@@ -2527,6 +2527,83 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_feature_update ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_feature_update",
+    label: "fn: Update Feature",
+    description:
+      "Update an existing feature's title, description, or acceptance criteria. " +
+      "Partial patches leave untouched fields intact.",
+    promptSnippet: "Update an existing mission feature",
+    promptGuidelines: [
+      "Use to revise acceptance criteria after reconciliation without re-creating the feature",
+      "Slice ordering and linked tasks are preserved",
+      "Provide only the fields you want to change",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Feature ID to update (e.g., F-001)" }),
+      title: Type.Optional(Type.String({ description: "Updated feature title" })),
+      description: Type.Optional(Type.String({ description: "Updated feature description" })),
+      acceptanceCriteria: Type.Optional(
+        Type.String({ description: "Updated acceptance criteria for completing the feature" })
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      const existingFeature = missionStore.getFeature(params.id);
+      if (!existingFeature) {
+        return {
+          content: [{ type: "text", text: `Feature ${params.id} not found` }],
+          isError: true,
+          details: { error: "Feature not found" },
+        };
+      }
+
+      const updates: { title?: string; description?: string; acceptanceCriteria?: string } = {};
+
+      if ("title" in params) {
+        updates.title = params.title?.trim();
+      }
+      if ("description" in params) {
+        updates.description = params.description?.trim();
+      }
+      if ("acceptanceCriteria" in params) {
+        updates.acceptanceCriteria = params.acceptanceCriteria?.trim();
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No fields to update (provide at least one of: title, description, acceptanceCriteria)",
+            },
+          ],
+          isError: true,
+          details: { error: "No fields to update" },
+        };
+      }
+
+      const feature = missionStore.updateFeature(params.id, updates);
+
+      return {
+        content: [{ type: "text", text: `Updated ${feature.id}: "${feature.title}"` }],
+        details: {
+          featureId: feature.id,
+          sliceId: feature.sliceId,
+          title: feature.title,
+          description: feature.description,
+          acceptanceCriteria: feature.acceptanceCriteria,
+          status: feature.status,
+        },
+      };
+    },
+  });
+
   // ── fn_agent_stop ─────────────────────────────────────────────────
 
   pi.registerTool({

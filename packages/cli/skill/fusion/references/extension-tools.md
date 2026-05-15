@@ -248,6 +248,28 @@ Link a feature to a fn task for implementation. Updates the feature status to 't
 | `featureId` | string | ✓ | Feature ID to link (e.g., F-001) |
 | `taskId` | string | ✓ | Task ID to link to (e.g., FN-001) |
 
+### fn_feature_update
+
+Update an existing feature's title, description, or acceptance criteria. Partial patches leave untouched fields intact.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Feature ID to update (e.g., F-001) |
+| `title` | string | — | Updated feature title |
+| `description` | string | — | Updated feature description |
+| `acceptanceCriteria` | string | — | Updated acceptance criteria for completing the feature |
+
+**Example:**
+
+```json
+{
+  "id": "F-001",
+  "acceptanceCriteria": "Runs deterministic verification and updates notes"
+}
+```
+
+**Returns:** Updated feature summary and details including `featureId`, `sliceId`, `title`, `description`, `acceptanceCriteria`, and `status`.
+
 ## Agent Tools
 
 ### fn_agent_stop

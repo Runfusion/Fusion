@@ -202,6 +202,7 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
         "fn_feature_add",
         "fn_slice_activate",
         "fn_feature_link_task",
+        "fn_feature_update",
         "fn_agent_stop",
         "fn_agent_start",
         "fn_agent_create",
@@ -1370,6 +1371,292 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
       expect(result.details.taskId).toBe(taskResult.details.taskId);
       expect(persisted?.status).toBe("triaged");
       expect(linkedTask.sliceId).toBe(slice.details.sliceId);
+    });
+  });
+
+  describe("fn_feature_update", () => {
+    it("patches title, description, and acceptanceCriteria", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const milestoneTool = api.tools.get("fn_milestone_add")!;
+      const sliceTool = api.tools.get("fn_slice_add")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const updateTool = api.tools.get("fn_feature_update")!;
+
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+      const milestone = await milestoneTool.execute(
+        "ms1",
+        { missionId: mission.details.missionId, title: "Milestone" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const slice = await sliceTool.execute(
+        "sl1",
+        { milestoneId: milestone.details.milestoneId, title: "Slice" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const feature = await featureTool.execute(
+        "f1",
+        { sliceId: slice.details.sliceId, title: "Feature", description: "Original", acceptanceCriteria: "AC old" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const result = await updateTool.execute(
+        "fu1",
+        {
+          id: feature.details.featureId,
+          title: "Updated Feature",
+          description: "Updated description",
+          acceptanceCriteria: "AC new",
+        },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const persisted = store.getMissionStore().getFeature(feature.details.featureId);
+
+      expect(result.content[0].text).toContain("Updated");
+      expect(persisted?.title).toBe("Updated Feature");
+      expect(persisted?.description).toBe("Updated description");
+      expect(persisted?.acceptanceCriteria).toBe("AC new");
+    });
+
+    it("partial patch preserves untouched fields", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const milestoneTool = api.tools.get("fn_milestone_add")!;
+      const sliceTool = api.tools.get("fn_slice_add")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const updateTool = api.tools.get("fn_feature_update")!;
+
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+      const milestone = await milestoneTool.execute(
+        "ms1",
+        { missionId: mission.details.missionId, title: "Milestone" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const slice = await sliceTool.execute(
+        "sl1",
+        { milestoneId: milestone.details.milestoneId, title: "Slice" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const feature = await featureTool.execute(
+        "f1",
+        { sliceId: slice.details.sliceId, title: "Feature", description: "Original", acceptanceCriteria: "AC old" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      await updateTool.execute(
+        "fu2",
+        { id: feature.details.featureId, acceptanceCriteria: "AC patched" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const persisted = store.getMissionStore().getFeature(feature.details.featureId);
+
+      expect(persisted?.title).toBe("Feature");
+      expect(persisted?.description).toBe("Original");
+      expect(persisted?.acceptanceCriteria).toBe("AC patched");
+    });
+
+    it("preserves slice ordering", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const milestoneTool = api.tools.get("fn_milestone_add")!;
+      const sliceTool = api.tools.get("fn_slice_add")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const updateTool = api.tools.get("fn_feature_update")!;
+
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+      const milestone = await milestoneTool.execute(
+        "ms1",
+        { missionId: mission.details.missionId, title: "Milestone" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const slice = await sliceTool.execute(
+        "sl1",
+        { milestoneId: milestone.details.milestoneId, title: "Slice" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const first = await featureTool.execute(
+        "f1",
+        { sliceId: slice.details.sliceId, title: "F1" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const second = await featureTool.execute(
+        "f2",
+        { sliceId: slice.details.sliceId, title: "F2" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const third = await featureTool.execute(
+        "f3",
+        { sliceId: slice.details.sliceId, title: "F3" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      await updateTool.execute(
+        "fu3",
+        { id: second.details.featureId, title: "F2 Updated" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const features = store.getMissionStore().listFeatures(slice.details.sliceId);
+
+      expect(features.map((featureItem) => featureItem.id)).toEqual([
+        first.details.featureId,
+        second.details.featureId,
+        third.details.featureId,
+      ]);
+    });
+
+    it("preserves linked task association", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const milestoneTool = api.tools.get("fn_milestone_add")!;
+      const sliceTool = api.tools.get("fn_slice_add")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const createTaskTool = api.tools.get("fn_task_create")!;
+      const linkTool = api.tools.get("fn_feature_link_task")!;
+      const updateTool = api.tools.get("fn_feature_update")!;
+
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+      const milestone = await milestoneTool.execute(
+        "ms1",
+        { missionId: mission.details.missionId, title: "Milestone" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const slice = await sliceTool.execute(
+        "sl1",
+        { milestoneId: milestone.details.milestoneId, title: "Slice" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const feature = await featureTool.execute(
+        "f1",
+        { sliceId: slice.details.sliceId, title: "Feature" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const taskResult = await createTaskTool.execute(
+        "t1",
+        { description: "Task for feature" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      await linkTool.execute(
+        "l1",
+        { featureId: feature.details.featureId, taskId: taskResult.details.taskId },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      await updateTool.execute(
+        "fu4",
+        { id: feature.details.featureId, title: "Updated Feature" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const persisted = store.getMissionStore().getFeature(feature.details.featureId);
+
+      expect(persisted?.taskId).toBe(taskResult.details.taskId);
+      expect(persisted?.status).toBe("triaged");
+    });
+
+    it("returns error when feature not found", async () => {
+      const updateTool = api.tools.get("fn_feature_update")!;
+
+      const result = await updateTool.execute(
+        "fu5",
+        { id: "F-999", title: "Updated" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Feature F-999 not found");
+    });
+
+    it("returns error when no fields supplied", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const milestoneTool = api.tools.get("fn_milestone_add")!;
+      const sliceTool = api.tools.get("fn_slice_add")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const updateTool = api.tools.get("fn_feature_update")!;
+
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+      const milestone = await milestoneTool.execute(
+        "ms1",
+        { missionId: mission.details.missionId, title: "Milestone" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const slice = await sliceTool.execute(
+        "sl1",
+        { milestoneId: milestone.details.milestoneId, title: "Slice" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const feature = await featureTool.execute(
+        "f1",
+        { sliceId: slice.details.sliceId, title: "Feature" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const result = await updateTool.execute(
+        "fu6",
+        { id: feature.details.featureId },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("No fields to update");
     });
   });
 
