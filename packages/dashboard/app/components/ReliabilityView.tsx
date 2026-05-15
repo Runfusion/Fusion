@@ -27,8 +27,7 @@ function formatDuration(value: number | null): string {
   if (value === null) {
     return "—";
   }
-  const minutes = value / 60_000;
-  return `${minutes.toFixed(1)}m`;
+  return `${(value / 60_000).toFixed(1)}m`;
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -36,15 +35,14 @@ function formatDateTime(value: string | null | undefined): string {
     return "—";
   }
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 export function ReliabilityView() {
   const [data, setData] = useState<ReliabilityResponse | null>(null);
   const [showEmptyDays, setShowEmptyDays] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/health/reliability");
@@ -54,6 +52,16 @@ export function ReliabilityView() {
     const payload = (await response.json()) as ReliabilityResponse;
     setData(payload);
   }, []);
+
+  const resetStats = useCallback(async () => {
+    setResetError(null);
+    const response = await fetch("/api/health/reliability/reset", { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`Failed to reset reliability metrics (${response.status})`);
+    }
+    await load();
+    setShowResetConfirm(false);
+  }, [load]);
 
   useEffect(() => {
     void load();
@@ -65,35 +73,18 @@ export function ReliabilityView() {
 
   const headlineColorVar = useMemo(() => {
     const rate = data?.headline.inReviewFailureRate7d;
-    if (rate === null || rate === undefined) {
-      return "var(--text-muted)";
-    }
-    if (rate < 0.05) {
-      return "var(--color-success)";
-    }
-    if (rate < 0.1) {
-      return "var(--color-warning)";
-    }
+    if (rate === null || rate === undefined) return "var(--text-muted)";
+    if (rate < 0.05) return "var(--color-success)";
+    if (rate < 0.1) return "var(--color-warning)";
     return "var(--color-error)";
   }, [data]);
 
-  const totalEntered = useMemo(
-    () => (data?.perDay ?? []).reduce((sum, row) => sum + row.tasksEnteredInReview, 0),
-    [data?.perDay],
-  );
-  const totalBounced = useMemo(
-    () => (data?.perDay ?? []).reduce((sum, row) => sum + row.tasksBouncedToInProgress, 0),
-    [data?.perDay],
-  );
+  const totalEntered = useMemo(() => (data?.perDay ?? []).reduce((sum, row) => sum + row.tasksEnteredInReview, 0), [data?.perDay]);
+  const totalBounced = useMemo(() => (data?.perDay ?? []).reduce((sum, row) => sum + row.tasksBouncedToInProgress, 0), [data?.perDay]);
 
   const perDayRows = useMemo(() => {
-    if (!data?.perDay) {
-      return [];
-    }
-    if (showEmptyDays) {
-      return data.perDay;
-    }
-    return data.perDay.filter((row) => row.hasSamples !== false);
+    if (!data?.perDay) return [];
+    return showEmptyDays ? data.perDay : data.perDay.filter((row) => row.hasSamples !== false);
   }, [data?.perDay, showEmptyDays]);
 
   const mergeAttemptTaskCount = useMemo(
@@ -101,20 +92,28 @@ export function ReliabilityView() {
     [data?.mergeAttempts.histogram],
   );
 
+  const windowStartLabel = data
+    ? formatDateTime(data.resetAt ?? new Date(Date.parse(data.generatedAt) - data.windowDays * 86_400_000).toISOString())
+    : "—";
+
   return (
     <section className="reliability-view">
       <div className="card reliability-card reliability-headline-card">
-        <h2>Reliability</h2>
+        <div className="reliability-section-header">
+          <h2>Reliability</h2>
+          <button className="btn btn-danger btn-sm" onClick={() => setShowResetConfirm(true)}>Reset stats</button>
+        </div>
         <div className="reliability-headline" style={{ color: headlineColorVar }}>
           {data?.headline.inReviewFailureRate7d === null || data?.headline.inReviewFailureRate7d === undefined
             ? `Insufficient data — ${data?.headline.reason ?? "unknown"}`
             : formatPercent(data.headline.inReviewFailureRate7d)}
         </div>
+        {data?.resetAt ? <div className="reliability-muted">{`Counting since ${formatDateTime(data.resetAt)}`}</div> : null}
         <details className="reliability-details">
           <summary>Details</summary>
           <div className="reliability-details-content">
             <div>{`${totalBounced} bounced / ${totalEntered} entered (last ${data?.windowDays ?? 7}d)`}</div>
-            <div>{`Window: ${data ? formatDateTime(data.resetAt ?? new Date(Date.parse(data.generatedAt) - data.windowDays * 86_400_000).toISOString()) : "—"} → ${formatDateTime(data?.generatedAt)}`}</div>
+            <div>{`Window: ${windowStartLabel} → ${formatDateTime(data?.generatedAt)}`}</div>
             {data?.resetAt ? <div>{`Reset baseline: ${formatDateTime(data.resetAt)}`}</div> : null}
             {data?.headline.reason ? <div>{`Reason: ${data.headline.reason}`}</div> : null}
           </div>
@@ -130,20 +129,10 @@ export function ReliabilityView() {
             </button>
           </div>
           <table className="reliability-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Entered</th>
-                <th>Bounced</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Date</th><th>Entered</th><th>Bounced</th></tr></thead>
             <tbody>
               {perDayRows.map((row) => (
-                <tr key={row.date}>
-                  <td>{row.date}</td>
-                  <td>{row.tasksEnteredInReview}</td>
-                  <td>{row.tasksBouncedToInProgress}</td>
-                </tr>
+                <tr key={row.date}><td>{row.date}</td><td>{row.tasksEnteredInReview}</td><td>{row.tasksBouncedToInProgress}</td></tr>
               ))}
             </tbody>
           </table>
@@ -188,6 +177,29 @@ export function ReliabilityView() {
           </details>
         </div>
       </div>
+
+      {showResetConfirm ? (
+        <div className="modal-overlay open" role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="reliability-reset-title">
+            <div className="modal-header"><h2 id="reliability-reset-title">Reset reliability stats?</h2></div>
+            <p>This sets a new baseline for reliability statistics. Historical events older than the reset time are excluded from counts but are not deleted.</p>
+            {resetError ? <div className="form-error">{resetError}</div> : null}
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  void resetStats().catch((error: unknown) => {
+                    setResetError(error instanceof Error ? error.message : "Failed to reset reliability stats");
+                  });
+                }}
+              >
+                Confirm reset
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
