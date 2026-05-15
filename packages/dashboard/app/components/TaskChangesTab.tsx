@@ -24,8 +24,13 @@ interface TaskChangesTabProps {
    * Used as a last-resort fallback when the live worktree diff is empty or the
    * recorded `mergeDetails.commitSha` resolves to an empty git commit (which
    * can happen when the merger stores a per-branch SHA that gets collapsed
-   * into a different squash on main). Without this, the tab would show "no
-   * changes" while the card shows N.
+   * into a different squash on main).
+   *
+   * Done-task sources of truth:
+   * - Authoritative landed diff: `/api/tasks/:id/diff` lineage union.
+   * - Fallback labels: `Final commit summary` (`mergeDetails`) or
+   *   `files touched during execution` (`modifiedFiles`).
+   * - Never present fallback values as bare landed `files changed`.
    */
   modifiedFiles?: string[];
 }
@@ -70,7 +75,8 @@ function renderModifiedFilesFallback(
         <p>{modifiedFiles.length} file{modifiedFiles.length === 1 ? "" : "s"} modified during execution.</p>
         <span className="task-changes-state-hint">
           {isDone
-            ? "The recorded merge commit has no diff (likely collapsed into a squash on main). Showing file paths only — patches unavailable."
+            // FN-4647: done-task fallback must explicitly describe executor-captured scope.
+            ? "These are files captured from the worktree during execution. They may differ from the files that actually landed on main. The lineage-backed diff is unavailable for this task."
             : "The live worktree diff is empty. Showing the last file paths captured during execution — patches unavailable."}
         </span>
       </div>
@@ -312,7 +318,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
             <p>Detailed file changes unavailable.</p>
             <span className="task-changes-state-hint">
               {hasSummary
-                ? `Merge summary: ${summaryFiles ?? 0} file${(summaryFiles ?? 0) === 1 ? "" : "s"} changed, +${summaryAdditions ?? 0} additions, -${summaryDeletions ?? 0} deletions.`
+                ? `Final commit summary: ${summaryFiles ?? 0} file${(summaryFiles ?? 0) === 1 ? "" : "s"} changed, +${summaryAdditions ?? 0} additions, -${summaryDeletions ?? 0} deletions. Counts only the recorded merge/squash commit, not the full task lineage.`
                 : "No merge commit was recorded for this task."}
             </span>
           </div>
