@@ -2766,7 +2766,7 @@ export class TaskExecutor {
       }
 
       if (livenessFailure) {
-        const expected = `<repo>/.worktrees/* (usable, registered)`;
+        const expected = `${resolveWorktreesDir(this.rootDir, settings)}/* (usable, registered)`;
         const observed = `${worktreePath} (${observedWorktreeRealpath})`;
         const failureMessage = `worktree liveness assertion failed: ${livenessFailure} — observed=${observed}, expected=${expected}`;
         executorLog.error(`${task.id}: ${failureMessage}`);
@@ -4930,7 +4930,7 @@ export class TaskExecutor {
         ok: false,
         reason: "wrong_toplevel",
         observed: "missing task.worktree",
-        expected: "registered task worktree under <repo>/.worktrees/*",
+        expected: `registered task worktree under ${resolveWorktreesDir(this.rootDir, settings)}/*`,
       };
     }
 
@@ -4943,7 +4943,7 @@ export class TaskExecutor {
         ok: false,
         reason: "wrong_toplevel",
         observed: `unresolvable task.worktree (${worktreePath}): ${error instanceof Error ? error.message : String(error)}`,
-        expected: "resolvable task worktree under <repo>/.worktrees/*",
+        expected: `resolvable task worktree under ${resolveWorktreesDir(this.rootDir, settings)}/*`,
       };
     }
 

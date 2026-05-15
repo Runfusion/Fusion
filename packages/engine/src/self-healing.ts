@@ -4364,7 +4364,7 @@ export class SelfHealingManager {
         return await this.reapUnregisteredOrphans();
       }
 
-      const orphaned = await scanIdleWorktrees(this.options.rootDir, this.store);
+      const orphaned = await scanIdleWorktrees(this.options.rootDir, this.store, settings);
       if (orphaned.length === 0) return 0;
 
       let cleaned = 0;
@@ -4666,7 +4666,7 @@ export class SelfHealingManager {
       if (dirs.length <= cap) return;
 
       // Find idle worktrees that can be safely removed
-      const idle = await scanIdleWorktrees(this.options.rootDir, this.store);
+      const idle = await scanIdleWorktrees(this.options.rootDir, this.store, settings);
       if (idle.length === 0) return;
 
       // Sort by mtime ascending (oldest first)

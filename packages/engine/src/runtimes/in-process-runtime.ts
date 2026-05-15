@@ -212,8 +212,9 @@ export class InProcessRuntime
       // ensures scanIdleWorktrees / rehydrate never sees broken entries, and
       // prevents assertValidWorktreeSession from permanently blocking retries.
       const { reapOrphanWorktrees, scanIdleWorktrees } = await import("../worktree-pool.js");
+      const settings = await this.taskStore.getSettings();
       try {
-        const reaped = await reapOrphanWorktrees(this.config.workingDirectory);
+        const reaped = await reapOrphanWorktrees(this.config.workingDirectory, settings);
         if (reaped > 0) {
           runtimeLog.log(`Reaped ${reaped} half-initialized orphan worktree(s) on startup`);
         }
@@ -236,7 +237,8 @@ export class InProcessRuntime
       // Rehydrate pool from disk state (idle worktrees)
       const idleWorktrees = await scanIdleWorktrees(
         this.config.workingDirectory,
-        this.taskStore
+        this.taskStore,
+        settings,
       );
       if (idleWorktrees.length > 0) {
         this.worktreePool.rehydrate(idleWorktrees);

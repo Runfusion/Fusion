@@ -391,7 +391,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           const settings = await scopedStore.getSettings();
           const rootDir = scopedStore.getRootDir();
           allocateWorktree = (reservedNames) =>
-            planTaskWorktreePath(existing, rootDir, settings.worktreeNaming, reservedNames);
+            planTaskWorktreePath(existing, rootDir, settings.worktreeNaming, reservedNames, settings);
         }
       }
 
