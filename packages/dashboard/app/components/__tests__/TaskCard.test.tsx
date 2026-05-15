@@ -676,6 +676,24 @@ describe("TaskCard", () => {
     expect(screen.queryByText("paused by agent")).toBeNull();
   });
 
+  it("renders todo userPaused tasks as paused", () => {
+    const { container } = render(
+      <TaskCard task={makeTask({ column: "todo", paused: undefined, userPaused: true })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(screen.getByText("paused")).toBeDefined();
+    expect(container.querySelector(".card")?.className).toContain("paused");
+  });
+
+  it("does not show paused by agent copy for userPaused-only tasks", () => {
+    render(
+      <TaskCard task={makeTask({ column: "todo", paused: undefined, userPaused: true, pausedByAgentId: undefined })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(screen.getByText("paused")).toBeDefined();
+    expect(screen.queryByText("paused by agent")).toBeNull();
+  });
+
   it("renders decision-only badge when noCommitsExpected is true", () => {
     render(<TaskCard task={makeTask({ noCommitsExpected: true })} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByText("decision-only")).toBeTruthy();

@@ -449,6 +449,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.priority === nextTask.priority &&
     previousTask.executionMode === nextTask.executionMode &&
     previousTask.paused === nextTask.paused &&
+    previousTask.userPaused === nextTask.userPaused &&
     previousTask.error === nextTask.error &&
     previousTask.size === nextTask.size &&
     previousTask.blockedBy === nextTask.blockedBy &&
@@ -760,7 +761,7 @@ function TaskCardComponent({
   }, [onOpenDetail, addToast]);
 
   const isFailed = task.status === "failed";
-  const isPaused = task.paused === true;
+  const isPaused = task.paused === true || task.userPaused === true;
   const pausedByAgent = Boolean(task.paused && task.pausedByAgentId);
   const normalizedPriority = normalizeTaskPriorityValue(task.priority);
   const showPriorityBadge = normalizedPriority !== DEFAULT_TASK_PRIORITY;
