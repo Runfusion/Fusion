@@ -1,3 +1,4 @@
+import { BubblewrapBackend } from "./bubblewrap-backend.js";
 import { NativeSandboxBackend } from "./native.js";
 import type { SandboxBackend, SandboxCapabilities } from "./types.js";
 
@@ -19,11 +20,14 @@ export function __resetSandboxBackendForTests(): void {
   sandboxBackendOverrideForTests = null;
 }
 
-export function resolveSandboxBackend(_options?: { backendId?: SandboxCapabilities["id"] }): SandboxBackend {
+export function resolveSandboxBackend(options?: { backendId?: SandboxCapabilities["id"] }): SandboxBackend {
   if (sandboxBackendOverrideForTests) {
     return sandboxBackendOverrideForTests;
   }
 
-  // TODO(FN-4637/FN-4638/FN-4642): branch by backend id once additional implementations land.
+  if (options?.backendId === "bubblewrap" && process.platform === "linux") {
+    return new BubblewrapBackend();
+  }
+
   return new NativeSandboxBackend();
 }
