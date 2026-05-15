@@ -772,6 +772,35 @@ describe("schema migration", () => {
     db.close();
   });
 
+  it("adds milestones.acceptanceCriteria when migrating from schema version 79", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS milestones (
+        id TEXT PRIMARY KEY,
+        missionId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL,
+        orderIndex INTEGER NOT NULL,
+        interviewState TEXT NOT NULL,
+        dependencies TEXT DEFAULT '[]',
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '79')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+
+    db.init();
+
+    const columns = db.prepare("PRAGMA table_info(milestones)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("acceptanceCriteria");
+    expect(db.getSchemaVersion()).toBe(80);
+
+    db.close();
+  });
+
   it("v76 backfill preserves explicit gateMode and defaults the rest to advisory (FN-4497)", () => {
     const db = new Database(fusionDir);
     db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");

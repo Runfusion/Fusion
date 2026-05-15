@@ -167,6 +167,8 @@ export interface Milestone {
   planningNotes?: string;
   /** How to verify milestone completion */
   verification?: string;
+  /** Acceptance criteria for completing the milestone */
+  acceptanceCriteria?: string;
   /** Computed validation state from contract assertions (optional, always populated by MissionStore) */
   validationState?: MilestoneValidationState;
   /** ISO-8601 timestamp of creation */
@@ -381,6 +383,8 @@ export interface MilestoneCreateInput {
   planningNotes?: string;
   /** How to verify milestone completion */
   verification?: string;
+  /** Acceptance criteria for completing the milestone */
+  acceptanceCriteria?: string;
 }
 
 /** Input for creating a new Slice */

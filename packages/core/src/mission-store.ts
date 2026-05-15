@@ -160,6 +160,7 @@ interface MilestoneRow {
   dependencies: string | null;
   planningNotes: string | null;
   verification: string | null;
+  acceptanceCriteria: string | null;
   validationState: string | null;
   createdAt: string;
   updatedAt: string;
