@@ -3,12 +3,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { __runConfiguredCommandForTests } from "../executor.js";
 import { __executePostMergeScriptStepForTests } from "../merger.js";
 import { RoutineRunner } from "../routine-runner.js";
-import { defaultShell } from "../shell-utils.js";
 import {
   __resetSandboxBackendForTests,
   __setSandboxBackendForTests,
   type SandboxBackend,
 } from "../sandbox/index.js";
+import { defaultShell } from "../shell-utils.js";
+import {
+  runVerificationCommand,
+  VERIFICATION_COMMAND_MAX_BUFFER,
+  VERIFICATION_COMMAND_TIMEOUT_MS,
+} from "../verification-utils.js";
+
+function makeStub(overrides: Partial<SandboxBackend> = {}): SandboxBackend {
+  return {
+    capabilities: () => ({ id: "native", supportsNetworkPolicy: false, supportsFilesystemPolicy: false, supportsStreaming: true, platform: "any" }),
+    prepare: async () => {},
+    run: vi.fn(),
+    runStreaming: vi.fn(),
+    dispose: async () => {},
+    ...overrides,
+  };
+}
 
 describe("sandbox wiring", () => {
   afterEach(() => {
@@ -26,12 +42,7 @@ describe("sandbox wiring", () => {
       bufferExceeded: true,
       spawnError: new Error("spawn"),
     });
-    const stub: SandboxBackend = {
-      capabilities: () => ({ id: "native", supportsNetworkPolicy: false, supportsFilesystemPolicy: false, platform: "any" }),
-      prepare: async () => {},
-      run,
-      dispose: async () => {},
-    };
+    const stub = makeStub({ run });
     __setSandboxBackendForTests(stub);
 
     const result = await __runConfiguredCommandForTests("echo hi", "/tmp", 1200, { A: "1" });
@@ -44,6 +55,7 @@ describe("sandbox wiring", () => {
       encoding: "utf-8",
       env: { A: "1" },
     });
+    expect((stub.runStreaming as any)).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       stdout: "out",
       stderr: "err",
@@ -64,12 +76,7 @@ describe("sandbox wiring", () => {
       timedOut: false,
       bufferExceeded: false,
     });
-    __setSandboxBackendForTests({
-      capabilities: () => ({ id: "native", supportsNetworkPolicy: false, supportsFilesystemPolicy: false, platform: "any" }),
-      prepare: async () => {},
-      run,
-      dispose: async () => {},
-    });
+    __setSandboxBackendForTests(makeStub({ run }));
 
     const result = await __executePostMergeScriptStepForTests(
       { updateTask: vi.fn() } as any,
@@ -97,12 +104,7 @@ describe("sandbox wiring", () => {
       timedOut: false,
       bufferExceeded: false,
     });
-    __setSandboxBackendForTests({
-      capabilities: () => ({ id: "native", supportsNetworkPolicy: false, supportsFilesystemPolicy: false, platform: "any" }),
-      prepare: async () => {},
-      run,
-      dispose: async () => {},
-    });
+    __setSandboxBackendForTests(makeStub({ run }));
 
     const runner = new RoutineRunner({
       routineStore: {} as any,
@@ -118,5 +120,67 @@ describe("sandbox wiring", () => {
       maxBuffer: 1024 * 1024,
       shell: defaultShell,
     });
+  });
+
+  it("routes verification command through sandbox runStreaming", async () => {
+    const run = vi.fn();
+    const runStreaming = vi.fn().mockResolvedValue({
+      outcome: "success",
+      stdout: "ok",
+      stderr: "",
+      bufferOverflow: false,
+    });
+    __setSandboxBackendForTests(makeStub({ run, runStreaming }));
+
+    const store = {
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    } as any;
+
+    const result = await runVerificationCommand(
+      store,
+      "/tmp/project",
+      "FN-TEST",
+      "echo ok",
+      "test",
+      undefined,
+      undefined,
+      undefined,
+      { FOO: "1" },
+    );
+
+    expect(runStreaming).toHaveBeenCalledTimes(1);
+    expect(runStreaming).toHaveBeenCalledWith("echo ok", {
+      cwd: "/tmp/project",
+      timeout: VERIFICATION_COMMAND_TIMEOUT_MS,
+      maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+      signal: undefined,
+      env: { FOO: "1" },
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+  });
+
+  it("maps non-zero streaming failures through runVerificationCommand", async () => {
+    const runStreaming = vi.fn().mockResolvedValue({
+      outcome: "non-zero-exit",
+      stdout: "",
+      stderr: "boom",
+      exitCode: 1,
+      signal: null,
+    });
+    __setSandboxBackendForTests(makeStub({ runStreaming }));
+
+    const store = {
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    } as any;
+
+    const result = await runVerificationCommand(store, "/tmp/project", "FN-TEST", "false", "test", undefined);
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(store.logEntry).toHaveBeenCalled();
+    expect(store.appendAgentLog).toHaveBeenCalled();
   });
 });
