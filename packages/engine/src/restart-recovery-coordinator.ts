@@ -15,20 +15,40 @@ function isNoTaskDoneFailure(task: Task): boolean {
     && task.error.toLowerCase().includes("without calling fn_task_done");
 }
 
-const MISSING_WORKTREE_SESSION_PREFIX = "Refusing to start coding agent in missing worktree:";
+/**
+ * Keep this list in sync with assertValidWorktreeSession() error strings in pi.ts:
+ * - Refusing to start coding agent in missing worktree:
+ * - Refusing to start coding agent in incomplete worktree:
+ * - Refusing to start coding agent in unregistered git worktree:
+ */
+const MISSING_WORKTREE_SESSION_PREFIXES = [
+  "Refusing to start coding agent in missing worktree:",
+  "Refusing to start coding agent in incomplete worktree:",
+  "Refusing to start coding agent in unregistered git worktree:",
+] as const;
+
+function findMissingWorktreeSessionPrefix(error: string): string | null {
+  for (const prefix of MISSING_WORKTREE_SESSION_PREFIXES) {
+    if (error.includes(prefix)) {
+      return prefix;
+    }
+  }
+  return null;
+}
 
 export function isMissingWorktreeSessionStartFailure(error: unknown): boolean {
   if (typeof error !== "string") {
     return false;
   }
-  return error.includes(MISSING_WORKTREE_SESSION_PREFIX);
+  return findMissingWorktreeSessionPrefix(error) !== null;
 }
 
 export function extractMissingWorktreePathFromSessionStartFailure(error: unknown): string | null {
   if (typeof error !== "string") return null;
-  const idx = error.indexOf(MISSING_WORKTREE_SESSION_PREFIX);
-  if (idx < 0) return null;
-  const pathPart = error.slice(idx + MISSING_WORKTREE_SESSION_PREFIX.length).trim();
+  const prefix = findMissingWorktreeSessionPrefix(error);
+  if (!prefix) return null;
+  const idx = error.indexOf(prefix);
+  const pathPart = error.slice(idx + prefix.length).trim();
   return pathPart.length > 0 ? pathPart : null;
 }
 
