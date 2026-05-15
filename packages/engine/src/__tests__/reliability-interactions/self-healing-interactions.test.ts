@@ -71,9 +71,10 @@ describe("reliability interactions: self-healing", () => {
   });
 
   it.each([
+    "Refusing to start coding agent in missing worktree: /tmp/wt",
     "Refusing to start coding agent in incomplete worktree: /tmp/wt",
     "Refusing to start coding agent in unregistered git worktree: /tmp/wt",
-  ])("recoverMissingWorktreeReviewFailures rebounds review tasks for '%s'", async (error) => {
+  ])("recoverMissingWorktreeReviewFailures rebounds no-progress review tasks for '%s'", async (error) => {
     const taskId = "WT";
     const tasks = new Map<string, Task>([[
       taskId,
@@ -84,7 +85,7 @@ describe("reliability interactions: self-healing", () => {
         error,
         worktree: "/tmp/wt",
         branch: "fusion/wt",
-        steps: [{ id: "s1", title: "Step", status: "done" }] as any,
+        steps: [{ id: "s1", title: "Step", status: "pending" }] as any,
       }),
     ]]);
     const store = makeStore(tasks);
@@ -98,8 +99,9 @@ describe("reliability interactions: self-healing", () => {
     expect(tasks.get(taskId)?.branch ?? null).toBeNull();
     expect(store.logEntry).toHaveBeenCalledWith(
       taskId,
-      expect.stringContaining("Auto-recovered: retry/verification session targeted unusable worktree"),
+      expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"),
     );
+    expect(tasks.get(taskId)?.worktreeSessionRetryCount).toBe(1);
   });
 
   it.skipIf(!hasGit)("recoverAlreadyMergedReviewTasks can still finalize from real git state", async () => {
