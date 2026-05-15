@@ -33,6 +33,7 @@ import {
 } from "./ai-session-diagnostics.js";
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
+import { createPlanningBoardTools } from "./planning-board-tools.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
@@ -199,6 +200,11 @@ When ready to complete, generate:
 - Size estimate (S/M/L) based on scope
 - Any suggested dependencies on existing tasks
 - Key deliverables as a checklist
+
+## Board tools
+- fn_task_list — list active tasks
+- fn_task_get — read a task's full details and PROMPT.md
+Use these to avoid duplicating an existing in-flight plan and to anchor your questions against current backlog context.
 
 ## Response Format
 Always respond with valid JSON in one of these formats:
@@ -737,7 +743,7 @@ export function getRateLimitResetTime(ip: string): Date | null {
 export async function createSession(
   ip: string,
   initialPlan: string,
-  _store?: TaskStore,
+  store?: TaskStore,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
   planningDepth?: PlanningDepth,
@@ -754,6 +760,9 @@ export async function createSession(
 
   if (!rootDir) {
     throw new Error("rootDir is required for AI-powered planning sessions");
+  }
+  if (!store) {
+    throw new Error("store is required for AI-powered planning sessions");
   }
 
   const sessionId = randomUUID();
@@ -789,6 +798,7 @@ export async function createSession(
     systemPrompt,
     tools: "readonly",
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
+    customTools: [...createPlanningBoardTools(store)],
     onThinking: () => {
       // Non-streaming path ignores thinking output
     },
@@ -1070,6 +1080,7 @@ export async function summarizeDraftTitle(
 export async function startExistingSession(
   sessionId: string,
   rootDir: string,
+  store: TaskStore,
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
@@ -1154,7 +1165,7 @@ export async function startExistingSession(
   }
 
   persistSession(session, "generating");
-  await initializeAgent(session, rootDir, modelProvider, modelId, promptOverrides);
+  await initializeAgent(session, rootDir, store, modelProvider, modelId, promptOverrides);
 }
 
 /**
@@ -1173,6 +1184,7 @@ export async function createSessionWithAgent(
   ip: string,
   initialPlan: string,
   rootDir: string,
+  store: TaskStore,
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
@@ -1223,6 +1235,7 @@ export async function createSessionWithAgent(
   initializeAgent(
     session,
     rootDir,
+    store,
     modelProvider,
     modelId,
     promptOverrides,
@@ -1246,6 +1259,7 @@ export async function createSessionWithAgent(
 async function initializeAgent(
   session: Session,
   rootDir: string,
+  store: TaskStore,
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
@@ -1256,6 +1270,7 @@ async function initializeAgent(
     session.agent = await createPlanningAgent(
       session,
       rootDir,
+      store,
       modelProvider,
       modelId,
       promptOverrides,
@@ -1282,6 +1297,7 @@ async function initializeAgent(
 async function createPlanningAgent(
   session: Session,
   rootDir: string,
+  store: TaskStore,
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
@@ -1301,6 +1317,7 @@ async function createPlanningAgent(
     systemPrompt,
     tools: "readonly",
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
+    customTools: [...createPlanningBoardTools(store)],
     ...(modelProvider && modelId
       ? {
           defaultProvider: modelProvider,

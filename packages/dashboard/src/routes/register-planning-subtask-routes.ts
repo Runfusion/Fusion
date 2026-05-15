@@ -642,6 +642,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         await startExistingSession(
           existingSessionId,
           rootDir,
+          scopedStore,
           resolvedPlanningProvider,
           resolvedPlanningModelId,
           settings.promptOverrides,
@@ -655,6 +656,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         ip,
         initialPlan,
         rootDir,
+        scopedStore,
         resolvedPlanningProvider,
         resolvedPlanningModelId,
         settings.promptOverrides,
