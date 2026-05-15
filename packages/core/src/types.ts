@@ -1175,8 +1175,23 @@ export interface MergeDetails {
    * Unset for squash merges.
    */
   rebaseBaseSha?: string;
+  /**
+   * Shortstat file count of the final recorded merge/squash commit only.
+   * For multi-commit task lineage this can undercount landed scope.
+   * Use `/api/tasks/:id/diff` for lineage-backed landed totals.
+   * Decision (FN-4647): this remains commit-level metadata; no separate
+   * persisted lineage-level summary is added at this time.
+   */
   filesChanged?: number;
+  /**
+   * Shortstat insertion count of the final recorded merge/squash commit only.
+   * Use `/api/tasks/:id/diff` for lineage-backed landed totals.
+   */
   insertions?: number;
+  /**
+   * Shortstat deletion count of the final recorded merge/squash commit only.
+   * Use `/api/tasks/:id/diff` for lineage-backed landed totals.
+   */
   deletions?: number;
   mergeCommitMessage?: string;
   mergedAt?: string;
@@ -1360,7 +1375,16 @@ export interface Task {
   /** Base commit SHA for creating this task's worktree. Used with the start ref
    *  chosen for the worktree to establish the exact starting point. */
   baseCommitSha?: string;
-  /** List of files modified by this task (populated during execution) */
+  /**
+   * Executor-time snapshot of `git diff <baseCommitSha>..HEAD` captured in the
+   * task worktree (`TaskExecutor.captureModifiedFiles`).
+   *
+   * This may be a stale/transient superset of files that actually landed after
+   * merge resolution or follow-up commits. UI surfaces must label this as
+   * "files touched during execution" (never landed "files changed" for done
+   * tasks). The authoritative landed diff for done tasks is
+   * `/api/tasks/:id/diff`.
+   */
   modifiedFiles?: string[];
   /** Opt out of the squash file-scope invariant for this task. */
   scopeOverride?: boolean;
