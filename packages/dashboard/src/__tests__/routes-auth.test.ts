@@ -1241,11 +1241,11 @@ describe("POST /auth/login", () => {
     expect(promptValue).toBe("");
   });
 
-  it("rewrites redirect_uri to dashboard oauth proxy when origin is non-localhost", async () => {
+  it("returns github-copilot verification_uri verbatim on non-localhost origins", async () => {
     (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation((_provider: string, callbacks: any) => {
       callbacks.onAuth({
-        url: "https://accounts.example.com/o/oauth2/v2/auth?state=test-state&redirect_uri=http%3A%2F%2Flocalhost%3A8085%2Foauth2callback",
-        instructions: "Open in browser",
+        url: "https://github.com/login/device",
+        instructions: "Enter code: ABCD-1234",
       });
       return Promise.resolve();
     });
@@ -1259,8 +1259,11 @@ describe("POST /auth/login", () => {
     );
 
     expect(res.status).toBe(200);
-    const returnedUrl = new URL(res.body.url);
-    expect(returnedUrl.searchParams.get("redirect_uri")).toBe("https://my-host.example.com/api/auth/oauth-callback");
+    expect(res.body.url).toBe("https://github.com/login/device");
+    expect(res.body.deviceCode).toEqual({
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+    });
   });
 
   it.each(["http://localhost:4040", "http://127.0.0.1:4040"])(
@@ -1299,6 +1302,27 @@ describe("POST /auth/login", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/auth/login", JSON.stringify({ provider: "github-copilot" }), {
       "Content-Type": "application/json",
     });
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe(unchangedUrl);
+  });
+
+  it("does not rewrite redirect_uri for github-copilot even on non-localhost origins", async () => {
+    const unchangedUrl =
+      "https://accounts.example.com/o/oauth2/v2/auth?state=test-state&redirect_uri=http%3A%2F%2Flocalhost%3A8085%2Foauth2callback";
+
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation((_provider: string, callbacks: any) => {
+      callbacks.onAuth({ url: unchangedUrl });
+      return Promise.resolve();
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/auth/login",
+      JSON.stringify({ provider: "github-copilot", origin: "https://my-host.example.com" }),
+      { "Content-Type": "application/json" },
+    );
 
     expect(res.status).toBe(200);
     expect(res.body.url).toBe(unchangedUrl);
@@ -1680,6 +1704,9 @@ describe("GET /auth/oauth-callback", () => {
       const port = typeof address === "object" && address ? address.port : 0;
       expect(port).toBeGreaterThan(0);
 
+      (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: "google", name: "Google" },
+      ]);
       (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation((_provider: string, callbacks: any) => {
         callbacks.onAuth({
           url: `https://accounts.example.com/o/oauth2/v2/auth?state=test-state&redirect_uri=${encodeURIComponent(`http://localhost:${port}/oauth2callback`)}`,
@@ -1692,7 +1719,7 @@ describe("GET /auth/oauth-callback", () => {
         app,
         "POST",
         "/api/auth/login",
-        JSON.stringify({ provider: "github-copilot", origin: "https://remote.example.com" }),
+        JSON.stringify({ provider: "google", origin: "https://remote.example.com" }),
         { "Content-Type": "application/json" },
       );
       expect(loginRes.status).toBe(200);
