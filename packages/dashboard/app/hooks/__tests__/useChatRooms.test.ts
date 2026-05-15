@@ -182,6 +182,27 @@ describe("useChatRooms", () => {
     expect(result.current.activeRoom).toBeNull();
   });
 
+  it("loads newest 100 room messages using desc fetch while preserving ascending transcript", async () => {
+    const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms.length).toBe(1));
+
+    const newestWindow = Array.from({ length: 100 }, (_, index) => {
+      const sequence = index + 8;
+      return roomMessage(`msg-${sequence}`, "room-1", `message-${sequence}`);
+    });
+
+    mockFetchChatRoomMembers.mockResolvedValueOnce({ members: [] });
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: newestWindow });
+    act(() => result.current.selectRoom("room-1"));
+    await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-1"));
+
+    expect(mockFetchChatRoomMessages).toHaveBeenLastCalledWith("room-1", { limit: 100, order: "desc" }, "proj-1");
+    expect(result.current.messages.at(-1)?.id).toBe("msg-107");
+    expect(result.current.messages.some((message) => message.id === "msg-1")).toBe(false);
+  });
+
   it("sendRoomMessage inserts optimistic temp message and reconciles to server transcript", async () => {
     const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
     mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
@@ -222,7 +243,7 @@ describe("useChatRooms", () => {
     });
 
     expect(mockPostChatRoomMessage).toHaveBeenCalledWith("room-1", { content: "hello" }, "proj-1");
-    expect(mockFetchChatRoomMessages).toHaveBeenLastCalledWith("room-1", { limit: 100 }, "proj-1");
+    expect(mockFetchChatRoomMessages).toHaveBeenLastCalledWith("room-1", { limit: 100, order: "desc" }, "proj-1");
     expect(result.current.messages.map((message) => message.id)).toEqual(["msg-user", "msg-assistant"]);
   });
 
@@ -247,8 +268,28 @@ describe("useChatRooms", () => {
     expect(result.current.messages).toEqual([]);
   });
 
-  it("refreshes persisted room messages even when room reply generation fails", async () => {
+  it("uses desc order when refreshing after send failure", async () => {
     const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
+    mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
+    const { result } = renderHook(() => useChatRooms("proj-1"));
+    await waitFor(() => expect(result.current.rooms.length).toBe(1));
+
+    mockFetchChatRoomMembers.mockResolvedValueOnce({ members: [] });
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [] });
+    act(() => result.current.selectRoom("room-1"));
+    await waitFor(() => expect(result.current.activeRoom?.id).toBe("room-1"));
+
+    mockPostChatRoomMessage.mockRejectedValueOnce(new Error("No active room responders available for room room-1"));
+    mockFetchChatRoomMessages.mockResolvedValueOnce({ messages: [roomMessage("msg-user", "room-1", "hello")] });
+
+    await act(async () => {
+      await expect(result.current.sendRoomMessage("hello")).rejects.toThrow("No active room responders available for room room-1");
+    });
+
+    expect(mockFetchChatRoomMessages).toHaveBeenLastCalledWith("room-1", { limit: 100, order: "desc" }, "proj-1");
+  });
+
+  it("refreshes persisted room messages even when room reply generation fails", async () => {    const active = room("room-1", "one", "2026-05-09T01:00:00.000Z");
     mockFetchChatRooms.mockResolvedValueOnce({ rooms: [active] });
     const { result } = renderHook(() => useChatRooms("proj-1"));
     await waitFor(() => expect(result.current.rooms.length).toBe(1));
