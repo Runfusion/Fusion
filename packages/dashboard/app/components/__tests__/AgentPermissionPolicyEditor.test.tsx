@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AgentPermissionPolicyEditor } from "../AgentPermissionPolicyEditor";
-import type { AgentPermissionPolicy } from "@fusion/core";
+import {
+  AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
+  type AgentPermissionPolicy,
+} from "@fusion/core";
 
 describe("AgentPermissionPolicyEditor", () => {
   it("preset dropdown switches all rules", () => {
@@ -73,5 +76,84 @@ describe("AgentPermissionPolicyEditor", () => {
     );
 
     expect(screen.getByText("from project default: Require approval")).toBeInTheDocument();
+  });
+
+  it("shows network and task mutation examples", () => {
+    render(
+      <AgentPermissionPolicyEditor
+        mode="project-default"
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("fn_research_run (web/research)")).toBeInTheDocument();
+    expect(screen.getByText("fn_task_create")).toBeInTheDocument();
+  });
+
+  it("renders exempt tools guidance", () => {
+    render(
+      <AgentPermissionPolicyEditor
+        mode="project-default"
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Tools exempt from approval policy")).toBeInTheDocument();
+    expect(screen.getByText(/bypass approval policy/i)).toBeInTheDocument();
+    expect(screen.getByText("fn_send_message")).toBeInTheDocument();
+  });
+
+  it("does not duplicate fn tool examples across category rows", () => {
+    const { container } = render(
+      <AgentPermissionPolicyEditor
+        mode="project-default"
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+
+    const rowTools = Array.from(container.querySelectorAll(".agent-policy-examples code"))
+      .map((node) => node.textContent ?? "")
+      .filter((name) => name.startsWith("fn_"));
+
+    expect(new Set(rowTools).size).toBe(rowTools.length);
+  });
+
+  it("renders exactly the action-gate categories as configurable rows", () => {
+    const { container } = render(
+      <AgentPermissionPolicyEditor
+        mode="project-default"
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+
+    const labels = Array.from(container.querySelectorAll(".agent-policy-row .agent-policy-cell strong"))
+      .map((node) => node.textContent ?? "");
+
+    expect(labels).toEqual([
+      "Git writes",
+      "File writes/deletes",
+      "Command execution",
+      "Network/API",
+      "Task/agent mutation",
+    ]);
+    expect(labels).toHaveLength(AGENT_PERMISSION_POLICY_ACTION_CATEGORIES.length);
+  });
+
+  it("keeps exempt tools panel read-only", () => {
+    const { container } = render(
+      <AgentPermissionPolicyEditor
+        mode="project-default"
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+
+    const details = container.querySelector(".agent-policy-exempt");
+    expect(details).toBeTruthy();
+    expect(details?.querySelector("input, select, button")).toBeNull();
   });
 });

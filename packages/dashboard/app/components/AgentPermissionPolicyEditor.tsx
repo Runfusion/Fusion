@@ -1,6 +1,8 @@
 import "./AgentPermissionPolicyEditor.css";
 import {
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
+  AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES,
+  AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES,
   type AgentPermissionPolicy,
   type AgentPermissionPolicyDisposition,
   type AgentPermissionPolicyRules,
@@ -134,6 +136,13 @@ export function AgentPermissionPolicyEditor({ value, projectDefault, mode, onCha
               <div className="agent-policy-cell">
                 <strong>{meta.label}</strong>
                 <div className="agent-policy-description">{meta.description}</div>
+                <ul className="agent-policy-examples" aria-label={`${meta.label} examples`}>
+                  {(AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES[category] ?? []).map((toolName) => (
+                    <li key={`${category}-${toolName}`}>
+                      <code>{toolName}</code>
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div className="agent-policy-cell">
                 <select
@@ -157,6 +166,21 @@ export function AgentPermissionPolicyEditor({ value, projectDefault, mode, onCha
           );
         })}
       </div>
+
+      <details className="agent-policy-exempt" open={false}>
+        <summary>Tools exempt from approval policy</summary>
+        <p>
+          These coordination tools bypass approval policy so heartbeats and inter-agent messaging cannot deadlock. They
+          are not user-configurable.
+        </p>
+        <ul className="agent-policy-exempt-list">
+          {AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES.map((toolName) => (
+            <li key={toolName}>
+              <code>{toolName}</code>
+            </li>
+          ))}
+        </ul>
+      </details>
     </div>
   );
 }

@@ -39,8 +39,45 @@
   font-size: 0.75rem;
 }
 
+.agent-policy-examples,
+.agent-policy-exempt-list {
+  margin: 0;
+  padding-left: var(--space-lg);
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.agent-policy-examples code,
+.agent-policy-exempt-list code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.agent-policy-exempt {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-sm);
+  color: var(--text-muted);
+}
+
+.agent-policy-exempt summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agent-policy-exempt p {
+  margin: var(--space-sm) 0;
+}
+
 @media (max-width: 768px) {
   .agent-policy-row {
     grid-template-columns: 1fr;
+  }
+
+  .agent-policy-examples,
+  .agent-policy-exempt-list {
+    padding-left: var(--space-md);
   }
 }
