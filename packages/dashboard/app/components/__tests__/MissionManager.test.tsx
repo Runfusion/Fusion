@@ -4500,6 +4500,32 @@ describe("MissionManager", () => {
     });
   });
 
+  describe("mission acceptance and verification visibility", () => {
+    it("renders milestone acceptance criteria, slice verification, and feature acceptance criteria", async () => {
+      const missionDetail = JSON.parse(JSON.stringify(mockMissionDetail)) as any;
+      missionDetail.milestones[0].acceptanceCriteria = "MILESTONE_AC_MARKER";
+      missionDetail.milestones[0].slices[0].verification = "SLICE_VERIFY_MARKER";
+      missionDetail.milestones[0].slices[0].features[0].acceptanceCriteria = "FEATURE_AC_MARKER";
+
+      globalThis.fetch = createDetailFetchMockForMissionDetail(missionDetail);
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      fireEvent.click(await screen.findByText("Build Auth System"));
+      await waitForDetailLoaded();
+
+      if (!screen.queryByText("MILESTONE_AC_MARKER")) {
+        fireEvent.click(screen.getByText("Database Schema"));
+      }
+      if (!screen.queryByText("SLICE_VERIFY_MARKER")) {
+        fireEvent.click(screen.getByText("User Tables"));
+      }
+
+      expect(await screen.findByText(/MILESTONE_AC_MARKER/)).toBeInTheDocument();
+      expect(await screen.findByText(/SLICE_VERIFY_MARKER/)).toBeInTheDocument();
+      expect((await screen.findAllByText(/FEATURE_AC_MARKER/)).length).toBeGreaterThan(0);
+    });
+  });
+
   describe("MissionManager tokenized sizing regression", () => {
     it("does not retain targeted hardcoded px literals in MissionManager selectors", async () => {
       const css = await loadAllAppCssBaseOnly();
