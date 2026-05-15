@@ -152,6 +152,7 @@ export {
 export type { CapacityRiskSignal } from "./capacity.js";
 export {
   getTaskMergeBlocker,
+  getTaskHardMergeBlocker,
   getTaskCompletionBlocker,
   isTaskReadyForMerge,
   resolveTaskMergeTarget,

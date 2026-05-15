@@ -116,6 +116,17 @@ export function getTaskMergeBlocker(
   return undefined;
 }
 
+export function getTaskHardMergeBlocker(
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
+): string | undefined {
+  return getTaskMergeBlocker({
+    ...task,
+    paused: false,
+    status: task.status === "failed" ? undefined : task.status,
+    error: undefined,
+  });
+}
+
 export function isTaskReadyForMerge(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
 ): boolean {

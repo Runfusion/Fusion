@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { StepStatus } from "../types.js";
 import {
   getTaskCompletionBlocker,
+  getTaskHardMergeBlocker,
   getTaskMergeBlocker,
   isTaskReadyForMerge,
   resolveTaskMergeTarget,
@@ -281,6 +282,45 @@ describe("getTaskMergeBlocker", () => {
       ],
     });
     expect(result).toBeUndefined();
+  });
+});
+
+describe("getTaskHardMergeBlocker", () => {
+  it("ignores paused when no hard blockers exist", () => {
+    expect(getTaskHardMergeBlocker({ ...baseTask, paused: true })).toBeUndefined();
+  });
+
+  it("ignores failed status when no hard blockers exist", () => {
+    expect(getTaskHardMergeBlocker({ ...baseTask, status: "failed" })).toBeUndefined();
+  });
+
+  it("still blocks on awaiting-user-review", () => {
+    expect(getTaskHardMergeBlocker({ ...baseTask, status: "awaiting-user-review" }))
+      .toContain("awaiting-user-review");
+  });
+
+  it("still blocks on incomplete steps", () => {
+    expect(getTaskHardMergeBlocker({
+      ...baseTask,
+      steps: [{ name: "Step 1", status: "pending" }],
+    })).toBe("task has incomplete steps");
+  });
+
+  it("still blocks on failed pre-merge workflow step", () => {
+    expect(getTaskHardMergeBlocker({
+      ...baseTask,
+      workflowStepResults: [{
+        workflowStepId: "WS-001",
+        workflowStepName: "Pre-merge Check",
+        phase: "pre-merge",
+        status: "failed",
+      }],
+    })).toBe("task has failed pre-merge workflow steps");
+  });
+
+  it("still blocks when task is not in-review", () => {
+    expect(getTaskHardMergeBlocker({ ...baseTask, column: "todo" }))
+      .toContain("must be in 'in-review'");
   });
 });
 
