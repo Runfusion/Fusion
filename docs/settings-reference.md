@@ -411,6 +411,19 @@ Recovery entrypoints in the dashboard:
 
 ### Authentication troubleshooting (mobile OAuth fallback)
 
+#### `/api/auth/login` response shape for device-code providers
+
+`POST /api/auth/login` returns:
+
+- `url: string`
+- `instructions?: string`
+- `manualCode?: { prompt: string; placeholder?: string; helpText?: string }`
+- `deviceCode?: { userCode: string; verificationUri: string }`
+
+For `github-copilot`, Fusion auto-resolves the upstream enterprise-domain prompt to blank (`github.com` default), then returns `deviceCode` so Settings/Onboarding can render a dedicated “Enter this code on GitHub” panel.
+
+Request body remains `{ provider: string, origin?: string }`. `enterpriseDomain` is reserved for future UX expansion and is not required for this flow.
+
 When an OAuth provider returns a localhost callback that this dashboard host cannot open directly, use the **manual code** fallback in Settings/Onboarding:
 - Tap **Login** for the provider, complete sign-in in the browser, then paste either the final redirect URL or the authorization code into the fallback textbox. Fusion now shows a pre-login warning first so you know to copy the browser address bar URL before the redirect tab appears to fail.
 - On mobile/coarse-pointer layouts, the fallback textbox now auto-scrolls into view on focus (and after keyboard viewport shifts) so the paste/submit path remains usable.

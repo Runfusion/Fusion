@@ -803,17 +803,20 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       // Start login flow in background — don't await the full login
       const loginPromise = storage.login(provider, {
         onAuth: (info) => {
-          const deviceCode =
+          const parsedUserCode =
             provider === "github-copilot" && info.instructions
-              ? {
-                  userCode: parseGitHubCopilotDeviceCode(info.instructions),
-                  verificationUri: info.url,
-                }
+              ? parseGitHubCopilotDeviceCode(info.instructions)
               : undefined;
+          const deviceCode = parsedUserCode
+            ? {
+                userCode: parsedUserCode,
+                verificationUri: info.url,
+              }
+            : undefined;
           authResolve({
             url: info.url,
             instructions: appendManualCodeHint(info.instructions, provider, origin),
-            deviceCode: deviceCode?.userCode ? deviceCode : undefined,
+            deviceCode,
           });
         },
         onPrompt: async (_prompt) => {
