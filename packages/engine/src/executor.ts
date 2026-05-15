@@ -3366,7 +3366,7 @@ export class TaskExecutor {
         ] : []),
         // Messaging tools — allows executor agents to send and receive messages.
         ...(this.options.messageStore && assignedAgentId ? [
-          createSendMessageTool(this.options.messageStore, assignedAgentId, { autoRecovery: settings.autoRecovery, runAudit: audit }),
+          createSendMessageTool(this.options.messageStore, assignedAgentId, { autoRecovery: settings.autoRecovery, runAudit: audit, taskStore: this.store, settings }),
           createReadMessagesTool(this.options.messageStore, assignedAgentId),
         ] : []),
         // Add plugin tools from PluginRunner

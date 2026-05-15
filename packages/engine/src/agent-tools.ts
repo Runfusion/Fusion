@@ -24,6 +24,7 @@ import { fetchWebContent, WebFetchError } from "./web-fetch.js";
 import type { RunAuditor } from "./run-audit.js";
 import { computeApprovalDedupeKey } from "./agent-action-gate.js";
 import { MessageDeliveryAutoRecoveryHandler } from "./auto-recovery-handlers/message-delivery.js";
+import { recordRetry } from "./retry-burned-logger.js";
 
 // ── Tool parameter schemas (canonical definitions) ────────────────────────
 
@@ -1834,7 +1835,7 @@ export function createDelegateTaskTool(
 export function createSendMessageTool(
   messageStore: MessageStore,
   fromAgentId: string,
-  options?: { autoRecovery?: ProjectSettings["autoRecovery"]; runAudit?: RunAuditor },
+  options?: { autoRecovery?: ProjectSettings["autoRecovery"]; runAudit?: RunAuditor; taskStore?: TaskStore; settings?: Settings },
 ): ToolDefinition {
   const deliveryHandler = new MessageDeliveryAutoRecoveryHandler({
     runAudit: options?.runAudit ?? { database: async () => {}, git: async () => {}, filesystem: async () => {} },
@@ -1892,7 +1893,17 @@ export function createSendMessageTool(
             ...(replyToMessageId ? { metadata: { replyTo: { messageId: replyToMessageId } } } : {}),
           })),
           correlation: { kind: "direct", fromAgentId, toId: recipient.id },
-        }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 });
+        }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 }, async () => {
+          const taskId = _ctx?.taskId as string | undefined;
+          if (!taskId || !options?.taskStore || !options.settings) {
+            return;
+          }
+          const task = await options.taskStore.getTask(taskId);
+          if (!task) {
+            return;
+          }
+          await recordRetry({ store: options.taskStore, settings: options.settings, task, category: "messageDelivery", role: "executor", agentId: fromAgentId });
+        });
 
         if (result.outcome === "parked") {
           return {
@@ -2153,7 +2164,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
 export function createPostRoomMessageTool(
   chatStore: ChatStore,
   fromAgentId: string,
-  options?: { autoRecovery?: ProjectSettings["autoRecovery"]; runAudit?: RunAuditor },
+  options?: { autoRecovery?: ProjectSettings["autoRecovery"]; runAudit?: RunAuditor; taskStore?: TaskStore; settings?: Settings },
 ): ToolDefinition {
   const deliveryHandler = new MessageDeliveryAutoRecoveryHandler({
     runAudit: options?.runAudit ?? { database: async () => {}, git: async () => {}, filesystem: async () => {} },
@@ -2166,7 +2177,7 @@ export function createPostRoomMessageTool(
       "Post a message to a room you are a member of. Room membership is enforced before posting, " +
       "so only reply when the room content is relevant to your role or identity.",
     parameters: postRoomMessageParams,
-    execute: async (_id: string, params: Static<typeof postRoomMessageParams>) => {
+    execute: async (_id: string, params: Static<typeof postRoomMessageParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
       const content = params.content.trim();
       if (content.length === 0) {
         return {
@@ -2208,7 +2219,17 @@ export function createPostRoomMessageTool(
             ...(replyToMessageId ? { metadata: { replyToMessageId } } : {}),
           })),
           correlation: { kind: "room", fromAgentId, roomId: params.roomId },
-        }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 });
+        }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 }, async () => {
+          const taskId = _ctx?.taskId as string | undefined;
+          if (!taskId || !options?.taskStore || !options.settings) {
+            return;
+          }
+          const task = await options.taskStore.getTask(taskId);
+          if (!task) {
+            return;
+          }
+          await recordRetry({ store: options.taskStore, settings: options.settings, task, category: "messageDelivery", role: "executor", agentId: fromAgentId });
+        });
 
         if (result.outcome === "parked") {
           return {

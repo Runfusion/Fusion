@@ -42,6 +42,7 @@ export class MessageDeliveryAutoRecoveryHandler {
   async runWithBoundedRetry<T>(
     attempt: MessageDeliveryAttempt<T>,
     settings: AutoRecoverySettings,
+    onRetryBurn?: () => Promise<void>,
   ): Promise<{ outcome: "delivered"; value: T } | { outcome: "parked"; error: Error; attempts: number }> {
     const maxAttempts = Math.max(1, settings.maxRetries ?? 3);
     const shouldRetry = this.isRetryMode(settings);
@@ -58,7 +59,9 @@ export class MessageDeliveryAutoRecoveryHandler {
             target: attempt.correlation.fromAgentId,
             metadata: { correlation: attempt.correlation, attempt: attempts, mode: settings.mode },
           });
-          if (this.deps.onRetryBurn) {
+          if (onRetryBurn) {
+            await onRetryBurn();
+          } else if (this.deps.onRetryBurn) {
             await this.deps.onRetryBurn(attempts);
           }
         }

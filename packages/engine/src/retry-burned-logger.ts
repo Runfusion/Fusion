@@ -19,7 +19,8 @@ type RetryCategory =
   | "workflowStep"
   | "verification"
   | "postReviewFix"
-  | "mergeConflict";
+  | "mergeConflict"
+  | "messageDelivery";
 
 const CATEGORY_COLUMN: Record<RetryCategory, keyof TaskDetail> = {
   branchConflict: "branchConflictRecoveryCount",
@@ -32,6 +33,7 @@ const CATEGORY_COLUMN: Record<RetryCategory, keyof TaskDetail> = {
   verification: "verificationFailureCount",
   postReviewFix: "postReviewFixCount",
   mergeConflict: "mergeConflictBounceCount",
+  messageDelivery: "recoveryRetryCount",
 };
 
 const CATEGORY_CAP = (category: RetryCategory, settings: Settings): number | undefined => {
