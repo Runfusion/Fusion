@@ -461,7 +461,7 @@ Recovery entrypoints in the dashboard:
 - `manualCode?: { prompt: string; placeholder?: string; helpText?: string }`
 - `deviceCode?: { userCode: string; verificationUri: string }`
 
-For `github-copilot`, Fusion auto-resolves the upstream enterprise-domain prompt to blank (`github.com` default), then returns `deviceCode` so Settings/Onboarding can render a dedicated “Enter this code on GitHub” panel.
+For `github-copilot`, Fusion auto-resolves the upstream enterprise-domain prompt to blank (`github.com` default), then returns `deviceCode` so Settings/Onboarding can render a dedicated “Enter this code on GitHub” panel. The dashboard now shows this panel (and auto-copies the code once) before opening GitHub; users explicitly click **Open GitHub** when ready.
 
 Request body remains `{ provider: string, origin?: string }`. `enterpriseDomain` is reserved for future UX expansion and is not required for this flow.
 
