@@ -6,6 +6,8 @@ export const READONLY_ALLOWLIST = [
   "grep",
   "find",
   "ls",
+  "WebSearch",
+  "WebFetch",
   "fn_web_fetch",
   "fn_task_show",
   "fn_task_list",

@@ -1300,9 +1300,9 @@ describe("createFnAgent", () => {
       "grep",
       "find",
       "ls",
+      "WebSearch",
+      "WebFetch",
     ]));
-    expect(createSessionArgs.tools).not.toContain("WebSearch");
-    expect(createSessionArgs.tools).not.toContain("WebFetch");
   });
 
   it("keeps caller customTools in coding sessions", async () => {

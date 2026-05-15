@@ -32,6 +32,7 @@ import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
+const MISSION_INTERVIEW_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const createFnAgent: any = engineCreateFnAgent;
 
@@ -834,6 +835,7 @@ async function createMissionInterviewAgent(
     cwd: rootDir,
     systemPrompt: effectivePrompt,
     tools: "readonly",
+    builtinToolsAllowlist: [...MISSION_INTERVIEW_BUILTIN_WEB_TOOLS],
     ...(session.modelProvider && session.modelId
       ? {
           defaultProvider: session.modelProvider,

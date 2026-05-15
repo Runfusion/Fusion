@@ -715,6 +715,7 @@ describe("mission-interview module", () => {
       expect(mockCreateFnAgent).toHaveBeenCalled();
       const lastCall = mockCreateFnAgent.mock.calls[mockCreateFnAgent.mock.calls.length - 1];
       expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
+      expect(lastCall[0].builtinToolsAllowlist).toEqual(["WebSearch", "WebFetch"]);
     });
 
     it("uses override prompt when promptOverrides provided", async () => {
@@ -827,6 +828,7 @@ describe("mission-interview module", () => {
       expect(agentConfig).toHaveProperty("cwd");
       expect(agentConfig).toHaveProperty("systemPrompt");
       expect(agentConfig).toHaveProperty("tools");
+      expect(agentConfig).toHaveProperty("builtinToolsAllowlist");
       expect(agentConfig).toHaveProperty("onThinking");
       expect(agentConfig).toHaveProperty("onText");
 
