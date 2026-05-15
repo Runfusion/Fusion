@@ -26,10 +26,10 @@ export class NativeSandboxBackend implements SandboxBackend {
         timeout: options.timeoutMs,
         maxBuffer: options.maxBuffer,
         ...(options.encoding !== undefined && { encoding: options.encoding }),
-        ...(options.shell !== undefined && { shell: options.shell }),
+        ...(options.shell !== undefined && { shell: options.shell as any }),
         ...(options.env !== undefined && { env: options.env }),
         ...(options.signal !== undefined && { signal: options.signal }),
-      });
+      } as any);
 
       return {
         stdout: stdout?.toString?.() ?? "",
