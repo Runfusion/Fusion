@@ -18,6 +18,9 @@ export const VALID_SETTINGS = [
   "maxParallelSteps",
   "defaultNodeId",
   "unavailableNodePolicy",
+  "worktrunk.enabled",
+  "worktrunk.binaryPath",
+  "worktrunk.onFailure",
 ] as const;
 
 const GLOBAL_ONLY_SETTINGS = ["ntfyEnabled", "ntfyTopic", "defaultModel"] as const;
@@ -45,6 +48,7 @@ const BOOLEAN_SETTINGS: readonly string[] = [
   "requirePlanApproval",
   "ntfyEnabled",
   "runStepsInNewSessions",
+  "worktrunk.enabled",
 ];
 
 const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees", "maxParallelSteps"];
@@ -52,9 +56,17 @@ const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees", "ma
 const ENUM_SETTINGS: Record<string, readonly string[]> = {
   worktreeNaming: ["random", "task-id", "task-title"],
   unavailableNodePolicy: ["block", "fallback-local"],
+  "worktrunk.onFailure": ["fail", "fallback-native"],
 };
 
-const STRING_SETTINGS: readonly string[] = ["taskPrefix", "ntfyTopic", "defaultModel", "defaultNodeId", "worktreesDir"];
+const STRING_SETTINGS: readonly string[] = [
+  "taskPrefix",
+  "ntfyTopic",
+  "defaultModel",
+  "defaultNodeId",
+  "worktreesDir",
+  "worktrunk.binaryPath",
+];
 
 // Validation ranges for numeric settings
 const NUMBER_RANGES: Record<string, { min: number; max: number }> = {
@@ -130,8 +142,35 @@ export function parseValue(key: ValidSettingKey, value: string): unknown {
 /**
  * Format a setting value for display
  */
+function getDottedValue(obj: unknown, key: string): unknown {
+  return key.split(".").reduce<unknown>((acc, part) => {
+    if (!acc || typeof acc !== "object") return undefined;
+    return (acc as Record<string, unknown>)[part];
+  }, obj);
+}
+
+function applyDottedSetting(key: string, value: unknown, current: Record<string, unknown>): Record<string, unknown> {
+  if (!key.includes(".")) {
+    return { [key]: value };
+  }
+
+  const [root, leaf] = key.split(".", 2);
+  const existingRoot = current[root];
+  const nested =
+    existingRoot && typeof existingRoot === "object" && !Array.isArray(existingRoot)
+      ? (existingRoot as Record<string, unknown>)
+      : {};
+
+  return {
+    [root]: {
+      ...nested,
+      [leaf]: value,
+    },
+  };
+}
+
 function formatSettingValue(
-  key: keyof Settings,
+  key: string,
   value: unknown,
   _settings: GlobalSettings | Settings
 ): string {
@@ -152,7 +191,7 @@ function formatSettingValue(
   }
 
   if (typeof value === "string") {
-    const defaultValue = DEFAULT_SETTINGS[key];
+    const defaultValue = getDottedValue(DEFAULT_SETTINGS, key);
     if (value === defaultValue) {
       return `"${value}" (default)`;
     }
@@ -168,6 +207,9 @@ function formatSettingValue(
 function getSettingLabel(key: string): string {
   if (key === "ntfyEnabled") return "ntfy Enabled";
   if (key === "ntfyTopic") return "ntfy Topic";
+  if (key === "worktrunk.enabled") return "Worktrunk Enabled";
+  if (key === "worktrunk.binaryPath") return "Worktrunk Binary Path";
+  if (key === "worktrunk.onFailure") return "Worktrunk On Failure";
 
   return key
     .replace(/([A-Z])/g, " $1")
@@ -207,6 +249,10 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
       keys: ["worktreeNaming", "worktreesDir", "recycleWorktrees"],
     },
     {
+      title: "Worktrunk integration",
+      keys: ["worktrunk.enabled", "worktrunk.binaryPath", "worktrunk.onFailure"],
+    },
+    {
       title: "Tasks",
       keys: ["taskPrefix", "requirePlanApproval", "includeTaskIdInCommit"],
     },
@@ -225,17 +271,16 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
   ];
 
   for (const group of settingGroups) {
-    const settingsRecord = settings as Record<string, unknown>;
-    const hasValues = group.keys.some((key) => settingsRecord[key] !== undefined);
+    const hasValues = group.keys.some((key) => getDottedValue(settings, key) !== undefined);
     if (!hasValues) continue;
 
     console.log();
     console.log(`  ${group.title}:`);
 
     for (const key of group.keys) {
-      const value = settingsRecord[key];
+      const value = getDottedValue(settings, key);
       const label = getSettingLabel(key);
-      const formattedValue = formatSettingValue(key as keyof Settings, value, settings);
+      const formattedValue = formatSettingValue(key, value, settings);
       console.log(`    ${label.padEnd(25)} ${formattedValue}`);
     }
   }
@@ -300,16 +345,29 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
       return;
     }
 
-    const patch: Partial<Settings> = { [key]: parsedValue };
     if (store) {
-      await store.updateSettings(patch);
+      if (key.includes(".")) {
+        const currentSettings = await store.getSettingsByScope();
+        const projectPatch = applyDottedSetting(
+          key,
+          parsedValue,
+          (currentSettings.project ?? {}) as Record<string, unknown>,
+        );
+        await store.updateSettings(projectPatch as Partial<Settings>);
+      } else {
+        await store.updateSettings({ [key]: parsedValue } as Partial<Settings>);
+      }
+    } else if (key.includes(".")) {
+      const currentGlobalSettings = await globalStore!.getSettings();
+      const globalPatch = applyDottedSetting(key, parsedValue, currentGlobalSettings as Record<string, unknown>);
+      await globalStore!.updateSettings(globalPatch as Partial<GlobalSettings>);
     } else {
-      await globalStore!.updateSettings(patch);
+      await globalStore!.updateSettings({ [key]: parsedValue } as Partial<GlobalSettings>);
     }
 
     const currentSettings = store ? await store.getSettings() : await globalStore!.getSettings();
     console.log();
-    console.log(`  ✓ Updated ${getSettingLabel(key)} to ${formatSettingValue(key as keyof Settings, parsedValue, currentSettings as Settings)}`);
+    console.log(`  ✓ Updated ${getSettingLabel(key)} to ${formatSettingValue(key, parsedValue, currentSettings as Settings)}`);
     console.log();
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

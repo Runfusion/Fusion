@@ -15,6 +15,11 @@ vi.mock("@fusion/core", () => {
     defaultModelId: undefined,
     defaultNodeId: undefined,
     unavailableNodePolicy: undefined,
+    worktrunk: {
+      enabled: false,
+      binaryPath: undefined,
+      onFailure: "fail",
+    },
   };
 
   return {
@@ -59,6 +64,9 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).toContain("maxConcurrent");
     expect(VALID_SETTINGS).toContain("defaultNodeId");
     expect(VALID_SETTINGS).toContain("unavailableNodePolicy");
+    expect(VALID_SETTINGS).toContain("worktrunk.enabled");
+    expect(VALID_SETTINGS).toContain("worktrunk.binaryPath");
+    expect(VALID_SETTINGS).toContain("worktrunk.onFailure");
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);
     expect(parseValue("worktreeNaming", "task-id")).toBe("task-id");
@@ -67,6 +75,10 @@ describe("settings commands", () => {
     expect(parseValue("unavailableNodePolicy", "block")).toBe("block");
     expect(parseValue("unavailableNodePolicy", "fallback-local")).toBe("fallback-local");
     expect(() => parseValue("unavailableNodePolicy", "invalid")).toThrow(/block, fallback-local/);
+    expect(parseValue("worktrunk.enabled", "true" as any)).toBe(true);
+    expect(parseValue("worktrunk.binaryPath", "/usr/local/bin/worktrunk" as any)).toBe("/usr/local/bin/worktrunk");
+    expect(parseValue("worktrunk.onFailure", "fallback-native" as any)).toBe("fallback-native");
+    expect(() => parseValue("worktrunk.onFailure", "ignore" as any)).toThrow(/fail, fallback-native/);
   });
 
   it("runSettingsShow without project uses global settings even if a project could resolve", async () => {
@@ -246,6 +258,106 @@ describe("settings commands", () => {
     expect(output).toContain("Execution");
     expect(output).toContain("Run Steps In New Sessions");
     expect(output).toContain("Max Parallel Steps");
+  });
+
+  it("runSettingsSet supports worktrunk dotted keys in global scope", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings({
+      worktrunk: { enabled: true, binaryPath: "/usr/local/bin/worktrunk", onFailure: "fail" },
+    }));
+    const getSettings = vi.fn().mockResolvedValue(makeSettings({
+      worktrunk: { enabled: false, binaryPath: "/usr/local/bin/worktrunk", onFailure: "fail" },
+    }));
+
+    (GlobalSettingsStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      updateSettings,
+      getSettings,
+    }));
+
+    await runSettingsSet("worktrunk.enabled", "true");
+    await runSettingsSet("worktrunk.onFailure", "fallback-native");
+    await runSettingsSet("worktrunk.binaryPath", "/usr/local/bin/worktrunk");
+
+    expect(updateSettings).toHaveBeenNthCalledWith(1, {
+      worktrunk: { enabled: true, binaryPath: "/usr/local/bin/worktrunk", onFailure: "fail" },
+    });
+    expect(updateSettings).toHaveBeenNthCalledWith(2, {
+      worktrunk: { enabled: false, binaryPath: "/usr/local/bin/worktrunk", onFailure: "fallback-native" },
+    });
+    expect(updateSettings).toHaveBeenNthCalledWith(3, {
+      worktrunk: { enabled: false, binaryPath: "/usr/local/bin/worktrunk", onFailure: "fail" },
+    });
+  });
+
+  it("runSettingsSet rejects invalid worktrunk onFailure enum", async () => {
+    const updateSettings = vi.fn();
+    const getSettings = vi.fn().mockResolvedValue(makeSettings());
+    (GlobalSettingsStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      updateSettings,
+      getSettings,
+    }));
+
+    await expect(runSettingsSet("worktrunk.onFailure", "ignore")).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Valid options: fail, fallback-native"));
+  });
+
+  it("runSettingsSet preserves existing project worktrunk sibling fields", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings());
+    const getSettingsByScope = vi.fn().mockResolvedValue({
+      global: makeSettings(),
+      project: {
+        worktrunk: {
+          enabled: true,
+          binaryPath: "/opt/bin/worktrunk",
+          onFailure: "fallback-native",
+        },
+      },
+    });
+    const getSettings = vi.fn().mockResolvedValue(makeSettings());
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettingsByScope, getSettings } as any,
+    });
+
+    await runSettingsSet("worktrunk.enabled", "false", "demo-project");
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      worktrunk: {
+        enabled: false,
+        binaryPath: "/opt/bin/worktrunk",
+        onFailure: "fallback-native",
+      },
+    });
+  });
+
+  it("runSettingsShow includes Worktrunk integration section", async () => {
+    const getSettings = vi.fn().mockResolvedValue(makeSettings({
+      worktrunk: {
+        enabled: true,
+        binaryPath: "/usr/local/bin/worktrunk",
+        onFailure: "fallback-native",
+      },
+    }));
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { getSettings } as any,
+    });
+
+    await runSettingsShow("demo-project");
+
+    const output = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(output).toContain("Worktrunk integration");
+    expect(output).toContain("Worktrunk Enabled");
+    expect(output).toContain("Worktrunk Binary Path");
+    expect(output).toContain("Worktrunk On Failure");
   });
 
   it("runSettingsShow includes Node Routing section", async () => {
