@@ -156,6 +156,68 @@ describe("useTasks", () => {
     expect(result.current.tasks[0].column).toBe("triage");
   });
 
+  it("exposes refreshTasks and performs exactly one additional fetch when called", async () => {
+    const initialTask = createMockTask({ id: "FN-001", title: "Initial" });
+    const refreshedTask = createMockTask({ id: "FN-002", title: "Refreshed" });
+    mockFetchTasks
+      .mockResolvedValueOnce([initialTask])
+      .mockResolvedValueOnce([refreshedTask]);
+
+    const { result } = renderHook(() => useTasks());
+
+    await waitFor(() => {
+      expect(result.current.tasks[0]?.id).toBe("FN-001");
+    });
+
+    await act(async () => {
+      await result.current.refreshTasks();
+    });
+
+    expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+    expect(result.current.tasks[0]?.id).toBe("FN-002");
+  });
+
+  it("keeps the latest refresh result when overlapping refreshTasks calls resolve out of order", async () => {
+    const initialTask = createMockTask({ id: "FN-001", title: "Initial" });
+    mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+    let resolveFirst: ((tasks: Task[]) => void) | undefined;
+    let resolveSecond: ((tasks: Task[]) => void) | undefined;
+    mockFetchTasks.mockImplementationOnce(
+      () =>
+        new Promise<Task[]>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    mockFetchTasks.mockImplementationOnce(
+      () =>
+        new Promise<Task[]>((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useTasks());
+
+    await waitFor(() => {
+      expect(result.current.tasks[0]?.id).toBe("FN-001");
+    });
+
+    void result.current.refreshTasks();
+    void result.current.refreshTasks();
+
+    await act(async () => {
+      resolveSecond?.([createMockTask({ id: "FN-200", title: "Newest" })]);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveFirst?.([createMockTask({ id: "FN-100", title: "Stale" })]);
+      await Promise.resolve();
+    });
+
+    expect(result.current.tasks[0]?.id).toBe("FN-200");
+  });
+
   describe("SSE event: task:created", () => {
     it("adds new task to the list", async () => {
       mockFetchTasks.mockResolvedValueOnce([]);
