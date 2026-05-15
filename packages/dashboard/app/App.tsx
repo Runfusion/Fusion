@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } fro
 import {
   computeCapacityRisk,
   DEFAULT_CAPACITY_RISK_TODO_THRESHOLD,
+  type ChatRoomMessage,
   type Task,
   type TaskDetail,
   type WorkflowStep,
@@ -138,7 +139,6 @@ function prefetchLazyViews() {
 registerBundledPluginViews();
 
 const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
-const ACTIVE_CHAT_SESSION_STORAGE_KEY = "kb-chat-active-session";
 const WORKING_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-working-branch-filter";
 const BASE_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-base-branch-filter";
 const NO_BRANCH_FILTER_VALUE = "__fusion:no-branch__";
@@ -600,12 +600,20 @@ function AppInner() {
       events: {
         "chat:message:added": (event: MessageEvent) => {
           try {
-            const payload = JSON.parse(event.data) as { role?: string; sessionId?: string; projectId?: string | null };
-            const activeSessionId = getScopedItem(ACTIVE_CHAT_SESSION_STORAGE_KEY, currentProject?.id);
-            if (!activeSessionId) return;
+            const payload = JSON.parse(event.data) as { role?: string; projectId?: string | null };
             if (payload.role !== "assistant") return;
             if (taskView === "chat") return;
-            if (payload.sessionId !== activeSessionId) return;
+            if (payload.projectId && currentProject?.id && payload.projectId !== currentProject.id) return;
+            setChatHasUnreadResponse(true);
+          } catch {
+            // no-op
+          }
+        },
+        "chat:room:message:added": (event: MessageEvent) => {
+          try {
+            const payload = JSON.parse(event.data) as ChatRoomMessage & { projectId?: string | null };
+            if (payload.role === "user") return;
+            if (taskView === "chat") return;
             if (payload.projectId && currentProject?.id && payload.projectId !== currentProject.id) return;
             setChatHasUnreadResponse(true);
           } catch {
