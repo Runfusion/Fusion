@@ -2688,6 +2688,25 @@ export class SelfHealingManager {
     }
   }
 
+  private async readLandedFilesForSha(sha: string, rebaseBaseSha?: string): Promise<string[] | null> {
+    try {
+      const command = rebaseBaseSha
+        ? `git diff --name-only ${shellQuote(`${rebaseBaseSha}..${sha}`)}`
+        : `git show --name-only --format= ${shellQuote(sha)}`;
+      const result = await execAsync(command, {
+        cwd: this.options.rootDir,
+        maxBuffer: 1024 * 1024,
+      });
+      const files = result.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      return files.length > 0 ? Array.from(new Set(files)) : [];
+    } catch {
+      return null;
+    }
+  }
+
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
       const tasks = await this.store.listTasks({ column: "done", slim: true });
@@ -2710,6 +2729,15 @@ export class SelfHealingManager {
             }
 
             const liveShortstat = await this.readShortstatForSha(storedSha);
+            const liveLandedFiles = await this.readLandedFilesForSha(storedSha, task.mergeDetails?.rebaseBaseSha);
+            const currentLandedFiles = task.mergeDetails?.landedFiles;
+            const landedFilesMismatch = Boolean(
+              liveLandedFiles && (
+                !currentLandedFiles ||
+                liveLandedFiles.length !== currentLandedFiles.length ||
+                liveLandedFiles.some((file, index) => currentLandedFiles[index] !== file)
+              ),
+            );
             const statsMismatch = Boolean(
               liveShortstat && (
                 task.mergeDetails?.filesChanged !== liveShortstat.filesChanged ||
@@ -2723,6 +2751,8 @@ export class SelfHealingManager {
               task.mergeDetails?.insertions === undefined ||
               task.mergeDetails?.deletions === undefined ||
               task.mergeDetails?.mergeCommitMessage === undefined ||
+              !currentLandedFiles ||
+              landedFilesMismatch ||
               statsMismatch;
 
             if (!needsMetadataRepair) continue;
@@ -2737,16 +2767,18 @@ export class SelfHealingManager {
                 filesChanged: nextFilesChanged,
                 insertions: nextInsertions,
                 deletions: nextDeletions,
+                landedFiles: liveLandedFiles ?? task.mergeDetails?.landedFiles,
                 mergeCommitMessage: task.mergeDetails?.mergeCommitMessage ?? landed.subject,
                 rebaseBaseSha: task.mergeDetails?.rebaseBaseSha ?? landed.rebaseBaseSha,
                 mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
                 prNumber: task.prInfo?.number,
               },
+              modifiedFiles: liveLandedFiles && liveLandedFiles.length > 0 ? liveLandedFiles : undefined,
             });
-            if (statsMismatch && liveShortstat) {
+            if ((statsMismatch && liveShortstat) || landedFilesMismatch) {
               await this.store.logEntry(
                 task.id,
-                `Auto-recovered: stale mergeDetails stats repaired (was ${task.mergeDetails?.filesChanged ?? "?"}/${task.mergeDetails?.insertions ?? "?"}/${task.mergeDetails?.deletions ?? "?"}, now ${liveShortstat.filesChanged}/${liveShortstat.insertions}/${liveShortstat.deletions}) — sha unchanged ${storedSha.slice(0, 8)}`,
+                `Auto-recovered: stale mergeDetails repaired (was ${task.mergeDetails?.filesChanged ?? "?"}/${task.mergeDetails?.insertions ?? "?"}/${task.mergeDetails?.deletions ?? "?"}, now ${liveShortstat?.filesChanged ?? nextFilesChanged}/${liveShortstat?.insertions ?? nextInsertions}/${liveShortstat?.deletions ?? nextDeletions})${landedFilesMismatch ? ` (files ${task.mergeDetails?.landedFiles?.length ?? 0} → ${liveLandedFiles?.length ?? task.mergeDetails?.landedFiles?.length ?? 0})` : ""} — sha unchanged ${storedSha.slice(0, 8)}`,
               );
             } else {
               await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
@@ -2768,16 +2800,22 @@ export class SelfHealingManager {
             insertions: landed.insertions ?? 0,
             deletions: landed.deletions ?? 0,
           };
+          const landedFiles = await this.readLandedFilesForSha(landed.sha, task.mergeDetails?.rebaseBaseSha ?? landed.rebaseBaseSha);
 
           const needsRepair =
             task.mergeDetails?.commitSha !== landed.sha ||
             task.mergeDetails?.filesChanged === undefined ||
             task.mergeDetails?.insertions === undefined ||
-            task.mergeDetails?.deletions === undefined || (
+            task.mergeDetails?.deletions === undefined ||
+            !task.mergeDetails?.landedFiles || (
               task.mergeDetails?.commitSha === landed.sha && (
                 task.mergeDetails?.filesChanged !== landedStats.filesChanged ||
                 task.mergeDetails?.insertions !== landedStats.insertions ||
-                task.mergeDetails?.deletions !== landedStats.deletions
+                task.mergeDetails?.deletions !== landedStats.deletions ||
+                (landedFiles ? (
+                  task.mergeDetails?.landedFiles?.length !== landedFiles.length ||
+                  landedFiles.some((file, index) => task.mergeDetails?.landedFiles?.[index] !== file)
+                ) : false)
               )
             );
 
@@ -2792,10 +2830,12 @@ export class SelfHealingManager {
               deletions: landedStats.deletions,
               mergeCommitMessage: landed.subject,
               rebaseBaseSha: task.mergeDetails?.rebaseBaseSha ?? landed.rebaseBaseSha,
+              landedFiles: landedFiles ?? task.mergeDetails?.landedFiles,
               mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
               mergeConfirmed: true,
               prNumber: task.prInfo?.number,
             },
+            modifiedFiles: landedFiles && landedFiles.length > 0 ? landedFiles : undefined,
           });
           await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
           repaired++;

@@ -23,6 +23,13 @@ function parseShortstat(output: string): { filesChanged: number; insertions: num
   };
 }
 
+function parseNameOnly(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function makeTask(id: string, repo: string, sha: string, mergeDetails: Task["mergeDetails"]): Task {
   return {
     id,
@@ -92,7 +99,7 @@ describeIfGit("SelfHealingManager recoverDoneTaskMergeMetadata stale stats", () 
   it("repairs stale confirmed stats from live shortstat without changing SHA", async () => {
     const { repo, sha } = setupRepo();
     const expected = parseShortstat(git(repo, `git show --shortstat --format= ${sha}`));
-    const task = makeTask("FN-4526-STATS", repo, sha, { filesChanged: 99, insertions: 999, deletions: 999 });
+    const task = makeTask("FN-4526-STATS", repo, sha, { filesChanged: 99, insertions: 999, deletions: 999, landedFiles: ["a.ts", "b.ts", "c.ts"] });
     const tasks = new Map([[task.id, task]]);
     const store = createStore(tasks);
     const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
@@ -104,13 +111,37 @@ describeIfGit("SelfHealingManager recoverDoneTaskMergeMetadata stale stats", () 
     expect(repaired.mergeDetails?.filesChanged).toBe(expected.filesChanged);
     expect(repaired.mergeDetails?.insertions).toBe(expected.insertions);
     expect(repaired.mergeDetails?.deletions).toBe(expected.deletions);
-    expect((store.logEntry as any).mock.calls.some((call: any[]) => String(call[1]).includes("stale mergeDetails stats repaired"))).toBe(true);
+    expect((store.logEntry as any).mock.calls.some((call: any[]) => String(call[1]).includes("stale mergeDetails repaired"))).toBe(true);
+  });
+
+  it("FN-4646: repairs stale landed file snapshot and modifiedFiles from live commit", async () => {
+    const { repo, sha } = setupRepo();
+    const expected = parseShortstat(git(repo, `git show --shortstat --format= ${sha}`));
+    const expectedFiles = parseNameOnly(git(repo, `git show --name-only --format= ${sha}`));
+    const task = makeTask("FN-4526-STATS", repo, sha, {
+      filesChanged: 99,
+      insertions: 999,
+      deletions: 999,
+      landedFiles: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"],
+    });
+    task.modifiedFiles = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"];
+    const tasks = new Map([[task.id, task]]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    const repaired = tasks.get(task.id)!;
+    expect(repaired.mergeDetails?.landedFiles).toEqual(expectedFiles);
+    expect(repaired.modifiedFiles).toEqual(expectedFiles);
+    expect(repaired.mergeDetails?.filesChanged).toBe(expected.filesChanged);
+    expect((store.logEntry as any).mock.calls.some((call: any[]) => String(call[1]).includes("files 5 → 2"))).toBe(true);
   });
 
   it("does not rewrite when stats are already correct", async () => {
     const { repo, sha } = setupRepo();
     const expected = parseShortstat(git(repo, `git show --shortstat --format= ${sha}`));
-    const task = makeTask("FN-4526-STATS", repo, sha, expected);
+    const task = makeTask("FN-4526-STATS", repo, sha, { ...expected, landedFiles: parseNameOnly(git(repo, `git show --name-only --format= ${sha}`)) });
     const tasks = new Map([[task.id, task]]);
     const store = createStore(tasks);
     const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });

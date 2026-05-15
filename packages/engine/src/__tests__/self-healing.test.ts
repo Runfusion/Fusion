@@ -5851,6 +5851,71 @@ describe("recoverDoneTaskMergeMetadata", () => {
     manager.stop();
   });
 
+  it("FN-4646: repairs missing landedFiles on confirmed merge metadata", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-4646-A",
+        column: "done",
+        paused: false,
+        mergeDetails: { commitSha: "merge1", mergeConfirmed: true, filesChanged: 2, insertions: 3, deletions: 1, mergeCommitMessage: "msg" },
+        modifiedFiles: ["a.ts", "b.ts", "c.ts"],
+      },
+    ]);
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd.includes("merge-base --is-ancestor 'merge1' HEAD")) return "" as any;
+      if (cmd.includes("log -1 --format=%H%x1f%s%x1f%b 'merge1'")) return "merge1\u001ffix(FN-4646): canonical merge\u001fFusion-Task-Id: FN-4646-A" as any;
+      if (cmd.includes("show --shortstat --format=") && cmd.includes("merge1")) return "2 files changed, 3 insertions(+), 1 deletion(-)" as any;
+      if (cmd.includes("Fusion-Task-Id: FN-4646-A")) return "merge1\u001ffix(FN-4646): canonical merge\n" as any;
+      return "" as any;
+    });
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4646-A", expect.objectContaining({
+      mergeDetails: expect.objectContaining({ landedFiles: [] }),
+      modifiedFiles: undefined,
+    }));
+
+    manager.stop();
+  });
+
+  it("FN-4646: repairs differing landedFiles on confirmed merge metadata", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-4646-B",
+        column: "done",
+        paused: false,
+        mergeDetails: { commitSha: "merge1", mergeConfirmed: true, filesChanged: 2, insertions: 3, deletions: 1, mergeCommitMessage: "msg", landedFiles: ["a.ts", "b.ts", "c.ts"] },
+      },
+    ]);
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd.includes("merge-base --is-ancestor 'merge1' HEAD")) return "" as any;
+      if (cmd.includes("log -1 --format=%H%x1f%s%x1f%b 'merge1'")) return "merge1\u001ffix(FN-4646): canonical merge\u001fFusion-Task-Id: FN-4646-B" as any;
+      if (cmd.includes("show --shortstat --format=") && cmd.includes("merge1")) return "2 files changed, 3 insertions(+), 1 deletion(-)" as any;
+      if (cmd.includes("Fusion-Task-Id: FN-4646-B")) return "merge1\u001ffix(FN-4646): canonical merge\n" as any;
+      return "" as any;
+    });
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4646-B", expect.objectContaining({
+      mergeDetails: expect.objectContaining({ landedFiles: [] }),
+      modifiedFiles: undefined,
+    }));
+
+    manager.stop();
+  });
+
   it("populates rebaseBaseSha from landed commit when missing", async () => {
     const store = createMockStore();
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
