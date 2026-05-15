@@ -4,6 +4,7 @@ import {
   DEFAULT_PROJECT_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
   PROJECT_SETTINGS_KEYS,
+  normalizeAutoRecovery,
   isGlobalOnlySettingsKey,
   isGlobalSettingsKey,
   isProjectSettingsKey,
@@ -134,6 +135,16 @@ describe("settings key parity", () => {
   it("keeps task stuck timeout active by default without coupling to workflow step timeout", () => {
     expect(DEFAULT_PROJECT_SETTINGS.taskStuckTimeoutMs).toBe(600_000);
     expect(DEFAULT_PROJECT_SETTINGS.workflowStepTimeoutMs).toBe(360_000);
+  });
+
+  it("defaults autoRecovery and normalizes overrides", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.autoRecovery).toEqual({ mode: "deterministic-only", maxRetries: 3 });
+    expect(normalizeAutoRecovery({ mode: "off", perClass: { "branch-conflict-unrecoverable": "ai-assisted" }, maxRetries: 2 })).toEqual({
+      mode: "off",
+      perClass: { "branch-conflict-unrecoverable": "ai-assisted" },
+      maxRetries: 2,
+    });
+    expect(normalizeAutoRecovery({ mode: "invalid" })).toEqual({ mode: "deterministic-only", perClass: undefined, maxRetries: 3 });
   });
 
   it("defaults stale high fan-out blocker escalation age threshold", () => {

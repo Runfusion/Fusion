@@ -71,6 +71,7 @@ import {
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import type { AgentReflectionService } from "./agent-reflection.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "./run-audit.js";
+import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
 import {
@@ -767,6 +768,7 @@ export interface TaskExecutorOptions {
   onError?: (task: Task, error: Error) => void;
   onAgentText?: (taskId: string, delta: string) => void;
   onAgentTool?: (taskId: string, toolName: string) => void;
+  autoRecoveryDispatcher?: AutoRecoveryDispatcher;
 }
 
 export class TaskExecutor {
@@ -4253,12 +4255,30 @@ export class TaskExecutor {
             await this.store.logEntry(task.id, `[recovery] contamination auto-recovery failed: ${recoveryMessage}`, undefined, this.currentRunContext);
           }
 
-          await this.store.updateTask(task.id, {
-            status: "failed",
-            error: err.message,
-            paused: true,
+          const autoRecoveryDispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({ taskStore: this.store, auditEmitter: audit });
+          const decision = await autoRecoveryDispatcher.dispatch({
+            class: "branch-cross-contamination",
+            taskId: task.id,
+            runId: this.currentRunContext?.runId,
             pausedReason: "branch-cross-contamination",
+            evidence: {
+              ownCommits: err.foreignCommits.filter((commit) => commit.foreignTaskId === task.id).length,
+              foreignAttributedCommits: err.foreignCommits.filter((commit) => commit.foreignTaskId !== task.id).length,
+            },
+            underlyingError: err,
+          }, {
+            task,
+            retryCount: task.recoveryRetryCount ?? 0,
+            settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
           });
+          if (decision.action === "pause") {
+            await this.store.updateTask(task.id, {
+              status: "failed",
+              error: err.message,
+              paused: true,
+              pausedReason: "branch-cross-contamination",
+            });
+          }
           return;
         } else if (isBranchConflictError(err)) {
           const conflictCount = (this.branchConflictErrorCount.get(task.id) ?? 0) + 1;
@@ -4273,12 +4293,30 @@ export class TaskExecutor {
             ].join(" ");
             const tripwireMessage = `Branch conflict tripwire fired after ${conflictCount} events (threshold ${this.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD}). ${details}`;
             await this.store.logEntry(task.id, `[recovery] ${tripwireMessage}`, undefined, this.currentRunContext);
-            await this.store.updateTask(task.id, {
-              status: "failed",
-              error: tripwireMessage,
-              paused: true,
+            const autoRecoveryDispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({ taskStore: this.store, auditEmitter: audit });
+            const decision = await autoRecoveryDispatcher.dispatch({
+              class: "branch-conflict-tripwire",
+              taskId: task.id,
+              runId: this.currentRunContext?.runId,
               pausedReason: "branch-conflict-tripwire",
+              evidence: {
+                branchName: err.branchName,
+                conflictingWorktreePath: err.conflictingWorktreePath,
+              },
+              underlyingError: err,
+            }, {
+              task,
+              retryCount: task.recoveryRetryCount ?? 0,
+              settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
             });
+            if (decision.action === "pause") {
+              await this.store.updateTask(task.id, {
+                status: "failed",
+                error: tripwireMessage,
+                paused: true,
+                pausedReason: "branch-conflict-tripwire",
+              });
+            }
             return;
           }
 
@@ -4299,12 +4337,30 @@ export class TaskExecutor {
             });
           }
           if (outcome === "retry") {
-            await this.store.updateTask(task.id, {
-              status: "failed",
-              error: err.message,
-              paused: true,
+            const autoRecoveryDispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({ taskStore: this.store, auditEmitter: audit });
+            const decision = await autoRecoveryDispatcher.dispatch({
+              class: "branch-conflict-recovery-exhausted",
+              taskId: task.id,
+              runId: this.currentRunContext?.runId,
               pausedReason: "branch-conflict-recovery-exhausted",
+              evidence: {
+                branchName: err.branchName,
+                conflictingWorktreePath: err.conflictingWorktreePath,
+              },
+              underlyingError: err,
+            }, {
+              task,
+              retryCount: task.recoveryRetryCount ?? 0,
+              settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
             });
+            if (decision.action === "pause") {
+              await this.store.updateTask(task.id, {
+                status: "failed",
+                error: err.message,
+                paused: true,
+                pausedReason: "branch-conflict-recovery-exhausted",
+              });
+            }
             return;
           }
           return;
@@ -7211,18 +7267,42 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       `Run 'fn task branch-recovery ${task.id}' to inspect candidates, then reclaim the existing branch or discard prior work explicitly.`;
     await this.store.logEntry(task.id, this.formatBranchConflictLifecycleLog(task.id, error), undefined, this.currentRunContext);
     await this.store.appendAgentLog(task.id, "Branch conflict recovery required", "tool_error", this.formatBranchConflictAgentLog(task.id, error), "executor");
-    await this.store.updateTask(task.id, {
-      status: "failed",
-      error: conflictMessage,
-      branch: error.branchName,
-      worktree: error.conflictingWorktreePath,
-      paused: true,
-      pausedReason: "branch-conflict-unrecoverable",
+    const autoRecoveryDispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({
+      taskStore: this.store,
+      auditEmitter: createRunAuditor(this.store, this.currentRunContext),
     });
-    await this.persistTokenUsage(task.id);
-    executorLog.warn(`✗ ${task.id} branch conflict sticky failure: ${error.branchName} @ ${error.conflictingWorktreePath}`);
-    this.options.onError?.(task, error);
-    return "sticky";
+    const decision = await autoRecoveryDispatcher.dispatch({
+      class: "branch-conflict-unrecoverable",
+      taskId: task.id,
+      runId: this.currentRunContext?.runId,
+      pausedReason: "branch-conflict-unrecoverable",
+      evidence: {
+        branchName: error.branchName,
+        conflictingWorktreePath: error.conflictingWorktreePath,
+      },
+      underlyingError: error,
+    }, {
+      task,
+      retryCount: task.recoveryRetryCount ?? 0,
+      settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
+    });
+
+    if (decision.action === "pause") {
+      await this.store.updateTask(task.id, {
+        status: "failed",
+        error: conflictMessage,
+        branch: error.branchName,
+        worktree: error.conflictingWorktreePath,
+        paused: true,
+        pausedReason: "branch-conflict-unrecoverable",
+      });
+      await this.persistTokenUsage(task.id);
+      executorLog.warn(`✗ ${task.id} branch conflict sticky failure: ${error.branchName} @ ${error.conflictingWorktreePath}`);
+      this.options.onError?.(task, error);
+      return "sticky";
+    }
+
+    return "retry";
   }
 
   private async createWorktree(

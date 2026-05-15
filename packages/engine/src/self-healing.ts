@@ -25,6 +25,7 @@ import { extractMissingWorktreePathFromSessionStartFailure, isMissingWorktreeSes
 import { classifyError, extractMissingModulePath, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
 import { deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
@@ -172,6 +173,7 @@ export interface SelfHealingOptions {
   staleMergingFanoutMinAgeMs?: number;
   hasActiveAgentExecution?: (agentId: string) => boolean;
   restartDurableAgentHeartbeat?: (agentId: string, context: { reason: string; attempt: number }) => Promise<boolean>;
+  autoRecoveryDispatcher?: AutoRecoveryDispatcher;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -1735,14 +1737,39 @@ export class SelfHealingManager {
           if (patchPath) {
             await this.store.logEntry(task.id, `Preserved uncommitted worktree changes before pause: ${patchPath}`);
           }
-          await this.store.updateTask(task.id, {
-            status: "failed",
-            error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-            paused: true,
-            pausedReason: "branch-conflict-unrecoverable",
+          const dispatcher = this.options.autoRecoveryDispatcher ?? new AutoRecoveryDispatcher({
+            taskStore: this.store,
+            auditEmitter: createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("self-heal", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "reclaim-self-owned-branch-conflicts",
+            }),
           });
-          await this.store.moveTask(task.id, "in-review");
-          await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+          const decision = await dispatcher.dispatch({
+            class: "branch-conflict-unrecoverable",
+            taskId: task.id,
+            pausedReason: "branch-conflict-unrecoverable",
+            evidence: {
+              branchName: task.branch,
+              worktreePath: task.worktree,
+            },
+          }, {
+            task,
+            retryCount: task.recoveryRetryCount ?? 0,
+            settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
+          });
+          if (decision.action === "pause") {
+            await this.store.updateTask(task.id, {
+              status: "failed",
+              error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
+              paused: true,
+              pausedReason: "branch-conflict-unrecoverable",
+            });
+            await this.store.moveTask(task.id, "in-review");
+            await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+          }
         }
       }
 

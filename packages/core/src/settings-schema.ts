@@ -227,6 +227,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   mergeStrategyOverlapBehavior: "flip-to-prefer-branch",
   postMergeAuditMode: "warn",
   mergeAuditAutoRecovery: "ai-assisted",
+  autoRecovery: {
+    mode: "deterministic-only",
+    maxRetries: 3,
+  },
   workflowStepTimeoutMs: 360_000,
   workflowStepScopeEnforcement: "block",
   planOnlyScopeLeakEnforcement: "warn",

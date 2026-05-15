@@ -222,6 +222,60 @@ export function normalizeMergeAuditAutoRecovery(value: unknown): MergeAuditAutoR
     ? (value as MergeAuditAutoRecoveryMode)
     : "ai-assisted";
 }
+
+export const AUTO_RECOVERY_MODES = ["off", "deterministic-only", "programmatic", "ai-assisted"] as const;
+
+export type AutoRecoveryMode = (typeof AUTO_RECOVERY_MODES)[number];
+
+export type AutoRecoveryFailureClass =
+  | "file-scope-invariant"
+  | "post-squash-audit-blocker"
+  | "branch-cross-contamination"
+  | "branch-conflict-tripwire"
+  | "branch-conflict-recovery-exhausted"
+  | "branch-conflict-unrecoverable";
+
+export interface AutoRecoverySettings {
+  mode: AutoRecoveryMode;
+  perClass?: Partial<Record<AutoRecoveryFailureClass, AutoRecoveryMode>>;
+  maxRetries?: number;
+}
+
+export function normalizeAutoRecovery(value: unknown): AutoRecoverySettings {
+  const fallback: AutoRecoverySettings = { mode: "deterministic-only", maxRetries: 3 };
+  if (!value || typeof value !== "object") return fallback;
+
+  const candidate = value as {
+    mode?: unknown;
+    perClass?: unknown;
+    maxRetries?: unknown;
+  };
+  const mode = typeof candidate.mode === "string" && (AUTO_RECOVERY_MODES as readonly string[]).includes(candidate.mode)
+    ? candidate.mode as AutoRecoveryMode
+    : fallback.mode;
+  const perClass = typeof candidate.perClass === "object" && candidate.perClass
+    ? Object.fromEntries(
+      Object.entries(candidate.perClass as Record<string, unknown>)
+        .filter(([k, v]) => (
+          [
+            "file-scope-invariant",
+            "post-squash-audit-blocker",
+            "branch-cross-contamination",
+            "branch-conflict-tripwire",
+            "branch-conflict-recovery-exhausted",
+            "branch-conflict-unrecoverable",
+          ].includes(k)
+          && typeof v === "string"
+          && (AUTO_RECOVERY_MODES as readonly string[]).includes(v)
+        )),
+    ) as Partial<Record<AutoRecoveryFailureClass, AutoRecoveryMode>>
+    : undefined;
+  const maxRetries = typeof candidate.maxRetries === "number" && Number.isFinite(candidate.maxRetries)
+    ? Math.max(0, Math.floor(candidate.maxRetries))
+    : fallback.maxRetries;
+
+  return { mode, perClass, maxRetries };
+}
 /** Policy for handling task execution when the selected node is unavailable/unhealthy. */
 export type UnavailableNodePolicy = "block" | "fallback-local";
 
@@ -2459,6 +2513,8 @@ export interface ProjectSettings {
    *  - "off": disable all recovery; audit blocks immediately.
    */
   mergeAuditAutoRecovery?: MergeAuditAutoRecoveryMode;
+  /** Dispatcher-level reliability recovery policy (FN-4533/FN-4534). */
+  autoRecovery?: AutoRecoverySettings;
   /** Wall-clock timeout (ms) for a single pre-merge workflow step's AI call.
    *  When a step exceeds this, the session is aborted and the executor is
    *  given one shot to retry with the configured fallback model before the
