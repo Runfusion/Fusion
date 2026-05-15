@@ -629,6 +629,25 @@ describe("ProjectEngine merge error recovery", () => {
     );
   });
 
+  it("auto-finalizes paused+failed merge-confirmed tasks by clearing soft blockers", async () => {
+    const store = makeStore({
+      tasks: [
+        makeTask({
+          mergeDetails: { mergeConfirmed: true },
+          paused: true,
+          status: "failed",
+          error: "stale merge failure",
+        }),
+      ],
+    });
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, { paused: false, status: null, error: null });
+    expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "done");
+  });
+
   it("does not park merge-confirmed tasks as failed when finalize loses in-review ownership", async () => {
     const store = makeStore({
       tasks: [

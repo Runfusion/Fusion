@@ -3868,21 +3868,37 @@ describe("SelfHealingManager", () => {
     it("auto-finalizes FN-4611-shape paused+failed tasks when landed content is proven", async () => {
       const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ globalPause: false, enginePaused: false });
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        {
-          id: "FN-4611-shape",
-          column: "in-review",
-          paused: true,
-          status: "failed",
-          error: "stale merge failure",
-          mergeRetries: 3,
-          mergeDetails: undefined,
-          baseBranch: "main",
-          branch: "fusion/fn-4611-shape",
-          steps: [],
-          log: [],
-        },
-      ]);
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([
+          {
+            id: "FN-4611-shape",
+            column: "in-review",
+            paused: true,
+            status: "failed",
+            error: "stale merge failure",
+            mergeRetries: 3,
+            mergeDetails: undefined,
+            baseBranch: "main",
+            branch: "fusion/fn-4611-shape",
+            steps: [],
+            log: [],
+          },
+        ])
+        .mockResolvedValue([
+          {
+            id: "FN-4611-shape",
+            column: "done",
+            dependencies: [],
+            log: [],
+          },
+          {
+            id: "FN-dependent",
+            column: "todo",
+            blockedBy: "FN-4611-shape",
+            dependencies: [],
+            log: [],
+          },
+        ]);
       mockedExecSync.mockImplementation((command: string | Buffer) => {
         if (String(command).includes("Fusion-Task-Id: FN-4611-shape")) return "abc123\n" as any;
         return "tip\n" as any;
@@ -3896,6 +3912,11 @@ describe("SelfHealingManager", () => {
         expect.objectContaining({ paused: false, status: null, error: null, mergeRetries: 0 }),
       );
       expect(store.moveTask).toHaveBeenCalledWith("FN-4611-shape", "done");
+      expect(store.updateTask).toHaveBeenCalledWith("FN-dependent", {
+        blockedBy: null,
+        overlapBlockedBy: null,
+        status: null,
+      });
 
       managerWithRecovery.stop();
     });
