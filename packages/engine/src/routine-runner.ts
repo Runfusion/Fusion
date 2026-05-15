@@ -339,6 +339,7 @@ export class RoutineRunner {
     const backend: SandboxBackend = auditor
       ? resolveSandboxBackend({ auditor })
       : resolveSandboxBackend();
+    await backend.prepare({ allowNetwork: true });
     const result = await backend.run(command, {
       cwd: this.options.rootDir,
       timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
