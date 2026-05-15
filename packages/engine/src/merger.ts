@@ -79,6 +79,7 @@ import { auditSquashMerge, MERGER_MAIN_OVERLAP_LOOKBACK_COMMITS, type PostMergeA
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merger-overlap-guard.js";
 import { checkDiffVolume, DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
+import { detectAlreadyLandedOnMain, type AlreadyMergedDetectionStrategy } from "./already-merged-detector.js";
 
 export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 
@@ -3038,7 +3039,12 @@ async function buildDeterministicMergeMessage(params: {
  * @internal Exported for integration tests only — not part of the public API.
  */
 type MergeFinalizeResult =
-  | { ok: true; reason: "completed" | "head-task-trailer" | "branch-already-merged" }
+  | {
+    ok: true;
+    reason: "committed" | "head-task-trailer" | "branch-already-merged" | "branch-already-merged-on-main";
+    mergeSha?: string;
+    strategy?: AlreadyMergedDetectionStrategy;
+  }
   | { ok: false; reason: "fix-produced-no-content" | "unknown-phantom" };
 
 async function persistFinalizeResetLeftovers(rootDir: string, taskId: string, store?: TaskStore): Promise<void> {
@@ -3467,6 +3473,40 @@ export async function commitOrAmendMergeWithFixes(
           mergerLog.log(`${taskId}: squash-restore reported already up to date; treating as branch-already-merged`);
           return { ok: true, reason: "branch-already-merged" };
         }
+
+        if (currentHead === preAttemptHeadSha) {
+          let lineageId: string | undefined;
+          if (store) {
+            const existingTask = await store.getTask(taskId);
+            lineageId = existingTask?.lineageId;
+          }
+          const landed = await detectAlreadyLandedOnMain({
+            rootDir,
+            taskId,
+            lineageId,
+            baseBranch: preAttemptHeadSha,
+            taskBranch: branch,
+            baseCommitSha: preAttemptHeadSha,
+          });
+          if (landed) {
+            mergerLog.log(
+              `${taskId}: recovered finalize no-content as already-landed branch=${branch} tip=${branchTip.slice(0, 8)} integrationTarget=${preAttemptHeadSha.slice(0, 8)} via=${landed.strategy}`,
+            );
+            await auditor?.database({
+              type: "task:auto-recover-finalize-already-on-main",
+              taskId,
+              metadata: {
+                mergeSha: landed.sha,
+                mergeStrategy: landed.strategy,
+                baseBranch: preAttemptHeadSha,
+                branch,
+                branchTip,
+              },
+            });
+            return { ok: true, reason: "branch-already-merged-on-main", mergeSha: landed.sha, strategy: landed.strategy };
+          }
+        }
+
         mergerLog.warn(
           `${taskId}: refusing to record merge — no commit was created and no changes are staged after squash-restore.`,
         );
@@ -3549,7 +3589,7 @@ export async function commitOrAmendMergeWithFixes(
         });
       }
       mergerLog.log(`${taskId}: created fresh merge commit after verification fix (no prior commit to amend)`);
-      return { ok: true, reason: "completed" };
+      return { ok: true, reason: "committed" };
     }
 
     // HEAD moved — AI agent committed already. Amend with deterministic
@@ -3592,7 +3632,7 @@ export async function commitOrAmendMergeWithFixes(
       });
     }
     mergerLog.log(`${taskId}: amended merge commit with verification fixes (deterministic message)`);
-    return { ok: true, reason: "completed" };
+    return { ok: true, reason: "committed" };
   } catch (err: unknown) {
     if (err instanceof DiffVolumeRegressionError || err instanceof FileScopeViolationError) {
       throw err;

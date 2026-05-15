@@ -26,6 +26,7 @@ import { classifyError, extractMissingModulePath, isOperatorActionableAgentError
 import { deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
+import { findAlreadyMergedTaskCommit } from "./already-merged-detector.js";
 
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
@@ -241,22 +242,6 @@ interface LandedTaskCommit {
   insertions?: number;
   deletions?: number;
   rebaseBaseSha?: string;
-}
-
-type AlreadyMergedDetectionStrategy = "trailer" | "ancestry" | "patch-id" | "tree-equal";
-
-interface AlreadyMergedLookupInput {
-  taskId: string;
-  lineageId?: string;
-  repoDir: string;
-  baseBranch: string;
-  taskBranch?: string;
-  baseCommitSha?: string;
-}
-
-interface AlreadyMergedLookupResult {
-  sha: string;
-  strategy: AlreadyMergedDetectionStrategy;
 }
 
 function commitOwnedByTask(taskId: string, lineageId: string | undefined, subject: string, body: string): boolean {
@@ -843,203 +828,6 @@ export class SelfHealingManager {
     }
 
     return commit;
-  }
-
-  private async findAlreadyMergedTaskCommit(
-    input: AlreadyMergedLookupInput,
-  ): Promise<AlreadyMergedLookupResult | null> {
-    const { taskId, lineageId, repoDir, baseBranch, taskBranch, baseCommitSha } = input;
-
-    try {
-      if (lineageId) {
-        const lineagePattern = `^Fusion-Task-Lineage: ${lineageId}$`;
-        const lineageCommand = [
-          "git log",
-          `--grep=${shellQuote(lineagePattern)}`,
-          "-E",
-          "--max-count=1",
-          "--format=%H",
-          shellQuote(baseBranch),
-        ].join(" ");
-        const lineage = await execAsync(lineageCommand, {
-          cwd: repoDir,
-          timeout: 30_000,
-          maxBuffer: 1024 * 1024,
-        });
-        const lineageSha = lineage.stdout.trim();
-        if (lineageSha) {
-          return { sha: lineageSha, strategy: "trailer" };
-        }
-      }
-
-      const trailerPattern = `^Fusion-Task-Id: ${taskId}$`;
-      const trailerCommand = [
-        "git log",
-        `--grep=${shellQuote(trailerPattern)}`,
-        "-E",
-        "--max-count=1",
-        "--format=%H",
-        shellQuote(baseBranch),
-      ].join(" ");
-      const { stdout } = await execAsync(trailerCommand, {
-        cwd: repoDir,
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const sha = stdout.trim();
-      if (sha) {
-        return { sha, strategy: "trailer" };
-      }
-    } catch {
-      // Fall through to ancestry/patch-id checks.
-    }
-
-    let branchTip: string | null = null;
-    const branchName = taskBranch || `fusion/${taskId.toLowerCase()}`;
-    try {
-      branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
-        cwd: repoDir,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-
-      execSync(`git merge-base --is-ancestor ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`, {
-        cwd: repoDir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      const ancestryCommand = [
-        "git log",
-        "--first-parent",
-        "--format=%H",
-        `--grep=${shellQuote(taskId)}`,
-        "--max-count=1",
-        shellQuote(baseBranch),
-      ].join(" ");
-      const { stdout } = await execAsync(ancestryCommand, {
-        cwd: repoDir,
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const sha = stdout.trim();
-      if (sha) {
-        return { sha, strategy: "ancestry" };
-      }
-    } catch {
-      // Fall through to patch-id checks.
-    }
-
-    try {
-      if (!branchTip) {
-        branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
-          cwd: repoDir,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        }).trim();
-      }
-
-      let branchBase = baseCommitSha?.trim();
-      if (!branchBase) {
-        const { stdout: mergeBaseStdout } = await execAsync(
-          `git merge-base ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`,
-          {
-            cwd: repoDir,
-            timeout: 30_000,
-            maxBuffer: 1024 * 1024,
-          },
-        );
-        branchBase = mergeBaseStdout.trim();
-      }
-
-      if (!branchBase) {
-        return null;
-      }
-
-      const branchPatchIdCommand = `git diff ${shellQuote(branchBase)}..${shellQuote(branchTip)} | git patch-id`;
-      const { stdout: branchPatchIdOut } = await execAsync(branchPatchIdCommand, {
-        cwd: repoDir,
-        shell: "/bin/sh",
-        timeout: 60_000,
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      const branchPatchIdLine = branchPatchIdOut
-        .trim()
-        .split("\n")
-        .find((line) => line.trim().length > 0);
-      const branchPatchId = branchPatchIdLine?.trim().split(/\s+/)[0];
-      if (!branchPatchId) {
-        return null;
-      }
-
-      const basePatchMapCommand = `git log -n 200 -p --format='%H' ${shellQuote(baseBranch)} | git patch-id`;
-      const { stdout: basePatchIdsOut } = await execAsync(basePatchMapCommand, {
-        cwd: repoDir,
-        shell: "/bin/sh",
-        timeout: 60_000,
-        maxBuffer: 32 * 1024 * 1024,
-      });
-
-      const basePatchMap = new Map<string, string>();
-      for (const line of basePatchIdsOut.split("\n")) {
-        const [patchId, sha] = line.trim().split(/\s+/);
-        if (!patchId || !sha) continue;
-        basePatchMap.set(patchId, sha);
-      }
-
-      const matchedSha = basePatchMap.get(branchPatchId);
-      if (matchedSha) {
-        return { sha: matchedSha, strategy: "patch-id" };
-      }
-    } catch {
-      // Fall through to null when patch-id detection fails.
-    }
-
-    // Last-resort fallback: if branch and base resolve to identical trees, content is already landed
-    // but attribution is weak (we cannot identify the exact landing commit), so prefer stronger
-    // trailer/ancestry/patch-id matches first and use this only at the end.
-    try {
-      const treeBranchName = taskBranch || `fusion/${taskId.toLowerCase()}`;
-      execSync(`git rev-parse --verify ${shellQuote(treeBranchName)}`, {
-        cwd: repoDir,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trim();
-
-      const { stdout: baseTreeStdout } = await execAsync(
-        `git rev-parse ${shellQuote(baseBranch)}^{tree}`,
-        {
-          cwd: repoDir,
-          timeout: 30_000,
-          maxBuffer: 1024 * 1024,
-        },
-      );
-      const { stdout: branchTreeStdout } = await execAsync(
-        `git rev-parse ${shellQuote(treeBranchName)}^{tree}`,
-        {
-          cwd: repoDir,
-          timeout: 30_000,
-          maxBuffer: 1024 * 1024,
-        },
-      );
-
-      const baseTree = baseTreeStdout.trim();
-      const branchTree = branchTreeStdout.trim();
-      if (baseTree && branchTree && baseTree === branchTree) {
-        const { stdout: baseHeadStdout } = await execAsync(`git rev-parse ${shellQuote(baseBranch)}`, {
-          cwd: repoDir,
-          timeout: 30_000,
-          maxBuffer: 1024 * 1024,
-        });
-        const baseHead = baseHeadStdout.trim();
-        if (baseHead) {
-          return { sha: baseHead, strategy: "tree-equal" };
-        }
-      }
-    } catch {
-      // Fall through to null when tree-equality detection fails.
-    }
-
-    return null;
   }
 
   private async cleanupWorktreeOnly(task: Task): Promise<void> {
@@ -3275,7 +3063,7 @@ export class SelfHealingManager {
           if (hasDeclaredOverlap) continue;
 
           const baseBranch = task.baseBranch || task.executionStartBranch || "main";
-          const landed = await this.findAlreadyMergedTaskCommit({
+          const landed = await findAlreadyMergedTaskCommit({
             taskId: task.id,
             lineageId: task.lineageId,
             repoDir: this.options.rootDir,
@@ -3385,7 +3173,7 @@ export class SelfHealingManager {
           const baseBranch = task.baseBranch || task.executionStartBranch || "main";
           if (!baseBranch) continue;
 
-          const landed = await this.findAlreadyMergedTaskCommit({
+          const landed = await findAlreadyMergedTaskCommit({
             taskId: task.id,
             lineageId: task.lineageId,
             repoDir: this.options.rootDir,
