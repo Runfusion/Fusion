@@ -2004,7 +2004,9 @@ export class SelfHealingManager {
       const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
       const inReviewTasks = (await this.store.listTasks({ column: "in-review", slim: true })).filter((t) => !t.paused);
 
-      const dependents = [...todoTasks, ...inProgressTasks, ...inReviewTasks].filter((t) => t.blockedBy === taskId);
+      const dependents = [...todoTasks, ...inProgressTasks, ...inReviewTasks].filter(
+        (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
+      );
       const todoTaskIds = new Set(todoTasks.map((t) => t.id));
       for (const dependent of dependents) {
         try {
@@ -2012,23 +2014,39 @@ export class SelfHealingManager {
             const dep = taskById.get(depId);
             return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
           });
+          const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
+          const overlapBlockerTask = overlapBlockedBy ? taskById.get(overlapBlockedBy) : undefined;
+          const hasActiveOverlapBlocker = Boolean(
+            overlapBlockerTask
+            && (overlapBlockerTask.column === "in-progress" || (overlapBlockerTask.column === "in-review" && !overlapBlockerTask.paused)),
+          );
+
           if (todoTaskIds.has(dependent.id)) {
             if (unresolvedDeps.length > 0) {
               const nextBlocker = unresolvedDeps[0]!;
-              await this.store.updateTask(dependent.id, { blockedBy: nextBlocker, status: "queued" });
+              await this.store.updateTask(dependent.id, { blockedBy: nextBlocker, overlapBlockedBy, status: "queued" });
               await this.store.logEntry(
                 dependent.id,
                 `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
               );
+            } else if (hasActiveOverlapBlocker) {
+              await this.store.updateTask(dependent.id, { blockedBy: null, overlapBlockedBy, status: "queued" });
+              await this.store.logEntry(
+                dependent.id,
+                `Auto-recovered (FN-4523): preserved queued status — still blocked by file scope overlap with ${overlapBlockedBy}`,
+              );
             } else {
-              await this.store.updateTask(dependent.id, { blockedBy: null, status: null });
+              await this.store.updateTask(dependent.id, { blockedBy: null, overlapBlockedBy: null, status: null });
               await this.store.logEntry(
                 dependent.id,
                 `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
               );
             }
           } else {
-            await this.store.updateTask(dependent.id, { blockedBy: null });
+            await this.store.updateTask(dependent.id, {
+              blockedBy: null,
+              ...(dependent.overlapBlockedBy === taskId ? { overlapBlockedBy: null } : {}),
+            });
             await this.store.logEntry(
               dependent.id,
               `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
@@ -2116,7 +2134,7 @@ export class SelfHealingManager {
         ...inReviewTasks.filter((task) => !task.paused),
       ].filter((task) => typeof task.blockedBy === "string" && task.blockedBy.trim().length > 0);
       const queuedDependencyTasks = todoTasks.filter(
-        (task) => task.status === "queued" && task.dependencies.length > 0,
+        (task) => task.status === "queued" && (task.dependencies.length > 0 || Boolean(task.overlapBlockedBy)),
       );
 
       if (blockedTasks.length === 0 && queuedDependencyTasks.length === 0) return 0;
@@ -2139,6 +2157,11 @@ export class SelfHealingManager {
           const dep = taskById.get(depId);
           return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
         });
+        const overlapBlocker = task.overlapBlockedBy ? taskById.get(task.overlapBlockedBy) : undefined;
+        const hasActiveOverlapBlocker = Boolean(
+          overlapBlocker
+          && (overlapBlocker.column === "in-progress" || (overlapBlocker.column === "in-review" && !overlapBlocker.paused)),
+        );
 
         if (blockedTaskIds.has(task.id)) {
           if (!blockerId) continue;
@@ -2190,8 +2213,11 @@ export class SelfHealingManager {
                   const nextBlocker = unresolvedDeps[0]!;
                   await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" });
                   await this.store.logEntry(task.id, `Auto-recovered: refreshed stale blockedBy — ${reason}; now blocked by ${nextBlocker}`);
+                } else if (hasActiveOverlapBlocker) {
+                  await this.store.updateTask(task.id, { blockedBy: null, status: "queued" });
+                  await this.store.logEntry(task.id, `Auto-recovered: preserved queued status — still blocked by file scope overlap with ${task.overlapBlockedBy}`);
                 } else {
-                  await this.store.updateTask(task.id, { blockedBy: null, status: null });
+                  await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, status: null });
                   await this.store.logEntry(task.id, `Auto-recovered: cleared stale blockedBy — ${reason}`);
                 }
               } else {
@@ -2214,8 +2240,13 @@ export class SelfHealingManager {
         if (unresolvedDeps.length === 0) {
           if (queuedDependencyTaskIds.has(task.id)) {
             try {
-              await this.store.updateTask(task.id, { blockedBy: null, status: null });
-              await this.store.logEntry(task.id, "Auto-recovered: cleared stale queued status — all dependencies satisfied");
+              if (hasActiveOverlapBlocker) {
+                await this.store.updateTask(task.id, { blockedBy: null, status: "queued" });
+                await this.store.logEntry(task.id, `Auto-recovered: preserved queued status — still blocked by file scope overlap with ${task.overlapBlockedBy}`);
+              } else {
+                await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, status: null });
+                await this.store.logEntry(task.id, "Auto-recovered: cleared stale queued status — all dependencies satisfied");
+              }
               recovered++;
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);

@@ -518,7 +518,7 @@ describe("SelfHealingManager", () => {
 
       await manager.runStartupRecovery();
 
-      expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+      expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
       expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("Auto-recovered: cleared stale blockedBy"));
     });
 
@@ -546,7 +546,7 @@ describe("SelfHealingManager", () => {
 
       await manager.runStartupRecovery();
 
-      expect(store.updateTask).not.toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+      expect(store.updateTask).not.toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     });
   });
 
@@ -5012,7 +5012,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("FN-MISSING"));
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("missing"));
     manager.stop();
@@ -5029,7 +5029,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId));
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(column));
     manager.stop();
@@ -5046,7 +5046,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId));
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("in-review + paused"));
     manager.stop();
@@ -5063,7 +5063,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(blockerId));
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("mergeRetries 3/3"));
     manager.stop();
@@ -5094,7 +5094,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("not among unresolved dependencies"));
     manager.stop();
   });
@@ -5130,7 +5130,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining(`blocker ${blockerId}`));
     expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("stale for"));
     manager.stop();
@@ -5178,7 +5178,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, overlapBlockedBy: null, status: null });
     manager.stop();
     vi.useRealTimers();
   });
@@ -5213,7 +5213,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4013", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4013", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith("FN-4013", expect.stringContaining("missing-worktree session start"));
     manager.stop();
   });
@@ -5345,7 +5345,7 @@ describe("clearStaleBlockedBy", () => {
     const recovered = await manager.clearStaleBlockedBy();
 
     expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: null, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: null, overlapBlockedBy: null, status: null });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-3170",
       "Auto-recovered: cleared stale queued status — all dependencies satisfied",
