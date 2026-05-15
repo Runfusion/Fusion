@@ -15,7 +15,7 @@
  * - Prompt override support for project-level customization
  */
 
-import type { PlanningQuestion, PromptOverrideMap } from "@fusion/core";
+import type { PlanningQuestion, PromptOverrideMap, TaskStore } from "@fusion/core";
 import { resolvePrompt } from "@fusion/core";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -29,6 +29,7 @@ import {
 import { GenerationGuard, isAbortError } from "./ai-session-timeout.js";
 
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+import { createPlanningBoardTools } from "./planning-board-tools.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
@@ -154,6 +155,11 @@ PREFER structured question types over free-text. This makes the interview faster
 - Suggest sensible defaults and push for specificity
 - Aim for 2-4 milestones, 1-3 slices per milestone, 2-5 features per slice
 - Keep the plan realistic and achievable
+
+## Board tools
+- fn_task_list — list active tasks
+- fn_task_get — read a task's full details and PROMPT.md
+Use these to avoid duplicating an existing in-flight plan and to anchor your questions against current backlog context.
 
 ## Response Format
 Always respond with valid JSON in one of these formats:
@@ -798,10 +804,11 @@ function disposeMissionAgentForRetry(session: MissionInterviewSession): void {
 async function initializeAgent(
   session: MissionInterviewSession,
   rootDir: string,
+  store: TaskStore,
   promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
   try {
-    session.agent = await createMissionInterviewAgent(session, rootDir, promptOverrides);
+    session.agent = await createMissionInterviewAgent(session, rootDir, store, promptOverrides);
     session.updatedAt = new Date();
 
     // Send initial message to get first question
@@ -825,6 +832,7 @@ async function initializeAgent(
 async function createMissionInterviewAgent(
   session: MissionInterviewSession,
   rootDir: string,
+  store: TaskStore,
   promptOverrides?: PromptOverrideMap,
 ): Promise<AgentResult> {
   await ensureEngineReady();
@@ -836,6 +844,7 @@ async function createMissionInterviewAgent(
     systemPrompt: effectivePrompt,
     tools: "readonly",
     builtinToolsAllowlist: [...MISSION_INTERVIEW_BUILTIN_WEB_TOOLS],
+    customTools: [...createPlanningBoardTools(store)],
     ...(session.modelProvider && session.modelId
       ? {
           defaultProvider: session.modelProvider,
@@ -893,6 +902,7 @@ function formatMissionInterviewHistory(
 async function ensureMissionInterviewAgent(
   session: MissionInterviewSession,
   rootDir: string | undefined,
+  store: TaskStore | undefined,
   historyForReplay: Array<{ question: PlanningQuestion; response: unknown }>,
   promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
@@ -905,8 +915,13 @@ async function ensureMissionInterviewAgent(
       "AI agent not available for this session and cannot be resumed without project context",
     );
   }
+  if (!store) {
+    throw new InvalidSessionStateError(
+      "AI agent not available for this session and cannot be resumed without task store context",
+    );
+  }
 
-  session.agent = await createMissionInterviewAgent(session, rootDir, promptOverrides);
+  session.agent = await createMissionInterviewAgent(session, rootDir, store, promptOverrides);
 
   if (historyForReplay.length === 0) {
     return;
@@ -1117,6 +1132,7 @@ export async function createMissionInterviewSession(
   ip: string,
   missionTitle: string,
   rootDir: string,
+  store: TaskStore,
   promptOverrides?: PromptOverrideMap,
   modelProvider?: string,
   modelId?: string,
@@ -1151,7 +1167,7 @@ export async function createMissionInterviewSession(
   persistMissionSession(session, "generating");
 
   // Initialize AI agent in background
-  initializeAgent(session, rootDir, promptOverrides).catch((err) => {
+  initializeAgent(session, rootDir, store, promptOverrides).catch((err) => {
     diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
     persistMissionSession(session, "error", err.message || "Failed to initialize AI agent");
     missionInterviewStreamManager.broadcast(sessionId, {
@@ -1171,6 +1187,7 @@ export async function submitMissionInterviewResponse(
   sessionId: string,
   responses: Record<string, unknown>,
   rootDir?: string,
+  store?: TaskStore,
   promptOverrides?: PromptOverrideMap,
 ): Promise<MissionInterviewResponse> {
   const session = getMissionInterviewSession(sessionId);
@@ -1193,7 +1210,7 @@ export async function submitMissionInterviewResponse(
 
   if (!session.agent) {
     const replayHistory = session.history.slice(0, -1);
-    await ensureMissionInterviewAgent(session, rootDir, replayHistory, promptOverrides);
+    await ensureMissionInterviewAgent(session, rootDir, store, replayHistory, promptOverrides);
   }
 
   const message = formatResponseForAgent(session.currentQuestion, responses);
@@ -1220,6 +1237,7 @@ export async function submitMissionInterviewResponse(
 export async function retryMissionInterviewSession(
   sessionId: string,
   rootDir: string,
+  store?: TaskStore,
   promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
   const session = getMissionInterviewSession(sessionId);
@@ -1245,7 +1263,7 @@ export async function retryMissionInterviewSession(
   persistMissionSession(session, "generating");
 
   if (session.history.length === 0) {
-    await ensureMissionInterviewAgent(session, rootDir, [], promptOverrides);
+    await ensureMissionInterviewAgent(session, rootDir, store, [], promptOverrides);
     await continueAgentConversation(
       session,
       `I want to plan a mission: "${session.missionTitle}". Interview me to understand what I need, then produce a structured plan.`,
@@ -1256,7 +1274,7 @@ export async function retryMissionInterviewSession(
   const replayHistory = session.history.slice(0, -1);
   const lastEntry = session.history[session.history.length - 1];
 
-  await ensureMissionInterviewAgent(session, rootDir, replayHistory, promptOverrides);
+  await ensureMissionInterviewAgent(session, rootDir, store, replayHistory, promptOverrides);
   const replayMessage = formatResponseForAgent(
     lastEntry.question,
     coerceResponseRecord(lastEntry.question, lastEntry.response),

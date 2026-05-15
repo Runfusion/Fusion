@@ -422,6 +422,7 @@ export function createMissionRouter(
           ip,
           missionTitle.trim(),
           rootDir,
+          scopedStore,
           settings.promptOverrides,
           resolvedProvider,
           resolvedModelId,
@@ -481,6 +482,7 @@ export function createMissionRouter(
           sessionId,
           responses,
           rootDir,
+          scopedStore,
           settings.promptOverrides,
         );
         res.json(result);
@@ -533,7 +535,7 @@ export function createMissionRouter(
 
         const { retryMissionInterviewSession } = await import("./mission-interview.js");
 
-        await retryMissionInterviewSession(sessionId, rootDir, settings.promptOverrides);
+        await retryMissionInterviewSession(sessionId, rootDir, scopedStore, settings.promptOverrides);
         res.json({ success: true, sessionId });
       } catch (err: unknown) {
         const errName = err instanceof Error ? err.name : "";
