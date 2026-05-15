@@ -1,11 +1,14 @@
 import { BubblewrapBackend } from "./bubblewrap-backend.js";
 import { NativeSandboxBackend } from "./native.js";
 import { SandboxExecBackend } from "./sandbox-exec-backend.js";
+import { withSandboxAudit } from "./audit.js";
+import type { RunAuditor } from "../run-audit.js";
 import type { SandboxBackend, SandboxCapabilities } from "./types.js";
 
 export type {
   SandboxBackend,
   SandboxCapabilities,
+  SandboxFallbackEvent,
   SandboxPolicy,
   SandboxRunOptions,
   SandboxRunResult,
@@ -23,21 +26,32 @@ export function __resetSandboxBackendForTests(): void {
   sandboxBackendOverrideForTests = null;
 }
 
-export function resolveSandboxBackend(options?: { backendId?: SandboxCapabilities["id"] }): SandboxBackend {
-  if (sandboxBackendOverrideForTests) {
-    return sandboxBackendOverrideForTests;
-  }
-
-  if (options?.backendId === "bubblewrap" && process.platform === "linux") {
-    return new BubblewrapBackend();
-  }
-
-  if (options?.backendId === "sandbox-exec") {
-    if (process.platform === "darwin") {
-      return new SandboxExecBackend();
+export function resolveSandboxBackend(options?: {
+  backendId?: SandboxCapabilities["id"];
+  auditor?: RunAuditor;
+}): SandboxBackend {
+  const resolved = (() => {
+    if (sandboxBackendOverrideForTests) {
+      return sandboxBackendOverrideForTests;
     }
+
+    if (options?.backendId === "bubblewrap" && process.platform === "linux") {
+      return new BubblewrapBackend();
+    }
+
+    if (options?.backendId === "sandbox-exec") {
+      if (process.platform === "darwin") {
+        return new SandboxExecBackend();
+      }
+      return new NativeSandboxBackend();
+    }
+
     return new NativeSandboxBackend();
+  })();
+
+  if (!options?.auditor) {
+    return resolved;
   }
 
-  return new NativeSandboxBackend();
+  return withSandboxAudit(resolved, options.auditor);
 }

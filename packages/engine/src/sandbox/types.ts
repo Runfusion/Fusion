@@ -1,3 +1,9 @@
+export interface SandboxFallbackEvent {
+  fromBackendId: SandboxCapabilities["id"];
+  toBackendId: SandboxCapabilities["id"];
+  reason: string;
+}
+
 export interface SandboxPolicy {
   allowNetwork: boolean;
   /** @future Backends with filesystem isolation will enforce this. */
@@ -5,6 +11,7 @@ export interface SandboxPolicy {
   /** @future Backends with filesystem isolation will enforce this. */
   allowedWritePaths?: string[];
   env?: NodeJS.ProcessEnv;
+  onFallback?: (event: SandboxFallbackEvent) => void;
 }
 
 export interface SandboxRunOptions {
