@@ -13,18 +13,22 @@ function git(dir: string, cmd: string): string {
   return execSync(cmd, { cwd: dir, stdio: "pipe" }).toString().trim();
 }
 
-function makeStore(task: Task, events: unknown[] = [], settings?: Partial<Settings>): TaskStore & EventEmitter {
+function makeStore(tasks: Task[], events: unknown[] = [], settings?: Partial<Settings>): TaskStore & EventEmitter {
   const emitter = new EventEmitter();
   const baseSettings = { globalPause: false, enginePaused: false, ...settings } as Settings;
   return Object.assign(emitter, {
     getSettings: async () => baseSettings,
-    listTasks: async ({ column }: { column?: string } = {}) => (column ? [task].filter((t) => t.column === column) : [task]),
-    updateTask: async (_id: string, updates: Partial<Task>) => Object.assign(task, updates),
-    moveTask: async (_id: string, column: Task["column"]) => {
-      task.column = column;
+    listTasks: async ({ column }: { column?: string } = {}) => (column ? tasks.filter((t) => t.column === column) : tasks),
+    updateTask: async (id: string, updates: Partial<Task>) => {
+      const task = tasks.find((candidate) => candidate.id === id);
+      if (task) Object.assign(task, updates);
+    },
+    moveTask: async (id: string, column: Task["column"]) => {
+      const task = tasks.find((candidate) => candidate.id === id);
+      if (task) task.column = column;
     },
     logEntry: async () => undefined,
-    getTask: async () => task,
+    getTask: async (id: string) => tasks.find((candidate) => candidate.id === id) ?? null,
     walCheckpoint: () => ({ busy: 0, log: 0, checkpointed: 0 }),
     archiveTaskAndCleanup: async () => ({}),
     clearStaleExecutionStartBranchReferences: () => [],
@@ -85,7 +89,7 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
 
       const task = makeTask();
       const auditEvents: unknown[] = [];
-      const store = makeStore(task, auditEvents);
+      const store = makeStore([task], auditEvents);
       const manager = new SelfHealingManager(store, { rootDir: dir, getExecutingTaskIds: () => new Set() });
 
       const recovered = await manager.recoverAlreadyMergedReviewTasks();
@@ -122,7 +126,7 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
         steps: [{ name: "Step 1", status: "pending" }],
       });
       const auditEvents: unknown[] = [];
-      const store = makeStore(task, auditEvents);
+      const store = makeStore([task], auditEvents);
       const manager = new SelfHealingManager(store, { rootDir: dir, getExecutingTaskIds: () => new Set() });
 
       const firstSweep = await manager.recoverAlreadyMergedReviewTasks();
@@ -150,6 +154,54 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
       expect(
         auditEvents.some((event: any) => event?.mutationType === "task:auto-recover-finalize-already-on-main"),
       ).toBe(true);
+
+      manager.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("composes scheduler inReviewWithWorktree filtering with auto-finalize and stale blockedBy cleanup", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fn-4653-ri-scheduler-"));
+    try {
+      git(dir, "git init -b main");
+      git(dir, 'git config user.email "test@example.com"');
+      git(dir, 'git config user.name "Test"');
+      git(dir, "git commit --allow-empty -m init");
+
+      seedLandedContent(dir, "fusion/fn-4653-scheduler", "FN-4653-SCHED", "scheduler.txt");
+
+      const upstream = makeTask({
+        id: "FN-4653-SCHED",
+        branch: "fusion/fn-4653-scheduler",
+        worktree: "/tmp/fake-worktree",
+      });
+      const downstream = makeTask({
+        id: "FN-4653-SCHED-DOWNSTREAM",
+        column: "todo",
+        paused: false,
+        status: null,
+        error: null,
+        branch: "fusion/fn-4653-scheduler-downstream",
+        blockedBy: "FN-4653-SCHED",
+      });
+
+      const store = makeStore([upstream, downstream]);
+      const manager = new SelfHealingManager(store, { rootDir: dir, getExecutingTaskIds: () => new Set() });
+
+      const inReviewWithWorktree = (task: Task) =>
+        task.column === "in-review" && Boolean(task.worktree) && !task.paused && task.status !== "failed";
+
+      expect(inReviewWithWorktree(upstream)).toBe(false);
+
+      const recovered = await manager.recoverAlreadyMergedReviewTasks();
+      expect(recovered).toBe(1);
+      expect(upstream.column).toBe("done");
+      expect(inReviewWithWorktree(upstream)).toBe(false);
+
+      const cleared = await manager.clearStaleBlockedBy();
+      expect(cleared).toBeGreaterThanOrEqual(0);
+      expect(downstream.blockedBy ?? null).toBeNull();
 
       manager.stop();
     } finally {
