@@ -20,6 +20,7 @@ const classes: AutoRecoveryFailure["class"][] = [
   "branch-conflict-tripwire",
   "branch-conflict-recovery-exhausted",
   "branch-conflict-unrecoverable",
+  "message-delivery-failure",
 ];
 
 describe("auto-recovery dispatcher", () => {
@@ -66,6 +67,21 @@ describe("auto-recovery dispatcher", () => {
     });
     expect(decision.action).toBe("pause");
     expect(decision.rationale).toBe("destructive-ambiguity");
+  });
+
+  it.each([
+    ["off", "pause"],
+    ["deterministic-only", "pause"],
+    ["programmatic", "retry"],
+    ["ai-assisted", "retry"],
+  ] as const)("message-delivery-failure routes %s to %s", (mode, expectedAction) => {
+    const { dispatcher } = createDispatcher();
+    const decision = dispatcher.classify({ class: "message-delivery-failure", taskId: "FN-1", pausedReason: "message-delivery-failure" }, {
+      task,
+      retryCount: 0,
+      settings: { mode, maxRetries: 3 },
+    });
+    expect(decision.action).toBe(expectedAction);
   });
 
   it("dispatch falls back to pause when handler missing", async () => {

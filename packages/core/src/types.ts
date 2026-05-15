@@ -234,7 +234,8 @@ export type AutoRecoveryFailureClass =
   | "branch-cross-contamination"
   | "branch-conflict-tripwire"
   | "branch-conflict-recovery-exhausted"
-  | "branch-conflict-unrecoverable";
+  | "branch-conflict-unrecoverable"
+  | "message-delivery-failure";
 
 export interface AutoRecoverySettings {
   mode: AutoRecoveryMode;
@@ -265,6 +266,7 @@ export function normalizeAutoRecovery(value: unknown): AutoRecoverySettings {
             "branch-conflict-tripwire",
             "branch-conflict-recovery-exhausted",
             "branch-conflict-unrecoverable",
+            "message-delivery-failure",
           ].includes(k)
           && typeof v === "string"
           && (AUTO_RECOVERY_MODES as readonly string[]).includes(v)
