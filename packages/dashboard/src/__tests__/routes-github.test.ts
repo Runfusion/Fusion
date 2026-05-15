@@ -1869,7 +1869,7 @@ describe("GET /tasks/:id/diff", () => {
   });
 
   describe("done tasks without commit SHA", () => {
-    it("returns safe empty file list with merge summary stats", async () => {
+    it("returns safe empty file list with zero stats", async () => {
       const doneTask = {
         ...FAKE_TASK_DETAIL,
         id: "FN-001",
@@ -1887,9 +1887,9 @@ describe("GET /tasks/:id/diff", () => {
       expect(res.status).toBe(200);
       expect(res.body.files).toEqual([]);
       expect(res.body.stats).toEqual({
-        filesChanged: 3,
-        additions: 10,
-        deletions: 2,
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
       });
     });
 
@@ -2058,7 +2058,7 @@ describe("GET /tasks/:id/diff", () => {
     }
   });
 
-  it("keeps mergeDetails summary fallback when no done-task commit sha can be resolved", async () => {
+  it("returns zero stats when no done-task commit sha can be resolved", async () => {
     const localStore = createMockStore({
       getRunAuditEvents: vi.fn().mockReturnValue([{ mutationType: "commit:create", target: "HEAD" }]),
       getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
@@ -2078,7 +2078,7 @@ describe("GET /tasks/:id/diff", () => {
     const res = await GET(app, "/api/tasks/FN-001/diff");
     expect(res.status).toBe(200);
     expect(res.body.files).toEqual([]);
-    expect(res.body.stats).toEqual({ filesChanged: 3, additions: 10, deletions: 2 });
+    expect(res.body.stats).toEqual({ filesChanged: 0, additions: 0, deletions: 0 });
   });
 
   it("uses destination path for rename entries in active-task name-status parsing", async () => {

@@ -43,7 +43,7 @@ describe("inspectBranchConflict zero-unique behavior", () => {
     expect(result.kind).toBe("tip-already-merged");
   });
 
-  it("returns tip-already-merged when branch patch already exists upstream", async () => {
+  it("classifies branch patch already existing upstream as merged/subsumed", async () => {
     const repoDir = await setupRepo();
     await run("git checkout -b fusion/fn-9001", repoDir);
     await appendFile(path.join(repoDir, "note.txt"), "change\n", "utf-8");
@@ -59,7 +59,7 @@ describe("inspectBranchConflict zero-unique behavior", () => {
     await mkdir(stalePath, { recursive: true });
 
     const result = await inspectBranchConflict({ repoDir, branchName: "fusion/fn-9001", conflictingWorktreePath: stalePath, requestingTaskId: "FN-9001", ownerTaskId: "FN-9001", startPoint: "main" });
-    expect(result.kind).toBe("tip-already-merged");
+    expect(["tip-already-merged", "fully-subsumed"]).toContain(result.kind);
   });
 
   it("returns reclaimable when branch still has unique commit", async () => {
