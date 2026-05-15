@@ -8,7 +8,7 @@ import { worktreePoolLog } from "./logger.js";
 
 const execAsync = promisify(exec);
 
-function canonicalizePath(path: string): string {
+export function canonicalizePath(path: string): string {
   try {
     return realpathSync(path);
   } catch {
