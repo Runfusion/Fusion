@@ -1305,6 +1305,64 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("FN-4538 overlap blocker persistence", () => {
+    it("FN-4538: overlap-blocked todo task with satisfied deps preserves overlapBlockedBy", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-DEP", column: "done" }),
+        createMockTask({ id: "FN-OVER", column: "in-progress" }),
+        createMockTask({ id: "FN-T", column: "todo", dependencies: ["FN-DEP"] }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, groupOverlappingFiles: true }),
+        parseFileScopeFromPrompt: vi.fn(async (taskId: string) => {
+          if (taskId === "FN-OVER" || taskId === "FN-T") return ["packages/core/src/store.ts"];
+          return ["packages/core/src/types.ts"];
+        }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-T", {
+        status: "queued",
+        blockedBy: null,
+        overlapBlockedBy: "FN-OVER",
+      });
+    });
+
+    it("FN-4538: overlapBlockedBy cleared when overlap resolves", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-DEP", column: "done" }),
+        createMockTask({ id: "FN-T", column: "todo", dependencies: ["FN-DEP"], status: "queued", overlapBlockedBy: "FN-OVER" }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, groupOverlappingFiles: true }),
+        parseFileScopeFromPrompt: vi.fn(async () => ["packages/core/src/types.ts"]),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-T", { overlapBlockedBy: null });
+    });
+  });
+
   describe("blockedBy stability — FN-3899", () => {
     it("preserves a still-valid queued blocker instead of repointing to another active task", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
