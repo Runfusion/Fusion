@@ -67,13 +67,46 @@ export async function isRegisteredGitWorktree(rootDir: string, worktreePath: str
 }
 
 export function hasRequiredWorktreeFiles(worktreePath: string): boolean {
-  return existsSync(join(worktreePath, ".git")) && existsSync(join(worktreePath, "package.json"));
+  return existsSync(join(worktreePath, ".git"));
 }
 
+export async function isInsideGitWorkTree(worktreePath: string): Promise<boolean> {
+  try {
+    const result = await execAsync("git rev-parse --is-inside-work-tree", {
+      cwd: worktreePath,
+      encoding: "utf-8",
+    });
+    return getExecStdout(result).trim() === "true";
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.log(`isInsideGitWorkTree check failed for ${worktreePath}: ${errorMessage}`);
+    return false;
+  }
+}
+
+/**
+ * Language-agnostic liveness gate for task worktrees.
+ *
+ * Usable requires: directory exists, `.git` entry exists (file or directory),
+ * worktree is registered in `git worktree list --porcelain`, and git confirms
+ * the path is inside a work tree (`git rev-parse --is-inside-work-tree`).
+ *
+ * Classification intent:
+ * - missing: worktree directory does not exist
+ * - incomplete: directory exists but required git metadata is not complete
+ * - unregistered: directory/.git exists but not registered as a git worktree
+ */
 export async function isUsableTaskWorktree(rootDir: string, worktreePath: string): Promise<boolean> {
-  return existsSync(worktreePath) &&
-    await isRegisteredGitWorktree(rootDir, worktreePath) &&
-    hasRequiredWorktreeFiles(worktreePath);
+  if (!existsSync(worktreePath)) {
+    return false;
+  }
+  if (!hasRequiredWorktreeFiles(worktreePath)) {
+    return false;
+  }
+  if (!await isRegisteredGitWorktree(rootDir, worktreePath)) {
+    return false;
+  }
+  return isInsideGitWorkTree(worktreePath);
 }
 
 export function isInsideWorktreesDir(
