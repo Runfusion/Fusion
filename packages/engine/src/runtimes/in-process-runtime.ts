@@ -1005,6 +1005,14 @@ export class InProcessRuntime
   }
 
   /**
+   * Get the ChatStore instance (if initialized).
+   * Returns undefined before start() or if initialization fails.
+   */
+  getChatStore(): import("@fusion/core").ChatStore | undefined {
+    return this.chatStore;
+  }
+
+  /**
    * Get the project's Scheduler instance.
    * @throws Error if runtime has not been started
    */

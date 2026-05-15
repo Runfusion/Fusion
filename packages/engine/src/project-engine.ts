@@ -612,6 +612,11 @@ export class ProjectEngine {
     return this.runtime.getMessageStore();
   }
 
+  /** Get the ChatStore (if initialized). Returns undefined before start(). */
+  getChatStore(): import("@fusion/core").ChatStore | undefined {
+    return this.runtime.getChatStore();
+  }
+
   attachChatStore(chatStore: NotificationChatStore): void {
     this.notificationService?.attachChatStore(chatStore);
   }
