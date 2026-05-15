@@ -2348,6 +2348,26 @@ describe("TaskCard", () => {
     expect(timer?.getAttribute("title")).toBe("Execution time 6m");
   });
 
+  it("keeps legacy wall-clock timers after firstExecutionAt migration backfill", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          executionStartedAt: "2026-04-25T12:00:00.000Z",
+          executionCompletedAt: "2026-04-25T12:30:00.000Z",
+          firstExecutionAt: "2026-04-25T12:00:00.000Z",
+          cumulativeActiveMs: undefined,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer).not.toBeNull();
+    expect(timer?.textContent).toContain("30m");
+  });
+
   it.each(["merging", "merging-fix"] as const)("shows live merge elapsed in timer chip while task.status is %s", (status) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-25T13:45:00.000Z"));

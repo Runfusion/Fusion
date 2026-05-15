@@ -161,7 +161,7 @@ function getInProgressElapsedMs(task: Task, nowMs: number): number | null {
 // inside instrumented code paths. Returns null on legacy tasks that completed
 // before `executionStartedAt` was tracked, so callers can fall back.
 function getTaskEndToEndDurationMs(task: Task, nowMs: number): number | null {
-  if (task.cumulativeActiveMs == null && task.firstExecutionAt == null) {
+  if (task.cumulativeActiveMs == null) {
     return getEndToEndDurationMs(task.executionStartedAt, task.executionCompletedAt, nowMs);
   }
   return getActiveRuntimeMs(task, nowMs);

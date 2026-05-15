@@ -210,6 +210,7 @@ describe("TaskTokenStatsPanel", () => {
 
       const metric = screen.getByText("Total execution time").closest(".task-token-stats-panel__metric");
       expect(metric).toHaveTextContent("5m 0s");
+      expect(screen.getByText("Wall-clock since first execution")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
