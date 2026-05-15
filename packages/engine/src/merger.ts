@@ -514,7 +514,7 @@ export async function classifyOwnedLandedEvidence(
     }
   }
 
-  if (aheadCount === 0 && baseReachableFromTarget) {
+  if (aheadCount === 0 && (baseReachableFromTarget || !task.baseCommitSha)) {
     return { kind: "proven-no-op", baseRef: mergeTargetBranch, ownDiffEmpty: true };
   }
 
@@ -5853,34 +5853,89 @@ export async function aiMergeTask(
 
   const aheadInfo = await resolveAheadCount();
   if (aheadInfo?.aheadCount === 0) {
-    const noOpReason = `branch has zero commits ahead of ${aheadInfo.baseRef}`;
-    const mergeDetails: MergeDetails = {
-      ...(task.mergeDetails || {}),
-      mergeConfirmed: true,
-      noOpMerge: true,
-      noOpReason,
-      mergedAt: new Date().toISOString(),
-      prNumber: task.prInfo?.number,
-      mergeTargetBranch: aheadInfo.baseRef,
-    };
-    await store.updateTask(taskId, { mergeDetails });
+    const classification = await classifyOwnedLandedEvidence(rootDir, task, { mergeTargetBranch: aheadInfo.baseRef });
+    if (classification.kind === "owned-commit") {
+      const mergeDetails: MergeDetails = {
+        ...(task.mergeDetails || {}),
+        commitSha: classification.commit.sha,
+        filesChanged: classification.commit.filesChanged,
+        insertions: classification.commit.insertions,
+        deletions: classification.commit.deletions,
+        mergeCommitMessage: classification.commit.subject,
+        mergeConfirmed: true,
+        mergedAt: new Date().toISOString(),
+        prNumber: task.prInfo?.number,
+        mergeTargetBranch: aheadInfo.baseRef,
+      };
+      await store.updateTask(taskId, { mergeDetails });
+      await store.logEntry(taskId, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
+      await store.moveTask(taskId, "done");
+      return {
+        task,
+        branch,
+        merged: true,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        mergeConfirmed: true,
+        mergedAt: mergeDetails.mergedAt,
+        mergeTargetBranch: aheadInfo.baseRef,
+      };
+    }
+
+    if (classification.kind === "proven-no-op") {
+      const noOpReason = `branch has zero commits ahead of ${classification.baseRef}`;
+      const mergeDetails: MergeDetails = {
+        ...(task.mergeDetails || {}),
+        mergeConfirmed: true,
+        noOpMerge: true,
+        noOpReason,
+        landedFiles: [],
+        mergedAt: new Date().toISOString(),
+        prNumber: task.prInfo?.number,
+        mergeTargetBranch: classification.baseRef,
+      };
+      await store.updateTask(taskId, { mergeDetails, modifiedFiles: [] });
+      await store.logEntry(
+        taskId,
+        `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`,
+      );
+      await store.moveTask(taskId, "done");
+      return {
+        task,
+        branch,
+        merged: true,
+        noOp: true,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        mergeConfirmed: true,
+        noOpMerge: true,
+        noOpReason,
+        mergedAt: mergeDetails.mergedAt,
+        mergeTargetBranch: classification.baseRef,
+      };
+    }
+
+    const unprovenError = `finalize-unproven: ${classification.reason}`;
+    await store.updateTask(taskId, { error: unprovenError });
     await store.logEntry(
       taskId,
-      `Auto-finalized: ${noOpReason}; treating as no-op merge and moving to done`,
+      `Finalize blocked: unproven ownership evidence (${classification.reason}); no owned landed commit was found — auto-retrying via todo requeue`,
+      JSON.stringify(classification.details, null, 2),
     );
-    await store.moveTask(taskId, "done");
+    await (store as any).recordRunAuditEvent?.({
+      domain: "database",
+      mutationType: "task:finalize-unproven-blocked",
+      target: taskId,
+      metadata: { reason: classification.reason, details: classification.details, autoRetry: true },
+    });
+    await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as any);
     return {
       task,
       branch,
-      merged: true,
-      noOp: true,
+      merged: false,
       worktreeRemoved: false,
       branchDeleted: false,
-      mergeConfirmed: true,
-      noOpMerge: true,
-      noOpReason,
-      mergedAt: mergeDetails.mergedAt,
-      mergeTargetBranch: aheadInfo.baseRef,
+      error: unprovenError,
     };
   }
 
@@ -5988,18 +6043,33 @@ export async function aiMergeTask(
       stdio: "pipe",
     });
   } catch {
-    result.error = `Branch '${branch}' not found — moving to done without merge`;
-    // Branch is gone; never infer ownership from raw HEAD. Only persist commit
-    // metadata when we can prove a landed commit belongs to this task.
-    const ownedCommit = await findOwnedLandedCommitForTask(rootDir, task);
-    if (ownedCommit) {
+    const classification = await classifyOwnedLandedEvidence(rootDir, task, { mergeTargetBranch: mergeTarget.branch });
+    if (classification.kind === "unproven") {
+      result.error = `finalize-unproven: ${classification.reason}`;
+      await store.updateTask(taskId, { error: result.error });
+      await store.logEntry(
+        taskId,
+        `Finalize blocked: unproven ownership evidence (${classification.reason}); branch missing and no owned landed commit was found — auto-retrying via todo requeue`,
+        JSON.stringify(classification.details, null, 2),
+      );
+      await (store as any).recordRunAuditEvent?.({
+        domain: "database",
+        mutationType: "task:finalize-unproven-blocked",
+        target: taskId,
+        metadata: { reason: classification.reason, details: classification.details, branchMissing: true, autoRetry: true },
+      });
+      await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as any);
+      return result;
+    }
+
+    if (classification.kind === "owned-commit") {
       await store.updateTask(taskId, {
         mergeDetails: {
-          commitSha: ownedCommit.sha,
-          filesChanged: ownedCommit.filesChanged,
-          insertions: ownedCommit.insertions,
-          deletions: ownedCommit.deletions,
-          mergeCommitMessage: ownedCommit.subject,
+          commitSha: classification.commit.sha,
+          filesChanged: classification.commit.filesChanged,
+          insertions: classification.commit.insertions,
+          deletions: classification.commit.deletions,
+          mergeCommitMessage: classification.commit.subject,
           mergedAt: new Date().toISOString(),
           mergeConfirmed: true,
           prNumber: task.prInfo?.number,
@@ -6007,8 +6077,26 @@ export async function aiMergeTask(
           mergeTargetSource: mergeTarget.source,
         },
       });
-      mergerLog.log(`${taskId}: branch missing; recovered owned landed commit ${ownedCommit.sha.slice(0, 8)}`);
+      mergerLog.log(`${taskId}: branch missing; recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
+    } else {
+      const noOpReason = `branch has zero commits ahead of ${classification.baseRef}`;
+      await store.updateTask(taskId, {
+        modifiedFiles: [],
+        mergeDetails: {
+          ...(task.mergeDetails || {}),
+          mergeConfirmed: true,
+          noOpMerge: true,
+          noOpReason,
+          landedFiles: [],
+          mergedAt: new Date().toISOString(),
+          prNumber: task.prInfo?.number,
+          mergeTargetBranch: classification.baseRef,
+          mergeTargetSource: mergeTarget.source,
+        },
+      });
+      await store.logEntry(taskId, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`);
     }
+
     // Audit trail: record merge completion (FN-1404)
     await audit.database({ type: "task:move", target: taskId, metadata: { to: "done", merged: false } });
     await completeTask(store, taskId, result);

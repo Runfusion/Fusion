@@ -70,6 +70,10 @@ vi.mock("../logger.js", () => ({
   schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("../merger.js", () => ({
+  classifyOwnedLandedEvidence: vi.fn(),
+}));
+
 import { SelfHealingManager, isBranchAheadOfBase } from "../self-healing.js";
 import type { TaskStore, Settings, Task, AgentStore, Agent, NotificationProvider } from "@fusion/core";
 import { EventEmitter } from "node:events";
@@ -82,12 +86,14 @@ import { isUsableTaskWorktree, scanOrphanedBranches } from "../worktree-pool.js"
 import * as branchConflictModule from "../branch-conflicts.js";
 import { createLogger } from "../logger.js";
 import { NotificationService } from "../notification/notification-service.js";
+import { classifyOwnedLandedEvidence } from "../merger.js";
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
 const mockedScanOrphanedBranches = vi.mocked(scanOrphanedBranches);
 const mockedIsUsableTaskWorktree = vi.mocked(isUsableTaskWorktree);
 const mockedCreateLogger = vi.mocked(createLogger);
+const mockedClassifyOwnedLandedEvidence = vi.mocked(classifyOwnedLandedEvidence);
 
 type MockLogger = {
   log: ReturnType<typeof vi.fn>;
@@ -142,6 +148,7 @@ describe("SelfHealingManager", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     store = createMockStore();
     manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    mockedClassifyOwnedLandedEvidence.mockResolvedValue({ kind: "proven-no-op", baseRef: "main", ownDiffEmpty: true });
   });
 
   afterEach(() => {
@@ -3157,9 +3164,58 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-500", "done");
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-500",
-        expect.stringContaining("Auto-finalized: branch has zero commits ahead of main"),
+        expect.stringContaining("Auto-finalized no-op (proven): start point on main; modifiedFiles cleared"),
       );
       expect(enqueueMerge).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("blocks unproven no-op finalize candidates and emits audit", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      mockedClassifyOwnedLandedEvidence.mockResolvedValueOnce({
+        kind: "unproven",
+        reason: "foreign-start-point",
+        details: { foreignRef: "fusion/fn-a" },
+      } as any);
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-501'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'main'..'fusion/fn-501'")) return "0\n" as any;
+        return "" as any;
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-501",
+          column: "in-review",
+          paused: false,
+          status: null,
+          worktree: "/tmp/test-project/.worktrees/fn-501",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.finalizeNoOpReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-501", "done");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-501", "todo", expect.anything());
+      expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:finalize-unproven-blocked",
+        target: "FN-501",
+      }));
 
       managerWithRecovery.stop();
     });

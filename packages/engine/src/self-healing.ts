@@ -33,9 +33,16 @@ import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { findAlreadyMergedTaskCommit } from "./already-merged-detector.js";
 import { resolveWorktreesDir } from "./worktree-paths.js";
+import type { OwnedLandedClassification } from "./merger.js";
 
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
+const DONE_TASK_INTEGRITY_SWEEP_LIMIT = 50;
+
+async function classifyOwnedLandedEvidenceForSelfHealing(rootDir: string, task: Task, mergeTargetBranch: string): Promise<OwnedLandedClassification> {
+  const { classifyOwnedLandedEvidence } = await import("./merger.js");
+  return classifyOwnedLandedEvidence(rootDir, task, { mergeTargetBranch });
+}
 
 function formatRecoveryTimestamp(date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -355,6 +362,7 @@ export class SelfHealingManager {
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
   private mergeStarvationDrops: Map<string, number> = new Map();
   private orphanArchivedAcknowledged = new Set<string>();
+  private finalizeUnprovenWarned = new Set<string>();
 
   constructor(
     private store: TaskStore,
@@ -415,6 +423,7 @@ export class SelfHealingManager {
       { name: "failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps().then(() => undefined) },
       { name: "interrupted-merging", fn: () => this.recoverInterruptedMergingTasks().then(() => undefined) },
       { name: "done-merge-metadata", fn: () => this.recoverDoneTaskMergeMetadata().then(() => undefined) },
+      { name: "reconcile-done-task-integrity", fn: () => this.reconcileDoneTaskIntegrity().then(() => undefined) },
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
       { name: "recover-branch-misbound-in-review", fn: () => this.recoverBranchMisboundInReviewTasks().then(() => undefined) },
       { name: "recover-orphan-only-scope-violations", fn: () => this.recoverOrphanOnlyScopeViolations().then(() => undefined) },
@@ -941,6 +950,7 @@ export class SelfHealingManager {
           { name: "recover-done-merge-metadata", fn: () => this.recoverDoneTaskMergeMetadata() },
           { name: "recover-stale-merging-status", fn: () => this.recoverStaleMergingStatus() },
           { name: "finalize-noop-review", fn: () => this.finalizeNoOpReviewTasks() },
+          { name: "reconcile-done-task-integrity", fn: () => this.reconcileDoneTaskIntegrity() },
           { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
           { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
           { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
@@ -2105,28 +2115,72 @@ export class SelfHealingManager {
       if (candidates.length === 0) return 0;
 
       let recovered = 0;
+      const mergeTargetBranch = typeof settings.baseBranch === "string" && settings.baseBranch.trim().length > 0
+        ? settings.baseBranch
+        : "main";
       for (const task of candidates) {
-        const ahead = await this.isBranchAheadOfBase(task, task.mergeDetails?.mergeTargetBranch || "main");
-        if (!ahead || ahead.aheadCount !== 0) {
+        const ahead = await this.isBranchAheadOfBase(task, task.mergeDetails?.mergeTargetBranch || mergeTargetBranch);
+        if (!ahead || ahead.aheadCount !== 0) continue;
+
+        const classification = await classifyOwnedLandedEvidenceForSelfHealing(this.options.rootDir, task, ahead.baseRef);
+
+        if (classification.kind === "unproven") {
+          if (!this.finalizeUnprovenWarned.has(task.id)) {
+            this.finalizeUnprovenWarned.add(task.id);
+            await this.store.logEntry(
+              task.id,
+              `Finalize blocked: unproven ownership evidence (${classification.reason}); no owned landed commit was found — auto-retrying via todo requeue`,
+              JSON.stringify(classification.details, null, 2),
+            );
+          }
+          await (this.store as any).recordRunAuditEvent?.({
+            taskId: task.id,
+            domain: "database",
+            mutationType: "task:finalize-unproven-blocked",
+            target: task.id,
+            metadata: { reason: classification.reason, details: classification.details, autoRetry: true },
+          });
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as any);
           continue;
         }
 
-        const noOpReason = `branch has zero commits ahead of ${ahead.baseRef}`;
-        // Reaching in-review means executor/spec gates already passed. If there
-        // are no commits ahead of base, treat this as a successful no-op merge.
-        const mergeDetails: MergeDetails = {
-          ...(task.mergeDetails || {}),
-          mergeConfirmed: true,
-          noOpMerge: true,
-          noOpReason,
-          mergedAt: new Date().toISOString(),
-        };
+        const mergedAt = new Date().toISOString();
+        if (classification.kind === "owned-commit") {
+          const mergeDetails: MergeDetails = {
+            ...(task.mergeDetails || {}),
+            commitSha: classification.commit.sha,
+            filesChanged: classification.commit.filesChanged,
+            insertions: classification.commit.insertions,
+            deletions: classification.commit.deletions,
+            mergeCommitMessage: classification.commit.subject,
+            mergeConfirmed: true,
+            mergedAt,
+            mergeTargetBranch: ahead.baseRef,
+          };
+          await this.store.updateTask(task.id, { mergeDetails });
+          await this.store.logEntry(task.id, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
+        } else {
+          const noOpReason = `branch has zero commits ahead of ${classification.baseRef}`;
+          const mergeDetails: MergeDetails = {
+            ...(task.mergeDetails || {}),
+            mergeConfirmed: true,
+            noOpMerge: true,
+            noOpReason,
+            landedFiles: [],
+            mergedAt,
+            mergeTargetBranch: classification.baseRef,
+          };
+          await this.store.updateTask(task.id, { mergeDetails, modifiedFiles: [] });
+          await (this.store as any).recordRunAuditEvent?.({
+            taskId: task.id,
+            domain: "database",
+            mutationType: "task:integrity-reconcile-modified-files",
+            target: task.id,
+            metadata: { reason: "proven-no-op-finalize", clearedCount: task.modifiedFiles?.length ?? 0 },
+          });
+          await this.store.logEntry(task.id, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`);
+        }
 
-        await this.store.updateTask(task.id, { mergeDetails });
-        await this.store.logEntry(
-          task.id,
-          `Auto-finalized: ${noOpReason}; treating as no-op merge and moving to done`,
-        );
         await this.store.moveTask(task.id, "done");
         recovered++;
       }
@@ -2138,6 +2192,97 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`No-op review finalization failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  async reconcileDoneTaskIntegrity(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks({ column: "done", slim: true });
+      const candidates = tasks.filter((task) =>
+        task.column === "done" &&
+        (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
+        (task.modifiedFiles?.length ?? 0) > 0,
+      ).slice(0, DONE_TASK_INTEGRITY_SWEEP_LIMIT);
+
+      if (candidates.length === 0) return 0;
+      const settings = await this.store.getSettings();
+      const mergeTargetBranch = typeof settings.baseBranch === "string" && settings.baseBranch.trim().length > 0
+        ? settings.baseBranch
+        : "main";
+
+      let reconciled = 0;
+      for (const task of candidates) {
+        const classification = await classifyOwnedLandedEvidenceForSelfHealing(this.options.rootDir, task, mergeTargetBranch);
+        if (classification.kind === "owned-commit") {
+          await this.store.updateTask(task.id, {
+            mergeDetails: {
+              ...(task.mergeDetails || {}),
+              commitSha: classification.commit.sha,
+              filesChanged: classification.commit.filesChanged,
+              insertions: classification.commit.insertions,
+              deletions: classification.commit.deletions,
+              mergeCommitMessage: classification.commit.subject,
+            },
+          });
+          await (this.store as any).recordRunAuditEvent?.({
+            taskId: task.id,
+            domain: "database",
+            mutationType: "task:integrity-reconcile-modified-files",
+            target: task.id,
+            metadata: { reason: "recovered-owned-commit", commitSha: classification.commit.sha },
+          });
+          reconciled++;
+          continue;
+        }
+
+        if (classification.kind === "proven-no-op") {
+          await this.store.updateTask(task.id, {
+            modifiedFiles: [],
+            mergeDetails: {
+              ...(task.mergeDetails || {}),
+              mergeConfirmed: true,
+              noOpMerge: true,
+              noOpReason: `branch has zero commits ahead of ${classification.baseRef}`,
+              landedFiles: [],
+            },
+          });
+          await (this.store as any).recordRunAuditEvent?.({
+            taskId: task.id,
+            domain: "database",
+            mutationType: "task:integrity-reconcile-modified-files",
+            target: task.id,
+            metadata: { reason: "proven-no-op", clearedCount: task.modifiedFiles?.length ?? 0 },
+          });
+          reconciled++;
+          continue;
+        }
+
+        if (!this.finalizeUnprovenWarned.has(task.id)) {
+          this.finalizeUnprovenWarned.add(task.id);
+          await this.store.logEntry(
+            task.id,
+            `Integrity warning: done-task finalize evidence is unproven (${classification.reason})`,
+            JSON.stringify(classification.details, null, 2),
+          );
+        }
+        await (this.store as any).recordRunAuditEvent?.({
+          taskId: task.id,
+          domain: "database",
+          mutationType: "task:integrity-warning",
+          target: task.id,
+          metadata: {
+            reason: classification.reason,
+            modifiedFilesCount: task.modifiedFiles?.length ?? 0,
+            details: classification.details,
+          },
+        });
+      }
+
+      return reconciled;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Done-task integrity reconciliation failed: ${errorMessage}`);
       return 0;
     }
   }

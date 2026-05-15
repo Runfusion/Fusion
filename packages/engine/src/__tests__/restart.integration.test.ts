@@ -944,7 +944,7 @@ describe("In-review merge handling after restart", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-055", { status: "merging" });
   });
 
-  it("aiMergeTask moves task to done when branch does not exist", async () => {
+  it("aiMergeTask blocks done transition when branch is missing and ownership evidence is unproven", async () => {
     const store = createMockStore();
     store.getTask.mockResolvedValue(makeTaskDetail("FN-056", "in-review"));
     store.moveTask.mockResolvedValue(makeTask("FN-056", "done"));
@@ -960,8 +960,9 @@ describe("In-review merge handling after restart", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-056");
 
     expect(result.merged).toBe(false);
-    expect(result.error).toContain("Branch");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-056", "done");
+    expect(result.error).toContain("finalize-unproven");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-056", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-056", "todo", expect.anything());
   });
 });
 

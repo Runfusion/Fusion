@@ -121,7 +121,45 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(classification).toEqual({ kind: "proven-no-op", baseRef: "main", ownDiffEmpty: true });
   });
 
-  it("reproduces FN-4653 shape: foreign start-point branch with no FN-owned commits can auto-complete", async () => {
+  it("auto-finalizes proven no-op and clears stale modifiedFiles", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-noop-finalize-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b fusion/fn-c");
+    git(repo, "git checkout main");
+
+    const task = {
+      id: "FN-C",
+      title: "FN-C",
+      description: "FN-C",
+      column: "in-review",
+      branch: "fusion/fn-c",
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      modifiedFiles: ["borrowed.txt"],
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-C",
+    } as unknown as Task;
+
+    const store = createStore(task);
+    const result = await aiMergeTask(store, repo, "FN-C");
+
+    expect(result.merged).toBe(true);
+    expect(result.noOpMerge).toBe(true);
+    expect((store.updateTask as ReturnType<typeof vi.fn>).mock.calls.some(([, patch]) => patch?.modifiedFiles?.length === 0)).toBe(true);
+    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(true);
+  }, 20_000);
+
+  it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-merger-unproven-"));
     repos.push(repo);
     git(repo, "git init -b main");
@@ -129,14 +167,13 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     git(repo, 'git config user.name "Test User"');
     writeFileSync(join(repo, "README.md"), "init\n", "utf-8");
     git(repo, "git add README.md && git commit -m 'chore: init'");
-    const baseSha = git(repo, "git rev-parse HEAD");
-
     git(repo, "git checkout -b fusion/fn-a");
     writeFileSync(join(repo, "foreign.txt"), "from fn-a\n", "utf-8");
     git(repo, "git add foreign.txt");
     git(repo, "git commit -m 'feat(FN-A): foreign start point' -m 'Fusion-Task-Id: FN-A'");
     const foreignBaseSha = git(repo, "git rev-parse HEAD");
 
+    git(repo, "git checkout main");
     git(repo, "git checkout -b fusion/fn-b");
     git(repo, "git checkout main");
 
@@ -160,12 +197,15 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     const classification = await classifyOwnedLandedEvidence(repo, task, { mergeTargetBranch: "main" });
     expect(classification.kind).toBe("unproven");
-    expect(classification.reason).toBe("foreign-start-point");
+    if (classification.kind === "unproven") {
+      expect(classification.reason).toBe("foreign-start-point");
+    }
 
     const store = createStore(task);
     const result = await aiMergeTask(store, repo, "FN-B");
-
-    expect(result.merged).toBe(true);
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(true);
+    expect(result.merged).toBe(false);
+    expect(result.error).toContain("finalize-unproven");
+    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
+    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "todo")).toBe(true);
   }, 20_000);
 });
