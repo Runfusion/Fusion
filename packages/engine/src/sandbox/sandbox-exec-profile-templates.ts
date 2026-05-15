@@ -22,6 +22,7 @@ export const SBPL_FILE_READ_BASE = `
 (allow file-read* (subpath "/private/var/db/timezone"))
 (allow file-read* (literal "/private/etc/hosts"))
 (allow file-read* (literal "/private/etc/services"))
+(allow file-read* (subpath "/private/var/folders"))
 `;
 
 export const SBPL_TMP_WRITE = `
@@ -32,7 +33,7 @@ export const SBPL_NETWORK_DENY_ALL = `(deny network*)`;
 
 export const SBPL_NETWORK_ALLOW_OUTBOUND = `
 (allow network-outbound)
-(allow network-bind)
+(allow network-bind (local ip))
 (allow system-socket)
 (deny network-bind (local ip "*:4040"))
 `;

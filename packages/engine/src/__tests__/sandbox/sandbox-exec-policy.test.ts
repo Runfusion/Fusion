@@ -51,12 +51,12 @@ describe("sandbox-exec policy", () => {
     expect(() => policyToSbplProfile({ allowNetwork: true, allowedPorts: [4040] }, ctx)).toThrow(SandboxPolicyError);
   });
 
-  it("guards fusion writes", () => {
+  it.each(["/tmp/repo/.fusion/tasks", "/tmp/repo/.fusion/fusion.db"])("guards fusion writes for %s", (writePath) => {
     expect(() =>
       policyToSbplProfile(
         {
           allowNetwork: true,
-          allowedWritePaths: ["/tmp/repo/.fusion/tasks"],
+          allowedWritePaths: [writePath],
         },
         ctx,
       ),
@@ -67,6 +67,10 @@ describe("sandbox-exec policy", () => {
     const profile = policyToSbplProfile(fusionWorktreePreset(ctx), ctx);
     expect(profile).toContain("(allow file-write* (subpath \"/tmp/worktree\"))");
     expect(profile).toContain("(allow file-write* (subpath \"/Users/test/Library/pnpm/store\"))");
+    expect(profile).toContain("(allow file-read* (subpath \"/usr\"))");
+    expect(profile).toContain("(allow file-read* (subpath \"/tmp/repo\"))");
+    expect(profile).toContain("(allow file-read* (subpath \"/usr/local/bin\"))");
+    expect(profile).toContain("(allow file-read* (subpath \"/private/var/folders\"))");
     expect(profile).toContain("(deny network-bind (local ip \"*:4040\"))");
   });
 });
