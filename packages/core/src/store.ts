@@ -7,6 +7,7 @@ import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, 
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
+import { resolveWorktrunkSettings, validateWorktrunkSettings } from "./worktrunk-settings.js";
 import { normalizeTaskPriority } from "./task-priority.js";
 import { canAgentTakeImplementationTaskForExplicitRouting } from "./agent-role-policy.js";
 import { GlobalSettingsStore } from "./global-settings.js";
@@ -459,12 +460,25 @@ function canonicalizeSettings(settings: Settings): Settings {
   const { globalMaxConcurrent, ...rest } = settings as Settings & { globalMaxConcurrent?: number };
   const base = globalMaxConcurrent !== undefined ? (rest as Settings) : settings;
 
+  const canonicalWorktrunk = (() => {
+    try {
+      return validateWorktrunkSettings(base.worktrunk);
+    } catch {
+      return undefined;
+    }
+  })();
+
+  const withWorktrunk = {
+    ...base,
+    ...(canonicalWorktrunk !== undefined ? { worktrunk: canonicalWorktrunk } : {}),
+  };
+
   // Rewrite legacy .kb/backups → .fusion/backups for projects upgraded from the
   // old brand so persisted settings keep working. Custom .kb/* paths are left alone.
-  if (base.autoBackupDir === ".kb/backups") {
-    return { ...base, autoBackupDir: ".fusion/backups" };
+  if (withWorktrunk.autoBackupDir === ".kb/backups") {
+    return { ...withWorktrunk, autoBackupDir: ".fusion/backups" };
   }
-  return base;
+  return withWorktrunk;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -2184,11 +2198,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const projectSettings = Object.fromEntries(
       Object.entries(config.settings ?? {}).filter(([key]) => !isGlobalOnlySettingsKey(key)),
     );
-    return canonicalizeSettings({
+    const merged = {
       ...DEFAULT_SETTINGS,
       ...globalSettings,
       ...projectSettings,
-    });
+      worktrunk: resolveWorktrunkSettings(globalSettings.worktrunk, projectSettings.worktrunk),
+    };
+    return canonicalizeSettings(merged);
   }
 
   /**
@@ -2221,11 +2237,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         ) as Partial<Settings>)
       : undefined;
 
-    return canonicalizeSettings({
+    const merged = {
       ...DEFAULT_SETTINGS,
       ...globalSettings,
       ...projectSettings,
-    });
+      worktrunk: resolveWorktrunkSettings(globalSettings.worktrunk, projectSettings?.worktrunk),
+    };
+
+    return canonicalizeSettings(merged);
   }
 
   /**
