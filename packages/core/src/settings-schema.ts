@@ -232,6 +232,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
     mode: "deterministic-only",
     maxRetries: 3,
   },
+  reliabilityStatsResetAt: undefined,
   workflowStepTimeoutMs: 360_000,
   workflowStepScopeEnforcement: "block",
   planOnlyScopeLeakEnforcement: "warn",
