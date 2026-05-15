@@ -37,7 +37,15 @@ import {
 } from "../ai-session-diagnostics.js";
 import type { LogEntry } from "../ai-session-diagnostics.js";
 import { EventEmitter } from "node:events";
+import type { TaskStore } from "@fusion/core";
 import type { AiSessionRow } from "../ai-session-store.js";
+
+const MOCK_TASK_STORE = {
+  listTasks: vi.fn(async () => []),
+  getTask: vi.fn(async () => {
+    throw new Error("not found");
+  }),
+} as unknown as TaskStore;
 
 function createQuestionJson(id = "q-1"): string {
   return JSON.stringify({
@@ -188,7 +196,7 @@ describe("mission-interview module", () => {
 
   describe("session lifecycle", () => {
     it("creates, retrieves, and cleans up a session", async () => {
-      const sessionId = await createMissionInterviewSession("127.0.0.1", "Launch platform", "/tmp/project");
+      const sessionId = await createMissionInterviewSession("127.0.0.1", "Launch platform", "/tmp/project", MOCK_TASK_STORE);
 
       const session = getMissionInterviewSession(sessionId);
       expect(session).toBeDefined();
@@ -199,7 +207,7 @@ describe("mission-interview module", () => {
     });
 
     it("cancels a session and throws when canceling missing session", async () => {
-      const sessionId = await createMissionInterviewSession("127.0.0.2", "Cancel mission", "/tmp/project");
+      const sessionId = await createMissionInterviewSession("127.0.0.2", "Cancel mission", "/tmp/project", MOCK_TASK_STORE);
       await waitForCurrentQuestion(sessionId);
 
       await cancelMissionInterviewSession(sessionId);
@@ -214,10 +222,10 @@ describe("mission-interview module", () => {
       const ip = "10.0.0.1";
 
       for (let i = 0; i < 5; i++) {
-        await createMissionInterviewSession(ip, `Mission ${i}`, "/tmp/project");
+        await createMissionInterviewSession(ip, `Mission ${i}`, "/tmp/project", MOCK_TASK_STORE);
       }
 
-      await expect(createMissionInterviewSession(ip, "Mission 6", "/tmp/project")).rejects.toBeInstanceOf(RateLimitError);
+      await expect(createMissionInterviewSession(ip, "Mission 6", "/tmp/project", MOCK_TASK_STORE)).rejects.toBeInstanceOf(RateLimitError);
       expect(getRateLimitResetTime(ip)).toBeInstanceOf(Date);
     });
 
@@ -339,7 +347,7 @@ describe("mission-interview module", () => {
         createMockAgent([createQuestionJson("q-plan"), createCompleteJson()]),
       );
 
-      const sessionId = await createMissionInterviewSession("172.16.0.1", "Build mission", "/tmp/project");
+      const sessionId = await createMissionInterviewSession("172.16.0.1", "Build mission", "/tmp/project", MOCK_TASK_STORE);
       await waitForCurrentQuestion(sessionId);
 
       const session = getMissionInterviewSession(sessionId);
@@ -404,7 +412,7 @@ describe("mission-interview module", () => {
     });
 
     it("throws InvalidSessionStateError when no active question", async () => {
-      const sessionId = await createMissionInterviewSession("172.16.0.2", "No question", "/tmp/project");
+      const sessionId = await createMissionInterviewSession("172.16.0.2", "No question", "/tmp/project", MOCK_TASK_STORE);
       await waitForCurrentQuestion(sessionId);
 
       const session = getMissionInterviewSession(sessionId);
@@ -452,7 +460,7 @@ describe("mission-interview module", () => {
       const resumedAgent = createMockAgent([createQuestionJson("q-retry")]);
       mockCreateFnAgent.mockImplementationOnce(async () => resumedAgent);
 
-      await retryMissionInterviewSession(row.id, "/tmp/project");
+      await retryMissionInterviewSession(row.id, "/tmp/project", MOCK_TASK_STORE);
 
       expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
       expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain("What is your goal?");
@@ -483,7 +491,7 @@ describe("mission-interview module", () => {
       const resumedAgent = createMockAgent([createQuestionJson("q-first")]);
       mockCreateFnAgent.mockImplementationOnce(async () => resumedAgent);
 
-      await retryMissionInterviewSession(row.id, "/tmp/project");
+      await retryMissionInterviewSession(row.id, "/tmp/project", MOCK_TASK_STORE);
 
       expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
       expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain('I want to plan a mission: "Launch alpha"');
@@ -706,9 +714,9 @@ describe("mission-interview module", () => {
       const mockAgent = createMockAgent([createQuestionJson()]);
       mockCreateFnAgent.mockImplementationOnce(async () => mockAgent);
 
-      await createMissionInterviewSession("192.168.1.1", "Test Mission", "/tmp/project");
+      await createMissionInterviewSession("192.168.1.1", "Test Mission", "/tmp/project", MOCK_TASK_STORE);
 
-      await waitForCurrentQuestion(await createMissionInterviewSession("192.168.1.1", "Test Mission 2", "/tmp/project"));
+      await waitForCurrentQuestion(await createMissionInterviewSession("192.168.1.1", "Test Mission 2", "/tmp/project", MOCK_TASK_STORE));
 
       // The first session starts asynchronously, so we need to wait
       // Check the createFnAgent call was made with default prompt
@@ -716,6 +724,9 @@ describe("mission-interview module", () => {
       const lastCall = mockCreateFnAgent.mock.calls[mockCreateFnAgent.mock.calls.length - 1];
       expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
       expect(lastCall[0].builtinToolsAllowlist).toEqual(["WebSearch", "WebFetch"]);
+      const customToolNames = (lastCall[0].customTools as Array<{ name: string }> | undefined)?.map((tool) => tool.name) ?? [];
+      expect(customToolNames).toContain("fn_task_list");
+      expect(customToolNames).toContain("fn_task_get");
     });
 
     it("uses override prompt when promptOverrides provided", async () => {
@@ -726,6 +737,7 @@ describe("mission-interview module", () => {
         "192.168.1.2",
         "Test Mission",
         "/tmp/project",
+        MOCK_TASK_STORE,
         { "mission-interview-system": customPrompt },
       );
       await waitForCurrentQuestion(sessionId);
@@ -743,6 +755,7 @@ describe("mission-interview module", () => {
         "192.168.1.3",
         "Test Mission",
         "/tmp/project",
+        MOCK_TASK_STORE,
         { "mission-interview-system": "" },
       );
       await waitForCurrentQuestion(sessionId);
@@ -766,6 +779,7 @@ describe("mission-interview module", () => {
         row.id,
         { "q-2": "Test response" },
         "/tmp/project",
+        MOCK_TASK_STORE,
         { "mission-interview-system": customPrompt },
       );
 
@@ -798,6 +812,7 @@ describe("mission-interview module", () => {
       await retryMissionInterviewSession(
         row.id,
         "/tmp/project",
+        MOCK_TASK_STORE,
         { "mission-interview-system": customPrompt },
       );
 
@@ -816,6 +831,7 @@ describe("mission-interview module", () => {
         "192.168.1.4",
         "Test Mission",
         "/tmp/project",
+        MOCK_TASK_STORE,
         { "mission-interview-system": customPrompt },
       );
       await waitForCurrentQuestion(sessionId);
@@ -857,6 +873,7 @@ describe("mission-interview module", () => {
         "192.168.1.5",
         "Test Mission",
         "/tmp/project",
+        MOCK_TASK_STORE,
         { "planning-system": "Should not affect mission interview" },
       );
       await waitForCurrentQuestion(sessionId);
@@ -886,7 +903,7 @@ describe("mission-interview module", () => {
       const resumedAgent = createMockAgent([createQuestionJson("q-retry")]);
       mockCreateFnAgent.mockImplementationOnce(async () => resumedAgent);
 
-      await retryMissionInterviewSession(row.id, "/tmp/project", undefined);
+      await retryMissionInterviewSession(row.id, "/tmp/project", MOCK_TASK_STORE, undefined);
 
       expect(mockCreateFnAgent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -905,7 +922,7 @@ describe("mission-interview module", () => {
       const resumedAgent = createMockAgent([createQuestionJson("q-fallback")]);
       mockCreateFnAgent.mockImplementationOnce(async () => resumedAgent);
 
-      await submitMissionInterviewResponse(row.id, { "q-2": "Test" }, "/tmp/project", undefined);
+      await submitMissionInterviewResponse(row.id, { "q-2": "Test" }, "/tmp/project", MOCK_TASK_STORE, undefined);
 
       expect(mockCreateFnAgent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -922,6 +939,7 @@ describe("mission-interview module", () => {
         "192.168.1.6",
         "Test Mission",
         "/tmp/project",
+        MOCK_TASK_STORE,
         {},
       );
       await waitForCurrentQuestion(sessionId);

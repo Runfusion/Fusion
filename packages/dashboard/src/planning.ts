@@ -1366,6 +1366,7 @@ async function ensureSessionAgent(
   rootDir: string | undefined,
   historyForReplay: Array<{ question: PlanningQuestion; response: unknown }>,
   promptOverrides?: PromptOverrideMap,
+  store?: TaskStore,
 ): Promise<void> {
   if (session.agent) {
     return;
@@ -1377,7 +1378,13 @@ async function ensureSessionAgent(
     );
   }
 
-  session.agent = await createPlanningAgent(session, rootDir, undefined, undefined, promptOverrides);
+  if (!store) {
+    throw new InvalidSessionStateError(
+      "Planning session has no task store and cannot be resumed without project context",
+    );
+  }
+
+  session.agent = await createPlanningAgent(session, rootDir, store, undefined, undefined, promptOverrides);
 
   if (historyForReplay.length === 0) {
     return;

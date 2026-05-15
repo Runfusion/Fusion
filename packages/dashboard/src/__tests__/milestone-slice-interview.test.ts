@@ -38,6 +38,14 @@ import {
   type MilestoneInterviewSummary,
   type SliceInterviewSummary,
 } from "../milestone-slice-interview.js";
+import type { TaskStore } from "@fusion/core";
+
+const MOCK_TASK_STORE = {
+  listTasks: vi.fn(async () => []),
+  getTask: vi.fn(async () => {
+    throw new Error("not found");
+  }),
+} as unknown as TaskStore;
 import { EventEmitter } from "node:events";
 import type { AiSessionRow } from "../ai-session-store.js";
 
@@ -233,12 +241,17 @@ describe("milestone-slice-interview module", () => {
         "ms-123",
         "Launch Platform",
         "Mission: Launch Platform v2",
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
 
       const session = getTargetInterviewSession(sessionId);
       expect(session).toBeDefined();
       expect(session?.targetType).toBe("milestone");
+      const createFnAgentCallArg = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { customTools?: Array<{ name: string }> };
+      const customToolNames = createFnAgentCallArg.customTools?.map((tool) => tool.name) ?? [];
+      expect(customToolNames).toContain("fn_task_list");
+      expect(customToolNames).toContain("fn_task_get");
       expect(session?.targetId).toBe("ms-123");
       expect(session?.targetTitle).toBe("Launch Platform");
       expect(session?.missionContext).toBe("Mission: Launch Platform v2");
@@ -254,7 +267,8 @@ describe("milestone-slice-interview module", () => {
         "sl-456",
         "Auth System",
         "Mission: Launch v2 | Milestone: Foundation",
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
 
       const session = getTargetInterviewSession(sessionId);
@@ -275,7 +289,8 @@ describe("milestone-slice-interview module", () => {
         "ms-789",
         "Cancel mission",
         undefined,
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -402,7 +417,8 @@ describe("milestone-slice-interview module", () => {
         "ms-no-q",
         "Test",
         undefined,
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -426,7 +442,8 @@ describe("milestone-slice-interview module", () => {
         "ms-retry",
         "Retry Test",
         undefined,
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
 
       // Mark session as errored
@@ -453,7 +470,8 @@ describe("milestone-slice-interview module", () => {
         "sl-no-error",
         "Not Error",
         undefined,
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -482,7 +500,8 @@ describe("milestone-slice-interview module", () => {
         "ms-apply",
         "Apply Test",
         "Mission context",
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -524,7 +543,8 @@ describe("milestone-slice-interview module", () => {
         "sl-apply",
         "Apply Slice Test",
         "Mission | Milestone context",
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -566,7 +586,8 @@ describe("milestone-slice-interview module", () => {
         "ms-cleanup",
         "Cleanup Test",
         "Context",
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -606,7 +627,8 @@ describe("milestone-slice-interview module", () => {
         "ms-no-summary",
         "No Summary",
         "Context",
-        "/tmp/project"
+        "/tmp/project",
+        MOCK_TASK_STORE
       );
       await waitForCurrentQuestion(sessionId);
 
@@ -794,6 +816,7 @@ describe("milestone-slice-interview module", () => {
         "Hung milestone interview",
         undefined,
         "/tmp/project",
+        MOCK_TASK_STORE,
       );
 
       // Yield so the guard registration runs.
@@ -831,6 +854,7 @@ describe("milestone-slice-interview module", () => {
         "Stoppable slice interview",
         undefined,
         "/tmp/project",
+        MOCK_TASK_STORE,
       );
 
       let stopped = false;
