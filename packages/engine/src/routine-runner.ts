@@ -25,6 +25,8 @@ import type { AiPromptExecutor } from "./cron-runner.js";
 import { createLogger } from "./logger.js";
 import { defaultShell } from "./shell-utils.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
+import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import type { EngineRunContext, RunAuditor } from "./run-audit.js";
 import type { SandboxBackend } from "./sandbox/types.js";
 
 const log = createLogger("routine-runner");
@@ -32,11 +34,6 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_BUFFER = 1024 * 1024;
 const MAX_OUTPUT_LENGTH = 10 * 1024;
 
-function getRoutineCommandSandboxBackend(): SandboxBackend {
-  // FN-4640: routine-runner has no RunAuditor context yet; keep sandbox backend un-audited for now.
-  // Follow-up: FN-4689 wires routine-runner through RunAuditor for sandbox emissions.
-  return resolveSandboxBackend({ auditor: undefined });
-}
 
 /** Options for RoutineRunner constructor */
 export interface RoutineRunnerOptions {
@@ -259,10 +256,27 @@ export class RoutineRunner {
     if (routine.steps && routine.steps.length > 0) {
       return this.executeSteps(routine, startedAt);
     }
-    return this.executeCommand(routine.command ?? "", routine.timeoutMs, startedAt);
+    return this.executeCommand(routine, routine.command ?? "", routine.timeoutMs, startedAt);
+  }
+
+  private getRoutineCommandAuditor(routine: Routine): RunAuditor | undefined {
+    if (!this.options.taskStore) {
+      return undefined;
+    }
+
+    // FN-4689: close FN-4640 follow-up by wiring routine command sandbox execution through RunAuditor.
+    const engineRunContext: EngineRunContext = {
+      runId: generateSyntheticRunId("routine", routine.id),
+      agentId: routine.agentId ?? "routine-runner",
+      phase: "routine-execute",
+      source: "routine",
+    };
+
+    return createRunAuditor(this.options.taskStore, engineRunContext);
   }
 
   private async executeCommand(
+    routine: Routine,
     command: string,
     timeoutMs: number | undefined,
     startedAt: string,
@@ -321,7 +335,10 @@ export class RoutineRunner {
       }
     }
 
-    const backend = getRoutineCommandSandboxBackend();
+    const auditor = this.getRoutineCommandAuditor(routine);
+    const backend: SandboxBackend = auditor
+      ? resolveSandboxBackend({ auditor })
+      : resolveSandboxBackend();
     const result = await backend.run(command, {
       cwd: this.options.rootDir,
       timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -399,7 +416,7 @@ export class RoutineRunner {
     const timeoutMs = step.timeoutMs ?? routine.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     if (step.type === "command") {
-      const result = await this.executeCommand(step.command ?? "", timeoutMs, startedAt);
+      const result = await this.executeCommand(routine, step.command ?? "", timeoutMs, startedAt);
       return {
         stepId: step.id,
         stepName: step.name,
