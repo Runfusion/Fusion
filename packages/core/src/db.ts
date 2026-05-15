@@ -119,7 +119,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 79;
+const SCHEMA_VERSION = 80;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -700,6 +700,7 @@ CREATE TABLE IF NOT EXISTS milestones (
   orderIndex INTEGER NOT NULL,
   interviewState TEXT NOT NULL,
   dependencies TEXT DEFAULT '[]',
+  acceptanceCriteria TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   FOREIGN KEY (missionId) REFERENCES missions(id) ON DELETE CASCADE
@@ -3288,6 +3289,12 @@ export class Database {
     if (version < 79) {
       this.applyMigration(79, () => {
         this.addColumnIfMissing("tasks", "overlapBlockedBy", "TEXT");
+      });
+    }
+
+    if (version < 80) {
+      this.applyMigration(80, () => {
+        this.addColumnIfMissing("milestones", "acceptanceCriteria", "TEXT");
       });
     }
 
