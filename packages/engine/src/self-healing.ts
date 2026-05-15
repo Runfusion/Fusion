@@ -17,7 +17,7 @@ import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { getInReviewStallReason, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type TaskStore, type Settings, type Task, type MergeDetails } from "@fusion/core";
+import { getInReviewStallReason, getStalePausedReviewSignal, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type TaskStore, type Settings, type Task, type MergeDetails } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, isUsableTaskWorktree, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
@@ -439,6 +439,7 @@ export class SelfHealingManager {
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
       { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts().then(() => undefined) },
       { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls().then(() => undefined) },
+      { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews().then(() => undefined) },
       { name: "audit-no-commits-expected-candidates", fn: () => this.auditNoCommitsExpectedCandidates().then(() => undefined) },
     ];
 
@@ -1152,6 +1153,7 @@ export class SelfHealingManager {
           { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy() },
           { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts() },
           { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls() },
+          { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews() },
           { name: "audit-no-commits-expected-candidates", fn: () => this.auditNoCommitsExpectedCandidates() },
         ];
         for (const fn of batch2Fns) {
@@ -2513,6 +2515,52 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`In-review stall surfacing failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  async surfaceStalePausedReviews(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const cycleStartMs = Date.now();
+      const thresholdMs = settings.stalePausedReviewThresholdMs;
+      if (!thresholdMs || thresholdMs <= 0) return 0;
+
+      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      let surfaced = 0;
+
+      for (const task of tasks) {
+        if (task.paused !== true) continue;
+        const signal = getStalePausedReviewSignal(task, { now: cycleStartMs, thresholdMs });
+        if (!signal) continue;
+        if (Date.parse(task.updatedAt) >= cycleStartMs) continue;
+
+        const previous = [...(task.log ?? [])]
+          .reverse()
+          .find((entry) => entry.action.startsWith("Stale paused review surfaced ["));
+        if (previous) {
+          const parsed = /^Stale paused review surfaced \[([^\]]+)\]/.exec(previous.action);
+          const previousCode = parsed?.[1];
+          const previousAt = Date.parse(previous.timestamp);
+          if (Number.isFinite(previousAt) && previousAt >= cycleStartMs - thresholdMs && previousCode === signal.code) {
+            continue;
+          }
+        }
+
+        const hours = (signal.ageMs / 3_600_000).toFixed(1);
+        await this.store.logEntry(
+          task.id,
+          `Stale paused review surfaced [${signal.code}]: paused ${hours}h; disposition options — unpause, retry, archive, or create follow-up task. pausedReason=${signal.pausedReason ?? "none"}`,
+        );
+        surfaced += 1;
+      }
+
+      return surfaced;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Stale paused review surfacing failed: ${errorMessage}`);
       return 0;
     }
   }

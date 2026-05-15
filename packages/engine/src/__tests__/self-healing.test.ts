@@ -488,6 +488,7 @@ describe("SelfHealingManager", () => {
       const recoverAgentsRunningOnInactiveTasks = vi.spyOn(manager, "recoverAgentsRunningOnInactiveTasks").mockResolvedValue(1);
       const clearStaleBlockedBy = vi.spyOn(manager, "clearStaleBlockedBy").mockResolvedValue(1);
       const surfaceInReviewStalls = vi.spyOn(manager, "surfaceInReviewStalls").mockResolvedValue(1);
+      const surfaceStalePausedReviews = vi.spyOn(manager, "surfaceStalePausedReviews").mockResolvedValue(1);
 
       await manager.runStartupRecovery();
 
@@ -502,6 +503,7 @@ describe("SelfHealingManager", () => {
       expect(recoverAgentsRunningOnInactiveTasks).toHaveBeenCalledTimes(1);
       expect(clearStaleBlockedBy).toHaveBeenCalledTimes(1);
       expect(surfaceInReviewStalls).toHaveBeenCalledTimes(1);
+      expect(surfaceStalePausedReviews).toHaveBeenCalledTimes(1);
     });
 
     it("runStartupRecovery clears stale blockedBy rows", async () => {
@@ -4261,6 +4263,98 @@ describe("SelfHealingManager", () => {
 
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(0);
       expect(store.logEntry).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+  });
+
+  describe("surfaceStalePausedReviews", () => {
+    function pausedReviewTask(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "FN-4233",
+        column: "in-review",
+        paused: true,
+        pausedReason: "manual-hold",
+        mergeDetails: {},
+        columnMovedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        log: [],
+        ...overrides,
+      };
+    }
+
+    it("no-ops under threshold", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ stalePausedReviewThresholdMs: 24 * 60 * 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([pausedReviewTask()]);
+
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(0);
+      expect(store.logEntry).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("logs disposition recommendation when threshold met", async () => {
+      vi.setSystemTime(new Date("2026-01-02T01:00:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ stalePausedReviewThresholdMs: 24 * 60 * 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([pausedReviewTask()]);
+
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(1);
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4233",
+        expect.stringContaining("Stale paused review surfaced [stale-paused-review]: paused"),
+      );
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4233",
+        expect.stringContaining("disposition options — unpause, retry, archive, or create follow-up task"),
+      );
+      managerWithRecovery.stop();
+    });
+
+    it("skips merge-confirmed, non-paused, recently-updated, and paused/global short-circuit", async () => {
+      vi.setSystemTime(new Date("2026-01-02T01:00:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ stalePausedReviewThresholdMs: 24 * 60 * 60_000 })
+        .mockResolvedValueOnce({ stalePausedReviewThresholdMs: 24 * 60 * 60_000, globalPause: true })
+        .mockResolvedValueOnce({ stalePausedReviewThresholdMs: 24 * 60 * 60_000, enginePaused: true });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        pausedReviewTask({ id: "FN-MERGED", mergeDetails: { mergeConfirmed: true } }),
+        pausedReviewTask({ id: "FN-RUN", paused: false }),
+        pausedReviewTask({ id: "FN-UPD", updatedAt: "2026-01-02T01:00:00.000Z" }),
+      ]);
+
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(0);
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(0);
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(0);
+      expect(store.logEntry).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("rate-limits within window and re-emits after threshold window", async () => {
+      vi.setSystemTime(new Date("2026-01-02T01:00:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ stalePausedReviewThresholdMs: 24 * 60 * 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([
+          pausedReviewTask({
+            log: [{
+              timestamp: "2026-01-01T12:00:00.000Z",
+              action: "Stale paused review surfaced [stale-paused-review]: recent",
+            }],
+          }),
+        ])
+        .mockResolvedValueOnce([
+          pausedReviewTask({
+            log: [{
+              timestamp: "2025-12-30T00:00:00.000Z",
+              action: "Stale paused review surfaced [stale-paused-review]: old",
+            }],
+          }),
+        ]);
+
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(0);
+      expect(await managerWithRecovery.surfaceStalePausedReviews()).toBe(1);
       managerWithRecovery.stop();
     });
   });
