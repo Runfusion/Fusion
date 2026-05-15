@@ -20,6 +20,7 @@ export interface SystemInfo {
   engineMode: "dev" | "active" | "paused";
   fileWatcher: boolean;
   startTimeMs: number;
+  startupDurationMs?: number;
 }
 
 export interface TaskStats {
@@ -347,6 +348,7 @@ export interface DashboardState {
   // pane has key focus (vs. the top main panel).
   narrowLogSplitFocused: boolean;
   loadingStatus: string;
+  isReady: boolean;
   mode: AppMode;
   interactiveData: InteractiveData | null;
   interactiveView: InteractiveView;
@@ -392,6 +394,7 @@ export function createInitialState(): DashboardState {
     logsViewportStart: 0,
     narrowLogSplitFocused: false,
     loadingStatus: "Starting…",
+    isReady: false,
     mode: "status",
     interactiveData: null,
     interactiveView: "board",

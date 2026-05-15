@@ -85,6 +85,7 @@ export class DashboardTUI {
   // changes or the split is no longer rendered.
   narrowLogSplitFocused = false;
   loadingStatus = "Starting…";
+  isReady = false;
   mode: "status" | "interactive" = "status";
   // When true, sampleSystemStats() kills any running vitest processes if
   // system memory usage crosses 90%. Toggled by [v] in the Utilities panel.
@@ -195,6 +196,7 @@ export class DashboardTUI {
       logsViewportStart: this.logsViewportStart,
       narrowLogSplitFocused: this.narrowLogSplitFocused,
       loadingStatus: this.loadingStatus,
+      isReady: this.isReady,
       mode: this.mode,
       interactiveData: this.interactiveData,
       interactiveView: this.interactiveView,
@@ -218,6 +220,10 @@ export class DashboardTUI {
 
   get running(): boolean {
     return this.isRunning;
+  }
+
+  get ready(): boolean {
+    return this.isReady;
   }
 
   setCallbacks(callbacks: TUICallbacks): void {
@@ -400,6 +406,11 @@ export class DashboardTUI {
 
   setLoadingStatus(text: string): void {
     this.loadingStatus = text;
+    this.notify();
+  }
+
+  setReady(ready: boolean): void {
+    this.isReady = ready;
     this.notify();
   }
 
