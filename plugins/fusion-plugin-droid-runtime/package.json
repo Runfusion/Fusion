@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/droid-runtime",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "type": "module",
   "description": "Droid runtime plugin for Fusion",
   "keywords": [

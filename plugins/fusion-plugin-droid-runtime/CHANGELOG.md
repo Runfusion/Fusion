@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.17
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.31.0
+
 ## 0.1.16
 
 ### Patch Changes

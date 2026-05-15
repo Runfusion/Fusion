@@ -1,5 +1,29 @@
 # @runfusion/fusion
 
+## 0.31.0
+
+### Minor Changes
+
+- 3d94b54: Persist cumulative active runtime and first-execution wall-clock anchor so
+  board cards and Task Detail stats no longer "forget" earlier work when a task
+  is moved back to todo and resumed (FN-4595).
+- 4f3f153: Add first-class milestone acceptance criteria support across missions: persist `Milestone.acceptanceCriteria`, expose milestone create/update route handling, and add the `fn_milestone_update` tool for partial milestone patches. The dashboard now renders and edits milestone acceptance criteria separately from description/verification semantics.
+
+### Patch Changes
+
+- f2bd31a: Fix chat room thread freshness by loading the newest message window (`order=desc` tail fetch) while preserving ascending message order in responses, and unify dashboard scoped chat event wiring with the engine's live `ChatStore` instance so agent-posted room messages stream to SSE listeners immediately.
+- 60982e6: Fix the executor no-`fn_task_done` retry race with self-healing branch/worktree reclaim by re-validating live worktree/branch bindings before retry sessions and converting missing/incomplete/unregistered worktree session-start failures into clean `todo` requeues with preserved progress.
+- 5356cff: Fix GitHub Copilot OAuth login failing with "OAuth provider did not return state in auth URL" on remote (non-localhost) dashboard hosts. Copilot's device-code flow has no redirect callback, so the dashboard now passes its verification URL through unchanged like it already did for Anthropic and OpenAI Codex. The verification page now opens in a new tab and the device-code panel renders as designed.
+- a3ff9d0: Add `fn_milestone_update` tool and `acceptanceCriteria` field on milestones.
+- f150850: Fix Missions UI false "No assertions defined" signal on milestones whose child features already have populated acceptance criteria. The milestone view now rolls up feature-level `acceptanceCriteria` as read-only "Completion criteria (from features)" when no structured `MissionContractAssertion` rows exist; the empty-state nudge is preserved only for milestones with no completion criteria at any level.
+- e0f7bb3: Dashboard: add Reliability view entry to the mobile More sheet so it is reachable on mobile, matching the desktop Header overflow menu.
+- 3e9ad89: Tasks manually parked back to Todo now consistently render as paused in TaskCard and TaskDetailModal, and using Unpause clears the `userPaused` latch so scheduler dispatch can resume.
+- cb0a606: Dashboard board and list views now refetch tasks once when the user navigates back from another dashboard view, so internal view switches no longer leave task data stale while task SSE was temporarily disabled.
+- 268afdd: Fix agent org chart not rendering connector lines between parent and child agents.
+- 065674f: Dashboard: agent and project permission editors now list the concrete tools each approval category covers (including web search and task creation) and show which coordination/messaging tools are exempt from approval by design. Project settings now expose the agent provisioning approval policy (`approvalMode`, trusted roles/agents, `alwaysApproveDelete`).
+- 8da30b3: Action-gate: `fn_web_fetch` is now classified under the `network_api` approval category, matching `fn_research_run`. Projects with `network_api: require-approval` will now prompt for approval before agents fetch external URLs. Previously fell through to exempt and bypassed the policy (FN-4603).
+- 236ce62: Test bootstrap (scripts/ensure-test-artifacts.mjs) now covers @fusion/engine and additional `@fusion-plugin-examples/*` packages so fresh-worktree test runs no longer fail with opaque `Failed to resolve import` errors. Adds package-level `pretest` hooks for the dashboard and dependency-graph plugin, and improves remediation output to name exact missing/stale artifact paths.
+
 ## 0.30.0
 
 ### Minor Changes
