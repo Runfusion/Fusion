@@ -894,9 +894,10 @@ export class Scheduler {
           );
           if (taskScope.length > 0) {
             const activeScopeEntries = Array.from(activeScopes.entries()).sort(([aId], [bId]) => aId.localeCompare(bId));
-            const currentBlockerScope = task.blockedBy ? activeScopes.get(task.blockedBy) : undefined;
+            const overlapBlockerId = task.overlapBlockedBy || task.blockedBy;
+            const currentBlockerScope = overlapBlockerId ? activeScopes.get(overlapBlockerId) : undefined;
             const hasValidCurrentBlocker =
-              Boolean(task.blockedBy)
+              Boolean(overlapBlockerId)
               && Boolean(currentBlockerScope)
               && this.pathsOverlap(taskScope, currentBlockerScope!);
 
@@ -907,21 +908,35 @@ export class Scheduler {
              * - idempotent writes only: update DB only when blockedBy/status must change
              */
             const overlappingTaskId = hasValidCurrentBlocker
-              ? task.blockedBy
+              ? overlapBlockerId
               : activeScopeEntries.find(([, ipScope]) => this.pathsOverlap(taskScope, ipScope))?.[0] ?? null;
 
             if (overlappingTaskId) {
-              // Keep blockedBy tied to explicit unresolved dependencies when a task has
-              // dependency edges; avoid repointing dependency-unblocked tasks to unrelated
-              // overlap ids (FN-3924). For dependency-free tasks, blockedBy may reference
-              // the active overlap blocker.
-              const targetBlockedBy = task.dependencies.length > 0 ? null : overlappingTaskId;
-              if (task.status !== "queued" || task.blockedBy !== targetBlockedBy) {
-                await this.store.updateTask(task.id, { status: "queued", blockedBy: targetBlockedBy });
+              const unresolvedDeps = task.dependencies.filter((depId) => {
+                const dep = tasks.find((t) => t.id === depId);
+                return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+              });
+              const targetBlockedBy = task.dependencies.length > 0
+                ? (unresolvedDeps[0] ?? null)
+                : overlappingTaskId;
+              if (
+                task.status !== "queued"
+                || task.blockedBy !== targetBlockedBy
+                || task.overlapBlockedBy !== overlappingTaskId
+              ) {
+                await this.store.updateTask(task.id, {
+                  status: "queued",
+                  blockedBy: targetBlockedBy,
+                  overlapBlockedBy: overlappingTaskId,
+                });
               }
               await this.rollbackRunningAgentsForQueuedTodoTask(task.id);
               await this.logDispatchQueuedReason(task.id, `queued — file scope overlap with ${overlappingTaskId}`);
               continue;
+            }
+
+            if (task.overlapBlockedBy) {
+              await this.store.updateTask(task.id, { overlapBlockedBy: null });
             }
           }
         }
