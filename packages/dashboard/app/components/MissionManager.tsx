@@ -2784,6 +2784,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
                               {expandedSlices.has(slice.id) && (
                                 <div className="mission-slice__body">
+                                  {slice.verification?.trim() && (
+                                    <p className="mission-feature__criteria">
+                                      <strong>Verification:</strong> {slice.verification}
+                                    </p>
+                                  )}
+
                                   {/* Create slice form */}
                                   {(isCreatingSlice && selectedMilestoneIdForNewSlice === milestone.id && !editingSliceId) && (
                                     <div className="mission-form-card">
