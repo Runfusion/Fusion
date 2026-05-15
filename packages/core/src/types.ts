@@ -1556,16 +1556,21 @@ export interface Task {
   /** ISO-8601 timestamp of when the task last entered its current column.
    *  Used to sort cards within a column so that recently-moved cards appear at the top. */
   columnMovedAt?: string;
-  /** ISO-8601 wall-clock timestamp when the task first entered `in-progress`.
-   *  Set on first transition into in-progress and never overwritten on retry,
-   *  so cards in in-progress / in-review / done can show end-to-end runtime
-   *  rather than just instrumented (`[timing]`) execution slices. Cleared
-   *  alongside `executionCompletedAt` when a task is reopened from
-   *  done/in-review back to todo/triage so a fresh run gets a fresh timer. */
+  /** ISO-8601 wall-clock timestamp for the first-ever transition into `in-progress`.
+   *  Immutable once set: never cleared or overwritten across retries, reopens,
+   *  recovery bounces, or user-initiated moves. */
+  firstExecutionAt?: string;
+  /** Accumulated milliseconds spent in `in-progress` across all attempts.
+   *  Incremented whenever the task leaves `in-progress`; never decremented and
+   *  never cleared by reopen flows. */
+  cumulativeActiveMs?: number;
+  /** ISO-8601 wall-clock timestamp for the current execution attempt.
+   *  Set when entering `in-progress`; may be cleared on reopen to
+   *  todo/triage when resume state is not preserved. */
   executionStartedAt?: string;
-  /** ISO-8601 wall-clock timestamp when the task first entered `done`.
-   *  Set on first transition into done and never overwritten. Cleared
-   *  alongside `executionStartedAt` on reopen-for-retry. */
+  /** ISO-8601 wall-clock timestamp when the task first reached `done`.
+   *  Set once on first transition to `done`; may be cleared on reopen to
+   *  todo/triage when resume state is not preserved. */
   executionCompletedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -3138,9 +3143,13 @@ export interface ArchivedTaskEntry {
   createdAt: string;
   updatedAt: string;
   columnMovedAt?: string;
-  /** Wall-clock timestamps for end-to-end runtime — preserved through archive
-   *  so unarchived tasks still show their original execution duration. */
+  /** Immutable first-ever dispatch timestamp into `in-progress`. */
+  firstExecutionAt?: string;
+  /** Accumulated active runtime spent in `in-progress` across attempts. */
+  cumulativeActiveMs?: number;
+  /** Current-attempt execution anchor; may be cleared on reopen. */
   executionStartedAt?: string;
+  /** First-time completion anchor; may be cleared on reopen. */
   executionCompletedAt?: string;
   /** Timestamp when the task was archived to the log */
   archivedAt: string;
