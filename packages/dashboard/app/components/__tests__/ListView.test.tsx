@@ -2417,6 +2417,17 @@ describe("ListView - Bulk Selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    ensureMatchMedia();
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
   });
 
   const createMockTask = (overrides: Partial<Task> = {}): Task => ({
@@ -2587,6 +2598,67 @@ describe("ListView - Bulk Selection", () => {
 
     const applyButton = screen.getByText("Apply");
     expect(applyButton).toBeDisabled();
+  });
+
+  it("shows mobile bulk action buttons and runs delete handler path", async () => {
+    const user = userEvent.setup();
+    const matchMediaSpy = mockMobileViewport();
+    const tasks = [createMockTask({ id: "FN-001" })];
+    const onDeleteTask = vi.fn(async () => createMockTask());
+    mockConfirm.mockResolvedValueOnce(true);
+
+    renderListView({ tasks, onDeleteTask });
+    enterBulkEditMode();
+    await user.click(screen.getByLabelText("Select FN-001"));
+
+    expect(screen.getByRole("button", { name: /^pause selected$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^unpause selected$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^archive selected$/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001");
+    });
+
+    matchMediaSpy.mockRestore();
+  });
+
+  it("shows mobile model toolbar and keeps apply disabled until a change is selected", async () => {
+    const user = userEvent.setup();
+    const matchMediaSpy = mockMobileViewport();
+    const availableModels = [
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+    ];
+    const tasks = [createMockTask({ id: "FN-001" })];
+
+    renderListView({ tasks, availableModels });
+    enterBulkEditMode();
+    await user.click(screen.getByLabelText("Select FN-001"));
+
+    expect(screen.getByText("Bulk Edit Models & Node:")).toBeInTheDocument();
+    const applyButton = screen.getByRole("button", { name: "Apply" });
+    expect(applyButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Node Override"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+
+    matchMediaSpy.mockRestore();
+  });
+
+  it("hides mobile bulk edit toolbars when bulk edit mode is turned off", async () => {
+    const user = userEvent.setup();
+    const matchMediaSpy = mockMobileViewport();
+    const tasks = [createMockTask({ id: "FN-001" })];
+
+    renderListView({ tasks });
+    enterBulkEditMode();
+    await user.click(screen.getByLabelText("Select FN-001"));
+    expect(screen.getByRole("button", { name: /^pause selected$/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Done Editing" }));
+    expect(screen.queryByRole("button", { name: /^pause selected$/i })).toBeNull();
+
+    matchMediaSpy.mockRestore();
   });
 
   describe("bulk pause/unpause/archive", () => {
