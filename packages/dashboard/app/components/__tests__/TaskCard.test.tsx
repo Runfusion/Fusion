@@ -1832,6 +1832,119 @@ describe("TaskCard", () => {
     expect(provenanceRule).not.toMatch(/margin-left\s*:\s*auto/);
   });
 
+  describe("FN-4607 TaskCard GitHub badge right-alignment", () => {
+    it("keeps source provenance and tracking chip grouped in footer order", () => {
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "todo",
+            sourceType: "github_import",
+            sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42" },
+            githubTracking: {
+              issue: {
+                owner: "other",
+                repo: "tracking",
+                number: 99,
+                url: "https://github.com/other/tracking/issues/99",
+                createdAt: "2026-05-12T00:00:00.000Z",
+              },
+            },
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+        />,
+      );
+
+      const footerRow = container.querySelector(".card-footer-row");
+      const sourceBadge = container.querySelector(".card-footer-row > .card-source-provenance");
+      const trackingChip = container.querySelector(".card-footer-row > .card-github-tracking-chip");
+      expect(footerRow).not.toBeNull();
+      expect(sourceBadge).not.toBeNull();
+      expect(trackingChip).not.toBeNull();
+      expect((sourceBadge as Element).nextElementSibling).toBe(trackingChip);
+
+      const css = loadAllAppCssBaseOnly();
+      expect(css).toMatch(/\.card-footer-row\s*>\s*\.card-source-provenance:first-of-type\s*\{[^}]*margin-left:\s*auto;[^}]*\}/);
+      expect(css).toMatch(/\.card-footer-row\s*>\s*\.card-source-provenance\s*\+\s*\.card-github-tracking-chip:first-of-type\s*\{[^}]*margin-left:\s*0;[^}]*\}/);
+    });
+
+    it("applies right-alignment rule when only tracking chip is rendered", () => {
+      const css = loadAllAppCssBaseOnly();
+      expect(css).toMatch(/\.card-footer-row\s*>\s*\.card-github-tracking-chip:first-of-type\s*\{[^}]*margin-left:\s*auto;[^}]*\}/);
+
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "todo",
+            sourceType: "dashboard_ui",
+            githubTracking: {
+              issue: {
+                owner: "owner",
+                repo: "repo",
+                number: 42,
+                url: "https://github.com/owner/repo/issues/42",
+                createdAt: "2026-05-12T00:00:00.000Z",
+              },
+            },
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+        />,
+      );
+
+      const footerRow = container.querySelector(".card-footer-row");
+      const trackingChip = container.querySelector(".card-footer-row > .card-github-tracking-chip");
+      expect(footerRow).not.toBeNull();
+      expect(trackingChip).not.toBeNull();
+      expect(container.querySelector(".card-footer-row > .card-source-provenance")).toBeNull();
+    });
+
+    it("keeps github badges before retry and time chips", () => {
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "in-review",
+            sourceType: "github_import",
+            sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42" },
+            retrySummary: { total: 3 } as any,
+            githubTracking: {
+              issue: {
+                owner: "other",
+                repo: "tracking",
+                number: 99,
+                url: "https://github.com/other/tracking/issues/99",
+                createdAt: "2026-05-12T00:00:00.000Z",
+              },
+            },
+            executionStartedAt: "2026-04-25T12:00:00.000Z",
+            updatedAt: "2026-04-25T12:12:00.000Z",
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onOpenDetailWithTab={vi.fn()}
+        />,
+      );
+
+      const footerRow = container.querySelector(".card-footer-row");
+      expect(footerRow).not.toBeNull();
+
+      const orderedSelectors = [
+        ".card-source-provenance",
+        ".card-github-tracking-chip",
+        ".card-retry-badge",
+        ".card-time-indicator",
+      ];
+      const orderedNodes = orderedSelectors.map((selector) => footerRow?.querySelector(selector));
+      orderedNodes.forEach((node) => expect(node).not.toBeNull());
+
+      const elementChildren = Array.from((footerRow as Element).children);
+      const orderedIndexes = orderedNodes.map((node) => elementChildren.indexOf(node as Element));
+      expect(orderedIndexes[0]).toBeLessThan(orderedIndexes[1]);
+      expect(orderedIndexes[1]).toBeLessThan(orderedIndexes[2]);
+      expect(orderedIndexes[2]).toBeLessThan(orderedIndexes[3]);
+    });
+  });
+
   it("does not render a GitHub tracking link when githubTracking is absent", () => {
     render(
       <TaskCard
