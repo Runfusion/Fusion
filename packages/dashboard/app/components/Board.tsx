@@ -76,6 +76,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const archivedLoadedRef = useRef(false);
   const [workflowStepNameLookup, setWorkflowStepNameLookup] = useState<ReadonlyMap<string, string>>(EMPTY_WORKFLOW_STEP_NAME_LOOKUP);
+  const boardRef = useRef<HTMLElement | null>(null);
   const blockerFanoutMap = useBlockerFanout(tasks, {
     staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
   });
@@ -163,6 +164,76 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
   // We keep the FN-001 baseline (`scroll-snap-type: x proximity` +
   // `overflow-anchor: none`) and only stabilize via reflow + scroll offset
   // normalization; do NOT reintroduce `scroll-snap-type: x mandatory`.
+  useEffect(() => {
+    if (!window.matchMedia("(max-width: 768px)").matches) {
+      return;
+    }
+
+    let rafId: number | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const runStabilization = () => {
+      const boardEl = boardRef.current;
+      if (!boardEl) return;
+      void boardEl.offsetWidth;
+      boardEl.scrollLeft = 0;
+    };
+
+    const scheduleStabilization = () => {
+      if (typeof window.requestAnimationFrame === "function") {
+        if (rafId !== null) {
+          window.cancelAnimationFrame(rafId);
+        }
+        rafId = window.requestAnimationFrame(() => {
+          rafId = null;
+          runStabilization();
+        });
+        return;
+      }
+
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        runStabilization();
+      }, 0);
+    };
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      const viewportScale = window.visualViewport?.scale ?? 1;
+      if (event.persisted || viewportScale > 1.0001) {
+        scheduleStabilization();
+      }
+    };
+
+    scheduleStabilization();
+    window.addEventListener("pageshow", handlePageShow);
+
+    const visualViewport = window.visualViewport;
+    let handleViewportResize: (() => void) | null = null;
+    if (visualViewport) {
+      handleViewportResize = () => {
+        scheduleStabilization();
+        visualViewport.removeEventListener("resize", handleViewportResize!);
+        handleViewportResize = null;
+      };
+      visualViewport.addEventListener("resize", handleViewportResize);
+    }
+
+    return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+      if (handleViewportResize) {
+        visualViewport?.removeEventListener("resize", handleViewportResize);
+      }
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, []);
 
   // FN-4380: GitHub badge state comes from persisted task fields (`task.prInfo`,
   // `task.issueInfo`, `task.githubTracking.issue`) and live WebSocket `badge:updated`
@@ -170,7 +241,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
 
   return (
     <>
-      <main className="board" id="board">
+      <main className="board" id="board" ref={boardRef}>
         {COLUMNS.map((col) => (
           <Column
             key={col}
