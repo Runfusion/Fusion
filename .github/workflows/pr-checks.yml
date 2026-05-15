@@ -55,12 +55,12 @@ jobs:
         run: pnpm build
 
   test-shards:
-    name: Test shard ${{ matrix.shard }}/3
+    name: Test shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout
@@ -70,4 +70,4 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Test (deterministic shard)
-        run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3
+        run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4
