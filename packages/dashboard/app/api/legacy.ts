@@ -6459,6 +6459,7 @@ export interface Milestone {
   orderIndex: number;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
   dependencies: string[];
+  acceptanceCriteria?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -6587,7 +6588,7 @@ export function fetchMissionsHealth(projectId?: string): Promise<Record<string, 
 /** Add milestone to mission */
 export function createMilestone(
   missionId: string,
-  input: { title: string; description?: string; dependencies?: string[] },
+  input: { title: string; description?: string; acceptanceCriteria?: string; dependencies?: string[] },
   projectId?: string
 ): Promise<Milestone> {
   return api<Milestone>(withProjectId(`/missions/${encodeURIComponent(missionId)}/milestones`, projectId), {
