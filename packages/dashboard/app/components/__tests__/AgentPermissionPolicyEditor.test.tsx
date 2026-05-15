@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import "../../styles.css";
 import { AgentPermissionPolicyEditor } from "../AgentPermissionPolicyEditor";
 import {
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
@@ -150,5 +151,34 @@ describe("AgentPermissionPolicyEditor", () => {
     const details = container.querySelector(".agent-policy-exempt");
     expect(details).toBeTruthy();
     expect(details?.querySelector("input, select, button")).toBeNull();
+  });
+
+  it("applies space-xl indentation to policy bullet lists", () => {
+    const { container } = render(
+      <AgentPermissionPolicyEditor
+        mode="project-default"
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+
+    const examplesList = container.querySelector(".agent-policy-examples");
+    const exemptList = container.querySelector(".agent-policy-exempt-list");
+    expect(examplesList).toBeTruthy();
+    expect(exemptList).toBeTruthy();
+
+    const spaceXl = getComputedStyle(document.documentElement).getPropertyValue("--space-xl").trim();
+    expect(spaceXl).not.toBe("");
+
+    if (!examplesList || !exemptList) {
+      return;
+    }
+
+    const examplesPaddingLeft = getComputedStyle(examplesList).paddingLeft;
+    const exemptPaddingLeft = getComputedStyle(exemptList).paddingLeft;
+    const expectedPaddingLeft = examplesPaddingLeft === "var(--space-xl)" ? "var(--space-xl)" : spaceXl;
+
+    expect(examplesPaddingLeft).toBe(expectedPaddingLeft);
+    expect(exemptPaddingLeft).toBe(expectedPaddingLeft);
   });
 });
