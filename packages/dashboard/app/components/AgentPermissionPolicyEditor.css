@@ -42,7 +42,7 @@
 .agent-policy-examples,
 .agent-policy-exempt-list {
   margin: 0;
-  padding-left: var(--space-lg);
+  padding-left: var(--space-xl);
   display: grid;
   gap: var(--space-xs);
 }
@@ -78,6 +78,6 @@
 
   .agent-policy-examples,
   .agent-policy-exempt-list {
-    padding-left: var(--space-md);
+    padding-left: var(--space-lg);
   }
 }
