@@ -70,9 +70,11 @@ export function __test_clearDiffStatsCache(): void {
  * Fetches diff stats for a task's Changes tab.
  *
  * For active worktree-backed tasks, this keeps the TaskCard count aligned with
- * the Changes tab. For done tasks, it always uses `/api/tasks/:id/diff`, whose
- * server-side aggregation is the canonical source (including multi-commit
- * lineage unions), instead of trusting `mergeDetails.filesChanged`.
+ * the Changes tab. For done tasks, this hook's `stats` is the authoritative
+ * source from `/api/tasks/:id/diff` (including multi-commit lineage unions).
+ * Per FN-4527, consumers must not fall back to `task.mergeDetails.filesChanged`
+ * once `loading` is false and `stats` is null: stored mergeDetails counts can
+ * be stale after post-merge rebase-and-push flows (see FN-4526).
  *
  * @param taskId - Task identifier
  * @param column - Current task column
