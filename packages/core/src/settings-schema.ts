@@ -355,6 +355,14 @@ export const DEFAULT_PROJECT_SETTINGS = {
       requestTimeoutMs: 30000,
     },
   },
+  sandbox: {
+    backend: "native",
+    policy: {
+      allowNetwork: true,
+      allowedPaths: [],
+    },
+    failureMode: "fail-hard",
+  },
   evalSettings: {
     enabled: false,
     intervalMs: 86_400_000,
