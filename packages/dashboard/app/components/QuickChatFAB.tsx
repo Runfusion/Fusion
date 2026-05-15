@@ -28,6 +28,7 @@ import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useAppSettings } from "../hooks/useAppSettings";
 import { useChatRooms } from "../hooks/useChatRooms";
+import { useChatUnread } from "../hooks/useChatUnread";
 
 interface PendingAttachment {
   file: File;
@@ -991,6 +992,7 @@ export function QuickChatFAB({
   const { experimentalFeatures } = useAppSettings();
   const chatRoomsEnabled = experimentalFeatures?.chatRooms === true;
   const roomsState = useChatRooms(projectId, addToast);
+  const { isUnread, markRead } = useChatUnread(projectId);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const fabRef = useRef<HTMLButtonElement | null>(null);
@@ -1630,6 +1632,54 @@ export function QuickChatFAB({
     }
   }, [messages, streamingText, streamingThinking, isStreaming, isOpen, scrollToBottom]);
 
+  useEffect(() => {
+    if (!activeSession?.id) {
+      return;
+    }
+
+    markRead("direct", activeSession.id, activeSession.lastMessageAt ?? activeSession.updatedAt);
+  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, markRead]);
+
+  useEffect(() => {
+    if (!roomsState.activeRoom?.id) {
+      return;
+    }
+
+    markRead("room", roomsState.activeRoom.id, roomsState.activeRoom.updatedAt);
+  }, [markRead, roomsState.activeRoom?.id, roomsState.activeRoom?.updatedAt]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (roomsState.activeRoom?.id) {
+      markRead("room", roomsState.activeRoom.id, roomsState.activeRoom.updatedAt);
+      return;
+    }
+
+    if (activeSession?.id) {
+      markRead("direct", activeSession.id, activeSession.lastMessageAt ?? activeSession.updatedAt);
+    }
+  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, isOpen, markRead, roomsState.activeRoom?.id, roomsState.activeRoom?.updatedAt]);
+
+  useEffect(() => {
+    if (isStreaming) {
+      return;
+    }
+
+    if (roomsState.activeRoom?.id && roomsState.messages.length > 0) {
+      const latestRoomMessage = roomsState.messages[roomsState.messages.length - 1];
+      markRead("room", roomsState.activeRoom.id, latestRoomMessage?.createdAt ?? roomsState.activeRoom.updatedAt);
+      return;
+    }
+
+    if (activeSession?.id && messages.length > 0) {
+      const latestMessage = messages[messages.length - 1];
+      markRead("direct", activeSession.id, latestMessage?.createdAt ?? activeSession.lastMessageAt ?? activeSession.updatedAt);
+    }
+  }, [activeSession?.id, activeSession?.lastMessageAt, activeSession?.updatedAt, isStreaming, markRead, messages, roomsState.activeRoom?.id, roomsState.activeRoom?.updatedAt, roomsState.messages]);
+
   const sessionOptions = useMemo(() => {
     const agentNameById = new Map(agents.map((agent) => [agent.id, agent.name?.trim() || agent.id]));
     const modelNameByKey = new Map(
@@ -1729,6 +1779,7 @@ export function QuickChatFAB({
       return;
     }
 
+    markRead("direct", selectedSession.id, selectedSession.lastMessageAt ?? selectedSession.updatedAt);
     hasAppliedInitialSessionRef.current = true;
 
     if (selectedSession.modelProvider && selectedSession.modelId) {
@@ -1741,12 +1792,14 @@ export function QuickChatFAB({
 
     void selectSession(selectedSession);
     setSessionMenuOpen(false);
-  }, [selectSession, sessions]);
+  }, [markRead, selectSession, sessions]);
 
   const handleRoomSwitch = useCallback((roomId: string) => {
+    const selectedRoom = roomsState.rooms.find((room) => room.id === roomId);
+    markRead("room", roomId, selectedRoom?.updatedAt);
     roomsState.selectRoom(roomId);
     setSessionMenuOpen(false);
-  }, [roomsState]);
+  }, [markRead, roomsState]);
 
   const handleCreateFreshSession = useCallback(async () => {
     if (sessionsLoading) return;
@@ -2498,33 +2551,56 @@ export function QuickChatFAB({
                   {showRoomGroups && (
                     <>
                       <div className="quick-chat-session-dropdown-group-label">Rooms</div>
-                      {roomOptions.map((room) => (
+                      {roomOptions.map((room) => {
+                        const isActiveRoom = roomsState.activeRoom?.id === room.id;
+                        const showUnreadDot = !isActiveRoom && isUnread("room", room.id, room.updatedAt);
+                        return (
                         <button
                           key={room.id}
                           type="button"
                           role="menuitem"
                           data-testid={`quick-chat-session-option-room-${room.slug}`}
-                          className={`quick-chat-session-option${roomsState.activeRoom?.id === room.id ? " quick-chat-session-option--active" : ""}`}
+                          className={`quick-chat-session-option${isActiveRoom ? " quick-chat-session-option--active" : ""}`}
                           onClick={() => handleRoomSwitch(room.id)}
                         >
-                          #{room.name}
+                          <span>#{room.name}</span>
+                          {showUnreadDot ? (
+                            <span
+                              className="chat-unread-dot quick-chat-session-unread-dot"
+                              data-testid={`quick-chat-unread-dot-${room.id}`}
+                              aria-label="Unread messages"
+                            />
+                          ) : null}
                         </button>
-                      ))}
+                        );
+                      })}
                       <div className="quick-chat-session-dropdown-group-label">Sessions</div>
                     </>
                   )}
-                  {sessionOptions.map((sessionOption) => (
+                  {sessionOptions.map((sessionOption) => {
+                    const isActiveSession = roomsState.activeRoom === null && activeSession?.id === sessionOption.id;
+                    const session = sessions.find((item) => item.id === sessionOption.id);
+                    const showUnreadDot = !isActiveSession && isUnread("direct", sessionOption.id, session?.lastMessageAt ?? session?.updatedAt);
+                    return (
                     <button
                       key={sessionOption.id}
                       type="button"
                       role="menuitem"
                       data-testid={`quick-chat-session-option-${sessionOption.id}`}
-                      className={`quick-chat-session-option${roomsState.activeRoom === null && activeSession?.id === sessionOption.id ? " quick-chat-session-option--active" : ""}`}
+                      className={`quick-chat-session-option${isActiveSession ? " quick-chat-session-option--active" : ""}`}
                       onClick={() => handleSessionSwitch(sessionOption.id)}
                     >
-                      {sessionOption.label}
+                      <span>{sessionOption.label}</span>
+                      {showUnreadDot ? (
+                        <span
+                          className="chat-unread-dot quick-chat-session-unread-dot"
+                          data-testid={`quick-chat-unread-dot-${sessionOption.id}`}
+                          aria-label="Unread messages"
+                        />
+                      ) : null}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
