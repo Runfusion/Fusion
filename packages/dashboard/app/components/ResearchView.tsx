@@ -227,9 +227,11 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
           <h2 className="research-view__title">Research</h2>
           <p className="research-view__subtitle">Cited search and synthesis runs: gather sources, fetch content, and synthesize findings.</p>
         </div>
-        <button className="btn" type="button" onClick={() => void refresh()}>
-          Refresh
-        </button>
+        <div className="research-view__header-actions">
+          <button className="btn" type="button" onClick={() => void refresh()}>
+            Refresh
+          </button>
+        </div>
       </header>
 
       {setupState ? (
@@ -252,72 +254,74 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
       <>
       <div className="research-view__layout">
         <aside className="research-view__sidebar card">
-          <div className="research-view__form">
-            <div className="form-group">
-              <label htmlFor="research-query">Query</label>
-              <textarea id="research-query" className="input research-view__textarea" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <div className="research-view__sidebar-content">
+            <div className="research-view__form">
+              <div className="form-group">
+                <label htmlFor="research-query">Query</label>
+                <textarea id="research-query" className="input research-view__textarea" value={query} onChange={(event) => setQuery(event.target.value)} />
+              </div>
+              <div className="form-group">
+                <label>Providers</label>
+                <div className="research-view__providers">
+                  {providerOptions.map((provider) => {
+                    const providerEnabled = isProviderEnabled(provider);
+                    const providerLocked = provider === "web-search";
+                    return (
+                      <label key={provider} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={providerLocked || selectedProviders.includes(provider)}
+                          disabled={providerLocked || !providerEnabled}
+                          onChange={() => {
+                            if (providerLocked || !providerEnabled) {
+                              return;
+                            }
+                            setSelectedProviders((current) =>
+                              current.includes(provider) ? current.filter((entry) => entry !== provider) : [...current, provider],
+                            );
+                          }}
+                        />
+                        <span>
+                          {PROVIDER_LABELS[provider] ?? provider}
+                          {providerLocked ? <span className="research-view__provider-lock">Always on</span> : null}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <button className="btn btn-primary" type="button" disabled={!query.trim() || submitting} onClick={() => void handleCreateRun()}>
+                {submitting ? <Loader2 className="animate-spin" size={14} /> : null}
+                Create Run
+              </button>
             </div>
-            <div className="form-group">
-              <label>Providers</label>
-              <div className="research-view__providers">
-                {providerOptions.map((provider) => {
-                  const providerEnabled = isProviderEnabled(provider);
-                  const providerLocked = provider === "web-search";
-                  return (
-                    <label key={provider} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={providerLocked || selectedProviders.includes(provider)}
-                        disabled={providerLocked || !providerEnabled}
-                        onChange={() => {
-                          if (providerLocked || !providerEnabled) {
-                            return;
-                          }
-                          setSelectedProviders((current) =>
-                            current.includes(provider) ? current.filter((entry) => entry !== provider) : [...current, provider],
-                          );
-                        }}
-                      />
-                      <span>
-                        {PROVIDER_LABELS[provider] ?? provider}
-                        {providerLocked ? <span className="research-view__provider-lock">Always on</span> : null}
-                      </span>
-                    </label>
-                  );
-                })}
+
+            <div className="research-view__history-header form-group">
+              <label htmlFor="research-run-search">Search</label>
+              <div className="research-view__history-search-row">
+                <Search size={14} />
+                <input
+                  id="research-run-search"
+                  className="input"
+                  placeholder="Search runs"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
               </div>
             </div>
-            <button className="btn btn-primary" type="button" disabled={!query.trim() || submitting} onClick={() => void handleCreateRun()}>
-              {submitting ? <Loader2 className="animate-spin" size={14} /> : null}
-              Create Run
-            </button>
-          </div>
-
-          <div className="research-view__history-header form-group">
-            <label htmlFor="research-run-search">Search</label>
-            <div className="research-view__history-search-row">
-              <Search size={14} />
-              <input
-                id="research-run-search"
-                className="input"
-                placeholder="Search runs"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-              />
+            <div className="research-view__history" data-testid="research-state-running">
+              {runs.map((run) => (
+                <button
+                  key={run.id}
+                  type="button"
+                  className={`research-view__history-item card${selectedRunId === run.id ? " research-view__history-item--active" : ""}`}
+                  onClick={() => setSelectedRunId(run.id)}
+                >
+                  <span className="card-id">{run.id}</span>
+                  <span>{run.title}</span>
+                </button>
+              ))}
             </div>
-          </div>
-          <div className="research-view__history" data-testid="research-state-running">
-            {runs.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                className={`research-view__history-item card${selectedRunId === run.id ? " research-view__history-item--active" : ""}`}
-                onClick={() => setSelectedRunId(run.id)}
-              >
-                <span className="card-id">{run.id}</span>
-                <span>{run.title}</span>
-              </button>
-            ))}
           </div>
         </aside>
 
