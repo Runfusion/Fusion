@@ -347,16 +347,18 @@ describe("Chat Room API Routes", () => {
     };
 
     const { createServer } = await import("../server.js");
+    const scopedEngine = {
+      getTaskStore: () => scopedStore,
+      getMessageStore: () => undefined,
+      getChatStore: () => scopedChatStore,
+    };
     const appWithScopedEngine = createServer(store as any, {
       chatStore,
       chatManager: defaultChatManager as any,
       engineManager: {
         getEngine: (projectId: string) => {
           if (projectId !== "proj-scope") return undefined;
-          return {
-            getTaskStore: () => scopedStore,
-            getMessageStore: () => undefined,
-          };
+          return scopedEngine;
         },
         ensureEngine: async () => undefined,
       } as any,
@@ -388,6 +390,17 @@ describe("Chat Room API Routes", () => {
     const scopedMessages = scopedChatStore.getRoomMessages(room.id);
     expect(scopedMessages.some((message) => message.role === "assistant" && message.senderAgentId === scopedAgent.id)).toBe(true);
     expect(chatStore.getRoomMessages(room.id)).toHaveLength(0);
+
+    const { resolveProjectChatContext } = await import("../chat-project-services.js");
+    const resolved = await resolveProjectChatContext({
+      projectId: "proj-scope",
+      defaultStore: store as any,
+      defaultChatStore: chatStore,
+      engineManager: {
+        getEngine: () => scopedEngine,
+      } as any,
+    });
+    expect(resolved.chatStore).toBe(scopedChatStore);
 
     responderSpy.mockRestore();
     scopedDb.close();

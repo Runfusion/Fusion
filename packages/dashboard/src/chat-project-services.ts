@@ -11,10 +11,15 @@ function cacheKeyForStore(store: TaskStore): string {
 
 export function getOrCreateScopedChatStore(store: TaskStore, fallbackChatStore?: ChatStore): ChatStore {
   const key = cacheKeyForStore(store);
+  if (fallbackChatStore) {
+    scopedChatStoreCache.set(key, fallbackChatStore);
+    return fallbackChatStore;
+  }
+
   const cached = scopedChatStoreCache.get(key);
   if (cached) return cached;
 
-  const chatStore = fallbackChatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
+  const chatStore = new ChatStore(store.getFusionDir(), store.getDatabase());
   scopedChatStoreCache.set(key, chatStore);
   return chatStore;
 }
@@ -36,9 +41,10 @@ export async function resolveProjectChatContext(options: {
   const engine = engineManager?.getEngine(projectId);
   try {
     const scopedStore = engine?.getTaskStore() ?? await getOrCreateProjectStore(projectId);
+    const engineChatStore = engine?.getChatStore?.();
     return {
       store: scopedStore,
-      chatStore: getOrCreateScopedChatStore(scopedStore),
+      chatStore: getOrCreateScopedChatStore(scopedStore, engineChatStore),
     };
   } catch {
     return {

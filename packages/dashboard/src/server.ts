@@ -715,7 +715,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       if (engineManager) {
         const engine = engineManager.getEngine(projectId);
         scopedStore = engine?.getTaskStore() ?? await getOrCreateProjectStore(projectId);
-        scopedChatStore = getOrCreateScopedChatStore(scopedStore);
+        scopedChatStore = getOrCreateScopedChatStore(scopedStore, engine?.getChatStore?.());
         // Use the engine's stores if available
         agentStore = engine?.getAgentStore();
         messageStore = engine?.getMessageStore();
