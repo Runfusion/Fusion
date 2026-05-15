@@ -3,7 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileEdit, Eye, ListOrdered, WrapText, ChevronDown, ChevronUp } from "lucide-react";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, type Extension } from "@codemirror/state";
+import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { resolveCodeMirrorLanguage } from "../utils/codemirror-language";
 
@@ -25,6 +26,10 @@ function isMarkdownFile(filePath?: string): boolean {
 
 function isDarkTheme(): boolean {
   return document.documentElement.dataset.theme !== "light";
+}
+
+function buildThemeExtension(isDark: boolean): Extension[] {
+  return isDark ? [oneDark] : [syntaxHighlighting(defaultHighlightStyle)];
 }
 
 export function FileEditor({
@@ -53,7 +58,7 @@ export function FileEditor({
 
   const isMarkdown = isMarkdownFile(filePath);
   const toolbarActionsId = useId();
-  const darkThemeActive = isDarkTheme();
+  const [darkThemeActive, setDarkThemeActive] = useState(() => isDarkTheme());
 
   const effectiveShowPreview = isMarkdown && (readOnly ? true : showPreview);
   const shouldRenderLineNumbers = showLineNumbers && !readOnly && !effectiveShowPreview;
@@ -84,7 +89,7 @@ export function FileEditor({
         wordWrapCompartmentRef.current.of(wordWrap ? EditorView.lineWrapping : []),
         readOnlyCompartmentRef.current.of(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         languageCompartmentRef.current.of(languageExtension ?? []),
-        themeCompartmentRef.current.of(darkThemeActive ? [oneDark] : []),
+        themeCompartmentRef.current.of(buildThemeExtension(darkThemeActive)),
         themeOverlay,
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || syncingFromPropsRef.current) return;
@@ -99,7 +104,28 @@ export function FileEditor({
       editorViewRef.current = null;
       view.destroy();
     };
-  }, [content, darkThemeActive, effectiveShowPreview, languageExtension, readOnly, shouldRenderLineNumbers, wordWrap]);
+  }, [content, effectiveShowPreview, languageExtension, readOnly, shouldRenderLineNumbers, wordWrap]);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setDarkThemeActive(isDarkTheme());
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const view = editorViewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: themeCompartmentRef.current.reconfigure(buildThemeExtension(darkThemeActive)),
+    });
+  }, [darkThemeActive]);
 
   useEffect(() => {
     const view = editorViewRef.current;

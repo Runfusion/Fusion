@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { FileEditor } from "../FileEditor";
@@ -21,13 +21,17 @@ describe("FileEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: /toggle editor options/i }));
   };
 
+  const highlightedTokenSelector = ".cm-line span[class]";
+
   it("renders CodeMirror editor with file-path aria-label", () => {
+    document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="" onChange={vi.fn()} filePath="a.ts" />);
     expect(screen.getByLabelText("Editor for a.ts")).toBeInTheDocument();
     expect(document.querySelector(".cm-editor")).toBeInTheDocument();
   });
 
   it("calls onChange when document changes", () => {
+    document.documentElement.dataset.theme = "dark";
     const onChange = vi.fn();
     render(<FileEditor content="" onChange={onChange} filePath="a.ts" />);
     const view = getEditorView();
@@ -36,16 +40,19 @@ describe("FileEditor", () => {
   });
 
   it("respects readOnly prop", () => {
+    document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="readonly" onChange={vi.fn()} readOnly filePath="a.ts" />);
     expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("false");
   });
 
   it("uses fallback aria-label when filePath missing", () => {
+    document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="x" onChange={vi.fn()} />);
     expect(screen.getByLabelText("File editor")).toBeInTheDocument();
   });
 
   it("markdown preview toggle still works", () => {
+    document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
     fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
     expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
@@ -54,6 +61,7 @@ describe("FileEditor", () => {
   });
 
   it("line-number toggle still flips state and gutter visibility", () => {
+    document.documentElement.dataset.theme = "dark";
     const onToggle = vi.fn();
     const { rerender } = render(
       <FileEditor content="a\nb" onChange={vi.fn()} filePath="a.ts" showLineNumbers={false} onToggleLineNumbers={onToggle} />,
@@ -69,6 +77,7 @@ describe("FileEditor", () => {
   });
 
   it("word-wrap toggle still works", () => {
+    document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="long long content" onChange={vi.fn()} filePath="a.ts" />);
     expandEditorOptions();
     const wrapButton = screen.getByRole("button", { name: /toggle word wrap/i });
@@ -77,6 +86,52 @@ describe("FileEditor", () => {
     expect(wrapButton.classList.contains("btn-primary")).toBe(false);
     fireEvent.click(wrapButton);
     expect(wrapButton.classList.contains("btn-primary")).toBe(true);
+  });
+
+  it("light mode produces highlighted tokens", async () => {
+    document.documentElement.dataset.theme = "light";
+    render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="foo.ts" />);
+
+    await waitFor(() => {
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+    });
+  });
+
+  it("dark mode produces highlighted tokens", async () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="foo.ts" />);
+
+    await waitFor(() => {
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+    });
+  });
+
+  it("theme switch reconfigures without remount", async () => {
+    document.documentElement.dataset.theme = "dark";
+    render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="foo.ts" />);
+
+    const initialContentNode = document.querySelector(".cm-content");
+    const editor = document.querySelector(".cm-editor");
+    const initialEditorClassName = editor?.className;
+    expect(initialContentNode).toBeInTheDocument();
+
+    document.documentElement.dataset.theme = "light";
+
+    await waitFor(() => {
+      expect(document.querySelector(".cm-content")).toBe(initialContentNode);
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+      expect(document.querySelector(".cm-editor")?.className).not.toBe(initialEditorClassName);
+    });
+  });
+
+  it("language is still resolved for json", async () => {
+    document.documentElement.dataset.theme = "light";
+    render(<FileEditor content={"{\"a\":1}"} onChange={vi.fn()} filePath="foo.json" />);
+
+    await waitFor(() => {
+      expect(document.querySelector('.cm-content[data-language="json"]')).toBeInTheDocument();
+      expect(document.querySelector(highlightedTokenSelector)).toBeInTheDocument();
+    });
   });
 
   describe("markdown preview", () => {
