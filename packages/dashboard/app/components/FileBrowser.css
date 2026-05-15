@@ -393,8 +393,12 @@
   }
 
   .file-editor-toolbar-actions {
-    width: 100%;
+    margin-inline-start: auto;
     justify-content: flex-end;
+  }
+
+  .file-editor-toolbar-actions[hidden] {
+    display: none;
   }
 
   .file-editor-toolbar-button {
@@ -707,6 +711,10 @@
   align-items: center;
   gap: var(--space-xs);
   flex-wrap: wrap;
+}
+
+.file-editor-toolbar-actions[hidden] {
+  display: none;
 }
 
 .file-editor-toolbar-button {
