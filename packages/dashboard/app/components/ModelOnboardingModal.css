@@ -1450,7 +1450,15 @@
   color: var(--text-muted);
 }
 
+.auth-provider-actions-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .auth-device-code-panel {
+  width: 100%;
   margin-top: var(--space-sm);
   padding: var(--space-sm);
   border: var(--btn-border-width) solid var(--border);
@@ -1470,8 +1478,8 @@
   border: var(--btn-border-width) solid var(--border);
   background: var(--card);
   color: var(--text);
-  display: inline-flex;
-  align-self: flex-start;
+  display: flex;
+  align-self: stretch;
 }
 
 @media (max-width: 768px) {
