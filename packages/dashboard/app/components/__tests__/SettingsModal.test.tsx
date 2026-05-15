@@ -3929,6 +3929,20 @@ describe("SettingsModal", () => {
       await userEvent.click(await screen.findByRole("button", { name: /^Research$/i }));
     };
 
+    it("renders global research defaults fields with expected default values", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openResearchGlobalSection();
+
+      expect(screen.getByLabelText("Default Max Concurrent Runs")).toHaveValue(3);
+      expect(screen.getByLabelText("Default Max Sources Per Run")).toHaveValue(20);
+      expect(screen.getByLabelText("Default Max Duration (ms)")).toHaveValue(300000);
+      expect(screen.getByLabelText("Request Timeout (ms)")).toHaveValue(30000);
+      expect(screen.getByLabelText("Max Synthesis Rounds")).toHaveValue(2);
+      expect(screen.getByRole("checkbox", { name: /^GitHub$/i })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /^Local Docs$/i })).toBeChecked();
+    });
+
     it("saves global research defaults through updateGlobalSettings only", async () => {
       renderModal();
       await waitForSettingsModalReady();
@@ -3937,12 +3951,26 @@ describe("SettingsModal", () => {
       await userEvent.click(screen.getByText(/Advanced — external search providers/i));
       const providerSelect = await screen.findByLabelText("Search Provider");
       fireEvent.change(providerSelect, { target: { value: "tavily" } });
+      fireEvent.change(screen.getByLabelText("Default Max Concurrent Runs"), { target: { value: "4" } });
+      fireEvent.change(screen.getByLabelText("Default Max Sources Per Run"), { target: { value: "25" } });
+      fireEvent.change(screen.getByLabelText("Default Max Duration (ms)"), { target: { value: "240000" } });
+      fireEvent.change(screen.getByLabelText("Request Timeout (ms)"), { target: { value: "45000" } });
+      fireEvent.change(screen.getByLabelText("Max Synthesis Rounds"), { target: { value: "3" } });
+      await userEvent.click(screen.getByRole("checkbox", { name: /^GitHub$/i }));
+      await userEvent.click(screen.getByRole("checkbox", { name: /^Local Docs$/i }));
       await userEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
         expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
           expect.objectContaining({
-            researchGlobalDefaults: expect.objectContaining({ searchProvider: "tavily" }),
+            researchGlobalDefaults: expect.objectContaining({ searchProvider: "tavily", maxSourcesPerRun: 25 }),
+            researchGlobalMaxConcurrentRuns: 4,
+            researchGlobalMaxSourcesPerRun: 25,
+            researchGlobalDefaultTimeout: 240000,
+            researchGlobalFetchTimeoutMs: 45000,
+            researchGlobalMaxSynthesisRounds: 3,
+            researchGlobalGitHubEnabled: true,
+            researchGlobalLocalDocsEnabled: false,
           }),
         );
       });

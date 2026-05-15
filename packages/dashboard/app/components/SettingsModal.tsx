@@ -4970,23 +4970,129 @@ export function SettingsModal({
               </details>
             </div>
             <div className="form-group">
-              <label htmlFor="research-global-max-sources">Default Max Sources Per Run</label>
-              <input
-                id="research-global-max-sources"
-                className="input"
-                type="number"
-                min={1}
-                value={form.researchGlobalDefaults?.maxSourcesPerRun ?? 20}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    researchGlobalDefaults: {
-                      ...(current.researchGlobalDefaults ?? {}),
-                      maxSourcesPerRun: Number(event.target.value) || 1,
-                    },
-                  }))
-                }
-              />
+              <div className="settings-research-limits-grid">
+                <div className="settings-research-limit-field">
+                  <label htmlFor="research-global-max-concurrent">Default Max Concurrent Runs</label>
+                  <input
+                    id="research-global-max-concurrent"
+                    className="input"
+                    type="number"
+                    min={1}
+                    value={form.researchGlobalMaxConcurrentRuns ?? 3}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalMaxConcurrentRuns: event.target.value === "" ? undefined : Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="settings-research-limit-field">
+                  <label htmlFor="research-global-max-sources">Default Max Sources Per Run</label>
+                  <input
+                    id="research-global-max-sources"
+                    className="input"
+                    type="number"
+                    min={1}
+                    value={form.researchGlobalMaxSourcesPerRun ?? 20}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalMaxSourcesPerRun: event.target.value === "" ? undefined : Number(event.target.value),
+                        researchGlobalDefaults: {
+                          ...(current.researchGlobalDefaults ?? {}),
+                          maxSourcesPerRun: event.target.value === "" ? undefined : Number(event.target.value),
+                        },
+                      }))
+                    }
+                  />
+                </div>
+                <div className="settings-research-limit-field">
+                  <label htmlFor="research-global-default-timeout">Default Max Duration (ms)</label>
+                  <input
+                    id="research-global-default-timeout"
+                    className="input"
+                    type="number"
+                    min={1000}
+                    value={form.researchGlobalDefaultTimeout ?? 300000}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalDefaultTimeout: event.target.value === "" ? undefined : Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="settings-research-limit-field">
+                  <label htmlFor="research-global-fetch-timeout">Request Timeout (ms)</label>
+                  <input
+                    id="research-global-fetch-timeout"
+                    className="input"
+                    type="number"
+                    min={1000}
+                    value={form.researchGlobalFetchTimeoutMs ?? 30000}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalFetchTimeoutMs: event.target.value === "" ? undefined : Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="settings-research-limit-field">
+                  <label htmlFor="research-global-max-synthesis-rounds">Max Synthesis Rounds</label>
+                  <input
+                    id="research-global-max-synthesis-rounds"
+                    className="input"
+                    type="number"
+                    min={1}
+                    value={form.researchGlobalMaxSynthesisRounds ?? 2}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalMaxSynthesisRounds: event.target.value === "" ? undefined : Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Enabled Sources</label>
+              <label htmlFor="research-global-source-webSearch" className="checkbox-label settings-research-source-locked">
+                <input id="research-global-source-webSearch" type="checkbox" checked disabled readOnly />
+                Web Search <span className="settings-muted">Always on</span>
+              </label>
+              <div className="settings-research-source-grid">
+                <label htmlFor="research-global-source-github" className="checkbox-label">
+                  <input
+                    id="research-global-source-github"
+                    type="checkbox"
+                    checked={form.researchGlobalGitHubEnabled ?? false}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalGitHubEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  GitHub
+                </label>
+                <label htmlFor="research-global-source-local-docs" className="checkbox-label">
+                  <input
+                    id="research-global-source-local-docs"
+                    type="checkbox"
+                    checked={form.researchGlobalLocalDocsEnabled ?? true}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        researchGlobalLocalDocsEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  Local Docs
+                </label>
+              </div>
             </div>
             {hasMissingResearchCredential && (
               <div className="settings-empty-state" role="alert">
