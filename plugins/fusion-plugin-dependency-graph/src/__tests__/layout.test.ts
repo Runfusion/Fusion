@@ -138,6 +138,78 @@ describe("computeAutoLayout", () => {
     });
   });
 
+  describe("horizontal orientation with measured heights", () => {
+    it("uses measured heights as the stacking stride for each preceding node", () => {
+      const nodeHeight = 100;
+      const verticalGap = 80;
+      const measuredHeights = new Map<string, number>([
+        ["A", 200],
+        ["B", 300],
+      ]);
+      const positions = computeAutoLayout(graph(["A", "B", "C"]), {
+        orientation: "horizontal",
+        nodeHeight,
+        verticalGap,
+        measuredHeights,
+      });
+
+      const ordered = ["A", "B", "C"].map((id) => ({
+        id,
+        y: positions.get(id)?.y ?? 0,
+        height: measuredHeights.get(id) ?? nodeHeight,
+      }));
+
+      expect(ordered[1].y - ordered[0].y).toBe(ordered[0].height + verticalGap);
+      expect(ordered[2].y - ordered[1].y).toBe(ordered[1].height + verticalGap);
+      expect(ordered[0].y + ordered[0].height + verticalGap).toBe(ordered[1].y);
+      expect(ordered[1].y + ordered[1].height + verticalGap).toBe(ordered[2].y);
+    });
+
+    it("keeps adjacent card gaps exactly equal to verticalGap when all nodes are measured", () => {
+      const nodeHeight = 100;
+      const verticalGap = 64;
+      const measuredHeights = new Map<string, number>([
+        ["A", 180],
+        ["B", 220],
+        ["C", 260],
+      ]);
+      const positions = computeAutoLayout(graph(["A", "B", "C"]), {
+        orientation: "horizontal",
+        nodeHeight,
+        verticalGap,
+        measuredHeights,
+      });
+
+      const ordered = ["A", "B", "C"].map((id) => ({
+        y: positions.get(id)?.y ?? 0,
+        height: measuredHeights.get(id) ?? nodeHeight,
+      }));
+
+      expect(ordered[1].y - (ordered[0].y + ordered[0].height)).toBe(verticalGap);
+      expect(ordered[2].y - (ordered[1].y + ordered[1].height)).toBe(verticalGap);
+    });
+
+    it.each([
+      { nodeHeight: 100, verticalGap: 80 },
+      { nodeHeight: 140, verticalGap: 24 },
+    ])("matches fixed-stride behavior when no measurements exist (%o)", ({ nodeHeight, verticalGap }) => {
+      const graphData = graph(["A", "B", "C"]);
+      const withoutHeights = computeAutoLayout(graphData, {
+        orientation: "horizontal",
+        nodeHeight,
+        verticalGap,
+      });
+      const emptyHeights = computeAutoLayout(graphData, {
+        orientation: "horizontal",
+        nodeHeight,
+        verticalGap,
+        measuredHeights: new Map(),
+      });
+
+      expect(Array.from(withoutHeights.entries())).toEqual(Array.from(emptyHeights.entries()));
+    });
+  });
+
   describe("horizontal orientation", () => {
     it("places linear chain in increasing depth along x", () => {
       const positions = computeAutoLayout(
