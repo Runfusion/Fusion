@@ -7,7 +7,7 @@ export interface LayoutOptions {
   verticalGap?: number;
   orientation?: "vertical" | "horizontal";
   /**
-   * Optional measured per-node heights (in px). Used by vertical layout to avoid
+   * Optional measured per-node heights (in px). Used by both orientations to avoid
    * overlaps; nodes without a measurement fall back to `nodeHeight`.
    */
   measuredHeights?: ReadonlyMap<string, number>;
@@ -99,19 +99,26 @@ export function computeAutoLayout(
     const layer = layers.get(depth) ?? [];
     layer.sort();
     const isHorizontal = settings.orientation === "horizontal";
-    const layerSpan =
-      layer.length * (isHorizontal ? settings.nodeHeight : settings.nodeWidth) +
-      Math.max(0, layer.length - 1) * (isHorizontal ? settings.verticalGap : settings.horizontalGap);
+
+    if (isHorizontal) {
+      const totalHeight =
+        layer.reduce((sum, id) => sum + (settings.measuredHeights?.get(id) ?? settings.nodeHeight), 0) +
+        Math.max(0, layer.length - 1) * settings.verticalGap;
+      const startOffset = -totalHeight / 2;
+      const x = depth * (settings.nodeWidth + settings.horizontalGap);
+      let cursorY = startOffset;
+
+      for (const id of layer) {
+        positions.set(id, { x, y: cursorY });
+        cursorY += (settings.measuredHeights?.get(id) ?? settings.nodeHeight) + settings.verticalGap;
+      }
+      continue;
+    }
+
+    const layerSpan = layer.length * settings.nodeWidth + Math.max(0, layer.length - 1) * settings.horizontalGap;
     const startOffset = -layerSpan / 2;
 
     layer.forEach((id, index) => {
-      if (isHorizontal) {
-        const x = depth * (settings.nodeWidth + settings.horizontalGap);
-        const y = startOffset + index * (settings.nodeHeight + settings.verticalGap);
-        positions.set(id, { x, y });
-        return;
-      }
-
       const x = startOffset + index * (settings.nodeWidth + settings.horizontalGap);
       const y = rowOffsetByDepth.get(depth) ?? depth * (settings.nodeHeight + settings.verticalGap);
       positions.set(id, { x, y });
