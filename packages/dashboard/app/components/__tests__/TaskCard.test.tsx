@@ -484,7 +484,7 @@ describe("TaskCard", () => {
       <TaskCard
         task={makeTask({
           column: "in-review",
-          status: "merging",
+          status: "failed",
           mergeRetries: 3,
           inReviewStall: {
             code: "merge-blocker",
@@ -499,6 +499,27 @@ describe("TaskCard", () => {
 
     expect(screen.getByText("Merge blocked")).toBeDefined();
     expect(screen.queryByText(/\/3/)).toBeNull();
+  });
+
+  it("FN-4570: hides merge-blocker stall badge while merge is active", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "in-review",
+          status: "merging",
+          inReviewStall: {
+            code: "merge-blocker",
+            reason: "Merge blocked by pre-merge check",
+            observedAt: "2026-05-13T00:00:00.000Z",
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("merging")).toBeDefined();
+    expect(screen.queryByText("Merge blocked")).toBeNull();
   });
 
   it.each([
