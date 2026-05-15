@@ -633,6 +633,8 @@ See [docs/missions.md](./docs/missions.md) for the full autopilot reference.
 
 When features are triaged to tasks, the system enriches descriptions with full mission hierarchy context (mission → milestone → slice → feature), giving implementation agents comprehensive context.
 
+Mission planning tools span `fn_mission_create`, `fn_milestone_add` / `fn_milestone_update`, `fn_slice_add` / `fn_slice_activate`, and `fn_feature_add` / `fn_feature_update` / `fn_feature_link_task`. Both `fn_milestone_update` and `fn_feature_update` accept partial patches, so only provided fields are written and omitted fields remain unchanged. See [docs/missions.md#mission-planning-tools-pi-extension](./docs/missions.md#mission-planning-tools-pi-extension) for full parameter tables.
+
 See [docs/missions.md](./docs/missions.md) for the planning context system and interview flow documentation.
 
 ## Workflow Steps
