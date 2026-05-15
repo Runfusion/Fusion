@@ -4095,7 +4095,7 @@ export class SelfHealingManager {
   }
 
   /**
-   * Recover failed `in-review` retries that point at a missing worktree path.
+   * Recover failed `in-review` retries that point at an unusable worktree path.
    *
    * This is a narrow guard for session-start failures thrown by
    * assertValidWorktreeSession() (`Refusing to start coding agent in missing worktree:`,
@@ -4111,7 +4111,7 @@ export class SelfHealingManager {
 
       if (candidates.length === 0) return 0;
 
-      log.warn(`Found ${candidates.length} in-review task(s) failed by missing-worktree session start`);
+      log.warn(`Found ${candidates.length} in-review task(s) failed by unusable-worktree session start`);
 
       let recovered = 0;
       for (const task of candidates) {
@@ -4130,27 +4130,30 @@ export class SelfHealingManager {
             branch: hasMismatchedLiveWorktree ? task.branch ?? null : null,
             sessionFile: null,
           });
+          const failureExcerpt = typeof task.error === "string"
+            ? task.error.slice(0, 200)
+            : "unknown error";
           await this.store.logEntry(
             task.id,
             hasMismatchedLiveWorktree
-              ? `Auto-recovered: stale resume referenced missing worktree (${missingWorktreePath}) while live task worktree is ${staleWorktree} — cleared stale session metadata and requeued to todo`
-              : `Auto-recovered: retry/verification session targeted missing worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo`,
+              ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while live task worktree is ${staleWorktree} — cleared stale session metadata and requeued to todo (failure: ${failureExcerpt})`
+              : `Auto-recovered: retry/verification session targeted unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (failure: ${failureExcerpt})`,
           );
           await this.store.moveTask(task.id, "todo", { preserveProgress: true });
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          log.error(`Failed to recover missing-worktree review failure ${task.id}: ${errorMessage}`);
+          log.error(`Failed to recover unusable-worktree review failure ${task.id}: ${errorMessage}`);
         }
       }
 
       if (recovered > 0) {
-        log.log(`Recovered ${recovered} missing-worktree review failure(s) → todo`);
+        log.log(`Recovered ${recovered} unusable-worktree review failure(s) → todo`);
       }
       return recovered;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error(`Missing-worktree review recovery failed: ${errorMessage}`);
+      log.error(`Unusable-worktree review recovery failed: ${errorMessage}`);
       return 0;
     }
   }

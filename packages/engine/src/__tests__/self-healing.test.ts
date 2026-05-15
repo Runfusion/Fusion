@@ -1760,7 +1760,7 @@ describe("SelfHealingManager", () => {
   });
 
   describe("recoverMissingWorktreeReviewFailures", () => {
-    it("requeues failed in-review tasks with missing-worktree session-start errors", async () => {
+    it("requeues failed in-review tasks with unusable-worktree session-start errors", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
       });
@@ -1792,13 +1792,92 @@ describe("SelfHealingManager", () => {
       });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-3900",
-        expect.stringContaining("missing worktree"),
+        expect.stringContaining("unusable worktree"),
       );
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-3900",
         expect.stringContaining("/tmp/project/.worktrees/fn-3900-stale"),
       );
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-3900",
+        expect.stringContaining("Refusing to start coding agent in missing worktree"),
+      );
       expect(store.moveTask).toHaveBeenCalledWith("FN-3900", "todo", { preserveProgress: true });
+
+      managerWithRecovery.stop();
+    });
+
+    it("requeues incomplete-worktree failures and clears stale worktree metadata", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4559",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          worktree: "/tmp/project/.worktrees/noble-eagle-stale",
+          branch: "fusion/FN-4559",
+          sessionFile: "/tmp/project/.fusion/sessions/FN-4559.json",
+          error: "Refusing to start coding agent in incomplete worktree: /tmp/project/.worktrees/noble-eagle",
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-4559", {
+        status: null,
+        error: null,
+        worktree: "/tmp/project/.worktrees/noble-eagle-stale",
+        branch: "fusion/FN-4559",
+        sessionFile: null,
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4559",
+        expect.stringContaining("Auto-recovered"),
+      );
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4559",
+        expect.stringContaining("incomplete worktree"),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4559", "todo", { preserveProgress: true });
+
+      managerWithRecovery.stop();
+    });
+
+    it("requeues unregistered-worktree failures", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4560",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          worktree: "/tmp/project/.worktrees/fn-4560",
+          branch: "fusion/FN-4560",
+          sessionFile: "/tmp/project/.fusion/sessions/FN-4560.json",
+          error: "Refusing to start coding agent in unregistered git worktree: /tmp/project/.worktrees/fn-4560",
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      expect(result).toBe(1);
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4560",
+        expect.stringContaining("unregistered git worktree"),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4560", "todo", { preserveProgress: true });
 
       managerWithRecovery.stop();
     });
