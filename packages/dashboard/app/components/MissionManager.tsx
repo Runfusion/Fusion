@@ -257,6 +257,7 @@ interface MissionFormData {
 interface MilestoneFormData {
   title: string;
   description: string;
+  acceptanceCriteria: string;
   status: MilestoneStatus;
   dependencies: string[];
 }
@@ -284,6 +285,7 @@ const EMPTY_MISSION_FORM: MissionFormData = {
 const EMPTY_MILESTONE_FORM: MilestoneFormData = {
   title: "",
   description: "",
+  acceptanceCriteria: "",
   status: "planning",
   dependencies: [],
 };
@@ -1370,6 +1372,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     setMilestoneForm({
       title: milestone.title,
       description: milestone.description || "",
+      acceptanceCriteria: milestone.acceptanceCriteria || "",
       status: milestone.status,
       dependencies: milestone.dependencies,
     });
@@ -1393,6 +1396,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         await createMilestone(selectedMission.id, {
           title: milestoneForm.title.trim(),
           description: milestoneForm.description.trim() || undefined,
+          acceptanceCriteria: milestoneForm.acceptanceCriteria.trim() || undefined,
           dependencies: milestoneForm.dependencies,
         }, projectId);
         addToast("Milestone created", "success");
@@ -1400,6 +1404,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         await updateMilestone(editingMilestoneId, {
           title: milestoneForm.title.trim(),
           description: milestoneForm.description.trim() || undefined,
+          acceptanceCriteria: milestoneForm.acceptanceCriteria.trim() || undefined,
           status: milestoneForm.status,
           dependencies: milestoneForm.dependencies,
         }, projectId);
@@ -2458,6 +2463,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
                     {expandedMilestones.has(milestone.id) && (
                       <div className="mission-milestone__body">
+                        {milestone.acceptanceCriteria && (
+                          <p className="mission-feature__criteria">
+                            <strong>Acceptance:</strong> {milestone.acceptanceCriteria}
+                          </p>
+                        )}
+
                         {/* Create milestone form (inline edit) */}
                         {(isCreatingMilestone || editingMilestoneId === milestone.id) && (
                           <div className="mission-form-card">
@@ -2473,6 +2484,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                               placeholder="Description (optional)"
                               value={milestoneForm.description}
                               onChange={(e) => setMilestoneForm({ ...milestoneForm, description: e.target.value })}
+                              rows={2}
+                            />
+                            <textarea
+                              placeholder="Acceptance criteria (optional)"
+                              value={milestoneForm.acceptanceCriteria}
+                              onChange={(e) => setMilestoneForm({ ...milestoneForm, acceptanceCriteria: e.target.value })}
                               rows={2}
                             />
                             <div className="mission-form-card__actions">
@@ -3440,6 +3457,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       placeholder="Description (optional)"
                       value={milestoneForm.description}
                       onChange={(e) => setMilestoneForm({ ...milestoneForm, description: e.target.value })}
+                      rows={2}
+                    />
+                    <textarea
+                      placeholder="Acceptance criteria (optional)"
+                      value={milestoneForm.acceptanceCriteria}
+                      onChange={(e) => setMilestoneForm({ ...milestoneForm, acceptanceCriteria: e.target.value })}
                       rows={2}
                     />
                     <div className="mission-form-card__actions">

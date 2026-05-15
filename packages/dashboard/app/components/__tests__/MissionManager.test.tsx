@@ -125,6 +125,7 @@ const mockMissionDetail = {
       id: "MS-001",
       title: "Database Schema",
       description: "Set up auth tables",
+      acceptanceCriteria: "Schema validated and migration succeeds",
       status: "planning",
       interviewState: "not_started",
       dependencies: [] as string[],
@@ -2694,6 +2695,62 @@ describe("MissionManager", () => {
         expect(screen.getByText("defined")).toBeDefined();
         // Acceptance criteria
         expect(screen.getByText(/Model exists with required fields/)).toBeDefined();
+      });
+    });
+
+    it("shows milestone acceptance criteria and submits milestone acceptanceCriteria updates", async () => {
+      const addToast = vi.fn();
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/missions/health")) {
+          return Promise.resolve(mockApiResponse(mockMissionHealthById));
+        }
+        if (url.includes("/health")) {
+          const missionId = extractMissionId(url) ?? "M-001";
+          return Promise.resolve(mockApiResponse(getMockMissionHealth(missionId)));
+        }
+        if (url.includes("/autopilot")) {
+          return Promise.resolve(mockApiResponse(mockAutopilotStatus));
+        }
+        const validationResponse = getValidationApiMock(url);
+        if (validationResponse !== null) {
+          return Promise.resolve(mockApiResponse(validationResponse));
+        }
+        if (url.includes("/api/missions/M-001/milestones/MS-001") && init?.method === "PATCH") {
+          return Promise.resolve(mockApiResponse({ ...mockMissionDetail.milestones[0], acceptanceCriteria: "Updated milestone acceptance" }));
+        }
+        if (url.includes("/api/missions/") && !url.includes("/milestones") && !url.includes("/status")) {
+          return Promise.resolve(mockApiResponse(mockMissionDetail));
+        }
+        return Promise.resolve(mockApiResponse(mockMissions));
+      });
+      globalThis.fetch = fetchMock;
+
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Schema validated and migration succeeds/)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTitle("Edit milestone"));
+      const acceptanceField = await screen.findByPlaceholderText("Acceptance criteria (optional)");
+      fireEvent.change(acceptanceField, { target: { value: " Updated milestone acceptance " } });
+      fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+      await waitFor(() => {
+        const patchCall = fetchMock.mock.calls.find(
+          (call) =>
+            typeof call[0] === "string" &&
+            call[0].includes("/api/missions/M-001/milestones/MS-001") &&
+            call[1]?.method === "PATCH",
+        );
+        expect(patchCall).toBeDefined();
+        const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+        expect(body.acceptanceCriteria).toBe("Updated milestone acceptance");
       });
     });
 

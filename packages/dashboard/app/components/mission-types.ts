@@ -238,6 +238,7 @@ export interface Milestone {
   dependencies: string[];
   planningNotes?: string;
   verification?: string;
+  acceptanceCriteria?: string;
   createdAt: string;
   updatedAt: string;
   slices: Slice[];
