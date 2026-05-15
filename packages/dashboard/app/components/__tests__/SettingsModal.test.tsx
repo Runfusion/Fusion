@@ -1732,8 +1732,13 @@ describe("SettingsModal", () => {
 
       expect(await within(copilotCard).findByText("ABCD-1234")).toBeInTheDocument();
       expect(within(copilotCard).queryByTestId("auth-login-instructions-github-copilot")).not.toBeInTheDocument();
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(writeText).toHaveBeenCalledWith("ABCD-1234");
+      expect(writeText).toHaveBeenCalledTimes(1);
+
       await userEvent.click(within(copilotCard).getByRole("button", { name: "Copy code" }));
       expect(writeText).toHaveBeenCalledWith("ABCD-1234");
+      expect(writeText).toHaveBeenCalledTimes(2);
 
       await userEvent.click(within(copilotCard).getByRole("button", { name: "Open GitHub" }));
       expect(openSpy).toHaveBeenCalledWith("https://github.com/login/device", "_blank");
