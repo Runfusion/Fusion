@@ -140,41 +140,43 @@ export function FileEditor({
   return (
     <div className="file-editor-container">
       {(isMarkdown || !readOnly) ? (
-        <div className="file-editor-toolbar">
-          {isMarkdown ? (
-            <div className="file-editor-mode-toggle">
-              {!readOnly && (
-                <button className={`btn btn-sm ${!effectiveShowPreview ? "btn-primary" : ""}`} onClick={handleEditClick} disabled={!effectiveShowPreview} aria-label="Edit mode">
-                  <FileEdit size={14} />
-                  Edit
+        <div className={`file-editor-toolbar ${toolbarActionsExpanded ? "file-editor-toolbar--expanded" : ""}`}>
+          <div className="file-editor-toolbar-actions">
+            {isMarkdown ? (
+              <div className="file-editor-mode-toggle">
+                {!readOnly && (
+                  <button className={`btn btn-sm ${!effectiveShowPreview ? "btn-primary" : ""}`} onClick={handleEditClick} disabled={!effectiveShowPreview} aria-label="Edit mode">
+                    <FileEdit size={14} />
+                    Edit
+                  </button>
+                )}
+                <button className={`btn btn-sm ${effectiveShowPreview ? "btn-primary" : ""}`} onClick={handlePreviewClick} disabled={effectiveShowPreview} aria-label="Preview mode">
+                  <Eye size={14} />
+                  Preview
                 </button>
-              )}
-              <button className={`btn btn-sm ${effectiveShowPreview ? "btn-primary" : ""}`} onClick={handlePreviewClick} disabled={effectiveShowPreview} aria-label="Preview mode">
-                <Eye size={14} />
-                Preview
-              </button>
-            </div>
-          ) : <span />}
-          {!readOnly && hasSecondaryActions ? (
-            <div className="file-editor-toolbar-actions">
+              </div>
+            ) : null}
+            {!readOnly && hasSecondaryActions ? (
               <>
+                {toolbarActionsExpanded ? (
+                  <div className="file-editor-toolbar-collapsible" id={toolbarActionsId}>
+                    {shouldShowLineNumbersToggle && (
+                      <button className={`btn btn-sm file-editor-line-numbers-button ${showLineNumbers ? "btn-primary" : ""}`} onClick={onToggleLineNumbers} aria-label="Toggle line numbers" aria-pressed={showLineNumbers} title="Toggle line numbers">
+                        <ListOrdered size={14} />
+                        <span>Line #</span>
+                      </button>
+                    )}
+                    <button className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`} onClick={handleWordWrapToggle} aria-label="Toggle word wrap" title="Toggle word wrap">
+                      <WrapText size={14} />
+                    </button>
+                  </div>
+                ) : null}
                 <button className="btn btn-sm btn-icon" onClick={handleToolbarActionsToggle} aria-label="Toggle editor options" title="Toggle editor options" aria-expanded={toolbarActionsExpanded} aria-controls={toolbarActionsId}>
                   {toolbarActionsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
-                <div className="file-editor-toolbar-collapsible" id={toolbarActionsId} hidden={!toolbarActionsExpanded}>
-                  {shouldShowLineNumbersToggle && (
-                    <button className={`btn btn-sm file-editor-line-numbers-button ${showLineNumbers ? "btn-primary" : ""}`} onClick={onToggleLineNumbers} aria-label="Toggle line numbers" aria-pressed={showLineNumbers} title="Toggle line numbers">
-                      <ListOrdered size={14} />
-                      <span>Line #</span>
-                    </button>
-                  )}
-                  <button className={`btn btn-sm ${wordWrap ? "btn-primary" : ""}`} onClick={handleWordWrapToggle} aria-label="Toggle word wrap" title="Toggle word wrap">
-                    <WrapText size={14} />
-                  </button>
-                </div>
               </>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       ) : null}
 
