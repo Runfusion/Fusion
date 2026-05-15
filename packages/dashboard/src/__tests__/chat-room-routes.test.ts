@@ -258,6 +258,10 @@ describe("Chat Room API Routes", () => {
     expect(page.status).toBe(200);
     expect((page.body as any).messages.map((m: any) => m.id)).toEqual([m2.id, m3.id]);
 
+    const newestPage = await request(app, "GET", `/api/chat/rooms/${room.id}/messages?limit=2&order=desc`);
+    expect(newestPage.status).toBe(200);
+    expect((newestPage.body as any).messages.map((m: any) => m.id)).toEqual([m2.id, m3.id]);
+
     const del1 = await request(app, "DELETE", `/api/chat/rooms/${room.id}/messages/${m1.id}`);
     expect(del1.status).toBe(200);
 

@@ -251,15 +251,23 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext): void {
       const room = chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      const { limit: limitStr, offset: offsetStr, before } = req.query as { limit?: string; offset?: string; before?: string };
+      const { limit: limitStr, offset: offsetStr, before, order: orderStr } = req.query as {
+        limit?: string;
+        offset?: string;
+        before?: string;
+        order?: string;
+      };
       const limit = limitStr !== undefined ? parseInt(String(limitStr), 10) : 50;
       const offset = offsetStr !== undefined ? parseInt(String(offsetStr), 10) : 0;
+      const order = orderStr === undefined ? "asc" : String(orderStr);
       if (!Number.isFinite(limit) || limit < 1) throw badRequest("limit must be a positive integer");
       if (!Number.isFinite(offset) || offset < 0) throw badRequest("offset must be a non-negative integer");
+      if (order !== "asc" && order !== "desc") throw badRequest("order must be either asc or desc");
 
       const messages = chatStore.getRoomMessages(roomId, {
         limit,
         offset,
+        order,
         ...(before ? { before } : {}),
       });
 

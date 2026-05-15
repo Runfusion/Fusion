@@ -73,7 +73,7 @@ describe("chat room legacy API client", () => {
   it("builds message endpoints", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ success: true }));
 
-    await fetchChatRoomMessages("room-1", { limit: 2, offset: 1, before: "2026-01-01" }, "proj-3");
+    await fetchChatRoomMessages("room-1", { limit: 2, offset: 1, before: "2026-01-01", order: "desc" }, "proj-3");
     await postChatRoomMessage("room-1", { content: "hello", mentions: ["agent-x"] }, "proj-3");
     await deleteChatRoomMessage("room-1", "msg-1", "proj-3");
 
@@ -83,6 +83,7 @@ describe("chat room legacy API client", () => {
     expect(listUrl).toContain("limit=2");
     expect(listUrl).toContain("offset=1");
     expect(listUrl).toContain("before=2026-01-01");
+    expect(listUrl).toContain("order=desc");
 
     const [, postInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(postInit.method).toBe("POST");
@@ -90,5 +91,15 @@ describe("chat room legacy API client", () => {
 
     const [, delInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(delInit.method).toBe("DELETE");
+  });
+
+  it("omits order param when undefined", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ messages: [] }));
+
+    await fetchChatRoomMessages("room-1", { limit: 2 }, "proj-3");
+
+    const [listUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(listUrl).toContain("limit=2");
+    expect(listUrl).not.toContain("order=");
   });
 });

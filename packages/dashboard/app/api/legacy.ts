@@ -8466,13 +8466,14 @@ export function removeChatRoomMember(id: string, agentId: string, projectId?: st
 
 export function fetchChatRoomMessages(
   id: string,
-  opts?: { limit?: number; offset?: number; before?: string },
+  opts?: { limit?: number; offset?: number; before?: string; order?: "asc" | "desc" },
   projectId?: string,
 ): Promise<ChatRoomMessageListResponse> {
   const search = new URLSearchParams();
   if (opts?.limit !== undefined) search.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) search.set("offset", String(opts.offset));
   if (opts?.before) search.set("before", opts.before);
+  if (opts?.order) search.set("order", opts.order);
   const qs = search.toString();
   return api<ChatRoomMessageListResponse>(
     withProjectId(`/chat/rooms/${encodeURIComponent(id)}/messages${qs ? `?${qs}` : ""}`, projectId),

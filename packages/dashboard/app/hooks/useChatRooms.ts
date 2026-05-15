@@ -102,7 +102,7 @@ export function useChatRooms(
     try {
       const [membersData, messagesData] = await Promise.all([
         fetchChatRoomMembers(room.id, projectId),
-        fetchChatRoomMessages(room.id, { limit: 100 }, projectId),
+        fetchChatRoomMessages(room.id, { limit: 100, order: "desc" }, projectId),
       ]);
       setActiveRoomMembers(membersData.members);
       setMessages(messagesData.messages);
@@ -208,14 +208,14 @@ export function useChatRooms(
           message.id === optimisticMessage.id ? postResult.message : message));
       }
 
-      const latestMessages = await fetchChatRoomMessages(roomId, { limit: 100 }, projectId);
+      const latestMessages = await fetchChatRoomMessages(roomId, { limit: 100, order: "desc" }, projectId);
       if (activeRoomRef.current?.id !== roomId) {
         return;
       }
       setMessages(latestMessages.messages);
     } catch (error) {
       try {
-        const latestMessages = await fetchChatRoomMessages(roomId, { limit: 100 }, projectId);
+        const latestMessages = await fetchChatRoomMessages(roomId, { limit: 100, order: "desc" }, projectId);
         if (activeRoomRef.current?.id === roomId) {
           setMessages(latestMessages.messages);
         }
