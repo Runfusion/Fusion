@@ -729,6 +729,22 @@
   white-space: nowrap;
 }
 
+.card-time-indicator > span,
+.card-github-tracking-chip > span,
+.card-retry-badge > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.card-time-indicator svg,
+.card-github-tracking-chip svg,
+.card-retry-badge svg,
+.card-source-provenance svg {
+  display: block;
+  flex-shrink: 0;
+}
+
 .card-github-tracking-chip {
   border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
