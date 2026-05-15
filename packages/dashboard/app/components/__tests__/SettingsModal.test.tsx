@@ -188,6 +188,7 @@ const defaultSettings = {
   ephemeralAgentsEnabled: true,
   executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
+  worktreesDir: "",
   includeTaskIdInCommit: true,
   worktreeInitCommand: "",
   ntfyEnabled: false,
@@ -2004,8 +2005,22 @@ describe("SettingsModal", () => {
       expect(input.value).toBe("3");
     });
 
-    it("allows clearing maxWorktrees without leaving a stuck zero", async () => {
+    it("includes worktreesDir in save payload", async () => {
       renderModal();
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Worktrees"));
+      const input = screen.getByLabelText("Worktrees Directory") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "~/.fn-worktrees/{repo}" } });
+
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.worktreesDir).toBe("~/.fn-worktrees/{repo}");
+    });
+
+    it("allows clearing maxWorktrees without leaving a stuck zero", async () => {      renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Worktrees section

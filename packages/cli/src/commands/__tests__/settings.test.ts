@@ -62,6 +62,7 @@ describe("settings commands", () => {
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);
     expect(parseValue("worktreeNaming", "task-id")).toBe("task-id");
+    expect(parseValue("worktreesDir", "~/.fn-worktrees/{repo}")).toBe("~/.fn-worktrees/{repo}");
     expect(parseValue("defaultNodeId", "node-abc-123")).toBe("node-abc-123");
     expect(parseValue("unavailableNodePolicy", "block")).toBe("block");
     expect(parseValue("unavailableNodePolicy", "fallback-local")).toBe("fallback-local");
@@ -164,8 +165,23 @@ describe("settings commands", () => {
     expect(updateSettings).toHaveBeenCalledWith({ runStepsInNewSessions: true });
   });
 
-  it("runSettingsSet with project updates maxParallelSteps", async () => {
-    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ maxParallelSteps: 3 }));
+  it("runSettingsSet with project updates worktreesDir", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ worktreesDir: "~/.fn-worktrees/{repo}" }));
+    const getSettings = vi.fn().mockResolvedValue(makeSettings({ worktreesDir: "~/.fn-worktrees/{repo}" }));
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj-1",
+      projectName: "demo-project",
+      projectPath: "/projects/demo",
+      isRegistered: true,
+      store: { updateSettings, getSettings } as any,
+    });
+
+    await runSettingsSet("worktreesDir", "~/.fn-worktrees/{repo}", "demo-project");
+
+    expect(updateSettings).toHaveBeenCalledWith({ worktreesDir: "~/.fn-worktrees/{repo}" });
+  });
+
+  it("runSettingsSet with project updates maxParallelSteps", async () => {    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ maxParallelSteps: 3 }));
     const getSettings = vi.fn().mockResolvedValue(makeSettings({ maxParallelSteps: 3 }));
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj-1",

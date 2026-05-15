@@ -6,6 +6,7 @@ export const VALID_SETTINGS = [
   "maxConcurrent",
   "maxWorktrees",
   "worktreeNaming",
+  "worktreesDir",
   "taskPrefix",
   "ntfyTopic",
   "autoResolveConflicts",
@@ -24,6 +25,7 @@ const PROJECT_ONLY_SETTINGS = [
   "maxConcurrent",
   "maxWorktrees",
   "worktreeNaming",
+  "worktreesDir",
   "taskPrefix",
   "autoResolveConflicts",
   "smartConflictResolution",
@@ -52,7 +54,7 @@ const ENUM_SETTINGS: Record<string, readonly string[]> = {
   unavailableNodePolicy: ["block", "fallback-local"],
 };
 
-const STRING_SETTINGS: readonly string[] = ["taskPrefix", "ntfyTopic", "defaultModel", "defaultNodeId"];
+const STRING_SETTINGS: readonly string[] = ["taskPrefix", "ntfyTopic", "defaultModel", "defaultNodeId", "worktreesDir"];
 
 // Validation ranges for numeric settings
 const NUMBER_RANGES: Record<string, { min: number; max: number }> = {
@@ -202,7 +204,7 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
     },
     {
       title: "Worktrees",
-      keys: ["worktreeNaming", "recycleWorktrees"],
+      keys: ["worktreeNaming", "worktreesDir", "recycleWorktrees"],
     },
     {
       title: "Tasks",

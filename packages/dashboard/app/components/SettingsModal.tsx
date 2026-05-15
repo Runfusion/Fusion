@@ -410,6 +410,7 @@ export function SettingsModal({
     recycleWorktrees: false,
     executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
+    worktreesDir: "",
     includeTaskIdInCommit: true,
     worktreeInitCommand: "",
     ntfyEnabled: false,
@@ -1670,6 +1671,7 @@ export function SettingsModal({
       const payload = {
         ...form,
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
+        worktreesDir: form.worktreesDir?.trim() || undefined,
         taskPrefix: form.taskPrefix?.trim() || undefined,
         githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
         githubAuthToken: form.githubAuthToken?.trim() || undefined,
@@ -3732,6 +3734,19 @@ export function SettingsModal({
                   ? "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names"
                   : "How to name fresh worktree directories. Only applies when recycling is off."}
               </small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="worktreesDir">Worktrees Directory</label>
+              <input
+                id="worktreesDir"
+                type="text"
+                placeholder="~/.fn-worktrees/{repo} or .worktrees"
+                value={form.worktreesDir || ""}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, worktreesDir: e.target.value }))
+                }
+              />
+              <small>Optional. Supports <code>~</code> and <code>{"{repo}"}</code>. Defaults to <code>&lt;projectRoot&gt;/.worktrees</code> when unset and only affects newly-created worktrees.</small>
             </div>
             <div className="form-group">
               <label htmlFor="worktreeRebaseBeforeMerge" className="checkbox-label">
