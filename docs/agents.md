@@ -112,6 +112,7 @@ The engine classifies tool calls by behavior (not namespace alone):
 - `git_write`: mutating git shell commands run via `bash`
 - `network_api`: external/network-facing tools (for example `fn_research_run`, `fn_research_cancel`, `fn_research_retry`)
 - `task_agent_mutation`: task/agent mutation tools (for example `fn_update_agent_config`, `fn_task_pause`, `fn_spawn_agent`; action-gate task-import/create tools like `fn_task_create`, `fn_delegate_task`, `fn_task_import_github`, and `fn_task_import_github_issue` use this category in action-gate evaluation)
+- Dashboard permission editors now show per-category example tools sourced from `AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES` in `@fusion/core`, plus a read-only exempt-tools panel for coordination/messaging bypass tools.
 - `none`: positively recognized read-only tools (`read`, `grep`, `find`, `ls`, list/show/get-style `fn_*` tools, plus permanent-agent coordination/task-creation helpers like `fn_task_create`, `fn_delegate_task`, `fn_task_import_github`, and `fn_task_import_github_issue`)
 
 `bash` git-write heuristic in v1:
@@ -142,6 +143,7 @@ Approval pause/resume lifecycle (FN-3548):
 Agent provisioning approvals (`agent_provisioning` category):
 
 - `fn_agent_create` / `fn_agent_delete` can return `pending_approval` under `projectSettings.agentProvisioning` policy (`approvalMode`, trusted roles/IDs, `alwaysApproveDelete`).
+- Dashboard surface: Project Settings → Agent Permissions → **Agent Provisioning Approvals** editor (project-scoped only).
 - Approval request is persisted with provisioning context (`tool` + `params`) and visible in mailbox/API approval queues.
 - Dashboard/API decision route `POST /api/approvals/:id/decision` executes deferred provisioning on `approve` via engine dispatcher (`executeApprovedAgentProvisioning`) and never executes on `deny`.
 - Decision handling emits run-audit mutations: `agent:create:{requested,approved,denied}` and `agent:delete:{requested,approved,denied}` using original request task/run/requester linkage.
