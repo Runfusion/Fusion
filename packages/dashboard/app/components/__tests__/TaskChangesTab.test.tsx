@@ -546,7 +546,7 @@ describe("TaskChangesTab — regression: non-done tasks and done-without-commitS
     await waitFor(() => {
       expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
-    expect(screen.getByText("Merge summary: 3 files changed, +10 additions, -2 deletions.")).toBeTruthy();
+    expect(screen.getByText("Final commit summary: 3 files changed, +10 additions, -2 deletions. Counts only the recorded merge/squash commit, not the full task lineage.")).toBeTruthy();
     expect(screen.queryByText(/Error loading changes:/)).toBeNull();
     expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
@@ -566,7 +566,7 @@ describe("TaskChangesTab — regression: non-done tasks and done-without-commitS
     await waitFor(() => {
       expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
-    expect(screen.getByText("Merge summary: 1 file changed, +5 additions, -0 deletions.")).toBeTruthy();
+    expect(screen.getByText("Final commit summary: 1 file changed, +5 additions, -0 deletions. Counts only the recorded merge/squash commit, not the full task lineage.")).toBeTruthy();
     expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
 
@@ -586,9 +586,11 @@ describe("TaskChangesTab — regression: non-done tasks and done-without-commitS
     await waitFor(() => {
       expect(screen.getByText("2 files modified during execution.")).toBeTruthy();
     });
+    expect(screen.getByText("These are files captured from the worktree during execution. They may differ from the files that actually landed on main. The lineage-backed diff is unavailable for this task.")).toBeTruthy();
     expect(screen.getByText("packages/cli/src/commands/__tests__/settings.test.ts")).toBeTruthy();
     expect(screen.getByText("packages/cli/src/commands/__tests__/task.test.ts")).toBeTruthy();
     expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(screen.queryByText("Files Changed (2)")).toBeNull();
     expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
 
@@ -626,7 +628,7 @@ describe("TaskChangesTab — regression: non-done tasks and done-without-commitS
     await waitFor(() => {
       expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
-    expect(screen.getByText("Merge summary: 2 files changed, +4 additions, -1 deletions.")).toBeTruthy();
+    expect(screen.getByText("Final commit summary: 2 files changed, +4 additions, -1 deletions. Counts only the recorded merge/squash commit, not the full task lineage.")).toBeTruthy();
     expect(screen.queryByText(/Error loading changes:/)).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -443,8 +443,126 @@ describe("FN-4524 done-task diff stats", () => {
     }
   });
 
-  it("matches shortstat when hunks include ++/-- content lines", async () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "fn-4524-done-plusminus-"));
+  it("returns lineage-union stats when final commit shortstat undercounts multi-commit landed scope", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-4613-done-lineage-union-"));
+
+    try {
+      git(rootDir, "init", "-b", "main");
+      git(rootDir, "config", "user.email", "fusion@example.com");
+      git(rootDir, "config", "user.name", "Fusion");
+
+      commitFile(rootDir, "base.ts", "export const base = 1;\n", "base");
+
+      git(rootDir, "checkout", "-b", "task-branch");
+      writeFileSync(join(rootDir, "a.ts"), "export const a = 1;\n");
+      writeFileSync(join(rootDir, "b.ts"), "export const b = 1;\n");
+      git(rootDir, "add", "a.ts", "b.ts");
+      git(rootDir, "commit", "-m", "task source files");
+      const commitOne = git(rootDir, "rev-parse", "HEAD");
+
+      mkdirSync(join(rootDir, ".changeset"), { recursive: true });
+      writeFileSync(join(rootDir, "notes.md"), "# notes\nrefinement\n");
+      writeFileSync(join(rootDir, ".changeset/fn-4613-test.md"), "---\n\"@runfusion/fusion\": patch\n---\n\nTest note.\n");
+      git(rootDir, "add", "notes.md", ".changeset/fn-4613-test.md");
+      git(rootDir, "commit", "-m", "task docs and changeset");
+      const finalCommit = git(rootDir, "rev-parse", "HEAD");
+
+      git(rootDir, "checkout", "main");
+      git(rootDir, "merge", "task-branch", "--no-ff", "-m", "merge multi-commit task");
+
+      const lineageId = "lin-fn-4613-a";
+      const store = new RealGitStore(rootDir);
+      store.addTask({
+        id: "FN-4524",
+        title: "multi-commit lineage test",
+        description: "multi-commit lineage test",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-05-14T00:00:00.000Z",
+        updatedAt: "2026-05-14T00:00:00.000Z",
+        columnMovedAt: "2026-05-14T00:00:00.000Z",
+        lineageId,
+        baseBranch: "main",
+        mergeDetails: { commitSha: finalCommit },
+      } as Task);
+      store.setAssociations(lineageId, [
+        mkAssoc(lineageId, commitOne, "2026-05-14T00:00:01.000Z"),
+        mkAssoc(lineageId, finalCommit, "2026-05-14T00:00:02.000Z"),
+      ]);
+
+      const finalCommitOnly = shortstatForShow(rootDir, finalCommit);
+      expect(finalCommitOnly.filesChanged).toBe(2);
+
+      const response = await getDoneDiff(store);
+      expect(response.status).toBe(200);
+      expect(response.body.stats.filesChanged).toBe(4);
+      expect(response.body.files).toHaveLength(4);
+      expect(response.body.stats.filesChanged).toBeGreaterThan(finalCommitOnly.filesChanged);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores persisted modifiedFiles superset and returns lineage diff totals", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-4613-stale-modified-files-"));
+
+    try {
+      git(rootDir, "init", "-b", "main");
+      git(rootDir, "config", "user.email", "fusion@example.com");
+      git(rootDir, "config", "user.name", "Fusion");
+
+      commitFile(rootDir, "base.ts", "export const base = 1;\n", "base");
+
+      git(rootDir, "checkout", "-b", "task-branch");
+      const commitOne = commitFile(rootDir, "one.ts", "export const one = 1;\n", "one");
+      const commitTwo = commitFile(rootDir, "two.ts", "export const two = 2;\n", "two");
+      const commitThree = commitFile(rootDir, "readme.md", "task docs\n", "docs");
+      mkdirSync(join(rootDir, ".changeset"), { recursive: true });
+      const commitFour = commitFile(rootDir, ".changeset/fn-4613-superset.md", "---\n\"@runfusion/fusion\": patch\n---\n\nSuperset test.\n", "changeset");
+
+      git(rootDir, "checkout", "main");
+      git(rootDir, "merge", "task-branch", "--no-ff", "-m", "merge stale modifiedFiles case");
+
+      const lineageId = "lin-fn-4613-b";
+      const store = new RealGitStore(rootDir);
+      store.addTask({
+        id: "FN-4524",
+        title: "stale modifiedFiles test",
+        description: "stale modifiedFiles test",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-05-14T00:00:00.000Z",
+        updatedAt: "2026-05-14T00:00:00.000Z",
+        columnMovedAt: "2026-05-14T00:00:00.000Z",
+        lineageId,
+        baseBranch: "main",
+        modifiedFiles: Array.from({ length: 10 }, (_, index) => `stale/path-${index + 1}.ts`),
+        mergeDetails: { commitSha: commitFour },
+      } as Task);
+      store.setAssociations(lineageId, [
+        mkAssoc(lineageId, commitOne, "2026-05-14T00:00:01.000Z"),
+        mkAssoc(lineageId, commitTwo, "2026-05-14T00:00:02.000Z"),
+        mkAssoc(lineageId, commitThree, "2026-05-14T00:00:03.000Z"),
+        mkAssoc(lineageId, commitFour, "2026-05-14T00:00:04.000Z"),
+      ]);
+
+      const response = await getDoneDiff(store);
+      expect(response.status).toBe(200);
+      expect(response.body.stats.filesChanged).toBe(4);
+      expect(response.body.files).toHaveLength(4);
+      expect(response.body.files.map((f: { path: string }) => f.path)).not.toContain("stale/path-1.ts");
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("matches shortstat when hunks include ++/-- content lines", async () => {    const rootDir = mkdtempSync(join(tmpdir(), "fn-4524-done-plusminus-"));
 
     try {
       git(rootDir, "init", "-b", "main");

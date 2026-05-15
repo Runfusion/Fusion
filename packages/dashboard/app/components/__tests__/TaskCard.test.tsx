@@ -2394,7 +2394,7 @@ describe("TaskCard", () => {
       expectedLabel: "108 files changed",
     },
     {
-      name: "hides badge when fetch resolved null",
+      name: "hides badge when fetch resolved null and no execution fallback exists",
       diff: { stats: null, loading: false },
       mergeDetails: { filesChanged: 108 },
       expectedLabel: null,
@@ -2442,6 +2442,79 @@ describe("TaskCard", () => {
 
     const filesChangedButton = document.querySelector(".card-session-files");
     expect(filesChangedButton).toBeNull();
+  });
+
+  it("shows execution-touched fallback label for done tasks when lineage stats are unavailable", () => {
+    const onOpenDetailWithTab = vi.fn();
+    useTaskDiffStatsMock.mockReturnValue({ stats: null, loading: false });
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          modifiedFiles: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={onOpenDetailWithTab}
+      />,
+    );
+
+    const touchedButton = screen.getByRole("button", { name: "6 files touched during execution" });
+    expect(touchedButton).toBeDefined();
+    expect(screen.queryByText(/\d+ files? changed/i)).toBeNull();
+
+    fireEvent.click(touchedButton);
+    expect(onOpenDetailWithTab).toHaveBeenCalledTimes(1);
+    expect(onOpenDetailWithTab.mock.calls[0]?.[1]).toBe("changes");
+  });
+
+  it("prefers lineage files-changed stats over stale execution-touched modifiedFiles for done tasks", () => {
+    useTaskDiffStatsMock.mockReturnValue({
+      stats: { filesChanged: 4, additions: 12, deletions: 3 },
+      loading: false,
+    });
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          modifiedFiles: [
+            "one.ts",
+            "two.ts",
+            "three.ts",
+            "four.ts",
+            "five.ts",
+            "six.ts",
+            "seven.ts",
+            "eight.ts",
+            "nine.ts",
+            "ten.ts",
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "4 files changed" })).toBeDefined();
+    expect(screen.queryByText("10 files touched during execution")).toBeNull();
+  });
+
+  it("hides done-task file chip when lineage stats are unavailable and no execution fallback exists", () => {
+    useTaskDiffStatsMock.mockReturnValue({ stats: null, loading: false });
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "done", modifiedFiles: [] })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector(".card-session-files")).toBeNull();
   });
 
   it("renders files-changed metadata and timer chip in footer row", () => {

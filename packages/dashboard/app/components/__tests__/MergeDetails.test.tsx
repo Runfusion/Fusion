@@ -41,8 +41,11 @@ describe("MergeDetails", () => {
 
     expect(screen.getByText("Merge Details")).toBeTruthy();
     expect(screen.getByText("abcdef1")).toBeTruthy();
+    expect(screen.getByText("Files in merge commit")).toBeTruthy();
+    expect(screen.getByText("Merge-commit insertions / deletions")).toBeTruthy();
     expect(screen.getByText("5")).toBeTruthy();
     expect(screen.getByText("+10 / -2")).toBeTruthy();
+    expect(screen.getAllByTitle("Final commit shortstat; for the full landed diff across all task commits, see the Changes tab.")).toHaveLength(2);
     expect(screen.getByText("#42")).toBeTruthy();
     expect(screen.getByText("feat(FN-001): merge fusion/fn-001")).toBeTruthy();
     expect(screen.getByText("Merged successfully")).toBeTruthy();
