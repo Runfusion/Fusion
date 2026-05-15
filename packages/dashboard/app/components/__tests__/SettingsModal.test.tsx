@@ -1623,6 +1623,50 @@ describe("SettingsModal", () => {
       });
     });
 
+    it("renders github copilot device code panel and handles copy/open actions", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      mockFetchAuthStatus
+        .mockResolvedValueOnce({
+          providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth" }],
+        })
+        .mockResolvedValueOnce({
+          providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth", loginInProgress: true }],
+        })
+        .mockResolvedValueOnce({
+          providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: true, type: "oauth" }],
+        });
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://auth.example.com/login",
+        deviceCode: {
+          userCode: "ABCD-1234",
+          verificationUri: "https://github.com/login/device",
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const copilotCard = screen.getByTestId("auth-provider-icon-github-copilot").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.click(within(copilotCard).getByRole("button", { name: "Login" }));
+
+      expect(await within(copilotCard).findByText("ABCD-1234")).toBeInTheDocument();
+      await userEvent.click(within(copilotCard).getByRole("button", { name: "Copy code" }));
+      expect(writeText).toHaveBeenCalledWith("ABCD-1234");
+
+      await userEvent.click(within(copilotCard).getByRole("button", { name: "Open GitHub" }));
+      expect(openSpy).toHaveBeenCalledWith("https://github.com/login/device", "_blank");
+
+      await waitFor(() => {
+        expect(within(copilotCard).queryByText("ABCD-1234")).not.toBeInTheDocument();
+      }, { timeout: 5000 });
+    });
+
     it("scrolls settings content to top after API key save succeeds", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [{ id: "openai", name: "OpenAI", authenticated: false, type: "api_key" }],

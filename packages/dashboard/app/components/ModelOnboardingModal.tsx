@@ -2,7 +2,7 @@ import "./ModelOnboardingModal.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus } from "lucide-react";
 import { getErrorMessage, type Task } from "@fusion/core";
-import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, CustomProvider, CustomProviderConfig } from "../api";
+import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, CustomProvider, CustomProviderConfig, OAuthDeviceCodeInfo } from "../api";
 import {
   fetchAuthStatus,
   fetchGlobalSettings,
@@ -588,6 +588,7 @@ export function ModelOnboardingModal({
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
   const [loginInstructions, setLoginInstructions] = useState<Record<string, string>>({});
   const [manualCodeConfigs, setManualCodeConfigs] = useState<Record<string, ManualOAuthCodeInfo>>({});
+  const [deviceCodes, setDeviceCodes] = useState<Record<string, OAuthDeviceCodeInfo>>({});
   const [manualCodeInputs, setManualCodeInputs] = useState<Record<string, string>>({});
   const [manualCodeSubmitInProgress, setManualCodeSubmitInProgress] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -1107,6 +1108,14 @@ export function ModelOnboardingModal({
           delete next[providerId];
           return next;
         });
+        setDeviceCodes((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
       };
 
       clearAuthLoginUiState();
@@ -1117,14 +1126,17 @@ export function ModelOnboardingModal({
       pollCountRef.current = 0;
 
       try {
-        const { url, instructions, manualCode } = await loginProvider(providerId);
+        const { url, instructions, manualCode, deviceCode } = await loginProvider(providerId);
         if (instructions?.trim()) {
           setLoginInstructions((prev) => ({ ...prev, [providerId]: instructions }));
         }
         if (manualCode) {
           setManualCodeConfigs((prev) => ({ ...prev, [providerId]: manualCode }));
         }
-        window.open(appendTokenQuery(url), "_blank");
+        if (deviceCode && providerId === "github-copilot") {
+          setDeviceCodes((prev) => ({ ...prev, [providerId]: deviceCode }));
+        }
+        window.open(appendTokenQuery(deviceCode?.verificationUri ?? url), "_blank");
 
         // Poll for auth completion
         pollIntervalRef.current = setInterval(async () => {
@@ -1278,6 +1290,14 @@ export function ModelOnboardingModal({
         return next;
       });
       setManualCodeSubmitInProgress((prev) => prev === providerId ? null : prev);
+      setDeviceCodes((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
     }
   }, [addToast, loadAuthStatus]);
 
@@ -1966,6 +1986,20 @@ export function ModelOnboardingModal({
             </button>
           )}
         </div>
+        {(authActionInProgress === provider.id || showRemoteLoginInProgress) && provider.id === "github-copilot" && deviceCodes[provider.id] && (
+          <div className="auth-device-code-panel" data-testid={`onboarding-device-code-${provider.id}`}>
+            <strong>Enter this code on GitHub</strong>
+            <div className="auth-device-code-pill">{deviceCodes[provider.id].userCode}</div>
+            <div className="auth-provider-actions-row">
+              <button className="btn btn-sm" onClick={() => { void navigator.clipboard?.writeText(deviceCodes[provider.id].userCode); }}>
+                Copy code
+              </button>
+              <button className="btn btn-sm" onClick={() => window.open(appendTokenQuery(deviceCodes[provider.id].verificationUri), "_blank")}>
+                Open GitHub
+              </button>
+            </div>
+          </div>
+        )}
         {(authActionInProgress === provider.id || showRemoteLoginInProgress) && loginInstructions[provider.id] && (
           <LoginInstructions
             instructions={loginInstructions[provider.id]}

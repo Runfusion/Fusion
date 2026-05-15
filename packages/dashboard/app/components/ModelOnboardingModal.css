@@ -1449,3 +1449,38 @@
   gap: var(--space-sm);
   color: var(--text-muted);
 }
+
+.auth-device-code-panel {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.auth-device-code-pill {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  letter-spacing: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-pill);
+  border: var(--btn-border-width) solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  display: inline-flex;
+  align-self: flex-start;
+}
+
+@media (max-width: 768px) {
+  .auth-device-code-panel {
+    width: 100%;
+  }
+
+  .auth-device-code-pill {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+}

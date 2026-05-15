@@ -13,7 +13,7 @@ import {
 } from "@fusion/core";
 import type { AgentPermissionPolicyRules, Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, killExternalTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
-import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
+import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse, OAuthDeviceCodeInfo } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
@@ -519,6 +519,7 @@ export function SettingsModal({
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
   const [loginInstructions, setLoginInstructions] = useState<Record<string, string>>({});
   const [manualCodeConfigs, setManualCodeConfigs] = useState<Record<string, ManualOAuthCodeInfo>>({});
+  const [deviceCodes, setDeviceCodes] = useState<Record<string, OAuthDeviceCodeInfo>>({});
   const [manualCodeInputs, setManualCodeInputs] = useState<Record<string, string>>({});
   const [manualCodeSubmitInProgress, setManualCodeSubmitInProgress] = useState<string | null>(null);
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
@@ -995,6 +996,14 @@ export function SettingsModal({
       delete next[providerId];
       return next;
     });
+    setDeviceCodes((prev) => {
+      if (!(providerId in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
   }, []);
 
   const handleLogin = useCallback(async (providerId: string) => {
@@ -1016,14 +1025,17 @@ export function SettingsModal({
     clearAuthLoginUiState(providerId);
 
     try {
-      const { url, instructions, manualCode } = await loginProvider(providerId);
+      const { url, instructions, manualCode, deviceCode } = await loginProvider(providerId);
       if (instructions?.trim()) {
         setLoginInstructions((prev) => ({ ...prev, [providerId]: instructions }));
       }
       if (manualCode) {
         setManualCodeConfigs((prev) => ({ ...prev, [providerId]: manualCode }));
       }
-      window.open(appendTokenQuery(url), "_blank");
+      if (deviceCode && providerId === "github-copilot") {
+        setDeviceCodes((prev) => ({ ...prev, [providerId]: deviceCode }));
+      }
+      window.open(appendTokenQuery(deviceCode?.verificationUri ?? url), "_blank");
 
       // Poll for auth completion every 2 seconds
       pollIntervalRef.current = setInterval(async () => {
@@ -6228,6 +6240,28 @@ export function SettingsModal({
                               >
                                 Login
                               </button>
+                            )}
+                            {provider.id === "github-copilot" && deviceCodes[provider.id] && (provider.loginInProgress || authActionInProgress === provider.id) && (
+                              <div className="auth-device-code-panel" data-testid={`auth-device-code-${provider.id}`}>
+                                <strong>Enter this code on GitHub</strong>
+                                <div className="auth-device-code-pill">{deviceCodes[provider.id].userCode}</div>
+                                <div className="auth-provider-actions-row">
+                                  <button
+                                    className="btn btn-sm"
+                                    onClick={() => {
+                                      void navigator.clipboard?.writeText(deviceCodes[provider.id].userCode);
+                                    }}
+                                  >
+                                    Copy code
+                                  </button>
+                                  <button
+                                    className="btn btn-sm"
+                                    onClick={() => window.open(appendTokenQuery(deviceCodes[provider.id].verificationUri), "_blank")}
+                                  >
+                                    Open GitHub
+                                  </button>
+                                </div>
+                              </div>
                             )}
                             {loginInstructions[provider.id] && (provider.loginInProgress || authActionInProgress === provider.id) && (
                               <LoginInstructions
