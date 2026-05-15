@@ -458,7 +458,7 @@ describe("TaskChangesTab — commit-backed (done tasks)", () => {
   });
 });
 
-describe("TaskChangesTab — regression: non-done tasks still use worktree path", () => {
+describe("TaskChangesTab — regression: non-done tasks and done-without-commitSha fallback parity", () => {
   it("in-progress without worktree shows worktree empty state, not commit path", async () => {
     mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
 
@@ -506,25 +506,34 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
     expect(mockFetchTaskDiff).not.toHaveBeenCalled();
   });
 
-  it("done task without commitSha does NOT call fetchTaskDiff — shows summary fallback", async () => {
-    render(
-      <TaskChangesTab
-        taskId="FN-001"
-        worktree={undefined}
-        column="done"
-        mergeDetails={{}} // no commitSha
-      />,
-    );
+  it("done task without commitSha uses lineage-backed fetch and renders file list parity", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@" },
+        { path: "b.ts", status: "added", additions: 2, deletions: 0, patch: "@@" },
+        { path: "c.ts", status: "deleted", additions: 0, deletions: 1, patch: "@@" },
+        { path: "d.ts", status: "modified", additions: 3, deletions: 2, patch: "@@" },
+        { path: "e.ts", status: "modified", additions: 1, deletions: 1, patch: "@@" },
+        { path: "f.ts", status: "modified", additions: 4, deletions: 0, patch: "@@" },
+        { path: "g.ts", status: "added", additions: 5, deletions: 0, patch: "@@" },
+      ],
+      stats: { filesChanged: 7, additions: 16, deletions: 4 },
+    });
+
+    render(<TaskChangesTab taskId="FN-001" projectId="proj-1" worktree={undefined} column="done" mergeDetails={{}} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+      expect(screen.getByText("Files Changed (7)")).toBeTruthy();
     });
-    expect(screen.getByText("No merge commit was recorded for this task.")).toBeTruthy();
-    // Must NOT have called fetchTaskDiff — that would trigger repo-wide fallback
-    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+    for (const path of ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"]) {
+      expect(screen.getByText(path)).toBeTruthy();
+    }
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, "proj-1");
   });
 
-  it("done task without commitSha shows merge summary when available", async () => {
+  it("done task without commitSha shows summary fallback when diff resolves empty", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
     render(
       <TaskChangesTab
         taskId="FN-001"
@@ -538,10 +547,13 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
       expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
     expect(screen.getByText("Merge summary: 3 files changed, +10 additions, -2 deletions.")).toBeTruthy();
-    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
 
   it("done task without commitSha shows singular 'file' when filesChanged is 1", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
     render(
       <TaskChangesTab
         taskId="FN-001"
@@ -555,9 +567,12 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
       expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
     expect(screen.getByText("Merge summary: 1 file changed, +5 additions, -0 deletions.")).toBeTruthy();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
 
   it("done task without commitSha falls back to modifiedFiles when available", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
     render(
       <TaskChangesTab
         taskId="FN-001"
@@ -573,10 +588,13 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
     });
     expect(screen.getByText("packages/cli/src/commands/__tests__/settings.test.ts")).toBeTruthy();
     expect(screen.getByText("packages/cli/src/commands/__tests__/task.test.ts")).toBeTruthy();
-    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
 
   it("done task without commitSha and no mergeDetails shows fallback without summary", async () => {
+    mockFetchTaskDiff.mockResolvedValue({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+
     render(
       <TaskChangesTab
         taskId="FN-001"
@@ -589,7 +607,27 @@ describe("TaskChangesTab — regression: non-done tasks still use worktree path"
       expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
     });
     expect(screen.getByText("No merge commit was recorded for this task.")).toBeTruthy();
-    expect(mockFetchTaskDiff).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
+    expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
+  });
+
+  it("done task without commitSha falls back gracefully when fetchTaskDiff rejects", async () => {
+    mockFetchTaskDiff.mockRejectedValue(new Error("Server unavailable"));
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={{ filesChanged: 2, insertions: 4, deletions: 1 }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Detailed file changes unavailable.")).toBeTruthy();
+    });
+    expect(screen.getByText("Merge summary: 2 files changed, +4 additions, -1 deletions.")).toBeTruthy();
+    expect(screen.queryByText(/Error loading changes:/)).toBeNull();
   });
 });
 
