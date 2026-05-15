@@ -979,7 +979,7 @@ function TaskCardComponent({
   );
 
   // Viewport-gated diff stats fetching - only fetch when card is visible
-  const { stats: diffStats } = useTaskDiffStats(
+  const { stats: diffStats, loading: diffLoading } = useTaskDiffStats(
     task.id,
     task.column,
     task.mergeDetails?.commitSha,
@@ -1357,11 +1357,17 @@ function TaskCardComponent({
     }
 
     if (task.column === "done") {
-      // Prefer diff stats from the same endpoint the modal uses so the
-      // count is always consistent with the Changes tab.
-      const diffCount = diffStats?.filesChanged;
-      const mergedCount = task.mergeDetails?.filesChanged;
-      const displayCount = diffCount ?? mergedCount;
+      // Per FN-4527: /api/tasks/:id/diff is authoritative for done-task file
+      // counts. mergeDetails.filesChanged can be stale after rebase-and-push
+      // (FN-4526), so only use it as a transient loading placeholder.
+      let displayCount: number | undefined;
+      if (diffStats) {
+        displayCount = diffStats.filesChanged;
+      } else if (diffLoading) {
+        displayCount = task.mergeDetails?.filesChanged ?? undefined;
+      } else {
+        displayCount = undefined;
+      }
       if (displayCount != null && displayCount > 0) {
         return (
           <button

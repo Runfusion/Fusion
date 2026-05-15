@@ -1938,24 +1938,54 @@ describe("TaskCard", () => {
     expect(css).toMatch(/\.card-github-badge\s*\{[^}]*border:\s*1px\s+solid\s+transparent;[^}]*\}/);
   });
 
-  it("prefers done-task /diff filesChanged over mergeDetails.filesChanged", () => {
-    useTaskDiffStatsMock.mockReturnValue({
-      stats: { filesChanged: 4, additions: 10, deletions: 2 },
-      loading: false,
-    });
+  it.each([
+    {
+      name: "uses live diff stats over stale mergeDetails",
+      diff: { stats: { filesChanged: 2, additions: 4, deletions: 1 }, loading: false },
+      mergeDetails: { filesChanged: 108 },
+      expectedLabel: "2 files changed",
+    },
+    {
+      name: "uses mergeDetails as transient placeholder while loading",
+      diff: { stats: null, loading: true },
+      mergeDetails: { filesChanged: 108 },
+      expectedLabel: "108 files changed",
+    },
+    {
+      name: "hides badge when fetch resolved null",
+      diff: { stats: null, loading: false },
+      mergeDetails: { filesChanged: 108 },
+      expectedLabel: null,
+    },
+    {
+      name: "hides badge when live diff resolves zero",
+      diff: { stats: { filesChanged: 0, additions: 0, deletions: 0 }, loading: false },
+      mergeDetails: { filesChanged: 108 },
+      expectedLabel: null,
+    },
+    {
+      name: "uses singular grammar for one live file",
+      diff: { stats: { filesChanged: 1, additions: 1, deletions: 0 }, loading: false },
+      mergeDetails: undefined,
+      expectedLabel: "1 file changed",
+    },
+  ])("FN-4527 done-task files changed contract: $name", ({ diff, mergeDetails, expectedLabel }) => {
+    useTaskDiffStatsMock.mockReturnValue(diff);
 
     render(
       <TaskCard
         task={makeTask({
           column: "done",
-          mergeDetails: {
-            commitSha: "abc123",
-            filesChanged: 1,
-            insertions: 10,
-            deletions: 2,
-            mergedAt: "2026-04-25T15:00:00.000Z",
-            mergeConfirmed: true,
-          },
+          mergeDetails: mergeDetails
+            ? {
+                commitSha: "abc123",
+                insertions: 10,
+                deletions: 2,
+                mergedAt: "2026-04-25T15:00:00.000Z",
+                mergeConfirmed: true,
+                ...mergeDetails,
+              }
+            : undefined,
         })}
         onOpenDetail={noop}
         addToast={noop}
@@ -1963,11 +1993,21 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "4 files changed" })).toBeDefined();
-    expect(screen.queryByRole("button", { name: "1 file changed" })).toBeNull();
+    if (expectedLabel) {
+      expect(screen.getByRole("button", { name: expectedLabel })).toBeDefined();
+      return;
+    }
+
+    const filesChangedButton = document.querySelector(".card-session-files");
+    expect(filesChangedButton).toBeNull();
   });
 
   it("renders files-changed metadata and timer chip in footer row", () => {
+    useTaskDiffStatsMock.mockReturnValue({
+      stats: { filesChanged: 4, additions: 10, deletions: 2 },
+      loading: false,
+    });
+
     const { container } = render(
       <TaskCard
         task={makeTask({
