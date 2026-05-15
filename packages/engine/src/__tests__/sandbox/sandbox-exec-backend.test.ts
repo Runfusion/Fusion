@@ -10,7 +10,7 @@ const { detectMock, policyToProfileMock, presetMock, nativeRunMock, nativePrepar
   nativeRunMock: vi.fn(),
   nativePrepareMock: vi.fn(),
   nativeDisposeMock: vi.fn(),
-  loggerMock: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  loggerMock: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   execMock: vi.fn(),
 }));
 
@@ -53,7 +53,7 @@ describe("SandboxExecBackend", () => {
     nativeDisposeMock.mockReset();
     execMock.mockReset();
     (execMock as unknown as Record<symbol, unknown>)[promisify.custom] = vi.fn();
-    loggerMock.info.mockReset();
+    loggerMock.log.mockReset();
     loggerMock.warn.mockReset();
     loggerMock.error.mockReset();
     loggerMock.debug.mockReset();
@@ -106,7 +106,7 @@ describe("SandboxExecBackend", () => {
     expect(cmd).toContain("/bin/sh -c");
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("ok");
-    expect(loggerMock.info).toHaveBeenCalled();
+    expect(loggerMock.log).toHaveBeenCalled();
   });
 
   it("maps timeout and maxBuffer failures", async () => {

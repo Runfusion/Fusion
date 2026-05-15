@@ -97,7 +97,7 @@ export class SandboxExecBackend implements SandboxBackend {
       tmpDirOverride: os.tmpdir(),
     };
 
-    log.info("[event:sandbox:prepare] backend=sandbox-exec");
+    log.log("[event:sandbox:prepare] backend=sandbox-exec");
   }
 
   async run(command: string, options: SandboxRunOptions): Promise<SandboxRunResult> {
@@ -124,7 +124,7 @@ export class SandboxExecBackend implements SandboxBackend {
     const profile = policyToSbplProfile(basePolicy, this.ctx);
 
     const wrappedCommand = `sandbox-exec -p ${shEscape(profile)} /bin/sh -c ${shEscape(command)}`;
-    log.info(`[event:sandbox:run] backend=sandbox-exec cmd=${JSON.stringify(command)}`);
+    log.log(`[event:sandbox:run] backend=sandbox-exec cmd=${JSON.stringify(command)}`);
 
     try {
       const execOptions: Parameters<typeof exec>[1] = {
@@ -146,7 +146,7 @@ export class SandboxExecBackend implements SandboxBackend {
         timedOut: false,
         bufferExceeded: false,
       };
-      log.info(`[event:sandbox:run] backend=sandbox-exec durationMs=${Date.now() - startedAt} exitCode=0`);
+      log.log(`[event:sandbox:run] backend=sandbox-exec durationMs=${Date.now() - startedAt} exitCode=0`);
       return result;
     } catch (error) {
       const errObj = error as Record<string, unknown>;

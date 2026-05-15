@@ -1,4 +1,4 @@
-import { exec, type ExecOptions } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { SandboxBackend, SandboxCapabilities, SandboxPolicy, SandboxRunOptions, SandboxRunResult } from "./types.js";
