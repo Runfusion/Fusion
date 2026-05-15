@@ -704,6 +704,25 @@ describe("SettingsModal", () => {
     });
   });
 
+  it("renders and saves agent provisioning approval settings", async () => {
+    renderModal({ initialSection: "agent-permissions" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByRole("heading", { name: "Agent Provisioning Approvals" })).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Approval mode"), "always");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSettings).toHaveBeenCalled();
+    });
+
+    const payload = mockUpdateSettings.mock.calls[0]?.[0] as {
+      agentProvisioning?: { approvalMode?: string };
+    };
+    expect(payload.agentProvisioning?.approvalMode).toBe("always");
+  });
+
   describe("Project General", () => {
     it("renders completion documentation automation control", async () => {
       renderModal({ initialSection: "general" });

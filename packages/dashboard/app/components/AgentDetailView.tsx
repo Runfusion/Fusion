@@ -4716,6 +4716,7 @@ function ConfigTab({
             </button>
           </div>
         ) : null}
+        {/* Provisioning policy (fn_agent_create/fn_agent_delete) is project-scoped only; no per-agent override UI here by design. */}
         <AgentPermissionPolicyEditor
           mode="agent-override"
           value={permissionPolicyValue}

@@ -41,6 +41,7 @@ import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { ProviderIcon } from "./ProviderIcon";
 import { CustomProvidersSection } from "./CustomProvidersSection";
 import { AgentPermissionPolicyEditor } from "./AgentPermissionPolicyEditor";
+import { AgentProvisioningPolicyEditor } from "./AgentProvisioningPolicyEditor";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
@@ -4225,6 +4226,17 @@ export function SettingsModal({
                   defaultAgentPermissionPolicy: { rules: toCompleteAgentPermissionRules(next?.rules) },
                 }))
               }
+            />
+
+            <h4 className="settings-section-heading">Agent Provisioning Approvals</h4>
+            <div className="form-group">
+              <small className="settings-muted">
+                Configure project-level approval behavior for durable provisioning tools (fn_agent_create/fn_agent_delete).
+              </small>
+            </div>
+            <AgentProvisioningPolicyEditor
+              value={form.agentProvisioning}
+              onChange={(next) => setForm((f) => ({ ...f, agentProvisioning: next }))}
             />
           </>
         );
