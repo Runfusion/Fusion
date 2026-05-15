@@ -61,9 +61,11 @@ export function DependencyGraph({
   const initialFitDoneRef = useRef(false);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const pointerDraggedRef = useRef(false);
+  const nodeRefs = useRef(new Map<string, HTMLDivElement>());
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [measuredHeights, setMeasuredHeights] = useState<Map<string, number>>(new Map());
   const filteredTasks = useMemo(() => filterGraphTasks(tasks), [tasks]);
   const graphData = useGraphData(filteredTasks);
   const { getChain } = useDependencyChain(filteredTasks);
@@ -75,8 +77,15 @@ export function DependencyGraph({
     return height > width || width < NARROW_VIEWPORT_WIDTH ? "horizontal" : "vertical";
   }, [viewportSize.height, viewportSize.width]);
   const layoutOptions = useMemo<LayoutOptions>(
-    () => ({ nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, horizontalGap: 40, verticalGap: 80, orientation }),
-    [orientation],
+    () => ({
+      nodeWidth: NODE_WIDTH,
+      nodeHeight: NODE_HEIGHT,
+      horizontalGap: 40,
+      verticalGap: 80,
+      orientation,
+      measuredHeights,
+    }),
+    [measuredHeights, orientation],
   );
 
   const autoLayoutPositions = useMemo(() => computeAutoLayout(graphData, layoutOptions), [graphData, layoutOptions]);
@@ -124,6 +133,69 @@ export function DependencyGraph({
     observer.observe(viewport);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const relevantTaskIds = new Set(graphData.nodes.map((node) => node.task.id));
+    const nextRefs = new Map<string, HTMLDivElement>();
+    for (const taskId of relevantTaskIds) {
+      const element = viewport.querySelector<HTMLDivElement>(`[data-testid="graph-task-node-${taskId}"]`);
+      if (element) {
+        nextRefs.set(taskId, element);
+      }
+    }
+    nodeRefs.current = nextRefs;
+
+    setMeasuredHeights((current) => {
+      let changed = false;
+      const next = new Map<string, number>();
+      for (const [taskId, height] of current.entries()) {
+        if (!relevantTaskIds.has(taskId)) {
+          changed = true;
+          continue;
+        }
+        next.set(taskId, height);
+      }
+      return changed ? next : current;
+    });
+
+    const updateHeightForTask = (taskId: string, height: number) => {
+      setMeasuredHeights((current) => {
+        const previous = current.get(taskId);
+        if (previous !== undefined && Math.abs(previous - height) < 1) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(taskId, height);
+        return next;
+      });
+    };
+
+    for (const [taskId, element] of nextRefs.entries()) {
+      updateHeightForTask(taskId, element.offsetHeight || NODE_HEIGHT);
+    }
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const element = entry.target as HTMLDivElement;
+        const taskId = Array.from(nextRefs.entries()).find(([, refElement]) => refElement === element)?.[0];
+        if (!taskId) continue;
+        updateHeightForTask(taskId, element.offsetHeight || NODE_HEIGHT);
+      }
+    });
+
+    for (const element of nextRefs.values()) {
+      observer.observe(element);
+    }
+
+    return () => observer.disconnect();
+  }, [graphData.nodes, positions, viewportSize.height, viewportSize.width]);
 
   const {
     transform,
