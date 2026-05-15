@@ -89,15 +89,9 @@ describe("Agent CSS classes", () => {
     expect(orgChartSection).toContain("--org-chart-sibling-gap: var(--space-xl)");
     expect(orgChartSection).toContain("--org-chart-children-offset: calc(var(--space-lg) + var(--space-sm))");
     expect(orgChartSection).toContain("--org-chart-connector-color: color-mix(in srgb, var(--text-muted) 60%, transparent)");
-    expect(orgChartSection).toContain("--org-chart-first-child-leaves: 1");
-    expect(orgChartSection).toContain("--org-chart-last-child-leaves: 1");
-    expect(orgChartSection).toContain("--org-chart-first-child-center-offset");
-    expect(orgChartSection).toContain("--org-chart-last-child-center-offset");
-    expect(orgChartSection).toContain("left: var(--org-chart-first-child-center-offset)");
-    expect(orgChartSection).toContain("right: var(--org-chart-last-child-center-offset)");
     expect(orgChartSection).toContain("min-height: var(--org-chart-node-width)");
-    expect(orgChartSection).toContain("touch-action: pan-x pan-y");
-    expect(orgChartSection).toContain("overflow: auto");
+    expect(orgChartSection).toContain("touch-action: none");
+    expect(orgChartSection).toContain("overflow: hidden");
     expect(orgChartSection).toContain("overscroll-behavior: contain");
     expect(orgChartSection).toContain("transform-origin: top left");
     expect(orgChartSection).toContain("background: var(--bg)");
@@ -118,10 +112,23 @@ describe("Agent CSS classes", () => {
     expect(orgChartSection).toContain("--org-chart-subtree-leaves-number: var(--org-chart-subtree-leaves, 1)");
     expect(orgChartSection).toContain("min-width: calc(");
     expect(orgChartSection).toContain(".agent-org-chart--vertical .org-chart-children");
+    expect(orgChartSection).toContain(".agent-org-chart-connectors");
+    expect(orgChartSection).toContain("position: absolute");
+    expect(orgChartSection).toContain("inset: 0");
+    expect(orgChartSection).toContain("pointer-events: none");
+    expect(orgChartSection).toContain(".agent-org-chart-canvas[data-panning=\"true\"]");
+    expect(orgChartSection).toContain("transition: none");
     expect(orgChartSection).toContain("gap: var(--space-sm)");
     expect(orgChartSection).toContain("padding-top: var(--space-sm)");
     expect(orgChartSection).toContain("padding-left: calc(var(--space-lg) + var(--space-sm))");
     expect(orgChartSection).toContain("@media (max-width: 768px)");
+    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-75");
+    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-100");
+    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-125");
+    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-150");
+    expect(orgChartSection).not.toContain("org-chart-node--has-children > .org-chart-node-card::after");
+    expect(orgChartSection).not.toContain("org-chart-children::before");
+    expect(orgChartSection).not.toContain(".org-chart-children > .org-chart-node::before");
     expect(orgChartSection).not.toContain("var(--border-color)");
     expect(orgChartSection).not.toContain("var(--text-primary)");
     expect(orgChartSection).not.toContain("var(--text-secondary)");
@@ -175,7 +182,7 @@ describe("Agent CSS classes", () => {
 
   it("should only keep runtime health color inline styles in AgentsView", () => {
     const inlineStyleCount = (agentsViewContent.match(/style=\{\{/g) || []).length;
-    expect(inlineStyleCount).toBe(3);
+    expect(inlineStyleCount).toBe(4);
   });
 
   it("should not have inline <style> blocks in AgentDetailView", () => {
