@@ -187,8 +187,8 @@ describe("PR checks workflow (.github/workflows/pr-checks.yml)", () => {
     expect(workflow.jobs?.typecheck).toBeDefined();
     expect(workflow.jobs?.build).toBeDefined();
     expect(workflow.jobs?.["test-shards"]).toBeDefined();
-    expect(workflow.jobs?.["test-shards"]?.strategy?.matrix?.shard).toEqual([1, 2, 3]);
-    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3");
+    expect(workflow.jobs?.["test-shards"]?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
+    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4");
     expect(content).not.toContain("run: pnpm test\n");
   });
 
