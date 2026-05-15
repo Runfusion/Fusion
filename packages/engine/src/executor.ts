@@ -7452,6 +7452,7 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       ? await this.planSquashImportFromDep(taskId, resolvedStartPoint, startPoint)
       : null;
     const initialStartPoint = squashImport ? squashImport.mainBase : resolvedStartPoint;
+    const settings = await this.store.getSettings();
 
     for (let attempt = 0; attempt < this.MAX_WORKTREE_RETRIES; attempt++) {
       try {

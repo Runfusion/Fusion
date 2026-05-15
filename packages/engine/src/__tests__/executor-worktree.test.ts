@@ -357,7 +357,7 @@ describe("TaskExecutor worktree naming", () => {
       worktree: "/tmp/test/.worktrees/swift-falcon",
       branch: "fusion/fn-030",
     });
-    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
   });
 
   it("does NOT use task ID as worktree directory name for fresh worktrees", async () => {
@@ -421,7 +421,7 @@ describe("TaskExecutor worktree naming", () => {
     await executor.execute(makeTask("FN-032", stalePath));
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-032", { worktree: null, branch: null });
-    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+    expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
       (call) => typeof call[0] === "string" && call[0].includes("git worktree add"),
     );
@@ -524,7 +524,7 @@ describe("TaskExecutor worktree naming", () => {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-045",
       });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
     });
 
     it("defaults to random naming when worktreeNaming is undefined", async () => {
@@ -546,7 +546,7 @@ describe("TaskExecutor worktree naming", () => {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-046",
       });
-      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test");
+      expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
     });
 
     it("ignores worktreeNaming setting when using pooled worktree (recycle mode)", async () => {

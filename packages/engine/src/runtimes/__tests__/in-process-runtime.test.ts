@@ -307,7 +307,7 @@ describe("InProcessRuntime", () => {
         expect(gitExecCalls).toHaveLength(0);
         expect(gitExecFileCalls).toHaveLength(0);
         expect(gitSpawnCalls).toHaveLength(0);
-        expect(mockReapOrphanWorktrees).toHaveBeenCalledWith(testDir);
+        expect(mockReapOrphanWorktrees).toHaveBeenCalledWith(testDir, expect.any(Object));
         expect(mockIsGitRepository).toHaveBeenCalledWith(testDir);
         expect(mockScanIdleWorktrees).toHaveBeenCalled();
       } finally {

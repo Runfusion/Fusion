@@ -10,6 +10,7 @@ import {
   type MissionFeature,
   type PrInfo,
   type AgentStore,
+  type Settings,
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
