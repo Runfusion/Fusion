@@ -1742,7 +1742,7 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {(filesChangedButton || timeIndicator || isGitHubImportedTask) && (
+      {(filesChangedButton || isGitHubImportedTask || (showTrackingIndicator && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0 || timeIndicator) && (
         <div className="card-footer-row">
           {filesChangedButton}
           {isGitHubImportedTask && (
@@ -1752,6 +1752,40 @@ function TaskCardComponent({
               aria-label="Imported from GitHub"
             >
               <ProviderIcon provider="github" size="sm" />
+            </span>
+          )}
+          {showTrackingIndicator && githubTrackedIssue && (
+            <a
+              className="card-github-tracking-chip card-github-tracking-link"
+              href={githubTrackedIssue.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Linked GitHub issue: ${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
+              aria-label={`Linked GitHub issue #${githubTrackedIssue.number}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ProviderIcon provider="github" size="sm" />
+              <span>{`#${githubTrackedIssue.number}`}</span>
+            </a>
+          )}
+          {(task.retrySummary?.total ?? 0) > 0 && (
+            <span
+              className={`card-retry-badge${(retryWarningThreshold != null && (task.retrySummary?.total ?? 0) >= retryWarningThreshold) ? " card-retry-badge--error" : " card-retry-badge--warning"}`}
+              onClick={handleOpenRetries}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onOpenDetailWithTab?.(task, "retries");
+                }
+              }}
+              aria-label={`${task.retrySummary?.total ?? 0} retries`}
+              title="Open retry breakdown"
+            >
+              <RotateCw size={11} />
+              <span>{task.retrySummary?.total ?? 0}</span>
             </span>
           )}
           {timeIndicator && (
@@ -1766,7 +1800,7 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {(((task.retrySummary?.total ?? 0) > 0) || (task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || task.overlapBlockedBy || (fanout && fanout.totalCount > 0)) && (
+      {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || task.overlapBlockedBy || (fanout && fanout.totalCount > 0)) && (
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
             <div className="card-dep-list">
@@ -1800,26 +1834,6 @@ function TaskCardComponent({
               </span>
             </span>
           )}
-          {(task.retrySummary?.total ?? 0) > 0 && (
-            <span
-              className={`card-retry-badge${(retryWarningThreshold != null && (task.retrySummary?.total ?? 0) >= retryWarningThreshold) ? " card-retry-badge--error" : " card-retry-badge--warning"}`}
-              onClick={handleOpenRetries}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onOpenDetailWithTab?.(task, "retries");
-                }
-              }}
-              aria-label={`${task.retrySummary?.total ?? 0} retries`}
-              title="Open retry breakdown"
-            >
-              <RotateCw size={11} />
-              <span>{task.retrySummary?.total ?? 0}</span>
-            </span>
-          )}
           {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
         </div>
       )}
@@ -1846,55 +1860,37 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {(showInReviewMoveControl || (showTrackingIndicator && githubTrackedIssue)) && (
-        <div className={`card-bottom-row${showInReviewMoveControl && showTrackingIndicator ? " card-bottom-row--split" : ""}`}>
-          {showInReviewMoveControl && (
-            <div className="card-bottom-left-row">
-              <div className="card-send-back" ref={sendBackRef}>
-                <button
-                  className="card-send-back-btn"
-                  onClick={handleSendBackClick}
-                  title="Move task"
-                  aria-label="Move task"
-                  aria-haspopup="menu"
-                  aria-expanded={showSendBackMenu}
-                >
-                  Move
-                  <ChevronDown size={10} />
-                </button>
-                {showSendBackMenu && (
-                  <div className="card-send-back-menu" role="menu">
-                    {VALID_TRANSITIONS["in-review"].map((col) => (
-                      <button
-                        key={col}
-                        className="card-send-back-menu-item"
-                        role="menuitem"
-                        onClick={(e) => handleSendBackOptionClick(e, col)}
-                      >
-                        {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {showTrackingIndicator && githubTrackedIssue && (
-            <div className="card-bottom-right-row">
-              <a
-                className="card-github-tracking-chip card-github-tracking-link"
-                href={githubTrackedIssue.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Linked GitHub issue: ${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
-                aria-label={`Linked GitHub issue #${githubTrackedIssue.number}`}
-                onClick={(e) => e.stopPropagation()}
+      {showInReviewMoveControl && (
+        <div className="card-bottom-row">
+          <div className="card-bottom-left-row">
+            <div className="card-send-back" ref={sendBackRef}>
+              <button
+                className="card-send-back-btn"
+                onClick={handleSendBackClick}
+                title="Move task"
+                aria-label="Move task"
+                aria-haspopup="menu"
+                aria-expanded={showSendBackMenu}
               >
-                <ProviderIcon provider="github" size="sm" />
-                <span>{`#${githubTrackedIssue.number}`}</span>
-              </a>
+                Move
+                <ChevronDown size={10} />
+              </button>
+              {showSendBackMenu && (
+                <div className="card-send-back-menu" role="menu">
+                  {VALID_TRANSITIONS["in-review"].map((col) => (
+                    <button
+                      key={col}
+                      className="card-send-back-menu-item"
+                      role="menuitem"
+                      onClick={(e) => handleSendBackOptionClick(e, col)}
+                    >
+                      {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />

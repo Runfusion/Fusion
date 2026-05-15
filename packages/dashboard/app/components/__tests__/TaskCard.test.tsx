@@ -1588,12 +1588,13 @@ describe("TaskCard", () => {
     expect(link.getAttribute("title")).toBe("Linked GitHub issue: owner/repo#42");
     expect(link).toHaveClass("card-github-tracking-chip", "card-github-tracking-link");
     expect(link).toHaveTextContent("#42");
-    expect(bottomRightRow?.contains(link)).toBe(true);
-    expect(footerRow).toBeNull();
+    expect(footerRow).not.toBeNull();
+    expect(footerRow?.contains(link)).toBe(true);
+    expect(bottomRightRow).toBeNull();
     expect(screen.getByTestId("provider-icon-github")).toBeDefined();
   });
 
-  it("renders the GitHub tracking link below the queued badge in the bottom-right row", () => {
+  it("renders the GitHub tracking link in the unified footer row above queued metadata", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -1616,12 +1617,50 @@ describe("TaskCard", () => {
     );
 
     const link = screen.getByRole("link", { name: "Linked GitHub issue #42" });
-    const bottomRightRow = container.querySelector(".card-bottom-right-row");
+    const footerRow = container.querySelector(".card-footer-row");
     const queuedBadge = container.querySelector(".queued-badge");
-    expect(bottomRightRow).not.toBeNull();
-    expect(bottomRightRow?.contains(link)).toBe(true);
+    expect(footerRow).not.toBeNull();
+    expect(footerRow?.contains(link)).toBe(true);
+    expect(container.querySelector(".card-bottom-right-row")).toBeNull();
     expect(queuedBadge).not.toBeNull();
-    expect(queuedBadge?.compareDocumentPosition(bottomRightRow as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(queuedBadge?.compareDocumentPosition(footerRow as Node) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
+  it("renders tracking, retry, and timer chips in the same footer row", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-review",
+          sourceType: "dashboard_ui",
+          retrySummary: { total: 3 } as any,
+          githubTracking: {
+            issue: {
+              owner: "owner",
+              repo: "repo",
+              number: 42,
+              url: "https://github.com/owner/repo/issues/42",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          },
+          executionStartedAt: "2026-04-25T12:00:00.000Z",
+          updatedAt: "2026-04-25T12:12:00.000Z",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={vi.fn()}
+      />,
+    );
+
+    const footerRow = container.querySelector(".card-footer-row");
+    const trackingLink = container.querySelector(".card-github-tracking-chip");
+    const retryChip = container.querySelector(".card-retry-badge");
+    const timerChip = container.querySelector(".card-time-indicator");
+
+    expect(footerRow).not.toBeNull();
+    expect(footerRow?.contains(trackingLink)).toBe(true);
+    expect(footerRow?.contains(retryChip)).toBe(true);
+    expect(footerRow?.contains(timerChip)).toBe(true);
+    expect(container.querySelector(".card-bottom-right-row")).toBeNull();
   });
 
   it("keeps the GitHub tracking link keyboard focusable", () => {
@@ -1681,9 +1720,11 @@ describe("TaskCard", () => {
   it("keeps GitHub tracking chip interaction-affordance CSS contract", () => {
     const css = loadAllAppCssBaseOnly();
 
-    expect(css).toMatch(/\.card-github-tracking-chip\s*\{[^}]*display:\s*inline-flex;[^}]*font-family:\s*var\(--font-mono\);[^}]*\}/);
+    expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*\{[^}]*display:\s*inline-flex;[^}]*font-family:\s*var\(--font-mono\);[^}]*\}/);
     expect(css).toContain(".card-github-tracking-chip:hover");
     expect(css).toMatch(/\.card-github-tracking-chip:focus-visible\s*\{[^}]*--focus-ring-strong/);
+    expect(css).toMatch(/\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*\{[^}]*padding:\s*var\(--space-xs\)\s+var\(--space-sm\);[^}]*height:\s*var\(--card-chip-height\);[^}]*border-radius:\s*var\(--radius-pill\);[^}]*font-size:\s*0\.6875rem;[^}]*line-height:\s*1;[^}]*\}/);
+    expect(css).toMatch(/\.card-github-tracking-chip\s+\.provider-icon\s+svg\s*\{[^}]*width:\s*12px;[^}]*height:\s*12px;[^}]*\}/);
 
     render(
       <TaskCard
@@ -1985,19 +2026,19 @@ describe("TaskCard", () => {
     expect(fullCss).toMatch(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.card-github-badge\s*\{[^}]*font-size:\s*0\.625rem;[^}]*\}/);
   });
 
-  it("FN-4525 defines shared card-chip height tokens and applies them to both badges", () => {
+  it("FN-4525 defines shared card-chip height tokens and applies them to badges and chips", () => {
     const baseCss = loadAllAppCssBaseOnly();
 
     expect(baseCss).toMatch(/:root\s*\{[^}]*--card-chip-height:\s*22px;[^}]*--card-chip-height-mobile:\s*20px;[^}]*\}/);
     expect(baseCss).toMatch(/\.card-github-badge\s*\{[^}]*height:\s*var\(--card-chip-height\);[^}]*\}/);
-    expect(baseCss).toMatch(/\.card-time-indicator\s*\{[^}]*height:\s*var\(--card-chip-height\);[^}]*\}/);
+    expect(baseCss).toMatch(/\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*\{[^}]*height:\s*var\(--card-chip-height\);[^}]*\}/);
   });
 
-  it("FN-4525 applies shared mobile card-chip height token to both badges", () => {
+  it("FN-4525 applies shared mobile card-chip height token to badges and chips", () => {
     const fullCss = loadAllAppCss();
 
     expect(fullCss).toMatch(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.card-github-badge\s*\{[^}]*height:\s*var\(--card-chip-height-mobile\);[^}]*\}/);
-    expect(fullCss).toMatch(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.card-time-indicator\s*\{[^}]*height:\s*var\(--card-chip-height-mobile\);[^}]*\}/);
+    expect(fullCss).toMatch(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.card-time-indicator\s*,\s*\.card-github-tracking-chip\s*,\s*\.card-retry-badge\s*\{[^}]*height:\s*var\(--card-chip-height-mobile\);[^}]*\}/);
   });
 
   it("FN-4511 keeps GitHub badge and timer chip geometry in parity", () => {

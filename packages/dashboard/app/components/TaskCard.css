@@ -131,15 +131,6 @@
 }
 
 .card-retry-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(var(--space-xs) / 2);
-  font-size: 0.625rem;
-  font-weight: 600;
-  line-height: 1;
-  padding: calc(var(--space-xs) / 2) var(--space-sm);
-  border: var(--btn-border-width) solid transparent;
-  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 
@@ -568,13 +559,6 @@
   margin-top: var(--space-sm);
 }
 
-.card-bottom-row--split {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-sm);
-}
-
 .card-bottom-left-row {
   display: flex;
   align-items: center;
@@ -583,13 +567,6 @@
 
 .card-bottom-left-row:focus-within .card-send-back-btn {
   opacity: 1;
-}
-
-.card-bottom-right-row {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  min-width: 0;
 }
 
 .card-provider-icons {
@@ -731,21 +708,29 @@
   align-items: center;
 }
 
-.card-github-tracking-chip {
+.card-time-indicator,
+.card-github-tracking-chip,
+.card-retry-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
   flex-shrink: 0;
   padding: var(--space-xs) var(--space-sm);
-  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  border: var(--btn-border-width) solid transparent;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  color: var(--text-muted);
   font-size: 0.6875rem;
   font-weight: 600;
   font-family: var(--font-mono);
   line-height: 1;
   white-space: nowrap;
+}
+
+.card-github-tracking-chip {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
   text-decoration: none;
   transition:
     background-color var(--transition-fast),
@@ -768,27 +753,15 @@
 }
 
 .card-time-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
   margin-left: auto;
-  flex-shrink: 0;
-  padding: var(--space-xs) var(--space-sm);
-  height: var(--card-chip-height);
-  min-height: var(--card-chip-height);
-  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
-  border-radius: var(--radius-pill);
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
   background: color-mix(in srgb, var(--text-muted) 12%, transparent);
   color: var(--text-muted);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  line-height: 1;
-  white-space: nowrap;
 }
 
-.card-source-provenance + .card-time-indicator {
-  margin-left: 0;
+.card-github-tracking-chip .provider-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 .card-progress-bar {
@@ -1290,24 +1263,17 @@
     gap: var(--space-xs);
   }
 
-  .card-time-indicator {
+  .card-time-indicator,
+  .card-github-tracking-chip,
+  .card-retry-badge {
     padding: var(--space-xs) var(--space-sm);
     font-size: 0.625rem;
     height: var(--card-chip-height-mobile);
     min-height: var(--card-chip-height-mobile);
   }
 
-  .card-github-tracking-chip {
-    padding: var(--space-xs) var(--space-sm);
-    font-size: 0.625rem;
-  }
-
   .card-bottom-row {
     margin-top: var(--space-xs);
-  }
-
-  .card-bottom-row--split {
-    gap: var(--space-xs);
   }
 
   /* Card: smaller status badges for 280px width */
