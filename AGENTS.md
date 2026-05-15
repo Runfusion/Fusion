@@ -968,9 +968,9 @@ If you're tempted to add `min-height: calc(var(--space-xl) + var(--space-md))` (
 - **CSS in `@media` blocks** — Don't search backwards for the nearest `@media` to check if a rule is mobile-scoped. Track brace depth to confirm the line is inside the block. Many components are defined globally even if they only visually appear on mobile.
 - **Mobile board view-switch scroll-snap pitfall (FN-001)** — `scroll-snap-type: x mandatory` on mobile `.board` can cause iOS Safari to compress the viewport into a corner when switching from ListView because stale layout measurements are snapped before flex children resolve. Use `scroll-snap-type: x proximity` combined with `overflow-anchor: none` instead.
 
-## Reliability Mechanism Governance
+## Reliability Mechanism Coverage
 
-Reliability mechanism changes are currently under freeze pending FN-4359 governance hardening; treat new reliability-layer behavior changes as blocked unless explicitly approved in task scope.
+Reliability governance freeze is **LIFTED** (user directive, 2026-05-14, #product). Reliability-layer behavior changes are unblocked — a reliability pass is in scope. Standard review/test rigor still applies.
 
 Reliability interaction regression backstops live in `packages/engine/src/__tests__/reliability-interactions/` and are the canonical location for cross-layer reliability coverage. Any task that adds or changes a reliability layer must add/update interaction tests in that directory for each plausible pair with existing layers (merge path, workflow/pre-merge, self-healing, scheduler/watchdog/restart recovery, and governance gates).
 
