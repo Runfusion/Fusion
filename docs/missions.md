@@ -41,6 +41,50 @@ fn mission activate-slice slice_456
 fn mission delete mission_123 --force
 ```
 
+## Mission Planning Tools (pi extension)
+
+The canonical per-parameter tool reference lives in `packages/cli/skill/fusion/references/extension-tools.md`; this section is a user-facing summary of the mission-planning tool surface.
+
+| Tool | Purpose |
+|---|---|
+| `fn_mission_create` | Create a mission with title/description and optional auto-advance behavior. |
+| `fn_mission_list` | List missions and their current status. |
+| `fn_mission_show` | Show mission details with milestone/slice/feature hierarchy. |
+| `fn_mission_delete` | Delete a mission and its hierarchy. |
+| `fn_milestone_add` | Add a milestone to a mission. |
+| `fn_milestone_update` | Update milestone fields using partial patches. |
+| `fn_slice_add` | Add a slice to a milestone. |
+| `fn_slice_activate` | Activate a pending slice for implementation. |
+| `fn_feature_add` | Add a feature to a slice with optional acceptance criteria. |
+| `fn_feature_update` | Update feature fields using partial patches. |
+| `fn_feature_link_task` | Link a feature to a task for implementation. |
+
+### fn_milestone_update
+
+Updates an existing milestone's `title`, `description`, or `acceptanceCriteria`. Partial patches leave untouched fields intact — fields omitted from the call are not modified.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Milestone ID to update (e.g., `MS-001`) |
+| `title` | string | — | Updated milestone title |
+| `description` | string | — | Updated milestone description |
+| `acceptanceCriteria` | string | — | Updated acceptance criteria for completing the milestone |
+
+Callers can only update milestones within missions they have access to. Use `fn_milestone_add` to create milestones. This update behavior was introduced in FN-4578.
+
+### fn_feature_update
+
+Updates an existing feature's `title`, `description`, or `acceptanceCriteria`. Partial patches leave untouched fields intact — fields omitted from the call are not modified.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Feature ID to update (e.g., `F-001`) |
+| `title` | string | — | Updated feature title |
+| `description` | string | — | Updated feature description |
+| `acceptanceCriteria` | string | — | Updated acceptance criteria for completing the feature |
+
+Use this to edit existing features without delete-and-re-add cycles.
+
 ## Mission Interview and Planning Workflow
 
 The dashboard supports mission planning workflows where you can:
