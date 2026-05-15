@@ -34,13 +34,23 @@ export function MergeDetails({ task }: MergeDetailsProps) {
         </div>
         <div className="detail-log-entry">
           <div className="detail-log-header">
-            <span className="detail-log-action">Files changed</span>
+            <span
+              className="detail-log-action"
+              title="Final commit shortstat; for the full landed diff across all task commits, see the Changes tab."
+            >
+              Files in merge commit
+            </span>
             <span className="detail-log-outcome">{details.filesChanged ?? 0}</span>
           </div>
         </div>
         <div className="detail-log-entry">
           <div className="detail-log-header">
-            <span className="detail-log-action">Insertions / Deletions</span>
+            <span
+              className="detail-log-action"
+              title="Final commit shortstat; for the full landed diff across all task commits, see the Changes tab."
+            >
+              Merge-commit insertions / deletions
+            </span>
             <span className="detail-log-outcome">+{details.insertions ?? 0} / -{details.deletions ?? 0}</span>
           </div>
         </div>
