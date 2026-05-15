@@ -1029,7 +1029,7 @@ describe("Scheduler", () => {
       // Dependency-blocked urgent task should be queued, not started.
       expect(updateTask).toHaveBeenCalledWith("FN-100", { status: "queued", blockedBy: "FN-900" });
       // Overlap-blocked urgent task should be queued with blocker id.
-      expect(updateTask).toHaveBeenCalledWith("FN-103", { status: "queued", blockedBy: "FN-001" });
+      expect(updateTask).toHaveBeenCalledWith("FN-103", { status: "queued", blockedBy: "FN-001", overlapBlockedBy: "FN-001" });
       // Paused and recovery-gated urgent tasks never enter scheduling.
       expect(moveTask).not.toHaveBeenCalledWith("FN-101", "in-progress");
       expect(moveTask).not.toHaveBeenCalledWith("FN-102", "in-progress");
@@ -1262,7 +1262,7 @@ describe("Scheduler", () => {
       (scheduler as any).running = true;
       await scheduler.schedule();
 
-      expect(updateTask).toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001" });
+      expect(updateTask).toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001", overlapBlockedBy: "FN-001" });
       expect(moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress");
     });
 
@@ -1300,7 +1300,7 @@ describe("Scheduler", () => {
       (scheduler as any).running = true;
       await scheduler.schedule();
 
-      expect(updateTask).toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001" });
+      expect(updateTask).toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001", overlapBlockedBy: "FN-001" });
       expect(moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress");
     });
   });
@@ -1379,7 +1379,7 @@ describe("Scheduler", () => {
       (scheduler as any).running = true;
       await scheduler.schedule();
 
-      expect(updateTask).toHaveBeenCalledWith("FN-T", { status: "queued", blockedBy: "FN-B" });
+      expect(updateTask).toHaveBeenCalledWith("FN-T", { status: "queued", blockedBy: "FN-B", overlapBlockedBy: "FN-B" });
     });
 
     it("does not stamp blockedBy for todos without overlap, including empty scopes", async () => {
