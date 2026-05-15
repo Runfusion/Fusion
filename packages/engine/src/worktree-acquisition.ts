@@ -8,6 +8,12 @@ import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "./logger.js";
 import { isBranchConflictError } from "./branch-conflicts.js";
 import { type WorktreePool, isUsableTaskWorktree } from "./worktree-pool.js";
+import {
+  NativeWorktreeBackend,
+  WorktrunkOperationError,
+  resolveWorktreeBackend,
+  type WorktreeBackend,
+} from "./worktree-backend.js";
 import type { RunAuditor } from "./run-audit.js";
 
 const execAsync = promisify(exec);
@@ -37,6 +43,7 @@ export interface AcquireTaskWorktreeOptions {
   ) => Promise<{ path: string; branch: string }>;
   runConfiguredCommand?: (command: string, cwd: string, timeoutMs: number, env?: NodeJS.ProcessEnv) => Promise<{ spawnError?: string | Error; timedOut?: boolean; exitCode?: number | null }>;
   taskEnv?: NodeJS.ProcessEnv;
+  backend?: WorktreeBackend;
 }
 
 export interface AcquireTaskWorktreeResult {
@@ -88,42 +95,9 @@ async function maybeWarnForeignTaskStartPoint(
   }
 }
 
-async function createWorktreeFallback(
-  rootDir: string,
-  branch: string,
-  path: string,
-  startPoint?: string,
-  allowSiblingBranchRename = false,
-): Promise<{ path: string; branch: string }> {
-  const escapedPath = JSON.stringify(path);
-  const escapedBranch = JSON.stringify(branch);
-  const escapedStart = startPoint ? JSON.stringify(startPoint) : undefined;
-  const startArg = escapedStart ? ` ${escapedStart}` : "";
-
-  try {
-    await execAsync(`git worktree add -b ${escapedBranch} ${escapedPath}${startArg}`, { cwd: rootDir });
-    return { path, branch };
-  } catch (error) {
-    if (!allowSiblingBranchRename) {
-      throw error;
-    }
-
-    for (let suffix = 2; suffix <= 50; suffix += 1) {
-      const candidate = `${branch}-${suffix}`;
-      const escapedCandidate = JSON.stringify(candidate);
-      try {
-        await execAsync(`git worktree add -b ${escapedCandidate} ${escapedPath}${startArg}`, { cwd: rootDir });
-        return { path, branch: candidate };
-      } catch {
-        // try next suffix
-      }
-    }
-    throw error;
-  }
-}
-
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv } = opts;
+  const backend = opts.backend ?? resolveWorktreeBackend(settings, { logger });
   const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
   const naming = settings.worktreeNaming || "random";
   const allowSiblingBranchRename = settings.executorAllowSiblingBranchRename === true;
@@ -237,8 +211,57 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
   const createWorktreeImpl = createWorktree
     ? createWorktree
-    : (branch: string, path: string, _taskId: string, startPoint?: string, allowRename?: boolean) => createWorktreeFallback(rootDir, branch, path, startPoint, allowRename);
+    : async (branch: string, path: string, taskId: string, startPoint?: string, allowRename?: boolean) => {
+      try {
+        const created = await backend.create({
+          rootDir,
+          branch,
+          worktreePath: path,
+          startPoint,
+          taskId,
+          allowSiblingBranchRename: allowRename,
+        });
+        if (backend.kind === "worktrunk") {
+          await audit?.git({ type: "worktree:worktrunk-create", target: created.path, metadata: { branch: created.branch } });
+        }
+        return created;
+      } catch (error) {
+        if (
+          backend.kind === "worktrunk" &&
+          error instanceof WorktrunkOperationError &&
+          settings.worktrunk?.onFailure === "fallback-native"
+        ) {
+          logger?.warn?.(
+            `${taskId}: worktrunk create failed (${error.code}); falling back to native git worktree backend`,
+          );
+          await audit?.git({
+            type: "worktree:worktrunk-fallback",
+            target: path,
+            metadata: {
+              branch,
+              operation: error.operation,
+              code: error.code,
+              stderr: error.stderr,
+              exitCode: error.exitCode,
+            },
+          });
+          const nativeBackend = new NativeWorktreeBackend({ logger });
+          return nativeBackend.create({
+            rootDir,
+            branch,
+            worktreePath: path,
+            startPoint,
+            taskId,
+            allowSiblingBranchRename: allowRename,
+          });
+        }
+        throw error;
+      }
+    };
 
+  // Removal/sync/prune call sites in executor.ts, merger.ts, worktree-pool.ts, and
+  // self-healing.ts remain on native git worktree flows in this task; migration is
+  // FN-4678 follow-up.
   const created = await createWorktreeImpl(branchName, worktreePath, task.id, baseBranch ?? undefined, allowSiblingBranchRename);
   worktreePath = created.path;
   branch = created.branch;
