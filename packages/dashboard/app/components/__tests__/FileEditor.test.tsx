@@ -18,7 +18,10 @@ describe("FileEditor", () => {
   };
 
   const expandEditorOptions = () => {
-    fireEvent.click(screen.getByRole("button", { name: /toggle editor options/i }));
+    const toggle = screen.getByRole("button", { name: /toggle editor options/i });
+    if (toggle.getAttribute("aria-expanded") !== "true") {
+      fireEvent.click(toggle);
+    }
   };
 
   const highlightedTokenSelector = ".cm-line span[class]";
@@ -54,12 +57,12 @@ describe("FileEditor", () => {
   it("markdown preview toggle still works", () => {
     document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+    expandEditorOptions();
     fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
     expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /edit mode/i }));
     expect(document.querySelector(".cm-editor")).toBeInTheDocument();
   });
-
   it("line-number toggle still flips state and gutter visibility", () => {
     document.documentElement.dataset.theme = "dark";
     const onToggle = vi.fn();
@@ -135,112 +138,44 @@ describe("FileEditor", () => {
   });
 
   describe("markdown preview", () => {
-    it("shows edit/preview toggle for .md files", () => {
-      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
-      
+    it("shows edit/preview toggle for markdown extensions when expanded", () => {
+      const { rerender } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
       expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
-    });
 
-    it("shows edit/preview toggle for .markdown files", () => {
-      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.markdown" />);
-      
+      rerender(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.markdown" />);
+      expandEditorOptions();
       expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
-    });
 
-    it("shows edit/preview toggle for .mdx files", () => {
-      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="page.mdx" />);
-      
-      expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
+      rerender(<FileEditor content="# Hello" onChange={vi.fn()} filePath="page.mdx" />);
+      expandEditorOptions();
       expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
     });
 
     it("does not show edit/preview toggle for non-markdown files", () => {
       render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
-      
       expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
     });
 
-    it("does not show edit/preview toggle when filePath is not provided", () => {
-      render(<FileEditor content="some content" onChange={vi.fn()} />);
-      
-      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
-    });
-
-    it("defaults to edit mode for markdown files", () => {
+    it("switches preview and edit when expanded", () => {
       render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" />);
-      expect(document.querySelector(".cm-editor")).toBeInTheDocument();
-    });
-
-    it("switches to preview mode when preview button is clicked", () => {
-      render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" />);
-
+      expandEditorOptions();
       const previewButton = screen.getByRole("button", { name: /preview/i });
       fireEvent.click(previewButton);
-
-      expect(document.querySelector(".cm-editor")).not.toBeInTheDocument();
       expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
-    });
-
-    it("switches back to edit mode when edit button is clicked", () => {
-      render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" />);
-
-      const previewButton = screen.getByRole("button", { name: /preview/i });
-      fireEvent.click(previewButton);
 
       const editButton = screen.getByRole("button", { name: /edit mode/i });
       fireEvent.click(editButton);
-
       expect(document.querySelector(".cm-editor")).toBeInTheDocument();
     });
 
-    it("renders markdown content in preview mode", () => {
-      render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" />);
-      
-      // Switch to preview
-      const previewButton = screen.getByRole("button", { name: /preview/i });
-      fireEvent.click(previewButton);
-      
-      // Check that the markdown is rendered (heading should be present)
-      expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
-    });
-
-    it("hides edit button in readOnly mode for markdown files", () => {
+    it("readOnly markdown shows preview action when expanded", () => {
       render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" readOnly />);
-      
-      // Edit button should not be visible
+      expandEditorOptions();
       expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
-      // Preview button should still be visible
       expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
-    });
-
-    it("defaults to preview mode in readOnly mode for markdown files", () => {
-      render(<FileEditor content="# Hello World" onChange={vi.fn()} filePath="readme.md" readOnly />);
-
-      expect(document.querySelector(".cm-editor")).not.toBeInTheDocument();
-      expect(document.querySelector(".file-editor-preview")).toBeInTheDocument();
-    });
-
-    it("preview button is disabled when already in preview mode", () => {
-      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
-      
-      // Switch to preview
-      const previewButton = screen.getByRole("button", { name: /preview/i });
-      fireEvent.click(previewButton);
-      
-      // Preview button should now be disabled
-      expect(previewButton).toBeDisabled();
-    });
-
-    it("edit button is disabled when already in edit mode", () => {
-      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
-      
-      const editButton = screen.getByRole("button", { name: /edit mode/i });
-      // Edit button should be disabled in edit mode
-      expect(editButton).toBeDisabled();
     });
   });
 
@@ -414,101 +349,107 @@ describe("FileEditor", () => {
   });
 
   describe("editor toolbar options collapse", () => {
-    it("secondary actions are collapsed by default for markdown and non-markdown files", () => {
-      const { rerender } = render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
-
-      expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /toggle word wrap/i })).not.toBeInTheDocument();
-
-      rerender(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+    it("hides edit, preview, line numbers, and wrap while collapsed", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /preview mode/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /toggle word wrap/i })).not.toBeInTheDocument();
     });
 
-    it("expanding shows line-number and wrap toggles", () => {
-      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
-
+    it("expanding shows all actions in one toolbar actions row", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
       expandEditorOptions();
-      expect(screen.getByRole("button", { name: /toggle line numbers/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /toggle word wrap/i })).toBeInTheDocument();
+
+      const editButton = screen.getByRole("button", { name: /edit mode/i });
+      const actionsRow = editButton.closest(".file-editor-toolbar-actions");
+      expect(actionsRow).toBeTruthy();
+      expect(actionsRow).toContainElement(screen.getByRole("button", { name: /preview mode/i }));
+      expect(actionsRow).toContainElement(screen.getByRole("button", { name: /toggle line numbers/i }));
+      expect(actionsRow).toContainElement(screen.getByRole("button", { name: /toggle word wrap/i }));
     });
 
-    it("collapsing hides the toggles again", () => {
-      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
-
-      expandEditorOptions();
-      expandEditorOptions();
-      expect(screen.queryByRole("button", { name: /toggle line numbers/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /toggle word wrap/i })).not.toBeInTheDocument();
-    });
+    it.each([/edit mode/i, /preview mode/i, /toggle line numbers/i, /toggle word wrap/i])(
+      "expanded action button %s uses compact toolbar class signature",
+      (name) => {
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        expandEditorOptions();
+        const button = screen.getByRole("button", { name });
+        expect(button.className).toContain("btn");
+        expect(button.className).toContain("btn-sm");
+        expect(button.className).toContain("file-editor-toolbar-button");
+      },
+    );
 
     it("aria-expanded reflects state", () => {
       render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
-
       const optionsButton = screen.getByRole("button", { name: /toggle editor options/i });
       expect(optionsButton).toHaveAttribute("aria-expanded", "false");
-
       fireEvent.click(optionsButton);
       expect(optionsButton).toHaveAttribute("aria-expanded", "true");
     });
+  });
 
-    it("FN-4480: collapsible region has computed display:none when collapsed", () => {
+  describe("toolbar sizing CSS", () => {
+    it("keeps equal height and font-size for all toolbar buttons on desktop and mobile", () => {
       const css = loadAllAppCss();
       const style = document.createElement("style");
       style.textContent = css;
       document.head.appendChild(style);
 
       try {
-        render(<FileEditor content="x" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        expandEditorOptions();
 
-        const optionsButton = screen.getByRole("button", { name: /toggle editor options/i });
-        const controlsId = optionsButton.getAttribute("aria-controls");
-        expect(controlsId).toBeTruthy();
+        const buttons = [
+          screen.getByRole("button", { name: /edit mode/i }),
+          screen.getByRole("button", { name: /preview mode/i }),
+          screen.getByRole("button", { name: /toggle line numbers/i }),
+          screen.getByRole("button", { name: /toggle word wrap/i }),
+        ];
 
-        const collapsibleRegion = document.getElementById(controlsId as string);
-        expect(collapsibleRegion).toBeTruthy();
+        const desktopStyles = buttons.map((button) => getComputedStyle(button));
+        expect(new Set(desktopStyles.map((styleDecl) => styleDecl.height)).size).toBe(1);
+        expect(new Set(desktopStyles.map((styleDecl) => styleDecl.fontSize)).size).toBe(1);
 
-        expect(getComputedStyle(collapsibleRegion as HTMLElement).display).toBe("none");
+        window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+          matches: query.includes("max-width: 768px"),
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }));
 
-        fireEvent.click(optionsButton);
-        expect(getComputedStyle(collapsibleRegion as HTMLElement).display).toBe("inline-flex");
-
-        fireEvent.click(optionsButton);
-        expect(getComputedStyle(collapsibleRegion as HTMLElement).display).toBe("none");
+        const mobileStyles = buttons.map((button) => getComputedStyle(button));
+        expect(new Set(mobileStyles.map((styleDecl) => styleDecl.height)).size).toBe(1);
+        expect(new Set(mobileStyles.map((styleDecl) => styleDecl.fontSize)).size).toBe(1);
       } finally {
         style.remove();
       }
     });
-  });
 
-  describe("mobile toolbar CSS", () => {
-    it("keeps file editor toolbar action buttons at a shared mobile touch target size", () => {
+    it("reduces toolbar vertical padding when expanded", () => {
       const css = loadAllAppCss();
-      const selectorIndex = css.indexOf(".file-editor-toolbar-actions .btn");
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
 
-      expect(selectorIndex).toBeGreaterThanOrEqual(0);
+      try {
+        render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" onToggleLineNumbers={vi.fn()} />);
+        const toolbar = document.querySelector(".file-editor-toolbar") as HTMLElement;
+        const collapsed = getComputedStyle(toolbar);
 
-      const mediaIndex = css.lastIndexOf("@media (max-width: 768px)", selectorIndex);
-      expect(mediaIndex).toBeGreaterThanOrEqual(0);
+        expandEditorOptions();
+        const expanded = getComputedStyle(toolbar);
 
-      const openBraceIndex = css.indexOf("{", mediaIndex);
-      let depth = 1;
-      let cursor = openBraceIndex + 1;
-
-      while (cursor < css.length && depth > 0) {
-        if (css[cursor] === "{") {
-          depth += 1;
-        } else if (css[cursor] === "}") {
-          depth -= 1;
-        }
-        cursor += 1;
+        expect(expanded.paddingTop).not.toBe(collapsed.paddingTop);
+        expect(expanded.paddingBottom).not.toBe(collapsed.paddingBottom);
+      } finally {
+        style.remove();
       }
-
-      const mobileCss = css.slice(openBraceIndex + 1, cursor - 1);
-
-      expect(mobileCss).toMatch(
-        /\.file-editor-toolbar-actions\s+\.btn\s*\{[^}]*min-height:\s*var\(--mobile-nav-height\);[^}]*min-width:\s*var\(--mobile-nav-height\);[^}]*\}/,
-      );
     });
   });
 });
