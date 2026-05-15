@@ -1523,9 +1523,11 @@ export function TaskDetailContent({
     }
   }, [task.id, onDuplicateTask, requestClose, addToast, confirm]);
 
+  const isTaskPaused = task.paused || task.userPaused;
+
   const handleTogglePause = useCallback(async () => {
     try {
-      if (task.paused) {
+      if (isTaskPaused) {
         await unpauseTask(task.id, projectId);
         addToast(`Unpaused ${task.id}`, "success");
       } else {
@@ -1536,7 +1538,7 @@ export function TaskDetailContent({
     } catch (err) {
       addToast(getErrorMessage(err), "error");
     }
-  }, [task.id, task.paused, requestClose, addToast]);
+  }, [isTaskPaused, task.id, requestClose, addToast]);
 
   const handleApprovePlan = useCallback(async () => {
     try {
@@ -3341,7 +3343,7 @@ export function TaskDetailContent({
               )}
 
               {/* Actions dropdown — less common operations */}
-              {(task.column !== "triage" || task.status === "awaiting-approval" || canRetryTask || task.paused) && (
+              {(task.column !== "triage" || task.status === "awaiting-approval" || canRetryTask || isTaskPaused) && (
                 <div className="detail-actions-dropdown" ref={actionsMenuRef}>
                   <button
                     className="btn btn-sm"
@@ -3426,7 +3428,7 @@ export function TaskDetailContent({
                           role="menuitem"
                           onClick={() => handleActionsMenuItemClick(handleTogglePause)}
                         >
-                          {task.paused ? "Unpause" : "Pause"}
+                          {isTaskPaused ? "Unpause" : "Pause"}
                         </button>
                       )}
                       {task.column !== "done" && task.paused && task.pausedByAgentId && (

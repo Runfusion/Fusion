@@ -880,6 +880,31 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("menuitem", { name: "Unpause" })).toBeTruthy();
     });
 
+    it("renders Unpause for userPaused-only tasks and unpauses once", async () => {
+      const { unpauseTask } = await import("../../api");
+      const mockUnpauseTask = vi.mocked(unpauseTask);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "todo", paused: undefined, userPaused: true })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: /actions/i }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Unpause" }));
+
+      await waitFor(() => {
+        expect(mockUnpauseTask).toHaveBeenCalledTimes(1);
+        expect(mockUnpauseTask).toHaveBeenCalledWith("FN-001", undefined);
+      });
+    });
+
     it("hides Pause/Unpause button for agent-assigned tasks", async () => {
       const { fetchAgent } = await import("../../api");
       const mockFetchAgent = vi.mocked(fetchAgent);
