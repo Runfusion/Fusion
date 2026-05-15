@@ -10,7 +10,7 @@ import type {
   ScheduledTask,
   AutomationRunResult,
 } from "@fusion/core";
-import { compareTasksByPriorityThenAgeAndId, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
+import { compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -1119,7 +1119,7 @@ export class ProjectEngine {
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
     if (task.mergeDetails?.mergeConfirmed) {
-      return task.status !== "failed";
+      return getTaskHardMergeBlocker(task as Task) === undefined;
     }
     if (this.options.getTaskMergeBlocker?.(task as Task)) return false;
     // Terminal failure: don't let the cooldown sweep re-attempt a merge that
@@ -1318,7 +1318,7 @@ export class ProjectEngine {
             if (!task || task.column !== "in-review") {
               continue;
             }
-            if (task.paused) {
+            if (task.paused && !task.mergeDetails?.mergeConfirmed) {
               runtimeLog.log(`Auto-merge skipping ${taskId} — task is paused`);
               continue;
             }
@@ -1333,11 +1333,7 @@ export class ProjectEngine {
             // in-review by auto-recovery after a successful merge) — just
             // complete the task without re-running the merge process.
             if (task.mergeDetails?.mergeConfirmed) {
-              const blockerReason = this.options.getTaskMergeBlocker?.({
-                ...(task as Task),
-                status: undefined,
-                error: undefined,
-              });
+              const blockerReason = getTaskHardMergeBlocker(task as Task);
               if (blockerReason) {
                 await store.updateTask(taskId, {
                   status: "failed",
@@ -1354,13 +1350,13 @@ export class ProjectEngine {
               }
 
               runtimeLog.log(
-                `Auto-merge: ${taskId} already has mergeConfirmed — moving to done`,
+                `Auto-merge: ${taskId} already has mergeConfirmed — unpausing and moving to done`,
               );
               await store.logEntry(
                 taskId,
-                "Merge already confirmed; completing task (recovered from post-merge state inconsistency)",
+                "Merge already confirmed; unpausing and completing task (recovered from post-merge state inconsistency)",
               );
-              await store.updateTask(taskId, { status: null, error: null });
+              await store.updateTask(taskId, { paused: false, status: null, error: null });
               try {
                 await store.moveTask(taskId, "done");
               } catch (error) {
