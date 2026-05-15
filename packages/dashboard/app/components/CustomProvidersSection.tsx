@@ -193,13 +193,16 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
       });
 
       if (result.models.length > 0) {
-        const discoveredIds = result.models.map((m) => m.id).join(", ");
         setModels((prev) => {
+          const existingIds = new Set(
+            prev.split(",").map((s) => s.trim()).filter(Boolean),
+          );
+          const newIds = result.models
+            .map((m) => m.id.trim())
+            .filter((id) => !existingIds.has(id));
+          if (newIds.length === 0) return prev;
           const existing = prev.trim();
-          if (existing) {
-            return discoveredIds + ", " + existing;
-          }
-          return discoveredIds;
+          return newIds.join(", ") + (existing ? ", " + existing : "");
         });
       } else {
         setDetectError("No models found. The provider may require an API key.");

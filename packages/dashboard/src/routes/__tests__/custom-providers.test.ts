@@ -418,7 +418,7 @@ describe("POST /api/custom-providers/probe-models", () => {
     expect(res.body.models[0]).toEqual({
       id: "claude-sonnet-4-20250514",
       name: "Claude Sonnet 4",
-      reasoning: true, // sonnet detected as reasoning
+      reasoning: false, // standard sonnet without thinking capability
     });
     expect(res.body.models[2]).toEqual({
       id: "claude-opus-4-20250514",

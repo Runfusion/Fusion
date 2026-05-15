@@ -5,6 +5,9 @@ import type { CustomProvider } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
+/**
+ * Masks an API key for safe display, showing only the first 3 and last 4 characters.
+ */
 function maskApiKey(key: string): string {
   if (key.length <= 8) {
     return "••••••••";
@@ -12,6 +15,9 @@ function maskApiKey(key: string): string {
   return key.slice(0, 3) + "•••••" + key.slice(-4);
 }
 
+/**
+ * Removes the raw API key from a provider object, replacing it with a masked version.
+ */
 function sanitizeProvider(provider: CustomProvider): CustomProvider {
   if (!provider.apiKey) {
     return provider;
@@ -23,6 +29,10 @@ function sanitizeProvider(provider: CustomProvider): CustomProvider {
   };
 }
 
+/**
+ * Asserts that a value is a non-empty string and returns the trimmed value.
+ * @throws {ApiError} with status 400 if the value is not a non-empty string.
+ */
 function assertNonEmptyString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw badRequest(`${fieldName} is required and must be a non-empty string`);
@@ -30,6 +40,10 @@ function assertNonEmptyString(value: unknown, fieldName: string): string {
   return value.trim();
 }
 
+/**
+ * Asserts that a value is a valid custom provider API type.
+ * @throws {ApiError} with status 400 if the type is not recognized.
+ */
 function assertApiType(value: unknown): CustomProvider["apiType"] {
   if (value !== "openai-compatible" && value !== "anthropic-compatible" && value !== "google-generative-ai") {
     throw badRequest("apiType must be 'openai-compatible', 'anthropic-compatible', or 'google-generative-ai'");
@@ -37,6 +51,10 @@ function assertApiType(value: unknown): CustomProvider["apiType"] {
   return value;
 }
 
+/**
+ * Asserts that a value is a valid HTTP/HTTPS URL suitable for use as a base URL.
+ * @throws {ApiError} with status 400 if the URL is invalid or uses an unsupported protocol.
+ */
 function assertBaseUrl(value: unknown): string {
   const baseUrl = assertNonEmptyString(value, "baseUrl");
 
@@ -54,6 +72,11 @@ function assertBaseUrl(value: unknown): string {
   return baseUrl;
 }
 
+/**
+ * Validates and normalizes a models array from a request body.
+ * Returns undefined if models is omitted, or an array of { id, name } objects.
+ * @throws {ApiError} with status 400 if the structure is invalid.
+ */
 function validateModels(value: unknown): Array<{ id: string; name: string }> | undefined {
   if (value === undefined) {
     return undefined;
@@ -76,6 +99,11 @@ function validateModels(value: unknown): Array<{ id: string; name: string }> | u
   });
 }
 
+/**
+ * Parses and validates the body of a create-custom-provider request.
+ * Returns all required and optional fields except the auto-generated id.
+ * @throws {ApiError} with status 400 if required fields are missing or invalid.
+ */
 function parseCreateBody(body: unknown): Omit<CustomProvider, "id"> {
   if (!body || typeof body !== "object") {
     throw badRequest("request body must be an object");
@@ -209,6 +237,27 @@ async function probeProviderModels(
         if (parts[0] === 192 && parts[1] === 168) throw badRequest("baseUrl must not be a loopback or private address");
         // 169.254.0.0/16 (link-local, includes cloud metadata)
         if (parts[0] === 169 && parts[1] === 254) throw badRequest("baseUrl must not be a loopback or private address");
+      } else if (net.isIPv6(addr)) {
+        const lower = addr.toLowerCase();
+        // ::1 — IPv6 loopback
+        if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") throw badRequest("baseUrl must not be a loopback or private address");
+        // fc00::/7 — Unique Local Addresses (private, RFC 4193)
+        if (lower.startsWith("fc") || lower.startsWith("fd")) throw badRequest("baseUrl must not be a loopback or private address");
+        // fe80::/10 — link-local addresses
+        if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) throw badRequest("baseUrl must not be a loopback or private address");
+        // ::ffff:0:0/96 — IPv4-mapped IPv6 — extract embedded IPv4 and re-check
+        const ipv4Mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)/);
+        if (ipv4Mapped) {
+          const v4Parts = ipv4Mapped[1].split(".").map(Number);
+          if (v4Parts.length === 4) {
+            if (v4Parts[0] === 127 || v4Parts[0] === 10 ||
+                (v4Parts[0] === 172 && v4Parts[1] >= 16 && v4Parts[1] <= 31) ||
+                (v4Parts[0] === 192 && v4Parts[1] === 168) ||
+                (v4Parts[0] === 169 && v4Parts[1] === 254)) {
+              throw badRequest("baseUrl must not be a loopback or private address");
+            }
+          }
+        }
       }
     }
   } catch (err) {
@@ -305,7 +354,7 @@ async function probeProviderModels(
         // Anthropic doesn't return context/max_tokens in the models list
         reasoning = Boolean(
           id.toLowerCase().includes("opus") ||
-            id.toLowerCase().includes("sonnet"),
+            (id.toLowerCase().includes("sonnet") && id.toLowerCase().includes("think")),
         );
       } else {
         // OpenAI-compatible
@@ -335,6 +384,11 @@ async function probeProviderModels(
   }
 }
 
+/**
+ * Parses and validates the body of an update-custom-provider request.
+ * Returns an object with only the fields that were provided for partial updates.
+ * @throws {ApiError} with status 400 if provided fields are invalid.
+ */
 function parseUpdateBody(body: unknown): Partial<Omit<CustomProvider, "id">> {
   if (!body || typeof body !== "object") {
     throw badRequest("request body must be an object");
@@ -365,6 +419,11 @@ function parseUpdateBody(body: unknown): Partial<Omit<CustomProvider, "id">> {
   return updates;
 }
 
+/**
+ * Registers custom provider CRUD routes and the probe-models endpoint.
+ * Routes are ordered so that static paths (probe-models) are registered after
+ * parameterized paths (:id) to avoid Express route conflicts.
+ */
 export const registerCustomProviderRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, store, rethrowAsApiError } = ctx;
 
