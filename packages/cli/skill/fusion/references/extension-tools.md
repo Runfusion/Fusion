@@ -259,17 +259,6 @@ Update an existing feature's title, description, or acceptance criteria. Partial
 | `description` | string | — | Updated feature description |
 | `acceptanceCriteria` | string | — | Updated acceptance criteria for completing the feature |
 
-**Example:**
-
-```json
-{
-  "id": "F-001",
-  "acceptanceCriteria": "Runs deterministic verification and updates notes"
-}
-```
-
-**Returns:** Updated feature summary and details including `featureId`, `sliceId`, `title`, `description`, `acceptanceCriteria`, and `status`.
-
 ## Agent Tools
 
 ### fn_agent_stop
