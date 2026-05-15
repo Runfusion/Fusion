@@ -197,6 +197,17 @@ type AggregatedDoneTaskFile = {
   patch: string;
 };
 
+function parseGitShortstat(output: string): { filesChanged: number; additions: number; deletions: number } {
+  const filesMatch = output.match(/(\d+) files? changed/);
+  const additionsMatch = output.match(/(\d+) insertions?\(\+\)/);
+  const deletionsMatch = output.match(/(\d+) deletions?\(-\)/);
+  return {
+    filesChanged: filesMatch ? Number(filesMatch[1]) : 0,
+    additions: additionsMatch ? Number(additionsMatch[1]) : 0,
+    deletions: deletionsMatch ? Number(deletionsMatch[1]) : 0,
+  };
+}
+
 function statusPriority(status: DoneTaskFileStatus): number {
   switch (status) {
     case "added":
@@ -641,13 +652,14 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         }
 
         if (!resolvedMergeSha) {
-          const md = task.mergeDetails;
+          // FN-4527: mergeDetails summary stats can be stale after post-merge
+          // rebase-and-push (FN-4526). Never echo stored values from /diff.
           res.json({
             files: [],
             stats: {
-              filesChanged: md?.filesChanged ?? 0,
-              additions: md?.insertions ?? 0,
-              deletions: md?.deletions ?? 0,
+              filesChanged: 0,
+              additions: 0,
+              deletions: 0,
             },
           });
           return;
@@ -697,17 +709,13 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
           return;
         }
 
-        const patch = await runGitCommand(["diff", diffSpec.range], rootDir, 10000).catch(() => "");
-        const filesChanged = (await runGitCommand(["diff", "--name-only", diffSpec.range], rootDir, 10000)
-          .then((output) => output.split("\n").filter(Boolean).length)
-          .catch(() => 0));
+        const shortstat = await runGitCommand(["show", "--shortstat", "--format=", resolvedMergeSha], rootDir, 10000)
+          .then((output) => parseGitShortstat(output))
+          .catch(() => ({ filesChanged: 0, additions: 0, deletions: 0 }));
 
         res.json({
           files: [],
-          stats: {
-            filesChanged,
-            ...countPatchLines(patch),
-          },
+          stats: shortstat,
         });
         return;
       }

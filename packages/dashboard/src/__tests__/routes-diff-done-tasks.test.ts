@@ -353,6 +353,96 @@ describe("FN-4524 done-task diff stats", () => {
     }
   });
 
+  it("uses live shortstat for done tasks even when mergeDetails stats are stale", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-4527-done-stale-merge-details-"));
+
+    try {
+      git(rootDir, "init", "-b", "main");
+      git(rootDir, "config", "user.email", "fusion@example.com");
+      git(rootDir, "config", "user.name", "Fusion");
+
+      commitFile(rootDir, "base.ts", "export const base = 1;\n", "base");
+
+      git(rootDir, "checkout", "-b", "task-branch");
+      commitFile(rootDir, "one.ts", "export const one = 1;\n", "task one");
+      commitFile(rootDir, "two.ts", "export const two = 2;\n", "task two");
+
+      git(rootDir, "checkout", "main");
+      git(rootDir, "merge", "--squash", "task-branch");
+      git(rootDir, "commit", "-m", "squash merge task");
+      const squashCommit = git(rootDir, "rev-parse", "HEAD");
+      const expected = shortstatForShow(rootDir, squashCommit);
+      expect(expected).toEqual({ filesChanged: 2, additions: 2, deletions: 0 });
+
+      const store = new RealGitStore(rootDir);
+      store.addTask({
+        id: "FN-4524",
+        title: "stale mergeDetails test",
+        description: "stale mergeDetails test",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-05-14T00:00:00.000Z",
+        updatedAt: "2026-05-14T00:00:00.000Z",
+        columnMovedAt: "2026-05-14T00:00:00.000Z",
+        baseBranch: "main",
+        mergeDetails: {
+          commitSha: squashCommit,
+          filesChanged: 108,
+          insertions: 999,
+          deletions: 999,
+        },
+      } as Task);
+
+      const response = await getDoneDiff(store);
+      expect(response.status).toBe(200);
+      expect(response.body.stats).toEqual(expected);
+      expect(response.body.stats).not.toEqual({ filesChanged: 108, additions: 999, deletions: 999 });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns zero stats when merge SHA is unresolvable even if mergeDetails has stored counts", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-4527-done-no-merge-sha-"));
+
+    try {
+      git(rootDir, "init", "-b", "main");
+      git(rootDir, "config", "user.email", "fusion@example.com");
+      git(rootDir, "config", "user.name", "Fusion");
+      commitFile(rootDir, "base.ts", "export const base = 1;\n", "base");
+
+      const store = new RealGitStore(rootDir);
+      store.addTask({
+        id: "FN-4524",
+        title: "missing sha test",
+        description: "missing sha test",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-05-14T00:00:00.000Z",
+        updatedAt: "2026-05-14T00:00:00.000Z",
+        columnMovedAt: "2026-05-14T00:00:00.000Z",
+        baseBranch: "main",
+        mergeDetails: {
+          filesChanged: 108,
+          insertions: 999,
+          deletions: 999,
+        },
+      } as Task);
+
+      const response = await getDoneDiff(store);
+      expect(response.status).toBe(200);
+      expect(response.body.stats).toEqual({ filesChanged: 0, additions: 0, deletions: 0 });
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("matches shortstat when hunks include ++/-- content lines", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "fn-4524-done-plusminus-"));
 
