@@ -44,7 +44,7 @@ describe("ContaminationAutoRecoveryHandler", () => {
 
   it("mode off does not call handler", async () => {
     const issueRetry = vi.fn();
-    const dispatcher = new AutoRecoveryDispatcher({ taskStore: {} as any, auditEmitter: { database: vi.fn(), git: vi.fn(), filesystem: vi.fn() }, handlers: { issueRetry } });
+    const dispatcher = new AutoRecoveryDispatcher({ taskStore: {} as any, auditEmitter: { database: vi.fn(), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() }, handlers: { issueRetry } });
     const decision = await dispatcher.dispatch({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination" }, { task: baseTask, retryCount: 0, settings: { mode: "off", maxRetries: 3 } });
     expect(decision.action).toBe("pause");
     expect(issueRetry).not.toHaveBeenCalled();

@@ -5021,7 +5021,7 @@ export function stopAgentRun(
 // ── Run-Audit & Timeline API ────────────────────────────────────────────────
 
 /** Valid domain filters for run-audit queries. */
-export type RunAuditDomainFilter = "database" | "git" | "filesystem";
+export type RunAuditDomainFilter = "database" | "git" | "filesystem" | "sandbox";
 
 /** Filter options for run-audit queries. */
 export interface RunAuditFilters {
@@ -5042,7 +5042,7 @@ export interface NormalizedRunAuditEvent {
   id: string;
   timestamp: string;
   taskId?: string;
-  domain: "database" | "git" | "filesystem";
+  domain: "database" | "git" | "filesystem" | "sandbox";
   mutationType: string;
   target: string;
   summary: string;
@@ -5086,6 +5086,7 @@ export interface RunTimelineResponse {
     database: NormalizedRunAuditEvent[];
     git: NormalizedRunAuditEvent[];
     filesystem: NormalizedRunAuditEvent[];
+    sandbox: NormalizedRunAuditEvent[];
   };
   counts: {
     auditEvents: number;

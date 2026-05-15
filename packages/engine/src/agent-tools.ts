@@ -1838,7 +1838,7 @@ export function createSendMessageTool(
   options?: { autoRecovery?: ProjectSettings["autoRecovery"]; runAudit?: RunAuditor; taskStore?: TaskStore; settings?: Settings },
 ): ToolDefinition {
   const deliveryHandler = new MessageDeliveryAutoRecoveryHandler({
-    runAudit: options?.runAudit ?? { database: async () => {}, git: async () => {}, filesystem: async () => {} },
+    runAudit: options?.runAudit ?? { database: async () => {}, git: async () => {}, filesystem: async () => {}, sandbox: async () => {} },
   });
 
   return {
@@ -2167,7 +2167,7 @@ export function createPostRoomMessageTool(
   options?: { autoRecovery?: ProjectSettings["autoRecovery"]; runAudit?: RunAuditor; taskStore?: TaskStore; settings?: Settings },
 ): ToolDefinition {
   const deliveryHandler = new MessageDeliveryAutoRecoveryHandler({
-    runAudit: options?.runAudit ?? { database: async () => {}, git: async () => {}, filesystem: async () => {} },
+    runAudit: options?.runAudit ?? { database: async () => {}, git: async () => {}, filesystem: async () => {}, sandbox: async () => {} },
   });
 
   return {

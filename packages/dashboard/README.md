@@ -1010,7 +1010,7 @@ interface RunAuditResponse {
 ```typescript
 interface RunTimelineResponse {
   run: { id, agentId, startedAt, endedAt?, status, taskId? };
-  auditByDomain: { database: [], git: [], filesystem: [] };
+  auditByDomain: { database: [], git: [], filesystem: [], sandbox: [] };
   counts: { auditEvents: number; logEntries: number };
   timeline: TimelineEntry[];
 }

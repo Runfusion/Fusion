@@ -945,6 +945,7 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       expect(Array.isArray(response.body.auditByDomain.database)).toBe(true);
       expect(Array.isArray(response.body.auditByDomain.git)).toBe(true);
       expect(Array.isArray(response.body.auditByDomain.filesystem)).toBe(true);
+      expect(Array.isArray(response.body.auditByDomain.sandbox)).toBe(true);
       expect(response.body.auditByDomain.database.length).toBe(1);
       expect(response.body.counts.auditEvents).toBe(1);
       expect(response.body.counts.logEntries).toBe(2);
@@ -994,6 +995,7 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       expect(response.body.auditByDomain.database).toEqual([]);
       expect(response.body.auditByDomain.git).toEqual([]);
       expect(response.body.auditByDomain.filesystem).toEqual([]);
+      expect(response.body.auditByDomain.sandbox).toEqual([]);
       expect(response.body.counts.auditEvents).toBe(0);
       expect(response.body.counts.logEntries).toBe(0);
       expect(response.body.timeline).toEqual([]);
@@ -1031,6 +1033,15 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
           mutationType: "file:write",
           target: "src/main.ts",
         },
+        {
+          id: "audit-sandbox",
+          timestamp: "2026-01-01T00:04:00.000Z",
+          agentId: "agent-001",
+          runId: "run-001",
+          domain: "sandbox",
+          mutationType: "sandbox:run",
+          target: "native",
+        },
       ];
       mockGetRunAuditEvents.mockReturnValue(mockAuditEvents);
       store.getAgentLogsByTimeRange = vi.fn().mockResolvedValue([]);
@@ -1041,7 +1052,8 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
       expect(response.body.auditByDomain.database.length).toBe(1);
       expect(response.body.auditByDomain.git.length).toBe(1);
       expect(response.body.auditByDomain.filesystem.length).toBe(1);
-      expect(response.body.counts.auditEvents).toBe(3);
+      expect(response.body.auditByDomain.sandbox.length).toBe(1);
+      expect(response.body.counts.auditEvents).toBe(4);
     });
 
     it("returns 400 for blank runId (URL-encoded space)", async () => {

@@ -17,7 +17,7 @@ function makeBackend(runImpl?: (command: string, options: SandboxRunOptions) => 
       policy.onFallback?.({ fromBackendId: "sandbox-exec", toBackendId: "native", reason: "unavailable" });
     }),
     run: runImpl ?? vi.fn(async () => ({ stdout: "ok", stderr: "", exitCode: 0, signal: null, timedOut: false, bufferExceeded: false })),
-    runStreaming: vi.fn(async () => ({ outcome: "success", stdout: "", stderr: "", bufferOverflow: false })),
+    runStreaming: vi.fn(async () => ({ outcome: "success" as const, stdout: "", stderr: "", bufferOverflow: false })),
     dispose: vi.fn(async () => {}),
   };
 }
@@ -39,8 +39,9 @@ describe("withSandboxAudit", () => {
     await backend.prepare({ allowNetwork: false });
     await backend.prepare({ allowNetwork: false });
 
-    const prepareEvents = auditor.sandbox.mock.calls.filter(([input]) => input.type === "sandbox:prepare");
-    const fallbackEvents = auditor.sandbox.mock.calls.filter(([input]) => input.type === "sandbox:fallback");
+    const sandboxCalls = auditor.sandbox.mock.calls as unknown as Array<[Parameters<RunAuditor["sandbox"]>[0]]>;
+    const prepareEvents = sandboxCalls.filter(([input]) => input.type === "sandbox:prepare");
+    const fallbackEvents = sandboxCalls.filter(([input]) => input.type === "sandbox:fallback");
     expect(prepareEvents).toHaveLength(1);
     expect(fallbackEvents).toHaveLength(2);
   });

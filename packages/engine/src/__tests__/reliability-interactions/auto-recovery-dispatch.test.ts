@@ -8,7 +8,7 @@ describe("reliability interaction: auto-recovery dispatcher precedence", () => {
   it("mode off preserves legacy pausedReason contract across wired classes", () => {
     const dispatcher = new AutoRecoveryDispatcher({
       taskStore: {} as never,
-      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn() },
+      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
     });
 
     const wired = [

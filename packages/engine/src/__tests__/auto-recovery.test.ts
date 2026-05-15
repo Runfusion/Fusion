@@ -8,7 +8,7 @@ function createDispatcher() {
   const database = vi.fn(async () => {});
   const dispatcher = new AutoRecoveryDispatcher({
     taskStore: {} as never,
-    auditEmitter: { database, git: vi.fn(), filesystem: vi.fn() },
+    auditEmitter: { database, git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
   });
   return { dispatcher, database };
 }

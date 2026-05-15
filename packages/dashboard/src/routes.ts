@@ -540,7 +540,7 @@ function sanitizeOverlapIgnorePaths(value: unknown): string[] | undefined {
 // ── Run-Audit Timeline Types & Helpers ─────────────────────────────────────
 
 /** Valid domain filters for run-audit queries. */
-export type RunAuditDomainFilter = "database" | "git" | "filesystem";
+export type RunAuditDomainFilter = "database" | "git" | "filesystem" | "sandbox";
 
 /** Filter options for run-audit queries. */
 export interface RunAuditQueryFilters {
@@ -567,8 +567,8 @@ export interface NormalizedRunAuditEvent {
   timestamp: string;
   /** Task ID associated with this event (if applicable) */
   taskId?: string;
-  /** Domain category: database, git, or filesystem */
-  domain: "database" | "git" | "filesystem";
+  /** Domain category: database, git, filesystem, or sandbox */
+  domain: "database" | "git" | "filesystem" | "sandbox";
   /** Type of mutation (e.g., "task:update", "git:commit", "file:write") */
   mutationType: string;
   /** Target of the mutation (e.g., task ID, file path, branch name) */
@@ -635,6 +635,7 @@ export interface RunTimelineResponse {
     database: NormalizedRunAuditEvent[];
     git: NormalizedRunAuditEvent[];
     filesystem: NormalizedRunAuditEvent[];
+    sandbox: NormalizedRunAuditEvent[];
   };
   /** Count metadata */
   counts: {
@@ -666,8 +667,8 @@ function parseRunAuditFilters(query: Record<string, unknown>): RunAuditQueryFilt
       throw new ApiError(400, "domain must be a string");
     }
     const domain = query.domain.toLowerCase();
-    if (domain !== "database" && domain !== "git" && domain !== "filesystem") {
-      throw new ApiError(400, "domain must be one of: database, git, filesystem");
+    if (domain !== "database" && domain !== "git" && domain !== "filesystem" && domain !== "sandbox") {
+      throw new ApiError(400, "domain must be one of: database, git, filesystem, sandbox");
     }
     filters.domain = domain as RunAuditDomainFilter;
   }
@@ -758,6 +759,9 @@ function generateAuditSummary(
       break;
     case "filesystem":
       parts.push("FS");
+      break;
+    case "sandbox":
+      parts.push("Sandbox");
       break;
     default:
       parts.push(domain);

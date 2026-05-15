@@ -9,7 +9,7 @@ describe("reliability interaction: contamination auto-recovery precedence", () =
     const issueRetry = vi.fn();
     const dispatcher = new AutoRecoveryDispatcher({
       taskStore: {} as never,
-      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn() },
+      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
       handlers: { issueRetry },
     });
 
@@ -38,7 +38,7 @@ describe("reliability interaction: contamination auto-recovery precedence", () =
     const issueRetry = vi.fn(async () => {});
     const dispatcher = new AutoRecoveryDispatcher({
       taskStore: {} as never,
-      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn() },
+      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
       handlers: { issueRetry },
     });
 
@@ -60,7 +60,7 @@ describe("reliability interaction: contamination auto-recovery precedence", () =
   it("mode off and destructive ambiguity preserve pause", () => {
     const dispatcher = new AutoRecoveryDispatcher({
       taskStore: {} as never,
-      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn() },
+      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
       handlers: { issueRetry: vi.fn() },
     });
 
@@ -88,7 +88,7 @@ describe("reliability interaction: contamination auto-recovery precedence", () =
   it("retry budget exhaustion pauses on subsequent event", () => {
     const dispatcher = new AutoRecoveryDispatcher({
       taskStore: {} as never,
-      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn() },
+      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
       handlers: { issueRetry: vi.fn() },
     });
 

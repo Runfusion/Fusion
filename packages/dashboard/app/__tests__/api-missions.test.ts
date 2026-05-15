@@ -669,7 +669,7 @@ describe("fetchAgentRunTimeline", () => {
   it("fetches run timeline with correct URL encoding", async () => {
     const mockResponse = {
       run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
-      auditByDomain: { database: [], git: [], filesystem: [] },
+      auditByDomain: { database: [], git: [], filesystem: [], sandbox: [] },
       counts: { auditEvents: 0, logEntries: 0 },
       timeline: [],
     };
@@ -687,7 +687,7 @@ describe("fetchAgentRunTimeline", () => {
   it("passes projectId as query param", async () => {
     const mockResponse = {
       run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
-      auditByDomain: { database: [], git: [], filesystem: [] },
+      auditByDomain: { database: [], git: [], filesystem: [], sandbox: [] },
       counts: { auditEvents: 0, logEntries: 0 },
       timeline: [],
     };
@@ -704,7 +704,7 @@ describe("fetchAgentRunTimeline", () => {
   it("includes options in query string", async () => {
     const mockResponse = {
       run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
-      auditByDomain: { database: [], git: [], filesystem: [] },
+      auditByDomain: { database: [], git: [], filesystem: [], sandbox: [] },
       counts: { auditEvents: 0, logEntries: 0 },
       timeline: [],
     };
@@ -734,7 +734,7 @@ describe("fetchAgentRunTimeline", () => {
   it("throws on 400 for blank runId before calling fetch", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {
       run: { id: "run-001", agentId: "agent-001", startedAt: "2026-01-01T00:00:00Z", status: "active" },
-      auditByDomain: { database: [], git: [], filesystem: [] },
+      auditByDomain: { database: [], git: [], filesystem: [], sandbox: [] },
       counts: { auditEvents: 0, logEntries: 0 },
       timeline: [],
     }));

@@ -23,7 +23,7 @@ interface AgentRuntimeRouteDeps {
   runExcerptToAgentLogs: (run: import("@fusion/core").AgentHeartbeatRun) => import("@fusion/core").AgentLogEntry[];
   parseRunAuditFilters: (query: Record<string, unknown>) => {
     taskId?: string;
-    domain?: "database" | "git" | "filesystem";
+    domain?: "database" | "git" | "filesystem" | "sandbox";
     startTime?: string;
     endTime?: string;
     limit?: number;
@@ -1442,7 +1442,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
    *
    * Query params:
    *   - taskId: Filter by task ID
-   *   - domain: Filter by domain (database, git, filesystem)
+   *   - domain: Filter by domain (database, git, filesystem, sandbox)
    *   - startTime: Start of time range (ISO-8601)
    *   - endTime: End of time range (ISO-8601)
    *   - limit: Maximum events to return (default 100, max 1000)
@@ -1525,7 +1525,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
    *
    * Query params:
    *   - taskId: Override task ID for audit filtering (defaults to run's contextSnapshot.taskId)
-   *   - domain: Filter audit events by domain (database, git, filesystem)
+   *   - domain: Filter audit events by domain (database, git, filesystem, sandbox)
    *   - startTime: Start of time range (ISO-8601)
    *   - endTime: End of time range (ISO-8601)
    *   - includeLogs: Whether to include agent logs (default true)
@@ -1590,6 +1590,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
         database: [],
         git: [],
         filesystem: [],
+        sandbox: [],
       };
 
       for (const event of normalizedAuditEvents) {
@@ -1599,6 +1600,8 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
           auditByDomain.git.push(event);
         } else if (event.domain === "filesystem") {
           auditByDomain.filesystem.push(event);
+        } else if (event.domain === "sandbox") {
+          auditByDomain.sandbox.push(event);
         }
       }
 
