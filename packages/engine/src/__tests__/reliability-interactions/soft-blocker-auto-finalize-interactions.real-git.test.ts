@@ -52,6 +52,14 @@ function seedLandedContent(dir: string, branch: string, taskId: string, fileName
   return taskCommit;
 }
 
+function seedUnlandedContent(dir: string, branch: string, taskId: string, fileName = "pending.txt"): void {
+  git(dir, `git checkout -b ${branch}`);
+  writeFileSync(join(dir, fileName), `${taskId} pending\n`);
+  git(dir, `git add ${fileName}`);
+  git(dir, `git commit -m 'test(${taskId}): pending content' -m 'Fusion-Task-Id: ${taskId}'`);
+  git(dir, "git checkout main");
+}
+
 function makeTask(overrides: Partial<Task> = {}): Task {
   const now = new Date().toISOString();
   return {
@@ -154,6 +162,61 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
       expect(
         auditEvents.some((event: any) => event?.mutationType === "task:auto-recover-finalize-already-on-main"),
       ).toBe(true);
+
+      manager.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("finalizes soft-blocked landed-content tasks during restart-time self-healing sweeps", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fn-4653-ri-restart-positive-"));
+    try {
+      git(dir, "git init -b main");
+      git(dir, 'git config user.email "test@example.com"');
+      git(dir, 'git config user.name "Test"');
+      git(dir, "git commit --allow-empty -m init");
+
+      seedLandedContent(dir, "fusion/fn-4653-restart", "FN-4653-RESTART", "restart.txt");
+
+      const task = makeTask({ id: "FN-4653-RESTART", branch: "fusion/fn-4653-restart" });
+      const store = makeStore([task]);
+      const manager = new SelfHealingManager(store, { rootDir: dir, getExecutingTaskIds: () => new Set() });
+
+      const recovered = await manager.recoverAlreadyMergedReviewTasks();
+      expect(recovered).toBe(1);
+      expect(task.column).toBe("done");
+      expect(task.paused).toBe(false);
+      expect(task.status).toBeNull();
+
+      manager.stop();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not false-positive finalize when content is not landed on main", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fn-4653-ri-restart-negative-"));
+    try {
+      git(dir, "git init -b main");
+      git(dir, 'git config user.email "test@example.com"');
+      git(dir, 'git config user.name "Test"');
+      git(dir, "git commit --allow-empty -m init");
+
+      seedUnlandedContent(dir, "fusion/fn-4653-restart-pending", "FN-4653-RESTART-PENDING");
+
+      const task = makeTask({
+        id: "FN-4653-RESTART-PENDING",
+        branch: "fusion/fn-4653-restart-pending",
+      });
+      const store = makeStore([task]);
+      const manager = new SelfHealingManager(store, { rootDir: dir, getExecutingTaskIds: () => new Set() });
+
+      const recovered = await manager.recoverAlreadyMergedReviewTasks();
+      expect(recovered).toBe(0);
+      expect(task.column).toBe("in-review");
+      expect(task.paused).toBe(true);
+      expect(task.status).toBe("failed");
 
       manager.stop();
     } finally {
