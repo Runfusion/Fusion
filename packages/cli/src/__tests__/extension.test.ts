@@ -1066,6 +1066,62 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
       expect(result.content[0].text).toContain("Test Mission");
     });
 
+    it("renders acceptanceCriteria / verification for milestones, slices, and features", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const missionStore = store.getMissionStore();
+      const milestone = missionStore.addMilestone(mission.details.missionId, {
+        title: "Milestone",
+        acceptanceCriteria: "MILESTONE_AC_MARKER",
+      });
+      const slice = missionStore.addSlice(milestone.id, {
+        title: "Slice",
+        verification: "SLICE_VERIFY_MARKER",
+      });
+      await featureTool.execute(
+        "f1",
+        {
+          sliceId: slice.id,
+          title: "Feature",
+          acceptanceCriteria: "FEATURE_AC_MARKER",
+        },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const showTool = api.tools.get("fn_mission_show")!;
+      const result = await showTool.execute("call-1", { id: mission.details.missionId }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.content[0].text).toContain("    AC: MILESTONE_AC_MARKER");
+      expect(result.content[0].text).toContain("      Verification: SLICE_VERIFY_MARKER");
+      expect(result.content[0].text).toContain("        AC: FEATURE_AC_MARKER");
+    });
+
+    it("truncates long acceptanceCriteria text while keeping full details.mission values", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+
+      const longValue = "LONG_AC_".repeat(40);
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const missionStore = store.getMissionStore();
+      missionStore.addMilestone(mission.details.missionId, {
+        title: "Milestone",
+        acceptanceCriteria: longValue,
+      });
+
+      const showTool = api.tools.get("fn_mission_show")!;
+      const result = await showTool.execute("call-1", { id: mission.details.missionId }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.content[0].text).toContain("… (truncated,");
+      expect(result.details.mission.milestones[0].acceptanceCriteria).toBe(longValue);
+    });
+
     it("returns error when mission not found", async () => {
       const showTool = api.tools.get("fn_mission_show")!;
       const result = await showTool.execute(
