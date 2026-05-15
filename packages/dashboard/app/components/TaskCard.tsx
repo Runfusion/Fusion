@@ -1421,6 +1421,11 @@ function TaskCardComponent({
     return null;
   })();
 
+  const chipFarRight = task.column === "in-progress"
+    && filesChangedButton == null
+    && showTrackingIndicator
+    && Boolean(githubTrackedIssue);
+
   if (isEditing) {
     return (
       <div
@@ -1754,7 +1759,7 @@ function TaskCardComponent({
         );
       })()}
       {(filesChangedButton || isGitHubImportedTask || (showTrackingIndicator && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0 || timeIndicator) && (
-        <div className="card-footer-row">
+        <div className={`card-footer-row${chipFarRight ? " card-footer-row--chip-far-right" : ""}`}>
           {filesChangedButton}
           {isGitHubImportedTask && (
             <span
