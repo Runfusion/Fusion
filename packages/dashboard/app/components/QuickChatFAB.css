@@ -423,7 +423,7 @@
   top: calc(100% + var(--space-xs));
   left: 0;
   width: 100%;
-  max-height: calc(var(--space-xl) * 10);
+  max-height: calc(var(--space-xl) * 7);
   overflow-y: auto;
   background: var(--surface);
   border: var(--btn-border-width) solid var(--border);
