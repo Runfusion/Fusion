@@ -2177,6 +2177,7 @@ export function createPostRoomMessageTool(
       "Post a message to a room you are a member of. Room membership is enforced before posting, " +
       "so only reply when the room content is relevant to your role or identity.",
     parameters: postRoomMessageParams,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     execute: async (_id: string, params: Static<typeof postRoomMessageParams>, _signal?: any, _onUpdate?: any, _ctx?: any) => {
       const content = params.content.trim();
       if (content.length === 0) {
