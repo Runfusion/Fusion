@@ -2380,6 +2380,65 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("uses rebase range shortstat and propagates rebaseBaseSha when mergeDetails provides it", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        taskStuckTimeoutMs: 60_000,
+      });
+      const staleUpdatedAt = new Date(Date.now() - 61_000).toISOString();
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2901",
+          column: "in-review",
+          status: "merging",
+          error: null,
+          paused: false,
+          worktree: "/tmp/test-project/.worktrees/fn-2901",
+          branch: "fusion/fn-2901",
+          baseCommitSha: "base901",
+          updatedAt: staleUpdatedAt,
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [],
+          mergeDetails: { rebaseBaseSha: "rebasebase901" },
+          log: [],
+        },
+      ]);
+      mockedExistsSync.mockReturnValue(true);
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("git log") && cmd.includes("Fusion-Task-Id: FN-2901")) {
+          return "rangeSha901\u001ffeat: ship something opaque\n" as any;
+        }
+        if (cmd.includes("git diff --shortstat") && cmd.includes("rebasebase901..rangeSha901")) {
+          return " 4 files changed, 104 insertions(+), 1 deletion(-)\n" as any;
+        }
+        return "" as any;
+      });
+
+      const result = await managerWithRecovery.recoverInterruptedMergingTasks();
+
+      expect(result).toBe(1);
+      expect(mockedExecSync.mock.calls.some(([cmd]) => String(cmd).includes("git diff --shortstat") && String(cmd).includes("rebasebase901..rangeSha901"))).toBe(true);
+      expect(mockedExecSync.mock.calls.some(([cmd]) => String(cmd).includes("git show --shortstat") && String(cmd).includes("rangeSha901"))).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-2901", {
+        status: null,
+        error: null,
+        mergeRetries: 0,
+        mergeDetails: expect.objectContaining({
+          commitSha: "rangeSha901",
+          rebaseBaseSha: "rebasebase901",
+          filesChanged: 4,
+          insertions: 104,
+          deletions: 1,
+        }),
+      });
+
+      managerWithRecovery.stop();
+    });
+
     it("finalizes stale merging tasks when baseCommitSha was advanced past the landed commit", async () => {
       // Reproduces the case where the merger fast-forward-rebased the task branch
       // and updated baseCommitSha to the new HEAD; the bounded `base..HEAD` range

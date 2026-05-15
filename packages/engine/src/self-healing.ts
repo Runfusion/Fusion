@@ -731,6 +731,7 @@ export class SelfHealingManager {
     // miss; (3) catches commits authored before the trailer was introduced.
 
     // ── (1) Stored sha ────────────────────────────────────────────────────
+    const rebaseBaseSha = task.mergeDetails?.rebaseBaseSha;
     const storedSha = task.mergeDetails?.commitSha;
     if (storedSha) {
       try {
@@ -744,13 +745,12 @@ export class SelfHealingManager {
         );
         const [sha, subject = "", body = ""] = stdout.trim().split("\x1f");
         if (sha && commitOwnedByTask(task.id, task.lineageId, subject, body)) {
-          const commit: LandedTaskCommit = { sha, subject };
+          const commit: LandedTaskCommit = { sha, subject, rebaseBaseSha };
           try {
-            const stats = await execAsync(`git show --shortstat --format= ${shellQuote(sha)}`, {
-              cwd: this.options.rootDir,
-              maxBuffer: 1024 * 1024,
-            });
-            Object.assign(commit, parseShortstat(stats.stdout));
+            const shortstat = await this.readShortstatForSha(sha, rebaseBaseSha);
+            if (shortstat) {
+              Object.assign(commit, shortstat);
+            }
           } catch { /* stats are optional */ }
           return commit;
         }
@@ -829,13 +829,12 @@ export class SelfHealingManager {
     const [sha, subject] = firstLine.split("\x1f");
     if (!sha) return null;
 
-    const commit: LandedTaskCommit = { sha, subject };
+    const commit: LandedTaskCommit = { sha, subject, rebaseBaseSha };
     try {
-      const stats = await execAsync(`git show --shortstat --format= ${shellQuote(sha)}`, {
-        cwd: this.options.rootDir,
-        maxBuffer: 1024 * 1024,
-      });
-      Object.assign(commit, parseShortstat(stats.stdout));
+      const shortstat = await this.readShortstatForSha(sha, rebaseBaseSha);
+      if (shortstat) {
+        Object.assign(commit, shortstat);
+      }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(
