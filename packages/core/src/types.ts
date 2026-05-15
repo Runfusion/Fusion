@@ -2539,6 +2539,10 @@ export interface ProjectSettings {
   mergeAuditAutoRecovery?: MergeAuditAutoRecoveryMode;
   /** Dispatcher-level reliability recovery policy (FN-4533/FN-4534). */
   autoRecovery?: AutoRecoverySettings;
+  /** Optional ISO-8601 timestamp baseline for reliability metrics.
+   *  When set, reliability windows are floored at this instant so historical
+   *  events before the reset are excluded from aggregates (but not deleted). */
+  reliabilityStatsResetAt?: string;
   /** Wall-clock timeout (ms) for a single pre-merge workflow step's AI call.
    *  When a step exceeds this, the session is aborted and the executor is
    *  given one shot to retry with the configured fallback model before the

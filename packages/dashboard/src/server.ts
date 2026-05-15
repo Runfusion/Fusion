@@ -1121,9 +1121,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       return;
     }
 
+    const settings = await store.getSettings();
+    const resetAt = typeof settings.reliabilityStatsResetAt === "string" ? settings.reliabilityStatsResetAt : null;
+
     const nowMs = Date.now();
     const windowStartMs = nowMs - parsedWindowDays * 86_400_000;
-    const startIso = new Date(windowStartMs).toISOString();
+    const resetAtMs = resetAt ? Date.parse(resetAt) : Number.NaN;
+    const effectiveStartMs = Number.isFinite(resetAtMs) ? Math.max(windowStartMs, resetAtMs) : windowStartMs;
+    const startIso = new Date(effectiveStartMs).toISOString();
     const endIso = new Date(nowMs).toISOString();
 
     const [runAuditEvents, activityLog] = await Promise.all([
@@ -1131,13 +1136,13 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       store.getActivityLog({ since: startIso, limit: 50_000 }),
     ]);
 
-    const enteredByDay = tasksEnteredInReviewPerDay(activityLog, windowStartMs, nowMs);
-    const bouncedByDay = tasksBouncedToInProgressPerDay(activityLog, windowStartMs, nowMs);
-    const postMergeByDay = postMergeAuditFailuresPerDay(runAuditEvents, windowStartMs, nowMs);
-    const fileScopeByDay = fileScopeInvariantFailuresPerDay(runAuditEvents, windowStartMs, nowMs);
-    const recoveriesByDay = recoverAlreadyMergedReviewTasksRecoveriesPerDay(runAuditEvents, windowStartMs, nowMs);
-    const duration = inReviewDurationMetrics(activityLog, windowStartMs, nowMs);
-    const mergeAttempts = mergeAttemptsPerMergedTask(runAuditEvents, activityLog, windowStartMs, nowMs);
+    const enteredByDay = tasksEnteredInReviewPerDay(activityLog, effectiveStartMs, nowMs);
+    const bouncedByDay = tasksBouncedToInProgressPerDay(activityLog, effectiveStartMs, nowMs);
+    const postMergeByDay = postMergeAuditFailuresPerDay(runAuditEvents, effectiveStartMs, nowMs);
+    const fileScopeByDay = fileScopeInvariantFailuresPerDay(runAuditEvents, effectiveStartMs, nowMs);
+    const recoveriesByDay = recoverAlreadyMergedReviewTasksRecoveriesPerDay(runAuditEvents, effectiveStartMs, nowMs);
+    const duration = inReviewDurationMetrics(activityLog, effectiveStartMs, nowMs);
+    const mergeAttempts = mergeAttemptsPerMergedTask(runAuditEvents, activityLog, effectiveStartMs, nowMs);
     const headline = inReviewFailureRate7d(enteredByDay, bouncedByDay, nowMs);
 
     const perDay: Array<{
@@ -1147,22 +1152,35 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       postMergeAuditFailures: { block: number; warn: number; off: number } | null;
       fileScopeInvariantFailures: number | null;
       recoverAlreadyMergedReviewTasksRecoveries: number | null;
+      hasSamples: boolean;
     }> = [];
 
-    const dayCursor = new Date(startIso);
+    const dayCursor = new Date(effectiveStartMs);
     const dayEnd = new Date(endIso);
     dayCursor.setUTCHours(0, 0, 0, 0);
     dayEnd.setUTCHours(0, 0, 0, 0);
 
     while (dayCursor.getTime() <= dayEnd.getTime()) {
       const day = dayCursor.toISOString().slice(0, 10);
+      const tasksEnteredInReview = enteredByDay[day] ?? 0;
+      const tasksBouncedToInProgress = bouncedByDay[day] ?? 0;
+      const postMergeAuditFailures = postMergeByDay.value ? (postMergeByDay.value[day] ?? { block: 0, warn: 0, off: 0 }) : null;
+      const fileScopeInvariantFailures = fileScopeByDay.value ? (fileScopeByDay.value[day] ?? 0) : null;
+      const recoverAlreadyMergedReviewTasksRecoveries = recoveriesByDay.value ? (recoveriesByDay.value[day] ?? 0) : null;
+      const hasSamples = tasksEnteredInReview > 0
+        || tasksBouncedToInProgress > 0
+        || (postMergeAuditFailures ? postMergeAuditFailures.block + postMergeAuditFailures.warn + postMergeAuditFailures.off > 0 : false)
+        || (typeof fileScopeInvariantFailures === "number" && fileScopeInvariantFailures > 0)
+        || (typeof recoverAlreadyMergedReviewTasksRecoveries === "number" && recoverAlreadyMergedReviewTasksRecoveries > 0);
+
       perDay.push({
         date: day,
-        tasksEnteredInReview: enteredByDay[day] ?? 0,
-        tasksBouncedToInProgress: bouncedByDay[day] ?? 0,
-        postMergeAuditFailures: postMergeByDay.value ? (postMergeByDay.value[day] ?? { block: 0, warn: 0, off: 0 }) : null,
-        fileScopeInvariantFailures: fileScopeByDay.value ? (fileScopeByDay.value[day] ?? 0) : null,
-        recoverAlreadyMergedReviewTasksRecoveries: recoveriesByDay.value ? (recoveriesByDay.value[day] ?? 0) : null,
+        tasksEnteredInReview,
+        tasksBouncedToInProgress,
+        postMergeAuditFailures,
+        fileScopeInvariantFailures,
+        recoverAlreadyMergedReviewTasksRecoveries,
+        hasSamples,
       });
       dayCursor.setUTCDate(dayCursor.getUTCDate() + 1);
     }
@@ -1170,11 +1188,13 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     res.json({
       windowDays: parsedWindowDays,
       generatedAt: new Date(nowMs).toISOString(),
+      resetAt,
       headline: {
         inReviewFailureRate7d: headline.value,
         ...(headline.reason ? { reason: headline.reason } : {}),
       },
       perDay,
+      perDayNonEmpty: perDay.filter((row) => row.hasSamples),
       duration: {
         p50Ms: duration.p50Ms,
         p95Ms: duration.p95Ms,
@@ -1188,6 +1208,12 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         ...(mergeAttempts.reason ? { reason: mergeAttempts.reason } : {}),
       },
     });
+  });
+
+  app.post("/api/health/reliability/reset", async (_req, res) => {
+    const resetAt = new Date().toISOString();
+    await store.updateSettings({ reliabilityStatsResetAt: resetAt });
+    res.json({ resetAt });
   });
 
   app.post("/api/health/refresh", (_req, res) => {

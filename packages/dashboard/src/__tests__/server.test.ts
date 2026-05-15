@@ -515,8 +515,10 @@ describe("createServer health and headless mode", () => {
     expect(res.body).toMatchObject({
       windowDays: 7,
       generatedAt: expect.any(String),
+      resetAt: null,
       headline: { inReviewFailureRate7d: 1 },
       perDay: expect.any(Array),
+      perDayNonEmpty: expect.any(Array),
       duration: { p50Ms: null, p95Ms: null, sampleCount: 0, reason: "insufficient-samples" },
       mergeAttempts: { mean: 1, max: 1, histogram: { "1": 1 } },
     });
@@ -587,6 +589,46 @@ describe("createServer health and headless mode", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.headline).toEqual({ inReviewFailureRate7d: 0.2 });
+
+    vi.useRealTimers();
+  });
+
+  it("returns resetAt and floors reliability windows to reset baseline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-13T12:00:00.000Z"));
+
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ reliabilityStatsResetAt: "2026-05-12T00:00:00.000Z" }),
+      getActivityLog: vi.fn().mockResolvedValue([]),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+    const app = createServer(store);
+
+    const res = await GET(app, "/api/health/reliability?windowDays=7");
+
+    expect(res.status).toBe(200);
+    expect(res.body.resetAt).toBe("2026-05-12T00:00:00.000Z");
+    expect(store.getActivityLog).toHaveBeenCalledWith(expect.objectContaining({ since: "2026-05-12T00:00:00.000Z" }));
+    expect(store.getRunAuditEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: "2026-05-12T00:00:00.000Z", endTime: "2026-05-13T12:00:00.000Z" }),
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("sets reliability reset baseline via /api/health/reliability/reset", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-13T12:00:00.000Z"));
+
+    const updateSettings = vi.fn().mockResolvedValue({});
+    const store = createMockStore({ updateSettings });
+    const app = createServer(store);
+
+    const res = await REQUEST(app, "POST", "/api/health/reliability/reset");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ resetAt: "2026-05-13T12:00:00.000Z" });
+    expect(updateSettings).toHaveBeenCalledWith({ reliabilityStatsResetAt: "2026-05-13T12:00:00.000Z" });
 
     vi.useRealTimers();
   });
