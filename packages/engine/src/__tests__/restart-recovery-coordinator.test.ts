@@ -62,9 +62,18 @@ describe("RestartRecoveryCoordinator", () => {
     expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, error: "other" })).toBe(false);
     expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, steps: [{ id: "s2", title: "y", status: "pending" }] as any, error: "Refusing to start coding agent in missing worktree: /tmp/wt" })).toBe(false);
 
-    const noProgressTask = { ...baseTask, steps: [{ id: "s2", title: "y", status: "pending" }] as any, error: "Refusing to start coding agent in missing worktree: /tmp/wt" };
-    expect(isRecoverableMissingWorktreeReviewFailureNoProgress(noProgressTask)).toBe(true);
-    expect(isRecoverableMissingWorktreeReviewFailure(noProgressTask)).toBe(true);
+    const errors = [
+      "Refusing to start coding agent in missing worktree: /tmp/wt",
+      "Refusing to start coding agent in incomplete worktree: /tmp/wt",
+      "Refusing to start coding agent in unregistered git worktree: /tmp/wt",
+    ];
+    for (const error of errors) {
+      const withProgressTask = { ...baseTask, error };
+      const noProgressTask = { ...baseTask, steps: [{ id: "s2", title: "y", status: "pending" }] as any, error };
+      expect(isRecoverableMissingWorktreeReviewFailureWithProgress(withProgressTask)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailureNoProgress(noProgressTask)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailure(noProgressTask)).toBe(true);
+    }
   });
 
   it("requeues interrupted failed tasks with no progress, then resumes remaining orphans", async () => {

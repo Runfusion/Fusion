@@ -21,7 +21,12 @@ import { getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlo
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, isUsableTaskWorktree, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
-import { extractMissingWorktreePathFromSessionStartFailure, isMissingWorktreeSessionStartFailure, isRecoverableMissingWorktreeReviewFailure } from "./restart-recovery-coordinator.js";
+import {
+  extractMissingWorktreePathFromSessionStartFailure,
+  isMissingWorktreeSessionStartFailure,
+  isRecoverableMissingWorktreeReviewFailureNoProgress,
+  isRecoverableMissingWorktreeReviewFailureWithProgress,
+} from "./restart-recovery-coordinator.js";
 import { classifyError, extractMissingModulePath, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
 import { deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
@@ -216,6 +221,7 @@ const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
  * forever; when exhausted the task stays in `in-review` for human inspection.
  */
 const MAX_TASK_DONE_RETRIES = 3;
+const MAX_WORKTREE_SESSION_RETRIES = 3;
 const MAX_AUTO_MERGE_RETRIES = 3;
 const MAX_STARVATION_DROPS = 3;
 const DEADLOCK_RECOVERY_COOLDOWN_MS = 15 * 60_000;
@@ -4092,7 +4098,10 @@ export class SelfHealingManager {
   async recoverMissingWorktreeReviewFailures(): Promise<number> {
     try {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
-      const candidates = tasks.filter((task) => isRecoverableMissingWorktreeReviewFailure(task));
+      const candidates = tasks.filter((task) =>
+        isRecoverableMissingWorktreeReviewFailureWithProgress(task)
+        || isRecoverableMissingWorktreeReviewFailureNoProgress(task),
+      );
 
       if (candidates.length === 0) return 0;
 
@@ -4101,18 +4110,48 @@ export class SelfHealingManager {
       let recovered = 0;
       for (const task of candidates) {
         try {
+          const nextCount = (task.worktreeSessionRetryCount ?? 0) + 1;
+          if (nextCount > MAX_WORKTREE_SESSION_RETRIES) {
+            await this.store.logEntry(
+              task.id,
+              `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for unusable-worktree session-start failure — leaving in-review for human inspection`,
+            );
+            try {
+              const auditor = createRunAuditor(this.store, {
+                runId: generateSyntheticRunId("self-heal", task.id),
+                agentId: "self-healing",
+                taskId: task.id,
+                taskLineageId: task.lineageId,
+                phase: "maintenance",
+              });
+              await auditor.database({
+                type: "task:auto-recover-worktree-session-exhausted",
+                target: task.id,
+                metadata: {
+                  retries: task.worktreeSessionRetryCount ?? 0,
+                  maxRetries: MAX_WORKTREE_SESSION_RETRIES,
+                },
+              });
+            } catch (auditErr: unknown) {
+              log.warn(`Failed to write worktree-session exhausted run-audit event for ${task.id}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+            }
+            continue;
+          }
+
           const staleWorktree = task.worktree;
           const missingWorktreePath = extractMissingWorktreePathFromSessionStartFailure(task.error);
           const hasMismatchedLiveWorktree =
-            typeof staleWorktree === "string" && staleWorktree.length > 0 &&
-            typeof missingWorktreePath === "string" && missingWorktreePath.length > 0 &&
-            resolve(staleWorktree) !== resolve(missingWorktreePath);
+            typeof staleWorktree === "string" && staleWorktree.length > 0
+            && typeof missingWorktreePath === "string" && missingWorktreePath.length > 0
+            && resolve(staleWorktree) !== resolve(missingWorktreePath);
+          const noProgress = isRecoverableMissingWorktreeReviewFailureNoProgress(task);
 
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
-            worktree: hasMismatchedLiveWorktree ? staleWorktree : null,
-            branch: hasMismatchedLiveWorktree ? task.branch ?? null : null,
+            worktreeSessionRetryCount: nextCount,
+            worktree: noProgress ? null : (hasMismatchedLiveWorktree ? staleWorktree : null),
+            branch: noProgress ? null : (hasMismatchedLiveWorktree ? task.branch ?? null : null),
             sessionFile: null,
           });
           const failureExcerpt = typeof task.error === "string"
@@ -4120,11 +4159,17 @@ export class SelfHealingManager {
             : "unknown error";
           await this.store.logEntry(
             task.id,
-            hasMismatchedLiveWorktree
-              ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while live task worktree is ${staleWorktree} — cleared stale session metadata and requeued to todo (failure: ${failureExcerpt})`
-              : `Auto-recovered: retry/verification session targeted unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (failure: ${failureExcerpt})`,
+            noProgress
+              ? `Auto-recovered (no-progress): session-start refused unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}, failure: ${failureExcerpt})`
+              : hasMismatchedLiveWorktree
+                ? `Auto-recovered: stale resume referenced unusable worktree (${missingWorktreePath}) while live task worktree is ${staleWorktree} — cleared stale session metadata and requeued to todo (attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}, failure: ${failureExcerpt})`
+                : `Auto-recovered: retry/verification session targeted unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}, failure: ${failureExcerpt})`,
           );
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          if (noProgress) {
+            await this.store.moveTask(task.id, "todo");
+          } else {
+            await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          }
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);

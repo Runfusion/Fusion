@@ -1786,6 +1786,7 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-3900", {
         status: null,
         error: null,
+        worktreeSessionRetryCount: 1,
         worktree: "/tmp/project/.worktrees/fn-3900-stale",
         branch: "fusion/fn-3900",
         sessionFile: null,
@@ -1833,6 +1834,7 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-4559", {
         status: null,
         error: null,
+        worktreeSessionRetryCount: 1,
         worktree: "/tmp/project/.worktrees/noble-eagle-stale",
         branch: "fusion/FN-4559",
         sessionFile: null,
@@ -1882,6 +1884,80 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("requeues zero-progress unusable-worktree failures with cleared git/session metadata", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4651",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          worktree: "/tmp/project/.worktrees/fn-4651",
+          branch: "fusion/FN-4651",
+          sessionFile: "/tmp/project/.fusion/sessions/FN-4651.json",
+          error: "Refusing to start coding agent in missing worktree: /tmp/project/.worktrees/fn-4651",
+          steps: [{ status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-4651", {
+        status: null,
+        error: null,
+        worktreeSessionRetryCount: 1,
+        worktree: null,
+        branch: null,
+        sessionFile: null,
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4651",
+        expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4651", "todo");
+
+      managerWithRecovery.stop();
+    });
+
+    it("escalates when unusable-worktree retry cap is exhausted", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4651-CAP",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          worktreeSessionRetryCount: 3,
+          worktree: "/tmp/project/.worktrees/fn-4651-cap",
+          branch: "fusion/FN-4651-CAP",
+          sessionFile: "/tmp/project/.fusion/sessions/FN-4651-CAP.json",
+          error: "Refusing to start coding agent in unregistered git worktree: /tmp/project/.worktrees/fn-4651-cap",
+          steps: [{ status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4651-CAP",
+        "Auto-recovery exhausted (3/3) for unusable-worktree session-start failure — leaving in-review for human inspection",
+      );
+
+      managerWithRecovery.stop();
+    });
+
     it("does not requeue non-matching in-review failures", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -1904,6 +1980,15 @@ describe("SelfHealingManager", () => {
           status: "failed",
           error: "Refusing to start coding agent in missing worktree: /tmp/project/.worktrees/fn-3902",
           steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+        {
+          id: "FN-3903",
+          column: "in-review",
+          paused: false,
+          status: "queued",
+          error: "Refusing to start coding agent in incomplete worktree: /tmp/project/.worktrees/fn-3903",
+          steps: [{ status: "pending" }],
           log: [],
         },
       ]);
