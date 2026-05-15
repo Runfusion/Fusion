@@ -1899,6 +1899,12 @@ export function TaskDetailContent({
   const overlapBlockingSummary = blockingEntry
     ? `${task.id} is blocking ${blockingEntry.overlapBlockedTodoCount} todo task(s) via blockedBy overlap`
     : null;
+  const overlapBlockerTask = workingTask.overlapBlockedBy
+    ? tasks.find((candidate) => candidate.id === workingTask.overlapBlockedBy)
+    : undefined;
+  const overlapBlockerActive = Boolean(
+    overlapBlockerTask && (overlapBlockerTask.column === "in-progress" || overlapBlockerTask.column === "in-review"),
+  );
 
   const assignedAgentLabel = assignedAgent?.name ?? task.assignedAgentId ?? null;
   const detailProviders = useMemo(() => {
@@ -3046,6 +3052,12 @@ export function TaskDetailContent({
               </ul>
             ) : (
               <div className="detail-empty-inline">(no dependencies)</div>
+            )}
+            {workingTask.overlapBlockedBy && (
+              <div className="detail-empty-inline">
+                File scope overlap blocker: {workingTask.overlapBlockedBy}
+                {!overlapBlockerActive && " (stale)"}
+              </div>
             )}
             <div className="dep-trigger-wrap">
               <button

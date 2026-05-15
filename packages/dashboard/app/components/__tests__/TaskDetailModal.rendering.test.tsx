@@ -312,6 +312,27 @@ describe("TaskDetailModal", () => {
     });
   });
 
+  it("shows active file scope overlap blocker in Dependencies section", () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER" })}
+        tasks={[
+          makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER" }),
+          makeTask({ id: "FN-OVER", column: "in-progress" }),
+        ]}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("File scope overlap blocker: FN-OVER")).toBeInTheDocument();
+    expect(screen.queryByText("File scope overlap blocker: FN-OVER (stale)")).toBeNull();
+  });
+
   it("shows overlap blockedBy summary in Blocking section", () => {
     render(
       <TaskDetailModal

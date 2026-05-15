@@ -661,6 +661,30 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-fanout-badge")).toBeNull();
   });
 
+  it("renders overlap scope badge when overlapBlockedBy is set without blockedBy", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "todo", blockedBy: undefined, overlapBlockedBy: "FN-OVER" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("FN-OVER")).toBeInTheDocument();
+  });
+
+  it("does not render overlap scope badge when blockedBy and overlapBlockedBy are absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "todo", blockedBy: undefined, overlapBlockedBy: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-scope-badge")).toBeNull();
+  });
+
   it("renders fan-out badge with downstream count and tooltip", () => {
     render(
       <TaskCard

@@ -452,6 +452,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.error === nextTask.error &&
     previousTask.size === nextTask.size &&
     previousTask.blockedBy === nextTask.blockedBy &&
+    previousTask.overlapBlockedBy === nextTask.overlapBlockedBy &&
     previousTask.worktree === nextTask.worktree &&
     previousTask.branch === nextTask.branch &&
     previousTask.baseBranch === nextTask.baseBranch &&
@@ -1760,7 +1761,7 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {(((task.retrySummary?.total ?? 0) > 0) || (task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || (fanout && fanout.totalCount > 0)) && (
+      {(((task.retrySummary?.total ?? 0) > 0) || (task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || task.overlapBlockedBy || (fanout && fanout.totalCount > 0)) && (
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
             <div className="card-dep-list">
@@ -1776,9 +1777,9 @@ function TaskCardComponent({
               ))}
             </div>
           )}
-          {task.blockedBy && (
-            <span className="card-scope-badge" data-tooltip={`Blocked by ${task.blockedBy} (file overlap)`}>
-              <Layers size={12} style={{ verticalAlign: "middle" }} /> {task.blockedBy}
+          {(task.overlapBlockedBy || task.blockedBy) && (
+            <span className="card-scope-badge" data-tooltip={`Blocked by ${task.overlapBlockedBy || task.blockedBy} (file overlap)`}>
+              <Layers size={12} style={{ verticalAlign: "middle" }} /> {task.overlapBlockedBy || task.blockedBy}
             </span>
           )}
           {fanout && fanout.totalCount > 0 && (
