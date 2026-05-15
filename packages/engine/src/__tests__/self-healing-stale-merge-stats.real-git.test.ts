@@ -177,6 +177,56 @@ describeIfGit("SelfHealingManager recoverDoneTaskMergeMetadata stale stats", () 
     expect(repaired.mergeDetails?.landedFiles).toEqual(landedFiles);
   });
 
+  it("uses rebase range stats in findLandedTaskCommit when mergeDetails.rebaseBaseSha is set", async () => {
+    const { repo, sha, rebaseBaseSha, rangeStats, tipStats } = setupRebaseMergeRepo();
+    expect(rangeStats).not.toEqual(tipStats);
+    const task = makeTask("FN-4672-REBASE", repo, sha, {
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      rebaseBaseSha,
+    });
+    const tasks = new Map([[task.id, task]]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    const landed = await (manager as any).findLandedTaskCommit(task);
+
+    expect(landed).toEqual(expect.objectContaining({
+      sha,
+      rebaseBaseSha,
+      filesChanged: rangeStats.filesChanged,
+      insertions: rangeStats.insertions,
+      deletions: rangeStats.deletions,
+    }));
+    expect(landed?.filesChanged).not.toBe(tipStats.filesChanged);
+    expect(landed?.insertions).not.toBe(tipStats.insertions);
+    expect(landed?.deletions).not.toBe(tipStats.deletions);
+  });
+
+  it("keeps tip shortstat behavior in findLandedTaskCommit when rebaseBaseSha is absent", async () => {
+    const { repo, sha } = setupSquashRepo();
+    const tipStats = parseShortstat(git(repo, `git show --shortstat --format= ${sha}`));
+    const task = makeTask("FN-4526-STATS", repo, sha, {
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+    });
+    const tasks = new Map([[task.id, task]]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    const landed = await (manager as any).findLandedTaskCommit(task);
+
+    expect(landed).toEqual(expect.objectContaining({
+      sha,
+      filesChanged: tipStats.filesChanged,
+      insertions: tipStats.insertions,
+      deletions: tipStats.deletions,
+    }));
+    expect(landed?.rebaseBaseSha).toBeUndefined();
+  });
+
   it("FN-4655 regression: does not overwrite correct rebase-range stats with tip-only shortstat", async () => {
     const { repo, sha, rebaseBaseSha, rangeStats, tipStats, landedFiles } = setupRebaseMergeRepo();
     expect(rangeStats).not.toEqual(tipStats);
