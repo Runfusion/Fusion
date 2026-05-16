@@ -2835,6 +2835,9 @@ export interface ProjectSettings {
   autoArchiveDoneTasksEnabled?: boolean;
   /** Age in milliseconds after a task enters done before auto-archive. Default: 172800000 (48h). */
   autoArchiveDoneAfterMs?: number;
+  /** Retention in integer days before done tasks are auto-archived.
+   *  0 disables this days-based override. When > 0, takes precedence over autoArchiveDoneAfterMs. */
+  doneAutoArchiveDays?: number;
   /** How much agent log content to preserve when a task is moved to cold archive storage.
    *  - "compact": deterministic summary plus a small recent-entry snapshot (default)
    *  - "full": copy the full agent.log into archive.db

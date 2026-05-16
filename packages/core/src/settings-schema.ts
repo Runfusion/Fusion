@@ -291,6 +291,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   maintenanceIntervalMs: 300_000,
   autoArchiveDoneTasksEnabled: true,
   autoArchiveDoneAfterMs: 48 * 60 * 60 * 1000,
+  doneAutoArchiveDays: 0,
   archiveAgentLogMode: "compact",
   autoUpdatePrStatus: false,
   githubCommentOnDone: false,
