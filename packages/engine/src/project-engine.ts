@@ -18,9 +18,10 @@ import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
 import { NtfyNotifier } from "./notifier.js";
-import { NotificationService } from "./notification/index.js";
+import { NotificationService, OAuthExpiryMonitor } from "./notification/index.js";
 import type { NotificationChatStore } from "./notification/notification-service.js";
 import { GridlockDetector } from "./gridlock-detector.js";
+import { createFusionAuthStorage } from "./auth-storage.js";
 import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
 import { aiMergeTask, sweepStaleAutostashes, VerificationError } from "./merger.js";
@@ -152,6 +153,7 @@ export class ProjectEngine {
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
   private notificationService?: NotificationService;
+  private oauthExpiryMonitor?: OAuthExpiryMonitor;
   private gridlockDetector?: GridlockDetector;
   private cronRunner?: CronRunner;
   private automationStore?: AutomationStoreType;
@@ -327,6 +329,11 @@ export class ProjectEngine {
         agentNameResolver,
       });
       await this.notificationService.start();
+      this.oauthExpiryMonitor = new OAuthExpiryMonitor({
+        authStorage: createFusionAuthStorage(),
+        notificationService: this.notificationService,
+      });
+      await this.oauthExpiryMonitor.start();
 
       // Backward-compatibility shim for gridlock notifications.
       this.notifier = new NtfyNotifier(
@@ -546,6 +553,7 @@ export class ProjectEngine {
     }
 
     // Stop auxiliary subsystems
+    this.oauthExpiryMonitor?.stop();
     this.notificationService?.stop();
     this.notifier?.stop();
     this.gridlockDetector?.stop();

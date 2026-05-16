@@ -40,7 +40,8 @@ type SupportedNtfyEvent =
   | "fallback-used"
   | "message:agent-to-user"
   | "message:agent-to-agent"
-  | "message:room";
+  | "message:room"
+  | "oauth-token-expired";
 
 const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "in-review",
@@ -53,6 +54,7 @@ const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "message:agent-to-user",
   "message:agent-to-agent",
   "message:room",
+  "oauth-token-expired",
 ]);
 
 export function resolveParticipantLabel(
@@ -169,13 +171,20 @@ export class NtfyNotificationProvider implements NotificationProvider {
         messageId,
         view: "rooms",
       })
-      : buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.config.projectId,
-        taskId: payload.taskId,
-        messageId,
-        view: "mailbox",
-      });
+      : event === "oauth-token-expired"
+        ? undefined
+        : buildNtfyClickUrl({
+          dashboardHost: this.config.dashboardHost,
+          projectId: this.config.projectId,
+          taskId: payload.taskId,
+          messageId,
+          view: "mailbox",
+        });
+
+    const providerId = typeof payload.metadata?.providerId === "string" ? payload.metadata.providerId : "provider";
+    const providerName = typeof payload.metadata?.providerName === "string"
+      ? payload.metadata.providerName
+      : providerId;
 
     const contentByEvent: Record<SupportedNtfyEvent, { title: string; message: string; priority: "default" | "high" }> = {
       "in-review": {
@@ -227,6 +236,11 @@ export class NtfyNotificationProvider implements NotificationProvider {
         title: `#${roomLabel} — ${roomSenderLabel}`,
         message: `${roomSenderLabel} in #${roomLabel}: ${preview}`,
         priority: "default",
+      },
+      "oauth-token-expired": {
+        title: "OAuth token expired",
+        message: `Your ${providerName} OAuth token has expired — please re-authenticate`,
+        priority: "high",
       },
     };
 

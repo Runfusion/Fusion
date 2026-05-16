@@ -191,6 +191,11 @@ export class WebhookNotificationProvider implements NotificationProvider {
         const preview = typeof payload.metadata?.preview === "string" ? payload.metadata.preview : "(no preview)";
         return `In #${roomName}: ${senderLabel}: ${preview}`;
       }
+      case "oauth-token-expired": {
+        const providerId = typeof payload.metadata?.providerId === "string" ? payload.metadata.providerId : "provider";
+        const providerName = typeof payload.metadata?.providerName === "string" ? payload.metadata.providerName : providerId;
+        return `Your ${providerName} OAuth token has expired — please re-authenticate`;
+      }
       default:
         return `Event "${event}" for task ${identifier}`;
     }

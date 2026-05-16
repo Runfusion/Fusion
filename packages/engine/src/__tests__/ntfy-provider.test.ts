@@ -47,6 +47,7 @@ describe("NtfyNotificationProvider", () => {
     ["message:agent-to-user", "New message from Triage Bot", "Triage Bot → you: preview text", "high"],
     ["message:agent-to-agent", "Triage Bot → Executor Bot", "Triage Bot messaged Executor Bot: preview text", "default"],
     ["message:room", "#Incident Room — Triage Bot", "Triage Bot in #Incident Room: preview text", "default"],
+    ["oauth-token-expired", "OAuth token expired", "Your OpenAI Codex OAuth token has expired", "high"],
   ])("maps %s event correctly", async (event, expectedTitle, messagePart, priority) => {
     await provider.sendNotification(event as any, {
       taskId: "FN-1",
@@ -63,6 +64,8 @@ describe("NtfyNotificationProvider", () => {
         messageId: "msg-1",
         roomId: "room-1",
         roomName: "Incident Room",
+        providerId: "openai-codex",
+        providerName: "OpenAI Codex",
       },
     });
 
@@ -93,6 +96,7 @@ describe("NtfyNotificationProvider", () => {
     expect(provider.isEventSupported("message:agent-to-user" as any)).toBe(true);
     expect(provider.isEventSupported("message:agent-to-agent" as any)).toBe(true);
     expect(provider.isEventSupported("message:room" as any)).toBe(true);
+    expect(provider.isEventSupported("oauth-token-expired" as any)).toBe(true);
     expect(provider.isEventSupported("custom-event" as any)).toBe(false);
   });
 

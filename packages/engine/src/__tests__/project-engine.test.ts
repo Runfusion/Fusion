@@ -3,7 +3,7 @@ import { ProjectEngine } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
 import { NtfyNotifier } from "../notifier.js";
-import { NotificationService } from "../notification/index.js";
+import { NotificationService, OAuthExpiryMonitor } from "../notification/index.js";
 
 const mocks = vi.hoisted(() => ({
   syncInsightExtractionAutomation: vi.fn(),
@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   notifierNotifyGridlock: vi.fn(),
   notificationServiceStart: vi.fn(async () => undefined),
   notificationServiceStop: vi.fn(),
+  oauthExpiryMonitorStart: vi.fn(async () => undefined),
+  oauthExpiryMonitorStop: vi.fn(),
   runtimeConfigurePrMonitoring: vi.fn(),
   prHandlerCreateFollowUpTask: vi.fn(async () => undefined),
 }));
@@ -91,6 +93,18 @@ vi.mock("../notification/index.js", () => ({
   NotificationService: vi.fn().mockImplementation(() => ({
     start: mocks.notificationServiceStart,
     stop: mocks.notificationServiceStop,
+  })),
+  OAuthExpiryMonitor: vi.fn().mockImplementation(() => ({
+    start: mocks.oauthExpiryMonitorStart,
+    stop: mocks.oauthExpiryMonitorStop,
+  })),
+}));
+
+vi.mock("../auth-storage.js", () => ({
+  createFusionAuthStorage: vi.fn(() => ({
+    reload: vi.fn(),
+    getOAuthProviders: vi.fn(() => []),
+    get: vi.fn(() => undefined),
   })),
 }));
 
@@ -244,6 +258,8 @@ beforeEach(() => {
   mocks.notifierNotifyGridlock.mockClear();
   mocks.notificationServiceStart.mockClear();
   mocks.notificationServiceStop.mockClear();
+  mocks.oauthExpiryMonitorStart.mockClear();
+  mocks.oauthExpiryMonitorStop.mockClear();
 
   mocks.execFile.mockImplementation((
     _file: string,
@@ -277,14 +293,17 @@ describe("ProjectEngine notification ownership wiring", () => {
     await engine.start();
 
     expect(NotificationService).toHaveBeenCalledTimes(1);
+    expect(OAuthExpiryMonitor).toHaveBeenCalledTimes(1);
     expect(NtfyNotifier).toHaveBeenCalledTimes(1);
     const notifierCtorArgs = vi.mocked(NtfyNotifier).mock.calls[0];
     expect(notifierCtorArgs?.[2]).toBe(vi.mocked(NotificationService).mock.results[0]?.value);
 
     expect(mocks.notificationServiceStart).toHaveBeenCalledTimes(1);
+    expect(mocks.oauthExpiryMonitorStart).toHaveBeenCalledTimes(1);
     expect(mocks.notifierStart).toHaveBeenCalledTimes(1);
 
     await engine.stop();
+    expect(mocks.oauthExpiryMonitorStop).toHaveBeenCalledTimes(1);
     expect(mocks.notificationServiceStop).toHaveBeenCalledTimes(1);
     expect(mocks.notifierStop).toHaveBeenCalledTimes(1);
   });
@@ -298,9 +317,23 @@ describe("ProjectEngine notification ownership wiring", () => {
     // Root cause guard: if ProjectEngine.start is called more than once, it should not
     // wire a second NotificationService/NtfyNotifier pair for the same store.
     expect(NotificationService).toHaveBeenCalledTimes(1);
+    expect(OAuthExpiryMonitor).toHaveBeenCalledTimes(1);
     expect(NtfyNotifier).toHaveBeenCalledTimes(1);
     expect(mocks.notificationServiceStart).toHaveBeenCalledTimes(1);
+    expect(mocks.oauthExpiryMonitorStart).toHaveBeenCalledTimes(1);
     expect(mocks.notifierStart).toHaveBeenCalledTimes(1);
+
+    await engine.stop();
+  });
+
+  it("does not create OAuth expiry monitor when notifier is skipped", async () => {
+    const engine = createEngine({ skipNotifier: true, projectId: "proj_for_notifier" });
+
+    await engine.start();
+
+    expect(NotificationService).not.toHaveBeenCalled();
+    expect(OAuthExpiryMonitor).not.toHaveBeenCalled();
+    expect(NtfyNotifier).not.toHaveBeenCalled();
 
     await engine.stop();
   });
