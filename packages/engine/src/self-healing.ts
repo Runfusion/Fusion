@@ -26,7 +26,7 @@ import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority } from "@fusion/core";
+import { getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type ChatStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, isUsableTaskWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
@@ -197,6 +197,8 @@ export interface SelfHealingOptions {
   hasActiveAgentExecution?: (agentId: string) => boolean;
   restartDurableAgentHeartbeat?: (agentId: string, context: { reason: string; attempt: number }) => Promise<boolean>;
   autoRecoveryDispatcher?: AutoRecoveryDispatcher;
+  /** Optional ChatStore for maintenance chat-retention cleanup. */
+  chatStore?: ChatStore;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -940,11 +942,29 @@ export class SelfHealingManager {
     log.log("Maintenance cycle starting");
 
     try {
-      // Batch 1 — Git/filesystem cleanup
+      const settings = await this.store.getSettings();
+
+      // Batch 1 — housekeeping (safe under pause: filesystem/db cleanup only)
       const batch1Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
         { name: "prune-worktrees", fn: () => this.pruneWorktrees() },
         { name: "cleanup-orphans", fn: () => this.cleanupOrphans() },
         { name: "cleanup-orphaned-branches", fn: () => this.cleanupOrphanedBranches() },
+        {
+          name: "cleanup-old-chats",
+          fn: async () => {
+            const days = Number(settings.chatAutoCleanupDays ?? 0);
+            if (!Number.isFinite(days) || days <= 0) {
+              log.log("Maintenance batch 1 step \"cleanup-old-chats\" skipped — chatAutoCleanupDays is not enabled");
+              return;
+            }
+            if (!this.options.chatStore) {
+              log.log("Maintenance batch 1 step \"cleanup-old-chats\" skipped — ChatStore unavailable");
+              return;
+            }
+            const { sessionsDeleted, roomsDeleted } = this.options.chatStore.cleanupOldChats(days * 86_400_000);
+            log.log(`Maintenance batch 1 step "cleanup-old-chats" succeeded — sessions=${sessionsDeleted} rooms=${roomsDeleted}`);
+          },
+        },
         { name: "checkpoint-wal", fn: () => Promise.resolve(this.checkpointWal()) },
         { name: "enforce-worktree-cap", fn: () => this.enforceWorktreeCap() },
       ];

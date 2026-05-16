@@ -641,6 +641,7 @@ export class InProcessRuntime
       }
 
       // 7. Initialize SelfHealingManager
+      this.chatStore ??= new ChatStore(this.taskStore.getFusionDir(), this.taskStore.getDatabase());
       this.selfHealingManager = new SelfHealingManager(this.taskStore, {
         rootDir: this.config.workingDirectory,
         agentStore: this.agentStore,
@@ -655,6 +656,7 @@ export class InProcessRuntime
         getActiveMergeTaskId: () => this.activeMergeTaskIdProvider?.() ?? null,
         leaseManager: this.leaseManager,
         hasActiveAgentExecution: (agentId: string) => this.heartbeatMonitor?.getTrackedAgents().includes(agentId) ?? false,
+        chatStore: this.chatStore,
         restartDurableAgentHeartbeat: async (agentId: string, context: { reason: string; attempt: number }) => {
           if (!this.heartbeatMonitor) {
             return false;
