@@ -436,6 +436,61 @@ describe("Node settings sync routes", () => {
       expect(mockApplyRemoteSettings).not.toHaveBeenCalled();
     });
 
+    it("does NOT record sync state when conflictResolution is manual (read-only inspection contract)", async () => {
+      const remoteNode = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(remoteNode);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          global: { defaultProvider: "openai" },
+          project: { maxConcurrent: 3 },
+        }),
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/nodes/node-remote-001/settings/pull",
+        JSON.stringify({ conflictResolution: "manual" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockUpdateSettingsSyncState).not.toHaveBeenCalled();
+      expect(mockApplyRemoteSettings).not.toHaveBeenCalled();
+    });
+
+    it("manual pull does not mutate central sync state (parity with sync-status)", async () => {
+      const remoteNode = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(remoteNode);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          global: { defaultProvider: "openai" },
+          project: { maxConcurrent: 3 },
+        }),
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/nodes/node-remote-001/settings/pull",
+        JSON.stringify({ conflictResolution: "manual" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockUpdateSettingsSyncState.mock.calls.length).toBe(0);
+      expect(res.body).toEqual(expect.objectContaining({
+        diff: expect.any(Object),
+        remoteSettings: expect.any(Object),
+        localSettings: expect.any(Object),
+      }));
+      expect(res.body.lastSyncedAt).toBeUndefined();
+      expect(res.body.lastSyncAt).toBeUndefined();
+      expect(Object.keys(res.body).sort()).toEqual(["diff", "localSettings", "remoteSettings"]);
+    });
+
     it("manual diff includes local-only keys that are absent from remote", async () => {
       const remoteNode = createMockRemoteNode();
       mockGetNode.mockResolvedValue(remoteNode);
@@ -506,6 +561,7 @@ describe("Node settings sync routes", () => {
         "node-remote-001",
         expect.objectContaining({
           lastSyncedAt: expect.any(String),
+          remoteChecksum: expect.any(String),
         }),
       );
     });
