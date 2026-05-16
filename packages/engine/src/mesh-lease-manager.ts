@@ -1,11 +1,23 @@
-import type { AgentStore, RunMutationContext, Task, TaskStore } from "@fusion/core";
+import type {
+  AgentStore,
+  OwningNodeHandoffPolicy,
+  RunMutationContext,
+  Task,
+  TaskStore,
+} from "@fusion/core";
 import type { NodeHealthMonitor } from "./node-health-monitor.js";
+import { decideOwningNodeHandoff } from "./node-routing-policy.js";
+import { createLogger } from "./logger.js";
+
+const meshLeaseManagerLog = createLogger("mesh-lease-manager");
 
 export interface MeshLeaseManagerOptions {
   taskStore: TaskStore;
   agentStore?: AgentStore;
   nodeHealthMonitor?: NodeHealthMonitor;
   getExecutingTaskIds?: () => Set<string>;
+  localNodeId?: string;
+  getHandoffPolicy?: () => Promise<OwningNodeHandoffPolicy | undefined>;
 }
 
 export interface LeaseRecoveryContext {
@@ -76,6 +88,27 @@ export class MeshLeaseManager {
     const stale = await this.isLeaseRecoverable(task);
     if (!stale.recoverable) {
       return false;
+    }
+
+    if ((stale.reason === "owner_node_offline" || stale.reason === "owner_node_error")
+      && task.checkoutNodeId
+      && this.options.nodeHealthMonitor) {
+      const ownerNodeHealth = this.options.nodeHealthMonitor.getNodeHealth(task.checkoutNodeId);
+      const handoffPolicy = await this.options.getHandoffPolicy?.();
+      const handoffDecision = decideOwningNodeHandoff({
+        task,
+        ownerNodeId: task.checkoutNodeId,
+        ownerNodeHealth,
+        localNodeId: this.options.localNodeId ?? "local",
+        handoffPolicy,
+      });
+
+      if (handoffDecision.action === "park") {
+        meshLeaseManagerLog.log(
+          `mesh-lease: handoff parked taskId=${task.id} reason=${handoffDecision.reason}`,
+        );
+        return false;
+      }
     }
 
     const nextEpoch = (task.checkoutLeaseEpoch ?? 0) + 1;
