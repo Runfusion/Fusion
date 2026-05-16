@@ -1093,6 +1093,65 @@ describe("ChatStore", () => {
     });
   });
 
+  describe("cleanupOldChats", () => {
+    it("deletes stale sessions/rooms, cascades messages, and emits deleted events", () => {
+      startFakeClock();
+      const deletedSessionEvents: string[] = [];
+      const deletedRoomEvents: string[] = [];
+      store.on("chat:session:deleted", (id) => deletedSessionEvents.push(id));
+      store.on("chat:room:deleted", (id) => deletedRoomEvents.push(id));
+
+      const staleSession = createTestSession(store, { title: "stale" });
+      const staleSessionMessage = store.addMessage(staleSession.id, { role: "user", content: "old session msg" });
+      const staleRoom = store.createRoom({ name: "old room", projectId: "proj-1" });
+      const staleRoomMessage = store.addRoomMessage(staleRoom.id, { role: "user", content: "old room msg" });
+
+      advanceClock(3 * 24 * 60 * 60 * 1000);
+
+      const freshSession = createTestSession(store, { title: "fresh" });
+      const freshSessionMessage = store.addMessage(freshSession.id, { role: "user", content: "new session msg" });
+      const freshRoom = store.createRoom({ name: "fresh room", projectId: "proj-1" });
+      const freshRoomMessage = store.addRoomMessage(freshRoom.id, { role: "user", content: "new room msg" });
+
+      const staleTimestamp = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+      const freshTimestamp = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
+      db.prepare("UPDATE chat_sessions SET updatedAt = ? WHERE id = ?").run(staleTimestamp, staleSession.id);
+      db.prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(staleTimestamp, staleRoom.id);
+      db.prepare("UPDATE chat_sessions SET updatedAt = ? WHERE id = ?").run(freshTimestamp, freshSession.id);
+      db.prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(freshTimestamp, freshRoom.id);
+
+      const result = store.cleanupOldChats(7 * 24 * 60 * 60 * 1000);
+
+      expect(result).toEqual({ sessionsDeleted: 1, roomsDeleted: 1 });
+      expect(store.getSession(staleSession.id)).toBeUndefined();
+      expect(store.getRoom(staleRoom.id)).toBeUndefined();
+      expect(store.getSession(freshSession.id)).toBeDefined();
+      expect(store.getRoom(freshRoom.id)).toBeDefined();
+
+      expect(store.getMessage(staleSessionMessage.id)).toBeUndefined();
+      expect(store.getRoomMessage(staleRoomMessage.id)).toBeUndefined();
+      expect(store.getMessage(freshSessionMessage.id)).toBeDefined();
+      expect(store.getRoomMessage(freshRoomMessage.id)).toBeDefined();
+
+      expect(deletedSessionEvents).toContain(staleSession.id);
+      expect(deletedRoomEvents).toContain(staleRoom.id);
+      expect(deletedSessionEvents).not.toContain(freshSession.id);
+      expect(deletedRoomEvents).not.toContain(freshRoom.id);
+    });
+
+    it("returns no-op for non-positive maxAgeMs", () => {
+      const session = createTestSession(store);
+      const room = store.createRoom({ name: "noop-room", projectId: "proj-1" });
+
+      expect(store.cleanupOldChats(0)).toEqual({ sessionsDeleted: 0, roomsDeleted: 0 });
+      expect(store.cleanupOldChats(-10)).toEqual({ sessionsDeleted: 0, roomsDeleted: 0 });
+      expect(store.cleanupOldChats(Number.NaN)).toEqual({ sessionsDeleted: 0, roomsDeleted: 0 });
+
+      expect(store.getSession(session.id)).toBeDefined();
+      expect(store.getRoom(room.id)).toBeDefined();
+    });
+  });
+
   describe("Test isolation", () => {
     it("starts with no leaked sessions from prior tests", () => {
       expect(store.listSessions()).toEqual([]);

@@ -823,6 +823,48 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     return true;
   }
 
+  cleanupOldChats(maxAgeMs: number): { sessionsDeleted: number; roomsDeleted: number } {
+    if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
+      return { sessionsDeleted: 0, roomsDeleted: 0 };
+    }
+
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+
+    const result = this.db.transaction(() => {
+      const staleSessionRows = this.db.prepare("SELECT id FROM chat_sessions WHERE updatedAt < ?").all(cutoff) as Array<{ id: string }>;
+      const staleRoomRows = this.db.prepare("SELECT id FROM chat_rooms WHERE updatedAt < ?").all(cutoff) as Array<{ id: string }>;
+
+      if (staleSessionRows.length > 0) {
+        this.db.prepare("DELETE FROM chat_sessions WHERE updatedAt < ?").run(cutoff);
+      }
+      if (staleRoomRows.length > 0) {
+        this.db.prepare("DELETE FROM chat_rooms WHERE updatedAt < ?").run(cutoff);
+      }
+
+      return {
+        staleSessionIds: staleSessionRows.map((row) => row.id),
+        staleRoomIds: staleRoomRows.map((row) => row.id),
+      };
+    });
+
+    if (result.staleSessionIds.length === 0 && result.staleRoomIds.length === 0) {
+      return { sessionsDeleted: 0, roomsDeleted: 0 };
+    }
+
+    this.db.bumpLastModified();
+    for (const sessionId of result.staleSessionIds) {
+      this.emit("chat:session:deleted", sessionId);
+    }
+    for (const roomId of result.staleRoomIds) {
+      this.emit("chat:room:deleted", roomId);
+    }
+
+    return {
+      sessionsDeleted: result.staleSessionIds.length,
+      roomsDeleted: result.staleRoomIds.length,
+    };
+  }
+
   addRoomMember(roomId: string, agentId: string, role: RoomMemberRole = "member"): ChatRoomMember {
     const now = new Date().toISOString();
     const result = this.db.prepare(`
