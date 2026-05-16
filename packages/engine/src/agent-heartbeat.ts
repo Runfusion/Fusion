@@ -702,25 +702,50 @@ function shortContentHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 8);
 }
 
-function buildIdentitySnapshot(args: {
+type SnapshotFieldStatus = "loaded" | "unset" | "empty" | "load-error";
+
+type SnapshotFieldState = {
+  status: SnapshotFieldStatus;
+  value?: string;
+};
+
+export function buildIdentitySnapshot(args: {
   agent: Agent;
-  resolvedInstructions: string;
-  workspaceMemory: string;
+  resolvedInstructions: SnapshotFieldState;
+  workspaceMemory: SnapshotFieldState;
 }): string {
   const { agent, resolvedInstructions, workspaceMemory } = args;
 
-  const soulTrimmed = typeof agent.soul === "string" ? agent.soul.trim() : "";
-  const instrTrimmed = resolvedInstructions.trim();
-  const inlineMemoryTrimmed = typeof agent.memory === "string" ? agent.memory.trim() : "";
-  const workspaceMemoryTrimmed = workspaceMemory.trim();
-  const memorySource = inlineMemoryTrimmed ? "inline" : workspaceMemoryTrimmed ? "workspace" : null;
-  const memTrimmed = inlineMemoryTrimmed || workspaceMemoryTrimmed;
-
-  const formatField = (trimmed: string, source?: "inline" | "workspace"): string => {
-    if (!trimmed) return "absent";
-    const sourceLabel = source ? `, source: ${source}` : "";
-    return `loaded (${trimmed.length} chars, sha256:${shortContentHash(trimmed)}${sourceLabel})`;
+  const toSnapshotState = (value: unknown): SnapshotFieldState => {
+    if (value === undefined || value === null) {
+      return { status: "unset" };
+    }
+    const normalized = typeof value === "string" ? value.trim() : String(value).trim();
+    if (!normalized) {
+      return { status: "empty" };
+    }
+    return { status: "loaded", value: normalized };
   };
+
+  const formatField = (
+    field: SnapshotFieldState,
+    source?: "inline" | "workspace",
+  ): string => {
+    if (field.status !== "loaded") {
+      return field.status;
+    }
+    const sourceLabel = source ? `, source: ${source}` : "";
+    return `loaded (${field.value!.length} chars, sha256:${shortContentHash(field.value!)}${sourceLabel})`;
+  };
+
+  const soulState = toSnapshotState(agent.soul);
+  const inlineMemoryState = toSnapshotState(agent.memory);
+  const memoryState = inlineMemoryState.status === "loaded"
+    ? inlineMemoryState
+    : workspaceMemory;
+  const memorySource = inlineMemoryState.status === "loaded"
+    ? "inline"
+    : memoryState.status === "loaded" ? "workspace" : undefined;
 
   return [
     "## Identity Snapshot",
@@ -730,9 +755,9 @@ function buildIdentitySnapshot(args: {
     `- agentId: ${agent.id}`,
     `- name: ${agent.name}`,
     `- role: ${agent.role}`,
-    `- soul: ${formatField(soulTrimmed)}`,
-    `- instructions: ${formatField(instrTrimmed)}`,
-    `- memory: ${formatField(memTrimmed, memorySource ?? undefined)}`,
+    `- soul: ${formatField(soulState)}`,
+    `- instructions: ${formatField(resolvedInstructions)}`,
+    `- memory: ${formatField(memoryState, memorySource)}`,
   ].join("\n");
 }
 
@@ -2114,20 +2139,32 @@ export class HeartbeatMonitor {
           isNoTaskRun ? HEARTBEAT_NO_TASK_SYSTEM_PROMPT : HEARTBEAT_SYSTEM_PROMPT,
           resolvedMemoryMode.mode,
         );
-        let resolvedInstructionsForIdentity = "";
-        let workspaceMemoryForIdentity = "";
+        let resolvedInstructionsText = "";
+        let resolvedInstructionsForIdentity: SnapshotFieldState = { status: "unset" };
+        let workspaceMemoryForIdentity: SnapshotFieldState = { status: "unset" };
         try {
-          resolvedInstructionsForIdentity = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store, resolvedMemoryMode.mode);
+          const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store, resolvedMemoryMode.mode);
+          resolvedInstructionsText = resolvedInstructions;
+          const trimmed = resolvedInstructions.trim();
+          resolvedInstructionsForIdentity = trimmed
+            ? { status: "loaded", value: trimmed }
+            : { status: "empty" };
         } catch (instructionError) {
           const message = instructionError instanceof Error ? instructionError.message : String(instructionError);
           heartbeatLog.warn(`Failed to resolve agent instructions for heartbeat ${agentId}: ${message}`);
+          resolvedInstructionsForIdentity = { status: "load-error" };
         }
 
         try {
-          workspaceMemoryForIdentity = await readAgentMemoryWorkspaceLongTerm(rootDir, agent.id);
+          const workspaceMemory = await readAgentMemoryWorkspaceLongTerm(rootDir, agent.id);
+          const trimmed = workspaceMemory.trim();
+          workspaceMemoryForIdentity = trimmed
+            ? { status: "loaded", value: trimmed }
+            : { status: "empty" };
         } catch (memoryReadErr) {
           const message = memoryReadErr instanceof Error ? memoryReadErr.message : String(memoryReadErr);
           heartbeatLog.warn(`Failed to resolve workspace memory for heartbeat ${agentId}: ${message}`);
+          workspaceMemoryForIdentity = { status: "load-error" };
         }
 
         let memoryInstructions = "";
@@ -2167,7 +2204,7 @@ export class HeartbeatMonitor {
 
         const heartbeatLayers = buildPromptLayers({
           basePrompt: baseHeartbeatSystemPrompt,
-          agentInstructions: [resolvedInstructionsForIdentity, memoryInstructions, selfImprovePrompt].filter((part) => part.trim()).join("\n\n"),
+          agentInstructions: [resolvedInstructionsText, memoryInstructions, selfImprovePrompt].filter((part) => part.trim()).join("\n\n"),
           pluginContributions: heartbeatPluginContributions,
         });
 
@@ -2462,6 +2499,16 @@ export class HeartbeatMonitor {
             ? "default-no-task-override"
             : (customProcedure ? "custom" : "default");
           const reportsHealthSection = await this.buildReportsHealthSection(agent.id, this.store);
+          const identitySnapshot = buildIdentitySnapshot({
+            agent,
+            resolvedInstructions: resolvedInstructionsForIdentity,
+            workspaceMemory: workspaceMemoryForIdentity,
+          });
+          if (resolvedInstructionsForIdentity.status === "load-error" || workspaceMemoryForIdentity.status === "load-error") {
+            heartbeatLog.warn(
+              `Identity snapshot rendered with load-error status for ${agentId}: instructions=${resolvedInstructionsForIdentity.status}, memory=${workspaceMemoryForIdentity.status}`,
+            );
+          }
 
           if (isNoTaskRun) {
             // No-task heartbeat: agent has identity but no assigned task
@@ -2493,11 +2540,7 @@ export class HeartbeatMonitor {
               `Heartbeat execution for agent "${agent.name}" (ID: ${agent.id})`,
               `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               "",
-              buildIdentitySnapshot({
-                agent,
-                resolvedInstructions: resolvedInstructionsForIdentity,
-                workspaceMemory: workspaceMemoryForIdentity,
-              }),
+              identitySnapshot,
               "",
               "## Wake Delta",
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
@@ -2601,11 +2644,7 @@ export class HeartbeatMonitor {
               `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `Assigned task: ${taskId} — ${taskTitle}`,
               "",
-              buildIdentitySnapshot({
-                agent,
-                resolvedInstructions: resolvedInstructionsForIdentity,
-                workspaceMemory: workspaceMemoryForIdentity,
-              }),
+              identitySnapshot,
               "",
               "## Wake Delta",
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
