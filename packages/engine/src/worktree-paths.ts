@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Settings } from "@fusion/core";
+import type { WorktreeBackendKind } from "./worktree-backend.js";
 import { canonicalizePath } from "./worktree-pool.js";
 
 export function resolveWorktreesDir(
@@ -23,6 +24,23 @@ export function resolveTaskWorktreePath(
   worktreeName: string,
 ): string {
   return join(resolveWorktreesDir(rootDir, settings), worktreeName);
+}
+
+// Structural backend input avoids importing the full WorktreeBackend interface here.
+export async function resolveTaskWorktreePathForBackend(
+  rootDir: string,
+  worktreeName: string,
+  settings: Pick<Settings, "worktreesDir"> | undefined,
+  backend: {
+    kind: WorktreeBackendKind;
+    resolveWorktreePath?: (input: { rootDir: string; worktreeName: string; branch: string }) => Promise<string>;
+  },
+  branch: string,
+): Promise<string> {
+  if (backend.kind === "worktrunk" && backend.resolveWorktreePath) {
+    return backend.resolveWorktreePath({ rootDir, worktreeName, branch });
+  }
+  return resolveTaskWorktreePath(rootDir, settings, worktreeName);
 }
 
 export function isInsideConfiguredWorktreesDir(

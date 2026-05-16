@@ -2,6 +2,7 @@ import { exec, execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { Settings } from "@fusion/core";
+import { resolveTaskWorktreePath } from "./worktree-paths.js";
 import { inspectBranchConflict } from "./branch-conflicts.js";
 import { formatError } from "./logger.js";
 
@@ -69,6 +70,7 @@ export interface WorktreeBackend {
   remove(input: WorktreeRemoveInput): Promise<void>;
   sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }>;
   prune(input: WorktreePruneInput): Promise<void>;
+  resolveWorktreePath(input: { rootDir: string; worktreeName: string; branch: string }): Promise<string>;
 }
 
 export type WorktrunkOperationCode =
@@ -137,7 +139,12 @@ function parseWorktreesFromPorcelain(porcelain: string): Array<{ path: string; b
 export class NativeWorktreeBackend implements WorktreeBackend {
   readonly kind: WorktreeBackendKind = "native";
 
-  constructor(private readonly deps: { logger?: { log: (m: string) => void; warn: (m: string) => void } } = {}) {}
+  constructor(
+    private readonly deps: {
+      logger?: { log: (m: string) => void; warn: (m: string) => void };
+      settings?: Pick<Settings, "worktreesDir">;
+    } = {},
+  ) {}
 
   async create(input: WorktreeCreateInput): Promise<WorktreeCreateResult> {
     const startArg = input.startPoint ? ` ${quoteShellArg(input.startPoint)}` : "";
@@ -228,6 +235,10 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       timeout: NATIVE_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
     });
+  }
+
+  async resolveWorktreePath(input: { rootDir: string; worktreeName: string; branch: string }): Promise<string> {
+    return resolveTaskWorktreePath(input.rootDir, this.deps.settings, input.worktreeName);
   }
 }
 
@@ -393,6 +404,23 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
       await this.remove({ rootDir: input.rootDir, worktreePath: row.path, branch: row.branch });
     }
   }
+
+  async resolveWorktreePath(input: { rootDir: string; worktreeName: string; branch: string }): Promise<string> {
+    const template = await this.resolveWorktrunkTemplate(input.rootDir);
+    const sanitizedBranch = input.branch.replace(/[\\/]/g, "-");
+    return template.replace(/\{\{\s*branch\s*\|\s*sanitize\s*\}\}/g, sanitizedBranch).replace(/\{\{\s*branch\s*\}\}/g, input.branch);
+  }
+
+  private async resolveWorktrunkTemplate(rootDir: string): Promise<string> {
+    const { stdout } = await execAsync("git config --get worktrunk.worktree-path", {
+      cwd: rootDir,
+      encoding: "utf-8",
+      timeout: WORKTRUNK_TIMEOUTS_MS.layout,
+      maxBuffer: MAX_BUFFER,
+    });
+    const configured = stdout.trim();
+    return configured || `${rootDir}/.worktrees/{{ branch | sanitize }}`;
+  }
 }
 
 export function resolveWorktreeBackend(
@@ -406,5 +434,5 @@ export function resolveWorktreeBackend(
     });
   }
 
-  return new NativeWorktreeBackend({ logger: deps.logger });
+  return new NativeWorktreeBackend({ logger: deps.logger, settings });
 }

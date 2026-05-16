@@ -136,7 +136,7 @@ describe("acquireTaskWorktree foreign start-point warning", () => {
       return Promise.resolve({ stdout: "", stderr: "" });
     };
 
-    vi.doMock("node:child_process", () => ({ exec: execMock }));
+    vi.doMock("node:child_process", () => ({ exec: execMock, execFile: execMock }));
     const mod = await import("../worktree-acquisition.js");
 
     await mod.acquireTaskWorktree({

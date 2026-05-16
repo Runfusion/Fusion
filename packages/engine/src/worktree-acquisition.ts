@@ -3,7 +3,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { RunMutationContext, Settings, Task, TaskStore } from "@fusion/core";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
-import { resolveTaskWorktreePath } from "./worktree-paths.js";
+import { resolveTaskWorktreePathForBackend } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "./logger.js";
 import { isBranchConflictError } from "./branch-conflicts.js";
@@ -110,7 +110,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       : naming === "task-title"
         ? slugify(task.title || task.description.slice(0, 60))
         : generateWorktreeName(rootDir, settings);
-    worktreePath = resolveTaskWorktreePath(rootDir, settings, worktreeName);
+    worktreePath = await resolveTaskWorktreePathForBackend(rootDir, worktreeName, settings, backend, branchName);
   }
 
   let isResume = Boolean(task.worktree && existsSync(worktreePath));
@@ -118,7 +118,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     logger?.log(`${task.id}: assigned worktree is not usable; creating a fresh worktree instead: ${worktreePath}`);
     await store.logEntry(task.id, "Assigned worktree is not a registered, usable git worktree; creating a fresh worktree instead", worktreePath, runContext);
     await store.updateTask(task.id, { worktree: null, branch: null });
-    worktreePath = resolveTaskWorktreePath(rootDir, settings, generateWorktreeName(rootDir, settings));
+    const fallbackName = generateWorktreeName(rootDir, settings);
+    worktreePath = await resolveTaskWorktreePathForBackend(rootDir, fallbackName, settings, backend, branchName);
     isResume = false;
   }
 
