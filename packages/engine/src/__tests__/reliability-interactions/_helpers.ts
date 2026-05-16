@@ -17,6 +17,7 @@ export type ReliabilityFixture = {
   store: TaskStore;
   task: Task;
   settings: Settings;
+  manager: SelfHealingManager;
   cleanup: () => Promise<void>;
   writeAndCommit: (file: string, content: string, message: string) => Promise<string>;
   createBranch: (branch: string) => Promise<void>;
@@ -26,6 +27,7 @@ export type ReliabilityFixture = {
     recoverAlreadyMergedReviewTasks: () => Promise<number>;
     recoverMisclassifiedFailures: () => Promise<number>;
     clearStaleBlockedBy: () => Promise<number>;
+    reconcileDoneTaskIntegrity: () => Promise<number>;
   };
 };
 
@@ -76,7 +78,9 @@ export async function makeReliabilityFixture(input: {
     store,
     task,
     settings,
+    manager,
     cleanup: async () => {
+      manager.stop();
       store.close();
       await rm(rootDir, { recursive: true, force: true });
     },
@@ -99,6 +103,7 @@ export async function makeReliabilityFixture(input: {
       recoverAlreadyMergedReviewTasks: async () => manager.recoverAlreadyMergedReviewTasks(),
       recoverMisclassifiedFailures: async () => manager.recoverMisclassifiedFailures(),
       clearStaleBlockedBy: async () => manager.clearStaleBlockedBy(),
+      reconcileDoneTaskIntegrity: async () => manager.reconcileDoneTaskIntegrity(),
     },
   };
 }
