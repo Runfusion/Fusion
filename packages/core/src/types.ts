@@ -1359,6 +1359,15 @@ export interface Task {
   pausedReason?: string;
   /** ISO timestamp set when the task first crossed the soft token budget cap. */
   tokenBudgetSoftAlertedAt?: string;
+  /** ISO timestamp marking first one-shot alert when worktrunk failed and fell back to native backend. */
+  worktrunkFallbackAlertedAt?: string;
+  /** Structured details for a fail-hard worktrunk operation failure. */
+  worktrunkFailure?: {
+    op: "create" | "sync" | "prune" | "remove" | "install" | "resolve-binary";
+    stderr?: string;
+    exitCode?: number | null;
+    attemptedAt: string;
+  };
   /** ISO timestamp set when the task first crossed the hard token budget cap. */
   tokenBudgetHardAlertedAt?: string;
   /** Optional per-task budget override set by an operator on resume. */
