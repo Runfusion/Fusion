@@ -68,6 +68,32 @@ async function emitBinaryAudit(
   await auditor.filesystem({ type, target: WORKTRUNK_INSTALL_PATH, metadata });
 }
 
+async function emitInstallSuccessAudit(
+  auditor: RunAuditor | undefined,
+  payload: { binaryPath: string; installSource: "release-binary" | "cargo"; durationMs: number },
+  runContext?: EngineRunContext,
+): Promise<void> {
+  if (!auditor) return;
+  try {
+    await auditor.git({
+      type: "worktree:worktrunk-install",
+      target: payload.binaryPath,
+      metadata: {
+        op: "install",
+        binaryPath: payload.binaryPath,
+        installSource: payload.installSource,
+        durationMs: payload.durationMs,
+        taskId: runContext?.taskId,
+        runId: runContext?.runId,
+      },
+    });
+  } catch (err) {
+    logger.warn("install-audit-failed", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 async function lookupPath(binaryName: string): Promise<string | null> {
   const command = process.platform === "win32" ? "where" : "which";
   try {
