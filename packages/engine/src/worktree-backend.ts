@@ -191,19 +191,19 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
     });
   }
 
-  async create(): Promise<{ path: string; branch: string }> {
+  async create(_input: WorktreeCreateInput): Promise<{ path: string; branch: string }> {
     return this.throwUnsupported("create");
   }
 
-  async remove(): Promise<void> {
+  async remove(_input: WorktreeRemoveInput): Promise<void> {
     return this.throwUnsupported("remove");
   }
 
-  async sync(): Promise<{ skipped: boolean }> {
+  async sync(_input: WorktreeSyncInput): Promise<{ skipped: boolean }> {
     return this.throwUnsupported("sync");
   }
 
-  async prune(): Promise<void> {
+  async prune(_input: WorktreePruneInput): Promise<void> {
     return this.throwUnsupported("prune");
   }
 }
