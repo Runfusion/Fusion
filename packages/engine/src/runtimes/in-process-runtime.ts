@@ -657,6 +657,7 @@ export class InProcessRuntime
         leaseManager: this.leaseManager,
         hasActiveAgentExecution: (agentId: string) => this.heartbeatMonitor?.getTrackedAgents().includes(agentId) ?? false,
         chatStore: this.chatStore,
+        messageStore: this.messageStore,
         restartDurableAgentHeartbeat: async (agentId: string, context: { reason: string; attempt: number }) => {
           if (!this.heartbeatMonitor) {
             return false;

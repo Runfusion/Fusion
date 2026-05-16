@@ -26,7 +26,7 @@ import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type ChatStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority } from "@fusion/core";
+import { getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
@@ -199,6 +199,8 @@ export interface SelfHealingOptions {
   autoRecoveryDispatcher?: AutoRecoveryDispatcher;
   /** Optional ChatStore for maintenance chat-retention cleanup. */
   chatStore?: ChatStore;
+  /** Optional MessageStore for maintenance mail-retention cleanup. */
+  messageStore?: MessageStore;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -969,6 +971,22 @@ export class SelfHealingManager {
             }
             const { sessionsDeleted, roomsDeleted } = this.options.chatStore.cleanupOldChats(days * 86_400_000);
             log.log(`Maintenance batch 1 step "cleanup-old-chats" succeeded — sessions=${sessionsDeleted} rooms=${roomsDeleted}`);
+          },
+        },
+        {
+          name: "cleanup-old-mail",
+          fn: async () => {
+            const value = Number(settings.mailAutoCleanupDays ?? 0);
+            if (!Number.isFinite(value) || value <= 0) {
+              log.log(`Skipping cleanup-old-mail: setting=${String(settings.mailAutoCleanupDays ?? 0)}`);
+              return;
+            }
+            if (!this.options.messageStore) {
+              log.log("Skipping cleanup-old-mail: messageStore unavailable");
+              return;
+            }
+            const { messagesDeleted } = this.options.messageStore.cleanupOldMessages(value * 86_400_000);
+            log.log(`Maintenance batch 1 step "cleanup-old-mail" succeeded — messagesDeleted=${messagesDeleted}`);
           },
         },
         { name: "checkpoint-wal", fn: () => Promise.resolve(this.checkpointWal()) },
