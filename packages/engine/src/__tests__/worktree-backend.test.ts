@@ -41,13 +41,29 @@ describe("NativeWorktreeBackend", () => {
     );
   });
 
-  it("retries with sibling branch suffixes when rename enabled", async () => {
+  it("rethrows immediately when rename disabled", async () => {
+    const error = new Error("branch exists");
+    execMock.mockRejectedValue(error);
+
+    await expect(
+      new NativeWorktreeBackend().create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+        allowSiblingBranchRename: false,
+      }),
+    ).rejects.toBe(error);
+
+    expect(execMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries with suffixes and resolves on first success", async () => {
     execMock
       .mockRejectedValueOnce(new Error("branch exists"))
       .mockResolvedValueOnce({ stdout: "", stderr: "" });
-    const backend = new NativeWorktreeBackend();
 
-    const result = await backend.create({
+    const result = await new NativeWorktreeBackend().create({
       rootDir: "/repo",
       worktreePath: "/repo/.worktrees/fn-1",
       branch: "fusion/fn-1",
@@ -63,52 +79,28 @@ describe("NativeWorktreeBackend", () => {
     );
   });
 
-  it("removes worktree with force command", async () => {
-    execMock.mockResolvedValue({ stdout: "", stderr: "" });
-    const backend = new NativeWorktreeBackend();
+  it("rethrows original error after exhausting suffix retries", async () => {
+    const originalError = new Error("branch exists");
+    execMock.mockRejectedValue(originalError);
 
-    await backend.remove({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1", taskId: "FN-1" });
+    await expect(
+      new NativeWorktreeBackend().create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+        allowSiblingBranchRename: true,
+      }),
+    ).rejects.toBe(originalError);
 
-    expect(execMock).toHaveBeenCalledWith(
-      'git worktree remove --force "/repo/.worktrees/fn-1"',
-      expect.objectContaining({ cwd: "/repo", timeout: 60000, maxBuffer: 10485760 }),
-    );
+    expect(execMock).toHaveBeenCalledTimes(50);
   });
 });
 
-describe("WorktrunkOperationError", () => {
-  it("preserves operation, stderr, exitCode, and code", () => {
-    const error = new WorktrunkOperationError({
-      operation: "create",
-      stderr: "failure",
-      exitCode: 2,
-      code: "worktrunk_operation_failed",
-    });
+describe("WorktrunkWorktreeBackend", () => {
+  it("throws missing binary error", async () => {
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: null });
 
-    expect(error.name).toBe("WorktrunkOperationError");
-    expect(error.operation).toBe("create");
-    expect(error.stderr).toBe("failure");
-    expect(error.exitCode).toBe(2);
-    expect(error.code).toBe("worktrunk_operation_failed");
-  });
-});
-
-describe("resolveWorktreeBackend", () => {
-  it("defaults to native when worktrunk undefined", () => {
-    expect(resolveWorktreeBackend({}).kind).toBe("native");
-  });
-
-  it("uses native when enabled=false", () => {
-    expect(resolveWorktreeBackend({ worktrunk: { enabled: false } as any }).kind).toBe("native");
-  });
-
-  it("uses worktrunk when enabled=true and binaryPath present", () => {
-    expect(resolveWorktreeBackend({ worktrunk: { enabled: true, binaryPath: "worktrunk" } as any }).kind).toBe("worktrunk");
-  });
-
-  it("uses worktrunk when enabled=true and binaryPath missing", async () => {
-    const backend = resolveWorktreeBackend({ worktrunk: { enabled: true } as any });
-    expect(backend.kind).toBe("worktrunk");
     await expect(
       backend.create({
         rootDir: "/repo",
@@ -116,15 +108,86 @@ describe("resolveWorktreeBackend", () => {
         branch: "fusion/fn-1",
         taskId: "FN-1",
       }),
-    ).rejects.toMatchObject({ code: "worktrunk_binary_missing" });
+    ).rejects.toMatchObject({
+      name: "WorktrunkOperationError",
+      code: "worktrunk_binary_missing",
+      stderr: "worktrunk binary not configured",
+      exitCode: null,
+    });
+  });
+
+  it("throws operation failed with stderr/exitCode", async () => {
+    execMock.mockRejectedValue({ stderr: "bad news", code: 7 });
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
+
+    await expect(
+      backend.create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+      }),
+    ).rejects.toMatchObject({ code: "worktrunk_operation_failed", stderr: "bad news", exitCode: 7 });
+  });
+
+  it("returns input path/branch on success", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
+
+    await expect(
+      backend.create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+      }),
+    ).resolves.toEqual({ path: "/repo/.worktrees/fn-1", branch: "fusion/fn-1" });
+  });
+
+  it("passes timeout/maxBuffer and cwd", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
+
+    await backend.create({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      branch: "fusion/fn-1",
+      taskId: "FN-1",
+    });
+
+    expect(execMock).toHaveBeenCalledWith(
+      '"worktrunk" switch --create "fusion/fn-1"',
+      expect.objectContaining({ cwd: "/repo", timeout: 120000, maxBuffer: 10485760 }),
+    );
   });
 });
 
-describe("WorktrunkWorktreeBackend", () => {
-  it("throws unsupported operation when configured", async () => {
-    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
-    await expect(
-      backend.prune({ rootDir: "/repo", taskId: "FN-1" }),
-    ).rejects.toMatchObject({ code: "worktrunk_unsupported_operation", operation: "prune" });
+describe("WorktrunkOperationError", () => {
+  it("preserves shape", () => {
+    const error = new WorktrunkOperationError("create", "worktrunk_operation_failed", "stderr", 2);
+    expect(error.name).toBe("WorktrunkOperationError");
+    expect(error.operation).toBe("create");
+    expect(error.code).toBe("worktrunk_operation_failed");
+    expect(error.stderr).toBe("stderr");
+    expect(error.exitCode).toBe(2);
+  });
+});
+
+describe("resolveWorktreeBackend", () => {
+  it("uses native for empty settings", () => {
+    expect(resolveWorktreeBackend({}).kind).toBe("native");
+  });
+
+  it("uses native for empty worktrunk object", () => {
+    expect(resolveWorktreeBackend({ worktrunk: {} }).kind).toBe("native");
+  });
+
+  it("uses native when worktrunk disabled", () => {
+    expect(resolveWorktreeBackend({ worktrunk: { enabled: false } }).kind).toBe("native");
+  });
+
+  it("uses worktrunk when enabled with or without binaryPath", () => {
+    expect(resolveWorktreeBackend({ worktrunk: { enabled: true, binaryPath: "worktrunk" } }).kind).toBe("worktrunk");
+    expect(resolveWorktreeBackend({ worktrunk: { enabled: true } }).kind).toBe("worktrunk");
   });
 });
