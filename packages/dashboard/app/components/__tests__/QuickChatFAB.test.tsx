@@ -1221,6 +1221,40 @@ describe("QuickChatFAB session-first UX", () => {
     });
   });
 
+  // FN-4720 guards that the first open transition snaps to the live tail before any user scroll event,
+  // complementing FN-3945/FN-4095/FN-4590 which only assert eventual bottom anchoring.
+  it("FN-4720: snaps to bottom on first uncontrolled open before any user scroll event fires", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "msg-open", sessionId: "session-model", role: "assistant", content: "Loaded", createdAt: new Date().toISOString() }],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const messages = await screen.findByTestId("quick-chat-messages");
+    let scrollTopValue = 240;
+    const scrollHeightValue = 1760;
+    let userScrollEventFired = false;
+    messages.addEventListener("scroll", () => {
+      userScrollEventFired = true;
+    });
+
+    Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+    Object.defineProperty(messages, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+
+    expect(userScrollEventFired).toBe(false);
+    await waitFor(() => {
+      expect(scrollTopValue).toBe(scrollHeightValue);
+    });
+    expect(userScrollEventFired).toBe(false);
+  });
+
   it("FN-4590: snaps to bottom on controlled initial open by overwriting a non-zero starting scrollTop", async () => {
     mockFetchChatMessages.mockResolvedValueOnce({
       messages: [{ id: "msg-open", sessionId: "session-model", role: "assistant", content: "Loaded", createdAt: new Date().toISOString() }],
