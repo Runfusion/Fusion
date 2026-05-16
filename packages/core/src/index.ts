@@ -96,11 +96,19 @@ export {
   resolveAgentProvisioningPolicy,
   extractAgentProvisioningRequest,
 } from "./agent-provisioning-policy.js";
+export {
+  resolveSandboxProvisioningPolicy,
+  extractSandboxProvisioningRequest,
+} from "./sandbox-provisioning-policy.js";
 export type {
   AgentProvisioningTool,
   AgentProvisioningPolicyInput,
   AgentProvisioningPolicyDecision,
 } from "./agent-provisioning-policy.js";
+export type {
+  SandboxProvisioningPolicyInput,
+  SandboxProvisioningPolicyDecision,
+} from "./sandbox-provisioning-policy.js";
 export { TaskStore } from "./store.js";
 export { computeRetrySummary, RETRY_STORM_WARNING_RATIO } from "./retry-summary.js";
 export { RetryStormError, serializeRetryStormError } from "./retry-storm-error.js";
