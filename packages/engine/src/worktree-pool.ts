@@ -2,10 +2,16 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { join, relative, resolve, isAbsolute } from "node:path";
-import type { Column, Settings, TaskStore } from "@fusion/core";
+import type { Column, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
 import { worktreePoolLog } from "./logger.js";
 import { isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree-paths.js";
+import {
+  resolveWorktrunkBinary,
+  WorktrunkBinaryUnavailableError,
+  WorktrunkInstallDeniedError,
+  WorktrunkInstallFailedError,
+} from "./worktrunk-installer.js";
 
 export {
   NativeWorktreeBackend,
@@ -15,7 +21,37 @@ export {
 } from "./worktree-backend.js";
 export type { WorktreeBackend, WorktreeBackendKind } from "./worktree-backend.js";
 
+// Re-export worktrunk installer types for convenience.
+export {
+  resolveWorktrunkBinary as resolveWorktrunkBinaryOriginal,
+  WorktrunkBinaryUnavailableError,
+  WorktrunkInstallDeniedError,
+  WorktrunkInstallFailedError,
+} from "./worktrunk-installer.js";
+
 const execAsync = promisify(exec);
+
+// ── Worktrunk binary lazy resolver ─────────────────────────────────────────────
+// Memoizes per (homedir, settings.binaryPath) so the resolution+install flow
+// runs at most once per unique settings combination per process.
+const _worktrunkBinaryCache = new Map<string, { binaryPath: string; resolvedAt: number }>();
+
+export async function getWorktrunkBinary(
+  settings: WorktrunkSettings,
+): Promise<{ binaryPath: string; source: "override" | "path" | "cached" | "installed-release" | "installed-cargo" }> {
+  const cacheKey = `${process.env.HOME ?? ""}::${settings.binaryPath ?? ""}`;
+  const cached = _worktrunkBinaryCache.get(cacheKey);
+  if (cached) {
+    return { binaryPath: cached.binaryPath, source: "cached" };
+  }
+  const result = await resolveWorktrunkBinary({ settings });
+  _worktrunkBinaryCache.set(cacheKey, { binaryPath: result.binaryPath, resolvedAt: Date.now() });
+  return result;
+}
+
+export function clearWorktrunkBinaryCache(): void {
+  _worktrunkBinaryCache.clear();
+}
 
 export function canonicalizePath(path: string): string {
   try {
