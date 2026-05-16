@@ -723,6 +723,10 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 
 `packages/dashboard/app/components/FileEditor.tsx` is CodeMirror 6-backed as the single edit surface (no fallback `<textarea>` pane). Language resolution lives in `packages/dashboard/app/utils/codemirror-language.ts` via `resolveCodeMirrorLanguage(filePath)`, currently mapping JS/TS, CSS, JSON, and Markdown extensions; unknown extensions intentionally fall back to plain text.
 
+### Chat-style textarea autosize pattern
+
+For chat-like composer fields (mailbox compose, planning interview textareas, onboarding Q&A), use `packages/dashboard/app/hooks/useAutosizeTextarea.ts` as the canonical pattern. It mirrors ChatView/QuickChat behavior: set `height = "auto"`, then clamp `scrollHeight` to min/max bounds, and re-run on value/dependency changes in `useLayoutEffect`. Pair it with component CSS that disables manual resize and uses `overflow-y: auto` plus token-based min/max heights.
+
 ### Design Tokens
 
 All new CSS **must** use these token variables instead of hardcoded values. Tokens are defined at `:root` and adapted for light mode via `[data-theme="light"]`.
