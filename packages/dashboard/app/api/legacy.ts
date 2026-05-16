@@ -2677,6 +2677,27 @@ export interface FileSearchResult {
   files: Array<{ path: string; name: string }>;
 }
 
+export interface IssueMentionItem {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  htmlUrl: string;
+  repository: string;
+  updatedAt?: string;
+}
+
+export function fetchRecentIssues(projectId?: string, query?: string): Promise<IssueMentionItem[]> {
+  const params = new URLSearchParams();
+  if (query && query.trim()) {
+    params.set("q", query.trim());
+  }
+  if (projectId) {
+    params.set("projectId", projectId);
+  }
+  const search = params.toString();
+  return api<IssueMentionItem[]>(`/github/issues/recent${search ? `?${search}` : ""}`);
+}
+
 /** Search for files matching a query in a workspace. */
 export function searchFiles(query: string, workspace?: string, projectId?: string): Promise<FileSearchResult> {
   const params = new URLSearchParams({ q: query });
