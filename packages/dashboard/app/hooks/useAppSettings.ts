@@ -24,6 +24,7 @@ export interface UseAppSettingsResult {
   memoryEnabled: boolean;
   devServerEnabled: boolean;
   todosEnabled: boolean;
+  goalsEnabled: boolean;
   autoReloadOnVersionChange: boolean;
   toggleAutoMerge: () => Promise<void>;
   toggleGlobalPause: () => Promise<void>;
@@ -56,6 +57,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [devServerEnabled, setDevServerEnabled] = useState(false);
   const [todosEnabled, setTodosEnabled] = useState(false);
+  const [goalsEnabled, setGoalsEnabled] = useState(false);
   const [autoReloadOnVersionChange, setAutoReloadOnVersionChangeState] = useState(true);
 
   /**
@@ -93,6 +95,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setMemoryEnabled(features.memoryView === true);
       setDevServerEnabled(features.devServerView === true || features.devServer === true);
       setTodosEnabled(features.todoView === true);
+      setGoalsEnabled(features.goalsView === true);
       // Sync the module-level auto-reload guard with the persisted setting
       const autoReload = settings.autoReloadOnVersionChange !== false;
       setAutoReloadOnVersionChangeState(autoReload);
@@ -109,6 +112,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setMemoryEnabled(false);
     setDevServerEnabled(false);
     setTodosEnabled(false);
+    setGoalsEnabled(false);
     void refresh();
   }, [refresh]);
 
@@ -194,6 +198,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     memoryEnabled,
     devServerEnabled,
     todosEnabled,
+    goalsEnabled,
     autoReloadOnVersionChange,
     toggleAutoMerge,
     toggleGlobalPause,

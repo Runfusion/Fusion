@@ -772,6 +772,7 @@ function AppInner() {
     memoryEnabled,
     devServerEnabled,
     todosEnabled,
+    goalsEnabled,
     toggleAutoMerge,
     toggleGlobalPause,
     toggleEnginePause,
@@ -873,7 +874,10 @@ function AppInner() {
     if (taskView === "evals" && !evalsEnabled) {
       handleChangeTaskView("board");
     }
-  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, graphPluginTaskView]);
+    if (taskView === "goalsView" && !goalsEnabled) {
+      handleChangeTaskView("board");
+    }
+  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, researchEnabled, evalsEnabled, goalsEnabled, graphPluginTaskView]);
 
   // Auto-close nodes overlay if feature flag is toggled off while overlay is open
   useEffect(() => {
