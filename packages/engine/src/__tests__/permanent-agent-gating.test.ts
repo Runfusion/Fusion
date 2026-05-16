@@ -45,6 +45,7 @@ describe("permanent-agent-gating", () => {
     expect(classifyPermanentAgentToolCall("fn_task_document_write").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_memory_append").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_research_run").category).toBe("network_api");
+    expect(classifyPermanentAgentToolCall("worktrunk_install").category).toBe("network_api");
     expect(classifyPermanentAgentToolCall("fn_task_show").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_research_get").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_heartbeat_done")).toEqual({ category: "none", recognized: true });

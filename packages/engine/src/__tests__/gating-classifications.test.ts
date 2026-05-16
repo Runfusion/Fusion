@@ -112,6 +112,12 @@ describe("gating-classifications parity", () => {
     expect((COORDINATION_EXEMPT_TOOLS as readonly string[]).includes("fn_web_fetch")).toBe(false);
   });
 
+  it("classifies worktrunk_install as network_api in both action and permanent sets", () => {
+    expect(ACTION_GATE_NETWORK_API_TOOLS.has("worktrunk_install")).toBe(true);
+    expect(NETWORK_API_TOOLS.has("worktrunk_install")).toBe(true);
+    expect((COORDINATION_EXEMPT_TOOLS as readonly string[]).includes("worktrunk_install")).toBe(false);
+  });
+
   it("keeps fn_* category equivalence mappings across gates", () => {
     const fnTools = new Set<string>();
     for (const source of [
