@@ -2823,6 +2823,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       !title &&
       input.description.length > 200 &&
       (input.summarize === true || options?.settings?.autoSummarizeTitles === true);
+    const hasPendingSummarization = shouldSummarize && typeof options?.onSummarize === "function";
 
     // Determine enabledWorkflowSteps: explicit input takes precedence, otherwise auto-apply default-on steps
     let resolvedWorkflowSteps: string[] | undefined = input.enabledWorkflowSteps?.length
@@ -2855,11 +2856,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         if (input.dependencies?.includes(taskId)) {
           throw new Error(`Task ${taskId} cannot depend on itself`);
         }
-        return this._createTaskInternal(input, title, resolvedWorkflowSteps, taskId);
+        return this._createTaskInternal(
+          input,
+          title,
+          resolvedWorkflowSteps,
+          taskId,
+          undefined,
+          undefined,
+          { invokeTaskCreatedHook: !hasPendingSummarization },
+        );
       },
     });
 
-    if (shouldSummarize && options?.onSummarize) {
+    if (hasPendingSummarization) {
       const id = task.id;
       Promise.resolve().then(async () => {
         try {
@@ -2883,6 +2892,23 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
               error: errorMessage,
             },
           );
+        }
+
+        let latestTask = task;
+        try {
+          const refreshed = this.readTaskFromDb(id);
+          if (refreshed) latestTask = refreshed;
+        } catch {
+          // Best-effort refresh; fall back to original task snapshot.
+        }
+
+        try {
+          await this.invokeTaskCreatedHook(latestTask);
+        } catch (err) {
+          storeLog.warn("Deferred task-created hook failed", {
+            taskId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }).catch((err) => {
         const autoEnabled = options?.settings?.autoSummarizeTitles === true;
