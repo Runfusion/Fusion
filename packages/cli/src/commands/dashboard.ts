@@ -1506,7 +1506,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // Start engines for all registered projects eagerly
     await engineManager.startAll();
 
-    let hybridExecutor: HybridExecutor | null = null;
+    let hybridExecutor: HybridExecutor | undefined = undefined;
     const hybridGate = await shouldUseHybridExecutor(centralCoreForEngine);
     logSink.log(
       `hybrid executor gate: enabled=${hybridGate.enabled} reason=${hybridGate.reason}`,
