@@ -5,7 +5,14 @@ import { buildDashboardClient, packageRoot, workspaceRoot } from "./workspace-to
 const dashboardClientDir = join(workspaceRoot, "packages", "dashboard", "dist", "client");
 const desktopDistDir = join(packageRoot, "dist");
 const desktopClientDistDir = join(desktopDistDir, "client");
-const externalMainProcessPackages = ["electron", "@fusion/core", "@fusion/dashboard"];
+const sharedExternals = [
+  "electron",
+  "@fusion/core",
+  "@fusion/dashboard",
+  "better-sqlite3",
+];
+const mainExternals = sharedExternals;
+const preloadExternals = sharedExternals;
 
 async function ensureDashboardBuild(): Promise<void> {
   console.log("[desktop:build] Building dashboard client...");
@@ -30,8 +37,7 @@ async function buildElectronEntrypoints(): Promise<void> {
       platform: "node",
       target: "node22",
       sourcemap: true,
-      packages: "external",
-      external: externalMainProcessPackages,
+      external: mainExternals,
       logLevel: "info",
     }),
     build({
@@ -43,7 +49,7 @@ async function buildElectronEntrypoints(): Promise<void> {
       target: "node22",
       sourcemap: true,
       packages: "external",
-      external: externalMainProcessPackages,
+      external: preloadExternals,
       logLevel: "info",
     }),
   ]);
