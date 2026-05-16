@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { ApprovalRequest, ApprovalRequestActorSnapshot, ApprovalRequestStore, WorktrunkSettings } from "@fusion/core";
 import { createLogger } from "./logger.js";
 import type { EngineRunContext, RunAuditor } from "./run-audit.js";
+import type { AgentActionGateContext } from "./agent-action-gate.js";
 
 const execAsync = promisify(exec);
 const logger = createLogger("worktrunk-installer");
@@ -97,7 +98,11 @@ export async function resolveWorktrunkBinary(opts: {
   settings: WorktrunkSettings;
   auditor?: RunAuditor;
   runContext?: EngineRunContext;
-}): Promise<{ binaryPath: string; source: "override" | "path" | "cached" }> {
+  actionGateContext?: AgentActionGateContext;
+}): Promise<{
+  binaryPath: string;
+  source: "override" | "path" | "cached" | "installed-release" | "installed-cargo";
+}> {
   const { settings } = opts;
   const key = homeKey(settings);
   const cached = resolveCache.get(key);
@@ -199,6 +204,7 @@ async function applyInstallGate(opts: {
   auditor?: RunAuditor;
   runContext?: EngineRunContext;
   gateOverride?: "pre-approved";
+  actionGateContext?: AgentActionGateContext;
 }): Promise<{ satisfied: boolean }> {
   if (opts.gateOverride === "pre-approved") {
     await emitBinaryAudit(opts.auditor, "binary:install-requested", {
@@ -222,6 +228,7 @@ export async function installWorktrunk(opts: {
   auditor?: RunAuditor;
   runContext?: EngineRunContext;
   gateOverride?: "pre-approved";
+  actionGateContext?: AgentActionGateContext;
 }): Promise<{ binaryPath: string; source: "installed-release" | "installed-cargo" }> {
   await applyInstallGate(opts);
   await emitBinaryAudit(opts.auditor, "binary:install-success", {

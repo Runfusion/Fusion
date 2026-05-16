@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktrunkSettings } from "@fusion/core";
+import type { AgentActionGateContext } from "../agent-action-gate.js";
 import type { RunAuditor } from "../run-audit.js";
 
 vi.mock("node:child_process", () => ({
@@ -171,6 +172,19 @@ describe("worktrunk-installer", () => {
       binaryPath: "/opt/worktrunk",
       source: "override",
     });
+  });
+
+  it("accepts actionGateContext and preserves current disabled-install behavior", async () => {
+    mockExecSequence([{ stdout: "worktrunk 0.4.2\n" }]);
+    const result = await resolveWorktrunkBinary({
+      settings: makeSettings({ binaryPath: "/opt/worktrunk" }),
+      actionGateContext: {} as AgentActionGateContext,
+    });
+
+    const _sourceUnionAssertion: {
+      source: "override" | "path" | "cached" | "installed-release" | "installed-cargo";
+    } = result;
+    expect(_sourceUnionAssertion.source).toBe("override");
   });
 
   it("resolveWorktrunkBinary resolves PATH hit when override is absent", async () => {
