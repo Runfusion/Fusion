@@ -1,4 +1,4 @@
-import { exec, execFile, spawn } from "node:child_process";
+import * as childProcess from "node:child_process";
 import { promisify } from "node:util";
 
 import { buildContainerArgv } from "./container-argv.js";
@@ -12,8 +12,13 @@ import type {
   SandboxStreamingResult,
 } from "./types.js";
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
+function getExecAsync() {
+  return promisify(childProcess.exec);
+}
+
+function getExecFileAsync() {
+  return promisify((childProcess as { execFile: typeof import("node:child_process").execFile }).execFile);
+}
 
 /**
  * Experimental container-backed sandbox execution using Podman or Docker.
@@ -50,7 +55,7 @@ export class ContainerSandboxBackend implements SandboxBackend {
     }
 
     try {
-      await execAsync(`${this.runtime} --version`, { timeout: 5_000, maxBuffer: 1024 * 1024 });
+      await getExecAsync()(`${this.runtime} --version`, { timeout: 5_000, maxBuffer: 1024 * 1024 });
       this.runtimeAvailable = true;
       this.runtimeProbeError = undefined;
     } catch (error) {
@@ -81,7 +86,7 @@ export class ContainerSandboxBackend implements SandboxBackend {
     const argv = buildContainerArgv(this.runtime, command, options, this.policy);
 
     try {
-      const execResult = await execFileAsync(argv[0]!, argv.slice(1), {
+      const execResult = await getExecFileAsync()(argv[0]!, argv.slice(1), {
         cwd: options.cwd,
         timeout: options.timeoutMs,
         maxBuffer: options.maxBuffer,
@@ -155,7 +160,7 @@ export class ContainerSandboxBackend implements SandboxBackend {
     const argv = buildContainerArgv(this.runtime, command, runOptions, this.policy);
 
     return await new Promise((resolve) => {
-      const child = spawn(argv[0]!, argv.slice(1), {
+      const child = childProcess.spawn(argv[0]!, argv.slice(1), {
         cwd: options.cwd,
         stdio: ["ignore", "pipe", "pipe"],
         env: {

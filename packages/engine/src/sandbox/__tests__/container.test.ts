@@ -8,11 +8,15 @@ const { mockExec, mockExecFile } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
-  exec: mockExec,
-  execFile: mockExecFile,
-  spawn: vi.fn(),
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    exec: mockExec,
+    execFile: mockExecFile,
+    spawn: vi.fn(),
+  };
+});
 
 describe("ContainerSandboxBackend", () => {
   beforeEach(() => {
