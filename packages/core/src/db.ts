@@ -119,7 +119,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 82;
+const SCHEMA_VERSION = 83;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -674,6 +674,25 @@ CREATE TABLE IF NOT EXISTS eval_run_events (
   FOREIGN KEY (runId) REFERENCES eval_runs(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idxEvalRunEventsRunIdSeq ON eval_run_events(runId, seq);
+
+-- FN-4788…FN-4800: pre-allocate secrets storage schema for upcoming secrets subsystem.
+CREATE TABLE IF NOT EXISTS secrets (
+  id TEXT PRIMARY KEY,
+  key TEXT NOT NULL,
+  value_ciphertext BLOB NOT NULL,
+  nonce BLOB NOT NULL,
+  description TEXT,
+  access_policy TEXT NOT NULL DEFAULT 'auto'
+    CHECK (access_policy IN ('auto', 'prompt', 'deny')),
+  env_exportable INTEGER NOT NULL DEFAULT 0
+    CHECK (env_exportable IN (0, 1)),
+  env_export_key TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_read_at TEXT,
+  last_read_by TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idxSecretsKey ON secrets(key);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
@@ -3321,6 +3340,32 @@ export class Database {
     if (version < 82) {
       this.applyMigration(82, () => {
         this.addColumnIfMissing("tasks", "worktreeSessionRetryCount", "INTEGER DEFAULT 0");
+      });
+    }
+
+    if (version < 83) {
+      this.applyMigration(83, () => {
+        if (!this.hasTable("secrets")) {
+          this.db.exec(`
+            CREATE TABLE secrets (
+              id TEXT PRIMARY KEY,
+              key TEXT NOT NULL,
+              value_ciphertext BLOB NOT NULL,
+              nonce BLOB NOT NULL,
+              description TEXT,
+              access_policy TEXT NOT NULL DEFAULT 'auto'
+                CHECK (access_policy IN ('auto', 'prompt', 'deny')),
+              env_exportable INTEGER NOT NULL DEFAULT 0
+                CHECK (env_exportable IN (0, 1)),
+              env_export_key TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              last_read_at TEXT,
+              last_read_by TEXT
+            )
+          `);
+          this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idxSecretsKey ON secrets(key)");
+        }
       });
     }
 
