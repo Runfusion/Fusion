@@ -65,15 +65,15 @@ COPY packages/dashboard/package.json ./packages/dashboard/package.json
 COPY packages/engine/package.json ./packages/engine/package.json
 
 RUN pnpm install --frozen-lockfile --prod \
-  --filter @gsxdsm/fusion
+  --filter @runfusion/fusion
 
 COPY --from=builder /app/packages/core/dist ./packages/core/dist
 COPY --from=builder /app/packages/engine/dist ./packages/engine/dist
 COPY --from=builder /app/packages/dashboard/dist ./packages/dashboard/dist
 COPY --from=builder /app/packages/cli/dist ./packages/cli/dist
 
-# @gsxdsm/fusion references @sinclair/typebox at runtime via the bundled CLI.
-COPY --from=builder /app/node_modules/.pnpm/@sinclair+typebox@*/node_modules/@sinclair/typebox /project/node_modules/@sinclair/typebox
+# @runfusion/fusion references typebox at runtime via the bundled CLI.
+COPY --from=builder /app/node_modules/.pnpm/typebox@*/node_modules/typebox /project/node_modules/typebox
 
 RUN chown node:node /project
 
@@ -82,7 +82,7 @@ USER node
 EXPOSE 4040
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://localhost:4040/api/tasks').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+  CMD node -e "fetch('http://localhost:4040/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENTRYPOINT ["node", "packages/cli/dist/bin.js"]
-CMD ["dashboard"]
+CMD ["dashboard", "--host", "0.0.0.0"]
