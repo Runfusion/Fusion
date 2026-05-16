@@ -350,6 +350,29 @@ Features:
 
 For mission planning context and handoff structure, see [Missions guide](./missions.md).
 
+## Goals View
+
+Goals view is a minimal strategic-goals surface that shows the current goal list, active-goal count, and quick activation controls.
+
+> No feature flag required.
+> Current status: the `GoalsView` chunk is lazy-defined/prefetched in `App.tsx`, but it is not yet wired into the primary dashboard navigation.
+
+What it currently shows:
+- Header with active-goal count (`N active goals`) and an **Add Goal** action
+- Goal cards with title, `Status: active|inactive`, and a per-goal **Activate** button (disabled for already-active goals)
+- Empty state when no goals exist: `No goals yet. Add one to begin tracking strategic outcomes.`
+
+Current data behavior:
+- Uses in-component mock data (`defaultMockGoals`)
+- UI-only state; no backend persistence or server-side goal storage yet
+
+Active-goal cap behavior:
+- Hard cap of 5 active goals
+- Warning banner appears when active goals are in the 3–5 range
+- Add/activate attempts beyond 5 are blocked and show an error message
+
+Source file: `packages/dashboard/app/components/GoalsView.tsx`
+
 ## Evals View
 
 Evals view is a dedicated dashboard surface for reviewing scheduled task-evaluation output.
