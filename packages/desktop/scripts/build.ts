@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { cp, mkdir, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { buildDashboardClient, packageRoot, workspaceRoot } from "./workspace-tools";
 const dashboardClientDir = join(workspaceRoot, "packages", "dashboard", "dist", "client");
 const desktopDistDir = join(packageRoot, "dist");
