@@ -3,7 +3,8 @@ import { EventEmitter } from "node:events";
 import type { Settings, TaskStore, Task } from "@fusion/core";
 import { cleanupOrphanedWorktrees } from "../../worktree-pool.js";
 import { SelfHealingManager } from "../../self-healing.js";
-import { readFileSync } from "node:fs";
+import { mergerTestHooks } from "../../merger.js";
+import { NativeWorktreeBackend, WorktrunkWorktreeBackend } from "../../worktree-backend.js";
 
 const { execSpy, existsSpy, readdirSpy } = vi.hoisted(() => ({
   execSpy: vi.fn(),
@@ -40,7 +41,44 @@ describe("reliability interactions: worktrunk worktree removal routing", () => {
     existsSpy.mockReturnValue(true);
   });
 
-  it("worktree-pool cleanup keeps native remove behavior in native mode", async () => {
+  it("merger post-merge cleanup calls worktrunk backend remove and avoids native git remove", async () => {
+    const removeSpy = vi.spyOn(WorktrunkWorktreeBackend.prototype, "remove").mockResolvedValue(undefined);
+
+    await mergerTestHooks.removePostMergeWorktree("/repo", "/repo/.worktrees/post", "FN-100", {
+      worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any,
+    });
+
+    expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/repo", worktreePath: "/repo/.worktrees/post", taskId: "FN-100" }));
+    expect(execSpy.mock.calls.some((call) => String(call[0]).includes("git worktree remove"))).toBe(false);
+  });
+
+  it("self-healing recover path calls worktrunk backend remove and not native remove", async () => {
+    const removeSpy = vi.spyOn(WorktrunkWorktreeBackend.prototype, "remove").mockResolvedValue(undefined);
+    const task = {
+      id: "FN-999",
+      column: "in-review",
+      status: "failed",
+      branch: "fusion/fn-999",
+      worktree: "/repo/.worktrees/fn-999",
+      mergeDetails: { mergeConfirmed: false },
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as unknown as Task;
+    const store = storeForSelfHealing({ worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any }, task);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo", getExecutingTaskIds: () => new Set() });
+
+    vi.spyOn(mgr as any, "isBranchTipMisboundToTask").mockResolvedValue({ misbound: true, branchTip: "abc", landed: { sha: "abc", strategy: "tip-reachable" } });
+    vi.spyOn(mgr as any, "clearCompletionBranchIfSubsumed").mockResolvedValue(true);
+
+    await mgr.recoverBranchMisboundInReviewTasks();
+
+    expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-999", taskId: "FN-999" }));
+    expect(execSpy.mock.calls.some((call) => String(call[0]).includes("git worktree remove"))).toBe(false);
+  });
+
+  it("worktree-pool cleanup registered branch calls native backend remove", async () => {
+    const removeSpy = vi.spyOn(NativeWorktreeBackend.prototype, "remove").mockResolvedValue(undefined);
     readdirSpy.mockReturnValue([{ isDirectory: () => true, name: "fn-1" }]);
     execSpy.mockImplementation((cmd: string, _opts: unknown, cb: (err: unknown, stdout: string, stderr: string) => void) => {
       if (cmd.includes("git worktree list --porcelain")) {
@@ -53,35 +91,6 @@ describe("reliability interactions: worktrunk worktree removal routing", () => {
     const store = { listTasks: vi.fn(async () => []) } as unknown as TaskStore;
     await cleanupOrphanedWorktrees("/repo", store, { worktreesDir: "/repo/.worktrees" });
 
-    expect(execSpy.mock.calls.some((call) => String(call[0]).includes("git worktree remove --force \"/repo/.worktrees/fn-1\""))).toBe(true);
-  });
-
-  it("self-healing recover path avoids native git remove under worktrunk mode", async () => {
-    const task = {
-      id: "FN-999",
-      column: "in-review",
-      status: "failed",
-      branch: "fusion/fn-999",
-      worktree: "/repo/.worktrees/fn-999",
-      mergeDetails: { mergeConfirmed: false },
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as unknown as Task;
-    const store = storeForSelfHealing({ worktrunk: { enabled: true, onFailure: "fail" } as any }, task);
-    const mgr = new SelfHealingManager(store, { rootDir: "/repo", getExecutingTaskIds: () => new Set() });
-
-    vi.spyOn(mgr as any, "isBranchTipMisboundToTask").mockResolvedValue({ misbound: true, branchTip: "abc", landed: { sha: "abc", strategy: "tip-reachable" } });
-    vi.spyOn(mgr as any, "clearCompletionBranchIfSubsumed").mockResolvedValue(true);
-
-    await mgr.recoverBranchMisboundInReviewTasks();
-
-    expect(execSpy.mock.calls.some((call) => String(call[0]).includes("git worktree remove"))).toBe(false);
-  });
-
-  it("merger callsite is migrated to removeWorktree helper", () => {
-    const source = readFileSync(new URL("../../merger.ts", import.meta.url), "utf-8");
-    expect(source).toContain("await removeWorktree({");
-    expect(source).toContain("removePostMergeWorktree(rootDir, postMergeWorktree, taskId, settings)");
+    expect(removeSpy).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" }));
   });
 });

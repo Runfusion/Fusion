@@ -5822,6 +5822,10 @@ async function removePostMergeWorktree(
   }
 }
 
+export const mergerTestHooks = {
+  removePostMergeWorktree,
+};
+
 /**
  * AI-powered merge with 3-attempt retry logic when autoResolveConflicts is enabled.
  *

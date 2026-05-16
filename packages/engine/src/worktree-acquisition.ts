@@ -301,9 +301,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       }
     };
 
-  // Removal/sync/prune call sites in executor.ts, merger.ts, worktree-pool.ts,
-  // and self-healing.ts remain on native git worktree commands in this task;
-  // migration follows in FN-4678.
+  // Worktree removal in merger.ts, worktree-pool.ts, and self-healing.ts is now
+  // backend-mediated via WorktreeBackend.remove(). executor.ts and
+  // step-session-executor.ts remain native-only paths (tracked separately).
   const created = await createWorktreeImpl(branchName, worktreePath, task.id, baseBranch ?? undefined, allowSiblingBranchRename);
   worktreePath = created.path;
   branch = created.branch;

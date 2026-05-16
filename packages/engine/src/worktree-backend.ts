@@ -221,7 +221,6 @@ export class NativeWorktreeBackend implements WorktreeBackend {
   }
 
   async remove(input: WorktreeRemoveInput): Promise<void> {
-    // FN-4678: migrate remove call sites to backend.remove().
     await execAsync(`git worktree remove --force ${quoteShellArg(input.worktreePath)}`, {
       cwd: input.rootDir,
       encoding: "utf-8",
