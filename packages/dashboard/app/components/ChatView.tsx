@@ -1678,6 +1678,16 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
         return;
       }
 
+      if (trimmed === "/clear" || trimmed === "/new") {
+        clearComposerState();
+        try {
+          await rooms.clearRoom(rooms.activeRoom.id);
+        } catch {
+          addToast("Failed to clear room conversation", "error");
+        }
+        return;
+      }
+
       const previousInput = messageInput;
       clearComposerState();
 
@@ -1694,7 +1704,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     }
 
     handleSend();
-  }, [messageInput, chatRoomsEnabled, chatScope, rooms, clearComposerState, addToast, handleSend]);
+  }, [messageInput, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend]);
 
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {

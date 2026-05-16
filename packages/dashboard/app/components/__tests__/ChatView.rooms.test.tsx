@@ -90,6 +90,7 @@ const defaultRoomsState: UseChatRoomsResult = {
   createRoom: vi.fn(),
   deleteRoom: vi.fn(),
   sendRoomMessage: vi.fn(),
+  clearRoom: vi.fn(),
   refreshRooms: vi.fn(),
 };
 
@@ -376,6 +377,69 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
 
     await waitFor(() => {
       expect(textarea.value).toBe("");
+    });
+  });
+
+  it("intercepts exact /clear in rooms scope and clears active room", async () => {
+    const clearRoom = vi.fn().mockResolvedValue(undefined);
+    const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
+    setup({}, { clearRoom, sendRoomMessage, activeRoom: roomA });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    await userEvent.type(textarea, "  /clear  {enter}");
+
+    await waitFor(() => {
+      expect(clearRoom).toHaveBeenCalledWith("room-a");
+    });
+    expect(sendRoomMessage).not.toHaveBeenCalled();
+  });
+
+  it("intercepts exact /new in rooms scope and clears active room", async () => {
+    const clearRoom = vi.fn().mockResolvedValue(undefined);
+    const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
+    setup({}, { clearRoom, sendRoomMessage, activeRoom: roomA });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    await userEvent.type(textarea, "  /new  {enter}");
+
+    await waitFor(() => {
+      expect(clearRoom).toHaveBeenCalledWith("room-a");
+    });
+    expect(sendRoomMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept /clear substring commands in rooms scope", async () => {
+    const clearRoom = vi.fn().mockResolvedValue(undefined);
+    const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
+    setup({}, { clearRoom, sendRoomMessage, activeRoom: roomA });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    await userEvent.type(textarea, "/clear now{enter}");
+
+    await waitFor(() => {
+      expect(sendRoomMessage).toHaveBeenCalledWith("/clear now");
+    });
+    expect(clearRoom).not.toHaveBeenCalled();
+  });
+
+  it("toasts error when room clear command fails", async () => {
+    const addToast = vi.fn();
+    const clearRoom = vi.fn().mockRejectedValue(new Error("clear failed"));
+    setup({}, { clearRoom, activeRoom: roomA });
+
+    render(<ChatView projectId="proj-123" addToast={addToast} experimentalFeatures={{ chatRooms: true }} />);
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    await userEvent.type(textarea, "/clear{enter}");
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Failed to clear room conversation", "error");
     });
   });
 
