@@ -119,7 +119,13 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     const stderr = error instanceof WorktrunkOperationError ? error.stderr : undefined;
     const exitCode = error instanceof WorktrunkOperationError ? error.exitCode : null;
     const disposition = await handleWorktrunkOperationFailure({
-      failure: { op, cause: error, stderr, exitCode },
+      failure: {
+        op,
+        cause: error,
+        stderr,
+        exitCode,
+        worktreePath,
+      },
       task,
       settings: settings.worktrunk ?? {},
       store,

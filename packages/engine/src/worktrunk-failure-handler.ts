@@ -14,6 +14,7 @@ export interface WorktrunkOperationFailure {
   exitCode?: number | null;
   durationMs?: number;
   binaryPath?: string;
+  worktreePath?: string;
 }
 
 export type WorktreeOperationResult = { path: string; branch: string } | { skipped: boolean } | void;
@@ -73,6 +74,7 @@ async function pauseTaskWithFailure(
       exitCode: failure.exitCode ?? null,
       stderrPreview: toStderrPreview(failure.stderr),
       binaryPath: failure.binaryPath,
+      worktreePath: failure.worktreePath,
       durationMs: failure.durationMs,
     },
   });
@@ -118,6 +120,7 @@ export async function handleWorktrunkOperationFailure(params: HandleFailureParam
         exitCode: failure.exitCode ?? null,
         stderrPreview: toStderrPreview(failure.stderr),
         binaryPath: failure.binaryPath,
+        worktreePath: failure.worktreePath,
         durationMs: failure.durationMs,
         alerted,
       },
