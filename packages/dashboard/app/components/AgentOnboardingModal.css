@@ -14,6 +14,13 @@
   gap: var(--space-sm);
 }
 
+#agent-onboarding-intent,
+#agent-onboarding-answer {
+  min-height: 120px;
+  max-height: calc(var(--space-2xl) * 10);
+  overflow-y: auto;
+}
+
 @media (max-width: 768px) {
   .agent-onboarding-modal {
     width: 100%;

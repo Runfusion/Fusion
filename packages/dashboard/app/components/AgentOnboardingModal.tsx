@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentCapability, ConversationHistoryEntry } from "../api";
 import {
   startAgentOnboardingStreaming,
@@ -17,6 +17,7 @@ import { AGENT_PRESETS } from "./agent-presets";
 import { ConversationHistory } from "./ConversationHistory";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import "./AgentOnboardingModal.css";
+import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 
 type ViewState = "initial" | "loading" | "question" | "summary" | "creating" | "error";
 
@@ -42,6 +43,14 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
   const [runtimeMode, setRuntimeMode] = useState<"model" | "runtime">("model");
   const [model, setModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const { ref: intentAutosizeRef } = useAutosizeTextarea({ value: intent, minHeight: 120, maxHeight: 320 });
+  const { ref: answerAutosizeRef } = useAutosizeTextarea({ value: answer, minHeight: 120, maxHeight: 320, deps: [currentQuestionId] });
+  const setIntentRef = useCallback((node: HTMLTextAreaElement | null) => {
+    intentAutosizeRef(node);
+  }, [intentAutosizeRef]);
+  const setAnswerRef = useCallback((node: HTMLTextAreaElement | null) => {
+    answerAutosizeRef(node);
+  }, [answerAutosizeRef]);
 
   const templateOptions = useMemo(
     () => AGENT_PRESETS.map((preset) => ({ id: preset.id, label: preset.name, description: preset.description })),
@@ -189,7 +198,7 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
         {viewState === "initial" && (
           <div className="form-group">
             <label htmlFor="agent-onboarding-intent">What do you want this agent to do?</label>
-            <textarea id="agent-onboarding-intent" className="input" value={intent} onChange={(e) => setIntent(e.target.value)} />
+            <textarea ref={setIntentRef} id="agent-onboarding-intent" className="input" value={intent} onChange={(e) => setIntent(e.target.value)} />
             <div className="modal-actions">
               <button className="btn" onClick={() => void handleClose()}>Cancel</button>
               <button className="btn btn-primary" disabled={!intent.trim()} onClick={() => void start()}>Start onboarding</button>
@@ -200,7 +209,7 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
         {(viewState === "loading" || viewState === "question") && (
           <div className="form-group">
             <label htmlFor="agent-onboarding-answer">{currentQuestion || "Waiting for AI question..."}</label>
-            <textarea id="agent-onboarding-answer" className="input" value={answer} onChange={(e) => setAnswer(e.target.value)} />
+            <textarea ref={setAnswerRef} id="agent-onboarding-answer" className="input" value={answer} onChange={(e) => setAnswer(e.target.value)} />
             <div className="modal-actions">
               <button className="btn" onClick={() => sessionId && void stopAgentOnboardingGeneration(sessionId, projectId)}>Stop</button>
               <button className="btn btn-primary" disabled={viewState === "loading" || !answer.trim()} onClick={() => void submitAnswer()}>Continue</button>
