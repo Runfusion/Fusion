@@ -170,8 +170,21 @@ function createMockGlobalSettingsStore() {
 }
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  const getTask = vi.fn();
+  const getTaskColumns = vi.fn(async (ids: string[]) => {
+    const columns = new Map<string, string>();
+    await Promise.all(
+      ids.map(async (id) => {
+        const task = await getTask(id);
+        if (task?.column) columns.set(id, task.column);
+      }),
+    );
+    return columns;
+  });
+
   return {
-    getTask: vi.fn(),
+    getTask,
+    getTaskColumns,
     listTasks: vi.fn().mockResolvedValue([]),
     searchTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
@@ -4048,18 +4061,7 @@ describe("Agent stale task-link sanitization", () => {
     const doneTaskId = "FN-DONE";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockResolvedValue({
-        id: doneTaskId,
-        column: "done",
-        description: "Completed task",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        prompt: "# Done\n\nDone task",
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[doneTaskId, "done"]])),
     } as any);
 
     const app = express();
@@ -4085,18 +4087,7 @@ describe("Agent stale task-link sanitization", () => {
     const archivedTaskId = "FN-ARCHIVED";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockResolvedValue({
-        id: archivedTaskId,
-        column: "archived",
-        description: "Archived task",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        prompt: "# Archived\n\nArchived task",
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[archivedTaskId, "archived"]])),
     } as any);
 
     const app = express();
@@ -4122,18 +4113,7 @@ describe("Agent stale task-link sanitization", () => {
     const activeTaskId = "FN-ACTIVE";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockResolvedValue({
-        id: activeTaskId,
-        column: "in-progress",
-        description: "Active task",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        prompt: "# Active\n\nActive task",
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[activeTaskId, "in-progress"]])),
     } as any);
 
     const app = express();
@@ -4159,18 +4139,7 @@ describe("Agent stale task-link sanitization", () => {
     const doneTaskId = "FN-DONE-DETAIL";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockResolvedValue({
-        id: doneTaskId,
-        column: "done",
-        description: "Done task",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        prompt: "# Done\n\nDone task",
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[doneTaskId, "done"]])),
     } as any);
 
     const app = express();
@@ -4195,18 +4164,7 @@ describe("Agent stale task-link sanitization", () => {
     const archivedTaskId = "FN-ARCHIVED-DETAIL";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockResolvedValue({
-        id: archivedTaskId,
-        column: "archived",
-        description: "Archived task",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        prompt: "# Archived\n\nArchived task",
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[archivedTaskId, "archived"]])),
     } as any);
 
     const app = express();
@@ -4231,18 +4189,7 @@ describe("Agent stale task-link sanitization", () => {
     const inReviewTaskId = "FN-IN-REVIEW";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockResolvedValue({
-        id: inReviewTaskId,
-        column: "in-review",
-        description: "In review task",
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        prompt: "# In Review\n\nIn review task",
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[inReviewTaskId, "in-review"]])),
     } as any);
 
     const app = express();
@@ -4269,37 +4216,12 @@ describe("Agent stale task-link sanitization", () => {
 
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockImplementation(async (taskId: string) => {
-        if (taskId === doneTaskId) {
-          return {
-            id: doneTaskId,
-            column: "done",
-            description: "Done task",
-            dependencies: [],
-            steps: [],
-            currentStep: 0,
-            log: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            prompt: "# Done\n\nDone task",
-          };
-        }
-        if (taskId === activeTaskId) {
-          return {
-            id: activeTaskId,
-            column: "in-progress",
-            description: "Active task",
-            dependencies: [],
-            steps: [],
-            currentStep: 0,
-            log: [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            prompt: "# Active\n\nActive task",
-          };
-        }
-        return null;
-      }),
+      getTaskColumns: vi.fn().mockResolvedValue(
+        new Map([
+          [doneTaskId, "done"],
+          [activeTaskId, "in-progress"],
+        ]),
+      ),
     } as any);
 
     const app = express();
@@ -4322,6 +4244,51 @@ describe("Agent stale task-link sanitization", () => {
     expect(res.status).toBe(200);
     // Only agent2 should count (active task), agent1 should be excluded (done task)
     expect(res.body.assignedTaskCount).toBe(1);
+  });
+
+  it("GET /api/agents does not call getTask when sanitizing linked taskIds", async () => {
+    const taskId = "FN-PERF-GUARD";
+    const getTaskSpy = vi.fn();
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+      getTask: getTaskSpy,
+      getTaskColumns: vi.fn().mockResolvedValue(new Map([[taskId, "in-progress"]])),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.assignTask(agentId, taskId);
+
+    const res = await GET(app, "/api/agents");
+
+    expect(res.status).toBe(200);
+    expect(getTaskSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("GET /api/agents/stats does not call getRecentRuns per agent", async () => {
+    const getRecentRunsSpy = vi.spyOn(AgentStore.prototype, "getRecentRuns");
+
+    const store = createMockStore({
+      getFusionDir: vi.fn().mockReturnValue(fusionDir),
+    } as any);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.createAgent({ name: "Stats Agent 1", role: "executor" });
+    await agentStore.createAgent({ name: "Stats Agent 2", role: "executor" });
+
+    const res = await GET(app, "/api/agents/stats");
+
+    expect(res.status).toBe(200);
+    expect(getRecentRunsSpy).toHaveBeenCalledTimes(0);
   });
 
   it("GET /api/agents/stats preserves taskId for agents with no linked task", async () => {
@@ -4386,7 +4353,7 @@ describe("Agent stale task-link sanitization", () => {
     const taskId = "FN-LOOKUP-FAIL";
     const store = createMockStore({
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
-      getTask: vi.fn().mockRejectedValue(new Error("Database error")),
+      getTaskColumns: vi.fn().mockRejectedValue(new Error("Database error")),
     } as any);
 
     const app = express();

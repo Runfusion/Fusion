@@ -2108,6 +2108,38 @@ export class AgentStore extends EventEmitter {
       .filter((run): run is AgentHeartbeatRun => run !== null);
   }
 
+  async getRunStatusCounts(agentIds?: readonly string[]): Promise<{ completedRuns: number; failedRuns: number }> {
+    let rows: Array<{ status: string; count: number }>;
+
+    if (agentIds && agentIds.length > 0) {
+      const placeholders = agentIds.map(() => "?").join(",");
+      rows = this.db.prepare(`
+        SELECT status, COUNT(*) as count
+        FROM agentRuns
+        WHERE agentId IN (${placeholders})
+        GROUP BY status
+      `).all(...agentIds) as Array<{ status: string; count: number }>;
+    } else {
+      rows = this.db.prepare(`
+        SELECT status, COUNT(*) as count
+        FROM agentRuns
+        GROUP BY status
+      `).all() as Array<{ status: string; count: number }>;
+    }
+
+    let completedRuns = 0;
+    let failedRuns = 0;
+    for (const row of rows) {
+      if (row.status === "completed") {
+        completedRuns += row.count;
+      } else if (row.status === "failed" || row.status === "terminated") {
+        failedRuns += row.count;
+      }
+    }
+
+    return { completedRuns, failedRuns };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Run-scoped log storage (JSONL files alongside run JSON in agentsDir)
   // ─────────────────────────────────────────────────────────────────────────

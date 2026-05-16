@@ -317,13 +317,7 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
       const sanitizedAgents = await sanitizeAgentTaskLinks(agents, scopedStore);
       const assignedTaskCount = sanitizedAgents.filter((a) => a.taskId).length;
 
-      let completedRuns = 0;
-      let failedRuns = 0;
-      for (const agent of agents) {
-        const runs = await agentStore.getRecentRuns(agent.id, 100);
-        completedRuns += runs.filter((r) => r.status === "completed").length;
-        failedRuns += runs.filter((r) => r.status === "failed" || r.status === "terminated").length;
-      }
+      const { completedRuns, failedRuns } = await agentStore.getRunStatusCounts();
 
       const total = completedRuns + failedRuns;
       const successRate = total > 0 ? completedRuns / total : 0;
