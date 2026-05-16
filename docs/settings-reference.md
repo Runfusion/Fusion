@@ -259,7 +259,9 @@ Sandbox backend precedence is:
 | `executorAllowSiblingBranchRename` | `boolean` | `false` | Opt back into the legacy executor behavior that silently allocates sibling branches (`fusion/<task-id>-2`, `-2-2`, …) when the canonical task branch is already checked out elsewhere. When disabled (default), branch conflicts fail loudly, leave the task in `todo` with `status: "failed"`, and expose stranded commits for explicit recovery via [`fn task branch-recovery`](./cli-reference.md#fn-task). See [Task Management → Branch conflict recovery](./task-management.md#branch-conflict-recovery). The dashboard Settings modal exposes the same toggle with warning copy because this legacy mode is discouraged. |
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for new worktree directories. |
 
-| Key | Type | Default | Description |
+#### Worktree backend settings
+
+| Setting | Type | Default | Description |
 | --- | --- | --- | --- |
 | `worktreesDir` | `string` | `undefined` | Optional container directory for task worktrees. Supports absolute paths, project-relative paths, `~` expansion, and `{repo}` token substitution (project root basename). Defaults to `<projectRoot>/.worktrees` when unset and applies to newly-created worktrees/pool scans. When `worktrunk.enabled` is `true`, worktrunk-managed layout takes precedence and this directory is ignored until worktrunk is disabled. |
 | `worktrunk.enabled` | `boolean` | `false` | Enables the worktrunk backend (`WorktreeBackend`) for worktree operations. When enabled, worktrunk layout supersedes Fusion’s `.worktrees/<task-id>` and `worktreesDir` behavior. This key exists in global and project settings; project values override global values for matching fields. See [Architecture: WorktreeBackend abstraction](./architecture.md#worktreebackend-abstraction). |
