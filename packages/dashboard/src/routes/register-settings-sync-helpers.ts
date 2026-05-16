@@ -3,6 +3,8 @@ import type { AuthMaterialSnapshot, NodeConfig, ProviderAuthEntry } from "@fusio
 import { ApiError } from "../api-error.js";
 import { getAuthFileCandidates, type StoredAuthProvider } from "../auth-paths.js";
 
+export const MISSING_REMOTE_NODE_API_KEY_MESSAGE = "Remote node requires an apiKey for authenticated sync";
+
 export async function readStoredAuthProvidersFromDisk(): Promise<Record<string, StoredAuthProvider>> {
   const merged: Record<string, StoredAuthProvider> = {};
   for (const authJsonPath of getAuthFileCandidates()) {
@@ -66,7 +68,7 @@ export async function fetchFromRemoteNode(
 
   // Validate node has apiKey (secure sync requires node authentication)
   if (!node.apiKey) {
-    throw new ApiError(400, "Remote node requires an apiKey for authenticated sync");
+    throw new ApiError(400, MISSING_REMOTE_NODE_API_KEY_MESSAGE);
   }
 
   const method = options?.method ?? "GET";

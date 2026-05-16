@@ -2,7 +2,12 @@ import type { ProjectSettings } from "@fusion/core";
 import { basename } from "node:path";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { getFusionAuthPath } from "../auth-paths.js";
-import { fetchFromRemoteNode, readStoredAuthProvidersFromDisk, toProviderAuthEntries } from "./register-settings-sync-helpers.js";
+import {
+  fetchFromRemoteNode,
+  MISSING_REMOTE_NODE_API_KEY_MESSAGE,
+  readStoredAuthProvidersFromDisk,
+  toProviderAuthEntries,
+} from "./register-settings-sync-helpers.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 function computeSettingsDiff(
@@ -347,7 +352,7 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
 
       if (!node.apiKey) {
         await central.close();
-        throw badRequest("Remote node requires an apiKey for auth sync");
+        throw badRequest(MISSING_REMOTE_NODE_API_KEY_MESSAGE);
       }
 
       const direction = req.body?.direction ?? "push";
