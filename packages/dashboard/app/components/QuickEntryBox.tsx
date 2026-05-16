@@ -12,6 +12,7 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 import { useNodes } from "../hooks/useNodes";
 import type { NodeInfo } from "../api";
 import { NodeHealthDot } from "./NodeHealthDot";
+import { ProviderIcon } from "./ProviderIcon";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -157,6 +158,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
   const [isFastMode, setIsFastMode] = useState(false);
+  const [githubTrackingOverride, setGithubTrackingOverride] = useState<boolean | null>(null);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   const { nodes } = useNodes();
@@ -435,6 +437,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setPlanningModelId(undefined);
     setSelectedPresetId(undefined);
     setIsFastMode(false);
+    setGithubTrackingOverride(null);
     setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setShowDeps(false);
@@ -508,6 +511,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
+        githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
         priority,
         nodeId,
       });
@@ -555,6 +559,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     addToast,
     resetForm,
     isFastMode,
+    githubTrackingOverride,
     priority,
     nodeId,
   ]);
@@ -1325,6 +1330,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
   const selectedNode = nodeId ? nodes.find((node) => node.id === nodeId) : undefined;
+  const projectGithubTrackingDefault = settings?.githubTrackingEnabledByDefault === true;
+  const effectiveGithubTracking = githubTrackingOverride ?? projectGithubTrackingDefault;
+  const githubToggleLabel = effectiveGithubTracking
+    ? `GitHub tracking ON for next task (project default: ${projectGithubTrackingDefault ? "on" : "off"})`
+    : "GitHub tracking OFF for next task";
 
   // Show expanded controls based on disclosure state (user preference), not textarea focus
   const showExpandedControls = isDisclosureExpanded;
@@ -1833,6 +1843,19 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               title="Toggle fast execution mode"
             >
               Fast
+            </button>
+
+            <button
+              type="button"
+              className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
+              onClick={() => setGithubTrackingOverride(!effectiveGithubTracking)}
+              onMouseDown={(e) => e.preventDefault()}
+              aria-pressed={effectiveGithubTracking}
+              data-testid="quick-entry-github-toggle"
+              title={githubToggleLabel}
+              aria-label={githubToggleLabel}
+            >
+              <ProviderIcon provider="github" size="sm" />
             </button>
 
             <button
