@@ -2861,8 +2861,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           title,
           resolvedWorkflowSteps,
           taskId,
-          undefined,
-          undefined,
           { invokeTaskCreatedHook: !hasPendingSummarization },
         );
       },
