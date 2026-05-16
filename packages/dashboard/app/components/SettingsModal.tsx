@@ -4019,6 +4019,7 @@ export function SettingsModal({
                   type="text"
                   placeholder="~/.fn-worktrees/{repo} or .worktrees"
                   value={form.worktreesDir || ""}
+                  disabled={form.worktrunk?.enabled === true}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, worktreesDir: e.target.value }))
                   }
@@ -4028,11 +4029,18 @@ export function SettingsModal({
                   className="btn btn-sm"
                   onClick={openWorktreesDirPicker}
                   aria-label="Browse worktrees directory"
+                  disabled={form.worktrunk?.enabled === true}
                 >
                   Browse
                 </button>
               </div>
-              <small>Optional. Supports <code>~</code> and <code>{"{repo}"}</code>. Defaults to <code>&lt;projectRoot&gt;/.worktrees</code> when unset and only affects newly-created worktrees.</small>
+              <small>
+                {form.worktrunk?.enabled === true
+                  ? "Disabled because Worktrunk integration is enabled — worktrunk manages the worktree directory layout. Disable worktrunk integration to use a custom directory."
+                  : <>
+                      Optional. Supports <code>~</code> and <code>{"{repo}"}</code>. Defaults to <code>&lt;projectRoot&gt;/.worktrees</code> when unset and only affects newly-created worktrees.
+                    </>}
+              </small>
             </div>
             <div className="form-group">
               <label htmlFor="worktreeRebaseBeforeMerge" className="checkbox-label">
@@ -4084,6 +4092,78 @@ export function SettingsModal({
               </label>
               <small>
                 In addition to the remote rebase above, also rebase the task branch onto the local default-branch HEAD (rootDir). This catches sibling tasks that merged locally but haven't been pushed yet — without it, two concurrent tasks where one deletes code can have the other silently re-introduce it via the fallback strategy. Enabled by default; only disable if it causes issues with your workflow.
+              </small>
+            </div>
+
+            <h4 className="settings-section-heading settings-section-heading--spaced">Worktrunk integration</h4>
+            <div className="form-group">
+              <label htmlFor="worktrunkEnabled" className="checkbox-label">
+                <input
+                  id="worktrunkEnabled"
+                  type="checkbox"
+                  checked={form.worktrunk?.enabled === true}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      worktrunk: {
+                        enabled: e.target.checked,
+                        binaryPath: f.worktrunk?.binaryPath ?? "",
+                        onFailure: f.worktrunk?.onFailure ?? "fail",
+                      },
+                    }))
+                  }
+                />
+                Enable worktrunk integration
+              </label>
+              <small>
+                When enabled, Fusion shells out to <code>worktrunk</code> for worktree create, sync, prune, and remove operations and follows worktrunk&apos;s directory layout.
+              </small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="worktrunkBinaryPath">Worktrunk binary path</label>
+              <input
+                id="worktrunkBinaryPath"
+                type="text"
+                className="input"
+                placeholder="auto-detect (~/.fusion/bin/worktrunk or $PATH)"
+                value={form.worktrunk?.binaryPath ?? ""}
+                disabled={form.worktrunk?.enabled !== true}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    worktrunk: {
+                      enabled: f.worktrunk?.enabled === true,
+                      binaryPath: e.target.value,
+                      onFailure: f.worktrunk?.onFailure ?? "fail",
+                    },
+                  }))
+                }
+              />
+              <small>Optional. Leave blank to auto-resolve; Fusion will offer to install on first use.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="worktrunkOnFailure">Worktrunk failure behavior</label>
+              <select
+                id="worktrunkOnFailure"
+                className="select"
+                value={form.worktrunk?.onFailure ?? "fail"}
+                disabled={form.worktrunk?.enabled !== true}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    worktrunk: {
+                      enabled: f.worktrunk?.enabled === true,
+                      binaryPath: f.worktrunk?.binaryPath ?? "",
+                      onFailure: e.target.value as "fail" | "fallback-native",
+                    },
+                  }))
+                }
+              >
+                <option value="fail">Fail and pause the task (default)</option>
+                <option value="fallback-native">Fall back to Fusion's native worktree backend</option>
+              </select>
+              <small>
+                <code>fail</code> stops on worktrunk errors for explicit operator recovery; <code>fallback-native</code> keeps progress moving by switching to Fusion&apos;s built-in worktree backend.
               </small>
             </div>
           </>
