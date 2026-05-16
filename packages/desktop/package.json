@@ -1,5 +1,6 @@
 {
   "name": "@fusion/desktop",
+  "productName": "Fusion",
   "version": "0.31.0",
   "license": "MIT",
   "description": "Fusion desktop: Electron wrapper around the Fusion dashboard for macOS, Windows, and Linux.",
