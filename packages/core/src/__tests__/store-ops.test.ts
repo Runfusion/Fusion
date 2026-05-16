@@ -10,6 +10,7 @@ import { CentralDatabase } from "../central-db.js";
 import { TaskStore, TaskHasDependentsError } from "../store.js";
 import type { runCommandAsync } from "../run-command.js";
 import { buildResearchDocumentKey, type Task } from "../types.js";
+import { setTaskCreatedHook } from "../task-creation-hooks.js";
 
 describe("TaskStore", () => {
   const harness = createTaskStoreTestHarness();
@@ -33,6 +34,37 @@ describe("TaskStore", () => {
   const deleteTaskDir = (taskId: string) => harness.deleteTaskDir(taskId);
   const createSourceIssueFixture = () => harness.createSourceIssueFixture();
   const insertLogEntryWithTimestamp = (...args: any[]) => (harness as any).insertLogEntryWithTimestamp(...args);
+
+  describe("createTask task-created hook options", () => {
+    afterEach(() => {
+      setTaskCreatedHook(undefined);
+    });
+
+    it("skips task-created hook when invokeTaskCreatedHook is false", async () => {
+      const hookSpy = vi.fn();
+      setTaskCreatedHook(hookSpy);
+
+      await store.createTask(
+        { description: "Task without post-create hook" },
+        { invokeTaskCreatedHook: false },
+      );
+
+      expect(hookSpy).not.toHaveBeenCalled();
+    });
+
+    it("invokes task-created hook by default", async () => {
+      const hookSpy = vi.fn();
+      setTaskCreatedHook(hookSpy);
+
+      const created = await store.createTask({ description: "Task with default post-create hook" });
+
+      expect(hookSpy).toHaveBeenCalledTimes(1);
+      expect(hookSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ id: created.id }),
+        expect.any(TaskStore),
+      );
+    });
+  });
 
   describe("duplicateTask", () => {
     it("duplicates from triage column", async () => {
