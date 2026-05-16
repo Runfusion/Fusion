@@ -1,14 +1,31 @@
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
+import { access } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { Settings } from "@fusion/core";
 import { inspectBranchConflict } from "./branch-conflicts.js";
 import { formatError } from "./logger.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const NATIVE_TIMEOUT_MS = 120_000;
-const WORKTRUNK_TIMEOUT_MS = 120_000;
 const REMOVE_TIMEOUT_MS = 60_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
+
+/**
+ * worktrunk CLI mapping (verified 2026-05-15 from README + worktrunk.dev docs):
+ * - create -> `wt switch --create <branch> [--base <startPoint>]`
+ * - remove -> `wt remove <branch> --foreground`
+ * - sync -> no dedicated `wt sync/rebase` primitive; fallback to git fetch+rebase
+ * - prune -> no dedicated `wt prune` primitive; backend-owned prune implementation
+ * - layout -> no dedicated path-query command; derive from worktrunk template/config
+ */
+const WORKTRUNK_TIMEOUTS_MS = {
+  create: 120_000,
+  sync: 180_000,
+  prune: 60_000,
+  remove: 60_000,
+  layout: 5_000,
+} as const;
 
 export type WorktreeBackendKind = "native" | "worktrunk";
 export type WorktreeOperation = "create" | "remove" | "sync" | "prune";
@@ -56,6 +73,8 @@ export interface WorktreeBackend {
 export type WorktrunkOperationCode =
   | "worktrunk_operation_failed"
   | "worktrunk_binary_missing"
+  | "worktrunk_timeout"
+  | "worktrunk_sync_conflict"
   | "worktrunk_unsupported_operation";
 
 export class WorktrunkOperationError extends Error {
@@ -194,6 +213,8 @@ export class NativeWorktreeBackend implements WorktreeBackend {
   }
 }
 
+type WorktrunkOperation = keyof typeof WORKTRUNK_TIMEOUTS_MS;
+
 export class WorktrunkWorktreeBackend implements WorktreeBackend {
   readonly kind: WorktreeBackendKind = "worktrunk";
 
@@ -204,41 +225,66 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
     },
   ) {}
 
-  private getBinaryPath(operation: WorktreeOperation): string {
+  private async getBinaryPath(operation: WorktrunkOperation): Promise<string> {
     const binaryPath = this.deps.binaryPath?.trim() ?? "";
     if (!binaryPath) {
       throw new WorktrunkOperationError({
-        operation,
+        operation: operation === "layout" ? "create" : operation,
         code: "worktrunk_binary_missing",
         stderr: "worktrunk binary not configured",
         exitCode: null,
       });
     }
+    try {
+      await access(binaryPath);
+    } catch {
+      if (binaryPath.includes("/") || binaryPath.includes("\\")) {
+        throw new WorktrunkOperationError({
+          operation: operation === "layout" ? "create" : operation,
+          code: "worktrunk_binary_missing",
+          stderr: `worktrunk binary not found at path: ${binaryPath}`,
+          exitCode: null,
+        });
+      }
+    }
     return binaryPath;
   }
 
-  private async runWorktrunk(operation: WorktreeOperation, rootDir: string, args: string[]): Promise<void> {
-    const binaryPath = this.getBinaryPath(operation);
-    const command = `${quoteShellArg(binaryPath)} ${args.map((arg) => quoteShellArg(arg)).join(" ")}`;
-    this.deps.logger?.log?.(`[worktree-backend] running worktrunk command: ${command}`);
+  private async runWorktrunk(
+    args: string[],
+    opts: { cwd: string; operation: WorktrunkOperation; signal?: AbortSignal },
+  ): Promise<{ stdout: string; stderr: string }> {
+    const binaryPath = await this.getBinaryPath(opts.operation);
+    this.deps.logger?.log?.(`[worktree-backend] running worktrunk command: ${binaryPath} ${args.join(" ")}`);
 
     try {
-      await execAsync(command, {
-        cwd: rootDir,
+      return await execFileAsync(binaryPath, args, {
+        cwd: opts.cwd,
         encoding: "utf-8",
-        timeout: WORKTRUNK_TIMEOUT_MS,
+        timeout: WORKTRUNK_TIMEOUTS_MS[opts.operation],
         maxBuffer: MAX_BUFFER,
+        signal: opts.signal,
       });
     } catch (error) {
       const stderr = getErrorStderr(error) ?? String(error);
+      const signal =
+        error && typeof error === "object" && "signal" in error
+          ? ((error as { signal?: unknown }).signal as string | null | undefined)
+          : undefined;
+      const syscallCode =
+        error && typeof error === "object" && "code" in error
+          ? ((error as { code?: unknown }).code as string | number | undefined)
+          : undefined;
       const exitCode = getErrorExitCode(error);
-      this.deps.logger?.warn?.(`[worktree-backend] worktrunk ${operation} failed: ${stderr}`);
-      throw new WorktrunkOperationError({
-        operation,
-        code: "worktrunk_operation_failed",
-        stderr,
-        exitCode,
-      });
+      const op = opts.operation === "layout" ? "create" : opts.operation;
+      let code: WorktrunkOperationCode = "worktrunk_operation_failed";
+      if (syscallCode === "ENOENT") {
+        code = "worktrunk_binary_missing";
+      } else if (signal === "SIGTERM") {
+        code = "worktrunk_timeout";
+      }
+      this.deps.logger?.warn?.(`[worktree-backend] worktrunk ${opts.operation} failed: ${stderr}`);
+      throw new WorktrunkOperationError({ operation: op, code, stderr, exitCode });
     }
   }
 
@@ -249,13 +295,13 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
     // worktree path resolution so callers can keep using `input.worktreePath`.
     const args = ["switch", "--create", input.branch];
     if (input.startPoint) args.push(input.startPoint);
-    await this.runWorktrunk("create", input.rootDir, args);
+    await this.runWorktrunk(args, { cwd: input.rootDir, operation: "create" });
     return { path: input.worktreePath, branch: input.branch };
   }
 
   async remove(input: WorktreeRemoveInput): Promise<void> {
     // worktrunk mapping: `wt remove <branch>` from repo root.
-    await this.runWorktrunk("remove", input.rootDir, ["remove", input.branch ?? input.worktreePath]);
+    await this.runWorktrunk(["remove", input.branch ?? input.worktreePath], { cwd: input.rootDir, operation: "remove" });
   }
 
   async sync(_input: WorktreeSyncInput): Promise<{ skipped: boolean }> {

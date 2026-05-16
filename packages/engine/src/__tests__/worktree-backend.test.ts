@@ -6,19 +6,25 @@ import {
   resolveWorktreeBackend,
 } from "../worktree-backend.js";
 
-const { execMock } = vi.hoisted(() => {
+const { execMock, execFileMock, accessMock } = vi.hoisted(() => {
   const mock = vi.fn();
+  const fileMock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
-  return { execMock: mock };
+  (fileMock as any)[Symbol.for("nodejs.util.promisify.custom")] = fileMock;
+  return { execMock: mock, execFileMock: fileMock, accessMock: vi.fn() };
 });
 
-vi.mock("node:child_process", () => ({ exec: execMock }));
+vi.mock("node:child_process", () => ({ exec: execMock, execFile: execFileMock }));
+vi.mock("node:fs/promises", () => ({ access: accessMock }));
 vi.mock("../branch-conflicts.js", () => ({
   inspectBranchConflict: vi.fn().mockResolvedValue({ kind: "stale" }),
 }));
 
 beforeEach(() => {
   execMock.mockReset();
+  execFileMock.mockReset();
+  accessMock.mockReset();
+  accessMock.mockResolvedValue(undefined);
 });
 
 describe("NativeWorktreeBackend", () => {
@@ -129,7 +135,7 @@ describe("WorktrunkWorktreeBackend", () => {
   });
 
   it("throws operation failed with stderr/exitCode", async () => {
-    execMock.mockRejectedValue({ stderr: "bad news", status: 7 });
+    execFileMock.mockRejectedValue({ stderr: "bad news", status: 7 });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
 
     await expect(
@@ -143,7 +149,7 @@ describe("WorktrunkWorktreeBackend", () => {
   });
 
   it("invokes create mapping with timeout/maxBuffer and cwd", async () => {
-    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
 
     await backend.create({
@@ -154,14 +160,15 @@ describe("WorktrunkWorktreeBackend", () => {
       taskId: "FN-1",
     });
 
-    expect(execMock).toHaveBeenCalledWith(
-      '"worktrunk" "switch" "--create" "fusion/fn-1" "main"',
+    expect(execFileMock).toHaveBeenCalledWith(
+      "worktrunk",
+      ["switch", "--create", "fusion/fn-1", "main"],
       expect.objectContaining({ cwd: "/repo", timeout: 120000, maxBuffer: 10485760 }),
     );
   });
 
   it("invokes remove mapping", async () => {
-    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
 
     await backend.remove({
@@ -170,10 +177,39 @@ describe("WorktrunkWorktreeBackend", () => {
       branch: "fusion/fn-1",
     });
 
-    expect(execMock).toHaveBeenCalledWith(
-      '"worktrunk" "remove" "fusion/fn-1"',
-      expect.objectContaining({ cwd: "/repo", timeout: 120000, maxBuffer: 10485760 }),
+    expect(execFileMock).toHaveBeenCalledWith(
+      "worktrunk",
+      ["remove", "fusion/fn-1"],
+      expect.objectContaining({ cwd: "/repo", timeout: 60000, maxBuffer: 10485760 }),
     );
+  });
+
+  it("maps ENOENT to worktrunk_binary_missing", async () => {
+    execFileMock.mockRejectedValue({ code: "ENOENT", stderr: "not found" });
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
+
+    await expect(
+      backend.create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+      }),
+    ).rejects.toMatchObject({ code: "worktrunk_binary_missing" });
+  });
+
+  it("maps SIGTERM timeout to worktrunk_timeout", async () => {
+    execFileMock.mockRejectedValue({ signal: "SIGTERM", stderr: "timed out" });
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
+
+    await expect(
+      backend.create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+      }),
+    ).rejects.toMatchObject({ code: "worktrunk_timeout" });
   });
 
   it("throws unsupported operation for sync/prune", async () => {
