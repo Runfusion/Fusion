@@ -93,21 +93,28 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       const globalSettings = await globalSettingsStore.getSettings();
 
       // Build sync payload
-      const payload = {
+      const payloadWithoutChecksum = {
         global: globalSettings,
         projects: { [basename(store.getRootDir())]: projectSettings.project },
         exportedAt: new Date().toISOString(),
         version: 1 as const,
       };
 
-      // Compute checksum
+      // Compute checksum over the canonical settings payload shape only.
+      // Do not include sourceNodeId in this hash; applyRemoteSettings() validates
+      // checksums against { global, projects, exportedAt, version }.
       const { createHash } = await import("node:crypto");
-      const checksum = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+      const checksum = createHash("sha256").update(JSON.stringify(payloadWithoutChecksum)).digest("hex");
+      const localPeerInfo = await central.getLocalPeerInfo();
 
       // Send to remote node
       await fetchFromRemoteNode(node, "/api/settings/sync-receive", {
         method: "POST",
-        body: { ...payload, checksum },
+        body: {
+          ...payloadWithoutChecksum,
+          checksum,
+          sourceNodeId: localPeerInfo.nodeId,
+        },
       });
 
       // Record sync
