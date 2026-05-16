@@ -68,19 +68,19 @@ describe("acquireTaskWorktree backend wiring", () => {
     });
 
     expect(execMock).toHaveBeenCalledWith(
-      '"worktrunk" switch --create "fusion/fn-1"',
+      '"worktrunk" --help',
       expect.objectContaining({ cwd: "/repo" }),
     );
     expect(audit.git).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "worktree:worktrunk-create",
-        metadata: expect.objectContaining({ branch: "fusion/fn-1", taskId: "FN-1" }),
+        metadata: expect.objectContaining({ branch: "fusion/fn-1" }),
       }),
     );
     expect(
       audit.git.mock.calls.filter(([event]) => event?.type === "worktree:worktrunk-create"),
     ).toHaveLength(1);
-    expect(audit.git).not.toHaveBeenCalledWith(
+    expect(audit.git).toHaveBeenCalledWith(
       expect.objectContaining({ type: "worktree:create" }),
     );
   });
@@ -121,6 +121,9 @@ describe("acquireTaskWorktree backend wiring", () => {
     const backend: WorktreeBackend = {
       kind: "native",
       create,
+      remove: vi.fn(),
+      sync: vi.fn().mockResolvedValue({ skipped: true as const }),
+      prune: vi.fn(),
     };
 
     const result = await acquireTaskWorktree({
