@@ -407,6 +407,15 @@ export type OwnedLandedClassification =
   | { kind: "owned-commit"; commit: OwnedLandedCommit }
   | { kind: "proven-no-op"; baseRef: string; ownDiffEmpty: true }
   | {
+    kind: "no-changes-finalized";
+    baseRef: string;
+    details: {
+      branchExists: boolean;
+      aheadCount: number | null;
+      baseReachableFromTarget: boolean;
+    };
+  }
+  | {
     kind: "unproven";
     reason: "foreign-start-point" | "no-owned-commit-foreign-deltas" | "missing-evidence";
     details: Record<string, unknown>;
@@ -518,6 +527,26 @@ export async function classifyOwnedLandedEvidence(
     return { kind: "proven-no-op", baseRef: mergeTargetBranch, ownDiffEmpty: true };
   }
 
+  let branchExists = false;
+  try {
+    await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: rootDir });
+    branchExists = true;
+  } catch {
+    branchExists = false;
+  }
+
+  if (!ownedCommit && !branchExists && aheadCount === null && (baseReachableFromTarget || !task.baseCommitSha)) {
+    return {
+      kind: "no-changes-finalized",
+      baseRef: mergeTargetBranch,
+      details: {
+        branchExists,
+        aheadCount,
+        baseReachableFromTarget,
+      },
+    };
+  }
+
   if (task.baseCommitSha && !baseReachableFromTarget) {
     try {
       const { stdout } = await execFileAsync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads/fusion"], {
@@ -581,6 +610,7 @@ export async function classifyOwnedLandedEvidence(
       branch,
       mergeTargetBranch,
       aheadCount,
+      branchExists,
       baseCommitShaPresent: Boolean(task.baseCommitSha),
       baseReachableFromTarget,
       hasOwnedCommit: Boolean(ownedCommit),
