@@ -242,6 +242,23 @@ describe("WorktrunkWorktreeBackend", () => {
     );
   });
 
+  it("sync supports explicit trunk target", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
+
+    await backend.sync({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1", branch: "fusion/fn-1", trunk: "release" });
+    expect(execMock).toHaveBeenNthCalledWith(
+      1,
+      'git fetch origin "release"',
+      expect.objectContaining({ cwd: "/repo/.worktrees/fn-1" }),
+    );
+    expect(execMock).toHaveBeenNthCalledWith(
+      2,
+      'git rebase "release"',
+      expect.objectContaining({ cwd: "/repo/.worktrees/fn-1" }),
+    );
+  });
+
   it("maps rebase conflicts to worktrunk_sync_conflict", async () => {
     execMock.mockResolvedValueOnce({ stdout: "", stderr: "" }).mockRejectedValueOnce({ stderr: "CONFLICT" });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
@@ -251,13 +268,23 @@ describe("WorktrunkWorktreeBackend", () => {
     ).rejects.toMatchObject({ code: "worktrunk_sync_conflict", operation: "sync" });
   });
 
-  it("prunes via git worktree prune fallback", async () => {
-    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+  it("prunes by listing worktrees and removing worktrunk managed entries", async () => {
+    execMock.mockResolvedValue({
+      stdout:
+        "worktree /repo\nbranch refs/heads/main\n\nworktree /repo/.worktrees/fusion-fn-1\nbranch refs/heads/fusion/fn-1\n\n",
+      stderr: "",
+    });
+    execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
 
     await expect(backend.prune({ rootDir: "/repo" })).resolves.toBeUndefined();
     expect(execMock).toHaveBeenCalledWith(
-      "git worktree prune",
+      "git worktree list --porcelain",
+      expect.objectContaining({ cwd: "/repo", timeout: 60000, maxBuffer: 10485760 }),
+    );
+    expect(execFileMock).toHaveBeenCalledWith(
+      "worktrunk",
+      ["remove", "--foreground", "fusion/fn-1"],
       expect.objectContaining({ cwd: "/repo", timeout: 60000, maxBuffer: 10485760 }),
     );
   });

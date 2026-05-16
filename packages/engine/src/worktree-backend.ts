@@ -55,6 +55,7 @@ export interface WorktreeSyncInput {
   rootDir: string;
   worktreePath: string;
   branch: string;
+  trunk?: string;
   taskId?: string;
 }
 
@@ -116,12 +117,21 @@ function getErrorExitCode(error: unknown): number | null {
   return null;
 }
 
-function parseWorktreePathsFromPorcelain(porcelain: string): string[] {
-  return porcelain
-    .split("\n")
-    .filter((line) => line.startsWith("worktree "))
-    .map((line) => line.slice("worktree ".length).trim())
-    .filter(Boolean);
+function parseWorktreesFromPorcelain(porcelain: string): Array<{ path: string; branch?: string }> {
+  const lines = porcelain.split("\n");
+  const rows: Array<{ path: string; branch?: string }> = [];
+  let current: { path?: string; branch?: string } = {};
+  for (const line of lines) {
+    if (!line.trim()) {
+      if (current.path) rows.push({ path: current.path, branch: current.branch });
+      current = {};
+      continue;
+    }
+    if (line.startsWith("worktree ")) current.path = line.slice("worktree ".length).trim();
+    if (line.startsWith("branch refs/heads/")) current.branch = line.slice("branch refs/heads/".length).trim();
+  }
+  if (current.path) rows.push({ path: current.path, branch: current.branch });
+  return rows;
 }
 
 export class NativeWorktreeBackend implements WorktreeBackend {
@@ -201,7 +211,7 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       maxBuffer: MAX_BUFFER,
     });
 
-    await execAsync(`git rebase ${quoteShellArg(`origin/${input.branch}`)}`, {
+    await execAsync(`git rebase ${quoteShellArg(input.trunk ? input.trunk : `origin/${input.branch}`)}`, {
       cwd: input.worktreePath,
       encoding: "utf-8",
       timeout: NATIVE_TIMEOUT_MS,
@@ -307,8 +317,11 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
       timeout: WORKTRUNK_TIMEOUTS_MS.layout,
       maxBuffer: MAX_BUFFER,
     });
-    const paths = parseWorktreePathsFromPorcelain(stdout);
-    const resolved = paths.find((path) => path.endsWith(input.branch) || path === input.worktreePath) ?? input.worktreePath;
+    const rows = parseWorktreesFromPorcelain(stdout);
+    const resolved =
+      rows.find((row) => row.branch === input.branch)?.path ??
+      rows.find((row) => row.path.endsWith(input.branch) || row.path === input.worktreePath)?.path ??
+      input.worktreePath;
     return { path: resolved, branch: input.branch };
   }
 
@@ -333,13 +346,14 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
 
   async sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }> {
     try {
-      await execAsync(`git fetch origin ${quoteShellArg(input.branch)}`, {
+      const trunk = input.trunk ?? "main";
+      await execAsync(`git fetch origin ${quoteShellArg(trunk)}`, {
         cwd: input.worktreePath,
         encoding: "utf-8",
         timeout: WORKTRUNK_TIMEOUTS_MS.sync,
         maxBuffer: MAX_BUFFER,
       });
-      await execAsync(`git rebase ${quoteShellArg(input.branch)}`, {
+      await execAsync(`git rebase ${quoteShellArg(trunk)}`, {
         cwd: input.worktreePath,
         encoding: "utf-8",
         timeout: WORKTRUNK_TIMEOUTS_MS.sync,
@@ -366,12 +380,18 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
   }
 
   async prune(input: WorktreePruneInput): Promise<void> {
-    await execAsync("git worktree prune", {
+    const { stdout } = await execAsync("git worktree list --porcelain", {
       cwd: input.rootDir,
       encoding: "utf-8",
       timeout: WORKTRUNK_TIMEOUTS_MS.prune,
       maxBuffer: MAX_BUFFER,
     });
+    const rows = parseWorktreesFromPorcelain(stdout).filter(
+      (row) => row.path !== input.rootDir && row.path.includes(".worktrees") && row.branch,
+    );
+    for (const row of rows) {
+      await this.remove({ rootDir: input.rootDir, worktreePath: row.path, branch: row.branch });
+    }
   }
 }
 
