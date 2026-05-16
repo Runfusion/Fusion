@@ -1912,6 +1912,33 @@ describe("MissionStore", () => {
         }),
       );
     });
+
+    it("fires the task-created hook during feature triage", async () => {
+      const { TaskStore } = await import("../store.js");
+      const { setTaskCreatedHook } = await import("../task-creation-hooks.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const hook = vi.fn();
+      setTaskCreatedHook(hook);
+
+      try {
+        const mission = msWithTs.createMission({ title: "Mission" });
+        const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+        const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+        const feature = msWithTs.addFeature(slice.id, { title: "Hook Feature" });
+
+        const triaged = await msWithTs.triageFeature(feature.id);
+
+        expect(hook).toHaveBeenCalledTimes(1);
+        expect(hook).toHaveBeenCalledWith(
+          expect.objectContaining({ id: triaged.taskId, title: "Hook Feature" }),
+          ts,
+        );
+      } finally {
+        setTaskCreatedHook(undefined);
+      }
+    });
   });
 
   describe("triageSlice", () => {
