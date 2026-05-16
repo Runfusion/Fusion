@@ -1,12 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-const mockConsumeVersionUpdateFlag = vi.fn(() => false);
-
-vi.mock("../../versionCheck", () => ({
-  consumeVersionUpdateFlag: () => mockConsumeVersionUpdateFlag(),
-}));
-
 import { DashboardLoader } from "../DashboardLoader";
 import { SWR_CACHE_KEYS, clearCache } from "../../utils/swrCache";
 
