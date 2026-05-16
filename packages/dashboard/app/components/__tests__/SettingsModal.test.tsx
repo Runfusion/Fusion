@@ -1021,6 +1021,62 @@ describe("SettingsModal", () => {
       expect(payload.githubTrackingDefaultRepo).toBeUndefined();
     });
 
+    it("renders github dedup toggle as checked when project value is unset", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const dedupToggle = screen.getByLabelText(
+        "Search the tracking repo for likely duplicates before opening a new issue",
+      ) as HTMLInputElement;
+      expect(dedupToggle.checked).toBe(true);
+    });
+
+    it("renders github dedup toggle as unchecked when explicitly disabled", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        githubTrackingDedupEnabled: false,
+      });
+
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const dedupToggle = screen.getByLabelText(
+        "Search the tracking repo for likely duplicates before opening a new issue",
+      ) as HTMLInputElement;
+      expect(dedupToggle.checked).toBe(false);
+    });
+
+    it("saves github dedup toggle changes", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const dedupToggle = screen.getByLabelText(
+        "Search the tracking repo for likely duplicates before opening a new issue",
+      ) as HTMLInputElement;
+
+      await userEvent.click(dedupToggle);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalled();
+      });
+
+      const firstPayload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(firstPayload.githubTrackingDedupEnabled).toBe(false);
+
+      mockUpdateSettings.mockClear();
+
+      await userEvent.click(dedupToggle);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalled();
+      });
+
+      const secondPayload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(secondPayload.githubTrackingDedupEnabled).toBe(true);
+    });
+
     it("hides summarization model picker when summarization and default tracking are disabled", async () => {
       renderModal({ initialSection: "models" });
       await waitForSettingsModalReady();
