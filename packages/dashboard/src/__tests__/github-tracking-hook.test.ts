@@ -20,8 +20,8 @@ vi.mock("../github-auth.js", () => ({
   resolveGithubTrackingAuth: (...args: unknown[]) => mockResolveGithubTrackingAuth(...args),
 }));
 
-import { registerGithubTrackingHook } from "../github-tracking-hook.js";
-import { maybeCreateTrackingIssue } from "../github-tracking.js";
+import { createTrackingIssueForTask, registerGithubTrackingHook } from "../github-tracking-hook.js";
+import * as githubTracking from "../github-tracking.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "kb-dashboard-github-tracking-hook-test-"));
@@ -148,7 +148,7 @@ describe("registerGithubTrackingHook", () => {
     const staleTaskRef = { ...createdTask, githubTracking: { enabled: true } };
     const projectSettings = await store.getSettings();
 
-    const result = await maybeCreateTrackingIssue(staleTaskRef, {
+    const result = await githubTracking.maybeCreateTrackingIssue(staleTaskRef, {
       taskStore: store,
       projectSettings,
       globalSettings: {},
@@ -158,5 +158,62 @@ describe("registerGithubTrackingHook", () => {
 
     expect(result).toEqual({ created: false, reason: "issue_already_linked" });
     expect(mockCreateIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes request token when settings token is missing", async () => {
+    const task = await store.createTask({
+      description: "token override",
+      githubTracking: { enabled: true },
+    });
+
+    const spy = vi.spyOn(githubTracking, "maybeCreateTrackingIssue").mockResolvedValue({
+      created: false,
+      reason: "tracking_disabled",
+    });
+
+    await createTrackingIssueForTask(store, task, { githubToken: "request-token" });
+
+    expect(spy).toHaveBeenCalledWith(
+      task,
+      expect.objectContaining({
+        projectSettings: expect.objectContaining({ githubAuthToken: "request-token" }),
+      }),
+    );
+    spy.mockRestore();
+  });
+
+  it("prefers settings token over request token", async () => {
+    await store.updateSettings({ githubAuthToken: "settings-token" });
+    const task = await store.createTask({
+      description: "token precedence",
+      githubTracking: { enabled: true },
+    });
+
+    const spy = vi.spyOn(githubTracking, "maybeCreateTrackingIssue").mockResolvedValue({
+      created: false,
+      reason: "tracking_disabled",
+    });
+
+    await createTrackingIssueForTask(store, task, { githubToken: "request-token" });
+
+    expect(spy).toHaveBeenCalledWith(
+      task,
+      expect.objectContaining({
+        projectSettings: expect.objectContaining({ githubAuthToken: "settings-token" }),
+      }),
+    );
+    spy.mockRestore();
+  });
+
+  it("swallows maybeCreateTrackingIssue errors", async () => {
+    const task = await store.createTask({
+      description: "best effort",
+      githubTracking: { enabled: true },
+    });
+
+    const spy = vi.spyOn(githubTracking, "maybeCreateTrackingIssue").mockRejectedValue(new Error("boom"));
+
+    await expect(createTrackingIssueForTask(store, task)).resolves.toBeUndefined();
+    spy.mockRestore();
   });
 });
