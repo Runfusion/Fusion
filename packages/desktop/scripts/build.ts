@@ -1,43 +1,15 @@
 import { build } from "esbuild";
 import { cp, mkdir, rm, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const packageRoot = resolve(__dirname, "..");
-const workspaceRoot = resolve(packageRoot, "..", "..");
+import { join, resolve } from "node:path";
+import { buildDashboardClient, packageRoot, workspaceRoot } from "./workspace-tools";
 const dashboardClientDir = join(workspaceRoot, "packages", "dashboard", "dist", "client");
 const desktopDistDir = join(packageRoot, "dist");
 const desktopClientDistDir = join(desktopDistDir, "client");
 const externalMainProcessPackages = ["electron", "@fusion/core", "@fusion/dashboard"];
 
-function run(command: string, args: string[], cwd: string): Promise<void> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: "inherit",
-      env: process.env,
-    });
-
-    child.on("error", (error) => {
-      rejectPromise(error);
-    });
-
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-
-      rejectPromise(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
-    });
-  });
-}
-
 async function ensureDashboardBuild(): Promise<void> {
   console.log("[desktop:build] Building dashboard client...");
-  await run("pnpm", ["--filter", "@fusion/dashboard", "build:client"], workspaceRoot);
+  await buildDashboardClient();
 
   try {
     await stat(dashboardClientDir);

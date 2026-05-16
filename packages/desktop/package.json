@@ -21,7 +21,7 @@
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "build": "tsx scripts/build.ts",
-    "test": "pnpm --filter @fusion/core build && pnpm --filter @fusion/dashboard build && vitest run --silent=passed-only --reporter=dot",
+    "test": "tsx scripts/test.ts",
     "typecheck": "tsc --noEmit",
     "generate:icons": "tsx scripts/generate-icons.ts",
     "pack": "electron-builder --dir",

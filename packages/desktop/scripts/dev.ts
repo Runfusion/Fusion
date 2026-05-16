@@ -1,13 +1,9 @@
 import { build } from "esbuild";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const packageRoot = resolve(__dirname, "..");
-const workspaceRoot = resolve(packageRoot, "..", "..");
+import { packageRoot, workspaceRoot } from "./workspace-tools";
 const distDir = join(packageRoot, "dist");
 
 const require = createRequire(import.meta.url);
@@ -94,19 +90,14 @@ async function main(): Promise<void> {
   const dashboardPort = dashboardUrl.port || (dashboardUrl.protocol === "https:" ? "443" : "80");
 
   console.log(`[desktop:dev] Starting dashboard Vite dev server on ${dashboardUrl.origin}...`);
-  const viteProcess = run(
-    "pnpm",
-    [
-      "--filter",
-      "@fusion/dashboard",
-      "dev:serve",
-      "--host",
-      dashboardHost,
-      "--port",
-      dashboardPort,
-      "--strictPort",
-    ],
-    workspaceRoot,
+  const viteProcess = spawn(
+    join(workspaceRoot, "packages", "dashboard", "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite"),
+    ["dev", "--host", dashboardHost, "--port", dashboardPort, "--strictPort"],
+    {
+      cwd: join(workspaceRoot, "packages", "dashboard"),
+      env: process.env,
+      stdio: "inherit",
+    },
   );
 
   let isShuttingDown = false;

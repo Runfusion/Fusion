@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree-pool.js";
+import { resolveWorktreesDir } from "../worktree-paths.js";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function task(overrides: Record<string, unknown> = {}) {
@@ -62,16 +63,39 @@ describe("FN-4114 worktree liveness assertion", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
   });
 
-  it("FN-4114 aborts when worktree path escapes .worktrees", async () => {
+  it.each([
+    { name: "default worktreesDir", settings: {}, outsidePath: "/repo/not-a-worktree" },
+    { name: "absolute worktreesDir", settings: { worktreesDir: "/custom/trees" }, outsidePath: "/repo/not-a-worktree" },
+    { name: "relative worktreesDir", settings: { worktreesDir: "custom-trees" }, outsidePath: "/repo/not-a-worktree" },
+  ])("FN-4114 enforces configured worktreesDir ($name)", async ({ settings, outsidePath }) => {
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
     const store = createMockStore();
-    store.getTask.mockResolvedValue(task({ worktree: "/repo/not-a-worktree" }));
+    const baseSettings = await store.getSettings();
+    const mergedSettings = { ...baseSettings, ...settings };
+    store.getSettings.mockResolvedValue(mergedSettings);
 
-    const executor = new TaskExecutor(store as any, "/repo");
-    await executor.execute(task({ worktree: "/repo/not-a-worktree" }) as any);
+    const allowedWorktree = `${resolveWorktreesDir("/repo", mergedSettings as any)}/fn-4114`;
+    store.getTask.mockResolvedValue(task({ worktree: outsidePath }));
+
+    const rejectExecutor = new TaskExecutor(store as any, "/repo");
+    await rejectExecutor.execute(task({ worktree: outsidePath }) as any);
 
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
+
+    mockedCreateFnAgent.mockReset();
+    mockedCreateFnAgent.mockImplementation(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() },
+    }) as any);
+
+    store.moveTask.mockReset();
+    store.getTask.mockResolvedValue(task({ worktree: allowedWorktree }));
+
+    const acceptExecutor = new TaskExecutor(store as any, "/repo");
+    await acceptExecutor.execute(task({ worktree: allowedWorktree }) as any);
+
+    expect(mockedCreateFnAgent).toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
   });
 
   it("FN-4114 accepts usable pool-acquired worktrees", async () => {
