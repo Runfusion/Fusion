@@ -2721,6 +2721,14 @@ export interface ProjectSettings {
     trustedAgentIds?: string[];
     alwaysApproveDelete?: boolean;
   };
+  /** Approval policy for sandbox provisioning/bootstrap actions that mutate the host. */
+  sandboxProvisioning?: {
+    approvalMode?: SandboxProvisioningApprovalMode;
+    trustedRoles?: string[];
+    trustedAgentIds?: string[];
+    /** Backend ids that may bootstrap without approval. Default: ["native"]. */
+    autoApproveBackendIds?: string[];
+  };
   /** Project default runtime permission-policy overrides for permanent agents.
    *  Rules are a partial map of category -> disposition (`allow` | `block` | `require-approval`).
    *  Missing categories inherit the built-in `unrestricted` seed (`allow`). */
@@ -4792,9 +4800,15 @@ export const AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES: readonly string[] = [
 export const AGENT_PROVISIONING_APPROVAL_MODES = ["always", "trusted-only", "never"] as const;
 export type AgentProvisioningApprovalMode = (typeof AGENT_PROVISIONING_APPROVAL_MODES)[number];
 
+export const SANDBOX_PROVISIONING_APPROVAL_MODES = ["always", "trusted-only", "never"] as const;
+export type SandboxProvisioningApprovalMode = (typeof SANDBOX_PROVISIONING_APPROVAL_MODES)[number];
+
 /** A single runtime action category governed by permission policy. */
 export type AgentPermissionPolicyActionCategory = PermanentAgentSensitiveActionCategory;
-export type ApprovalRequestActionCategory = AgentPermissionPolicyActionCategory | "agent_provisioning";
+export type ApprovalRequestActionCategory =
+  | AgentPermissionPolicyActionCategory
+  | "agent_provisioning"
+  | "sandbox_provisioning";
 
 /** How a runtime action category is handled by permission policy. */
 export type AgentPermissionPolicyDisposition = "allow" | "block" | "require-approval";
@@ -4894,6 +4908,8 @@ export function normalizeApprovalRequestActionCategory(
       return "task_agent_mutation";
     case "agent_provisioning":
       return "agent_provisioning";
+    case "sandbox_provisioning":
+      return "sandbox_provisioning";
     default:
       return category;
   }
