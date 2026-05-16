@@ -1366,9 +1366,10 @@ describe("SelfHealingManager", () => {
   // ── Auto-archive ────────────────────────────────────────────────────
 
   describe("archiveStaleDoneTasks", () => {
-    it("skips when auto-archive is disabled", async () => {
+    it("skips when auto-archive is disabled and doneAutoArchiveDays is 0", async () => {
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         autoArchiveDoneTasksEnabled: false,
+        doneAutoArchiveDays: 0,
       } as unknown as Settings);
 
       const result = await manager.archiveStaleDoneTasks();
@@ -1378,11 +1379,12 @@ describe("SelfHealingManager", () => {
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalled();
     });
 
-    it("archives stale done tasks with cleanup using the configured age", async () => {
+    it("archives stale done tasks with cleanup using the configured ms age when doneAutoArchiveDays is 0", async () => {
       vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         autoArchiveDoneTasksEnabled: true,
         autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
       } as unknown as Settings);
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
@@ -1407,6 +1409,85 @@ describe("SelfHealingManager", () => {
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-002");
     });
 
+    it("uses doneAutoArchiveDays threshold and logs task age", async () => {
+      vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 48 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 30,
+      } as unknown as Settings);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-030",
+          column: "done",
+          columnMovedAt: "2026-01-29T00:00:00.000Z",
+          updatedAt: "2026-01-29T00:00:00.000Z",
+        },
+        {
+          id: "FN-031",
+          column: "done",
+          columnMovedAt: "2026-01-31T00:00:00.000Z",
+          updatedAt: "2026-01-31T00:00:00.000Z",
+        },
+      ]);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(1);
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-031");
+      expect(getSelfHealingLogger().log).toHaveBeenCalledWith(
+        "auto-archive: archived FN-030 (age 31d, threshold 30d)",
+      );
+    });
+
+    it("doneAutoArchiveDays takes precedence over autoArchiveDoneAfterMs", async () => {
+      vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 60 * 60 * 1000,
+        doneAutoArchiveDays: 30,
+      } as unknown as Settings);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-AGE-29",
+          column: "done",
+          columnMovedAt: "2026-01-31T00:00:00.000Z",
+          updatedAt: "2026-01-31T00:00:00.000Z",
+        },
+      ]);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(0);
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { label: "negative", doneAutoArchiveDays: -1 },
+      { label: "non-integer", doneAutoArchiveDays: 2.5 },
+    ])("falls back to ms retention when doneAutoArchiveDays is $label", async ({ doneAutoArchiveDays }) => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays,
+      } as unknown as Settings);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-FALLBACK",
+          column: "done",
+          columnMovedAt: "2026-01-02T23:59:00.000Z",
+          updatedAt: "2026-01-02T23:59:00.000Z",
+        },
+      ]);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(1);
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-FALLBACK");
+    });
+
     it("skips stale done tasks that have active dependents", async () => {
       vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1414,9 +1495,6 @@ describe("SelfHealingManager", () => {
         autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
       } as unknown as Settings);
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        // Stale done — but a todo task depends on it. Must not be archived
-        // because archiving wipes .fusion/tasks/{id}/ and downstream agents
-        // are told they may read sibling task specs from disk.
         {
           id: "FN-100",
           column: "done",
@@ -1424,7 +1502,6 @@ describe("SelfHealingManager", () => {
           updatedAt: "2026-01-02T00:00:00.000Z",
           dependencies: [],
         },
-        // Stale done — only a done dependent remains, archive is fine
         {
           id: "FN-101",
           column: "done",
@@ -1440,8 +1517,6 @@ describe("SelfHealingManager", () => {
         {
           id: "FN-201",
           column: "done",
-          // Fresh — not stale. Demonstrates that a *done* dependent does
-          // not block archive of FN-101.
           columnMovedAt: "2026-01-03T23:00:00.000Z",
           updatedAt: "2026-01-03T23:00:00.000Z",
           dependencies: ["FN-101"],
