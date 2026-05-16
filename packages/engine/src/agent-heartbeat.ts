@@ -2398,6 +2398,10 @@ export class HeartbeatMonitor {
             return triggerDetail || source;
           };
           const wakeReason = deriveWakeReason();
+          const isWakeOnMessageTrigger = triggerDetail?.startsWith("wake-on-message") ?? false;
+          const wakeMessageStillUnread = wakeMessage
+            ? pendingMessages.some((message) => message.id === wakeMessage.messageId)
+            : undefined;
 
           if (wakeInboxEmpty && (triggerDetail === "wake-on-message" || triggerDetail === "wake-on-message-forced")) {
             heartbeatLog.log("wake-empty-inbox", {
@@ -2408,9 +2412,20 @@ export class HeartbeatMonitor {
             });
           }
 
+          if (isWakeOnMessageTrigger) {
+            heartbeatLog.log(
+              `[wake-trigger-diagnostics] agent=${agentId} run=${run.id} triggerDetail=${triggerDetail} source=${source} messageId=${wakeMessage?.messageId ?? "none"} from=${wakeMessage ? `${wakeMessage.fromType}:${wakeMessage.fromId}` : "none"} forced=${wakeMessage?.forced ?? false} createdAt=${wakeMessage?.createdAt ?? "none"} inboxUnreadCount=${pendingMessages.length} wakeMessageStillUnread=${wakeMessageStillUnread ?? "unknown"} pendingRoomMessages=${pendingRoomMessages.total}`,
+            );
+          }
+
           const wakeInboxSnapshotLine = wakeInboxEmpty
             ? "- inbox snapshot: empty (already consumed)"
             : `- inbox snapshot: ${pendingMessages.length} message(s)`;
+          const wakeTriggerSourceLine = isWakeOnMessageTrigger
+            ? (`- wake trigger source: ${wakeMessage
+              ? `message ${wakeMessage.messageId} from ${wakeMessage.fromType}:${wakeMessage.fromId}${wakeMessage.forced ? " (forced)" : ""}, ${wakeMessageStillUnread ? "still unread" : "already consumed at snapshot"}`
+              : "no triggering-message metadata"}`)
+            : null;
 
           // Per-agent override of the default HEARTBEAT_PROCEDURE: if the agent
           // configured a heartbeatProcedurePath pointing to a markdown file in
@@ -2488,8 +2503,9 @@ export class HeartbeatMonitor {
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `- wake reason: ${wakeReason}`,
               `- assigned task: none`,
-              `- pending messages: ${pendingMessages.length}`,
               wakeInboxSnapshotLine,
+              ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
+              `- pending messages: ${pendingMessages.length}`,
               `- pending room messages: ${pendingRoomMessages.total}`,
               `- auto-claim relevant tasks: ${autoClaimEnabled ? (promptCandidateLimit === 0 ? "disabled (prompt-suppressed)" : "enabled") : "disabled"}`,
               "",
@@ -2595,8 +2611,9 @@ export class HeartbeatMonitor {
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `- wake reason: ${wakeReason}`,
               `- assigned task: ${taskId}`,
-              `- pending messages: ${pendingMessages.length}`,
               wakeInboxSnapshotLine,
+              ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
+              `- pending messages: ${pendingMessages.length}`,
               `- pending room messages: ${pendingRoomMessages.total}`,
               `- triggering comments: ${effectiveTriggeringCommentIds?.length ?? 0}`,
               "",
