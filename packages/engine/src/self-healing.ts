@@ -4825,6 +4825,14 @@ export class SelfHealingManager {
   private async cleanupOrphans(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
+      if (settings.worktrunk?.enabled === true) {
+        log.log("[self-healing] skipped native orphan cleanup — worktrunk backend owns layout");
+        const backend = resolveWorktreeBackend(settings, { logger: log });
+        if (backend.kind === "worktrunk") {
+          await backend.prune({ rootDir: this.options.rootDir });
+        }
+        return 0;
+      }
 
       if (settings.recycleWorktrees) {
         // Recycle on: only sweep unregistered stale dirs.
@@ -4867,6 +4875,14 @@ export class SelfHealingManager {
    */
   private async reapUnregisteredOrphans(): Promise<number> {
     const settings = await this.store.getSettings();
+    if (settings.worktrunk?.enabled === true) {
+      log.log("[self-healing] skipped native unregistered-orphan reap — worktrunk backend owns layout");
+      const backend = resolveWorktreeBackend(settings, { logger: log });
+      if (backend.kind === "worktrunk") {
+        await backend.prune({ rootDir: this.options.rootDir });
+      }
+      return 0;
+    }
     const worktreesDir = resolveWorktreesDir(this.options.rootDir, settings);
     if (!existsSync(worktreesDir)) return 0;
 
@@ -5123,6 +5139,14 @@ export class SelfHealingManager {
   private async enforceWorktreeCap(): Promise<void> {
     try {
       const settings = await this.store.getSettings();
+      if (settings.worktrunk?.enabled === true) {
+        log.log("[self-healing] skipped native worktree cap enforcement — worktrunk backend owns layout");
+        const backend = resolveWorktreeBackend(settings, { logger: log });
+        if (backend.kind === "worktrunk") {
+          await backend.prune({ rootDir: this.options.rootDir });
+        }
+        return;
+      }
       const worktreesDir = resolveWorktreesDir(this.options.rootDir, settings);
       if (!existsSync(worktreesDir)) return;
       const cap = (settings.maxWorktrees ?? 4) * 2;
