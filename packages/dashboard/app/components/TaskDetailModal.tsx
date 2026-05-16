@@ -2316,6 +2316,14 @@ export function TaskDetailContent({
               </div>
             </div>
           )}
+          {task.pausedReason === "worktrunk_operation_failed" && (
+            <div className="task-pause-reason" role="status" aria-live="polite">
+              <div className="task-pause-reason-label">Worktrunk operation failed</div>
+              {task.worktrunkFailure?.stderr && (
+                <pre className="task-pause-stderr">{task.worktrunkFailure.stderr.slice(0, 2048)}</pre>
+              )}
+            </div>
+          )}
           {!isEditing && (
             <>
           <div className="detail-tabs">
