@@ -17,7 +17,7 @@ import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { BranchConflictError } from "../../branch-conflicts.js";
 import * as branchConflictModule from "../../branch-conflicts.js";
-import { createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
+import { createMockStore, mockedExec, mockedExistsSync, resetExecutorMocks } from "../executor-test-helpers.js";
 
 const ACTIVE_PATH = "/tmp/test/.worktrees/lemon-reef";
 const STALE_PATH = "/tmp/test/.worktrees/azure-peach";
@@ -165,21 +165,60 @@ describe("FN-4811: active worktree removal liveness gate", () => {
       store.listTasks.mockResolvedValue([
         { id: "FN-DONE", worktree: STALE_PATH, column: "done", paused: false },
       ]);
+      // existsSync defaults to true in helpers; this exercises the standard remove path.
+      mockedExistsSync.mockImplementation((p: string) => p === STALE_PATH);
 
-      // Spy on removeWorktree to confirm it's invoked. The mocked exec in test helpers will
-      // handle the actual git command without touching disk.
       const result = await (executor as any).cleanupConflictingWorktree(
         STALE_PATH,
         "fusion/fn-9999",
         "FN-4811",
       );
 
-      // result may be true or false depending on whether mocked exec succeeds, but the key
-      // assertion is that the refusal log was NOT emitted (i.e., we got past the gate).
       const logCalls = store.logEntry.mock.calls.map((c: any[]) => String(c[1] ?? ""));
       expect(logCalls.some((m: string) => m.includes("Refused to remove conflicting worktree"))).toBe(false);
-      // result is the actual outcome of the removal attempt; the gate didn't block it.
       void result;
+    });
+
+    it("FN-4811 follow-up (FN-4813): recovers from 'validation failed, cannot remove working tree'", async () => {
+      // Regression: a stale worktree admin entry (or missing on-disk directory) causes
+      // `git worktree remove --force` to fail with 'validation failed, cannot remove
+      // working tree'. The cleanup must catch that specific error, prune the stale admin
+      // entry, best-effort delete the branch, and return success so the caller can proceed
+      // with worktree creation.
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+      store.listTasks.mockResolvedValue([]);
+
+      const execCalls: string[] = [];
+      mockedExec.mockImplementation((cmd: string, _opts: unknown, cb: (err: Error | null, out: { stdout: string; stderr: string }) => void) => {
+        execCalls.push(cmd);
+        if (cmd.includes("git worktree remove")) {
+          const err: any = new Error(
+            `Command failed: ${cmd}\nfatal: validation failed, cannot remove working tree:`,
+          );
+          err.stderr = "fatal: validation failed, cannot remove working tree:";
+          cb(err, { stdout: "", stderr: err.stderr });
+          return { kill: () => undefined } as any;
+        }
+        cb(null, { stdout: "", stderr: "" });
+        return { kill: () => undefined } as any;
+      });
+
+      const result = await (executor as any).cleanupConflictingWorktree(
+        STALE_PATH,
+        "fusion/fn-9999",
+        "FN-4811",
+      );
+
+      expect(result).toBe(true);
+      // Must have run prune after the validation-failed catch.
+      expect(execCalls.some((c) => c.includes("git worktree prune"))).toBe(true);
+      // Must have attempted branch -D as part of the recovery.
+      expect(execCalls.some((c) => c.includes('git branch -D "fusion/fn-9999"'))).toBe(true);
+      // Must have logged the stale-path cleanup outcome — NOT the generic failure log.
+      const logCalls = store.logEntry.mock.calls.map((c: any[]) => String(c[1] ?? ""));
+      expect(logCalls.some((m: string) => m.includes("Cleaned up stale conflicting worktree admin entry"))).toBe(true);
+      expect(logCalls.some((m: string) => m === "Failed to clean up conflicting worktree")).toBe(false);
     });
   });
 

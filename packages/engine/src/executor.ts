@@ -4046,54 +4046,43 @@ export class TaskExecutor {
                 this.currentRunContext,
               );
               // Clear any stale binding so the next pickup creates a fresh worktree.
-              await this.store.updateTask(task.id, { worktree: null, branch: null });
+              // baseCommitSha is also cleared because it pinned to the now-reclaimed worktree;
+              // the next pickup will re-anchor it on the fresh checkout.
+              await this.store.updateTask(task.id, { worktree: null, branch: null, baseCommitSha: null });
               await this.persistTokenUsage(task.id);
               await this.store.moveTask(task.id, "todo", { preserveProgress: true });
               executorLog.log(silentMessage);
             } else {
+              // FN-4806: Genuine "agent finished without calling fn_task_done after N retries"
+              // exhaustion. Not a reclaim/self-heal — the agent had a fair chance and failed to
+              // signal completion. Mark failed, surface onError, and either requeue (budget
+              // remaining) or escalate to in-review (budget exhausted).
               const priorRequeues = task.taskDoneRetryCount ?? 0;
               const nextRequeueCount = priorRequeues + 1;
               const errorMessage = `Agent finished without calling fn_task_done (after ${MAX_TASK_DONE_SESSION_RETRIES} retries)`;
 
               if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
                 await this.store.updateTask(task.id, {
-                  sessionFile: null,
-                  worktree: null,
-                  branch: null,
-                  baseCommitSha: null,
+                  status: "failed",
+                  error: errorMessage,
+                  taskDoneRetryCount: nextRequeueCount,
                 });
-                const reclaimMessage = "Worktree/branch reclaimed mid-retry — requeued to todo (engine self-heal, no failure)";
-                await this.store.logEntry(task.id, reclaimMessage, undefined, this.currentRunContext);
-                executorLog.log(`${task.id}: ${reclaimMessage}`);
+                await this.store.logEntry(
+                  task.id,
+                  `${errorMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
+                  undefined,
+                  this.currentRunContext,
+                );
                 await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+                executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
               } else {
-                const priorRequeues = task.taskDoneRetryCount ?? 0;
-                const nextRequeueCount = priorRequeues + 1;
-                const errorMessage = `Agent finished without calling fn_task_done (after ${MAX_TASK_DONE_SESSION_RETRIES} retries)`;
-
-                if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
-                  await this.store.updateTask(task.id, {
-                    status: "failed",
-                    error: errorMessage,
-                    taskDoneRetryCount: nextRequeueCount,
-                  });
-                  await this.store.logEntry(
-                    task.id,
-                    `${errorMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
-                    undefined,
-                    this.currentRunContext,
-                  );
-                  await this.store.moveTask(task.id, "todo", { preserveProgress: true });
-                  executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
-                } else {
-                  await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
-                  await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
-                  await this.persistTokenUsage(task.id);
-                  await this.store.moveTask(task.id, "in-review");
-                  executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no fn_task_done → in-review`);
-                }
-                this.options.onError?.(task, new Error(errorMessage));
+                await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
+                await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
+                await this.persistTokenUsage(task.id);
+                await this.store.moveTask(task.id, "in-review");
+                executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no fn_task_done → in-review`);
               }
+              this.options.onError?.(task, new Error(errorMessage));
             }
           }
         } finally {
@@ -8378,6 +8367,37 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       return true;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      // FN-4811 follow-up (FN-4813): when `git worktree remove --force` fails with
+      // "fatal: validation failed, cannot remove working tree", the worktree directory
+      // doesn't exist on disk and the git admin entry (if any) is stale. Treat as
+      // already-cleaned: prune the stale admin entry, best-effort delete the branch, and
+      // return success so the caller can proceed with fresh worktree creation. Without
+      // this recovery, every `tryCreateWorktree` retry on a stale conflict path fails
+      // with "automatic cleanup failed".
+      if (/validation failed, cannot remove working tree/i.test(errorMessage)) {
+        try {
+          await execAsync("git worktree prune", {
+            cwd: this.rootDir,
+            timeout: 30_000,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+        } catch (pruneErr: unknown) {
+          const pruneMsg = pruneErr instanceof Error ? pruneErr.message : String(pruneErr);
+          executorLog.warn(`${taskId}: git worktree prune failed during stale-path cleanup of ${worktreePath}: ${pruneMsg}`);
+        }
+        try {
+          await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
+          this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
+        } catch {
+          // best-effort — branch may not exist, which is fine for a stale-path cleanup
+        }
+        await this.store.logEntry(
+          taskId,
+          `Cleaned up stale conflicting worktree admin entry (validation failed — path likely missing on disk)`,
+          worktreePath,
+        );
+        return true;
+      }
       await this.store.logEntry(
         taskId,
         `Failed to clean up conflicting worktree`,
