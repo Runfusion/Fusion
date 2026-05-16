@@ -90,6 +90,12 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("autoClaimCandidatesInPrompt")).toBe(false);
   });
 
+  it("defaults chatAutoCleanupDays to off and keeps it project-scoped", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.chatAutoCleanupDays).toBe(0);
+    expect(isProjectSettingsKey("chatAutoCleanupDays")).toBe(true);
+    expect(isGlobalSettingsKey("chatAutoCleanupDays")).toBe(false);
+  });
+
   it("keeps heartbeatScopeDiscipline project-scoped with strict default", () => {
     expect(DEFAULT_PROJECT_SETTINGS.heartbeatScopeDiscipline).toBe("strict");
     expect(isProjectSettingsKey("heartbeatScopeDiscipline")).toBe(true);
