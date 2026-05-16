@@ -1120,6 +1120,149 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  const strandedReasonRecommendation = (reasons: string[]): string => {
+    if (reasons.includes("awaiting-approval")) return "operator approval needed";
+    if (reasons.includes("failed")) return "operator retry needed (failed)";
+    if (reasons.includes("stuck-killed")) return "operator retry needed (stuck-killed)";
+    if (reasons.includes("recovery-backoff")) return "safe to expedite (clear backoff)";
+    return "safe to expedite";
+  };
+
+  router.get("/tasks/stranded-refinements", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const rawFreshnessMinutes = req.query.freshnessMinutes;
+      let freshnessThresholdMs: number | undefined;
+      if (rawFreshnessMinutes !== undefined) {
+        const value = Array.isArray(rawFreshnessMinutes) ? rawFreshnessMinutes[0] : rawFreshnessMinutes;
+        const parsed = Number.parseInt(String(value), 10);
+        if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1440) {
+          throw badRequest("freshnessMinutes must be a positive integer <= 1440");
+        }
+        freshnessThresholdMs = parsed * 60 * 1000;
+      }
+
+      const items = await scopedStore.listStrandedRefinements({ freshnessThresholdMs });
+      res.json({
+        items: items.map((item) => ({
+          ...item,
+          recommendation: strandedReasonRecommendation(item.reasons),
+        })),
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/tasks/:id/stranded-refinement", async (req, res) => {
+    try {
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (task.sourceType !== "task_refine") {
+        throw badRequest("Task must have sourceType 'task_refine'");
+      }
+      if (task.column !== "triage") {
+        throw badRequest("Task must be in 'triage' column");
+      }
+
+      const stranded = await scopedStore.listStrandedRefinements();
+      const detail = stranded.find((item) => item.task.id === task.id) ?? {
+        task,
+        reasons: [] as string[],
+        nextRecoveryAt: task.nextRecoveryAt,
+        ageMs: Math.max(0, Date.now() - Date.parse(task.createdAt)),
+      };
+
+      const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+      const promptExists = existsSync(promptPath);
+      const dependencyDetails = await Promise.all((task.dependencies ?? []).map(async (dependencyId) => {
+        try {
+          const depTask = await scopedStore.getTask(dependencyId);
+          return { id: dependencyId, exists: true, column: depTask.column, done: depTask.column === "done" || depTask.column === "archived" };
+        } catch {
+          return { id: dependencyId, exists: false, done: false };
+        }
+      }));
+
+      res.json({
+        ...detail,
+        recommendation: strandedReasonRecommendation(detail.reasons),
+        promptExists,
+        dependencies: {
+          total: dependencyDetails.length,
+          allExist: dependencyDetails.every((dep) => dep.exists),
+          allResolved: dependencyDetails.every((dep) => dep.done),
+          items: dependencyDetails,
+        },
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  router.post("/tasks/:id/expedite-refinement", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (task.sourceType !== "task_refine") {
+        throw badRequest("Task must have sourceType 'task_refine'");
+      }
+      if (task.column !== "triage") {
+        throw badRequest("Task must be in 'triage' column");
+      }
+      if (task.paused) {
+        throw badRequest("Paused refinements cannot be expedited");
+      }
+
+      if (task.status === "awaiting-approval") {
+        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "approve-plan required");
+        return res.json({ task, expedited: false, requiresOperatorAction: "approve-plan" });
+      }
+      if (task.status === "failed") {
+        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "retry-failed required");
+        return res.json({ task, expedited: false, requiresOperatorAction: "retry-failed" });
+      }
+      if (task.status === "stuck-killed") {
+        await scopedStore.logEntry(task.id, "Expedite requested — operator action required", "retry-stuck required");
+        return res.json({ task, expedited: false, requiresOperatorAction: "retry-stuck" });
+      }
+
+      if (task.expediteRequestedAt && !task.nextRecoveryAt) {
+        return res.json({ task, expedited: true, alreadyExpedited: true });
+      }
+
+      const nowIso = new Date().toISOString();
+      const updated = await scopedStore.updateTask(task.id, {
+        nextRecoveryAt: undefined,
+        expediteRequestedAt: task.expediteRequestedAt ?? nowIso,
+      });
+      await scopedStore.logEntry(task.id, "Refinement expedited", "Cleared nextRecoveryAt and set expediteRequestedAt");
+
+      res.json({
+        task: updated,
+        expedited: true,
+        alreadyExpedited: Boolean(task.expediteRequestedAt),
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const errorWithCode = err as NodeJS.ErrnoException;
+      const status = errorWithCode.code === "ENOENT" ? 404 : 500;
+      throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
   router.get("/tasks/:id/comments", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);

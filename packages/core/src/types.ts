@@ -1555,6 +1555,9 @@ export interface Task {
    *  recovery retry. Scheduler and triage processor skip tasks whose
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */
   nextRecoveryAt?: string;
+  /** ISO-8601 timestamp recording an operator expedite request for triage processing.
+   *  Used as a transient triage tie-break signal; does not bypass planning/approval gates. */
+  expediteRequestedAt?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
   /** Execution mode for task implementation.

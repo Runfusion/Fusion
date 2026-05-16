@@ -5,6 +5,7 @@ export interface TaskPrioritySortable {
   id: string;
   createdAt: string;
   priority?: TaskPriority | null;
+  expediteRequestedAt?: string | null;
 }
 
 export interface TaskColumnSortable extends TaskPrioritySortable {
@@ -66,6 +67,16 @@ export function compareTasksByPriorityThenAgeAndId<T extends TaskPrioritySortabl
   const priorityCmp = compareTaskPriority(a.priority, b.priority);
   if (priorityCmp !== 0) {
     return priorityCmp;
+  }
+
+  const aExpedite = a.expediteRequestedAt;
+  const bExpedite = b.expediteRequestedAt;
+  if (aExpedite || bExpedite) {
+    if (aExpedite && !bExpedite) return -1;
+    if (!aExpedite && bExpedite) return 1;
+    if (aExpedite && bExpedite && aExpedite !== bExpedite) {
+      return bExpedite.localeCompare(aExpedite);
+    }
   }
 
   if (a.createdAt !== b.createdAt) {
