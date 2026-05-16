@@ -44,6 +44,7 @@ import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
 import { getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, isUsableTaskWorktree, removeWorktree, type WorktreePool } from "./worktree-pool.js";
+import { activeSessionRegistry } from "./active-session-registry.js";
 import {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -844,6 +845,53 @@ export class TaskExecutor {
   /** Set of ephemeral spawned agent IDs with in-flight cleanup (prevents duplicate deletion attempts). */
   private pendingEphemeralDeletions = new Set<string>();
 
+  private setActiveSession(taskId: string, sessionState: {
+    session: AgentSession;
+    seenSteeringIds: Set<string>;
+    lastResolvedModelProvider?: string;
+    lastResolvedModelId?: string;
+    lastTaskModelProvider?: string | null;
+    lastTaskModelId?: string | null;
+    lastAssignedAgentId?: string | null;
+  }, worktreePath: string): void {
+    this.activeSessions.set(taskId, sessionState);
+    activeSessionRegistry.registerPath(worktreePath, { taskId, kind: "executor", ownerKey: taskId });
+  }
+
+  private deleteActiveSession(taskId: string, worktreePath?: string): void {
+    this.activeSessions.delete(taskId);
+    const resolvedWorktreePath = worktreePath ?? this.activeWorktrees.get(taskId);
+    if (resolvedWorktreePath) {
+      activeSessionRegistry.unregisterPath(resolvedWorktreePath);
+    }
+  }
+
+  private setActiveStepExecutor(taskId: string, stepExecutor: StepSessionExecutor, worktreePath: string): void {
+    this.activeStepExecutors.set(taskId, stepExecutor);
+    activeSessionRegistry.registerPath(worktreePath, { taskId, kind: "step-session", ownerKey: `${taskId}#step-session` });
+  }
+
+  private deleteActiveStepExecutor(taskId: string, worktreePath?: string): void {
+    this.activeStepExecutors.delete(taskId);
+    const resolvedWorktreePath = worktreePath ?? this.activeWorktrees.get(taskId);
+    if (resolvedWorktreePath) {
+      activeSessionRegistry.unregisterPath(resolvedWorktreePath);
+    }
+  }
+
+  private setActiveWorkflowStepSession(taskId: string, session: AgentSession, worktreePath: string): void {
+    this.activeWorkflowStepSessions.set(taskId, session);
+    activeSessionRegistry.registerPath(worktreePath, { taskId, kind: "workflow-step", ownerKey: `${taskId}#workflow-step` });
+  }
+
+  private deleteActiveWorkflowStepSession(taskId: string, worktreePath?: string): void {
+    this.activeWorkflowStepSessions.delete(taskId);
+    const resolvedWorktreePath = worktreePath ?? this.activeWorktrees.get(taskId);
+    if (resolvedWorktreePath) {
+      activeSessionRegistry.unregisterPath(resolvedWorktreePath);
+    }
+  }
+
   private getAutoRecoveryDispatcher(audit: RunAuditor): AutoRecoveryDispatcher {
     if (this.options.autoRecoveryDispatcher) return this.options.autoRecoveryDispatcher;
     const fileScopeHandler = createFileScopeAutoRecoveryHandler({
@@ -1307,7 +1355,7 @@ export class TaskExecutor {
             });
           }
           session.dispose();
-          this.activeSessions.delete(task.id);
+          this.deleteActiveSession(task.id);
         }
         if (this.activeStepExecutors.has(task.id)) {
           executorLog.log(`${task.id} moved from in-progress to ${to} — terminating step sessions`);
@@ -1325,7 +1373,7 @@ export class TaskExecutor {
           stepExecutor.terminateAllSessions().catch((err) =>
             executorLog.error(`Failed to terminate step sessions for ${task.id}:`, err),
           );
-          this.activeStepExecutors.delete(task.id);
+          this.deleteActiveStepExecutor(task.id);
         }
         if (this.activeWorkflowStepSessions.has(task.id)) {
           executorLog.log(`${task.id} moved from in-progress to ${to} — terminating workflow step session`);
@@ -1339,7 +1387,7 @@ export class TaskExecutor {
             });
           }
           workflowSession.dispose();
-          this.activeWorkflowStepSessions.delete(task.id);
+          this.deleteActiveWorkflowStepSession(task.id);
         }
         // Reviewer subagents run in their own sessions outside `activeSessions`
         // and `activeStepExecutors`, so the loops above don't reach them.
@@ -1408,7 +1456,7 @@ export class TaskExecutor {
             );
           }
           workflowSession.dispose();
-          this.activeWorkflowStepSessions.delete(task.id);
+          this.deleteActiveWorkflowStepSession(task.id);
           this.loopRecoveryState.delete(task.id);
           this.spawnedAgents.delete(task.id);
           this.stuckAborted.delete(task.id);
@@ -1628,7 +1676,7 @@ export class TaskExecutor {
             });
           }
           workflowSession.dispose();
-          this.activeWorkflowStepSessions.delete(taskId);
+          this.deleteActiveWorkflowStepSession(taskId);
           this.loopRecoveryState.delete(taskId);
           this.spawnedAgents.delete(taskId);
           this.stuckAborted.delete(taskId);
@@ -2187,7 +2235,7 @@ export class TaskExecutor {
       if (this.activeSessions.has(task.id)) {
         const { session: activeSession } = this.activeSessions.get(task.id)!;
         activeSession.dispose();
-        this.activeSessions.delete(task.id);
+        this.deleteActiveSession(task.id);
       }
 
       // Untrack from stuck detector
@@ -2931,7 +2979,7 @@ export class TaskExecutor {
             });
           },
         });
-        this.activeStepExecutors.set(task.id, stepExecutor);
+        this.setActiveStepExecutor(task.id, stepExecutor, worktreePath);
 
         const stepWork = async () => {
           const results = await stepExecutor.executeAll();
@@ -3250,7 +3298,7 @@ export class TaskExecutor {
           } catch (cleanupErr) {
             executorLog.warn(`StepSessionExecutor cleanup failed for ${task.id}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
           }
-          this.activeStepExecutors.delete(task.id);
+          this.deleteActiveStepExecutor(task.id);
 
           // Stuck-requeue: clean up worktree and move to todo
           if (stuckRequeue === true) {
@@ -3544,7 +3592,7 @@ export class TaskExecutor {
             seenSteeringIds.add(comment.id);
           }
         }
-        this.activeSessions.set(task.id, {
+        this.setActiveSession(task.id, {
           session,
           seenSteeringIds,
           lastResolvedModelProvider: executorProvider,
@@ -3552,7 +3600,7 @@ export class TaskExecutor {
           lastTaskModelProvider: detail.modelProvider,
           lastTaskModelId: detail.modelId,
           lastAssignedAgentId: detail.assignedAgentId ?? null,
-        });
+        }, worktreePath);
 
         let leaseRenewalTimer: ReturnType<typeof setInterval> | undefined;
         if (detail.assignedAgentId && detail.checkedOutBy === detail.assignedAgentId) {
@@ -3816,7 +3864,7 @@ export class TaskExecutor {
                 const reclaimMessage = `${task.id}: worktree/branch reclaimed during no-fn_task_done retry — aborting retry and requeueing`;
                 executorLog.log(reclaimMessage);
                 await this.store.logEntry(task.id, reclaimMessage, undefined, this.currentRunContext);
-                this.activeSessions.delete(task.id);
+                this.deleteActiveSession(task.id);
                 this.tokenUsageBaselines.delete(task.id);
                 session.dispose();
                 retryAbortedDueToReclaim = true;
@@ -3852,7 +3900,7 @@ export class TaskExecutor {
               // Dispose old session and create a fresh one.
               // Reset lastAssistantText so the new session's text is tracked cleanly.
               lastAssistantText = "";
-              this.activeSessions.delete(task.id);
+              this.deleteActiveSession(task.id);
               this.tokenUsageBaselines.delete(task.id);
               session.dispose();
 
@@ -3893,7 +3941,7 @@ export class TaskExecutor {
 
                 session = retrySession;
                 sessionRef.current = retrySession;
-                this.activeSessions.set(task.id, {
+                this.setActiveSession(task.id, {
                   session: retrySession,
                   seenSteeringIds,
                   lastResolvedModelProvider: executorProvider,
@@ -3901,7 +3949,7 @@ export class TaskExecutor {
                   lastTaskModelProvider: detail.modelProvider,
                   lastTaskModelId: detail.modelId,
                   lastAssignedAgentId: detail.assignedAgentId ?? null,
-                });
+                }, worktreePath);
                 stuckDetector?.trackTask(task.id, retrySession);
 
                 let retryPrompt: string;
@@ -3959,7 +4007,7 @@ export class TaskExecutor {
                   branch: null,
                   baseCommitSha: null,
                 });
-                this.activeSessions.delete(task.id);
+                this.deleteActiveSession(task.id);
                 this.tokenUsageBaselines.delete(task.id);
                 retrySession?.dispose();
                 retryAbortedDueToReclaim = true;
@@ -4089,7 +4137,7 @@ export class TaskExecutor {
           if (leaseRenewalTimer) {
             clearInterval(leaseRenewalTimer);
           }
-          this.activeSessions.delete(task.id);
+          this.deleteActiveSession(task.id);
           stuckDetector?.untrackTask(task.id);
           await agentLogger.flush();
           await this.persistTokenUsage(task.id, session).catch((err: unknown) => {
@@ -7074,7 +7122,7 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
         task.id,
         `Workflow step '${workflowStep.name}' using model: ${describeModel(session)}${useOverride && attemptLabel === "primary" ? " (workflow step override)" : ""}${attemptLabel === "fallback" ? " (fallback after timeout)" : ""}`,
       );
-      this.activeWorkflowStepSessions.set(task.id, session);
+      this.setActiveWorkflowStepSession(task.id, session, worktreePath);
 
       let output = "";
       session.subscribe((event) => {
@@ -7175,7 +7223,7 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
         if (timeoutHandle) clearTimeout(timeoutHandle);
         const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
         if (activeWorkflowStepSession === session) {
-          this.activeWorkflowStepSessions.delete(task.id);
+          this.deleteActiveWorkflowStepSession(task.id);
         }
         // Suppress unused-variable warning; `timedOut` documents intent.
         void timedOut;

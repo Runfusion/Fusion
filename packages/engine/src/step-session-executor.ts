@@ -49,6 +49,7 @@ import {
   createTaskLogTool,
 } from "./agent-tools.js";
 import { removeWorktree } from "./worktree-backend.js";
+import { activeSessionRegistry } from "./active-session-registry.js";
 
 const stepExecLog = createLogger("step-session-executor");
 
@@ -628,6 +629,37 @@ export class StepSessionExecutor {
   private aborted = false;
   private maxParallel: number;
 
+  private registerActiveStepSession(stepIndex: number, handle: SessionHandle, worktreePath: string): void {
+    this.registerActiveStepSession(stepIndex, handle, worktreePath);
+    activeSessionRegistry.registerPath(worktreePath, {
+      taskId: this.options.taskDetail.id,
+      kind: "step-session",
+      ownerKey: `${this.options.taskDetail.id}#step-${stepIndex}`,
+    });
+  }
+
+  private unregisterActiveStepSession(stepIndex: number, worktreePath: string): void {
+    this.unregisterActiveStepSession(stepIndex, worktreePath);
+    activeSessionRegistry.unregisterPath(worktreePath);
+  }
+
+  private registerParallelWorktree(stepIndex: number, worktreePath: string): void {
+    this.registerParallelWorktree(stepIndex, worktreePath);
+    activeSessionRegistry.registerPath(worktreePath, {
+      taskId: this.options.taskDetail.id,
+      kind: "step-session-parallel",
+      ownerKey: `${this.options.taskDetail.id}#parallel-${stepIndex}`,
+    });
+  }
+
+  private unregisterParallelWorktree(stepIndex: number): void {
+    const path = this.parallelWorktrees.get(stepIndex);
+    if (path) {
+      activeSessionRegistry.unregisterPath(path);
+    }
+    this.parallelWorktrees.delete(stepIndex);
+  }
+
   constructor(options: StepSessionExecutorOptions) {
     this.options = options;
     this.store = options.store ?? (NOOP_TASK_STORE as TaskStore);
@@ -734,6 +766,9 @@ export class StepSessionExecutor {
       this.options.stuckTaskDetector?.untrackTask(trackingKey);
     }
 
+    for (const worktreePath of activeSessionRegistry.pathsForTask(this.options.taskDetail.id)) {
+      activeSessionRegistry.unregisterPath(worktreePath);
+    }
     this.activeSessions.clear();
   }
 
@@ -778,7 +813,9 @@ export class StepSessionExecutor {
       }
     }
 
-    this.parallelWorktrees.clear();
+    for (const [stepIdx] of this.parallelWorktrees) {
+      this.unregisterParallelWorktree(stepIdx);
+    }
     this.parallelBranches.clear();
 
     stepExecLog.log(`Cleanup complete for task ${this.options.taskDetail.id}`);
@@ -1024,7 +1061,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             dispose: () => session?.dispose(),
             abortBash: () => session?.abortBash(),
           };
-          this.activeSessions.set(stepIndex, handle);
+          this.registerActiveStepSession(stepIndex, handle, worktreePath);
           stuckTaskDetector?.trackTask(trackingKey, { dispose: () => session?.dispose() }, taskDetail.id);
 
           const sessionModel = await describeAgentModel(session);
@@ -1125,7 +1162,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             stepExecLog.warn(`Failed to flush agent logs for step ${stepIndex}: ${flushError}`);
           }
 
-          this.activeSessions.delete(stepIndex);
+          this.unregisterActiveStepSession(stepIndex, worktreePath);
           stuckTaskDetector?.untrackTask(trackingKey);
           try {
             session?.dispose();
@@ -1264,7 +1301,7 @@ Follow instructions precisely and avoid unrelated changes.`,
         } catch (err) {
           stepExecLog.warn(`Failed to clean up worktree for step ${stepIdx}: ${err}`);
         } finally {
-          this.parallelWorktrees.delete(stepIdx);
+          this.unregisterParallelWorktree(stepIdx);
           this.parallelBranches.delete(stepIdx);
         }
       }
@@ -1305,7 +1342,7 @@ Follow instructions precisely and avoid unrelated changes.`,
       throw err;
     }
 
-    this.parallelWorktrees.set(stepIndex, worktreePath);
+    this.registerParallelWorktree(stepIndex, worktreePath);
     this.parallelBranches.set(stepIndex, branchName);
 
     return worktreePath;
