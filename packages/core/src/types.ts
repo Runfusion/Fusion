@@ -3027,6 +3027,9 @@ export interface ProjectSettings {
    *  When false, the FAB is hidden but chat remains accessible via the More menu.
    *  Default: false. */
   showQuickChatFAB?: boolean;
+  /** Number of days of chat inactivity before old chat sessions/rooms are auto-cleaned.
+   *  Allowed values: 0 (off, default), 7, 14, 30, 60, 90. Uses updatedAt inactivity age. */
+  chatAutoCleanupDays?: number;
   /** Number of most-recent chat-room messages kept verbatim in the responder transcript.
    *  Older messages are compacted into a summary block. Default: 12. */
   chatRoomRecentVerbatimMessages?: number;
