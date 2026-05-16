@@ -348,6 +348,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reviewHandoffPolicy: "disabled",
   showQuickChatFAB: false,
   chatAutoCleanupDays: 0,
+  mailAutoCleanupDays: 0,
   chatRoomRecentVerbatimMessages: 12,
   chatRoomCompactionFetchLimit: 80,
   chatRoomSummaryMaxChars: 1_500,
