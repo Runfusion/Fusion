@@ -230,25 +230,6 @@ describe("approval routes", async () => {
       }],
     ]);
     state.audits = new Map([
-        id: "apr-5",
-        status: "pending",
-        requester: { actorId: "agent-1", actorType: "agent", actorName: "Agent 1" },
-        targetAction: {
-          category: "agent_provisioning",
-          summary: "Malformed",
-          action: "create",
-          resourceType: "agent",
-          resourceId: "",
-          context: {},
-        },
-        taskId: "FN-1",
-        runId: "run-3",
-        createdAt: now,
-        updatedAt: now,
-        requestedAt: now,
-      }],
-    ]);
-    state.audits = new Map([
       ["apr-1", [{ id: "evt-created", eventType: "created", actor: { actorId: "agent-1", actorType: "agent", actorName: "Agent 1" }, createdAt: now }]],
       ["apr-2", [{ id: "evt-denied", eventType: "denied", actor: { actorId: "dashboard", actorType: "user", actorName: "User" }, createdAt: now }]],
       ["apr-6", [{ id: "evt-created-6", eventType: "created", actor: { actorId: "agent-1", actorType: "agent", actorName: "Agent 1" }, createdAt: now }]],
