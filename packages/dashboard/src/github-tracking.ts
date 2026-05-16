@@ -209,6 +209,13 @@ export async function maybeCreateTrackingIssue(
     return { created: false, reason: "issue_already_linked" };
   }
 
+  if (tracking?.enabled !== true) {
+    latestTask = await deps.taskStore.updateGithubTracking(task.id, {
+      ...(tracking ?? {}),
+      enabled: true,
+    });
+  }
+
   const repo = resolvedTracking.repo;
 
   if (!repo) {

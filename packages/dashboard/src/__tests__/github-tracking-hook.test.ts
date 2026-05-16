@@ -283,6 +283,124 @@ describe("registerGithubTrackingHook", () => {
     );
   });
 
+  it("persists enabled=true from project default when repo is missing", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const created = await store.createTask({
+      description: "default tracking without repo",
+      title: "Default tracking without repo",
+    });
+
+    const persisted = await store.getTask(created.id);
+    expect(persisted?.githubTracking?.enabled).toBe(true);
+    expect(mockCreateIssue).not.toHaveBeenCalled();
+  });
+
+  it("persists enabled=true from project default when no title is available", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+      titleSummarizerProvider: undefined,
+      titleSummarizerModelId: undefined,
+      titleSummarizerFallbackProvider: undefined,
+      titleSummarizerFallbackModelId: undefined,
+    });
+
+    const created = await store.createTask({
+      description: "```ts\nconst value = 1;\n```",
+    });
+
+    const persisted = await store.getTask(created.id);
+    expect(persisted?.githubTracking?.enabled).toBe(true);
+    expect(persisted?.githubTracking?.issue).toBeUndefined();
+    expect(mockCreateIssue).not.toHaveBeenCalled();
+  });
+
+  it("creates issue and keeps enabled=true when project default tracking is on", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const created = await store.createTask({
+      description: "default tracking with repo",
+      title: "Default tracking with repo",
+    });
+
+    const persisted = await store.getTask(created.id);
+    expect(mockCreateIssue).toHaveBeenCalledTimes(1);
+    expect(persisted?.githubTracking?.enabled).toBe(true);
+    expect(persisted?.githubTracking?.issue).toEqual(
+      expect.objectContaining({ owner: "owner", repo: "repo", number: 42 }),
+    );
+  });
+
+  it("keeps inline enabled=false without flipping back on", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const created = await store.createTask({
+      description: "tracking explicitly disabled",
+      title: "Tracking explicitly disabled",
+      githubTracking: { enabled: false },
+    });
+
+    const persisted = await store.getTask(created.id);
+    const enabledLogs = persisted?.log.filter((entry) => entry.action === "GitHub tracking enabled") ?? [];
+
+    expect(persisted?.githubTracking?.enabled).toBe(false);
+    expect(enabledLogs).toHaveLength(0);
+    expect(mockCreateIssue).not.toHaveBeenCalled();
+  });
+
+  it("avoids redundant enabled writes when inline enabled=true already set", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const created = await store.createTask({
+      description: "tracking already enabled",
+      title: "Tracking already enabled",
+      githubTracking: { enabled: true },
+    });
+
+    const afterHook = await store.getTask(created.id);
+    const enabledLogsBefore = afterHook?.log.filter((entry) => entry.action === "GitHub tracking enabled").length ?? 0;
+
+    await createTrackingIssueForTask(store, created);
+
+    const afterSecondPass = await store.getTask(created.id);
+    const enabledLogsAfter = afterSecondPass?.log.filter((entry) => entry.action === "GitHub tracking enabled").length ?? 0;
+
+    expect(enabledLogsBefore).toBe(0);
+    expect(enabledLogsAfter).toBe(0);
+    expect(mockCreateIssue).not.toHaveBeenCalled();
+  });
+
   it("creates issue during createTask await when summarization is disabled", async () => {
     registerGithubTrackingHook();
 
