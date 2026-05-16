@@ -217,7 +217,11 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
           allowSiblingBranchRename: allowRename,
         });
         if (backend.kind === "worktrunk") {
-          await audit?.git({ type: "worktree:worktrunk-create", target: created.path, metadata: { branch: created.branch } });
+          await audit?.git({
+            type: "worktree:worktrunk-create",
+            target: created.path,
+            metadata: { branch: created.branch, taskId: task.id },
+          });
         }
         return created;
       } catch (error) {
