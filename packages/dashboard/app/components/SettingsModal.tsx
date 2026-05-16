@@ -282,6 +282,7 @@ const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
   "message:agent-to-user",
   "message:agent-to-agent",
   "message:room",
+  "oauth-token-expired",
 ];
 
 const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: string; description: string }> = [
@@ -297,6 +298,7 @@ const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: s
   { event: "message:agent-to-user", label: "Agent → user message", description: "An agent sent you a direct message" },
   { event: "message:agent-to-agent", label: "Agent → agent message", description: "Agents are talking to each other (including replies)" },
   { event: "message:room", label: "Agent message in room", description: "An agent posted a reply in a chat room you're watching" },
+  { event: "oauth-token-expired", label: "OAuth token expired", description: "Notify when a provider OAuth token (Codex, Claude, etc.) expires." },
 ];
 
 /** Well-known experimental feature flags with display labels.

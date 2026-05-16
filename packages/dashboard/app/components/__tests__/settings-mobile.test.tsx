@@ -29,7 +29,7 @@ const defaultSettings = {
   defaultPresetBySize: {},
   ntfyEnabled: false,
   ntfyTopic: undefined,
-  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "fallback-used", "memory-dreams-processed"],
+  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "fallback-used", "memory-dreams-processed", "oauth-token-expired"],
   webhookEnabled: false,
   webhookUrl: undefined,
   webhookFormat: undefined,
