@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { execMock } = vi.hoisted(() => {
+const { execMock, existsSyncMock } = vi.hoisted(() => {
   const mock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
-  return { execMock: mock };
+  return { execMock: mock, existsSyncMock: vi.fn() };
 });
 
 vi.mock("node:child_process", () => ({ exec: execMock }));
+vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
 vi.mock("../worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
   return { ...actual, isUsableTaskWorktree: vi.fn().mockResolvedValue(true) };
@@ -43,6 +44,8 @@ const makeAudit = () => {
 
 beforeEach(() => {
   execMock.mockReset();
+  existsSyncMock.mockReset();
+  existsSyncMock.mockReturnValue(true);
 });
 
 describe("acquireTaskWorktree worktrunk wiring", () => {
@@ -79,7 +82,17 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
   });
 
   it("emits worktrunk + native create audits when worktrunk succeeds", async () => {
-    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    execMock.mockImplementation((command: string) => {
+      if (command.includes('"config" "show"')) return Promise.resolve({ stdout: "", stderr: "" });
+      if (command.includes('"switch" "--create"')) return Promise.resolve({ stdout: "", stderr: "" });
+      if (command === "git worktree list --porcelain") {
+        return Promise.resolve({
+          stdout: "worktree /repo/.worktrees/fusion/fn-1\nbranch refs/heads/fusion/fn-1\n",
+          stderr: "",
+        });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    });
     const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
     const { audit, events } = makeAudit();
 
@@ -94,6 +107,36 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
     expect(execMock.mock.calls.some((call) => String(call[0]).includes('"worktrunk" "switch" "--create" "fusion/fn-1" "--no-hooks" "--no-cd"'))).toBe(true);
     expect(events.filter((event) => event.type === "worktree:worktrunk-create")).toHaveLength(1);
     expect(events.filter((event) => event.type === "worktree:create")).toHaveLength(1);
+  });
+
+  it("propagates resolved worktrunk path into result and task store", async () => {
+    const store = makeStore();
+    execMock.mockImplementation((command: string) => {
+      if (command.includes('"config" "show"')) return Promise.resolve({ stdout: "", stderr: "" });
+      if (command.includes('"switch" "--create"')) return Promise.resolve({ stdout: "", stderr: "" });
+      if (command === "git worktree list --porcelain") {
+        return Promise.resolve({
+          stdout: "worktree /repo/.worktrees/custom/fusion-fn-1\nbranch refs/heads/fusion/fn-1\n",
+          stderr: "",
+        });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    });
+    existsSyncMock.mockImplementation((path: string) => path === "/repo/.worktrees/custom/fusion-fn-1");
+    const { acquireTaskWorktree } = await import("../worktree-acquisition.js");
+
+    const result = await acquireTaskWorktree({
+      task,
+      rootDir: "/repo",
+      store: store as any,
+      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } } as any,
+    });
+
+    expect(result.worktreePath).toBe("/repo/.worktrees/custom/fusion-fn-1");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
+      worktree: "/repo/.worktrees/custom/fusion-fn-1",
+      branch: "fusion/fn-1",
+    });
   });
 
   it("fails hard without fallback when onFailure=fail", async () => {

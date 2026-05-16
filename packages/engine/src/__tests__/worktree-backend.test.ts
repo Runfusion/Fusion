@@ -7,13 +7,14 @@ import {
   resolveWorktreeBackend,
 } from "../worktree-backend.js";
 
-const { execMock, accessMock } = vi.hoisted(() => {
+const { execMock, accessMock, existsSyncMock } = vi.hoisted(() => {
   const mock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
-  return { execMock: mock, accessMock: vi.fn() };
+  return { execMock: mock, accessMock: vi.fn(), existsSyncMock: vi.fn() };
 });
 
 vi.mock("node:child_process", () => ({ exec: execMock }));
+vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
 vi.mock("node:fs/promises", () => ({ access: accessMock }));
 vi.mock("../branch-conflicts.js", () => ({
   inspectBranchConflict: vi.fn().mockResolvedValue({ kind: "stale" }),
@@ -22,7 +23,9 @@ vi.mock("../branch-conflicts.js", () => ({
 beforeEach(() => {
   execMock.mockReset();
   accessMock.mockReset();
+  existsSyncMock.mockReset();
   accessMock.mockResolvedValue(undefined);
+  existsSyncMock.mockReturnValue(true);
 });
 
 describe("NativeWorktreeBackend", () => {
@@ -156,7 +159,10 @@ describe("WorktrunkWorktreeBackend", () => {
   it("invokes create mapping with timeout/maxBuffer and cwd", async () => {
     execMock
       .mockResolvedValueOnce({ stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ stdout: "worktree /repo/.worktrees/fusion/fn-1\n", stderr: "" });
+      .mockResolvedValueOnce({
+        stdout: "worktree /repo/.worktrees/fusion/fn-1\nbranch refs/heads/fusion/fn-1\n",
+        stderr: "",
+      });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
 
     await backend.create({
@@ -172,6 +178,118 @@ describe("WorktrunkWorktreeBackend", () => {
       '"worktrunk" "switch" "--create" "fusion/fn-1" "--no-hooks" "--no-cd" "--base" "main"',
       expect.objectContaining({ cwd: "/repo", timeout: 120000, maxBuffer: 10485760 }),
     );
+  });
+
+  describe("create() — path resolution", () => {
+    it("returns porcelain-resolved path and warns on drift", async () => {
+      const logger = { log: vi.fn(), warn: vi.fn() };
+      execMock
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({
+          stdout:
+            "worktree /repo/.worktrees/custom/fusion-fn-1\nbranch refs/heads/fusion/fn-1\n\nworktree /repo\nbranch refs/heads/main\n",
+          stderr: "",
+        });
+      existsSyncMock.mockImplementation((path: string) => path === "/repo/.worktrees/custom/fusion-fn-1");
+
+      const result = await new WorktrunkWorktreeBackend({ binaryPath: "worktrunk", logger }).create({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+      });
+
+      expect(result).toEqual({ path: "/repo/.worktrees/custom/fusion-fn-1", branch: "fusion/fn-1" });
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "[worktree-backend] worktrunk created branch fusion/fn-1 at /repo/.worktrees/custom/fusion-fn-1 (fusion assumed /repo/.worktrees/fn-1); using worktrunk-assigned path",
+      );
+    });
+
+    it("fails when no branch match exists", async () => {
+      execMock
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "worktree /repo/.worktrees/other\nbranch refs/heads/other\n", stderr: "" });
+
+      await expect(
+        new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" }).create({
+          rootDir: "/repo",
+          worktreePath: "/repo/.worktrees/fn-1",
+          branch: "fusion/fn-1",
+          taskId: "FN-1",
+        }),
+      ).rejects.toMatchObject({
+        name: "WorktrunkOperationError",
+        code: "worktrunk_operation_failed",
+        stderr: expect.stringContaining("fusion/fn-1"),
+      });
+    });
+
+    it("fails when multiple branch matches exist", async () => {
+      execMock
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({
+          stdout:
+            "worktree /repo/.worktrees/a\nbranch refs/heads/fusion/fn-1\n\nworktree /repo/.worktrees/b\nbranch refs/heads/fusion/fn-1\n",
+          stderr: "",
+        });
+
+      await expect(
+        new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" }).create({
+          rootDir: "/repo",
+          worktreePath: "/repo/.worktrees/fn-1",
+          branch: "fusion/fn-1",
+          taskId: "FN-1",
+        }),
+      ).rejects.toMatchObject({
+        name: "WorktrunkOperationError",
+        code: "worktrunk_operation_failed",
+        stderr: expect.stringContaining("/repo/.worktrees/a, /repo/.worktrees/b"),
+      });
+    });
+
+    it("fails when resolved path does not exist on disk", async () => {
+      existsSyncMock.mockReturnValue(false);
+      execMock
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({
+          stdout: "worktree /repo/.worktrees/missing\nbranch refs/heads/fusion/fn-1\n",
+          stderr: "",
+        });
+
+      await expect(
+        new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" }).create({
+          rootDir: "/repo",
+          worktreePath: "/repo/.worktrees/fn-1",
+          branch: "fusion/fn-1",
+          taskId: "FN-1",
+        }),
+      ).rejects.toMatchObject({
+        name: "WorktrunkOperationError",
+        code: "worktrunk_operation_failed",
+        stderr: "worktrunk reported worktree at /repo/.worktrees/missing but the path does not exist",
+      });
+    });
+
+    it("wraps porcelain command failures as worktrunk operation errors", async () => {
+      execMock
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockRejectedValueOnce({ stderr: "porcelain failed", status: 2 });
+
+      await expect(
+        new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" }).create({
+          rootDir: "/repo",
+          worktreePath: "/repo/.worktrees/fn-1",
+          branch: "fusion/fn-1",
+          taskId: "FN-1",
+        }),
+      ).rejects.toMatchObject({
+        name: "WorktrunkOperationError",
+        code: "worktrunk_operation_failed",
+        stderr: "porcelain failed",
+        exitCode: 2,
+      });
+    });
   });
 
   it("invokes remove mapping", async () => {
