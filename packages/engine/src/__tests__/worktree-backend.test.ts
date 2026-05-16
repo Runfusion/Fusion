@@ -74,6 +74,28 @@ describe("NativeWorktreeBackend", () => {
     );
   });
 
+  it("syncs by fetching then rebasing", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+
+    const result = await new NativeWorktreeBackend().sync({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      branch: "main",
+    });
+
+    expect(result).toEqual({ skipped: false });
+    expect(execMock).toHaveBeenNthCalledWith(
+      1,
+      "git fetch --all --prune",
+      expect.objectContaining({ cwd: "/repo/.worktrees/fn-1", timeout: 120000, maxBuffer: 10485760 }),
+    );
+    expect(execMock).toHaveBeenNthCalledWith(
+      2,
+      'git rebase "origin/main"',
+      expect.objectContaining({ cwd: "/repo/.worktrees/fn-1", timeout: 120000, maxBuffer: 10485760 }),
+    );
+  });
+
   it("prunes worktrees with expected command", async () => {
     execMock.mockResolvedValue({ stdout: "", stderr: "" });
 

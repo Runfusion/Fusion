@@ -48,7 +48,7 @@ export interface WorktreeBackend {
   readonly kind: WorktreeBackendKind;
   create(input: WorktreeCreateInput): Promise<WorktreeCreateResult>;
   remove(input: WorktreeRemoveInput): Promise<void>;
-  sync(input: WorktreeSyncInput): Promise<{ skipped: true }>;
+  sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }>;
   prune(input: WorktreePruneInput): Promise<void>;
 }
 
@@ -165,9 +165,22 @@ export class NativeWorktreeBackend implements WorktreeBackend {
     });
   }
 
-  async sync(_input: WorktreeSyncInput): Promise<{ skipped: true }> {
-    // Sync-with-trunk semantics are specific to the worktrunk backend.
-    return { skipped: true as const };
+  async sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }> {
+    await execAsync("git fetch --all --prune", {
+      cwd: input.worktreePath,
+      encoding: "utf-8",
+      timeout: NATIVE_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+    });
+
+    await execAsync(`git rebase ${quoteShellArg(`origin/${input.branch}`)}`, {
+      cwd: input.worktreePath,
+      encoding: "utf-8",
+      timeout: NATIVE_TIMEOUT_MS,
+      maxBuffer: MAX_BUFFER,
+    });
+
+    return { skipped: false };
   }
 
   async prune(input: WorktreePruneInput): Promise<void> {
@@ -246,9 +259,9 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
     await this.runPlaceholder("remove", input.rootDir);
   }
 
-  async sync(input: WorktreeSyncInput): Promise<{ skipped: true }> {
+  async sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }> {
     await this.runPlaceholder("sync", input.rootDir);
-    return { skipped: true as const };
+    return { skipped: true };
   }
 
   async prune(input: WorktreePruneInput): Promise<void> {
