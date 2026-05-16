@@ -1217,6 +1217,21 @@ export interface MergeDetails {
   resolutionMethod?: "ai" | "auto" | "mixed" | "theirs" | "ours" | "abort";
   attemptsMade?: 1 | 2 | 3;
   autoResolvedCount?: number;
+  /**
+   * FN-4811 follow-up: persisted record of a done-task finalize-integrity warning.
+   * When set, the periodic integrity sweep skips re-emitting the same warning across
+   * engine restarts — the in-memory `finalizeUnprovenWarned` Set is volatile and would
+   * otherwise spam the log every time the sweep ran on a fresh process.
+   *
+   * `warnedAt` is the ISO timestamp of the first warning; `reason` is the classifier
+   * reason (e.g. "missing-evidence", "foreign-start-point", "no-owned-commit-foreign-deltas").
+   * Clear this field when the task evidence is later proven (e.g., via
+   * `task:integrity-reconcile-modified-files` repair path).
+   */
+  integrityWarning?: {
+    warnedAt: string;
+    reason: string;
+  };
 }
 
 /** Represents an agent's checkout lease on a task. */

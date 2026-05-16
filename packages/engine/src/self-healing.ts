@@ -2241,13 +2241,33 @@ export class SelfHealingManager {
         const classification = await classifyOwnedLandedEvidenceForSelfHealing(this.options.rootDir, task, ahead.baseRef);
 
         if (classification.kind === "unproven") {
-          if (!this.finalizeUnprovenWarned.has(task.id)) {
+          // FN-4811 follow-up: dedupe across engine restarts. The in-memory Set only
+          // dedupes within one process; persist the first-warning state on
+          // mergeDetails.integrityWarning so subsequent sweep runs (after restart) skip
+          // re-emitting an identical log entry.
+          const alreadyWarned =
+            this.finalizeUnprovenWarned.has(task.id) ||
+            (task.mergeDetails?.integrityWarning?.reason === classification.reason);
+          if (!alreadyWarned) {
             this.finalizeUnprovenWarned.add(task.id);
             await this.store.logEntry(
               task.id,
               `Finalize blocked: unproven ownership evidence (${classification.reason}); no owned landed commit was found — auto-retrying via todo requeue`,
               JSON.stringify(classification.details, null, 2),
             );
+            await this.store.updateTask(task.id, {
+              mergeDetails: {
+                ...(task.mergeDetails || {}),
+                integrityWarning: {
+                  warnedAt: new Date().toISOString(),
+                  reason: classification.reason,
+                },
+              },
+            });
+          } else {
+            // Hydrate the in-memory dedup Set from the persisted record so subsequent
+            // checks in this process don't have to re-query the task.
+            this.finalizeUnprovenWarned.add(task.id);
           }
           await this.recordIntegrityAudit(task.id, "task:finalize-unproven-blocked", {
             reason: classification.reason,
@@ -2388,13 +2408,28 @@ export class SelfHealingManager {
           continue;
         }
 
-        if (!this.finalizeUnprovenWarned.has(task.id)) {
+        // FN-4811 follow-up: dedupe across engine restarts (see matching block above).
+        const alreadyWarned =
+          this.finalizeUnprovenWarned.has(task.id) ||
+          (task.mergeDetails?.integrityWarning?.reason === classification.reason);
+        if (!alreadyWarned) {
           this.finalizeUnprovenWarned.add(task.id);
           await this.store.logEntry(
             task.id,
             `Integrity warning: done-task finalize evidence is unproven (${classification.reason})`,
             JSON.stringify(classification.details, null, 2),
           );
+          await this.store.updateTask(task.id, {
+            mergeDetails: {
+              ...(task.mergeDetails || {}),
+              integrityWarning: {
+                warnedAt: new Date().toISOString(),
+                reason: classification.reason,
+              },
+            },
+          });
+        } else {
+          this.finalizeUnprovenWarned.add(task.id);
         }
         await this.recordIntegrityAudit(task.id, "task:integrity-warning", {
           reason: classification.reason,
