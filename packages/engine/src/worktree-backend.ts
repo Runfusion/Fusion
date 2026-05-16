@@ -116,6 +116,14 @@ function getErrorExitCode(error: unknown): number | null {
   return null;
 }
 
+function parseWorktreePathsFromPorcelain(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length).trim())
+    .filter(Boolean);
+}
+
 export class NativeWorktreeBackend implements WorktreeBackend {
   readonly kind: WorktreeBackendKind = "native";
 
@@ -289,39 +297,80 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
   }
 
   async create(input: WorktreeCreateInput): Promise<WorktreeCreateResult> {
-    // worktrunk mapping: `wt switch --create <branch> [startPoint]`.
-    // NOTE: Worktrunk computes the worktree path via its own template; this
-    // backend currently assumes that template aligns with Fusion's configured
-    // worktree path resolution so callers can keep using `input.worktreePath`.
-    const args = ["switch", "--create", input.branch];
+    const args = ["switch", "--create", input.branch, "--no-hooks", "--no-cd"];
     if (input.startPoint) args.push("--base", input.startPoint);
     await this.runWorktrunk(args, { cwd: input.rootDir, operation: "create" });
-    return { path: input.worktreePath, branch: input.branch };
+
+    const { stdout } = await execAsync("git worktree list --porcelain", {
+      cwd: input.rootDir,
+      encoding: "utf-8",
+      timeout: WORKTRUNK_TIMEOUTS_MS.layout,
+      maxBuffer: MAX_BUFFER,
+    });
+    const paths = parseWorktreePathsFromPorcelain(stdout);
+    const resolved = paths.find((path) => path.endsWith(input.branch) || path === input.worktreePath) ?? input.worktreePath;
+    return { path: resolved, branch: input.branch };
   }
 
   async remove(input: WorktreeRemoveInput): Promise<void> {
-    // worktrunk mapping: `wt remove <branch>` from repo root.
-    await this.runWorktrunk(["remove", "--foreground", input.branch ?? input.worktreePath], {
+    const target = input.branch ?? input.worktreePath;
+    try {
+      await this.runWorktrunk(["remove", "--foreground", target], {
+        cwd: input.rootDir,
+        operation: "remove",
+      });
+    } catch (error) {
+      if (
+        error instanceof WorktrunkOperationError &&
+        error.code === "worktrunk_operation_failed" &&
+        /(not managed|not found|already removed)/i.test(error.stderr ?? "")
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async sync(input: WorktreeSyncInput): Promise<{ skipped: boolean }> {
+    try {
+      await execAsync(`git fetch origin ${quoteShellArg(input.branch)}`, {
+        cwd: input.worktreePath,
+        encoding: "utf-8",
+        timeout: WORKTRUNK_TIMEOUTS_MS.sync,
+        maxBuffer: MAX_BUFFER,
+      });
+      await execAsync(`git rebase ${quoteShellArg(input.branch)}`, {
+        cwd: input.worktreePath,
+        encoding: "utf-8",
+        timeout: WORKTRUNK_TIMEOUTS_MS.sync,
+        maxBuffer: MAX_BUFFER,
+      });
+      return { skipped: false };
+    } catch (error) {
+      const stderr = getErrorStderr(error) ?? String(error);
+      if (/conflict|could not apply|resolve all conflicts/i.test(stderr)) {
+        throw new WorktrunkOperationError({
+          operation: "sync",
+          code: "worktrunk_sync_conflict",
+          stderr,
+          exitCode: getErrorExitCode(error),
+        });
+      }
+      throw new WorktrunkOperationError({
+        operation: "sync",
+        code: "worktrunk_operation_failed",
+        stderr,
+        exitCode: getErrorExitCode(error),
+      });
+    }
+  }
+
+  async prune(input: WorktreePruneInput): Promise<void> {
+    await execAsync("git worktree prune", {
       cwd: input.rootDir,
-      operation: "remove",
-    });
-  }
-
-  async sync(_input: WorktreeSyncInput): Promise<{ skipped: boolean }> {
-    throw new WorktrunkOperationError({
-      operation: "sync",
-      code: "worktrunk_unsupported_operation",
-      stderr: "worktrunk sync operation is not mapped by this backend",
-      exitCode: null,
-    });
-  }
-
-  async prune(_input: WorktreePruneInput): Promise<void> {
-    throw new WorktrunkOperationError({
-      operation: "prune",
-      code: "worktrunk_unsupported_operation",
-      stderr: "worktrunk prune operation is not mapped by this backend",
-      exitCode: null,
+      encoding: "utf-8",
+      timeout: WORKTRUNK_TIMEOUTS_MS.prune,
+      maxBuffer: MAX_BUFFER,
     });
   }
 }
