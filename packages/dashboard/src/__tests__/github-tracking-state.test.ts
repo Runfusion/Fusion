@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { decideIssueAction, GitHubTrackingStateService } from "../github-tracking-state.js";
 
-const { mockSetIssueState, mockDeleteIssue } = vi.hoisted(() => ({
+const { mockSetIssueState, mockDeleteIssue, mockGetIssue } = vi.hoisted(() => ({
   mockSetIssueState: vi.fn(),
   mockDeleteIssue: vi.fn(),
+  mockGetIssue: vi.fn(),
 }));
 
 const { mockResolveGithubTrackingAuth } = vi.hoisted(() => ({
@@ -16,6 +17,7 @@ vi.mock("../github.js", () => ({
   GitHubClient: vi.fn().mockImplementation(() => ({
     setIssueState: (...args: unknown[]) => mockSetIssueState(...args),
     deleteIssue: (...args: unknown[]) => mockDeleteIssue(...args),
+    getIssue: (...args: unknown[]) => mockGetIssue(...args),
   })),
 }));
 
@@ -92,6 +94,7 @@ describe("GitHubTrackingStateService", () => {
     vi.clearAllMocks();
     store = new MockStore();
     mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    mockGetIssue.mockResolvedValue({ state: "open" });
     service = new GitHubTrackingStateService(store as unknown as TaskStore);
   });
 
@@ -234,6 +237,28 @@ describe("GitHubTrackingStateService", () => {
     expect(mockSetIssueState).toHaveBeenCalledTimes(2);
   });
 
+  it("retries once for transient close failures", async () => {
+    service.start();
+    mockSetIssueState.mockRejectedValueOnce(new Error("ECONNRESET"));
+    mockSetIssueState.mockResolvedValueOnce(undefined);
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "done" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(mockSetIssueState).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats already-closed issue as success", async () => {
+    service.start();
+    mockGetIssue.mockResolvedValueOnce({ state: "closed" });
+
+    store.emit("task:moved", { task: createTask(), from: "todo", to: "done" });
+    await flushAsync();
+
+    expect(mockSetIssueState).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Linked GitHub tracking issue already closed", "owner/repo#42");
+  });
+
   it("swallows reopen failures", async () => {
     service.start();
     mockSetIssueState.mockRejectedValueOnce(new Error("reopen failed"));
@@ -266,7 +291,7 @@ describe("GitHubTrackingStateService", () => {
     expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
   });
 
-  it("emits close then reopen in order", async () => {
+  it("emits close and reopen updates", async () => {
     service.start();
 
     store.emit("task:moved", { task: createTask(), from: "triage", to: "done" });
@@ -274,8 +299,8 @@ describe("GitHubTrackingStateService", () => {
     await flushAsync();
 
     expect(mockSetIssueState).toHaveBeenCalledTimes(2);
-    expect(mockSetIssueState).toHaveBeenNthCalledWith(1, "owner", "repo", 42, "closed", "completed");
-    expect(mockSetIssueState).toHaveBeenNthCalledWith(2, "owner", "repo", 42, "open", "reopened");
+    expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
+    expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "open", "reopened");
   });
 
   describe("on task:deleted", () => {

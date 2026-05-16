@@ -2,6 +2,8 @@ import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStor
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 
+const TRANSIENT_RETRY_DELAY_MS = 25;
+
 type Column = "triage" | "todo" | "in-progress" | "in-review" | "done" | "archived";
 
 interface TaskMovedEvent {
@@ -36,6 +38,24 @@ export function decideIssueAction(
   }
 
   return null;
+}
+
+function isTransientGitHubError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  const status = (error as Error & { status?: number; statusCode?: number }).status
+    ?? (error as Error & { status?: number; statusCode?: number }).statusCode;
+
+  return (typeof status === "number" && status >= 500)
+    || message.includes("econn")
+    || message.includes("timed out")
+    || message.includes("socket hang up");
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class GitHubTrackingStateService {
@@ -131,13 +151,34 @@ export class GitHubTrackingStateService {
         ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
         : new GitHubClient({ forceMode: "gh-cli" });
 
-      await client.setIssueState(
-        owner,
-        repo,
-        number,
-        decision.action === "close" ? "closed" : "open",
-        decision.stateReason,
-      );
+      if (decision.action === "close") {
+        const existing = await client.getIssue(owner, repo, number);
+        if (existing?.state === "closed") {
+          await store.logEntry(event.task.id, "Linked GitHub tracking issue already closed", `${owner}/${repo}#${number}`);
+          return;
+        }
+      }
+
+      const updateIssueState = async () => {
+        await client.setIssueState(
+          owner,
+          repo,
+          number,
+          decision.action === "close" ? "closed" : "open",
+          decision.stateReason,
+        );
+      };
+
+      try {
+        await updateIssueState();
+      } catch (error) {
+        if (!isTransientGitHubError(error)) {
+          throw error;
+        }
+        await delay(TRANSIENT_RETRY_DELAY_MS);
+        await updateIssueState();
+      }
+
       await store.logEntry(
         event.task.id,
         decision.action === "close"
