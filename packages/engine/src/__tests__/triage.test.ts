@@ -1899,8 +1899,9 @@ describe("taskCreate tool model inheritance", () => {
       const toolNames = tools.map((t: any) => t.name);
       expect(toolNames).toContain("fn_task_create");
       expect(toolNames).toContain("fn_task_list");
+      expect(toolNames).toContain("fn_task_search");
       expect(toolNames).toContain("fn_task_get");
-      expect(tools).toHaveLength(3);
+      expect(tools).toHaveLength(4);
     });
 
     it("fn_task_create tool succeeds and tracks created subtask", async () => {
@@ -4009,6 +4010,7 @@ describe("TriageProcessor delegation tools", () => {
   function createMockStore() {
     return {
       listTasks: vi.fn().mockResolvedValue([]),
+      searchTasks: vi.fn().mockResolvedValue([]),
       getTask: vi.fn().mockResolvedValue({
         id: "FN-TRIAGE",
         title: "Test",
@@ -4037,7 +4039,7 @@ describe("TriageProcessor delegation tools", () => {
     };
   }
 
-  it("createTriageTools returns fn_task_list, fn_task_get, fn_task_create (no delegation tools — those are in customTools)", () => {
+  it("createTriageTools returns fn_task_list, fn_task_search, fn_task_get, fn_task_create (no delegation tools — those are in customTools)", () => {
     const store = createMockStore();
     const processor = new TriageProcessor(store as any, "/tmp/root");
 
@@ -4049,11 +4051,91 @@ describe("TriageProcessor delegation tools", () => {
 
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("fn_task_list");
+    expect(toolNames).toContain("fn_task_search");
     expect(toolNames).toContain("fn_task_get");
     expect(toolNames).toContain("fn_task_create");
     // fn_list_agents and fn_delegate_task are added in customTools, not createTriageTools
     expect(toolNames).not.toContain("fn_list_agents");
     expect(toolNames).not.toContain("fn_delegate_task");
+  });
+
+  it("fn_task_search includes done tasks by default and searches with includeArchived true", async () => {
+    const store = createMockStore();
+    (store.searchTasks as any).mockResolvedValue([
+      {
+        id: "FN-100",
+        title: "Fix rebase merge truncation",
+        description: "desc",
+        column: "done",
+        dependencies: [],
+      },
+      {
+        id: "FN-101",
+        title: "Another task",
+        description: "desc",
+        column: "todo",
+        dependencies: ["FN-100"],
+      },
+    ]);
+    const processor = new TriageProcessor(store as any, "/tmp/root");
+    const tools = (processor as any).createTriageTools({
+      parentTaskId: "FN-TRIAGE",
+      allowTaskCreate: true,
+      createdSubtasksRef: { current: [] },
+    });
+
+    const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
+    const result = await taskSearchTool.execute("call-1", { query: "rebase diff" });
+    const text = result.content[0].text;
+
+    expect(store.searchTasks).toHaveBeenCalledWith("rebase diff", {
+      slim: true,
+      includeArchived: true,
+      limit: 20,
+    });
+    expect(text).toContain('Search results for "rebase diff" (2):');
+    expect(text).toContain("FN-100 (done): Fix rebase merge truncation");
+  });
+
+  it("fn_task_search filters done tasks when includeDone is false", async () => {
+    const store = createMockStore();
+    (store.searchTasks as any).mockResolvedValue([
+      { id: "FN-100", title: "Done task", description: "desc", column: "done", dependencies: [] },
+      { id: "FN-101", title: "Todo task", description: "desc", column: "todo", dependencies: [] },
+    ]);
+    const processor = new TriageProcessor(store as any, "/tmp/root");
+    const tools = (processor as any).createTriageTools({
+      parentTaskId: "FN-TRIAGE",
+      allowTaskCreate: true,
+      createdSubtasksRef: { current: [] },
+    });
+
+    const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
+    const result = await taskSearchTool.execute("call-1", {
+      query: "task",
+      includeDone: false,
+    });
+    const text = result.content[0].text;
+
+    expect(store.searchTasks).toHaveBeenCalled();
+    expect(text).toContain("FN-101 (todo): Todo task");
+    expect(text).not.toContain("FN-100 (done): Done task");
+  });
+
+  it("fn_task_search returns no-match text when search results are empty", async () => {
+    const store = createMockStore();
+    (store.searchTasks as any).mockResolvedValue([]);
+    const processor = new TriageProcessor(store as any, "/tmp/root");
+    const tools = (processor as any).createTriageTools({
+      parentTaskId: "FN-TRIAGE",
+      allowTaskCreate: true,
+      createdSubtasksRef: { current: [] },
+    });
+
+    const taskSearchTool = tools.find((t: any) => t.name === "fn_task_search");
+    const result = await taskSearchTool.execute("call-1", { query: "missing" });
+
+    expect(result.content[0].text).toBe("No tasks matched.");
   });
 
   it("delegation tools are accessible when agentStore is available", () => {
