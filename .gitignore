@@ -8,7 +8,16 @@ node_modules/
 
 # Build output
 dist/
+dist-electron/
 *.tsbuildinfo
+
+# Desktop packaging artifacts
+*.dmg
+*.dmg.blockmap
+*.zip.blockmap
+*.AppImage
+*.exe
+*.nupkg
 
 # Coverage reports
 coverage/
