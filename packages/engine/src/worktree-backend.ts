@@ -133,12 +133,14 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
         error && typeof error === "object" && "stderr" in error
           ? String((error as { stderr?: unknown }).stderr ?? "")
           : "";
-      const exitCode =
-        error && typeof error === "object" && "code" in error
-          ? (typeof (error as { code?: unknown }).code === "number"
-              ? (error as { code: number }).code
-              : null)
-          : null;
+      const execError = error && typeof error === "object" ? (error as Record<string, unknown>) : null;
+      const exitCode = execError
+        ? typeof execError.status === "number"
+          ? execError.status
+          : typeof execError.code === "number"
+            ? execError.code
+            : null
+        : null;
       this.deps.logger?.warn?.(
         `[worktree-backend] worktrunk create failed: ${stderr || String(error)}`,
       );

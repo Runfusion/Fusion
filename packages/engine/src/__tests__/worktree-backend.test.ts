@@ -117,7 +117,7 @@ describe("WorktrunkWorktreeBackend", () => {
   });
 
   it("throws operation failed with stderr/exitCode", async () => {
-    execMock.mockRejectedValue({ stderr: "bad news", code: 7 });
+    execMock.mockRejectedValue({ stderr: "bad news", status: 7 });
     const backend = new WorktrunkWorktreeBackend({ binaryPath: "worktrunk" });
 
     await expect(

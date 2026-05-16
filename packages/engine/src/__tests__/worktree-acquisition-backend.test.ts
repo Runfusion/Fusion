@@ -99,7 +99,7 @@ describe("acquireTaskWorktree backend wiring", () => {
   });
 
   it("throws worktrunk_operation_failed and preserves stderr", async () => {
-    execMock.mockRejectedValue({ stderr: "worktrunk exploded", code: 17 });
+    execMock.mockRejectedValue({ stderr: "worktrunk exploded", status: 17 });
 
     await expect(
       acquireTaskWorktree({
