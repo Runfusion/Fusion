@@ -114,6 +114,7 @@ Fusion automatically falls back to ntfy's JSON publish format when a notificatio
 | `researchGlobalUserAgent` | `string` | `"FusionResearchBot/1.0"` | User-Agent header for HTTP requests made by research providers. |
 | `experimentalFeatures` | `Record<string, boolean>` | `{}` | Global-scoped experimental feature flags. Includes `experimentalFeatures.researchView`, which gates all Research surfaces and tools (dashboard view, engine task-session tools, and CLI `fn_research_*` tools), and `experimentalFeatures.evalsView`, which gates Evals surfaces (dashboard view, Settings → Scheduled Evals, and scheduled-eval cron execution). |
 | `remoteAccess` | `RemoteAccessSettings` | `{ activeProvider: null, providers: {...}, tokenStrategy: {...}, lifecycle: {...} }` | Global-scoped remote access provider + token strategy configuration used by Remote Access routes and tunnel lifecycle controls. |
+| `worktrunk` | `WorktrunkSettings` | `{ enabled: false, binaryPath: undefined, installedBinaryPath: undefined, onFailure: "fail" }` | Global defaults for worktrunk integration. Merged field-by-field with project `worktrunk` values; project values override global values for matching fields. |
 
 ### Notification providers (pluggable)
 
@@ -258,48 +259,12 @@ Sandbox backend precedence is:
 | `executorAllowSiblingBranchRename` | `boolean` | `false` | Opt back into the legacy executor behavior that silently allocates sibling branches (`fusion/<task-id>-2`, `-2-2`, …) when the canonical task branch is already checked out elsewhere. When disabled (default), branch conflicts fail loudly, leave the task in `todo` with `status: "failed"`, and expose stranded commits for explicit recovery via [`fn task branch-recovery`](./cli-reference.md#fn-task). See [Task Management → Branch conflict recovery](./task-management.md#branch-conflict-recovery). The dashboard Settings modal exposes the same toggle with warning copy because this legacy mode is discouraged. |
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for new worktree directories. |
 
-#### Worktrunk integration
-
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `worktrunk.enabled` | `boolean` | `false` | Enables `WorktreeBackend` selection in `packages/engine/src/worktree-backend.ts`. Tier: global + project, merged field-by-field with project overrides. |
-| `worktrunk.binaryPath` | `string \| undefined` | `undefined` | Optional absolute `worktrunk` binary path passed to the worktrunk backend. Tier: global + project with field-level precedence (project overrides only this field when set). |
-| `worktrunk.onFailure` | `"fail" \| "fallback-native"` | `"fail"` | Failure disposition for delegated worktrunk operations (`create`, `sync`, `prune`, `remove`, install/resolve): `fail` (default) pauses the task with `pausedReason: "worktrunk_operation_failed"`, persists `task.worktrunkFailure`, and emits `worktree:worktrunk-failure`; `fallback-native` emits `worktree:worktrunk-fallback-native`, sends a one-shot per-task fallback alert guarded by `task.worktrunkFallbackAlertedAt`, then retries against native `git worktree`. |
-| `worktrunk.installedBinaryPath` | `string \| undefined` | `undefined` | Optional cached probe path (`~/.fusion/bin/worktrunk` by default). Managed by the engine; not intended for manual editing. Tier: global + project with field-level precedence. |
-
-### Worktrunk install approval
-
-When dashboard-triggered worktrunk installation is needed (for example after enabling `worktrunk.enabled` and no binary is detected), Fusion creates a `network_api` approval request with action `worktrunk_install`.
-
-- Dashboard clients can probe current install state via `GET /api/worktrunk/status`.
-- Dashboard clients request install approval via `POST /api/worktrunk/install-request`.
-- Pending/decided requests appear in the Approvals mailbox view and approval banner counts.
-- Approving the request through `POST /api/approvals/:id/decision` runs the installer with a pre-approved gate path; denying leaves the binary uninstalled.
-
-### Worktrunk auto-install flow
-
-> ⚠️ Auto-install is currently disabled (FN-4706, following the FN-4704/FN-4705 source-availability investigation).
-
-When `worktrunk.enabled` is `true`, Fusion resolves the `worktrunk` binary via the following ordered chain:
-
-1. **`worktrunk.binaryPath` override** — if set and the binary passes `--version` probe.
-2. **`$PATH` lookup** — `which worktrunk` (POSIX) or `where worktrunk` (Windows).
-3. **Cached install probe path** — `~/.fusion/bin/worktrunk` (or `worktrunk.installedBinaryPath` when set).
-4. **Auto-install denied** — `installWorktrunk()` emits `binary:install-denied` with `reason: "auto-install-disabled"` and throws `WorktrunkInstallFailedError`.
-
-Because the installer path is disabled, users opting into `worktrunk.enabled` must install `worktrunk` manually and either:
-
-- set `worktrunk.binaryPath`, or
-- ensure `worktrunk` is discoverable on `$PATH`.
-
-If resolution fails, `worktrunk.onFailure` governs disposition (`fail` → pause task, `fallback-native` → native fallback with one-shot alert), and unresolved tasks surface `WorktrunkBinaryUnavailableError` context through the existing FN-4625 failure-handling pipeline.
-
-| Key | Type | Default | Description |
-| --- | --- | --- | --- |
-| `worktreesDir` | `string` | `undefined` | Optional container directory for task worktrees. Supports absolute paths, project-relative paths, `~` expansion, and `{repo}` token substitution (project root basename). Defaults to `<projectRoot>/.worktrees` when unset and applies to newly-created worktrees/pool scans. When `worktrunk.enabled` is `true`, worktrunk's managed layout takes precedence and the custom directory is ignored until worktrunk is disabled. |
-| `worktrunk.enabled` | `boolean` | `false` | Enables worktrunk-backed worktree operations (create/sync/prune/remove) via the WorktreeBackend abstraction. |
-| `worktrunk.binaryPath` | `string` | `undefined` | Optional absolute path override for the `worktrunk` binary. Leave unset to auto-resolve from `~/.fusion/bin/worktrunk` and `$PATH`. |
-| `worktrunk.onFailure` | `"fail" \| "fallback-native"` | `"fail"` | Behavior when a worktrunk operation fails: `fail` pauses the task with a surfaced error, `fallback-native` switches to Fusion's native worktree backend and emits a one-shot alert. |
+| `worktreesDir` | `string` | `undefined` | Optional container directory for task worktrees. Supports absolute paths, project-relative paths, `~` expansion, and `{repo}` token substitution (project root basename). Defaults to `<projectRoot>/.worktrees` when unset and applies to newly-created worktrees/pool scans. When `worktrunk.enabled` is `true`, worktrunk-managed layout takes precedence and this directory is ignored until worktrunk is disabled. |
+| `worktrunk.enabled` | `boolean` | `false` | Enables the worktrunk backend (`WorktreeBackend`) for worktree operations. When enabled, worktrunk layout supersedes Fusion’s `.worktrees/<task-id>` and `worktreesDir` behavior. This key exists in global and project settings; project values override global values for matching fields. See [Architecture: WorktreeBackend abstraction](./architecture.md#worktreebackend-abstraction). |
+| `worktrunk.binaryPath` | `string \| undefined` | `undefined` | Optional absolute override for the `worktrunk` binary. When unset, Fusion resolves from `$PATH`/cached install path and then falls through to the auto-install flow on first use (guarded by `network_api` action-gate approval for `worktrunk_install`; currently disabled by default). Setting this key bypasses auto-install resolution. |
+| `worktrunk.onFailure` | `"fail" \| "fallback-native"` | `"fail"` | Failure behavior for delegated worktrunk operations. `"fail"` (default) pauses the task with `pausedReason: "worktrunk_operation_failed"` and surfaces worktrunk stderr via `task.worktrunkFailure`. `"fallback-native"` switches to the native backend and emits a one-shot dashboard fallback alert per task (`task.worktrunkFallbackAlertedAt`). |
 | `taskPrefix` | `string` | `"FN"` | Prefix used for newly generated task IDs. |
 | `includeTaskIdInCommit` | `boolean` | `true` | Include task ID as commit scope in generated commits. |
 | `commitAuthorEnabled` | `boolean` | `true` | Apply explicit `--author` attribution on Fusion commits. |
