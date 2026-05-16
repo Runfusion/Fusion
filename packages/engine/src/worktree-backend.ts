@@ -585,11 +585,17 @@ export async function removeWorktree(input: {
 
 export function resolveWorktreeBackend(
   settings: Partial<Settings>,
-  deps: { logger?: { log: (m: string) => void; warn: (m: string) => void } } = {},
+  deps: {
+    logger?: { log: (m: string) => void; warn: (m: string) => void };
+    binaryPathResolver?: () => Promise<string | null>;
+  } = {},
 ): WorktreeBackend {
   if (settings.worktrunk?.enabled === true) {
+    // FN-4681 wires binaryPathResolver from worktree-acquisition; precedence is literal setting > resolver > null.
+    const configuredBinaryPath = settings.worktrunk.binaryPath?.trim() ?? "";
+    const binaryPath = configuredBinaryPath ? configuredBinaryPath : deps.binaryPathResolver ?? null;
     return new WorktrunkWorktreeBackend({
-      binaryPath: settings.worktrunk.binaryPath ?? null,
+      binaryPath,
       logger: deps.logger,
     });
   }

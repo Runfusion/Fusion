@@ -608,6 +608,57 @@ describe("resolveWorktreeBackend", () => {
     expect(resolveWorktreeBackend({ worktrunk: { enabled: true, binaryPath: "worktrunk" } as any }).kind).toBe("worktrunk");
   });
 
+  it("uses literal binaryPath over resolver when both are provided", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    const resolver = vi.fn().mockResolvedValue("/resolved");
+    const backend = resolveWorktreeBackend(
+      { worktrunk: { enabled: true, binaryPath: " /literal " } as any },
+      { binaryPathResolver: resolver },
+    );
+
+    await (backend as WorktrunkWorktreeBackend).remove({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      branch: "fusion/fn-1",
+    });
+
+    expect(resolver).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith(
+      '"/literal" "remove" "--foreground" "fusion/fn-1"',
+      expect.objectContaining({ cwd: "/repo" }),
+    );
+  });
+
+  it("wires binaryPathResolver when literal is absent", async () => {
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+    const resolver = vi.fn().mockResolvedValue("/resolved");
+    const backend = resolveWorktreeBackend({ worktrunk: { enabled: true } as any }, { binaryPathResolver: resolver });
+
+    await (backend as WorktrunkWorktreeBackend).remove({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      branch: "fusion/fn-1",
+    });
+
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(execMock).toHaveBeenCalledWith(
+      '"/resolved" "remove" "--foreground" "fusion/fn-1"',
+      expect.objectContaining({ cwd: "/repo" }),
+    );
+  });
+
+  it("preserves null behavior when literal and resolver are absent", async () => {
+    const backend = resolveWorktreeBackend({ worktrunk: { enabled: true } as any });
+
+    await expect(
+      (backend as WorktrunkWorktreeBackend).remove({
+        rootDir: "/repo",
+        worktreePath: "/repo/.worktrees/fn-1",
+        branch: "fusion/fn-1",
+      }),
+    ).rejects.toMatchObject({ code: "worktrunk_binary_missing", operation: "remove" });
+  });
+
   it("uses worktrunk when enabled without binaryPath", () => {
     expect(resolveWorktreeBackend({ worktrunk: { enabled: true } as any }).kind).toBe("worktrunk");
   });
