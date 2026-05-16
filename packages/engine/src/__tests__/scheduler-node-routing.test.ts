@@ -27,6 +27,11 @@ vi.mock("../logger.js", () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+  createLogger: () => ({
+    log: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 function createMockTask(overrides: Partial<Task> = {}): Task {

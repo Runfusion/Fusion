@@ -8,9 +8,6 @@ import { worktreePoolLog } from "./logger.js";
 import { isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree-paths.js";
 import {
   resolveWorktrunkBinary,
-  WorktrunkBinaryUnavailableError,
-  WorktrunkInstallDeniedError,
-  WorktrunkInstallFailedError,
 } from "./worktrunk-installer.js";
 
 export {
