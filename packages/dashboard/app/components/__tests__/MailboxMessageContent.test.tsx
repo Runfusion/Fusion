@@ -1,5 +1,7 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import { MailboxMessageContent } from "../MailboxMessageContent";
 
 afterEach(() => {
@@ -84,5 +86,44 @@ describe("MailboxMessageContent", () => {
   it("forwards testId to the wrapper", () => {
     render(<MailboxMessageContent content="x" testId="mailbox-message-body" />);
     expect(screen.getByTestId("mailbox-message-body")).toBeInTheDocument();
+  });
+
+  describe("file-path linkification", () => {
+    it("renders prose file paths as clickable file-path-link buttons", () => {
+      render(
+        <FileBrowserProvider openFile={vi.fn()}>
+          <MailboxMessageContent content="See packages/dashboard/app/App.tsx for context." />
+        </FileBrowserProvider>,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "packages/dashboard/app/App.tsx" }),
+      ).toHaveClass("file-path-link");
+    });
+
+    it("opens the linked file with parsed line and column", async () => {
+      const openFile = vi.fn();
+      render(
+        <FileBrowserProvider openFile={openFile}>
+          <MailboxMessageContent content="Review packages/dashboard/app/App.tsx:12:3 before shipping." />
+        </FileBrowserProvider>,
+      );
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "packages/dashboard/app/App.tsx:12:3" }),
+      );
+
+      expect(openFile).toHaveBeenCalledWith("packages/dashboard/app/App.tsx", { line: 12, col: 3 });
+    });
+
+    it("does not linkify paths inside fenced code blocks", () => {
+      render(
+        <FileBrowserProvider openFile={vi.fn()}>
+          <MailboxMessageContent content={"```\npackages/dashboard/app/App.tsx:44\n```"} />
+        </FileBrowserProvider>,
+      );
+
+      expect(screen.queryByRole("button", { name: "packages/dashboard/app/App.tsx:44" })).toBeNull();
+    });
   });
 });

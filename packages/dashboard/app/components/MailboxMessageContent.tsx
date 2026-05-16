@@ -2,8 +2,11 @@ import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import { linkifyReactChildren } from "../utils/filePathLinkify";
 
 const mailboxMarkdownComponents: Components = {
+  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
+  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
   pre: ({ children, ...props }) => (
     <pre {...props} className="mailbox-markdown-pre">
       {children}
