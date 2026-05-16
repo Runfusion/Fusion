@@ -36,6 +36,7 @@ const EXPECTED_APP_LEVEL_VIEWS = new Set([
   "ReliabilityView",
   "DevServerView",
   "TodoView",
+  "GoalsView",
   "StashRecoveryView",
 ]);
 

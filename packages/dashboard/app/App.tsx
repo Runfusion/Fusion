@@ -105,7 +105,7 @@ const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ d
 const ReliabilityView = lazy(() => import("./components/ReliabilityView").then((m) => ({ default: m.ReliabilityView })));
 const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
 const _TodoView = lazy(() => import("./components/TodoView").then((m) => ({ default: m.TodoView })));
-const _GoalsView = lazy(() => import("./components/GoalsView").then((m) => ({ default: m.GoalsView })));
+const GoalsView = lazy(() => import("./components/GoalsView").then((m) => ({ default: m.GoalsView })));
 const StashRecoveryView = lazy(() => import("./components/StashRecoveryView").then((m) => ({ default: m.StashRecoveryView })));
 
 // Warm lazy chunks during browser idle so first navigation to each view is
