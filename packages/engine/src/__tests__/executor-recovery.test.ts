@@ -1269,6 +1269,98 @@ describe("Per-task thinkingLevel override", () => {
   });
 });
 
+describe("TaskExecutor no-fn_task_done reclaim retry handling", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(true);
+  });
+
+  it("silently requeues to todo when worktree/branch is reclaimed mid-retry", async () => {
+    const store = createMockStore();
+    const onError = vi.fn();
+    const taskState: any = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      paused: false,
+      worktree: "/tmp/test/.worktrees/swift-falcon",
+      branch: "fusion/fn-001",
+      baseCommitSha: "abc123",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      taskDoneRetryCount: 0,
+    };
+
+    store.getTask.mockImplementation(async () => ({ ...taskState }));
+    store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      Object.assign(taskState, patch);
+      return { ...taskState };
+    });
+    store.moveTask.mockImplementation(async (_id: string, column: string) => {
+      taskState.column = column;
+      return { ...taskState };
+    });
+
+    let promptCalls = 0;
+    mockedCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(async () => {
+          promptCalls += 1;
+          if (promptCalls === 1) {
+            taskState.column = "todo";
+          }
+        }),
+        dispose: vi.fn(),
+        sessionManager: {
+          getLeafId: vi.fn(),
+          branchWithSummary: vi.fn(),
+        },
+        navigateTree: vi.fn(),
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(taskState.column).toBe("todo");
+    expect(taskState.status).not.toBe("failed");
+    expect(taskState.error ?? null).toBeNull();
+    expect(taskState.taskDoneRetryCount).toBe(0);
+    expect(onError).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Worktree/branch reclaimed mid-retry — requeued to todo (engine self-heal, no failure)",
+      undefined,
+      expect.objectContaining({ agentId: "executor" }),
+    );
+    expect(taskState.worktree).toBeNull();
+    expect(taskState.branch).toBeNull();
+    expect(taskState.baseCommitSha).toBeNull();
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "failed" }),
+    );
+  });
+});
+
 // ── Invalid transition error handling tests ─────────────────────────
 
 describe("Invalid transition error handling", () => {
