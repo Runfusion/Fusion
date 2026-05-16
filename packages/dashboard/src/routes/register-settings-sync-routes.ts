@@ -182,6 +182,11 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       };
 
       if (conflictResolution === "manual") {
+        // Manual conflict resolution is a read-only inspection probe — do NOT call
+        // central.updateSettingsSyncState(...) here. SettingsSyncState.lastSyncedAt
+        // represents the last successful settings sync; mutating it on a diff probe
+        // would corrupt the contract and lie to sync-status. Parallel to
+        // GET /nodes/:id/settings/sync-status, which is also read-only.
         // Get local settings for diff comparison
         const localProjectSettings = await store.getSettingsByScope();
         const localGlobalSettings = await store.getGlobalSettingsStore().getSettings();
