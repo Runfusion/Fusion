@@ -48,6 +48,7 @@ import {
   createTaskDocumentWriteTool,
   createTaskLogTool,
 } from "./agent-tools.js";
+import { removeWorktree } from "./worktree-backend.js";
 
 const stepExecLog = createLogger("step-session-executor");
 
@@ -752,8 +753,11 @@ export class StepSessionExecutor {
     for (const [stepIdx, worktreePath] of this.parallelWorktrees) {
       try {
         if (existsSync(worktreePath)) {
-          await execAsync(`git worktree remove "${worktreePath}" --force`, {
-            cwd: this.options.rootDir,
+          await removeWorktree({
+            worktreePath,
+            rootDir: this.options.rootDir,
+            settings: this.options.settings,
+            taskId: this.options.taskDetail.id,
           });
         } else {
           stepExecLog.warn(`Parallel worktree for step ${stepIdx} already removed: ${worktreePath}`);
@@ -1244,8 +1248,11 @@ Follow instructions precisely and avoid unrelated changes.`,
       if (worktreePath !== this.options.worktreePath) {
         try {
           if (existsSync(worktreePath)) {
-            await execAsync(`git worktree remove "${worktreePath}" --force`, {
-              cwd: this.options.rootDir,
+            await removeWorktree({
+              worktreePath,
+              rootDir: this.options.rootDir,
+              settings: this.options.settings,
+              taskId: this.options.taskDetail.id,
             });
           }
           const branch = this.parallelBranches.get(stepIdx);
