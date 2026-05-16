@@ -1038,21 +1038,60 @@ export class Scheduler {
             policy: settings.unavailableNodePolicy,
           });
 
-          if (!decision.allowed) {
-            if (!this.wasNodeBlocked.has(task.id)) {
-              this.wasNodeBlocked.add(task.id);
-              schedulerLog.log(`Task ${task.id} dispatch blocked — ${decision.reason}`);
-              await this.store.logEntry(task.id, decision.reason);
+          if (freshTask.checkoutNodeId) {
+            const ownerNodeHealth = this.options.nodeHealthMonitor.getNodeHealth(freshTask.checkoutNodeId);
+            if (ownerNodeHealth === "offline" || ownerNodeHealth === "error") {
+              const handoffDecision = decideOwningNodeHandoff({
+                task: freshTask,
+                ownerNodeId: freshTask.checkoutNodeId,
+                ownerNodeHealth,
+                localNodeId: settings.defaultNodeId ?? "local",
+                handoffPolicy: settings.owningNodeHandoffPolicy,
+              });
+
+              if (handoffDecision.action === "park") {
+                if (!this.wasNodeBlocked.has(task.id)) {
+                  this.wasNodeBlocked.add(task.id);
+                  schedulerLog.log(`Task ${task.id} dispatch blocked — ${handoffDecision.reason}`);
+                  await this.store.logEntry(task.id, handoffDecision.reason);
+                }
+                continue;
+              }
+
+              if (handoffDecision.action === "reassign-local") {
+                effectiveNode = { nodeId: undefined, source: "local" };
+                await this.store.logEntry(task.id, `Owner handoff: ${handoffDecision.reason}`);
+              } else if (handoffDecision.action === "reassign-any") {
+                skipUnavailableNodePolicy = true;
+                await this.store.logEntry(task.id, `Owner handoff: ${handoffDecision.reason}`);
+              }
             }
-            continue;
           }
 
-          this.wasNodeBlocked.delete(task.id);
+          if (!skipUnavailableNodePolicy) {
+            const nodeHealth = this.options.nodeHealthMonitor.getNodeHealth(effectiveNode.nodeId);
+            const decision = applyUnavailableNodePolicy({
+              effectiveNode,
+              nodeHealth,
+              policy: settings.unavailableNodePolicy,
+            });
 
-          if (decision.fallbackToLocal) {
-            schedulerLog.log(`Task ${task.id} falling back to local — ${decision.reason}`);
-            await this.store.logEntry(task.id, decision.reason);
-            effectiveNode = { nodeId: undefined, source: "local" };
+            if (!decision.allowed) {
+              if (!this.wasNodeBlocked.has(task.id)) {
+                this.wasNodeBlocked.add(task.id);
+                schedulerLog.log(`Task ${task.id} dispatch blocked — ${decision.reason}`);
+                await this.store.logEntry(task.id, decision.reason);
+              }
+              continue;
+            }
+
+            this.wasNodeBlocked.delete(task.id);
+
+            if (decision.fallbackToLocal) {
+              schedulerLog.log(`Task ${task.id} falling back to local — ${decision.reason}`);
+              await this.store.logEntry(task.id, decision.reason);
+              effectiveNode = { nodeId: undefined, source: "local" };
+            }
           }
         }
 
