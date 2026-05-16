@@ -630,7 +630,7 @@ export class StepSessionExecutor {
   private maxParallel: number;
 
   private registerActiveStepSession(stepIndex: number, handle: SessionHandle, worktreePath: string): void {
-    this.registerActiveStepSession(stepIndex, handle, worktreePath);
+    this.activeSessions.set(stepIndex, handle);
     activeSessionRegistry.registerPath(worktreePath, {
       taskId: this.options.taskDetail.id,
       kind: "step-session",
@@ -639,12 +639,12 @@ export class StepSessionExecutor {
   }
 
   private unregisterActiveStepSession(stepIndex: number, worktreePath: string): void {
-    this.unregisterActiveStepSession(stepIndex, worktreePath);
+    this.activeSessions.delete(stepIndex);
     activeSessionRegistry.unregisterPath(worktreePath);
   }
 
   private registerParallelWorktree(stepIndex: number, worktreePath: string): void {
-    this.registerParallelWorktree(stepIndex, worktreePath);
+    this.parallelWorktrees.set(stepIndex, worktreePath);
     activeSessionRegistry.registerPath(worktreePath, {
       taskId: this.options.taskDetail.id,
       kind: "step-session-parallel",
