@@ -23,6 +23,7 @@ describe("acquireTaskWorktree backend wiring", () => {
   const task = { id: "FN-1", title: "Task", description: "Desc", branch: null, worktree: null } as any;
   const store = {
     updateTask: vi.fn().mockResolvedValue(undefined),
+    pauseTask: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
   } as any;
 
@@ -30,6 +31,7 @@ describe("acquireTaskWorktree backend wiring", () => {
     execMock.mockReset();
     store.updateTask.mockClear();
     store.logEntry.mockClear();
+    store.pauseTask.mockClear();
   });
 
   it("uses native backend by default and emits no worktrunk audit", async () => {

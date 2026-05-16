@@ -264,7 +264,7 @@ Sandbox backend precedence is:
 | --- | --- | --- | --- |
 | `worktrunk.enabled` | `boolean` | `false` | Enables `WorktreeBackend` selection in `packages/engine/src/worktree-backend.ts`. Tier: global + project, merged field-by-field with project overrides. |
 | `worktrunk.binaryPath` | `string \| undefined` | `undefined` | Optional absolute `worktrunk` binary path passed to the worktrunk backend. Tier: global + project with field-level precedence (project overrides only this field when set). |
-| `worktrunk.onFailure` | `"fail" \| "fallback-native"` | `"fail"` | Worktrunk failure mode in `packages/engine/src/worktree-backend.ts`: `fail` rethrows the backend error; `fallback-native` retries once with native `git worktree` and records fallback audit telemetry. Binary auto-install (FN-4624), dashboard settings UX (FN-4627), and CLI setter wiring (FN-4629) are downstream follow-ups. |
+| `worktrunk.onFailure` | `"fail" \| "fallback-native"` | `"fail"` | Failure disposition for delegated worktrunk operations (`create`, `sync`, `prune`, `remove`, install/resolve): `fail` (default) pauses the task with `pausedReason: "worktrunk_operation_failed"`, persists `task.worktrunkFailure`, and emits `worktree:worktrunk-failure`; `fallback-native` emits `worktree:worktrunk-fallback-native`, sends a one-shot per-task fallback alert guarded by `task.worktrunkFallbackAlertedAt`, then retries against native `git worktree`. |
 | `worktrunk.installedBinaryPath` | `string \| undefined` | `undefined` | Cached install path set by the auto-install flow. Managed by the engine; not intended for manual editing. Tier: global + project with field-level precedence. |
 
 ### Worktrunk auto-install flow
@@ -286,7 +286,13 @@ Fusion maintains a pinned release version (`WORKTRUNK_PINNED_RELEASE` in `packag
 
 If the platform has no pinned release asset, or if the release download/verification fails, Fusion falls back to `cargo install worktrunk --version <pinned>` when `cargo` is on `$PATH`. After cargo install, Fusion probes `$PATH` and `~/.cargo/bin/worktrunk` for the installed binary.
 
-If both release and cargo paths fail, the install throws `WorktrunkInstallFailedError` and the worktrunk backend's `onFailure` setting determines whether the task pauses or falls back to native worktree operations.
+If both release and cargo paths fail, the install throws `WorktrunkInstallFailedError` and `worktrunk.onFailure` governs disposition (`fail` → pause task, `fallback-native` → native fallback with one-shot alert).
+
+When fail-hard disposition is used, the task carries structured diagnostics:
+
+- `pausedReason: "worktrunk_operation_failed"`
+- `worktrunkFailure: { op, stderr, exitCode, attemptedAt }`
+- `worktrunkFallbackAlertedAt` remains unset unless `fallback-native` is used
 
 #### `network_api` action-gate
 

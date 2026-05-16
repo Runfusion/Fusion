@@ -21,6 +21,7 @@ import {
 } from "./worktrunk-installer.js";
 import {
   handleWorktrunkOperationFailure,
+  type WorktreeOperationResult,
   type WorktrunkOpName,
 } from "./worktrunk-failure-handler.js";
 import type { RunAuditor } from "./run-audit.js";
@@ -125,7 +126,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       runContext,
       runAudit: audit,
       notify: ({ op: failedOp, stderr: failedStderr }) => notifyFallback(failedOp, failedStderr),
-      nativeFallback: nativeFallback as (() => Promise<any>) | undefined,
+      nativeFallback: nativeFallback as (() => Promise<WorktreeOperationResult>) | undefined,
     });
     if (disposition.kind === "fallback-native") {
       return disposition.result;
