@@ -2256,6 +2256,31 @@ export class SelfHealingManager {
           continue;
         }
 
+        if (classification.kind === "no-changes-finalized") {
+          await this.store.updateTask(task.id, {
+            modifiedFiles: [],
+            mergeDetails: {
+              ...(task.mergeDetails || {}),
+              mergeConfirmed: true,
+              noOpMerge: true,
+              noOpReason: "verification-only finalize: no branch and no owned commits",
+              landedFiles: [],
+            },
+          });
+          await this.recordIntegrityAudit(task.id, "task:integrity-reconcile-modified-files", {
+            reason: "verification-only-finalize",
+            clearedCount: task.modifiedFiles?.length ?? 0,
+            baseRef: classification.baseRef,
+            details: classification.details,
+          });
+          await this.store.logEntry(
+            task.id,
+            "Finalize: verification-only task — no owned commits and no branch; cleared stale modifiedFiles snapshot",
+          );
+          reconciled++;
+          continue;
+        }
+
         if (!this.finalizeUnprovenWarned.has(task.id)) {
           this.finalizeUnprovenWarned.add(task.id);
           await this.store.logEntry(
