@@ -29,6 +29,7 @@ vi.mock("../pi.js", () => ({
   }),
 }));
 import { createFnAgent } from "../pi.js";
+import { heartbeatLog } from "../logger.js";
 import { acquireTaskWorktree } from "../worktree-acquisition.js";
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedAcquireTaskWorktree = vi.mocked(acquireTaskWorktree);
@@ -1576,6 +1577,7 @@ describe("executeHeartbeat", () => {
 
   describe("executeHeartbeat - message processing", () => {
     it("keeps message_received wake reason when wake-on-message inbox is non-empty", async () => {
+      vi.mocked(heartbeatLog.log).mockClear();
       const store = createStoreWithAgentForExec();
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
@@ -1613,6 +1615,13 @@ describe("executeHeartbeat", () => {
         agentId: "agent-001",
         source: "on_demand",
         triggerDetail: "wake-on-message",
+        wakeMessage: {
+          messageId: "msg-1",
+          fromType: "user",
+          fromId: "user-1",
+          forced: false,
+          createdAt: "2024-01-15T10:30:00.000Z",
+        },
       });
 
       expect(result.status).toBe("completed");
@@ -1632,14 +1641,19 @@ describe("executeHeartbeat", () => {
       // assigned task (paperclip-parity).
       expect(executionPrompt).toContain("## Wake Delta");
       expect(executionPrompt).toContain("wake reason: message_received");
-      expect(executionPrompt).toContain("- pending messages: 2");
       expect(executionPrompt).toContain("- inbox snapshot: 2 message(s)");
+      expect(executionPrompt).toContain("wake trigger source: message msg-1 from user:user-1, still unread");
+      expect(executionPrompt).toContain("- pending messages: 2");
       expect(executionPrompt).toContain("autonomous heartbeat run");
       expect(executionPrompt).toContain(HEARTBEAT_PROCEDURE);
       expect(executionPrompt).toContain("do not re-read PROMPT.md to advance it");
+      expect(vi.mocked(heartbeatLog.log)).toHaveBeenCalledWith(
+        expect.stringMatching(/\[wake-trigger-diagnostics\].*messageId=msg-1.*inboxUnreadCount=2.*wakeMessageStillUnread=true/),
+      );
     });
 
     it("annotates wake-on-message with already-consumed reason when inbox snapshot is empty", async () => {
+      vi.mocked(heartbeatLog.log).mockClear();
       const store = createStoreWithAgentForExec();
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
@@ -1661,18 +1675,30 @@ describe("executeHeartbeat", () => {
         agentId: "agent-001",
         source: "on_demand",
         triggerDetail: "wake-on-message",
+        wakeMessage: {
+          messageId: "msg-empty-1",
+          fromType: "user",
+          fromId: "user-empty",
+          forced: false,
+          createdAt: "2024-01-15T12:00:00.000Z",
+        },
       });
 
       expect(result.status).toBe("completed");
       const promptCalls = mockSession.prompt.mock.calls;
       const executionPrompt = promptCalls[promptCalls.length - 1][0];
       expect(executionPrompt).toContain("wake reason: message_received_already_consumed");
-      expect(executionPrompt).toContain("- pending messages: 0");
       expect(executionPrompt).toContain("- inbox snapshot: empty (already consumed)");
+      expect(executionPrompt).toContain("wake trigger source: message msg-empty-1 from user:user-empty, already consumed at snapshot");
+      expect(executionPrompt).toContain("- pending messages: 0");
       expect(executionPrompt).not.toContain("wake reason: message_received\n");
+      expect(vi.mocked(heartbeatLog.log)).toHaveBeenCalledWith(
+        expect.stringMatching(/\[wake-trigger-diagnostics\].*messageId=msg-empty-1.*inboxUnreadCount=0.*wakeMessageStillUnread=false/),
+      );
     });
 
     it("annotates forced wake-on-message with urgent already-consumed reason when inbox snapshot is empty", async () => {
+      vi.mocked(heartbeatLog.log).mockClear();
       const store = createStoreWithAgentForExec();
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
@@ -1694,14 +1720,25 @@ describe("executeHeartbeat", () => {
         agentId: "agent-001",
         source: "on_demand",
         triggerDetail: "wake-on-message-forced",
+        wakeMessage: {
+          messageId: "msg-forced-1",
+          fromType: "user",
+          fromId: "user-forced",
+          forced: true,
+          createdAt: "2024-01-15T13:00:00.000Z",
+        },
       });
 
       expect(result.status).toBe("completed");
       const promptCalls = mockSession.prompt.mock.calls;
       const executionPrompt = promptCalls[promptCalls.length - 1][0];
       expect(executionPrompt).toContain("wake reason: message_received_urgent_already_consumed");
-      expect(executionPrompt).toContain("- pending messages: 0");
       expect(executionPrompt).toContain("- inbox snapshot: empty (already consumed)");
+      expect(executionPrompt).toContain("wake trigger source: message msg-forced-1 from user:user-forced (forced), already consumed at snapshot");
+      expect(executionPrompt).toContain("- pending messages: 0");
+      expect(vi.mocked(heartbeatLog.log)).toHaveBeenCalledWith(
+        expect.stringMatching(/\[wake-trigger-diagnostics\].*messageId=msg-forced-1.*forced=true.*inboxUnreadCount=0.*wakeMessageStillUnread=false/),
+      );
     });
 
     it("substitutes per-agent heartbeatProcedurePath content for the default procedure", async () => {
