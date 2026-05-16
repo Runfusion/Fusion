@@ -11,6 +11,7 @@ import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { derivePerTaskBranch, resolveBranchAssignmentContext, resolveBranchSelection } from "./branch-selection.js";
+import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 
 interface PlanningSubtaskRouteDeps {
   store: TaskStore;
@@ -23,6 +24,15 @@ interface PlanningSubtaskRouteDeps {
 export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: PlanningSubtaskRouteDeps): void {
   const { router, getProjectContext, planningLogger, rethrowAsApiError } = ctx;
   const { aiSessionStore, checkSessionLock, parseLastEventId, replayBufferedSSE } = deps;
+
+  const dispatchTrackingIssueCreation = (scopedStore: TaskStore, task: Awaited<ReturnType<TaskStore["createTask"]>>): void => {
+    void createTrackingIssueForTask(scopedStore, task, { logger: planningLogger }).catch((error: unknown) => {
+      planningLogger.warn("Background planning tracking-issue creation failed", {
+        taskId: task.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
 
   // ── Planning Mode Routes ──────────────────────────────────────────────────
   // UTILITY PATH: Planning and subtask session routes are on a separate control-plane lane.
@@ -1077,7 +1087,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         source: { sourceType: "api" },
         branch: resolvedBranch,
         baseBranch: resolvedBaseBranch,
-      });
+      }, { invokeTaskCreatedHook: false });
 
       // Update task with suggested size if provided
       if (summary.suggestedSize) {
@@ -1095,6 +1105,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       res.status(201).json(task);
+      dispatchTrackingIssueCreation(scopedStore, task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -1270,7 +1281,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           branch: taskBranch,
           baseBranch: resolvedBaseBranch,
           branchContext: planningBranchContext,
-        });
+        }, { invokeTaskCreatedHook: false });
 
         tempIdToTaskId.set(item.id, task.id);
         createdTasks.push(task);
@@ -1298,6 +1309,9 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       cleanupSession(planningSessionId);
 
       res.status(201).json({ tasks: createdTasks });
+      for (const task of createdTasks) {
+        dispatchTrackingIssueCreation(scopedStore, task);
+      }
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
