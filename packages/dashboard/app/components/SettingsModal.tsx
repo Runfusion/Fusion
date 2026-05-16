@@ -4130,6 +4130,46 @@ export function SettingsModal({
                 <small className="settings-muted">Install the worktrunk binary below to enable this integration.</small>
               )}
             </div>
+            <div className="form-group" data-testid="worktrunk-install-affordance">
+              {worktrunkInstall.status === "installed" && (
+                <small className="settings-muted">
+                  worktrunk {worktrunkInstall.version ?? ""} installed at {worktrunkInstall.installPath ?? "~/.fusion/bin/worktrunk"}
+                </small>
+              )}
+              {(worktrunkInstall.status === "missing" || worktrunkInstall.status === "installing") && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void worktrunkInstall.requestInstall()}
+                    disabled={worktrunkInstall.requesting || worktrunkInstall.status === "installing"}
+                  >
+                    Install worktrunk binary
+                  </button>
+                  <small className="settings-muted">Enable worktrunk and request approval to install the pinned release.</small>
+                </>
+              )}
+              {worktrunkInstall.status === "pending-approval" && (
+                <>
+                  <small className="settings-muted">Awaiting approval — open Approvals to continue.</small>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => onOpenApprovals?.(worktrunkInstall.pendingApprovalId)}
+                  >
+                    Open Approvals
+                  </button>
+                </>
+              )}
+              {(worktrunkInstall.status === "denied" || worktrunkInstall.status === "failed") && (
+                <>
+                  <small style={{ color: "var(--color-error)" }}>{worktrunkInstall.error ?? "Worktrunk install failed."}</small>
+                  <button type="button" className="btn btn-secondary" onClick={() => void worktrunkInstall.requestInstall()}>
+                    Try again
+                  </button>
+                </>
+              )}
+            </div>
             <div className="form-group">
               <label htmlFor="worktrunkBinaryPath">Worktrunk binary path</label>
               <input
@@ -4176,46 +4216,6 @@ export function SettingsModal({
               <small>
                 <code>fail</code> stops on worktrunk errors for explicit operator recovery; <code>fallback-native</code> keeps progress moving by switching to Fusion&apos;s built-in worktree backend.
               </small>
-            </div>
-            <div className="form-group" data-testid="worktrunk-install-affordance">
-              {worktrunkInstall.status === "installed" && (
-                <small className="settings-muted">
-                  worktrunk {worktrunkInstall.version ?? ""} installed at {worktrunkInstall.installPath ?? "~/.fusion/bin/worktrunk"}
-                </small>
-              )}
-              {(worktrunkInstall.status === "missing" || worktrunkInstall.status === "installing") && (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => void worktrunkInstall.requestInstall()}
-                    disabled={worktrunkInstall.requesting || worktrunkInstall.status === "installing"}
-                  >
-                    Install worktrunk binary
-                  </button>
-                  <small className="settings-muted">Enable worktrunk and request approval to install the pinned release.</small>
-                </>
-              )}
-              {worktrunkInstall.status === "pending-approval" && (
-                <>
-                  <small className="settings-muted">Awaiting approval — open Approvals to continue.</small>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => onOpenApprovals?.(worktrunkInstall.pendingApprovalId)}
-                  >
-                    Open Approvals
-                  </button>
-                </>
-              )}
-              {(worktrunkInstall.status === "denied" || worktrunkInstall.status === "failed") && (
-                <>
-                  <small style={{ color: "var(--color-error)" }}>{worktrunkInstall.error ?? "Worktrunk install failed."}</small>
-                  <button type="button" className="btn btn-secondary" onClick={() => void worktrunkInstall.requestInstall()}>
-                    Try again
-                  </button>
-                </>
-              )}
             </div>
           </>
         );
