@@ -189,6 +189,10 @@ const defaultSettings = {
   executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   worktreesDir: "",
+  worktrunk: {
+    enabled: false,
+    onFailure: "fail",
+  },
   includeTaskIdInCommit: true,
   worktreeInitCommand: "",
   ntfyEnabled: false,
@@ -2091,6 +2095,70 @@ describe("SettingsModal", () => {
       // Clear the input - the input should be empty, not show "0"
       await userEvent.clear(input);
       expect(input.value).toBe("");
+    });
+  });
+
+  describe("Worktrunk integration", () => {
+    it("renders worktrunk controls in the Worktrees section only", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+
+      expect(screen.queryByLabelText("Enable worktrunk integration")).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByText("Worktrees"));
+
+      expect(screen.getByRole("heading", { name: "Worktrunk integration" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Enable worktrunk integration")).toBeInTheDocument();
+      expect(screen.getByLabelText("Worktrunk binary path")).toBeInTheDocument();
+      expect(screen.getByLabelText("Worktrunk failure behavior")).toBeInTheDocument();
+    });
+
+    it("toggles disabled states and shows the worktreesDir precedence hint", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await userEvent.click(screen.getByText("Worktrees"));
+
+      const enabledToggle = screen.getByLabelText("Enable worktrunk integration") as HTMLInputElement;
+      const binaryPathInput = screen.getByLabelText("Worktrunk binary path") as HTMLInputElement;
+      const onFailureSelect = screen.getByLabelText("Worktrunk failure behavior") as HTMLSelectElement;
+      const worktreesDirInput = screen.getByLabelText("Worktrees Directory") as HTMLInputElement;
+      const browseButton = screen.getByRole("button", { name: "Browse worktrees directory" });
+
+      expect(enabledToggle.checked).toBe(false);
+      expect(binaryPathInput).toBeDisabled();
+      expect(onFailureSelect).toBeDisabled();
+      expect(worktreesDirInput).not.toBeDisabled();
+      expect(browseButton).not.toBeDisabled();
+
+      await userEvent.click(enabledToggle);
+
+      expect(binaryPathInput).not.toBeDisabled();
+      expect(onFailureSelect).not.toBeDisabled();
+      expect(worktreesDirInput).toBeDisabled();
+      expect(browseButton).toBeDisabled();
+      expect(screen.getByText(/Disabled because Worktrunk integration is enabled/i)).toBeInTheDocument();
+    });
+
+    it.each(["fail", "fallback-native"])("saves worktrunk payload and defaults onFailure on first enable (%s)", async (onFailure) => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await userEvent.click(screen.getByText("Worktrees"));
+
+      const enabledToggle = screen.getByLabelText("Enable worktrunk integration");
+      await userEvent.click(enabledToggle);
+
+      const onFailureSelect = screen.getByLabelText("Worktrunk failure behavior") as HTMLSelectElement;
+      if (onFailure !== "fail") {
+        await userEvent.selectOptions(onFailureSelect, onFailure);
+      }
+
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      const payload = mockUpdateSettings.mock.calls[0][0] as {
+        worktrunk?: { enabled?: boolean; onFailure?: string; binaryPath?: string };
+      };
+      expect(payload.worktrunk).toMatchObject({ enabled: true, onFailure });
     });
   });
 
