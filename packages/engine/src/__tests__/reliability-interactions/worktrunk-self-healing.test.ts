@@ -1,13 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { RunAuditEventInput, Settings, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
 
-const { execSpy, resolveBackendSpy, scanIdleSpy, readdirSpy, inspectBranchConflictSpy } = vi.hoisted(() => ({
+const { execSpy, execSyncSpy, resolveBackendSpy, scanIdleSpy, scanOrphanedBranchesSpy, readdirSpy, existsSpy, inspectBranchConflictSpy } = vi.hoisted(() => ({
   execSpy: vi.fn(),
+  execSyncSpy: vi.fn(),
   resolveBackendSpy: vi.fn(),
   scanIdleSpy: vi.fn(),
+  scanOrphanedBranchesSpy: vi.fn().mockResolvedValue([]),
   readdirSpy: vi.fn(),
+  existsSpy: vi.fn().mockReturnValue(false),
   inspectBranchConflictSpy: vi.fn(),
 }));
 
@@ -16,6 +19,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   return {
     ...actual,
     exec: execSpy,
+    execSync: execSyncSpy,
   };
 });
 
@@ -24,6 +28,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...actual,
     readdirSync: readdirSpy,
+    existsSync: existsSpy,
   };
 });
 
@@ -33,6 +38,7 @@ vi.mock("../../worktree-pool.js", async () => {
     ...actual,
     resolveWorktreeBackend: resolveBackendSpy,
     scanIdleWorktrees: scanIdleSpy,
+    scanOrphanedBranches: scanOrphanedBranchesSpy,
     isUsableTaskWorktree: vi.fn().mockResolvedValue(true),
   };
 });
@@ -82,6 +88,18 @@ function wireExecSuccess() {
 }
 
 describe("reliability interactions: worktrunk x self-healing", () => {
+  beforeEach(() => {
+    execSpy.mockReset();
+    execSyncSpy.mockReset();
+    resolveBackendSpy.mockReset();
+    scanIdleSpy.mockReset();
+    scanOrphanedBranchesSpy.mockReset();
+    scanOrphanedBranchesSpy.mockResolvedValue([]);
+    readdirSpy.mockReset();
+    existsSpy.mockReset();
+    existsSpy.mockReturnValue(false);
+    inspectBranchConflictSpy.mockReset();
+  });
   it("periodic maintenance delegates prune to worktrunk and skips native git prune", async () => {
     wireExecSuccess();
     const prune = vi.fn().mockResolvedValue(undefined);
@@ -139,14 +157,10 @@ describe("reliability interactions: worktrunk x self-healing", () => {
     wireExecSuccess();
     resolveBackendSpy.mockReturnValue({ kind: "worktrunk", prune: vi.fn() });
     inspectBranchConflictSpy.mockResolvedValue({
-      status: "tip-already-merged",
-      branch: "fusion/fn-4628",
-      tip: "abc",
-      mergeTarget: "main",
-      uniqueCommitCount: 0,
-      uniqueCommits: [],
-      branchExists: true,
-      strategyUsed: "tip-reachability",
+      kind: "tip-already-merged",
+      livePath: null,
+      tipSha: "abc123456789",
+      integrationRef: "main",
     });
 
     const store = makeStore({ maintenanceIntervalMs: 0, worktrunk: { enabled: true, onFailure: "fail" } } as Settings);
@@ -159,17 +173,41 @@ describe("reliability interactions: worktrunk x self-healing", () => {
     expect(nativePruneCalled).toBe(true);
   });
 
-  it("uses merged store settings where worktrunk is enabled", async () => {
+  it("cleanupOrphans defers in both recycleWorktrees branches when worktrunk is enabled", async () => {
     wireExecSuccess();
     const prune = vi.fn().mockResolvedValue(undefined);
     resolveBackendSpy.mockReturnValue({ kind: "worktrunk", prune });
 
-    const store = makeStore({ maintenanceIntervalMs: 0, worktrunk: { enabled: true, onFailure: "fail" } } as Settings);
-    const manager = new SelfHealingManager(store, { rootDir: "/tmp/project" });
+    const settingsVariants = [
+      { maintenanceIntervalMs: 0, recycleWorktrees: false, worktrunk: { enabled: true, onFailure: "fail" } },
+      { maintenanceIntervalMs: 0, recycleWorktrees: true, worktrunk: { enabled: true, onFailure: "fail" } },
+    ] as Settings[];
 
-    await (manager as any).pruneWorktrees();
+    for (const settings of settingsVariants) {
+      const store = makeStore(settings);
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/project" });
+      await (manager as any).cleanupOrphans();
+    }
+
+    expect(prune).toHaveBeenCalledTimes(2);
+    expect(scanIdleSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses merged store settings for worktrunk-on vs off behavior", async () => {
+    wireExecSuccess();
+    const prune = vi.fn().mockResolvedValue(undefined);
+    resolveBackendSpy.mockReturnValue({ kind: "worktrunk", prune });
+
+    const worktrunkOnStore = makeStore({ maintenanceIntervalMs: 0, worktrunk: { enabled: true, onFailure: "fail" } } as Settings);
+    const onManager = new SelfHealingManager(worktrunkOnStore, { rootDir: "/tmp/project" });
+    await (onManager as any).pruneWorktrees();
+
+    const worktrunkOffStore = makeStore({ maintenanceIntervalMs: 0, worktrunk: { enabled: false, onFailure: "fail" } } as Settings);
+    const offManager = new SelfHealingManager(worktrunkOffStore, { rootDir: "/tmp/project" });
+    await (offManager as any).pruneWorktrees();
 
     expect(prune).toHaveBeenCalledTimes(1);
-    expect(store.getSettings).toHaveBeenCalled();
+    const nativePruneCalls = execSpy.mock.calls.filter((call) => String(call[0]).includes("git worktree prune"));
+    expect(nativePruneCalls.length).toBeGreaterThanOrEqual(1);
   });
 });
