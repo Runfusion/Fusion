@@ -178,6 +178,34 @@ describe("ChatStore — rooms (FN-3805..FN-3811 contract)", () => {
       expect(store.getRoomMessages(roomB.id).map((m) => m.content)).toEqual(["b1"]);
       expect(store.getMessages(session.id).map((m) => m.content)).toEqual(["direct"]);
     });
+
+    it("clears all room messages while preserving room and advancing updatedAt", async () => {
+      const room = store.createRoom({ name: "clear-room" });
+      store.addRoomMessage(room.id, { role: "user", content: "one" });
+      store.addRoomMessage(room.id, { role: "assistant", content: "two" });
+      const before = store.getRoom(room.id)?.updatedAt;
+
+      await new Promise((r) => setTimeout(r, 5));
+      const deletedCount = store.clearRoomMessages(room.id);
+
+      expect(deletedCount).toBe(2);
+      expect(store.getRoomMessages(room.id)).toEqual([]);
+      expect(store.getRoom(room.id)).toBeDefined();
+      expect(store.getRoom(room.id)?.updatedAt > (before ?? "")).toBe(true);
+    });
+
+    it("returns 0 when clearing a non-existent room", () => {
+      expect(store.clearRoomMessages("room-missing")).toBe(0);
+    });
+
+    it("returns 0 and does not emit clear event when clearing an empty room", () => {
+      const room = store.createRoom({ name: "empty-clear" });
+      const cleared = vi.fn();
+      store.on("chat:room:messages:cleared", cleared);
+
+      expect(store.clearRoomMessages(room.id)).toBe(0);
+      expect(cleared).not.toHaveBeenCalled();
+    });
   });
 
   describe("Room events", () => {
@@ -190,6 +218,7 @@ describe("ChatStore — rooms (FN-3805..FN-3811 contract)", () => {
       const messageAdded = vi.fn();
       const messageUpdated = vi.fn();
       const messageDeleted = vi.fn();
+      const messagesCleared = vi.fn();
 
       store.on("chat:room:created", created);
       store.on("chat:room:updated", updated);
@@ -199,6 +228,7 @@ describe("ChatStore — rooms (FN-3805..FN-3811 contract)", () => {
       store.on("chat:room:message:added", messageAdded);
       store.on("chat:room:message:updated", messageUpdated);
       store.on("chat:room:message:deleted", messageDeleted);
+      store.on("chat:room:messages:cleared", messagesCleared);
 
       const room = store.createRoom({ name: "events", createdBy: "agent-1", memberAgentIds: ["agent-1"] });
       const roomUpdate = store.updateRoom(room.id, { description: "updated" });
@@ -212,8 +242,11 @@ describe("ChatStore — rooms (FN-3805..FN-3811 contract)", () => {
         size: 1,
         createdAt: new Date().toISOString(),
       });
+      store.addRoomMessage(room.id, { role: "user", content: "clear-me" });
       store.removeRoomMember(room.id, "agent-2");
       store.deleteRoomMessage(message.id);
+      const clearedCount = store.clearRoomMessages(room.id);
+      const refreshedRoom = store.getRoom(room.id);
       store.deleteRoom(room.id);
 
       expect(created).toHaveBeenCalledWith(room);
@@ -223,6 +256,10 @@ describe("ChatStore — rooms (FN-3805..FN-3811 contract)", () => {
       expect(messageUpdated).toHaveBeenCalledWith(msgUpdate);
       expect(memberRemoved).toHaveBeenCalledWith({ roomId: room.id, agentId: "agent-2" });
       expect(messageDeleted).toHaveBeenCalledWith(message.id);
+      expect(clearedCount).toBe(1);
+      expect(messagesCleared).toHaveBeenCalledTimes(1);
+      expect(messagesCleared).toHaveBeenCalledWith({ roomId: room.id, deletedCount: 1 });
+      expect(updated).toHaveBeenCalledWith(refreshedRoom);
       expect(deleted).toHaveBeenCalledWith(room.id);
     });
   });

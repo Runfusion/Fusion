@@ -67,6 +67,8 @@ export interface ChatStoreEvents {
   "chat:room:message:updated": [message: ChatRoomMessage];
   /** Emitted when a room message is deleted */
   "chat:room:message:deleted": [messageId: string];
+  /** Emitted when all room messages are cleared */
+  "chat:room:messages:cleared": [payload: { roomId: string; deletedCount: number }];
 }
 
 // ── Row Interfaces ───────────────────────────────────────────────────
@@ -1025,6 +1027,31 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     }
 
     return true;
+  }
+
+  clearRoomMessages(roomId: string): number {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return 0;
+    }
+
+    const deleted = this.db.prepare("DELETE FROM chat_room_messages WHERE roomId = ?").run(roomId);
+    const deletedCount = deleted.changes;
+    if (deletedCount <= 0) {
+      return 0;
+    }
+
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE chat_rooms SET updatedAt = ? WHERE id = ?").run(now, roomId);
+    this.db.bumpLastModified();
+    this.emit("chat:room:messages:cleared", { roomId, deletedCount });
+
+    const updatedRoom = this.getRoom(roomId);
+    if (updatedRoom) {
+      this.emit("chat:room:updated", updatedRoom);
+    }
+
+    return deletedCount;
   }
 
   addRoomMessageAttachment(roomId: string, messageId: string, attachment: ChatAttachment): ChatRoomMessage {
