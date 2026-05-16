@@ -289,6 +289,13 @@ describe("bin command routing and fallbacks", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("fn — AI-orchestrated task board"));
   });
 
+  it("includes worktrunk settings keys in help output", async () => {
+    await expect(runBin(["--help"])).rejects.toThrow("process.exit:0");
+    const output = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(output).toContain("worktrunk.enabled");
+    expect(output).toContain("worktrunk.onFailure");
+  });
+
   it("launches dashboard when no args are provided", async () => {
     commandMocks.runDashboard.mockResolvedValue({ dispose: vi.fn() });
     await runBin([]);
