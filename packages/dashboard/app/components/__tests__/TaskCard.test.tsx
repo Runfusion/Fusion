@@ -2049,13 +2049,54 @@ describe("TaskCard", () => {
       expect(footerRow).not.toHaveClass("card-footer-row--chip-far-right");
     });
 
-    it("does not force far-right modifier for in-review cards without files changed", () => {
+    it.each([
+      {
+        name: "retry summary present",
+        taskPatch: { retrySummary: { total: 2 } as any },
+        expectedLeftChipSelector: ".card-retry-badge",
+      },
+      {
+        name: "time indicator present",
+        taskPatch: {
+          executionStartedAt: "2026-04-25T12:00:00.000Z",
+          updatedAt: "2026-04-25T12:12:00.000Z",
+        },
+        expectedLeftChipSelector: ".card-time-indicator",
+      },
+    ])("keeps tracking chip visually last on in-review when files changed is absent: $name", ({ taskPatch, expectedLeftChipSelector }) => {
       const { container } = render(
         <TaskCard
           task={makeTask({
             column: "in-review",
             sourceType: "dashboard_ui",
             modifiedFiles: [],
+            githubTracking: { issue: trackedIssue },
+            ...taskPatch,
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onOpenDetailWithTab={vi.fn()}
+        />,
+      );
+
+      const footerRow = container.querySelector(".card-footer-row");
+      const trackingChip = container.querySelector(".card-github-tracking-chip") as HTMLElement | null;
+      const leftChip = container.querySelector(expectedLeftChipSelector) as HTMLElement | null;
+      expect(footerRow).not.toBeNull();
+      expect(footerRow).toHaveClass("card-footer-row--chip-far-right");
+      expect(trackingChip).not.toBeNull();
+      expect(leftChip).not.toBeNull();
+      expect(getComputedStyle(trackingChip as HTMLElement).order).toBe("2");
+      expect(getComputedStyle(leftChip as HTMLElement).order).not.toBe("2");
+    });
+
+    it("does not force far-right modifier when in-review card has files changed", () => {
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "in-review",
+            sourceType: "dashboard_ui",
+            modifiedFiles: ["src/file.ts"],
             githubTracking: { issue: trackedIssue },
             retrySummary: { total: 2 } as any,
           })}
