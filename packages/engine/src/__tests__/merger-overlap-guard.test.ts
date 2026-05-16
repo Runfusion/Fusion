@@ -431,20 +431,26 @@ describe("aiMergeTask overlap-aware fallback integration", () => {
     ).toBe(false);
   });
 
-  it("replays FN-3936 through the merger so branch hardening survives the final squash commit", async () => {
-    commitFile(dir, "store.ts", "export function normalize(value) {\n  return value?.trim() ?? \"\";\n}\n", "feat: add store normalizer");
-    createBranchFromMain(dir, "FN-054");
-    commitFile(dir, "store.ts", "export function normalize(value) {\n  const trimmed = value?.trim() ?? \"\";\n  return trimmed.slice(0, 128);\n}\n", "feat: harden normalizer");
+  it(
+    "replays FN-3936 through the merger so branch hardening survives the final squash commit",
+    async () => {
+      commitFile(dir, "store.ts", "export function normalize(value) {\n  return value?.trim() ?? \"\";\n}\n", "feat: add store normalizer");
+      createBranchFromMain(dir, "FN-054");
+      commitFile(dir, "store.ts", "export function normalize(value) {\n  const trimmed = value?.trim() ?? \"\";\n  return trimmed.slice(0, 128);\n}\n", "feat: harden normalizer");
 
-    git(dir, "git checkout main");
-    commitFile(dir, "store.ts", "export function normalize(value) {\n  const trimmed = value?.trim() ?? \"\";\n  return trimmed.toLowerCase();\n}\n", "feat: main follow-up normalizer");
+      git(dir, "git checkout main");
+      commitFile(dir, "store.ts", "export function normalize(value) {\n  const trimmed = value?.trim() ?? \"\";\n  return trimmed.toLowerCase();\n}\n", "feat: main follow-up normalizer");
 
-    const { result } = await runOverlapMerge(dir, "FN-054");
-    const mergedStore = git(dir, "git show HEAD:store.ts");
+      const { result } = await runOverlapMerge(dir, "FN-054");
+      const mergedStore = git(dir, "git show HEAD:store.ts");
 
-    expect(result.merged).toBe(true);
-    expect(result.resolutionMethod).toBe("mixed");
-    expect(mergedStore).toContain("slice(0, 128)");
-    expect(mergedStore).not.toContain("toLowerCase");
-  });
+      expect(result.merged).toBe(true);
+      expect(result.resolutionMethod).toBe("mixed");
+      expect(mergedStore).toContain("slice(0, 128)");
+      expect(mergedStore).not.toContain("toLowerCase");
+    },
+    // FN-4807: this real-git replay can stretch under workspace contention
+    // (merge retries + agent-session fallback), so keep a bounded explicit timeout.
+    90_000,
+  );
 });
