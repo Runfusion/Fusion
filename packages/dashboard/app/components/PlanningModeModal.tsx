@@ -73,8 +73,7 @@ type ViewState =
   | { type: "summary"; session: PlanningSession; summary: PlanningSummary }
   | { type: "error"; session: PlanningSession; errorMessage: string }
   | { type: "breakdown"; sessionId: string; originalSubtasks: SubtaskItem[]; subtasks: SubtaskItem[]; dirty: boolean }
-  | { type: "loading" }
-  | { type: "creating" };
+  | { type: "loading" };
 
 const EXAMPLE_PLANS = [
   "Build a user authentication system with login and signup",
@@ -169,6 +168,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [isStartingBreakdown, setIsStartingBreakdown] = useState(false);
+  const [isCreatingFromBreakdown, setIsCreatingFromBreakdown] = useState(false);
   const [generationStartTime, setGenerationStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1554,7 +1556,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (view.type !== "summary") return;
 
     setError(null);
-    setView({ type: "loading" });
+    setIsCreatingTask(true);
 
     try {
       const completedSessionId = view.session.sessionId;
@@ -1574,7 +1576,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       handleClose();
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to create task");
-      setView({ type: "summary", session: view.session, summary: view.summary });
+    } finally {
+      setIsCreatingTask(false);
     }
   }, [broadcastCompleted, editedSummary, view, projectId, onTaskCreated, handleClose]);
 
@@ -1582,7 +1585,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (view.type !== "summary") return;
 
     setError(null);
-    setView({ type: "loading" });
+    setIsStartingBreakdown(true);
 
     try {
       const result = await startPlanningBreakdown(view.session.sessionId, editedSummary ?? undefined, projectId);
@@ -1601,7 +1604,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       });
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to start breakdown");
-      setView({ type: "summary", session: view.session, summary: view.summary });
+    } finally {
+      setIsStartingBreakdown(false);
     }
   }, [editedSummary, view, projectId]);
 
@@ -1609,7 +1613,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     if (view.type !== "breakdown") return;
 
     setError(null);
-    setView({ type: "creating" });
+    setIsCreatingFromBreakdown(true);
 
     try {
       const completedSessionId = view.sessionId;
@@ -1651,13 +1655,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       handleClose();
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to create tasks");
-      setView({
-        type: "breakdown",
-        sessionId: view.sessionId,
-        originalSubtasks: view.originalSubtasks,
-        subtasks: view.subtasks,
-        dirty: view.dirty,
-      });
+    } finally {
+      setIsCreatingFromBreakdown(false);
     }
   }, [broadcastCompleted, handleClose, view, onTasksCreated, projectId]);
 
@@ -2050,13 +2049,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             </div>
           )}
 
-          {view.type === "creating" && (
-            <div className="planning-loading">
-              <Loader2 size={40} className="spin icon-todo" />
-              <p>Creating tasks...</p>
-            </div>
-          )}
-
           {view.type === "question" && view.session.currentQuestion && (
             <div className="planning-question">
               <QuestionForm
@@ -2080,14 +2072,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               onRefine={() => {
                 void handleRefineFurther();
               }}
-              isLoading={false}
+              isLoading={isCreatingTask || isStartingBreakdown}
             />
           )}
 
           {view.type === "breakdown" && (
             <BreakdownView
               subtasks={view.subtasks}
-              isLoading={false}
+              isLoading={isCreatingFromBreakdown}
               onUpdateSubtasks={(newSubtasks) =>
                 setView({ ...view, subtasks: newSubtasks, dirty: true })
               }

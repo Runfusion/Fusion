@@ -572,6 +572,219 @@ describe("PlanningModeModal", () => {
   });
 
   describe("Resuming complete sessions", () => {
+    function createDeferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    }
+
+    it("FN-4769 shows inline Creating spinner for Create Single Task while task creation is pending", async () => {
+      const resumedSummary: PlanningSummary = {
+        title: "Resume-spinner-single-task",
+        description: "Recovered summary for spinner",
+        suggestedSize: "M",
+        suggestedDependencies: [],
+        keyDeliverables: ["Implement", "Verify"],
+      };
+      const createTaskDeferred = createDeferred<Task>();
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-spinner-single-task",
+        type: "planning",
+        status: "complete",
+        title: "Resume-spinner-single-task",
+        inputPayload: JSON.stringify({ initialPlan: "Recover and create" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(resumedSummary),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+      mockCreateTaskFromPlanning.mockReturnValueOnce(createTaskDeferred.promise);
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-spinner-single-task"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Create Single Task" })).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Single Task" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Creating..." })).toBeDefined();
+      });
+
+      createTaskDeferred.resolve({
+        id: "FN-4769",
+        title: "Created from spinner test",
+        description: "",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as Task);
+
+      await waitFor(() => {
+        expect(mockOnClose).toHaveBeenCalled();
+      });
+    });
+
+    it("FN-4769 shows inline Breaking down spinner for Break into Tasks while breakdown start is pending", async () => {
+      const resumedSummary: PlanningSummary = {
+        title: "Resume-spinner-breakdown-start",
+        description: "Recovered summary for breakdown start spinner",
+        suggestedSize: "M",
+        suggestedDependencies: [],
+        keyDeliverables: ["Implement", "Verify"],
+      };
+      const breakdownDeferred = createDeferred<{ sessionId: string; subtasks: any[] }>();
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-spinner-breakdown-start",
+        type: "planning",
+        status: "complete",
+        title: "Resume-spinner-breakdown-start",
+        inputPayload: JSON.stringify({ initialPlan: "Recover and break down" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(resumedSummary),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+      mockStartPlanningBreakdown.mockReturnValueOnce(breakdownDeferred.promise);
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-spinner-breakdown-start"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Break into Tasks" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Breaking down..." })).toBeDefined();
+      });
+
+      breakdownDeferred.resolve({
+        sessionId: "session-spinner-breakdown-start",
+        subtasks: [
+          {
+            id: "subtask-1",
+            title: "First subtask",
+            description: "First description",
+            suggestedSize: "M",
+            dependsOn: [],
+          },
+        ],
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Create Tasks" })).toBeDefined();
+      });
+    });
+
+    it("FN-4769 shows inline Creating spinner for Create Tasks while breakdown creation is pending", async () => {
+      const resumedSummary: PlanningSummary = {
+        title: "Resume-spinner-breakdown-create",
+        description: "Recovered summary for breakdown create spinner",
+        suggestedSize: "M",
+        suggestedDependencies: [],
+        keyDeliverables: ["Implement", "Verify"],
+      };
+      const createTasksDeferred = createDeferred<{ tasks: Task[] }>();
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-spinner-breakdown-create",
+        type: "planning",
+        status: "complete",
+        title: "Resume-spinner-breakdown-create",
+        inputPayload: JSON.stringify({ initialPlan: "Recover and create tasks" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(resumedSummary),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+      mockStartPlanningBreakdown.mockResolvedValueOnce({
+        sessionId: "session-spinner-breakdown-create",
+        subtasks: [
+          {
+            id: "subtask-1",
+            title: "First subtask",
+            description: "First description",
+            suggestedSize: "M",
+            dependsOn: [],
+          },
+        ],
+      });
+      mockCreateTasksFromPlanning.mockReturnValueOnce(createTasksDeferred.promise);
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-spinner-breakdown-create"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Break into Tasks" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Create Tasks" })).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Tasks" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Creating..." })).toBeDefined();
+      });
+
+      createTasksDeferred.resolve({ tasks: [] });
+
+      await waitFor(() => {
+        expect(mockOnClose).toHaveBeenCalled();
+      });
+    });
+
     it("shows summary view when resuming a complete persisted session", async () => {
       const resumedSummary: PlanningSummary = {
         title: "Resume-ready planning output",
