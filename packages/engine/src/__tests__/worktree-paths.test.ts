@@ -15,6 +15,10 @@ describe("worktree-paths", () => {
     expect(resolveWorktreesDir(rootDir, undefined)).toBe(join(rootDir, ".worktrees"));
   });
 
+  it("defaults to <rootDir>/.worktrees when settings object is present but worktreesDir is unset", () => {
+    expect(resolveWorktreesDir(rootDir, {} as any)).toBe(join(rootDir, ".worktrees"));
+  });
+
   it("supports absolute path", () => {
     expect(resolveWorktreesDir(rootDir, { worktreesDir: "/var/tmp/fn-worktrees" } as any)).toBe("/var/tmp/fn-worktrees");
   });
