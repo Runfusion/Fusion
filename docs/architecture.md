@@ -1387,6 +1387,26 @@ Git behavior is implemented primarily in engine executor/merger + dashboard/CLI 
 
 Git dashboard routes are registered in `register-git-github.ts`.
 
+### Stranded refinement affordance (Lane C)
+
+Fusion adds an operator-first API surface to diagnose and expedite refinement tasks that remain in Planning (`triage`) without bypassing plan/approval gates from FN-4657.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/tasks/stranded-refinements` | List stranded refinement diagnostics (`sourceType=task_refine`, `column=triage`, `paused!=true`) with reasons and recommendation. Supports `?freshnessMinutes=` (1-1440). |
+| GET | `/api/tasks/:id/stranded-refinement` | Return one refinement diagnostic row plus PROMPT.md presence and dependency-resolution status. |
+| POST | `/api/tasks/:id/expedite-refinement` | Request bounded expedite for a triage refinement. Clears `nextRecoveryAt` for stale/backoff rows; returns `requiresOperatorAction` for `awaiting-approval`/`failed`/`stuck-killed` without mutating status. |
+
+Stranded reasons are: `untriaged-stale`, `awaiting-approval`, `failed`, `stuck-killed`, and `recovery-backoff`.
+
+Non-bypass guarantees:
+- Expedite never moves a task directly to `todo`.
+- Expedite never fabricates/writes `PROMPT.md`.
+- Expedite never clears `awaiting-approval` (or failed/stuck statuses).
+- `POST /api/tasks/:id/approve-plan` remains the only route that clears `awaiting-approval` and promotes approved plans.
+
+This complements FN-4657's durable triage routing fix; it does not replace triage specification or plan-approval policy.
+
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/git/remotes` | List GitHub remotes parsed from `git remote -v` output. |
