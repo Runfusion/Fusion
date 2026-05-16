@@ -7,12 +7,14 @@ vi.mock("node:child_process", () => ({
   exec: vi.fn(),
 }));
 
+const loggerMock = {
+  log: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+};
+
 vi.mock("../logger.js", () => ({
-  createLogger: () => ({
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: () => loggerMock,
 }));
 
 const { exec: execImport } = await import("node:child_process");
@@ -47,18 +49,26 @@ function makeSettings(overrides?: Partial<WorktrunkSettings>): WorktrunkSettings
   return { enabled: true, onFailure: "fail", ...overrides };
 }
 
-function makeAuditor(): { auditor: RunAuditor; events: Array<{ type: string; metadata: Record<string, unknown> }> } {
-  const events: Array<{ type: string; metadata: Record<string, unknown> }> = [];
+function makeAuditor(): {
+  auditor: RunAuditor;
+  filesystemEvents: Array<{ type: string; metadata: Record<string, unknown> }>;
+  gitEvents: Array<{ type: string; target: string; metadata: Record<string, unknown> }>;
+} {
+  const filesystemEvents: Array<{ type: string; metadata: Record<string, unknown> }> = [];
+  const gitEvents: Array<{ type: string; target: string; metadata: Record<string, unknown> }> = [];
   return {
     auditor: {
-      git: vi.fn().mockResolvedValue(undefined),
+      git: vi.fn().mockImplementation(async (input: { type: string; target: string; metadata?: Record<string, unknown> }) => {
+        gitEvents.push({ type: input.type, target: input.target, metadata: input.metadata ?? {} });
+      }),
       database: vi.fn().mockResolvedValue(undefined),
       filesystem: vi.fn().mockImplementation(async (input: { type: string; metadata?: Record<string, unknown> }) => {
-        events.push({ type: input.type, metadata: input.metadata ?? {} });
+        filesystemEvents.push({ type: input.type, metadata: input.metadata ?? {} });
       }),
       sandbox: vi.fn().mockResolvedValue(undefined),
     },
-    events,
+    filesystemEvents,
+    gitEvents,
   };
 }
 
@@ -67,6 +77,7 @@ describe("worktrunk-installer", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    loggerMock.warn.mockReset();
     clearWorktrunkResolveCache();
   });
 
@@ -120,13 +131,13 @@ describe("worktrunk-installer", () => {
   });
 
   it("installWorktrunk with pre-approved override emits requested/success and returns path", async () => {
-    const { auditor, events } = makeAuditor();
+    const { auditor, filesystemEvents } = makeAuditor();
     await expect(installWorktrunk({ settings: makeSettings(), auditor, gateOverride: "pre-approved" })).resolves.toEqual({
       binaryPath: expect.stringContaining("worktrunk"),
       source: "installed-release",
     });
-    expect(events.some((event) => event.type === "binary:install-requested" && event.metadata.reason === "pre-approved")).toBe(true);
-    expect(events.some((event) => event.type === "binary:install-success")).toBe(true);
+    expect(filesystemEvents.some((event) => event.type === "binary:install-requested" && event.metadata.reason === "pre-approved")).toBe(true);
+    expect(filesystemEvents.some((event) => event.type === "binary:install-success")).toBe(true);
   });
 
   it("executeApprovedWorktrunkInstall marks request completed", async () => {
@@ -157,13 +168,13 @@ describe("worktrunk-installer", () => {
   });
 
   it("installWorktrunk throws disabled-path error and emits binary:install-denied", async () => {
-    const { auditor, events } = makeAuditor();
+    const { auditor, filesystemEvents } = makeAuditor();
     await expect(installWorktrunk({ settings: makeSettings(), auditor })).rejects.toThrow(WorktrunkInstallFailedError);
     await expect(installWorktrunk({ settings: makeSettings(), auditor })).rejects.toThrow(
       "worktrunk auto-install path disabled; set worktrunk.binaryPath or install worktrunk on PATH",
     );
-    expect(events.some((event) => event.type === "binary:install-denied")).toBe(true);
-    expect(events.find((event) => event.type === "binary:install-denied")?.metadata.reason).toBe("auto-install-disabled");
+    expect(filesystemEvents.some((event) => event.type === "binary:install-denied")).toBe(true);
+    expect(filesystemEvents.find((event) => event.type === "binary:install-denied")?.metadata.reason).toBe("auto-install-disabled");
   });
 
   it("resolveWorktrunkBinary resolves explicit binaryPath when probe succeeds", async () => {
@@ -207,5 +218,75 @@ describe("worktrunk-installer", () => {
     await expect(resolveWorktrunkBinary({ settings: makeSettings() })).rejects.toThrow(
       "worktrunk auto-install path disabled; set worktrunk.binaryPath or install worktrunk on PATH",
     );
+  });
+
+  describe("install audit emission", () => {
+    it("is a safe no-op when auditor is undefined", async () => {
+      await expect(
+        installWorktrunk({
+          settings: makeSettings(),
+          gateOverride: "pre-approved",
+          runContext: { runId: "run-no-audit", agentId: "agent-1", taskId: "FN-4711" },
+        }),
+      ).resolves.toEqual({
+        binaryPath: expect.stringContaining("worktrunk"),
+        source: "installed-release",
+      });
+    });
+
+    it("swallows install audit emitter failures and logs a warning", async () => {
+      const { auditor } = makeAuditor();
+      vi.mocked(auditor.git).mockRejectedValueOnce(new Error("audit write failed"));
+
+      await expect(
+        installWorktrunk({
+          settings: makeSettings(),
+          auditor,
+          gateOverride: "pre-approved",
+          runContext: { runId: "run-audit-fail", agentId: "agent-1", taskId: "FN-4711" },
+        }),
+      ).resolves.toEqual({
+        binaryPath: expect.stringContaining("worktrunk"),
+        source: "installed-release",
+      });
+
+      expect(loggerMock.warn).toHaveBeenCalledWith("install-audit-failed", expect.objectContaining({ err: "audit write failed" }));
+    });
+
+    it.each([
+      { expectedSource: "release-binary" as const },
+    ])("emits worktree install audit event metadata for $expectedSource", async ({ expectedSource }) => {
+      const { auditor, gitEvents } = makeAuditor();
+      const runContext = { runId: "run-install-success", agentId: "agent-1", taskId: "FN-4711" };
+
+      await installWorktrunk({ settings: makeSettings(), auditor, gateOverride: "pre-approved", runContext });
+
+      const installEvent = gitEvents.find((event) => event.type === "worktree:worktrunk-install");
+      expect(installEvent).toBeDefined();
+      expect(installEvent?.target).toContain("worktrunk");
+      expect(installEvent?.metadata).toEqual(
+        expect.objectContaining({
+          op: "install",
+          binaryPath: expect.stringContaining("worktrunk"),
+          installSource: expectedSource,
+          durationMs: expect.any(Number),
+          taskId: "FN-4711",
+          runId: "run-install-success",
+        }),
+      );
+      expect((installEvent?.metadata.durationMs as number) ?? -1).toBeGreaterThanOrEqual(0);
+    });
+
+    it("does not emit worktree install audit for PATH cache-hit resolution", async () => {
+      const { auditor, gitEvents } = makeAuditor();
+      mockExecSequence([
+        { stdout: "/usr/bin/worktrunk\n" },
+        { stdout: "worktrunk 0.4.2\n" },
+      ]);
+
+      await resolveWorktrunkBinary({ settings: makeSettings(), auditor });
+
+      expect(gitEvents.some((event) => event.type === "worktree:worktrunk-install")).toBe(false);
+    });
   });
 });
