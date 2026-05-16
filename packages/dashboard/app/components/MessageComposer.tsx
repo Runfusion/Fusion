@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 import { X, Send, Loader2, Bot, AlertCircle } from "lucide-react";
 import type { ParticipantType, MessageType } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
@@ -46,7 +47,17 @@ export function MessageComposer({
   const [wakeRecipient, setWakeRecipient] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const { ref: autosizeRef } = useAutosizeTextarea({
+    value: content,
+    minHeight: 68,
+    maxHeight: 320,
+  });
+
+  const setTextareaRef = useCallback((node: HTMLTextAreaElement | null) => {
+    textareaRef.current = node;
+    autosizeRef(node);
+  }, [autosizeRef]);
 
   const selectedAgent = useMemo(() => agents.find((agent) => agent.id === toId), [agents, toId]);
   const prefilledRecipientAgent = useMemo(
@@ -189,13 +200,12 @@ export function MessageComposer({
           </label>
           <textarea
             id="message-content"
-            ref={textareaRef}
+            ref={setTextareaRef}
             className="message-composer-textarea"
             placeholder="Type your message…"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             maxLength={MAX_CONTENT_LENGTH}
-            rows={4}
             data-testid="message-composer-content"
           />
           <div className="message-composer-charcount" data-testid="message-composer-charcount">

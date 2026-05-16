@@ -1051,8 +1051,9 @@
   color: var(--text);
   font-size: var(--font-size-base, 0.9rem);
   font-family: var(--font-primary);
-  resize: vertical;
   min-height: calc(var(--space-2xl) + var(--space-xl) + var(--space-md));
+  max-height: calc(var(--space-2xl) * 10);
+  overflow-y: auto;
   line-height: 1.5;
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
