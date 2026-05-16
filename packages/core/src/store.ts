@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
@@ -3798,6 +3798,60 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     `).all(...params) as TaskRow[];
 
     return rows.map((row) => this.rowToTask(row));
+  }
+
+  async tryClaimCheckout(
+    taskId: string,
+    claim: {
+      agentId: string;
+      nodeId: string;
+      runId: string | null;
+      leaseEpoch: number;
+      renewedAt: string;
+    },
+    precondition: CheckoutClaimPrecondition,
+  ): Promise<{ ok: true; task: Task } | { ok: false; reason: "row_not_found" | "precondition_failed"; current: Task | null }> {
+    const current = await this.getTask(taskId);
+    if (!current) {
+      return { ok: false, reason: "row_not_found", current: null };
+    }
+
+    const updateResult = this.db.prepare(`
+      UPDATE tasks
+      SET
+        checkedOutBy = ?,
+        checkedOutAt = COALESCE(checkedOutAt, ?),
+        checkoutNodeId = ?,
+        checkoutRunId = ?,
+        checkoutLeaseRenewedAt = ?,
+        checkoutLeaseEpoch = ?
+      WHERE id = ?
+        AND COALESCE(checkedOutBy, '') = COALESCE(?, '')
+        AND COALESCE(checkoutNodeId, '') = COALESCE(?, '')
+        AND COALESCE(checkoutLeaseEpoch, 0) = COALESCE(?, 0)
+    `).run(
+      claim.agentId,
+      new Date().toISOString(),
+      claim.nodeId,
+      claim.runId,
+      claim.renewedAt,
+      claim.leaseEpoch,
+      taskId,
+      precondition.expectedCheckedOutBy ?? null,
+      precondition.expectedNodeId ?? null,
+      precondition.expectedLeaseEpoch ?? 0,
+    ) as { changes: number };
+
+    const post = await this.getTask(taskId);
+    if (updateResult.changes === 0) {
+      return { ok: false, reason: "precondition_failed", current: post };
+    }
+
+    if (!post) {
+      return { ok: false, reason: "row_not_found", current: null };
+    }
+
+    return { ok: true, task: post };
   }
 
   async selectNextTaskForAgent(

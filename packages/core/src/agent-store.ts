@@ -52,15 +52,8 @@ import {
   getLegacyAgentInstructionsBundleDirName,
   getSafeAgentAssetIdSegment,
 } from "./types.js";
-import type { RunMutationContext } from "./types.js";
+import type { CheckoutClaimContext, RunMutationContext } from "./types.js";
 import type { TaskStore } from "./store.js";
-
-interface CheckoutLeaseContext {
-  nodeId?: string;
-  runId?: string;
-  leaseEpoch?: number;
-  renewedAt?: string;
-}
 import { computeAccessState } from "./agent-permissions.js";
 import { canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, formatRoleMismatchReason } from "./agent-role-policy.js";
 import { normalizeAgentPermissionPolicy, resolveEffectiveAgentPermissionPolicy } from "./agent-permission-policy.js";
@@ -1378,7 +1371,7 @@ export class AgentStore extends EventEmitter {
   async checkoutTask(
     agentId: string,
     taskId: string,
-    leaseContext?: CheckoutLeaseContext,
+    leaseContext?: CheckoutClaimContext,
     runContext?: RunMutationContext,
   ): Promise<Task> {
     if (!this.taskStore) {
@@ -1399,11 +1392,51 @@ export class AgentStore extends EventEmitter {
       throw new CheckoutConflictError(taskId, task.checkedOutBy, agentId);
     }
 
-    const nextEpoch = leaseContext?.leaseEpoch ?? task.checkoutLeaseEpoch ?? 0;
     const nextRenewedAt = leaseContext?.renewedAt ?? new Date().toISOString();
-    const existingNodeId = task.checkoutNodeId;
+    const existingNodeId = task.checkoutNodeId ?? null;
     const existingEpoch = task.checkoutLeaseEpoch ?? 0;
+    const tryClaimCheckout = "tryClaimCheckout" in this.taskStore
+      ? (this.taskStore as TaskStore & {
+        tryClaimCheckout: NonNullable<TaskStore["tryClaimCheckout"]>;
+      }).tryClaimCheckout
+      : undefined;
 
+    if (tryClaimCheckout) {
+      const isSameAgentHolder = task.checkedOutBy === agentId;
+      const isRenewal = isSameAgentHolder
+        && existingNodeId !== null
+        && leaseContext?.nodeId === existingNodeId
+        && leaseContext?.leaseEpoch === existingEpoch;
+
+      if (isSameAgentHolder && !isRenewal) {
+        throw new CheckoutConflictError(taskId, agentId, agentId);
+      }
+
+      const result = await tryClaimCheckout.call(this.taskStore, taskId, {
+        agentId,
+        nodeId: leaseContext?.nodeId ?? existingNodeId ?? "",
+        runId: leaseContext?.runId ?? task.checkoutRunId ?? null,
+        renewedAt: nextRenewedAt,
+        leaseEpoch: isRenewal ? existingEpoch : existingEpoch + 1,
+      }, {
+        expectedCheckedOutBy: task.checkedOutBy ?? null,
+        expectedNodeId: existingNodeId,
+        expectedLeaseEpoch: existingEpoch,
+      });
+
+      if (!result.ok) {
+        if (result.reason === "row_not_found") {
+          throw new Error(`Task ${taskId} not found`);
+        }
+        const currentHolder = result.current?.checkedOutBy;
+        throw new CheckoutConflictError(taskId, currentHolder ?? "unknown", agentId);
+      }
+
+      await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+      return result.task;
+    }
+
+    const nextEpoch = leaseContext?.leaseEpoch ?? task.checkoutLeaseEpoch ?? 0;
     if (
       task.checkedOutBy === agentId
       && existingNodeId === (leaseContext?.nodeId ?? existingNodeId)

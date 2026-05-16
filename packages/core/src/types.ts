@@ -1242,6 +1242,24 @@ export interface CheckoutLease {
   checkedOutAt: string;
 }
 
+export interface CheckoutClaimContext {
+  /** Node identity for the claimant. */
+  nodeId: string;
+  /** Owning run/session ID when known. */
+  runId?: string;
+  /** Expected current lease epoch for renewal operations. */
+  leaseEpoch?: number;
+  /** ISO-8601 timestamp for lease-renewed heartbeat updates. */
+  renewedAt?: string;
+}
+
+export interface CheckoutClaimPrecondition {
+  /** Null/undefined means expecting an unclaimed row. */
+  expectedCheckedOutBy?: string | null;
+  expectedNodeId?: string | null;
+  expectedLeaseEpoch?: number | null;
+}
+
 /**
  * Durable task-level aggregate token usage totals persisted on the task row.
  *
