@@ -216,4 +216,99 @@ describe("registerGithubTrackingHook", () => {
     await expect(createTrackingIssueForTask(store, task)).resolves.toBeUndefined();
     spy.mockRestore();
   });
+
+  it("creates tracking issue with summarized title when createTask summarization is pending", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    await store.createTask(
+      {
+        description: "Long task description ".repeat(20),
+      },
+      {
+        onSummarize: async () => "Summarized Issue Title",
+        settings: { autoSummarizeTitles: true },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(mockCreateIssue).toHaveBeenCalledTimes(1);
+    });
+
+    expect(mockCreateIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: "owner",
+        repo: "repo",
+        title: expect.stringContaining("Summarized Issue Title"),
+      }),
+    );
+  });
+
+  it("creates one fallback issue title when summarizer rejects", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const description = "Fallback issue title words should appear in GitHub issue title. ".repeat(10);
+
+    await store.createTask(
+      { description },
+      {
+        onSummarize: async () => {
+          throw new Error("summarizer failed");
+        },
+        settings: { autoSummarizeTitles: true },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(mockCreateIssue).toHaveBeenCalledTimes(1);
+    });
+
+    expect(mockCreateIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: expect.stringContaining("Fallback issue title words should appear"),
+      }),
+    );
+  });
+
+  it("creates issue during createTask await when summarization is disabled", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const beforeAwaitCalls = mockCreateIssue.mock.calls.length;
+    await store.createTask(
+      {
+        description: "No summarization configured but tracking issue should still be created",
+      },
+      {
+        settings: { autoSummarizeTitles: false },
+      },
+    );
+    const afterAwaitCalls = mockCreateIssue.mock.calls.length;
+
+    expect(afterAwaitCalls - beforeAwaitCalls).toBe(1);
+    expect(mockCreateIssue).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        title: expect.stringContaining("No summarization configured"),
+      }),
+    );
+  });
 });
