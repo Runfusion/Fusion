@@ -79,11 +79,11 @@ import { SelfHealingManager, isBranchAheadOfBase } from "../self-healing.js";
 import type { TaskStore, Settings, Task, AgentStore, Agent, NotificationProvider } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isUsableTaskWorktree, resolveWorktreeBackend, scanOrphanedBranches } from "../worktree-pool.js";
+import { isUsableTaskWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "../worktree-pool.js";
 import * as branchConflictModule from "../branch-conflicts.js";
 import { createLogger } from "../logger.js";
 import { NotificationService } from "../notification/notification-service.js";
@@ -94,6 +94,8 @@ const mockedExistsSync = vi.mocked(existsSync);
 const mockedScanOrphanedBranches = vi.mocked(scanOrphanedBranches);
 const mockedIsUsableTaskWorktree = vi.mocked(isUsableTaskWorktree);
 const mockedResolveWorktreeBackend = vi.mocked(resolveWorktreeBackend);
+const mockedScanIdleWorktrees = vi.mocked(scanIdleWorktrees);
+const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedCreateLogger = vi.mocked(createLogger);
 const mockedClassifyOwnedLandedEvidence = vi.mocked(classifyOwnedLandedEvidence);
 
@@ -6331,6 +6333,73 @@ describe("pruneWorktrees", () => {
 
     expect(prune).toHaveBeenCalledTimes(1);
     expect(mockedExecSync).toHaveBeenCalledWith("git worktree prune", expect.objectContaining({ cwd: "/tmp/test-project", timeout: 30000, stdio: ["pipe", "pipe", "pipe"] }));
+  });
+});
+
+describe("worktrunk-aware cleanup sweeps", () => {
+  let store: TaskStore & EventEmitter;
+  let manager: SelfHealingManager;
+  let backendPrune: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    store = createMockStore();
+    manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    backendPrune = vi.fn().mockResolvedValue(undefined);
+    mockedResolveWorktreeBackend.mockReturnValue({
+      kind: "worktrunk",
+      create: vi.fn(),
+      remove: vi.fn(),
+      sync: vi.fn(),
+      prune: backendPrune,
+      resolveWorktreePath: vi.fn(),
+    } as any);
+    vi.mocked(store.getSettings).mockResolvedValue({ worktrunk: { enabled: true, onFailure: "fail" } } as any);
+    mockedExecSync.mockClear();
+    mockedScanIdleWorktrees.mockClear();
+    mockedReaddirSync.mockClear();
+  });
+
+  afterEach(() => {
+    manager.stop();
+  });
+
+  it("cleanupOrphans short-circuits to backend prune when recycleWorktrees is false", async () => {
+    vi.mocked(store.getSettings).mockResolvedValue({ worktrunk: { enabled: true }, recycleWorktrees: false } as any);
+
+    const result = await (manager as any).cleanupOrphans();
+
+    expect(result).toBe(0);
+    expect(backendPrune).toHaveBeenCalledWith({ rootDir: "/tmp/test-project" });
+    expect(mockedScanIdleWorktrees).not.toHaveBeenCalled();
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove"), expect.anything());
+  });
+
+  it("cleanupOrphans short-circuits to backend prune when recycleWorktrees is true", async () => {
+    const reapSpy = vi.spyOn(manager as any, "reapUnregisteredOrphans");
+    vi.mocked(store.getSettings).mockResolvedValue({ worktrunk: { enabled: true }, recycleWorktrees: true } as any);
+
+    const result = await (manager as any).cleanupOrphans();
+
+    expect(result).toBe(0);
+    expect(reapSpy).not.toHaveBeenCalled();
+    expect(backendPrune).toHaveBeenCalledWith({ rootDir: "/tmp/test-project" });
+    expect(mockedScanIdleWorktrees).not.toHaveBeenCalled();
+  });
+
+  it("reapUnregisteredOrphans short-circuits to backend prune", async () => {
+    await (manager as any).reapUnregisteredOrphans();
+
+    expect(backendPrune).toHaveBeenCalledWith({ rootDir: "/tmp/test-project" });
+    expect(mockedReaddirSync).not.toHaveBeenCalled();
+  });
+
+  it("enforceWorktreeCap short-circuits to backend prune", async () => {
+    await (manager as any).enforceWorktreeCap();
+
+    expect(backendPrune).toHaveBeenCalledWith({ rootDir: "/tmp/test-project" });
+    expect(mockedScanIdleWorktrees).not.toHaveBeenCalled();
+    expect(mockedReaddirSync).not.toHaveBeenCalled();
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git worktree remove"), expect.anything());
   });
 });
 
