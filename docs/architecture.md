@@ -645,7 +645,7 @@ Guardrails: this routine does **not** retry merges, does **not** apply to mixed/
 
 ### Worktree and naming helpers
 - `WorktreePool` (`worktree-pool.ts`) — idle worktree reuse
-- `WorktreeBackend` (`worktree-backend.ts`) — abstraction for worktree operations used by `acquireTaskWorktree`. `native` (default) preserves existing `git worktree add` behavior (including sibling-branch retry semantics). `resolveWorktreeBackend(settings)` selects `worktrunk` when `settings.worktrunk?.enabled === true`; `worktrunk.onFailure` controls fail-hard vs fallback-native create behavior. The current `worktrunk` backend is a scaffold (placeholder `--help` shell-out and typed failure mapping); real CLI subcommand mapping lands in FN-4623.
+- `WorktreeBackend` (`worktree-backend.ts`) — abstraction for worktree operations used by `acquireTaskWorktree`. `native` (default) preserves existing `git worktree` behavior (including sibling-branch retry semantics), while `resolveWorktreeBackend(settings)` selects `worktrunk` when `settings.worktrunk?.enabled === true`. `worktrunk.onFailure` controls fail-hard vs fallback-native create behavior and emits `worktree:worktrunk-*` run-audit events for create/fallback paths.
 - `WorktreeNames` (`worktree-names.ts`) — deterministic worktree/branch naming
 
 ### Observability and reflection
