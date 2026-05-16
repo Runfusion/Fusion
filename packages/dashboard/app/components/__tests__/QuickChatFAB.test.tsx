@@ -9,6 +9,7 @@ import { useMobileKeyboard } from "../../hooks/useMobileKeyboard";
 import { useAppSettings } from "../../hooks/useAppSettings";
 import { useChatRooms } from "../../hooks/useChatRooms";
 import { QuickChatFAB } from "../QuickChatFAB";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 
 vi.mock("../../api", () => ({
   fetchResumeChatSession: vi.fn(),
@@ -1279,5 +1280,44 @@ describe("QuickChatFAB session-first UX", () => {
     await waitFor(() => {
       expect(scrollTopValue).toBe(scrollHeightValue);
     });
+  });
+
+  it("linkifies file paths in markdown assistant messages", async () => {
+    const openFile = vi.fn();
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "msg-path", sessionId: "session-model", role: "assistant", content: "See packages/dashboard/app/App.tsx:9", createdAt: new Date().toISOString() }],
+    });
+
+    render(
+      <FileBrowserProvider openFile={openFile}>
+        <QuickChatFAB addToast={vi.fn()} projectId="proj-1" />
+      </FileBrowserProvider>,
+    );
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const fileLink = await screen.findByRole("button", { name: "packages/dashboard/app/App.tsx:9" });
+    fireEvent.click(fileLink);
+
+    expect(openFile).toHaveBeenCalledWith("packages/dashboard/app/App.tsx", { line: 9, col: undefined });
+  });
+
+  it("linkifies file paths in plain-text render mode", async () => {
+    const openFile = vi.fn();
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{ id: "msg-plain", sessionId: "session-model", role: "assistant", content: "Check packages/dashboard/app/components/QuickChatFAB.tsx", createdAt: new Date().toISOString() }],
+    });
+
+    render(
+      <FileBrowserProvider openFile={openFile}>
+        <QuickChatFAB addToast={vi.fn()} projectId="proj-1" />
+      </FileBrowserProvider>,
+    );
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    fireEvent.click(await screen.findByTestId("quick-chat-message-render-toggle"));
+    const fileLink = await screen.findByRole("button", { name: "packages/dashboard/app/components/QuickChatFAB.tsx" });
+    fireEvent.click(fileLink);
+
+    expect(openFile).toHaveBeenCalledWith("packages/dashboard/app/components/QuickChatFAB.tsx", { line: undefined, col: undefined });
   });
 });

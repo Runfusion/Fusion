@@ -29,6 +29,7 @@ import { useViewportMode } from "../hooks/useViewportMode";
 import { useAppSettings } from "../hooks/useAppSettings";
 import { useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
+import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 
 interface PendingAttachment {
   file: File;
@@ -231,6 +232,8 @@ function renderToolCalls(toolCalls?: ToolCallInfo[], compact = false): ReactNode
 }
 
 const quickChatMarkdownComponents: Components = {
+  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
+  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
   pre: ({ children, ...props }) => (
     <pre {...props} className="quick-chat-markdown-pre">
       {children}
@@ -820,7 +823,7 @@ const QuickChatMessageItem = memo(function QuickChatMessageItem({
   const assistantBody = useMemo<ReactNode>(() => {
     if (isSent) return null;
     if (forcePlain) {
-      return <div className="quick-chat-message-content quick-chat-message-content--plain">{message.content}</div>;
+      return <div className="quick-chat-message-content quick-chat-message-content--plain">{linkifyFilePaths(message.content)}</div>;
     }
     return (
       <div className="quick-chat-message-content quick-chat-message-content--markdown">
@@ -2217,7 +2220,7 @@ export function QuickChatFAB({
   const renderAssistantMessageContent = useCallback(
     (content: string, forcePlain = false) => {
       if (forcePlain) {
-        return <div className="quick-chat-message-content quick-chat-message-content--plain">{content}</div>;
+        return <div className="quick-chat-message-content quick-chat-message-content--plain">{linkifyFilePaths(content)}</div>;
       }
 
       return (
@@ -2743,7 +2746,7 @@ export function QuickChatFAB({
                   {streamingThinking && (
                     <details className="chat-message-thinking" data-testid="quick-chat-streaming-thinking">
                       <summary>Thinking</summary>
-                      <pre className="chat-message-thinking-content">{streamingThinking}</pre>
+                      <pre className="chat-message-thinking-content">{linkifyFilePaths(streamingThinking)}</pre>
                     </details>
                   )}
                 </div>
