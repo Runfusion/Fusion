@@ -370,6 +370,10 @@ vi.mock("../../components/TodoView", () => ({
   ),
 }));
 
+vi.mock("../../components/GoalsView", () => ({
+  GoalsView: () => <div data-testid="goals-view">Goals View</div>,
+}));
+
 vi.mock("../../components/ChatView", () => ({
   ChatView: () => <FileBrowserProbe testId="fb-probe-chat" />,
 }));
@@ -2581,6 +2585,42 @@ describe("App view switching", () => {
     });
 
     // Cleanup
+    localStorage.removeItem(taskViewStorageKey());
+  });
+
+  it("renders goals view when goalsView experimental feature is enabled", async () => {
+    localStorage.setItem(taskViewStorageKey(), "goalsView");
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: { goalsView: true },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("goals-view")).toBeTruthy();
+    });
+
+    localStorage.removeItem(taskViewStorageKey());
+  });
+
+  it("redirects to board when goalsView experimental feature is disabled and taskView is goalsView", async () => {
+    localStorage.setItem(taskViewStorageKey(), "goalsView");
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: { goalsView: false },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector(".board")).toBeTruthy();
+    });
+
     localStorage.removeItem(taskViewStorageKey());
   });
 });

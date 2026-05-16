@@ -225,4 +225,24 @@ describe("useAppSettings", () => {
       expect(result.current.todosEnabled).toBe(true);
     });
   });
+
+  it("derives goalsEnabled from experimentalFeatures.goalsView", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      autoMerge: false,
+      globalPause: false,
+      enginePaused: false,
+      prAuthAvailable: true,
+      taskStuckTimeoutMs: 600000,
+      showQuickChatFAB: false,
+      experimentalFeatures: {
+        goalsView: true,
+      },
+    } as never);
+
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => {
+      expect(result.current.goalsEnabled).toBe(true);
+    });
+  });
 });

@@ -516,6 +516,31 @@ describe("MobileNavBar", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("evals");
   });
 
+  it("gates goals item in more sheet, routes to goalsView, and marks More active on goals view", () => {
+    const hidden = render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{}} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.queryByTestId("mobile-more-item-goals")).toBeNull();
+    hidden.unmount();
+
+    const props = createDefaultProps();
+    const { container } = render(
+      <MobileNavBar
+        {...props}
+        view="goalsView"
+        experimentalFeatures={{ goalsView: true }}
+      />,
+    );
+
+    const moreTab = screen.getByTestId("mobile-nav-tab-more");
+    expect(moreTab.className).toContain("mobile-nav-tab--active");
+
+    fireEvent.click(moreTab);
+    fireEvent.click(screen.getByTestId("mobile-more-item-goals"));
+
+    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    expect(props.onChangeView).toHaveBeenCalledWith("goalsView");
+  });
+
   it("activity log item in more sheet calls onOpenActivityLog", () => {
     const props = createDefaultProps();
     const { container } = render(<MobileNavBar {...props} />);

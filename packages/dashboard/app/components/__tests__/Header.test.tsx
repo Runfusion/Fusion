@@ -311,6 +311,27 @@ describe("Header", () => {
       expect(onChangeView).toHaveBeenCalledWith("evals");
       expect(screen.queryByTestId("view-overflow-evals")).toBeNull();
     });
+
+    it("gates goals overflow entry and routes to goalsView when enabled", () => {
+      const hidden = renderHeader({ onChangeView: noop, experimentalFeatures: { goalsView: false, insights: true } });
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.queryByTestId("view-overflow-goals")).toBeNull();
+      hidden.unmount();
+
+      const onChangeView = vi.fn();
+      renderHeader({ onChangeView, view: "goalsView", experimentalFeatures: { goalsView: true } });
+
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger.className).toContain("active");
+      fireEvent.click(trigger);
+
+      const goalsItem = screen.getByTestId("view-overflow-goals");
+      expect(goalsItem.className).toContain("active");
+      fireEvent.click(goalsItem);
+
+      expect(onChangeView).toHaveBeenCalledWith("goalsView");
+      expect(screen.queryByTestId("view-overflow-goals")).toBeNull();
+    });
   });
 
   describe("terminal split button", () => {
