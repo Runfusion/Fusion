@@ -10,6 +10,7 @@ import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
 import { execSync } from "node:child_process";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
 import { WorktreePool } from "../worktree-pool.js";
+import * as worktreePoolModule from "../worktree-pool.js";
 import { BranchConflictError } from "../branch-conflicts.js";
 import * as branchConflictModule from "../branch-conflicts.js";
 import { generateWorktreeName, slugify } from "../worktree-names.js";
@@ -1129,7 +1130,7 @@ describe("TaskExecutor worktree recovery", () => {
 
     // Should have cleaned up the conflicting worktree
     expect(mockedExecSync).toHaveBeenCalledWith(
-      expect.stringContaining('git worktree remove "/tmp/test/.worktrees/green-sage" --force'),
+      expect.stringContaining('git worktree remove --force "/tmp/test/.worktrees/green-sage"'),
       expect.any(Object),
     );
 
@@ -1720,6 +1721,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
     const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
+    const removeWorktreeSpy = vi.spyOn(worktreePoolModule, "removeWorktree");
 
     let firstAttempt = true;
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -1738,9 +1740,13 @@ describe("TaskExecutor dependency-based worktree creation", () => {
 
     await executor.execute(makeTask({ id: "FN-064" }));
 
-    expect(mockedExecSync).toHaveBeenCalledWith(
-      `git worktree remove "${conflictingPath}" --force`,
-      expect.objectContaining({ cwd: "/tmp/test" }),
+    expect(removeWorktreeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreePath: conflictingPath,
+        rootDir: "/tmp/test",
+        taskId: "FN-064",
+        settings: expect.any(Object),
+      }),
     );
     expect(mockedExecSync).toHaveBeenCalledWith(
       'git branch -D "fusion/fn-064"',
@@ -1775,7 +1781,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
         );
         throw err;
       }
-      if (cmd === `git worktree remove "${conflictingPath}" --force`) {
+      if (cmd === `git worktree remove --force "${conflictingPath}"`) {
         throw new Error("remove failed");
       }
       return Buffer.from("");

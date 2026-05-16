@@ -7,6 +7,7 @@ import {
   StepSessionExecutor,
 } from "../step-session-executor.js";
 import { AgentLogger } from "../agent-logger.js";
+import * as worktreeBackendModule from "../worktree-backend.js";
 import type { TaskDetail, Settings, TaskStore } from "@fusion/core";
 
 // ── Shared test fixtures ──────────────────────────────────────────────
@@ -1889,6 +1890,8 @@ describe("StepSessionExecutor", () => {
       mockedCreateFnAgent.mockResolvedValue({ session } as any);
       mockedExecSync.mockReturnValue("");
 
+      const removeWorktreeSpy = vi.spyOn(worktreeBackendModule, "removeWorktree");
+
       const executor = new StepSessionExecutor({
         taskDetail: task,
         worktreePath: "/project/.worktrees/main",
@@ -1899,10 +1902,13 @@ describe("StepSessionExecutor", () => {
       await executor.executeAll();
       await executor.cleanup();
 
-      // Verify cleanup was called with git worktree remove
-      expect(mockedExecSync).toHaveBeenCalledWith(
-        expect.stringContaining("git worktree remove"),
-        expect.objectContaining({ cwd: "/project" }),
+      expect(removeWorktreeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rootDir: "/project",
+          taskId: "FN-001",
+          settings,
+          worktreePath: expect.stringContaining("/project/.worktrees/"),
+        }),
       );
     });
 
