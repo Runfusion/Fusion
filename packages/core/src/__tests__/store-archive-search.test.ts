@@ -1,14 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { AgentStore } from "../agent-store.js";
 import { TaskStore } from "../store.js";
-import { createTaskStoreTestHarness } from "./store-test-helpers.js";
+import { createSharedTaskStoreTestHarness } from "./store-test-helpers.js";
 
 describe("TaskStore Archive and Search", () => {
-  const harness = createTaskStoreTestHarness();
+  const harness = createSharedTaskStoreTestHarness();
   let store: TaskStore;
+
+  beforeAll(harness.beforeAll);
 
   beforeEach(async () => {
     await harness.beforeEach();
@@ -18,6 +20,8 @@ describe("TaskStore Archive and Search", () => {
   afterEach(async () => {
     await harness.afterEach();
   });
+
+  afterAll(harness.afterAll);
 
   describe("archiveTask", () => {
     it("archives a done task (moves done → archived)", async () => {
@@ -332,8 +336,8 @@ describe("TaskStore Archive and Search", () => {
   describe("cleanupArchivedTasks", () => {
     it("writes compact entry to archive DB with compact agent log", async () => {
       // This test asserts the archive.db file exists on disk, which the
-      // in-memory beforeEach store can't satisfy. Swap to disk-backed.
-      await harness.reopenDiskBackedStore();
+      // shared in-memory store can't satisfy.
+      await harness.useIsolatedStore();
       store = harness.store();
 
       // Create and archive a task
@@ -751,7 +755,7 @@ describe("TaskStore Archive and Search", () => {
     });
 
     it("archiveTask clears stale linked agent assignments", async () => {
-      await harness.reopenDiskBackedStore();
+      await harness.useIsolatedStore();
       store = harness.store();
 
       const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
@@ -783,7 +787,7 @@ describe("TaskStore Archive and Search", () => {
       // store, but this test verifies disk persistence. Swap to a
       // disk-backed store before doing any work so newStore (also
       // disk-backed) can read what the first instance wrote.
-      await harness.reopenDiskBackedStore();
+      await harness.useIsolatedStore();
       store = harness.store();
 
       const task = await store.createTask({ description: "Survival test" });

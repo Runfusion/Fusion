@@ -97,7 +97,14 @@ async function resetStoreFilesystem(rootDir: string, globalDir: string, store: T
   await clearDirectoryContents(join(fusionDir, "tasks"));
   await clearDirectoryContents(join(fusionDir, "task-documents"));
   await clearDirectoryContents(join(fusionDir, "agent-logs"));
-  await clearDirectoryContents(join(globalDir, ".fusion-global-settings"));
+  try {
+    (store as any)._archiveDb?.close?.();
+  } catch {
+    // ignored
+  }
+  (store as any)._archiveDb = null;
+  await rm(join(fusionDir, "archive.db"), { force: true });
+  await clearDirectoryContents(globalDir);
 
   const config = await (store as any).readConfig();
   const content = (store as any).serializeConfigForDisk(config);
@@ -114,6 +121,16 @@ function resetTaskStorePrivateState(store: TaskStore): void {
   (store as any).taskIdStateReconciled = false;
   (store as any).taskIdIntegrityReport = (store as any).buildTaskIdIntegrityFallbackReport?.();
   (store as any).lastTaskIdIntegrityLogSignature = null;
+  (store as any).distributedTaskIdAllocator = null;
+  (store as any)._archiveDb = null;
+  if ((store as any).agentLogFlushTimer) {
+    clearTimeout((store as any).agentLogFlushTimer);
+    (store as any).agentLogFlushTimer = null;
+  }
+  if (Array.isArray((store as any).agentLogBuffer)) {
+    (store as any).agentLogBuffer.length = 0;
+  }
+  (store as any).globalSettingsStore.cachedSettings = null;
 }
 
 export function createTaskStoreTestHarness() {
@@ -215,6 +232,17 @@ export function createSharedTaskStoreTestHarness() {
   let isolatedStore: TaskStore | null = null;
   let isolatedRootDir: string | null = null;
   let isolatedGlobalDir: string | null = null;
+  let configRowSnapshot: {
+    nextId: number;
+    nextWorkflowStepId: number;
+    settings: string;
+    workflowSteps: string;
+  } = {
+    nextId: 1,
+    nextWorkflowStepId: 1,
+    settings: JSON.stringify(DEFAULT_PROJECT_SETTINGS),
+    workflowSteps: "[]",
+  };
   let distributedStateSnapshot: Array<{
     prefix: string;
     nextSequence: number;
@@ -228,8 +256,14 @@ export function createSharedTaskStoreTestHarness() {
     db.prepare("DELETE FROM config").run();
     db.prepare(
       `INSERT INTO config (id, nextId, nextWorkflowStepId, settings, workflowSteps, updatedAt)
-       VALUES (1, 1, 1, ?, '[]', ?)`,
-    ).run(JSON.stringify(DEFAULT_PROJECT_SETTINGS), now);
+       VALUES (1, ?, ?, ?, ?, ?)`,
+    ).run(
+      configRowSnapshot.nextId,
+      configRowSnapshot.nextWorkflowStepId,
+      configRowSnapshot.settings,
+      configRowSnapshot.workflowSteps,
+      now,
+    );
   };
 
   const resetDistributedState = (db: Database) => {
@@ -284,6 +318,13 @@ export function createSharedTaskStoreTestHarness() {
       currentStore = sharedStore;
 
       const db = (sharedStore as any).db as Database;
+      const configRow = db
+        .prepare("SELECT nextId, nextWorkflowStepId, settings, workflowSteps FROM config WHERE id = 1")
+        .get() as typeof configRowSnapshot | undefined;
+      if (configRow) {
+        configRowSnapshot = configRow;
+      }
+
       distributedStateSnapshot = db
         .prepare(
           `SELECT prefix, nextSequence, committedClusterTaskCount, lastCommittedTaskId, updatedAt
@@ -306,10 +347,10 @@ export function createSharedTaskStoreTestHarness() {
         resetConfigRow(db);
         resetDistributedState(db);
       });
-
       await resetStoreFilesystem(rootDir, globalDir, sharedStore);
       sharedStore.removeAllListeners();
       resetTaskStorePrivateState(sharedStore);
+      (sharedStore as any).workflowStepsCache = null;
     },
     afterEach: async () => {
       vi.useRealTimers();

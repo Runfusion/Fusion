@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 
 import { TaskStore } from "../store.js";
-import { createTaskStoreTestHarness } from "./store-test-helpers.js";
+import { createSharedTaskStoreTestHarness } from "./store-test-helpers.js";
 
 describe("TaskStore Workflow Steps", () => {
-  const harness = createTaskStoreTestHarness();
+  const harness = createSharedTaskStoreTestHarness();
   let store: TaskStore;
+
+  beforeAll(harness.beforeAll);
 
   beforeEach(async () => {
     await harness.beforeEach();
@@ -15,6 +17,8 @@ describe("TaskStore Workflow Steps", () => {
   afterEach(async () => {
     await harness.afterEach();
   });
+
+  afterAll(harness.afterAll);
 
   describe("Workflow Steps", () => {
     it("should create a workflow step with all fields", async () => {
@@ -438,6 +442,8 @@ describe("TaskStore Workflow Steps", () => {
     });
 
     it("should delete a workflow step", async () => {
+      await harness.useIsolatedStore();
+      store = harness.store();
       const ws = await store.createWorkflowStep({ name: "ToDelete", description: "Gone" });
       await store.deleteWorkflowStep(ws.id);
 

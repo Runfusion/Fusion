@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 
-import { createTaskStoreTestHarness, makeTmpDir, mockedExecSync, mockedRunCommandAsync } from "./store-test-helpers.js";
+import { createSharedTaskStoreTestHarness, makeTmpDir, mockedExecSync, mockedRunCommandAsync } from "./store-test-helpers.js";
 import { appendFile, readFile, writeFile, mkdir, rm, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -13,10 +13,12 @@ import { buildResearchDocumentKey, type Task } from "../types.js";
 import { setTaskCreatedHook } from "../task-creation-hooks.js";
 
 describe("TaskStore", () => {
-  const harness = createTaskStoreTestHarness();
+  const harness = createSharedTaskStoreTestHarness();
   let rootDir: string;
   let globalDir: string;
   let store: TaskStore;
+
+  beforeAll(harness.beforeAll);
 
   beforeEach(async () => {
     await harness.beforeEach();
@@ -28,6 +30,8 @@ describe("TaskStore", () => {
   afterEach(async () => {
     await harness.afterEach();
   });
+
+  afterAll(harness.afterAll);
 
   const createTestTask = () => harness.createTestTask();
   const createTaskWithSteps = () => harness.createTaskWithSteps();

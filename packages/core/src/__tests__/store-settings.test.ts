@@ -1,13 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createTaskStoreTestHarness } from "./store-test-helpers.js";
+import { TaskStore } from "../store.js";
+import { createSharedTaskStoreTestHarness } from "./store-test-helpers.js";
 
 describe("TaskStore", () => {
-  const harness = createTaskStoreTestHarness();
+  const harness = createSharedTaskStoreTestHarness();
 
+  beforeAll(harness.beforeAll);
   beforeEach(harness.beforeEach);
   afterEach(harness.afterEach);
+  afterAll(harness.afterAll);
 
   describe("model settings", () => {
     it("persists defaultProvider and defaultModelId via updateGlobalSettings", async () => {
@@ -1962,23 +1965,29 @@ describe("TaskStore", () => {
     };
 
     it("round-trips nested remoteAccess settings with both providers, token strategy, and lifecycle", async () => {
-      harness.store().close();
-      await harness.reopenDiskBackedStore();
+      await harness.useIsolatedStore();
+      let isolatedStore = harness.store();
 
-      await harness.store().updateGlobalSettings({ remoteAccess: baseRemoteAccess });
+      isolatedStore.close();
+      isolatedStore = new TaskStore(harness.rootDir(), harness.globalDir());
+      await isolatedStore.init();
 
-      const settings = await harness.store().getSettings();
+      await isolatedStore.updateGlobalSettings({ remoteAccess: baseRemoteAccess });
+
+      const settings = await isolatedStore.getSettings();
       expect(settings.remoteAccess).toEqual(baseRemoteAccess);
 
-      const { project, global } = await harness.store().getSettingsByScope();
+      const { project, global } = await isolatedStore.getSettingsByScope();
       expect((project as Record<string, unknown>).remoteAccess).toBeUndefined();
       expect(global.remoteAccess).toEqual(baseRemoteAccess);
 
-      harness.store().close();
-      await harness.reopenDiskBackedStore();
+      isolatedStore.close();
+      const reloadedStore = new TaskStore(harness.rootDir(), harness.globalDir());
+      await reloadedStore.init();
 
-      const reloaded = await harness.store().getSettings();
+      const reloaded = await reloadedStore.getSettings();
       expect(reloaded.remoteAccess).toEqual(baseRemoteAccess);
+      reloadedStore.close();
     });
 
     it("patching remoteAccess.providers.tailscale preserves providers.cloudflare", async () => {
