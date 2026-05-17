@@ -221,6 +221,17 @@ export class ApprovalRequestStore {
     return rows.map((row) => this.rowToRequest(row));
   }
 
+  getPendingCountsByActor(): Map<string, number> {
+    const rows = this.db.prepare(`
+      SELECT requesterActorId AS actorId, COUNT(*) AS requestCount
+      FROM approval_requests
+      WHERE status = 'pending'
+      GROUP BY requesterActorId
+    `).all() as Array<{ actorId: string; requestCount: number }>;
+
+    return new Map(rows.map((row) => [row.actorId, Number(row.requestCount)]));
+  }
+
   findLatestByDedupeKey(input: { requesterActorId: string; taskId?: string; dedupeKey: string }): ApprovalRequest | null {
     const where = ["requesterActorId = ?"];
     const params: Array<string> = [input.requesterActorId];

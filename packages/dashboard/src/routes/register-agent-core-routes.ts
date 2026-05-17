@@ -82,13 +82,7 @@ function isCompatibleDefaultHeartbeatPath(path: string | undefined, agent: Agent
 function withPendingApprovalCounts<T extends Agent>(agents: T[], scopedStore: TaskStore): Array<T & { pendingApprovalCount: number }> {
   try {
     const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
-    const pendingRequests = approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 });
-    const counts = new Map<string, number>();
-
-    for (const request of pendingRequests) {
-      const agentId = request.requester.actorId;
-      counts.set(agentId, (counts.get(agentId) ?? 0) + 1);
-    }
+    const counts = approvalStore.getPendingCountsByActor();
 
     return agents.map((agent) => ({
       ...agent,
