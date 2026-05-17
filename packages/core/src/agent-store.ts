@@ -52,7 +52,7 @@ import {
   getLegacyAgentInstructionsBundleDirName,
   getSafeAgentAssetIdSegment,
 } from "./types.js";
-import type { CheckoutClaimContext, RunMutationContext } from "./types.js";
+import type { CentralClaimStore, CheckoutClaimContext, RunMutationContext } from "./types.js";
 import type { TaskStore } from "./store.js";
 import { computeAccessState } from "./agent-permissions.js";
 import { canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, formatRoleMismatchReason } from "./agent-role-policy.js";
@@ -102,6 +102,12 @@ export interface AgentStoreOptions {
   rootDir?: string;
   /** Optional TaskStore for checkout/release operations */
   taskStore?: TaskStore;
+  /** Optional authoritative central claim store for cross-node checkout mutex. */
+  claimStore?: CentralClaimStore;
+  /** Project ID for central claim ownership rows (required when claimStore is set). */
+  projectId?: string;
+  /** Optional default nodeId when checkout leaseContext omits one. */
+  nodeId?: string;
   /**
    * Test-only: open the underlying SQLite DB as `:memory:` instead of a
    * disk-backed file. Skips per-test fsync and WAL setup; mirrors the
@@ -220,6 +226,9 @@ export class AgentStore extends EventEmitter {
   private locks: Map<string, AgentLock> = new Map();
   private _db: Database | null = null;
   private taskStore?: TaskStore;
+  private readonly claimStore?: CentralClaimStore;
+  private readonly claimProjectId?: string;
+  private readonly defaultNodeId?: string;
   private readonly inMemoryDb: boolean;
 
   constructor(options: AgentStoreOptions = {}) {
@@ -234,6 +243,12 @@ export class AgentStore extends EventEmitter {
     this.rootDir = options.rootDir ?? resolve(".fusion");
     this.agentsDir = join(this.rootDir, "agents");
     this.taskStore = options.taskStore;
+    this.claimStore = options.claimStore;
+    this.claimProjectId = options.projectId;
+    this.defaultNodeId = options.nodeId;
+    if (this.claimStore && !this.claimProjectId) {
+      throw new Error("AgentStore requires projectId when claimStore is configured");
+    }
     this.inMemoryDb = options.inMemoryDb === true;
   }
 
@@ -1402,6 +1417,75 @@ export class AgentStore extends EventEmitter {
       : undefined;
 
     if (tryClaimCheckout) {
+      const requestNodeId = this.claimStore
+        ? (leaseContext?.nodeId ?? this.defaultNodeId)
+        : (leaseContext?.nodeId ?? existingNodeId ?? "");
+      if (this.claimStore && !requestNodeId) {
+        throw new Error("checkoutTask requires leaseContext.nodeId or AgentStore nodeId when claimStore is configured");
+      }
+
+      if (this.claimStore && this.claimProjectId) {
+        const isSameAgentHolder = task.checkedOutBy === agentId;
+        const isSameNodeHolder = existingNodeId !== null && requestNodeId === existingNodeId;
+        const expectedEpoch = isSameAgentHolder && isSameNodeHolder ? existingEpoch : undefined;
+
+        const centralResult = this.claimStore.tryClaimTask({
+          projectId: this.claimProjectId,
+          taskId,
+          nodeId: requestNodeId,
+          agentId,
+          runId: leaseContext?.runId ?? task.checkoutRunId ?? null,
+          renewedAt: nextRenewedAt,
+          expectedEpoch,
+        });
+
+        if (!centralResult.ok) {
+          throw new CheckoutConflictError(taskId, centralResult.current.ownerAgentId, agentId);
+        }
+
+        const claim = centralResult.claim;
+        const mirrorLease = {
+          agentId,
+          nodeId: claim.ownerNodeId,
+          runId: claim.ownerRunId,
+          renewedAt: claim.leaseRenewedAt,
+          leaseEpoch: claim.leaseEpoch,
+        };
+        const mirrorPrecondition = {
+          expectedCheckedOutBy: task.checkedOutBy ?? null,
+          expectedNodeId: existingNodeId,
+          expectedLeaseEpoch: existingEpoch,
+        };
+
+        let result = await tryClaimCheckout.call(this.taskStore, taskId, mirrorLease, mirrorPrecondition);
+        if (!result.ok) {
+          const mirrorTask = await this.taskStore.getTask(taskId);
+          if (mirrorTask) {
+            result = await tryClaimCheckout.call(this.taskStore, taskId, mirrorLease, {
+              expectedCheckedOutBy: mirrorTask.checkedOutBy ?? null,
+              expectedNodeId: mirrorTask.checkoutNodeId ?? null,
+              expectedLeaseEpoch: mirrorTask.checkoutLeaseEpoch ?? 0,
+            });
+          }
+          if (!result.ok) {
+            await this.taskStore.logEntry(
+              taskId,
+              "Warning: central checkout claim succeeded but per-project mirror update failed",
+              undefined,
+              runContext,
+            );
+            const latestTask = await this.taskStore.getTask(taskId);
+            if (!latestTask) {
+              throw new Error(`Task ${taskId} not found`);
+            }
+            return latestTask;
+          }
+        }
+
+        await this.taskStore.logEntry(taskId, `Checked out by agent ${agentId}`, undefined, runContext);
+        return result.task;
+      }
+
       const isSameAgentHolder = task.checkedOutBy === agentId;
       const isRenewal = isSameAgentHolder
         && existingNodeId !== null
@@ -1479,6 +1563,15 @@ export class AgentStore extends EventEmitter {
 
     if (!task.checkedOutBy) {
       return task;
+    }
+
+    if (this.claimStore && this.claimProjectId && task.checkoutNodeId) {
+      this.claimStore.releaseTaskClaim({
+        projectId: this.claimProjectId,
+        taskId,
+        nodeId: task.checkoutNodeId,
+        agentId,
+      });
     }
 
     const updated = await this.taskStore.updateTask(taskId, {
