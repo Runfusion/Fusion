@@ -158,6 +158,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn().mockResolvedValue({ id: "FN-RESCUE", lineageId: "lin-rescue" }),
+    recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
     ...overrides,
@@ -4705,6 +4706,141 @@ describe("SelfHealingManager", () => {
 
       expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(0);
       expect(store.logEntry).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("auto-disposes after three identical merge-blocker stalls", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      const reason = "task is marked 'failed': Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved";
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        taskStuckTimeoutMs: 60_000,
+        inReviewStallDeadlockThreshold: 3,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        staleMergingTask({
+          id: "FN-9999",
+          status: "failed",
+          error: "Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved",
+          branch: "fusion/fn-9999",
+          worktree: "/tmp/FN-9999",
+          log: [
+            { timestamp: "2026-01-01T00:01:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+            { timestamp: "2026-01-01T00:03:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+          ],
+        }),
+      ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-9999", expect.objectContaining({
+        paused: true,
+        pausedReason: "in-review-stall-deadlock",
+        status: "failed",
+      }));
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-9999",
+        expect.stringContaining("In-review stall auto-disposed [merge-blocker]: deadlock-prevention threshold reached after 3 identical stalls"),
+      );
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-9999",
+        expect.stringContaining("In-review stall surfaced [merge-blocker]"),
+      );
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        domain: "database",
+        mutationType: "task:in-review-stall-deadlock-disposed",
+        target: "FN-9999",
+        metadata: expect.objectContaining({
+          code: "merge-blocker",
+          reason,
+          repetitionCount: 3,
+          threshold: 3,
+        }),
+      }));
+      managerWithRecovery.stop();
+    });
+
+    it("does not dispose below threshold", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      const reason = "task is marked 'failed': Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved";
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000, inReviewStallDeadlockThreshold: 3 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        staleMergingTask({
+          id: "FN-9999",
+          status: "failed",
+          error: "Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved",
+          worktree: "/tmp/FN-9999",
+          log: [{ timestamp: "2026-01-01T00:01:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` }],
+        }),
+      ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"));
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("does not dispose when threshold is disabled", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      const reason = "task is marked 'failed': Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved";
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000, inReviewStallDeadlockThreshold: 0 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        staleMergingTask({
+          id: "FN-9999",
+          status: "failed",
+          error: "Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved",
+          worktree: "/tmp/FN-9999",
+          log: [
+            { timestamp: "2026-01-01T00:01:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+            { timestamp: "2026-01-01T00:02:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+            { timestamp: "2026-01-01T00:03:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${reason}` },
+          ],
+        }),
+      ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"));
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("does not accumulate when reasons differ and no-ops when already paused", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      const baseError = "Failed to create worktree after 3 attempts: Branch fusion/fn-9999 conflict could not be auto-resolved";
+      const currentReason = `task is marked 'failed': ${baseError}`;
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000, inReviewStallDeadlockThreshold: 3 });
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([
+          staleMergingTask({
+            id: "FN-9999",
+            status: "failed",
+            error: baseError,
+            worktree: "/tmp/FN-9999",
+            log: [
+              { timestamp: "2026-01-01T00:01:00.000Z", action: "In-review stall surfaced [merge-blocker]: task is marked 'failed': other reason 1" },
+              { timestamp: "2026-01-01T00:02:00.000Z", action: "In-review stall surfaced [merge-blocker]: task is marked 'failed': other reason 2" },
+              { timestamp: "2026-01-01T00:03:00.000Z", action: `In-review stall surfaced [merge-blocker]: ${currentReason}` },
+            ],
+          }),
+        ])
+        .mockResolvedValueOnce([
+          staleMergingTask({ id: "FN-9999", paused: true, status: "failed", error: baseError, worktree: "/tmp/FN-9999" }),
+        ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-9999", expect.stringContaining("In-review stall surfaced [merge-blocker]:"));
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(0);
+      expect(store.logEntry).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
       managerWithRecovery.stop();
     });
   });
