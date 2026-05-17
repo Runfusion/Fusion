@@ -346,6 +346,7 @@ describe("GlobalSettingsStore", () => {
         "message:agent-to-agent",
         "message:room",
         "gridlock",
+        "board-stall-unrecovered",
         "fallback-used",
         "memory-dreams-processed",
         "token-budget",

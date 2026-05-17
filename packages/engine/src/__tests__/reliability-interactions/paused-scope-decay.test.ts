@@ -40,7 +40,7 @@ function makeStore(tasks: Task[], settings: Partial<Settings> = {}) {
       }),
     ),
     moveTask: vi.fn(async (id: string, column: Task["column"], _opts?: any) => {
-      byId.set(id, { ...byId.get(id)!, column, paused: false, pausedReason: undefined, blockedBy: null, overlapBlockedBy: null } as Task);
+      byId.set(id, { ...byId.get(id)!, column, paused: false, pausedReason: undefined, blockedBy: undefined, overlapBlockedBy: undefined } as Task);
       return byId.get(id)!;
     }),
     updateTask: vi.fn(async (id: string, updates: Partial<Task>) => {

@@ -40,7 +40,7 @@ function makeStore(tasks: Task[], settings: Partial<Settings> = {}) {
       })),
     moveTask: vi.fn(async (id: string, column: Task["column"]) => {
       const prev = byId.get(id)!;
-      const next = { ...prev, column, paused: false, blockedBy: null, overlapBlockedBy: null } as Task;
+      const next = { ...prev, column, paused: false, blockedBy: undefined, overlapBlockedBy: undefined } as Task;
       byId.set(id, next);
       emitter.emit("task:moved", { task: next, from: prev.column, to: column, source: "engine" });
       return next;
