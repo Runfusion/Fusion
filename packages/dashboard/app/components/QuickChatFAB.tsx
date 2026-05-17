@@ -1785,6 +1785,10 @@ export function QuickChatFAB({
       return;
     }
 
+    if (chatRoomsEnabled && roomsState.activeRoom) {
+      roomsState.selectRoom(null);
+    }
+
     markRead("direct", selectedSession.id, selectedSession.lastMessageAt ?? selectedSession.updatedAt);
     hasAppliedInitialSessionRef.current = true;
 
@@ -1798,12 +1802,13 @@ export function QuickChatFAB({
 
     void selectSession(selectedSession);
     setSessionMenuOpen(false);
-  }, [markRead, selectSession, sessions]);
+  }, [chatRoomsEnabled, markRead, roomsState, selectSession, sessions]);
 
   const handleRoomSwitch = useCallback((roomId: string) => {
     const selectedRoom = roomsState.rooms.find((room) => room.id === roomId);
     markRead("room", roomId, selectedRoom?.updatedAt);
     roomsState.selectRoom(roomId);
+    hasAppliedInitialSessionRef.current = true;
     setSessionMenuOpen(false);
   }, [markRead, roomsState]);
 
@@ -2539,7 +2544,12 @@ export function QuickChatFAB({
           <div className="quick-chat-panel-agent-select" data-testid="quick-chat-session-select">
             <div className="quick-chat-session-menu" ref={sessionMenuRef}>
               <label htmlFor="quick-chat-session-dropdown-trigger" className="visually-hidden">Select session</label>
-              <input type="hidden" data-testid="quick-chat-session-dropdown" value={activeSession?.id ?? ""} readOnly />
+              <input
+                type="hidden"
+                data-testid="quick-chat-session-dropdown"
+                value={showRoomGroups && roomsState.activeRoom ? "" : activeSession?.id ?? ""}
+                readOnly
+              />
               <button
                 id="quick-chat-session-dropdown-trigger"
                 type="button"

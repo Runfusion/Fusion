@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Agent } from "../../api";
@@ -452,6 +453,53 @@ describe("QuickChatFAB session-first UX", () => {
       expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("GPT-4o");
     });
     expect(screen.getByTestId("quick-chat-input")).toHaveAttribute("placeholder", "Message GPT-4o");
+  });
+
+  it("FN-4804: switching from an active room to a direct session clears room display state", async () => {
+    const room = {
+      id: "room-1",
+      name: "engineering",
+      slug: "engineering",
+      memberCount: 2,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockUseAppSettings.mockReturnValue({ experimentalFeatures: { chatRooms: true } } as ReturnType<typeof useAppSettings>);
+    mockUseChatRooms.mockImplementation(() => {
+      const [activeRoom, setActiveRoom] = useState(room);
+      return {
+        rooms: [room],
+        roomsLoading: false,
+        roomsError: null,
+        activeRoom,
+        activeRoomMembers: [],
+        messages: [],
+        messagesLoading: false,
+        selectRoom: (roomId: string | null) => {
+          setActiveRoom(roomId ? room : null);
+        },
+        createRoom: vi.fn(),
+        deleteRoom: vi.fn(),
+        sendRoomMessage: vi.fn(),
+        refreshRooms: vi.fn(),
+      };
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByTestId("quick-chat-input")).toHaveAttribute("placeholder", "Message #engineering");
+    expect(screen.getByTestId("quick-chat-session-dropdown")).toHaveValue("");
+
+    fireEvent.click(screen.getByTestId("quick-chat-session-dropdown-trigger"));
+    fireEvent.click(screen.getByTestId("quick-chat-session-option-session-agent"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-session-dropdown")).toHaveValue("session-agent");
+      expect(screen.getByTestId("quick-chat-input")).toHaveAttribute("placeholder", "Message Agent One");
+      expect(screen.getByTestId("quick-chat-session-dropdown-trigger")).not.toHaveTextContent("#engineering");
+    });
   });
 
   describe("FN-4708 room reflection", () => {
