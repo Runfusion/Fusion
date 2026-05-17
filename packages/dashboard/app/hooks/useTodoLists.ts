@@ -10,6 +10,7 @@ import {
   deleteTodoItem,
   reorderTodoItems,
 } from "../api";
+import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 
 type ToastType = "info" | "success" | "error" | "warning";
 
@@ -50,9 +51,13 @@ function buildTempId(prefix: string): string {
 export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsResult {
   const { projectId, addToast } = options;
 
-  const [lists, setLists] = useState<TodoList[]>([]);
+  const cacheKey = `${SWR_CACHE_KEYS.TODO_LISTS_PREFIX}${projectId ?? "global"}`;
+  const [lists, setLists] = useState<TodoList[]>(() => {
+    const cached = readCache<TodoList[]>(cacheKey);
+    return Array.isArray(cached) ? cached : [];
+  });
   const [items, setItems] = useState<TodoItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => lists.length === 0);
   const [error, setError] = useState<string | null>(null);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [listData, setListData] = useState<TodoListWithItems[]>([]);
@@ -63,8 +68,21 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
   useEffect(() => {
     let cancelled = false;
 
-    async function loadLists() {
+    const cachedLists = readCache<TodoList[]>(cacheKey);
+    const hasCachedLists = Array.isArray(cachedLists) && cachedLists.length > 0;
+
+    if (hasCachedLists) {
+      setLists(cachedLists);
+      setLoading(false);
+    } else {
+      setLists([]);
       setLoading(true);
+    }
+
+    async function loadLists() {
+      if (!hasCachedLists) {
+        setLoading(true);
+      }
       setError(null);
 
       try {
@@ -74,7 +92,9 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
         }
 
         setListData(data);
-        setLists(data.map(toList));
+        const fetchedLists = data.map(toList);
+        setLists(fetchedLists);
+        writeCache(cacheKey, fetchedLists, { maxBytes: 500_000 });
 
         const activeListId =
           selectedListIdRef.current && data.some((list) => list.id === selectedListIdRef.current)
@@ -104,7 +124,7 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [cacheKey, projectId]);
 
   useEffect(() => {
     if (!selectedListId) {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { TaskDocumentWithTask } from "@fusion/core";
 import { fetchAllDocuments, fetchProjectMarkdownFiles, type MarkdownFileEntry } from "../api";
+import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
 
 export interface UseDocumentsResult {
   /** List of all documents across tasks */
@@ -32,13 +33,20 @@ export function useDocuments(options?: {
   includeProjectFiles?: boolean;
 }): UseDocumentsResult {
   const { projectId, searchQuery, includeProjectFiles = true } = options ?? {};
-  const [documents, setDocuments] = useState<TaskDocumentWithTask[]>([]);
+  const cacheKey = projectId ? `${SWR_CACHE_KEYS.DOCUMENTS_PREFIX}${projectId}` : null;
+  const [documents, setDocuments] = useState<TaskDocumentWithTask[]>(() => {
+    if (!cacheKey) {
+      return [];
+    }
+    const cached = readCache<TaskDocumentWithTask[]>(cacheKey);
+    return Array.isArray(cached) ? cached : [];
+  });
   const [projectFiles, setProjectFiles] = useState<MarkdownFileEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => documents.length === 0);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Track if we've completed the initial load
-  const initialLoadCompleteRef = useRef(false);
+  const initialLoadCompleteRef = useRef(documents.length > 0);
   // Debounce timer for search
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -55,7 +63,7 @@ export function useDocuments(options?: {
     const requestController = new AbortController();
     abortRef.current = requestController;
 
-    // Only set loading on initial load
+    // Only set loading on initial load when we have no cached docs.
     const isInitial = !initialLoadCompleteRef.current;
     if (isInitial) {
       setLoading(true);
@@ -84,6 +92,10 @@ export function useDocuments(options?: {
 
     if (documentResult.status === "fulfilled") {
       setDocuments(documentResult.value);
+      if (cacheKey) {
+        const cachedPayload = documentResult.value.length > 500 ? documentResult.value.slice(0, 500) : documentResult.value;
+        writeCache(cacheKey, cachedPayload, { maxBytes: 500_000 });
+      }
       initialLoadCompleteRef.current = true;
     } else {
       documentError = documentResult.reason instanceof Error
@@ -107,7 +119,27 @@ export function useDocuments(options?: {
     if (isInitial) {
       setLoading(false);
     }
-  }, [includeProjectFiles, projectId, searchQuery]);
+  }, [cacheKey, includeProjectFiles, projectId, searchQuery]);
+
+  useEffect(() => {
+    if (!cacheKey) {
+      initialLoadCompleteRef.current = false;
+      setDocuments([]);
+      setLoading(true);
+      return;
+    }
+
+    const cached = readCache<TaskDocumentWithTask[]>(cacheKey);
+    if (Array.isArray(cached)) {
+      setDocuments(cached);
+      initialLoadCompleteRef.current = true;
+      setLoading(false);
+    } else {
+      initialLoadCompleteRef.current = false;
+      setDocuments([]);
+      setLoading(true);
+    }
+  }, [cacheKey]);
 
   // Debounced search effect
   useEffect(() => {
