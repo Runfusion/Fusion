@@ -8,7 +8,11 @@ import type {
   RuntimeStatus,
 } from "../project-runtime.js";
 import { remoteNodeLog } from "../logger.js";
-import { RemoteNodeClient, type RemoteNodeEvent } from "./remote-node-client.js";
+import {
+  RemoteNodeClient,
+  type RemoteNodeEvent,
+  type RemoteNodeTaskAssignedPayload,
+} from "./remote-node-client.js";
 
 export interface RemoteNodeRuntimeConfig {
   nodeConfig: NodeConfig;
@@ -32,6 +36,8 @@ export class RemoteNodeRuntime
   private reconnectBaseDelayMs = 5_000;
   private maxReconnectDelayMs = 60_000;
   private maxReconnectAttempts = 10;
+  private lastAssignmentCursor: string | null = null;
+  private readonly seenAssignmentKeys = new Set<string>();
 
   constructor(private config: RemoteNodeRuntimeConfig) {
     super();
@@ -222,6 +228,8 @@ export class RemoteNodeRuntime
             `(attempt ${reconnectAttempts}/${this.maxReconnectAttempts})`
         );
 
+        await this.pollPendingAssignments("cross-node-poll");
+
         await this.sleep(delayMs, signal);
         if (signal.aborted) {
           return;
@@ -253,6 +261,9 @@ export class RemoteNodeRuntime
       case "task:updated":
         this.emit("task:updated", event.payload as Task);
         break;
+      case "task:assigned":
+        this.emitAssignmentWake(event.payload as RemoteNodeTaskAssignedPayload, "cross-node-push");
+        break;
       case "error": {
         const payload = event.payload;
         if (payload instanceof Error) {
@@ -270,6 +281,46 @@ export class RemoteNodeRuntime
           `Ignoring unsupported remote event type "${event.type}" for ${this.config.projectId}`
         );
     }
+  }
+
+  async reconcileAssignments(assignments: RemoteNodeTaskAssignedPayload[]): Promise<void> {
+    for (const assignment of assignments) {
+      this.emitAssignmentWake(assignment, "cross-node-reconcile");
+    }
+  }
+
+  private async pollPendingAssignments(source: "cross-node-poll" | "cross-node-reconcile"): Promise<void> {
+    try {
+      const assignments = await this.client.pollPendingAssignments({
+        since: this.lastAssignmentCursor ?? undefined,
+      });
+      for (const assignment of assignments) {
+        this.emitAssignmentWake(assignment, source);
+      }
+    } catch (error) {
+      this.emitRuntimeError(this.toError(error));
+    }
+  }
+
+  private emitAssignmentWake(
+    assignment: RemoteNodeTaskAssignedPayload,
+    source: "cross-node-push" | "cross-node-poll" | "cross-node-reconcile"
+  ): void {
+    const key = `${assignment.taskId}:${assignment.agentId}:${assignment.assignedAt}`;
+    if (this.seenAssignmentKeys.has(key)) {
+      return;
+    }
+    this.seenAssignmentKeys.add(key);
+    this.lastAssignmentCursor = assignment.assignedAt;
+    remoteNodeLog.log(
+      `[wake-trigger-diagnostics] source=${source} taskId=${assignment.taskId} agentId=${assignment.agentId}`
+    );
+    this.emit("task:assigned", {
+      taskId: assignment.taskId,
+      agentId: assignment.agentId,
+      assignedAt: assignment.assignedAt,
+      source,
+    });
   }
 
   private async refreshMetrics(): Promise<RuntimeMetrics> {

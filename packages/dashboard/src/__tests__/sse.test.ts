@@ -325,6 +325,36 @@ describe("createSSE client cleanup", () => {
     expect(getActiveSSEConnections()).toBe(baseline);
   });
 
+  it("emits task:assigned SSE event from agent assignments", () => {
+    let onAssigned: ((agent: unknown, taskId: string) => void) | undefined;
+    const store = createMockStore();
+    const agentStore = {
+      on: vi.fn((event: string, handler: (agent: unknown, taskId: string) => void) => {
+        if (event === "agent:assigned") onAssigned = handler;
+      }),
+      off: vi.fn(),
+    };
+    const socket = new MockSocket();
+    const req = new EventEmitter() as Request & { query: Record<string, string>; socket: MockSocket };
+    req.query = { clientId: "assigned-client" };
+    req.socket = socket;
+    const res = new MockResponse(socket);
+
+    createSSE(store, undefined, undefined, undefined, undefined, agentStore as never)(
+      req,
+      res as unknown as Response
+    );
+
+    onAssigned?.({ id: "agent-1" }, "FN-1");
+
+    expect(res.write).toHaveBeenCalledWith(
+      expect.stringContaining("event: task:assigned")
+    );
+    expect(res.write).toHaveBeenCalledWith(
+      expect.stringContaining('"taskId":"FN-1"')
+    );
+  });
+
   it("closes the connection when the outbound buffer exceeds the backpressure threshold", () => {
     // Capture the task:created listener so we can fire a send after the
     // socket buffer has been bloated past the threshold.

@@ -123,6 +123,25 @@ describe("RemoteNodeClient", () => {
     );
   });
 
+  it("pollPendingAssignments() sends since cursor query", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ taskId: "KB-1", agentId: "agent-1", assignedAt: "2026-04-08T00:00:00.000Z" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new RemoteNodeClient({ baseUrl: BASE_URL, apiKey: API_KEY });
+    const result = await client.pollPendingAssignments({ since: "2026-04-08T00:00:00.000Z" });
+
+    expect(result).toEqual([{ taskId: "KB-1", agentId: "agent-1", assignedAt: "2026-04-08T00:00:00.000Z" }]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${BASE_URL}/api/events/assignments?since=2026-04-08T00%3A00%3A00.000Z`,
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
   it("executeTask() posts to execute endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ acknowledged: true }), {

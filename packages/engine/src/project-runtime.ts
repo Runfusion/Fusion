@@ -67,6 +67,8 @@ export interface ProjectRuntimeEvents {
   "task:moved": [data: { task: Task; from: string; to: string }];
   /** Emitted when a task is updated */
   "task:updated": [task: Task];
+  /** Emitted when a cross-node assignment event is observed */
+  "task:assigned": [data: { taskId: string; agentId: string; assignedAt: string; source?: string }];
   /** Emitted when an error occurs in the runtime */
   "error": [error: Error];
   /** Emitted when the runtime health status changes */

@@ -7,6 +7,7 @@ const mockClientConstructor = vi.hoisted(() => vi.fn());
 const mockHealth = vi.hoisted(() => vi.fn());
 const mockGetMetrics = vi.hoisted(() => vi.fn());
 const mockStreamEvents = vi.hoisted(() => vi.fn());
+const mockPollPendingAssignments = vi.hoisted(() => vi.fn());
 
 vi.mock("../remote-node-client.js", () => ({
   RemoteNodeClient: vi.fn().mockImplementation((options: unknown) => {
@@ -15,6 +16,7 @@ vi.mock("../remote-node-client.js", () => ({
       health: mockHealth,
       getMetrics: mockGetMetrics,
       streamEvents: mockStreamEvents,
+      pollPendingAssignments: mockPollPendingAssignments,
     };
   }),
 }));
@@ -60,6 +62,7 @@ describe("RemoteNodeRuntime", () => {
     mockHealth.mockReset();
     mockGetMetrics.mockReset();
     mockStreamEvents.mockReset();
+    mockPollPendingAssignments.mockReset();
 
     mockHealth.mockResolvedValue({ status: "ok", version: "1.0.0", uptime: 100 });
     mockGetMetrics.mockResolvedValue({
@@ -70,6 +73,7 @@ describe("RemoteNodeRuntime", () => {
     mockStreamEvents.mockImplementation(({ signal }: { signal?: AbortSignal } = {}) =>
       idleStream(signal)
     );
+    mockPollPendingAssignments.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -173,6 +177,7 @@ describe("RemoteNodeRuntime", () => {
     const createdHandler = vi.fn();
     const movedHandler = vi.fn();
     const updatedHandler = vi.fn();
+    const assignedHandler = vi.fn();
     const errorHandler = vi.fn();
 
     mockStreamEvents.mockImplementation(({ signal }: { signal?: AbortSignal } = {}) =>
@@ -194,6 +199,11 @@ describe("RemoteNodeRuntime", () => {
             timestamp: NOW,
           },
           {
+            type: "task:assigned",
+            payload: { taskId: "KB-1", agentId: "agent-1", assignedAt: NOW },
+            timestamp: NOW,
+          },
+          {
             type: "error",
             payload: { message: "boom" },
             timestamp: NOW,
@@ -212,6 +222,7 @@ describe("RemoteNodeRuntime", () => {
     runtime.on("task:created", createdHandler);
     runtime.on("task:moved", movedHandler);
     runtime.on("task:updated", updatedHandler);
+    runtime.on("task:assigned", assignedHandler);
     runtime.on("error", errorHandler);
 
     await runtime.start();
@@ -224,6 +235,12 @@ describe("RemoteNodeRuntime", () => {
         to: "in-progress",
       });
       expect(updatedHandler).toHaveBeenCalledWith({ id: "KB-1", column: "done" });
+      expect(assignedHandler).toHaveBeenCalledWith({
+        taskId: "KB-1",
+        agentId: "agent-1",
+        assignedAt: NOW,
+        source: "cross-node-push",
+      });
       expect(errorHandler).toHaveBeenCalledWith(expect.any(Error));
     });
 
@@ -252,6 +269,40 @@ describe("RemoteNodeRuntime", () => {
     });
 
     expect(mockStreamEvents.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+    await runtime.stop();
+  });
+
+  it("polls pending assignments while reconnecting and deduplicates by assignedAt", async () => {
+    vi.useFakeTimers();
+
+    mockStreamEvents.mockImplementation(async function* () {
+      throw new Error("stream down");
+    });
+
+    mockPollPendingAssignments
+      .mockResolvedValueOnce([{ taskId: "KB-2", agentId: "agent-2", assignedAt: NOW }])
+      .mockResolvedValue([{ taskId: "KB-2", agentId: "agent-2", assignedAt: NOW }]);
+
+    const runtime = new RemoteNodeRuntime({
+      nodeConfig: createNode(),
+      projectId: "proj_poll",
+      projectName: "Project Poll",
+    });
+
+    (runtime as unknown as { reconnectBaseDelayMs: number }).reconnectBaseDelayMs = 1;
+    (runtime as unknown as { maxReconnectDelayMs: number }).maxReconnectDelayMs = 1;
+    (runtime as unknown as { maxReconnectAttempts: number }).maxReconnectAttempts = 2;
+
+    const assignedHandler = vi.fn();
+    runtime.on("task:assigned", assignedHandler);
+
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(5);
+
+    await vi.waitFor(() => {
+      expect(assignedHandler).toHaveBeenCalledTimes(1);
+    });
 
     await runtime.stop();
   });

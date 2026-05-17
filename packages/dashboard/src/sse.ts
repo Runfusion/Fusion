@@ -389,6 +389,17 @@ export function createSSE(
     const onUpdated = (task: unknown) => {
       send(`event: task:updated\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
     };
+    const onTaskAssigned = (agent: unknown, taskId: string) => {
+      const payload = {
+        taskId,
+        agentId:
+          agent && typeof agent === "object" && "id" in agent
+            ? String((agent as { id: unknown }).id)
+            : "",
+        assignedAt: new Date().toISOString(),
+      };
+      send(`event: task:assigned\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
     const onDeleted = (task: unknown) => {
       send(`event: task:deleted\ndata: ${JSON.stringify(stripTaskListHeavyFields(task))}\n\n`);
     };
@@ -713,6 +724,7 @@ export function createSSE(
         agentStore.off("agent:updated", onAgentUpdated);
         agentStore.off("agent:deleted", onAgentDeleted);
         agentStore.off("agent:stateChanged", onAgentStateChanged);
+        agentStore.off("agent:assigned", onTaskAssigned);
       }
       if (messageStore) {
         messageStore.off("message:sent", onMessageSent);
@@ -822,6 +834,7 @@ export function createSSE(
       agentStore.on("agent:updated", onAgentUpdated);
       agentStore.on("agent:deleted", onAgentDeleted);
       agentStore.on("agent:stateChanged", onAgentStateChanged);
+      agentStore.on("agent:assigned", onTaskAssigned);
     }
 
     if (messageStore) {

@@ -2,8 +2,25 @@ import type { Task, TaskCreateInput } from "@fusion/core";
 import type { RuntimeMetrics } from "../project-runtime.js";
 import { remoteNodeLog } from "../logger.js";
 
+export type RemoteNodeEventType =
+  | "task:created"
+  | "task:moved"
+  | "task:updated"
+  | "task:assigned"
+  | "error"
+  | (string & {});
+
+export interface RemoteNodeTaskAssignedPayload {
+  taskId: string;
+  agentId: string;
+  fromNodeId?: string;
+  toNodeId?: string;
+  leaseEpoch?: number;
+  assignedAt: string;
+}
+
 export interface RemoteNodeEvent {
-  type: string;
+  type: RemoteNodeEventType;
   payload: unknown;
   timestamp: string;
 }
@@ -92,6 +109,21 @@ export class RemoteNodeClient {
           method: "POST",
         }
       )
+    );
+  }
+
+  async pollPendingAssignments(options?: { since?: string }): Promise<RemoteNodeTaskAssignedPayload[]> {
+    const query = new URLSearchParams();
+    if (options?.since) {
+      query.set("since", options.since);
+    }
+    const path = query.size > 0
+      ? `/api/events/assignments?${query.toString()}`
+      : "/api/events/assignments";
+    return this.withRetry(() =>
+      this.requestJson<RemoteNodeTaskAssignedPayload[]>(path, {
+        method: "GET",
+      })
     );
   }
 
