@@ -610,7 +610,7 @@ describe("useChat", () => {
     });
   });
 
-  it("prefers done payload assistant snapshot over streamed text", async () => {
+  it("prefers accumulated streamed text over done payload snapshot when both exist", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
     mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
@@ -633,16 +633,21 @@ describe("useChat", () => {
       result.current.selectSession("session-001");
     });
 
+    await waitFor(() => {
+      expect(result.current.activeSession?.id).toBe("session-001");
+    });
+
     act(() => {
       result.current.sendMessage("Hello!");
-      textHandler?.("streamed text");
+      textHandler?.("Hello.");
+      textHandler?.(" World.");
       doneHandler?.({
         messageId: "msg-003",
         message: {
           id: "msg-003",
           sessionId: "session-001",
           role: "assistant",
-          content: "snapshot wins",
+          content: "Hello.World.",
           thinkingOutput: null,
           metadata: null,
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -653,7 +658,7 @@ describe("useChat", () => {
     await waitFor(() => {
       expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
         id: "msg-003",
-        content: "snapshot wins",
+        content: "Hello. World.",
       }));
     });
   });

@@ -738,7 +738,12 @@ export function useQuickChat(
           },
           onDone: ({ messageId, message: finalMessage, accumulated }) => {
             const assistantMessage: ChatMessageInfo = finalMessage
-              ? mapChatMessageToInfo(finalMessage)
+              ? {
+                  ...mapChatMessageToInfo(finalMessage),
+                  // FN-4835 (downstream of FN-3817): keep wire-accurate streamed
+                  // text when available instead of potentially lossy snapshots.
+                  ...(accumulated.text.length > 0 ? { content: accumulated.text } : {}),
+                }
               : {
                   id: messageId || `msg-${Date.now()}`,
                   sessionId: activeSession.id,

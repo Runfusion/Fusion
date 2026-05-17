@@ -734,7 +734,12 @@ export function useChat(
         },
         onDone: ({ messageId, message: finalMessage, accumulated }) => {
           const assistantMessage: ChatMessageInfo = finalMessage
-            ? mapChatMessageToInfo(finalMessage)
+            ? {
+                ...mapChatMessageToInfo(finalMessage),
+                // FN-4835 (downstream of FN-3817): the streamed accumulator is
+                // the authoritative wire transcript, so keep it when present.
+                ...(accumulated.text.length > 0 ? { content: accumulated.text } : {}),
+              }
             : {
                 id: messageId || `msg-${Date.now()}`,
                 sessionId: activeSession.id,
