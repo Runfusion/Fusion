@@ -123,6 +123,7 @@ export default defineConfig({
   build: {
     outDir: "../dist/client",
     emptyOutDir: true,
+    manifest: true,
     target: "es2022",
     cssCodeSplit: true,
     sourcemap: false,
