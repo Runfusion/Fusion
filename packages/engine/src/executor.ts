@@ -171,6 +171,108 @@ const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
 const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
+const TASK_DONE_REFUSAL_SUFFIX = "Either finish the work and resubmit, or do not call fn_task_done — exit the session and the engine will requeue.";
+
+export const DISSENT_PATTERNS: RegExp[] = [
+  /\btask (is|was)(?: not|n['’]?t) complete\b/i,
+  /\b(?:i (?:could|can)(?:not|n['’]?t)|unable to|failed to) (?:complete|finish|implement)\b/i,
+  /\b(?:partially|not fully) (?:complete|implemented|done|finished)\b/i,
+  /\b(?:i['’]?m blocked|blocked from|blocking issue prevents)\b/i,
+  /\bto unblock\b/i,
+  /\b(?:needs|requires) (?:FN-\d+|further work|additional work|follow[- ]?up)\b/i,
+];
+
+type TaskDoneRefusalClass =
+  | "summary-claims-incomplete"
+  | "bulk-step-completion-without-review"
+  | "pending-code-review-revise";
+
+type TaskDoneRefusalResult =
+  | { ok: true }
+  | {
+    ok: false;
+    refusalClass: TaskDoneRefusalClass;
+    message: string;
+    reason: string;
+  };
+
+function formatTaskDoneRefusal(refusalClass: TaskDoneRefusalClass, reason: string): string {
+  return `fn_task_done refused (${refusalClass}): ${reason}. ${TASK_DONE_REFUSAL_SUFFIX}`;
+}
+
+export function evaluateTaskDoneRefusal(
+  task: Task,
+  params: { summary?: string },
+  codeReviewVerdicts: Map<number, ReviewVerdict>,
+): TaskDoneRefusalResult {
+  const pendingSteps: number[] = [];
+  for (let stepIndex = 0; stepIndex < task.steps.length; stepIndex++) {
+    const step = task.steps[stepIndex];
+    if (!step || step.status === "done" || step.status === "skipped") {
+      continue;
+    }
+    pendingSteps.push(stepIndex);
+    if (codeReviewVerdicts.get(stepIndex) === "REVISE") {
+      const reason = `Step ${stepIndex + 1} (${step.name}) has a pending code review verdict of REVISE`;
+      return {
+        ok: false,
+        refusalClass: "pending-code-review-revise",
+        reason,
+        message: formatTaskDoneRefusal("pending-code-review-revise", reason),
+      };
+    }
+  }
+
+  const summary = params.summary?.trim();
+  if (summary) {
+    const dissentMatch = DISSENT_PATTERNS.find((pattern) => pattern.test(summary));
+    if (dissentMatch) {
+      const matchText = summary.match(dissentMatch)?.[0] ?? dissentMatch.source;
+      const reason = `summary indicates incomplete work (${JSON.stringify(matchText)})`;
+      return {
+        ok: false,
+        refusalClass: "summary-claims-incomplete",
+        reason,
+        message: formatTaskDoneRefusal("summary-claims-incomplete", reason),
+      };
+    }
+
+    const scopedPattern = /\b(incomplete|not implemented|not done|not finished)\b/i;
+    const scopedMatch = scopedPattern.exec(summary);
+    if (scopedMatch) {
+      const start = Math.max(0, scopedMatch.index - 40);
+      const end = Math.min(summary.length, scopedMatch.index + scopedMatch[0].length + 40);
+      const scopedWindow = summary.slice(start, end);
+      const hasFirstPersonContext = /\b(i|i['’]?m|i['’]?ve|my|we)\b/i.test(scopedWindow)
+        || /\b(the task|this task)\b/i.test(scopedWindow);
+      if (hasFirstPersonContext) {
+        const reason = `summary indicates incomplete work (${JSON.stringify(scopedMatch[0])})`;
+        return {
+          ok: false,
+          refusalClass: "summary-claims-incomplete",
+          reason,
+          message: formatTaskDoneRefusal("summary-claims-incomplete", reason),
+        };
+      }
+    }
+  }
+
+  if (pendingSteps.length >= 2) {
+    const allPendingApproved = pendingSteps.every((stepIndex) => codeReviewVerdicts.get(stepIndex) === "APPROVE");
+    if (!allPendingApproved) {
+      const reason = `attempted to auto-complete ${pendingSteps.length} pending steps without APPROVE verdicts on all of them`;
+      return {
+        ok: false,
+        refusalClass: "bulk-step-completion-without-review",
+        reason,
+        message: formatTaskDoneRefusal("bulk-step-completion-without-review", reason),
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
 /**
  * Determines the step index from which revision should restart given a set of
  * completed steps and user feedback. Exported for unit tests; no longer called
@@ -3424,7 +3526,7 @@ export class TaskExecutor {
         this.createTaskLogTool(task.id),
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
-        this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", () => { taskDone = true; }),
+        this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }),
         createRunVerificationTool({
           worktreePath,
           rootDir: this.rootDir,
@@ -5256,7 +5358,13 @@ export class TaskExecutor {
     return { blocked: false };
   }
 
-  private createTaskDoneTool(taskId: string, worktreePath: string, promptContent: string, onDone: () => void): ToolDefinition {
+  private createTaskDoneTool(
+    taskId: string,
+    worktreePath: string,
+    promptContent: string,
+    codeReviewVerdicts: Map<number, ReviewVerdict>,
+    onDone: () => void,
+  ): ToolDefinition {
     const store = this.store;
     return {
       name: "fn_task_done",
@@ -5331,6 +5439,58 @@ export class TaskExecutor {
             content: [{ type: "text" as const, text: refusalMessage }],
             details: {
               error: refusalMessage,
+            },
+          };
+        }
+
+        const taskDoneRefusal = evaluateTaskDoneRefusal(task, params, codeReviewVerdicts);
+        if (!taskDoneRefusal.ok) {
+          const refusalMessage = taskDoneRefusal.message;
+          await store.logEntry(taskId, refusalMessage, undefined, this.currentRunContext);
+          executorLog.error(`${taskId}: fn_task_done refused (${taskDoneRefusal.refusalClass}) — ${taskDoneRefusal.reason}`);
+
+          const priorRequeues = task.taskDoneRetryCount ?? 0;
+          const nextRequeueCount = priorRequeues + 1;
+          if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
+            await store.updateTask(taskId, {
+              status: "failed",
+              error: refusalMessage,
+              taskDoneRetryCount: nextRequeueCount,
+              paused: false,
+              pausedByAgentId: null,
+              worktree: null,
+              branch: null,
+              sessionFile: null,
+            });
+            await store.logEntry(
+              taskId,
+              `${refusalMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
+              undefined,
+              this.currentRunContext,
+            );
+            await store.moveTask(taskId, "todo", { preserveProgress: true });
+            executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass}) — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
+          } else {
+            await store.updateTask(taskId, {
+              status: "failed",
+              error: refusalMessage,
+              paused: false,
+              pausedByAgentId: null,
+              worktree: null,
+              branch: null,
+              sessionFile: null,
+            });
+            await store.logEntry(taskId, `${refusalMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
+            await this.persistTokenUsage(taskId);
+            await store.moveTask(taskId, "in-review");
+            executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass}) — moved to in-review for inspection`);
+          }
+
+          return {
+            content: [{ type: "text" as const, text: refusalMessage }],
+            details: {
+              error: refusalMessage,
+              refusalClass: taskDoneRefusal.refusalClass,
             },
           };
         }
