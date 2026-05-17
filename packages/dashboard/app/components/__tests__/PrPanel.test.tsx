@@ -7,10 +7,11 @@ vi.mock("../../api", () => ({
   fetchPrChecks: vi.fn(),
   fetchPrReviews: vi.fn(),
   mergePr: vi.fn(),
+  reclaimPrConflict: vi.fn(),
   setAutoMergeOnGreen: vi.fn(),
 }));
 
-import { refreshPrStatus, fetchPrChecks, fetchPrReviews, mergePr, setAutoMergeOnGreen } from "../../api";
+import { refreshPrStatus, fetchPrChecks, fetchPrReviews, mergePr, reclaimPrConflict, setAutoMergeOnGreen } from "../../api";
 
 const mockAddToast = vi.fn();
 const mockOnPrUpdated = vi.fn();
@@ -160,6 +161,58 @@ describe("PrPanel", () => {
 
     fireEvent.click(screen.getByTitle("Refresh PR status"));
     expect(await screen.findByText("No reviews yet")).toBeInTheDocument();
+  });
+
+  it("renders conflict hint and retries conflict reclaim", async () => {
+    (reclaimPrConflict as ReturnType<typeof vi.fn>).mockResolvedValue({ queued: true });
+    (refreshPrStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      prInfo: { ...mockPrInfo, mergeable: "conflicting" },
+      checks: [],
+      reviewDecision: null,
+      blockingReasons: ["conflict"],
+      mergeReady: false,
+    });
+
+    render(
+      <PrPanel
+        taskId="FN-001"
+        projectId="project-1"
+        prInfo={{ ...mockPrInfo, mergeable: "conflicting" }}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        addToast={mockAddToast}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Retry conflict reclaim/i }));
+
+    await waitFor(() => {
+      expect(reclaimPrConflict).toHaveBeenCalledWith("FN-001", "project-1");
+      expect(refreshPrStatus).toHaveBeenCalledWith("FN-001", "project-1");
+    });
+  });
+
+  it("shows conflict hint from blocking reasons after refresh", async () => {
+    (refreshPrStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      prInfo: mockPrInfo,
+      checks: [],
+      reviewDecision: null,
+      blockingReasons: ["merge conflict"],
+      mergeReady: false,
+    });
+
+    render(
+      <PrPanel
+        taskId="FN-001"
+        prInfo={mockPrInfo}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        addToast={mockAddToast}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("Refresh PR status"));
+    expect(await screen.findByRole("button", { name: /Retry conflict reclaim/i })).toBeInTheDocument();
   });
 
   it("shows error toast when refresh fails", async () => {

@@ -158,6 +158,20 @@
   padding: var(--space-sm);
 }
 
+.pr-hint--conflict {
+  align-items: center;
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: var(--btn-border-width) solid var(--color-warning);
+  border-radius: var(--radius-md);
+  color: var(--color-warning);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+  gap: var(--space-sm);
+  justify-content: space-between;
+  padding: var(--space-sm);
+}
+
 .pr-hint--success {
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
   border: var(--btn-border-width) solid color-mix(in srgb, var(--color-success) 35%, transparent);

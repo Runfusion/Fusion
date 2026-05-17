@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitPullRequest, ExternalLink, RefreshCw, Plus, MessageSquare, CircleDot, XCircle, GitMerge } from "lucide-react";
 import { getErrorMessage, type DirectMergeCommitStrategy } from "@fusion/core";
-import { fetchPrReviews, mergePr, refreshPrStatus, setAutoMergeOnGreen, type PrCheckStatus, type PrInfo, type PrRefreshResponse, type PrReviewsResponse } from "../api";
+import { fetchPrReviews, mergePr, reclaimPrConflict, refreshPrStatus, setAutoMergeOnGreen, type PrCheckStatus, type PrInfo, type PrRefreshResponse, type PrReviewsResponse } from "../api";
 import { usePrChecksStream } from "../hooks/usePrChecksStream";
 import { PrChecksList } from "./PrChecksList";
 import type { ToastType } from "../hooks/useToast";
@@ -60,6 +60,7 @@ export function PrPanel({
   const [refreshState, setRefreshState] = useState<PrRefreshResponse | null>(null);
   const [reviewsState, setReviewsState] = useState<PrReviewsResponse | null>(null);
   const [isMerging, setIsMerging] = useState(false);
+  const [isReclaimingConflict, setIsReclaimingConflict] = useState(false);
   const [mergeStrategy, setMergeStrategy] = useState<"merge" | "squash" | "rebase">(
     directMergeCommitStrategy === "always-rebase"
       ? "rebase"
@@ -208,6 +209,8 @@ export function PrPanel({
   const mergeReady = (refreshState?.mergeReady ?? false) && prInfo.status === "open";
   const blockingReasonsTitle = (refreshState?.blockingReasons ?? []).join("; ");
   const showMergeControls = prInfo.status === "open" && (prInfo.draft ?? prInfo.isDraft) !== true;
+  const hasConflictBlockingReason = blockingReasons.some((reason) => reason.toLowerCase().includes("conflict"));
+  const showConflictHint = prInfo.mergeable === "conflicting" || hasConflictBlockingReason;
 
   return (
     <div className="pr-section">
@@ -308,6 +311,36 @@ export function PrPanel({
                 <button className="btn btn-sm" onClick={handleMerge} disabled={isMerging}>Retry</button>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {showConflictHint ? (
+          <div className="pr-hint pr-hint--conflict">
+            Merge conflict detected. Resolve/rebase branch and retry reclaim.
+            <button
+              className="btn btn-sm"
+              onClick={async () => {
+                setIsReclaimingConflict(true);
+                try {
+                  const result = await reclaimPrConflict(taskId, projectId);
+                  if (result.queued) {
+                    addToast("Conflict reclaim queued", "success");
+                    const updated = await refreshPrStatus(taskId, projectId);
+                    setRefreshState(updated);
+                    onPrUpdated(updated.prInfo);
+                  } else {
+                    addToast(result.reason ?? "Conflict reclaim unavailable", "warning");
+                  }
+                } catch (err) {
+                  addToast(getErrorMessage(err) || "Failed to queue conflict reclaim", "error");
+                } finally {
+                  setIsReclaimingConflict(false);
+                }
+              }}
+              disabled={isReclaimingConflict}
+            >
+              Retry conflict reclaim
+            </button>
           </div>
         ) : null}
 

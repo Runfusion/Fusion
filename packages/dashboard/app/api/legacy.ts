@@ -2213,10 +2213,12 @@ export interface PrStatusResponse {
 export interface PrRefreshResponse {
   prInfo: PrInfo;
   mergeReady: boolean;
+  mergeable?: PrInfo["mergeable"];
   blockingReasons: string[];
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
   checks: PrCheckStatus[];
   automationStatus?: string | null;
+  conflictReclaimQueued?: boolean;
 }
 
 export interface PrMergeResponse {
@@ -2350,6 +2352,12 @@ export function fetchPrStatus(id: string, projectId?: string): Promise<PrStatusR
 /** Force refresh PR status from GitHub */
 export function refreshPrStatus(id: string, projectId?: string): Promise<PrRefreshResponse> {
   return api<PrRefreshResponse>(withProjectId(`/tasks/${id}/pr/refresh`, projectId), {
+    method: "POST",
+  });
+}
+
+export function reclaimPrConflict(id: string, projectId?: string): Promise<{ queued: boolean; reason?: string }> {
+  return api<{ queued: boolean; reason?: string }>(withProjectId(`/tasks/${id}/pr/reclaim-conflict`, projectId), {
     method: "POST",
   });
 }
