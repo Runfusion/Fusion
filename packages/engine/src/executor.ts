@@ -5198,14 +5198,24 @@ export class TaskExecutor {
       return { blocked: false };
     }
 
-    const message = `[scope-leak] reviewLevel=${reviewLevel} enforcement=${enforcementMode} off-scope touched files [${offScopeFiles.join(", ")}]; declared scope [${declaredScope.join(", ")}]`;
+    const renderListPreview = (items: string[], cap = 10): string => {
+      if (items.length <= cap) {
+        return items.join(", ");
+      }
+      const remaining = items.length - cap;
+      return `${items.slice(0, cap).join(", ")}, … (+${remaining} more)`;
+    };
+
+    const offScopePreview = renderListPreview(offScopeFiles);
+    const declaredScopePreview = renderListPreview(declaredScope);
+    const message = `[scope-leak] reviewLevel=${reviewLevel} enforcement=${enforcementMode} off-scope touched files [${offScopePreview}]; declared scope [${declaredScopePreview}]; total off-scope=${offScopeFiles.length} total scope=${declaredScope.length}`;
     executorLog.warn(`${task.id}: ${message}`);
     await this.store.logEntry(task.id, message, undefined, this.currentRunContext);
 
     if (enforcementMode === "block") {
       return {
         blocked: true,
-        message: `Plan-Only scope-leak guard refused fn_task_done. Off-scope paths: [${offScopeFiles.join(", ")}]. Revert them before retrying (for example: git checkout -- <paths>).`,
+        message: `Plan-Only scope-leak guard refused fn_task_done. Off-scope paths: [${offScopePreview}]. Revert them before retrying (for example: git checkout -- <paths>).`,
       };
     }
 

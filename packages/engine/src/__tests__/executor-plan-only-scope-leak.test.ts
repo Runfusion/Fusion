@@ -110,6 +110,36 @@ describe("FN-4482 plan-only scope leak guard", () => {
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4482", "in-review");
   });
 
+  it("truncates scope-leak output when off-scope list or declared scope exceeds 10 entries", async () => {
+    const scope = Array.from({ length: 15 }, (_, i) => `docs/scope-${i + 1}.md`);
+    const unstaged = Array.from({ length: 15 }, (_, i) => `packages/core/src/off-scope-${i + 1}.ts`);
+    const { store, tool } = await setup({ scope, unstaged });
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+
+    const scopeLeakEntry = store.logEntry.mock.calls.find((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel=1 enforcement=warn"));
+    expect(scopeLeakEntry).toBeTruthy();
+    const entryText = String(scopeLeakEntry?.[1]);
+    expect(entryText).toContain("… (+5 more)");
+    expect(entryText).toContain("total off-scope=15");
+    expect(entryText).toContain("total scope=15");
+    expect(entryText).not.toContain("packages/core/src/off-scope-11.ts");
+    expect(entryText).not.toContain("packages/core/src/off-scope-15.ts");
+    expect(entryText).not.toContain("docs/scope-11.md");
+    expect(entryText).not.toContain("docs/scope-15.md");
+  });
+
+  it("truncates block refusal message when off-scope list exceeds 10 entries", async () => {
+    const unstaged = Array.from({ length: 15 }, (_, i) => `packages/core/src/off-scope-${i + 1}.ts`);
+    const { tool } = await setup({ enforcement: "block", unstaged });
+    const result = await tool.execute("id", {});
+    const refusalText = result.content[0].text;
+    expect(refusalText).toContain("Plan-Only scope-leak guard refused fn_task_done");
+    expect(refusalText).toContain("… (+5 more)");
+    expect(refusalText).not.toContain("packages/core/src/off-scope-11.ts");
+    expect(refusalText).not.toContain("packages/core/src/off-scope-15.ts");
+  });
+
   it("bypasses guard when scopeOverride=true", async () => {
     const { store, tool } = await setup({ scopeOverride: true, unstaged: ["packages/core/src/db.ts"] });
     const result = await tool.execute("id", {});

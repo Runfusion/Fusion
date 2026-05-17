@@ -228,6 +228,9 @@ Fusion also enforces a completion-time scope-leak check in the executor `fn_task
 - Applies to tasks with declared `## File Scope`.
 - Uses touched files from branch committed delta plus uncommitted working-tree edits at completion time.
 - Emits `[scope-leak]` activity-log entries when touched files are off-scope.
+  - Off-scope touched-file and declared-scope lists are truncated to the first 10 entries with `… (+N more)` when longer.
+  - Log entries include `total off-scope=` and `total scope=` counters so full list sizes remain explicit.
+  - In `"block"` mode, the `fn_task_done` refusal message uses the same truncated off-scope preview.
 - Honors `task.scopeOverride === true` as an explicit bypass.
 
 `planOnlyScopeLeakEnforcement` controls Review Level 1 behavior:
