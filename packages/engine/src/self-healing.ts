@@ -2626,6 +2626,8 @@ export class SelfHealingManager {
     const blockedGrowth = blockedDepth - window.windowStartBlockedDepth;
     if (window.transitionsOutOfInProgressInWindow === 0 && blockedGrowth >= growthThreshold) {
       const rebound = await this.autoReboundPausedScopeDecayDetailed({ ignoreAgeGate: true });
+      // Measure verification progress after intervention; don't count our own rebound moves.
+      window.transitionsOutOfInProgressInWindow = 0;
       const followerCount = blockedDepth;
       const auditor = createRunAuditor(this.store, { runId: generateSyntheticRunId("fn4890-board-stall", "global"), agentId: "self-healing", phase: "board-stall-broken" });
       await auditor.database({ type: "task:auto-board-stall-broken", target: "board", metadata: { holderIds: rebound.reboundedIds, followerCount, windowMs, blockedGrowth } });

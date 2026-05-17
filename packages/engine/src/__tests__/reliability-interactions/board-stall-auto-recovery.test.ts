@@ -38,30 +38,24 @@ function makeStore(tasks: Task[], settings: Partial<Settings> = {}) {
         if (includeArchived === false && task.column === "archived") return false;
         return true;
       })),
-    moveTask: vi.fn(async (id: string, column: Task["column"], _opts?: any) => {
+    moveTask: vi.fn(async (id: string, column: Task["column"]) => {
       const prev = byId.get(id)!;
       const next = { ...prev, column, paused: false, blockedBy: null, overlapBlockedBy: null } as Task;
       byId.set(id, next);
+      emitter.emit("task:moved", { task: next, from: prev.column, to: column, source: "engine" });
       return next;
     }),
     getTask: vi.fn(async (id: string) => byId.get(id)),
     archiveTaskAndCleanup: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
-    recordRunAuditEvent: vi.fn(async (event: any) => {
-      audits.push(event.mutationType);
-    }),
+    recordRunAuditEvent: vi.fn(async (event: any) => audits.push(event.mutationType)),
   });
   return { store: store as unknown as TaskStore & EventEmitter, byId, audits };
 }
 
 describe("reliability interactions: board stall auto-recovery", () => {
   it("emits broken then unrecovered events and notifies once", async () => {
-    const holder = makeTask("FN-1", {
-      column: "in-progress",
-      paused: true,
-      pausedReason: "waiting",
-      columnMovedAt: new Date(Date.now() - 1_000).toISOString(),
-    });
+    const holder = makeTask("FN-1", { column: "in-progress", paused: true, pausedReason: "waiting" });
     const { store, byId, audits } = makeStore([holder]);
     const notify = vi.fn(async () => undefined);
     const manager = new SelfHealingManager(store, {
@@ -69,6 +63,7 @@ describe("reliability interactions: board stall auto-recovery", () => {
       getExecutingTaskIds: () => new Set(),
       ntfyNotifier: { notifyBoardStallUnrecovered: notify },
     });
+    manager.start();
 
     await manager.runBoardStallAutoRecoverySweep();
     byId.set("FN-2", makeTask("FN-2", { column: "todo", blockedBy: "FN-1" }));
@@ -83,6 +78,7 @@ describe("reliability interactions: board stall auto-recovery", () => {
     expect(second.unrecovered).toBe(true);
     expect(audits).toContain("task:auto-board-stall-unrecovered");
     expect(notify).toHaveBeenCalledTimes(1);
+    manager.stop();
   });
 
   it("skips unrecovered notification when progress resumes", async () => {
@@ -90,6 +86,7 @@ describe("reliability interactions: board stall auto-recovery", () => {
     const { store, byId } = makeStore([holder]);
     const notify = vi.fn(async () => undefined);
     const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getExecutingTaskIds: () => new Set(), ntfyNotifier: { notifyBoardStallUnrecovered: notify } });
+    manager.start();
 
     await manager.runBoardStallAutoRecoverySweep();
     byId.set("FN-11", makeTask("FN-11", { column: "todo", blockedBy: "FN-10" }));
@@ -99,6 +96,7 @@ describe("reliability interactions: board stall auto-recovery", () => {
     const verification = await manager.runBoardStallAutoRecoverySweep();
     expect(verification.unrecovered).toBe(false);
     expect(notify).not.toHaveBeenCalled();
+    manager.stop();
   });
 
   it("enforces cooldown for repeated unrecovered alerts", async () => {
@@ -106,6 +104,7 @@ describe("reliability interactions: board stall auto-recovery", () => {
     const { store, byId } = makeStore([holder]);
     const notify = vi.fn(async () => undefined);
     const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getExecutingTaskIds: () => new Set(), ntfyNotifier: { notifyBoardStallUnrecovered: notify } });
+    manager.start();
 
     await manager.runBoardStallAutoRecoverySweep();
     byId.set("FN-21", makeTask("FN-21", { column: "todo", blockedBy: "FN-20" }));
@@ -118,5 +117,6 @@ describe("reliability interactions: board stall auto-recovery", () => {
     await manager.runBoardStallAutoRecoverySweep();
 
     expect(notify).toHaveBeenCalledTimes(1);
+    manager.stop();
   });
 });
