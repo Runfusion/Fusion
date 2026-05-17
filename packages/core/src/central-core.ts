@@ -514,6 +514,40 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     return updated;
   }
 
+  async transitionProjectIsolation(
+    projectId: string,
+    nextMode: IsolationMode,
+    opts: { force?: boolean } = {}
+  ): Promise<{ ok: true } | { ok: false; reason: string; activeTaskCount?: number }> {
+    void opts;
+    this.ensureInitialized();
+
+    const project = await this.getProject(projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+
+    if (project.isolationMode === nextMode) {
+      return { ok: false, reason: "noop" };
+    }
+
+    await this.updateProject(projectId, { isolationMode: nextMode });
+    await this.logActivity({
+      type: "project:isolation-transition",
+      projectId,
+      projectName: project.name,
+      timestamp: new Date().toISOString(),
+      details: `Project isolation mode transitioned: ${project.isolationMode} -> ${nextMode}`,
+      metadata: {
+        from: project.isolationMode,
+        to: nextMode,
+      },
+    });
+
+    return { ok: true };
+  }
+
+
   /**
    * Reconcile stale project statuses.
    *

@@ -401,4 +401,67 @@ describe("Scheduler node routing", () => {
 
     expect((healthMonitor.getNodeHealth as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
+
+  it("parks dispatch when owning-node handoff policy blocks peer-owner takeover", async () => {
+    const task = createMockTask({ id: "FN-118", nodeId: "node-online", checkoutNodeId: "node-owner", checkedOutBy: "agent-owner" });
+    const store = createMockStore(task, {
+      maxConcurrent: 1,
+      maxWorktrees: 1,
+      unavailableNodePolicy: "block",
+      owningNodeHandoffPolicy: "block",
+    });
+    const healthMonitor = createMockHealthMonitor({ "node-online": "online", "node-owner": "offline" });
+    const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      task.id,
+      "Owning-node handoff parked dispatch: handoff_blocked_by_policy",
+    );
+  });
+
+  it("forces local dispatch when owning-node handoff returns reassign-local", async () => {
+    const task = createMockTask({ id: "FN-119", nodeId: "node-online", checkoutNodeId: "node-owner", checkedOutBy: "agent-owner" });
+    const store = createMockStore(task, {
+      maxConcurrent: 1,
+      maxWorktrees: 1,
+      unavailableNodePolicy: "block",
+      owningNodeHandoffPolicy: "reassign-to-local",
+    });
+    const healthMonitor = createMockHealthMonitor({ "node-online": "online", "node-owner": "offline" });
+    const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      effectiveNodeId: null,
+      effectiveNodeSource: "local",
+    }));
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Owning-node handoff applied: owner_offline_local_takes_over");
+  });
+
+  it("keeps non-local routing when owning-node handoff returns reassign-any", async () => {
+    const task = createMockTask({ id: "FN-120", nodeId: "node-online", checkoutNodeId: "node-owner", checkedOutBy: "agent-owner" });
+    const store = createMockStore(task, {
+      maxConcurrent: 1,
+      maxWorktrees: 1,
+      unavailableNodePolicy: "block",
+      owningNodeHandoffPolicy: "reassign-any-healthy",
+    });
+    const healthMonitor = createMockHealthMonitor({ "node-online": "online", "node-owner": "offline" });
+    const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      effectiveNodeId: "node-online",
+      effectiveNodeSource: "task-override",
+    }));
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Owning-node handoff applied: owner_offline_any_healthy_eligible");
+  });
 });

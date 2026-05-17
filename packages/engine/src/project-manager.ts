@@ -45,6 +45,21 @@ export interface ProjectManagerEvents {
   "runtime:added": [data: { projectId: string; projectName: string }];
   /** Emitted when a runtime is removed */
   "runtime:removed": [data: { projectId: string; projectName: string }];
+  /** Emitted when a runtime is restarted */
+  "project:runtime-restarted": [data: { projectId: string; projectName: string; isolationMode: import("@fusion/core").IsolationMode; reason?: string }];
+}
+
+
+
+export interface ProjectRuntimeRestartBlockedError {
+  kind: "active_tasks";
+  count: number;
+}
+
+export function isProjectRuntimeRestartBlockedError(error: unknown): error is ProjectRuntimeRestartBlockedError {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { kind?: unknown; count?: unknown };
+  return candidate.kind === "active_tasks" && typeof candidate.count === "number";
 }
 
 /**
@@ -461,6 +476,43 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     } catch (error) {
       projectManagerLog.error(`Failed to release global slot for ${projectId}:`, error);
     }
+  }
+
+
+  async restartProjectRuntime(projectId: string, options?: { reason?: string; force?: boolean }): Promise<void> {
+    const runtime = this.runtimes.get(projectId);
+    if (!runtime) {
+      throw new Error(`Runtime not found for project ${projectId}`);
+    }
+
+    const metrics = runtime.getMetrics();
+    if (!options?.force && metrics.inFlightTasks > 0) {
+      throw { kind: "active_tasks", count: metrics.inFlightTasks } satisfies ProjectRuntimeRestartBlockedError;
+    }
+
+    const project = await this.centralCore.getProject(projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+
+    const workingDirectory = await this.centralCore.resolveLocalProjectWorkingDirectory(projectId);
+    await this.removeProject(projectId);
+
+    await this.addProject({
+      projectId,
+      workingDirectory,
+      isolationMode: project.isolationMode,
+      maxConcurrent: project.settings?.maxConcurrent ?? 2,
+      maxWorktrees: project.settings?.maxWorktrees ?? 4,
+      settings: project.settings,
+    });
+
+    this.emit("project:runtime-restarted", {
+      projectId,
+      projectName: project.name,
+      isolationMode: project.isolationMode,
+      reason: options?.reason,
+    });
   }
 
   /**

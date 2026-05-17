@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { Task, CentralCore, RegisteredProject } from "@fusion/core";
+import type { Task, CentralCore, RegisteredProject, IsolationMode } from "@fusion/core";
 import { ProjectManager } from "./project-manager.js";
 import { NodeHealthMonitor } from "./node-health-monitor.js";
 import type {
@@ -48,6 +48,8 @@ export interface HybridExecutorEvents {
   "project:added": [data: { projectId: string; projectName: string }];
   /** Emitted when a project runtime is removed */
   "project:removed": [data: { projectId: string; projectName: string }];
+  /** Emitted when a project runtime is restarted */
+  "project:runtime-restarted": [data: { projectId: string; projectName: string; isolationMode: IsolationMode; reason?: string }];
 }
 
 /**
@@ -309,6 +311,47 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
     return existingRuntime;
   }
 
+
+  /**
+   * Transition project isolation mode and restart runtime to apply changes.
+   *
+   * Non-force transitions that fail runtime restart due to active tasks roll back
+   * the persisted isolationMode change to its previous value before returning.
+   */
+  async transitionProjectIsolation(
+    projectId: string,
+    nextMode: IsolationMode,
+    opts?: { force?: boolean },
+  ): Promise<{ ok: true } | { ok: false; reason: string; activeTaskCount?: number }> {
+    const current = await this.centralCore.getProject(projectId);
+    if (!current) {
+      return { ok: false, reason: "project_not_found" };
+    }
+
+    const transition = await this.centralCore.transitionProjectIsolation(projectId, nextMode, opts);
+    if (!transition.ok) {
+      return transition;
+    }
+
+    try {
+      await this.projectManager.restartProjectRuntime(projectId, {
+        reason: `isolation-transition:${current.isolationMode}->${nextMode}`,
+        force: opts?.force,
+      });
+      return { ok: true };
+    } catch (error) {
+      if (!opts?.force && error && typeof error === "object" && (error as { kind?: unknown }).kind === "active_tasks") {
+        await this.centralCore.updateProject(projectId, { isolationMode: current.isolationMode });
+        return {
+          ok: false,
+          reason: "active_tasks",
+          activeTaskCount: Number((error as { count?: unknown }).count) || 0,
+        };
+      }
+      throw error;
+    }
+  }
+
   /**
    * Get a runtime by project ID.
    */
@@ -437,6 +480,10 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
 
     this.projectManager.on("runtime:removed", (data) => {
       this.emit("project:removed", data);
+    });
+
+    this.projectManager.on("project:runtime-restarted", (data) => {
+      this.emit("project:runtime-restarted", data);
     });
   }
 

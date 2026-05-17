@@ -585,33 +585,63 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.patch("/projects/:id", async (req, res) => {
     try {
-      const { name, status, isolationMode, nodeId } = req.body;
+      const { name, status, isolationMode, nodeId, force } = req.body;
 
       const updates: Partial<import("@fusion/core").RegisteredProject> = {};
       if (name !== undefined) updates.name = name;
       if (status !== undefined) updates.status = status as import("@fusion/core").ProjectStatus;
       if (isolationMode !== undefined) updates.isolationMode = isolationMode as "in-process" | "child-process";
 
-      const resultProject = await withCentralCore(async (central) => {
-        const project = await central.updateProject(req.params.id, updates);
-        if (!project) {
+      const result = await withCentralCore(async (central) => {
+        const existing = await central.getProject(req.params.id);
+        if (!existing) {
           throw notFound("Project not found");
         }
 
+        let transitionDeferred = false;
+        const isolationChanged =
+          isolationMode !== undefined && isolationMode !== existing.isolationMode;
+
+        if (isolationChanged) {
+          if (options?.hybridExecutor) {
+            const transition = await options.hybridExecutor.transitionProjectIsolation(
+              req.params.id,
+              isolationMode as "in-process" | "child-process",
+              { force: Boolean(force) },
+            );
+            if (!transition.ok && transition.reason === "active_tasks") {
+              throw new ApiError(409, "active_tasks", {
+                error: "active_tasks",
+                activeTaskCount: transition.activeTaskCount ?? 0,
+              });
+            }
+          } else {
+            transitionDeferred = true;
+          }
+        }
+
+        const project = await central.updateProject(req.params.id, updates);
+
         if (nodeId === undefined) {
-          return project;
+          return { project, transitionDeferred };
         }
         if (nodeId === null) {
-          return await central.unassignProjectFromNode(req.params.id);
+          return {
+            project: await central.unassignProjectFromNode(req.params.id),
+            transitionDeferred,
+          };
         }
         if (typeof nodeId === "string" && nodeId.trim()) {
-          return await central.assignProjectToNode(req.params.id, nodeId.trim());
+          return {
+            project: await central.assignProjectToNode(req.params.id, nodeId.trim()),
+            transitionDeferred,
+          };
         }
 
         throw badRequest("nodeId must be a non-empty string or null");
       });
 
-      res.json(resultProject);
+      res.json(result.transitionDeferred ? { ...result.project, transitionDeferred: true } : result.project);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

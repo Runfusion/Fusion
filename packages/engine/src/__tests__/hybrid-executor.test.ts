@@ -16,6 +16,7 @@ const mockProjectManagerInstances: Array<{
   getGlobalMetrics: ReturnType<typeof vi.fn>;
   acquireGlobalSlot: ReturnType<typeof vi.fn>;
   releaseGlobalSlot: ReturnType<typeof vi.fn>;
+  restartProjectRuntime: ReturnType<typeof vi.fn>;
   stopAll: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
 }> = [];
@@ -71,6 +72,7 @@ vi.mock("../project-manager.js", () => ({
       }),
       acquireGlobalSlot: vi.fn().mockResolvedValue(true),
       releaseGlobalSlot: vi.fn().mockResolvedValue(undefined),
+      restartProjectRuntime: vi.fn().mockResolvedValue(undefined),
       stopAll: vi.fn().mockImplementation(() => {
         mockRuntimes.clear();
         mockProjectIds.length = 0;
@@ -133,6 +135,7 @@ describe("HybridExecutor", () => {
       registerProject: vi.fn().mockResolvedValue(mockProject),
       unregisterProject: vi.fn().mockResolvedValue(undefined),
       updateProject: vi.fn().mockResolvedValue(mockProject),
+      transitionProjectIsolation: vi.fn().mockResolvedValue({ ok: true }),
       getGlobalConcurrencyState: vi.fn().mockResolvedValue({
         globalMaxConcurrent: 4,
         currentlyActive: 0,
@@ -473,6 +476,28 @@ describe("HybridExecutor", () => {
       ).rejects.toThrow(
         "Project/node path mapping not found for projectId=proj_test123 nodeId=node_local",
       );
+    });
+  });
+
+  describe("transitionProjectIsolation", () => {
+    beforeEach(async () => {
+      await executor.initialize();
+      await executor.addProject({
+        projectId: "proj_test123",
+        workingDirectory: "/tmp/test-project",
+        isolationMode: "in-process",
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+      });
+    });
+
+    it("rolls back persisted isolation mode when restart is blocked by active tasks", async () => {
+      const manager = mockProjectManagerInstances[0];
+      manager?.restartProjectRuntime.mockRejectedValueOnce({ kind: "active_tasks", count: 3 });
+
+      const result = await executor.transitionProjectIsolation("proj_test123", "child-process");
+      expect(result).toEqual({ ok: false, reason: "active_tasks", activeTaskCount: 3 });
+      expect(mockCentralCore.updateProject).toHaveBeenCalledWith("proj_test123", { isolationMode: "in-process" });
     });
   });
 });

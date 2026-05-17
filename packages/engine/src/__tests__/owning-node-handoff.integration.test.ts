@@ -1,71 +1,82 @@
-import { describe, expect, it, vi } from "vitest";
-import type { Task, TaskStore } from "@fusion/core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { TaskStore, type OwningNodeHandoffPolicy } from "@fusion/core";
 import { MeshLeaseManager } from "../mesh-lease-manager.js";
+import type { NodeHealthMonitor } from "../node-health-monitor.js";
 
-function baseTask(overrides: Partial<Task> = {}): Task {
-  return {
-    id: "FN-1",
-    description: "handoff",
-    column: "in-progress",
-    dependencies: [],
-    steps: [],
-    currentStep: 0,
-    log: [],
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    checkedOutBy: "agent-1",
-    checkedOutAt: "2026-01-01T00:00:00.000Z",
-    checkoutLeaseRenewedAt: "2026-01-01T00:00:00.000Z",
-    checkoutLeaseEpoch: 1,
-    checkoutNodeId: "node-owner",
-    ...overrides,
-  };
-}
-
-function createTaskStore(task: Task) {
-  let current = { ...task };
-  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => {
-    current = { ...current, ...patch };
-    return current;
-  });
-  const taskStore = {
-    getTask: vi.fn(async () => current),
-    updateTask,
-    moveTask: vi.fn(async () => current),
-    logEntry: vi.fn(async () => undefined),
-  } as unknown as TaskStore;
-  return { taskStore, updateTask, getCurrent: () => current };
+function makeTmpDir(): string {
+  return mkdtempSync(join(tmpdir(), "fn-owning-handoff-test-"));
 }
 
 describe("MeshLeaseManager owning-node handoff integration", () => {
-  it.each([
-    { policy: "block", selfOwned: false, expectRecovered: false },
-    { policy: "reassign-to-local", selfOwned: false, expectRecovered: true },
-    { policy: "reassign-any-healthy", selfOwned: false, expectRecovered: true },
-    { policy: "block", selfOwned: true, expectRecovered: true },
-    { policy: "reassign-to-local", selfOwned: true, expectRecovered: true },
-    { policy: "reassign-any-healthy", selfOwned: true, expectRecovered: true },
-  ] as const)("policy=$policy selfOwned=$selfOwned", async ({ policy, selfOwned, expectRecovered }) => {
-    const ownerNodeId = selfOwned ? "node-local" : "node-owner";
-    const { taskStore, updateTask, getCurrent } = createTaskStore(baseTask({ checkoutNodeId: ownerNodeId }));
+  let rootDir: string;
+  let globalDir: string;
+  let taskStore: TaskStore;
+  let taskId: string;
 
+  beforeEach(async () => {
+    rootDir = makeTmpDir();
+    globalDir = join(rootDir, ".fusion-global");
+    taskStore = new TaskStore(rootDir, globalDir);
+    await taskStore.init();
+    taskId = (await taskStore.createTask({ description: "handoff" })).id;
+  });
+
+  afterEach(async () => {
+    taskStore?.close();
+    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  async function seedLease(ownerNodeId: string): Promise<void> {
+    await taskStore.updateTask(taskId, {
+      column: "in-progress",
+      checkedOutBy: "agent-1",
+      checkedOutAt: "2026-05-01T00:00:00.000Z",
+      checkoutLeaseRenewedAt: "2026-05-01T00:00:00.000Z",
+      checkoutLeaseEpoch: 1,
+      checkoutNodeId: ownerNodeId,
+    });
+  }
+
+  async function runCase(policy: OwningNodeHandoffPolicy, ownerNodeId: string): Promise<boolean> {
     const manager = new MeshLeaseManager({
       taskStore,
-      nodeHealthMonitor: { getNodeHealth: vi.fn(() => "offline") } as any,
       localNodeId: "node-local",
       getHandoffPolicy: async () => policy,
+      nodeHealthMonitor: {
+        getNodeHealth: () => "offline",
+      } as unknown as NodeHealthMonitor,
     });
+    return manager.recoverAbandonedLease(taskId, "test-owner-unavailable", { preserveProgress: true });
+  }
 
-    const recovered = await manager.recoverAbandonedLease("FN-1", "test");
-    expect(recovered).toBe(expectRecovered);
+  it("applies handoff policy matrix for peer-owned leases", async () => {
+    await seedLease("node-peer");
+    expect(await runCase("block", "node-peer")).toBe(false);
+    let task = await taskStore.getTask(taskId);
+    expect(task?.checkedOutBy).toBe("agent-1");
 
-    if (expectRecovered) {
-      expect(updateTask).toHaveBeenCalled();
-      expect(getCurrent().checkedOutBy).toBeNull();
-      expect(getCurrent().checkoutNodeId).toBeNull();
-    } else {
-      expect(updateTask).not.toHaveBeenCalled();
-      expect(getCurrent().checkedOutBy).toBe("agent-1");
+    await seedLease("node-peer");
+    expect(await runCase("reassign-to-local", "node-peer")).toBe(true);
+    task = await taskStore.getTask(taskId);
+    expect(task?.checkedOutBy ?? null).toBeNull();
+
+    await seedLease("node-peer");
+    expect(await runCase("reassign-any-healthy", "node-peer")).toBe(true);
+    task = await taskStore.getTask(taskId);
+    expect(task?.checkedOutBy ?? null).toBeNull();
+  });
+
+  it("recovers self-owned leases regardless of policy", async () => {
+    for (const policy of ["block", "reassign-to-local", "reassign-any-healthy"] as const) {
+      await seedLease("node-local");
+      const recovered = await runCase(policy, "node-local");
+      expect(recovered).toBe(true);
+      const task = await taskStore.getTask(taskId);
+      expect(task?.checkedOutBy ?? null).toBeNull();
     }
   });
 });
