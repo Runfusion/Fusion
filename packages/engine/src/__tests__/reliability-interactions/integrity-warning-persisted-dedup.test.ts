@@ -38,7 +38,7 @@ function makeStore(task: Task, events: unknown[] = []): TaskStore & EventEmitter
     commitAuthorEnabled: false,
     useAiMergeCommitSummary: false,
     baseBranch: "main",
-  } as Settings;
+  } as unknown as Settings;
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => mergedSettings),
     getTask: vi.fn(async () => task),

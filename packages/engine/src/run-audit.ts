@@ -92,6 +92,8 @@ export type GitMutationType =
   | "worktree:worktrunk-fallback"
   | "worktree:worktrunk-failure"
   | "worktree:worktrunk-fallback-native"
+  | "worktree:removal-refused-active-session"
+  | "worktree:removal-forced-over-active-session"
   | "branch:create"
   | "branch:delete"
   | "branch:checkout"

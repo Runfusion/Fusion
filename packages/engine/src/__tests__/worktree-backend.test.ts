@@ -5,6 +5,7 @@ import {
   WorktrunkWorktreeBackend,
   removeWorktree,
   resolveWorktreeBackend,
+  RemovalReason,
 } from "../worktree-backend.js";
 
 const { execMock, accessMock, existsSyncMock } = vi.hoisted(() => {
@@ -527,6 +528,7 @@ describe("removeWorktree", () => {
       worktreePath: "/repo/.worktrees/fn-1",
       settings: {},
       audit,
+      reason: RemovalReason.SelfHealingReclaim,
     });
 
     expect(execMock).toHaveBeenCalledWith(
@@ -546,6 +548,7 @@ describe("removeWorktree", () => {
       settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any },
       audit,
       taskId: "FN-1",
+      reason: RemovalReason.SelfHealingReclaim,
     });
 
     expect(audit.git).toHaveBeenCalledWith({ type: "worktree:worktrunk-remove", target: "/repo/.worktrees/fn-1" });
@@ -562,6 +565,7 @@ describe("removeWorktree", () => {
       worktreePath: "/repo/.worktrees/fn-1",
       settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fallback-native" } as any },
       audit,
+      reason: RemovalReason.SelfHealingReclaim,
     });
 
     expect(audit.git).toHaveBeenCalledWith(
@@ -580,6 +584,7 @@ describe("removeWorktree", () => {
         rootDir: "/repo",
         worktreePath: "/repo/.worktrees/fn-1",
         settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } as any },
+        reason: RemovalReason.SelfHealingReclaim,
       }),
     ).rejects.toMatchObject({ code: "worktrunk_operation_failed", operation: "remove" });
   });
@@ -590,6 +595,7 @@ describe("removeWorktree", () => {
         rootDir: "/repo",
         worktreePath: "/repo/.worktrees/fn-1",
         settings: { worktrunk: { enabled: true, onFailure: "fail" } as any },
+        reason: RemovalReason.SelfHealingReclaim,
       }),
     ).rejects.toMatchObject({ code: "worktrunk_binary_missing", operation: "remove" });
   });

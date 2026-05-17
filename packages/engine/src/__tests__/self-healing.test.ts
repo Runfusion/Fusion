@@ -51,6 +51,25 @@ vi.mock("node:fs", async (importOriginal) => {
 
 vi.mock("../worktree-pool.js", () => ({
   WorktreePool: vi.fn(),
+  // FN-4811: Must mirror the production `RemovalReason` const in worktree-backend.ts
+  // exactly — every key referenced as `RemovalReason.X` in production code (self-healing,
+  // executor, merger) needs to resolve here, otherwise removeWorktree({ reason: undefined })
+  // gets passed through and the gate logic fails with confusing 'reason is undefined' errors.
+  RemovalReason: {
+    HardCancel: "hard-cancel",
+    ExecutorTransientRetry: "executor-transient-retry",
+    ExecutorStuckKilled: "executor-stuck-killed",
+    ExecutorDispose: "executor-dispose",
+    StepSessionCleanup: "step-session-cleanup",
+    MergerPostMerge: "merger-post-merge",
+    MergerCleanup: "merger-cleanup",
+    SelfHealingReclaim: "self-healing-reclaim",
+    SelfHealingStaleActiveBranch: "self-healing-stale-active-branch",
+    SelfHealingBranchConflict: "self-healing-branch-conflict",
+    SelfHealingOrphanRescue: "self-healing-orphan-rescue",
+    SelfHealingIdleSweep: "self-healing-idle-sweep",
+    PoolPrune: "pool-prune",
+  },
   scanIdleWorktrees: vi.fn().mockResolvedValue([]),
   cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
   scanOrphanedBranches: vi.fn().mockResolvedValue([]),

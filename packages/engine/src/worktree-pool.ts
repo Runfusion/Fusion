@@ -22,7 +22,7 @@ export {
   removeWorktree,
   resolveWorktreeBackend,
 } from "./worktree-backend.js";
-export type { WorktreeBackend, WorktreeBackendKind, RemovalReason } from "./worktree-backend.js";
+export type { WorktreeBackend, WorktreeBackendKind } from "./worktree-backend.js";
 export { RemovalReason } from "./worktree-backend.js";
 
 // Re-export worktrunk installer types for convenience.
