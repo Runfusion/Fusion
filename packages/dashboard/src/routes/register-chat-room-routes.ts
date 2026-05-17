@@ -1,9 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import type { ChatAttachment, ChatRoomCreateInput, ChatRoomStatus, ChatRoomUpdateInput } from "@fusion/core";
 import type { Request } from "express";
 import { RoomReplyGenerationError } from "../chat.js";
 import { createProjectScopedChatManager, resolveProjectChatContext } from "../chat-project-services.js";
 import { ApiError, badRequest, internalError, notFound } from "../api-error.js";
 import { rateLimit, RATE_LIMITS } from "../rate-limit.js";
+import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
 import type { ApiRoutesContext } from "./types.js";
 
 function isSlugCollisionError(err: unknown): boolean {
@@ -11,8 +16,41 @@ function isSlugCollisionError(err: unknown): boolean {
   return message.includes("slug") || message.includes("exists");
 }
 
-export function registerChatRoomRoutes(ctx: ApiRoutesContext): void {
-  const { router, options, chatLogger, rethrowAsApiError } = ctx;
+interface ChatRoomRouteDeps {
+  upload: import("multer").Multer;
+}
+
+function resolveRoomAttachmentPath(rootDir: string, roomId: string, filename: string): { roomDir: string; filePath: string } {
+  const roomDir = resolve(rootDir, ".fusion", "chat-room-attachments", roomId);
+  const safeName = basename(filename);
+  if (safeName !== filename) {
+    throw badRequest("Invalid attachment path");
+  }
+  const filePath = resolve(roomDir, safeName);
+  if (!filePath.startsWith(`${roomDir}/`) && filePath !== roomDir) {
+    throw badRequest("Invalid attachment path");
+  }
+  return { roomDir, filePath };
+}
+
+export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRouteDeps): void {
+  const { router, options, getProjectContext, chatLogger, rethrowAsApiError } = ctx;
+  const { upload } = deps;
+
+  const uploadChatAttachment: import("express").RequestHandler = (req, res, next) => {
+    upload.single("file")(req, res, (err?: unknown) => {
+      if (!err) {
+        next();
+        return;
+      }
+      const multerError = err as { code?: string };
+      if (multerError?.code === "LIMIT_FILE_SIZE") {
+        next(badRequest(`File too large. Maximum: ${CHAT_MAX_ATTACHMENT_SIZE} bytes (5MB)`));
+        return;
+      }
+      next(err as Error);
+    });
+  };
 
   function getRequestedProjectId(req: Request): string | undefined {
     return typeof req.query.projectId === "string"
@@ -347,6 +385,70 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  router.post("/chat/rooms/:id/attachments", rateLimit(RATE_LIMITS.mutation), uploadChatAttachment, async (req, res) => {
+    try {
+      const roomId = String(req.params.id);
+      const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
+      const room = chatStore.getRoom(roomId);
+      if (!room) throw notFound(`Chat room ${roomId} not found`);
+
+      const file = req.file;
+      if (!file) throw badRequest("file is required");
+      if (!CHAT_ALLOWED_MIME_TYPES.has(file.mimetype)) throw badRequest(`Invalid mime type '${file.mimetype}'`);
+      if (file.size > CHAT_MAX_ATTACHMENT_SIZE) {
+        throw badRequest(`File too large (${file.size} bytes). Maximum: ${CHAT_MAX_ATTACHMENT_SIZE} bytes (5MB)`);
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const roomDir = resolve(scopedStore.getRootDir(), ".fusion", "chat-room-attachments", roomId);
+      await mkdir(roomDir, { recursive: true });
+
+      const sanitizedFilename = (file.originalname || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filename = `${Date.now()}-${sanitizedFilename}`;
+      const filePath = join(roomDir, filename);
+      await writeFile(filePath, file.buffer);
+
+      const attachment: ChatAttachment = {
+        id: `att-${randomUUID().slice(0, 8)}`,
+        filename,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        createdAt: new Date().toISOString(),
+      };
+
+      res.status(201).json({ attachment });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to upload chat room attachment");
+    }
+  });
+
+  router.get("/chat/rooms/:id/attachments/:filename", async (req, res) => {
+    try {
+      const roomId = String(req.params.id);
+      const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
+      const room = chatStore.getRoom(roomId);
+      if (!room) throw notFound(`Chat room ${roomId} not found`);
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const { filePath } = resolveRoomAttachmentPath(scopedStore.getRootDir(), roomId, String(req.params.filename));
+      const stream = createReadStream(filePath);
+      stream.on("error", () => {
+        if (!res.headersSent) {
+          res.status(404).json({ error: "Attachment not found" });
+        } else {
+          res.end();
+        }
+      });
+      res.setHeader("Content-Type", "application/octet-stream");
+      stream.pipe(res);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to fetch chat room attachment");
+    }
+  });
+
   router.post("/chat/rooms/:id/messages/:messageId/attachments", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
       const roomId = String(req.params.id);
@@ -387,6 +489,8 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext): void {
       "POST /chat/rooms/:id/messages",
       "DELETE /chat/rooms/:id/messages/:messageId",
       "DELETE /chat/rooms/:id/messages",
+      "POST /chat/rooms/:id/attachments",
+      "GET /chat/rooms/:id/attachments/:filename",
       "POST /chat/rooms/:id/messages/:messageId/attachments",
     ];
     chatLogger.info("room routes registered", { chatRoomRoutes });

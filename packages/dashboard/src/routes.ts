@@ -1030,7 +1030,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     validateOptionalModelField,
     upload,
   });
-  registerChatRoomRoutes(routeContext);
+  registerChatRoomRoutes(routeContext, { upload });
   registerMessagingScriptRoutes(routeContext);
   registerGitGitHubRoutes(routeContext);
   registerFilesTerminalWorkspaceRoutes(routeContext);

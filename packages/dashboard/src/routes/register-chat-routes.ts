@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { EnrichedChatSession, ChatAttachment } from "@fusion/core";
 import { ApiError, badRequest, internalError, notFound } from "../api-error.js";
+import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
 import { rateLimit, RATE_LIMITS } from "../rate-limit.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -14,21 +15,6 @@ interface ChatRouteDeps {
   validateOptionalModelField: (value: unknown, fieldName: string) => string | undefined;
   upload: import("multer").Multer;
 }
-
-const CHAT_ALLOWED_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "text/plain",
-  "application/json",
-  "text/yaml",
-  "text/x-toml",
-  "text/csv",
-  "application/xml",
-]);
-
-const CHAT_MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
 
 function resolveAttachmentPath(rootDir: string, sessionId: string, filename: string): { sessionDir: string; filePath: string } {
   const sessionDir = resolve(rootDir, ".fusion", "chat-attachments", sessionId);

@@ -78,6 +78,15 @@ function openSseConnection(chatStore: ChatStore) {
   return { req, res };
 }
 
+function buildMultipartBody(filename: string, mimeType: string, content: Buffer): { boundary: string; body: Buffer } {
+  const boundary = "----fusion-boundary";
+  const preamble = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`,
+  );
+  const closing = Buffer.from(`\r\n--${boundary}--\r\n`);
+  return { boundary, body: Buffer.concat([preamble, content, closing]) };
+}
+
 describe("Chat HTTP + SSE routes — rooms (FN-3805..FN-3811 contract)", () => {
   let tempRoot: string;
   let db: Database;
@@ -236,6 +245,48 @@ describe("Chat HTTP + SSE routes — rooms (FN-3805..FN-3811 contract)", () => {
     expect(addAttachment.status).toBe(200);
     expect((addAttachment.body as any).message.attachments).toHaveLength(1);
   });
+
+  it("supports room attachment upload/fetch and rejects invalid payloads", async () => {
+    const createRoomRes = await request(app, "POST", "/api/chat/rooms", JSON.stringify({ name: "Attachments" }), {
+      "content-type": "application/json",
+    });
+    const roomId = (createRoomRes.body as any).room.id as string;
+
+    const png = buildMultipartBody("test.png", "image/png", Buffer.from("png-bytes"));
+    const ok = await request(app, "POST", `/api/chat/rooms/${roomId}/attachments`, png.body, {
+      "content-type": `multipart/form-data; boundary=${png.boundary}`,
+    }, png.body);
+    expect(ok.status).toBe(201);
+    expect((ok.body as any).attachment.mimeType).toBe("image/png");
+
+    const savedFilename = (ok.body as any).attachment.filename as string;
+    const fetched = await request(app, "GET", `/api/chat/rooms/${roomId}/attachments/${savedFilename}`);
+    expect(fetched.status).toBe(200);
+    expect(fetched.body).toBe("png-bytes");
+
+    const badMime = buildMultipartBody("bad.exe", "application/x-msdownload", Buffer.from("nope"));
+    const badMimeRes = await request(app, "POST", `/api/chat/rooms/${roomId}/attachments`, badMime.body, {
+      "content-type": `multipart/form-data; boundary=${badMime.boundary}`,
+    }, badMime.body);
+    expect(badMimeRes.status).toBe(400);
+
+    const tooBigRes = await request(
+      app,
+      "POST",
+      `/api/chat/rooms/${roomId}/attachments`,
+      "{}",
+      { "content-type": "application/json" },
+    );
+    expect(tooBigRes.status).toBe(400);
+
+    const missingRoom = await request(app, "POST", "/api/chat/rooms/room-missing/attachments", png.body, {
+      "content-type": `multipart/form-data; boundary=${png.boundary}`,
+    }, png.body);
+    expect(missingRoom.status).toBe(404);
+
+    const traversal = await request(app, "GET", `/api/chat/rooms/${roomId}/attachments/..%2Fetc%2Fpasswd`);
+    expect(traversal.status).toBe(400);
+  }, 30_000);
 
   it("emits room SSE payloads for lifecycle/member/message events and cleans up listeners", () => {
     const { req, res } = openSseConnection(chatStore);
