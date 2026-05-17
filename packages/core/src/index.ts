@@ -244,10 +244,13 @@ export {
   runGhJson, 
   runGhJsonAsync, 
   getGhErrorMessage, 
+  classifyGhError,
   ensureGhAuth,
   parseRepoFromRemote,
   getCurrentRepo,
   type GhError,
+  type GhErrorCode,
+  type StructuredGhError,
 } from "./gh-cli.js";
 export {
   parseRepoSlug,

@@ -7,6 +7,32 @@ export interface GhError extends Error {
   stdout: string;
 }
 
+export type GhErrorCode =
+  | "not-installed"
+  | "not-authenticated"
+  | "rate-limited"
+  | "not-found"
+  | "network"
+  | "permission"
+  | "merge-conflict"
+  | "validation"
+  | "timeout"
+  | "unknown";
+
+export interface StructuredGhError {
+  code: GhErrorCode;
+  message: string;
+  hint?: string;
+  action?: { kind: "shell"; command: string } | { kind: "retry" } | { kind: "open"; url: string };
+  retryable: boolean;
+  retryAfterMs?: number;
+  cause?: {
+    stderr?: string;
+    stdout?: string;
+    exitCode?: string | number | null;
+  };
+}
+
 export interface RunGhOptions {
   cwd?: string;
   /** External abort signal — propagated to the spawned `gh` process. */
@@ -212,34 +238,148 @@ export async function runGhJsonAsync<T>(args: string[], cwdOrOptions?: string | 
   }
 }
 
+function parseRetryAfterMs(content: string): number | undefined {
+  const retryAfterMatch = content.match(/retry-after\s*[:=]\s*(\d+)/i);
+  if (retryAfterMatch) {
+    return Number.parseInt(retryAfterMatch[1], 10) * 1000;
+  }
+
+  const resetMatch = content.match(/x-ratelimit-reset\s*[:=]\s*(\d{10,})/i);
+  if (resetMatch) {
+    const resetEpochMs = Number.parseInt(resetMatch[1], 10) * 1000;
+    return Math.max(0, resetEpochMs - Date.now());
+  }
+
+  const waitMatch = content.match(/(?:try again|retry)\s+in\s+(\d+)\s*(second|seconds|sec|s|minute|minutes|min|m)/i);
+  if (waitMatch) {
+    const amount = Number.parseInt(waitMatch[1], 10);
+    const unit = waitMatch[2].toLowerCase();
+    if (unit.startsWith("m")) return amount * 60_000;
+    return amount * 1000;
+  }
+
+  return undefined;
+}
+
+function normalizeGhErrorParts(error: unknown): { message: string; stderr: string; stdout: string; exitCode: string | number | null } {
+  if (error && typeof error === "object") {
+    const withDetails = error as Partial<GhError> & { message?: unknown; code?: unknown; stderr?: unknown; stdout?: unknown };
+    return {
+      message: withDetails.message instanceof Error ? withDetails.message.message : String(withDetails.message ?? error),
+      stderr: String(withDetails.stderr ?? ""),
+      stdout: String(withDetails.stdout ?? ""),
+      exitCode: (withDetails.code as string | number | null | undefined) ?? null,
+    };
+  }
+
+  return { message: String(error), stderr: "", stdout: "", exitCode: null };
+}
+
+export function classifyGhError(error: unknown): StructuredGhError {
+  const parts = normalizeGhErrorParts(error);
+  const haystack = `${parts.message}\n${parts.stderr}\n${parts.stdout}`.toLowerCase();
+  const baseCause = {
+    stderr: parts.stderr || undefined,
+    stdout: parts.stdout || undefined,
+    exitCode: parts.exitCode,
+  };
+
+  const withCause = (result: Omit<StructuredGhError, "cause">): StructuredGhError => ({ ...result, cause: baseCause });
+
+  if (haystack.includes("not logged into") || haystack.includes("authentication required") || /\b401\b/.test(haystack)) {
+    return withCause({
+      code: "not-authenticated",
+      message: "GitHub CLI is not authenticated. Run 'gh auth login' to authenticate.",
+      hint: "Run 'gh auth login' to authenticate with GitHub.",
+      action: { kind: "shell", command: "gh auth login" },
+      retryable: true,
+    });
+  }
+
+  if (haystack.includes("rate limit") || (/\b403\b/.test(haystack) && haystack.includes("rate"))) {
+    return withCause({
+      code: "rate-limited",
+      message: "GitHub API rate limit exceeded. Please try again later.",
+      retryable: true,
+      action: { kind: "retry" },
+      retryAfterMs: parseRetryAfterMs(`${parts.stderr}\n${parts.message}`),
+    });
+  }
+
+  if (haystack.includes("command not found") || haystack.includes("gh cli is not available") || haystack.includes("enoent") || parts.exitCode === "ENOENT") {
+    return withCause({
+      code: "not-installed",
+      message: "GitHub CLI (gh) is not installed. Install it from https://github.com/cli/cli#installation",
+      hint: "Install GitHub CLI from https://github.com/cli/cli#installation",
+      action: { kind: "open", url: "https://github.com/cli/cli#installation" },
+      retryable: false,
+    });
+  }
+
+  if (haystack.includes("etimedout") || haystack.includes("econnreset") || haystack.includes("enotfound") || haystack.includes("eai_again") || haystack.includes("getaddrinfo") || haystack.includes("network")) {
+    return withCause({
+      code: "network",
+      message: "Network error while talking to GitHub. Check connectivity and retry.",
+      action: { kind: "retry" },
+      retryable: true,
+    });
+  }
+
+  if (haystack.includes("timed out") || (parts.exitCode === "ABORT_ERR" && haystack.includes(`${DEFAULT_GH_TIMEOUT_MS}`))) {
+    return withCause({
+      code: "timeout",
+      message: parts.message,
+      action: { kind: "retry" },
+      retryable: true,
+    });
+  }
+
+  if (haystack.includes("merge conflict") || haystack.includes("not mergeable")) {
+    return withCause({
+      code: "merge-conflict",
+      message: "Pull request cannot be merged due to conflicts.",
+      retryable: false,
+    });
+  }
+
+  if (haystack.includes("validation failed") || /\b422\b/.test(haystack)) {
+    return withCause({
+      code: "validation",
+      message: "GitHub rejected the request due to validation errors.",
+      retryable: false,
+    });
+  }
+
+  if (haystack.includes("permission") || /\b403\b/.test(haystack)) {
+    return withCause({
+      code: "permission",
+      message: "GitHub denied access to this resource.",
+      retryable: false,
+    });
+  }
+
+  if (haystack.includes("not found") || /\b404\b/.test(haystack)) {
+    return withCause({
+      code: "not-found",
+      message: "Resource not found. Check that the repository, PR, or issue exists and you have access.",
+      retryable: false,
+    });
+  }
+
+  return withCause({
+    code: "unknown",
+    message: parts.message,
+    retryable: true,
+    action: { kind: "retry" },
+  });
+}
+
 /**
  * Get a human-readable error message from a gh CLI error.
  * Extracts the most relevant error information.
  */
 export function getGhErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    // Check for common gh CLI error patterns
-    const message = error.message;
-    
-    // Authentication errors
-    if (message.includes("not logged into") || message.includes("authentication required")) {
-      return "GitHub CLI is not authenticated. Run 'gh auth login' to authenticate.";
-    }
-    
-    // Not found errors
-    if (message.includes("not found") || message.includes("404")) {
-      return "Resource not found. Check that the repository, PR, or issue exists and you have access.";
-    }
-    
-    // Rate limit errors
-    if (message.includes("rate limit") || message.includes("403")) {
-      return "GitHub API rate limit exceeded. Please try again later.";
-    }
-    
-    return message;
-  }
-  
-  return String(error);
+  return classifyGhError(error).message;
 }
 
 /**

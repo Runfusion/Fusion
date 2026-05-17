@@ -13,32 +13,51 @@ vi.mock("node:child_process", async () => {
 });
 
 import {
+  classifyGhError,
   getGhErrorMessage,
   parseRepoFromRemote,
   runGhAsync,
+  type GhErrorCode,
 } from "../gh-cli.js";
 
 // Tests for pure functions (no child_process dependency)
+describe("classifyGhError", () => {
+  it.each<{
+    label: string;
+    error: unknown;
+    expectedCode: GhErrorCode;
+    retryable: boolean;
+    hint?: string;
+    actionKind?: string;
+  }>([
+    { label: "not installed", error: Object.assign(new Error("command not found: gh"), { code: "ENOENT" }), expectedCode: "not-installed", retryable: false, hint: "Install GitHub CLI", actionKind: "open" },
+    { label: "not authenticated", error: new Error("authentication required 401"), expectedCode: "not-authenticated", retryable: true, hint: "gh auth login", actionKind: "shell" },
+    { label: "rate limited", error: { message: "403 API rate limit exceeded", stderr: "Retry-After: 5" }, expectedCode: "rate-limited", retryable: true, actionKind: "retry" },
+    { label: "not found", error: new Error("404 not found"), expectedCode: "not-found", retryable: false },
+    { label: "network", error: new Error("getaddrinfo ENOTFOUND api.github.com"), expectedCode: "network", retryable: true, actionKind: "retry" },
+    { label: "permission", error: new Error("403 permission denied"), expectedCode: "permission", retryable: false },
+    { label: "merge conflict", error: new Error("pull request is not mergeable due to merge conflict"), expectedCode: "merge-conflict", retryable: false },
+    { label: "validation", error: new Error("422 validation failed"), expectedCode: "validation", retryable: false },
+    { label: "timeout", error: new Error("gh command timed out after 30000ms"), expectedCode: "timeout", retryable: true, actionKind: "retry" },
+    { label: "unknown", error: new Error("something novel happened"), expectedCode: "unknown", retryable: true, actionKind: "retry" },
+  ])("classifies $label", ({ error, expectedCode, retryable, hint, actionKind }) => {
+    const result = classifyGhError(error);
+    expect(result.code).toBe(expectedCode);
+    expect(result.retryable).toBe(retryable);
+    if (hint) expect(result.hint ?? "").toContain(hint);
+    if (actionKind) expect(result.action?.kind).toBe(actionKind);
+  });
+
+  it("parses retryAfterMs when available", () => {
+    const result = classifyGhError({ message: "rate limit exceeded", stderr: "Retry-After: 3" });
+    expect(result.code).toBe("rate-limited");
+    expect(result.retryAfterMs).toBe(3000);
+  });
+});
+
 describe("getGhErrorMessage", () => {
-  it("returns authentication error message for auth errors", () => {
-    const error = new Error("not logged into any hosts");
-    expect(getGhErrorMessage(error)).toContain("not authenticated");
-    expect(getGhErrorMessage(error)).toContain("gh auth login");
-  });
-
-  it("returns not found message for 404 errors", () => {
-    const error = new Error("404 Not Found");
-    expect(getGhErrorMessage(error)).toContain("not found");
-  });
-
-  it("returns rate limit message for rate limit errors", () => {
-    const error = new Error("API rate limit exceeded 403");
-    expect(getGhErrorMessage(error)).toContain("rate limit");
-  });
-
-  it("returns generic message for unknown errors", () => {
-    const error = new Error("something went wrong");
-    expect(getGhErrorMessage(error)).toBe("something went wrong");
+  it("delegates to classifyGhError", () => {
+    expect(getGhErrorMessage(new Error("404 Not Found"))).toBe(classifyGhError(new Error("404 Not Found")).message);
   });
 
   it("handles non-Error values", () => {
