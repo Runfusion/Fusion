@@ -1108,7 +1108,7 @@ describe("GitHubClient", () => {
           headRefName: "fusion/fn-093",
         })
         .mockResolvedValueOnce([
-          { name: "ci", state: "SUCCESS" },
+          { name: "ci", state: "SUCCESS", link: "https://github.com/owner/repo/actions/runs/1", startedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-01T00:01:00Z" },
           { name: "lint", state: "SUCCESS" },
         ]);
 
@@ -1117,8 +1117,15 @@ describe("GitHubClient", () => {
       expect(result.mergeReady).toBe(true);
       expect(result.blockingReasons).toEqual([]);
       expect(result.checks).toEqual([
-        { name: "ci", required: true, state: "success" },
-        { name: "lint", required: true, state: "success" },
+        {
+          name: "ci",
+          required: true,
+          state: "success",
+          detailsUrl: "https://github.com/owner/repo/actions/runs/1",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: "2026-01-01T00:01:00Z",
+        },
+        { name: "lint", required: true, state: "success", detailsUrl: undefined, startedAt: undefined, completedAt: undefined },
       ]);
     });
 
@@ -1151,6 +1158,9 @@ describe("GitHubClient", () => {
                                 name: "ci",
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
+                                detailsUrl: "https://github.com/owner/repo/actions/runs/2",
+                                startedAt: "2026-01-01T00:00:00Z",
+                                completedAt: "2026-01-01T00:02:00Z",
                                 isRequired: true,
                               },
                               {
@@ -1158,7 +1168,15 @@ describe("GitHubClient", () => {
                                 name: "optional-preview",
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
+                                detailsUrl: "https://github.com/owner/repo/actions/runs/3",
                                 isRequired: false,
+                              },
+                              {
+                                __typename: "StatusContext",
+                                context: "legacy-status",
+                                state: "SUCCESS",
+                                targetUrl: "https://github.com/owner/repo/commit/status",
+                                isRequired: true,
                               },
                             ],
                           },
@@ -1177,7 +1195,94 @@ describe("GitHubClient", () => {
       const result = await clientWithToken.getPrMergeStatus("owner", "repo", 42);
 
       expect(result.mergeReady).toBe(true);
-      expect(result.checks).toEqual([{ name: "ci", required: true, state: "success" }]);
+      expect(result.checks).toEqual([
+        {
+          name: "ci",
+          required: true,
+          state: "success",
+          detailsUrl: "https://github.com/owner/repo/actions/runs/2",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: "2026-01-01T00:02:00Z",
+        },
+        {
+          name: "legacy-status",
+          required: true,
+          state: "success",
+          detailsUrl: "https://github.com/owner/repo/commit/status",
+        },
+      ]);
+      vi.restoreAllMocks();
+    });
+  });
+
+  describe("getAllPrChecks", () => {
+    it("returns required and non-required checks in gh mode and computes rollup from required checks", async () => {
+      mockRunGhJsonAsync.mockResolvedValueOnce([
+        { name: "required-ci", state: "SUCCESS", link: "https://example.com/ci", bucket: "pass" },
+        { name: "optional-preview", state: "FAILURE", link: "https://example.com/preview", bucket: "none" },
+      ]);
+
+      const result = await client.getAllPrChecks("owner", "repo", 42);
+
+      expect(result.rollupRequired).toBe("success");
+      expect(result.checks).toEqual([
+        { name: "required-ci", required: true, state: "success", detailsUrl: "https://example.com/ci", startedAt: undefined, completedAt: undefined },
+        { name: "optional-preview", required: false, state: "failure", detailsUrl: "https://example.com/preview", startedAt: undefined, completedAt: undefined },
+      ]);
+    });
+
+    it("returns all checks in API mode and ignores non-required failures for rollup", async () => {
+      const clientWithToken = new GitHubClient("ghp_token");
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          data: {
+            repository: {
+              pullRequest: {
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [
+                              {
+                                __typename: "CheckRun",
+                                name: "required-ci",
+                                status: "COMPLETED",
+                                conclusion: "SUCCESS",
+                                detailsUrl: "https://example.com/required",
+                                isRequired: true,
+                              },
+                              {
+                                __typename: "StatusContext",
+                                context: "optional-legacy",
+                                state: "FAILURE",
+                                targetUrl: "https://example.com/optional",
+                                isRequired: false,
+                              },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.getAllPrChecks("owner", "repo", 42);
+
+      expect(result.rollupRequired).toBe("success");
+      expect(result.checks).toEqual([
+        { name: "required-ci", required: true, state: "success", detailsUrl: "https://example.com/required", startedAt: undefined, completedAt: undefined },
+        { name: "optional-legacy", required: false, state: "failure", detailsUrl: "https://example.com/optional" },
+      ]);
       vi.restoreAllMocks();
     });
   });

@@ -102,6 +102,9 @@ export interface PrCheckStatus {
   name: string;
   required: boolean;
   state: PrCheckState;
+  detailsUrl?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface PrReviewItem {
@@ -234,6 +237,10 @@ interface GhPrListJson {
 interface GhPrCheckJson {
   name: string;
   state: string;
+  link?: string;
+  startedAt?: string;
+  completedAt?: string;
+  bucket?: string;
 }
 
 interface GhIssueViewJson {
@@ -1012,7 +1019,7 @@ export class GitHubClient {
       "pr", "checks", String(number),
       "--repo", `${resolved.owner}/${resolved.repo}`,
       "--required",
-      "--json", "name,state",
+      "--json", "name,state,link,startedAt,completedAt",
     ]).catch(() => []);
 
     const prInfo = toPrInfo({
@@ -1028,6 +1035,9 @@ export class GitHubClient {
       name: check.name,
       required: true,
       state: normalizeCheckState(check.state),
+      detailsUrl: check.link,
+      startedAt: check.startedAt,
+      completedAt: check.completedAt,
     } satisfies PrCheckStatus));
     const readiness = isPrMergeReady({
       status: prInfo.status,
@@ -1072,11 +1082,15 @@ export class GitHubClient {
                             name
                             status
                             conclusion
+                            detailsUrl
+                            startedAt
+                            completedAt
                             isRequired(pullRequestNumber: $number)
                           }
                           ... on StatusContext {
                             context
                             state
+                            targetUrl
                             isRequired(pullRequestNumber: $number)
                           }
                         }
@@ -1110,8 +1124,17 @@ export class GitHubClient {
                   statusCheckRollup?: {
                     contexts?: {
                       nodes?: Array<
-                        | { __typename: "CheckRun"; name: string; status: string; conclusion: string | null; isRequired?: boolean }
-                        | { __typename: "StatusContext"; context: string; state: string; isRequired?: boolean }
+                        | {
+                          __typename: "CheckRun";
+                          name: string;
+                          status: string;
+                          conclusion: string | null;
+                          detailsUrl?: string | null;
+                          startedAt?: string | null;
+                          completedAt?: string | null;
+                          isRequired?: boolean;
+                        }
+                        | { __typename: "StatusContext"; context: string; state: string; targetUrl?: string | null; isRequired?: boolean }
                         | null
                       >;
                     };
@@ -1143,12 +1166,16 @@ export class GitHubClient {
           name: node.name,
           required: true,
           state: normalizeCheckState(node.conclusion ?? node.status),
+          detailsUrl: node.detailsUrl ?? undefined,
+          startedAt: node.startedAt ?? undefined,
+          completedAt: node.completedAt ?? undefined,
         } satisfies PrCheckStatus];
       }
       return [{
         name: node.context,
         required: true,
         state: normalizeCheckState(node.state),
+        detailsUrl: node.targetUrl ?? undefined,
       } satisfies PrCheckStatus];
     });
 
@@ -1173,6 +1200,200 @@ export class GitHubClient {
       checks,
       mergeReady: readiness.ready,
       blockingReasons: readiness.blockingReasons,
+    };
+  }
+
+  async getAllPrChecks(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+  ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown" }> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.getAllPrChecksWithGh(owner, repo, number);
+      } catch (err) {
+        if (this.token) {
+          return this.getAllPrChecksWithApi(owner, repo, number);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.getAllPrChecksWithApi(owner, repo, number);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private computeRequiredChecksRollup(checks: PrCheckStatus[]): PrCheckState | "unknown" {
+    const requiredChecks = checks.filter((check) => check.required);
+    if (requiredChecks.some((check) => ["failure", "cancelled", "timed_out", "action_required", "startup_failure"].includes(check.state))) {
+      return "failure";
+    }
+    if (requiredChecks.some((check) => check.state === "pending")) {
+      return "pending";
+    }
+    if (requiredChecks.length > 0) {
+      return "success";
+    }
+    return "unknown";
+  }
+
+  private async getAllPrChecksWithGh(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+  ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown" }> {
+    const resolved = this.resolveRepo(owner, repo);
+
+    let checks = await runGhJsonAsync<GhPrCheckJson[]>([
+      "pr", "checks", String(number),
+      "--repo", `${resolved.owner}/${resolved.repo}`,
+      "--json", "name,state,link,startedAt,completedAt,bucket",
+    ]).catch(async () => {
+      const allChecks = await runGhJsonAsync<GhPrCheckJson[]>([
+        "pr", "checks", String(number),
+        "--repo", `${resolved.owner}/${resolved.repo}`,
+        "--json", "name,state,link,startedAt,completedAt",
+      ]);
+      const requiredChecks = await runGhJsonAsync<GhPrCheckJson[]>([
+        "pr", "checks", String(number),
+        "--repo", `${resolved.owner}/${resolved.repo}`,
+        "--required",
+        "--json", "name,state",
+      ]).catch(() => []);
+      const requiredNames = new Set(requiredChecks.map((check) => check.name));
+      return allChecks.map((check) => ({ ...check, bucket: requiredNames.has(check.name) ? "pass" : "none" }));
+    });
+
+    checks = checks ?? [];
+    const normalized = checks.map((check) => ({
+      name: check.name,
+      required: check.bucket ? check.bucket !== "none" : false,
+      state: normalizeCheckState(check.state),
+      detailsUrl: check.link,
+      startedAt: check.startedAt,
+      completedAt: check.completedAt,
+    } satisfies PrCheckStatus));
+
+    return {
+      checks: normalized,
+      rollupRequired: this.computeRequiredChecksRollup(normalized),
+    };
+  }
+
+  private async getAllPrChecksWithApi(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+  ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown" }> {
+    const resolved = this.resolveRepo(owner, repo);
+    const response = await fetch(`${this.baseUrl}/graphql`, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify({
+        query: `query PullRequestAllChecks($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              commits(last: 1) {
+                nodes {
+                  commit {
+                    statusCheckRollup {
+                      contexts(first: 100) {
+                        nodes {
+                          __typename
+                          ... on CheckRun {
+                            name
+                            status
+                            conclusion
+                            detailsUrl
+                            startedAt
+                            completedAt
+                            isRequired(pullRequestNumber: $number)
+                          }
+                          ... on StatusContext {
+                            context
+                            state
+                            targetUrl
+                            isRequired(pullRequestNumber: $number)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        variables: { owner: resolved.owner, repo: resolved.repo, number },
+      }),
+    });
+
+    const payload = await response.json() as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            commits: {
+              nodes: Array<{
+                commit: {
+                  statusCheckRollup?: {
+                    contexts?: {
+                      nodes?: Array<
+                        | {
+                          __typename: "CheckRun";
+                          name: string;
+                          status: string;
+                          conclusion: string | null;
+                          detailsUrl?: string | null;
+                          startedAt?: string | null;
+                          completedAt?: string | null;
+                          isRequired?: boolean;
+                        }
+                        | { __typename: "StatusContext"; context: string; state: string; targetUrl?: string | null; isRequired?: boolean }
+                        | null
+                      >;
+                    };
+                  } | null;
+                };
+              }>;
+            };
+          };
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    if (!response.ok || payload.errors?.length) {
+      const message = payload.errors?.[0]?.message || response.statusText;
+      throw new Error(`GitHub API error: ${response.status} ${message}`);
+    }
+
+    const nodes = payload.data?.repository?.pullRequest?.commits.nodes[0]?.commit.statusCheckRollup?.contexts?.nodes ?? [];
+    const checks = nodes.flatMap((node) => {
+      if (!node) return [];
+      if (node.__typename === "CheckRun") {
+        return [{
+          name: node.name,
+          required: Boolean(node.isRequired),
+          state: normalizeCheckState(node.conclusion ?? node.status),
+          detailsUrl: node.detailsUrl ?? undefined,
+          startedAt: node.startedAt ?? undefined,
+          completedAt: node.completedAt ?? undefined,
+        } satisfies PrCheckStatus];
+      }
+
+      return [{
+        name: node.context,
+        required: Boolean(node.isRequired),
+        state: normalizeCheckState(node.state),
+        detailsUrl: node.targetUrl ?? undefined,
+      } satisfies PrCheckStatus];
+    });
+
+    return {
+      checks,
+      rollupRequired: this.computeRequiredChecksRollup(checks),
     };
   }
 

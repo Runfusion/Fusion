@@ -972,6 +972,9 @@ export interface PrCheckStatus {
   name: string;
   required: boolean;
   state: PrCheckState;
+  detailsUrl?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface TaskReviewAuthor {
