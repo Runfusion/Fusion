@@ -23,6 +23,7 @@ describe("reliability interactions: board stall auto-recovery", () => {
       const first = await fixture.selfHeal.runBoardStallAutoRecoverySweep();
       expect(first.recovered).toBeGreaterThanOrEqual(0);
 
+      (fixture.manager as any).maintenanceTickCounter++;
       const second = await fixture.selfHeal.runBoardStallAutoRecoverySweep();
       expect(typeof second.unrecovered).toBe("boolean");
     } finally {

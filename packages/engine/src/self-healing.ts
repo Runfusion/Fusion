@@ -2584,15 +2584,23 @@ export class SelfHealingManager {
         let ntfyDispatched = false;
         if (ntfyAllowed) {
           try {
-            await getActiveNotificationService()?.dispatch("board-stall-unrecovered", {
-              event: "board-stall-unrecovered",
-              metadata: {
-                holderIds: window.pendingVerification.holderIds,
-                followerCount: window.pendingVerification.followerCount,
-              },
-            } as any);
-            window.lastNtfyAt = now;
-            ntfyDispatched = true;
+            const settings = await this.store.getSettings();
+            const enabled = Boolean(settings.ntfyEnabled && settings.ntfyTopic);
+            const events = resolveNtfyEvents(settings.ntfyEvents);
+            if (enabled && isNtfyEventEnabled(events, "board-stall-unrecovered")) {
+              const clickUrl = buildNtfyClickUrl({ dashboardHost: settings.ntfyDashboardHost });
+              await sendNtfyNotification({
+                ntfyBaseUrl: settings.ntfyBaseUrl,
+                ntfyAccessToken: settings.ntfyAccessToken,
+                topic: settings.ntfyTopic!,
+                title: "Board stall unrecovered",
+                message: `Auto-recovery could not clear board stall. Holders: ${window.pendingVerification.holderIds.join(", ") || "none"}. Followers blocked: ${window.pendingVerification.followerCount}.`,
+                priority: "high",
+                clickUrl,
+              });
+              window.lastNtfyAt = now;
+              ntfyDispatched = true;
+            }
           } catch {
             ntfyDispatched = false;
           }
