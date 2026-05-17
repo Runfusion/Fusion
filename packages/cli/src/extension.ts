@@ -42,6 +42,7 @@ import {
   ExperimentFinalizeStateError,
   type FinalizePlanOverride,
   fetchWebContent,
+  assertNoSecretPlaintext,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, basename, extname, join } from "node:path";
@@ -121,15 +122,20 @@ function emitSecretAudit(
   metadata?: Record<string, unknown>,
 ): void {
   if (!ctx.runId || !ctx.agentId) return;
-  store.recordRunAuditEvent({
-    runId: ctx.runId,
-    agentId: ctx.agentId,
-    taskId: ctx.taskId,
-    domain: "filesystem",
-    mutationType,
-    target,
-    metadata,
-  });
+  try {
+    assertNoSecretPlaintext(metadata);
+    store.recordRunAuditEvent({
+      runId: ctx.runId,
+      agentId: ctx.agentId,
+      taskId: ctx.taskId,
+      domain: "filesystem",
+      mutationType,
+      target,
+      metadata,
+    });
+  } catch (error) {
+    console.warn("[fusion-extension] secret audit emission skipped", error);
+  }
 }
 
 /**
