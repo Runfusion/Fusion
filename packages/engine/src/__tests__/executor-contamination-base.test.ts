@@ -186,6 +186,119 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     expect(recoverySpy).toHaveBeenCalledWith(expect.objectContaining({ repoDir: "/tmp/test" }));
   });
 
+  it("auto-recovers obviously misrouted .changeset-only foreign commits and emits audit", async () => {
+    const store = createMockStore();
+    (store as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    const misroutedCommit = {
+      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      subject: "feat(FN-5000): changeset",
+      foreignTaskId: "FN-5000",
+    };
+    const contamination = new branchConflicts.BranchCrossContaminationError({
+      branchName: "fusion/fn-4428",
+      baseSha: "abc123",
+      taskId: "FN-4428",
+      foreignCommits: [misroutedCommit],
+    });
+
+    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [], unique: [misroutedCommit] });
+    vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({
+      misrouted: true,
+      foreignTaskId: "FN-5000",
+      paths: [".changeset/fn-5000-fix.md"],
+    });
+    const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
+      newTipSha: "2222222222222222222222222222222222222222",
+      droppedShas: [misroutedCommit.sha],
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    expect(recoverySpy).toHaveBeenCalledWith(expect.objectContaining({ shasToDrop: [misroutedCommit.sha] }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4428", "todo", { preserveResumeState: true, preserveWorktree: true });
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-recover-misrouted-foreign-commit" }));
+  });
+
+  it("keeps escalation path for foreign commits that touch shared paths", async () => {
+    const store = createMockStore();
+    const foreignCommit = {
+      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      subject: "fix(FN-5001): mixed paths",
+      foreignTaskId: "FN-5001",
+    };
+    const contamination = new branchConflicts.BranchCrossContaminationError({
+      branchName: "fusion/fn-4428",
+      baseSha: "abc123",
+      taskId: "FN-4428",
+      foreignCommits: [foreignCommit],
+    });
+
+    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [], unique: [foreignCommit] });
+    vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({
+      misrouted: false,
+      foreignTaskId: "FN-5001",
+      paths: [".changeset/fn-5001-fix.md", "packages/engine/src/executor.ts"],
+    });
+    const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
+      newTipSha: "2222222222222222222222222222222222222222",
+      droppedShas: [],
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    expect(recoverySpy).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
+  });
+
+  it("drops already-upstream + misrouted together then escalates on second contamination", async () => {
+    const upstreamCommit = {
+      sha: "cccccccccccccccccccccccccccccccccccccccc",
+      subject: "feat(FN-5002): upstream",
+      foreignTaskId: "FN-5002",
+    };
+    const misroutedCommit = {
+      sha: "dddddddddddddddddddddddddddddddddddddddd",
+      subject: "feat(FN-5003): changeset",
+      foreignTaskId: "FN-5003",
+    };
+    const contamination = new branchConflicts.BranchCrossContaminationError({
+      branchName: "fusion/fn-4428",
+      baseSha: "abc123",
+      taskId: "FN-4428",
+      foreignCommits: [upstreamCommit, misroutedCommit],
+    });
+
+    const firstStore = createMockStore();
+    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [upstreamCommit], unique: [misroutedCommit] });
+    vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
+    const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
+      newTipSha: "3333333333333333333333333333333333333333",
+      droppedShas: [upstreamCommit.sha, misroutedCommit.sha],
+    });
+
+    const executor = new TaskExecutor(firstStore, "/tmp/test");
+    await executor.execute(makeTask());
+    expect(recoverySpy).toHaveBeenCalledWith(expect.objectContaining({ shasToDrop: [upstreamCommit.sha, misroutedCommit.sha] }));
+
+    const secondStore = createMockStore();
+    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [upstreamCommit], unique: [misroutedCommit] });
+    vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
+
+    const secondExecutor = new TaskExecutor(secondStore, "/tmp/test");
+    await secondExecutor.execute(makeTask(1));
+    expect(secondStore.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
+  });
+
   it("falls back to terminal contamination failure when bootstrap reanchor throws", async () => {
     const store = createMockStore();
     const contamination = new branchConflicts.BranchCrossContaminationError({
