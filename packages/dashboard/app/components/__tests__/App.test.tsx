@@ -603,6 +603,7 @@ beforeEach(() => {
   mockUseTasks.mockReset();
   mockUseTasks.mockImplementation(() => ({
     tasks: [],
+    isStale: false,
     createTask: mockCreateTask,
     moveTask: vi.fn(),
     pauseTask: vi.fn(),
@@ -704,6 +705,84 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
 
     expect(screen.getByTitle("Settings")).toBeInTheDocument();
     expect(screen.queryByTestId("fb-probe-loader")).not.toBeInTheDocument();
+  });
+
+  it("FN-4801: keeps top progress bar visible while tasks are stale", () => {
+    mockProjectsState.loading = false;
+    mockProjectsState.projects = [
+      { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+    ];
+    mockCurrentProjectState.loading = false;
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [],
+      isStale: true,
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      pauseTask: vi.fn(),
+      unpauseTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      resetTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      loadArchivedTasks: vi.fn(),
+      refreshTasks: vi.fn(),
+      ingestCreatedTasks: vi.fn(),
+      lastFetchTimeMs: Date.now(),
+    }));
+
+    render(<App />);
+
+    const progressBar = screen.getByRole("progressbar", { name: "Loading" });
+    expect(progressBar).toHaveAttribute("aria-busy", "true");
+    expect(progressBar).toHaveAttribute("data-visible", "true");
+  });
+
+  it("FN-4801: hides top progress bar on next render when tasks are fresh", () => {
+    mockProjectsState.loading = false;
+    mockProjectsState.projects = [
+      { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+    ];
+    mockCurrentProjectState.loading = false;
+
+    const taskHookState = { isStale: true };
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [],
+      isStale: taskHookState.isStale,
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      pauseTask: vi.fn(),
+      unpauseTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      resetTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      loadArchivedTasks: vi.fn(),
+      refreshTasks: vi.fn(),
+      ingestCreatedTasks: vi.fn(),
+      lastFetchTimeMs: Date.now(),
+    }));
+
+    const { rerender } = render(<App />);
+
+    const progressBar = screen.getByRole("progressbar", { name: "Loading" });
+    expect(progressBar).toHaveAttribute("aria-busy", "true");
+    expect(progressBar).toHaveAttribute("data-visible", "true");
+
+    taskHookState.isStale = false;
+    rerender(<App />);
+
+    expect(progressBar).toHaveAttribute("aria-busy", "false");
+    expect(progressBar).toHaveAttribute("data-visible", "false");
   });
 
   it("FN-4250: ChatView branch is inside FileBrowserProvider", async () => {

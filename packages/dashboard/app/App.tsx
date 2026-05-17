@@ -382,7 +382,7 @@ function AppInner() {
   // Tasks hook with project context and search query
   // SSE is only enabled for board/list views to free connection slots for mission detail fetches
   const taskSseEnabled = taskView === "board" || taskView === "list";
-  const { tasks, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone, loadArchivedTasks, refreshTasks, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, archiveAllDone, loadArchivedTasks, refreshTasks, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -1643,6 +1643,10 @@ function AppInner() {
     isOnboardingCompleted() &&
     !isPostOnboardingDismissed();
 
+  // Top progress bar reflects any in-flight revalidation: projects, current-project, or tasks.
+  // Add new sources here, not inside TopProgressBar.
+  const isRevalidating = projectsLoading || currentProjectLoading || isStale;
+
   return (
     <NavigationHistoryProvider value={{ pushNav, replaceCurrent }}>
       <FileBrowserProvider openFile={openFileInBrowser}>
@@ -1654,7 +1658,7 @@ function AppInner() {
           </>
         ) : (
           <>
-            <TopProgressBar visible={projectsLoading || currentProjectLoading} />
+            <TopProgressBar visible={isRevalidating} />
             <Header
         shellHost={shellHost.host}
         onOpenSettings={openSettingsWithNav}

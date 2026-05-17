@@ -18,4 +18,17 @@ describe("TopProgressBar", () => {
     expect(progressBar).toHaveAttribute("aria-busy", "false");
     expect(progressBar).toHaveAttribute("data-visible", "false");
   });
+
+  it("derives visibility only from the visible prop across rerenders", () => {
+    const { rerender } = render(<TopProgressBar visible={true} />);
+
+    const progressBar = screen.getByRole("progressbar", { name: "Loading" });
+    expect(progressBar).toHaveAttribute("aria-busy", "true");
+    expect(progressBar).toHaveAttribute("data-visible", "true");
+
+    rerender(<TopProgressBar visible={false} />);
+
+    expect(progressBar).toHaveAttribute("aria-busy", "false");
+    expect(progressBar).toHaveAttribute("data-visible", "false");
+  });
 });
