@@ -1131,6 +1131,5 @@ export {
 } from "./secrets-store.js";
 export type {
   SecretScope,
-  SecretAccessPolicy,
   SecretRecord,
 } from "./secrets-store.js";

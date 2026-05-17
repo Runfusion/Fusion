@@ -224,6 +224,7 @@ Provisioning note: durable `fn_agent_create` / `fn_agent_delete` approvals use `
 - `create(input: ApprovalRequestCreateInput)` — inserts a `pending` request and appends a `created` audit event
 - `get(id)` — returns one request or `null`
 - `list(input?: ApprovalRequestListInput)` — filters by `status`, `requesterActorId`, `taskId`, `runId`; ordered `createdAt DESC, id DESC`; paginated by `limit`/`offset`
+- `getPendingCountsByActor()` — single-pass SQL aggregate (`status='pending'` grouped by `requesterActorId`) used by `/api/agents` pending-approval counters without materializing full request rows
 - `decide(requestId, status, input: ApprovalRequestDecisionInput)` — applies `pending -> approved|denied`, stamps `decidedAt`, appends `approved`/`denied` audit event
 - `markCompleted(requestId, input: ApprovalRequestCompletionInput)` — applies `approved -> completed`, stamps `completedAt`, appends `completed` audit event
 - `getAuditHistory(requestId)` — returns append-only audit rows ordered `createdAt ASC, rowid ASC`
