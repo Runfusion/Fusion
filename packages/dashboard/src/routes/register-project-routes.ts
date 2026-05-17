@@ -615,6 +615,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
                 activeTaskCount: transition.activeTaskCount ?? 0,
               });
             }
+            delete updates.isolationMode;
           } else {
             transitionDeferred = true;
           }

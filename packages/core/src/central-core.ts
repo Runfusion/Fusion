@@ -519,6 +519,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     nextMode: IsolationMode,
     opts: { force?: boolean } = {}
   ): Promise<{ ok: true } | { ok: false; reason: string; activeTaskCount?: number }> {
+    // Runtime restart force semantics are handled by HybridExecutor/ProjectManager.
     void opts;
     this.ensureInitialized();
 
