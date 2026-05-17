@@ -406,6 +406,9 @@ export class MeshLeaseManager {
         });
         meshLeaseManagerLog.log(`mesh-lease: handoff parked taskId=${task.id} reason=${handoffDecision.reason}`);
         await (this.options.taskStore as any).recordRunAuditEvent?.({
+          taskId: task.id,
+          agentId: "mesh-lease-manager",
+          runId: generateSyntheticRunId("mesh-lease", task.id),
           domain: "database",
           mutationType: "node:handoff:parked",
           target: task.id,
@@ -470,6 +473,9 @@ export class MeshLeaseManager {
     }
 
     await (this.options.taskStore as any).recordRunAuditEvent?.({
+      taskId: task.id,
+      agentId: "mesh-lease-manager",
+      runId: generateSyntheticRunId("mesh-lease", task.id),
       domain: "database",
       mutationType: "node:lease:recovered",
       target: task.id,

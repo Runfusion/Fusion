@@ -1075,6 +1075,9 @@ export class Scheduler {
                 schedulerLog.log(`Task ${task.id} dispatch blocked — ${reason}`);
                 await this.store.logEntry(task.id, reason);
                 await (this.store as any).recordRunAuditEvent?.({
+                  taskId: freshTask.id,
+                  agentId: "scheduler",
+                  runId: generateSyntheticRunId("scheduler", freshTask.id),
                   domain: "database",
                   mutationType: "node:handoff:parked",
                   target: freshTask.id,
@@ -1097,6 +1100,9 @@ export class Scheduler {
 
             await this.store.logEntry(task.id, `Owning-node handoff applied: ${handoffDecision.reason}`);
             await (this.store as any).recordRunAuditEvent?.({
+              taskId: freshTask.id,
+              agentId: "scheduler",
+              runId: generateSyntheticRunId("scheduler", freshTask.id),
               domain: "database",
               mutationType: handoffDecision.action === "reassign-local" ? "node:handoff:reassign-local" : "node:handoff:reassign-any",
               target: freshTask.id,

@@ -59,6 +59,7 @@ function createMockStore(task: Task, settings: Record<string, unknown> = {}): Ta
     moveTask: vi.fn().mockResolvedValue(undefined),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/tmp/test"),
     getTasksDir: vi.fn().mockReturnValue("/tmp/test/.fusion/tasks"),
     on: vi.fn(),
@@ -421,6 +422,23 @@ describe("Scheduler node routing", () => {
       task.id,
       "Owning-node handoff parked dispatch: handoff_blocked_by_policy",
     );
+    const handoffEvent = vi.mocked(store.recordRunAuditEvent).mock.calls
+      .map(([event]) => event)
+      .find((event) => event.mutationType === "node:handoff:parked");
+    expect(handoffEvent).toEqual(expect.objectContaining({
+      domain: "database",
+      mutationType: "node:handoff:parked",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        ownerNodeId: "node-owner",
+        ownerNodeHealth: "offline",
+        localNodeId: "local",
+        handoffPolicy: "block",
+        decisionReason: "handoff_blocked_by_policy",
+        source: "scheduler.dispatch",
+      },
+    }));
   });
 
   it("forces local dispatch when owning-node handoff returns reassign-local", async () => {
@@ -442,6 +460,23 @@ describe("Scheduler node routing", () => {
       effectiveNodeSource: "local",
     }));
     expect(store.logEntry).toHaveBeenCalledWith(task.id, "Owning-node handoff applied: owner_offline_local_takes_over");
+    const handoffEvent = vi.mocked(store.recordRunAuditEvent).mock.calls
+      .map(([event]) => event)
+      .find((event) => event.mutationType === "node:handoff:reassign-local");
+    expect(handoffEvent).toEqual(expect.objectContaining({
+      domain: "database",
+      mutationType: "node:handoff:reassign-local",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        ownerNodeId: "node-owner",
+        ownerNodeHealth: "offline",
+        localNodeId: "local",
+        handoffPolicy: "reassign-to-local",
+        decisionReason: "owner_offline_local_takes_over",
+        source: "scheduler.dispatch",
+      },
+    }));
   });
 
   it("keeps non-local routing when owning-node handoff returns reassign-any", async () => {
@@ -463,6 +498,23 @@ describe("Scheduler node routing", () => {
       effectiveNodeSource: "task-override",
     }));
     expect(store.logEntry).toHaveBeenCalledWith(task.id, "Owning-node handoff applied: owner_offline_any_healthy_eligible");
+    const handoffEvent = vi.mocked(store.recordRunAuditEvent).mock.calls
+      .map(([event]) => event)
+      .find((event) => event.mutationType === "node:handoff:reassign-any");
+    expect(handoffEvent).toEqual(expect.objectContaining({
+      domain: "database",
+      mutationType: "node:handoff:reassign-any",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        ownerNodeId: "node-owner",
+        ownerNodeHealth: "offline",
+        localNodeId: "local",
+        handoffPolicy: "reassign-any-healthy",
+        decisionReason: "owner_offline_any_healthy_eligible",
+        source: "scheduler.dispatch",
+      },
+    }));
   });
 });
 
