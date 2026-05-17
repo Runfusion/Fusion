@@ -119,4 +119,39 @@ describe("reliability interactions: board stall auto-recovery", () => {
     expect(notify).toHaveBeenCalledTimes(1);
     manager.stop();
   });
+
+  it("skips unrecovered notification when progress resumes", async () => {
+    const holder = makeTask("FN-10", { column: "in-progress", paused: true, pausedReason: "waiting" });
+    const { store, byId } = makeStore([holder]);
+    const notify = vi.fn(async () => undefined);
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getExecutingTaskIds: () => new Set(), ntfyNotifier: { notifyBoardStallUnrecovered: notify } });
+
+    await manager.runBoardStallAutoRecoverySweep();
+    byId.set("FN-11", makeTask("FN-11", { column: "todo", blockedBy: "FN-10" }));
+    await manager.runBoardStallAutoRecoverySweep();
+    (manager as any).boardStallWindow.transitionsOutOfInProgressInWindow = 1;
+    (manager as any).maintenanceTickCounter++;
+    const verification = await manager.runBoardStallAutoRecoverySweep();
+    expect(verification.unrecovered).toBe(false);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("enforces cooldown for repeated unrecovered alerts", async () => {
+    const holder = makeTask("FN-20", { column: "in-progress", paused: true, pausedReason: "waiting" });
+    const { store, byId } = makeStore([holder]);
+    const notify = vi.fn(async () => undefined);
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getExecutingTaskIds: () => new Set(), ntfyNotifier: { notifyBoardStallUnrecovered: notify } });
+
+    await manager.runBoardStallAutoRecoverySweep();
+    byId.set("FN-21", makeTask("FN-21", { column: "todo", blockedBy: "FN-20" }));
+    await manager.runBoardStallAutoRecoverySweep();
+    (manager as any).maintenanceTickCounter++;
+    await manager.runBoardStallAutoRecoverySweep();
+
+    (manager as any).boardStallWindow.pendingVerification = { holderIds: ["FN-20"], followerCount: 1, startedAt: Date.now(), tick: 0 };
+    (manager as any).maintenanceTickCounter++;
+    await manager.runBoardStallAutoRecoverySweep();
+
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
 });
