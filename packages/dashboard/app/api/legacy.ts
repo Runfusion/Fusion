@@ -2215,10 +2215,85 @@ export interface PrRefreshResponse {
   automationStatus?: string | null;
 }
 
+export interface PrMetadataResponse {
+  title: string;
+  body: string;
+  templateUsed: boolean;
+}
+
+export interface PrPreflightCommit {
+  sha: string;
+  subject: string;
+  author: string;
+}
+
+export interface PrPreflightChangedFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  status: "added" | "modified" | "deleted" | "renamed";
+}
+
+export interface PrPreflightResponse {
+  branchOnRemote: boolean;
+  commitsPresent: boolean;
+  conflictsWithBase: boolean;
+  ghAuthOk: boolean;
+  defaultBaseBranch: string;
+  head: string;
+  commits: PrPreflightCommit[];
+  changedFiles: PrPreflightChangedFile[];
+}
+
+export interface PrOptionsUser {
+  login: string;
+  name?: string;
+}
+
+export interface PrOptionsLabel {
+  name: string;
+  color: string;
+}
+
+export interface PrOptionsResponse {
+  baseBranches: string[];
+  reviewers: PrOptionsUser[];
+  assignees: PrOptionsUser[];
+  labels: PrOptionsLabel[];
+}
+
+export interface CreatePrParams {
+  title: string;
+  body?: string;
+  base?: string;
+  draft?: boolean;
+  reviewers?: string[];
+  assignees?: string[];
+  labels?: string[];
+}
+
+/** Generate AI metadata for creating a GitHub PR for a task */
+export function generatePrMetadata(id: string, projectId?: string): Promise<PrMetadataResponse> {
+  return api<PrMetadataResponse>(withProjectId(`/tasks/${id}/pr/generate-metadata`, projectId), {
+    method: "POST",
+  });
+}
+
+/** Fetch PR preflight diagnostics for a task */
+export function fetchPrPreflight(id: string, projectId?: string, base?: string): Promise<PrPreflightResponse> {
+  const baseParam = base ? `?base=${encodeURIComponent(base)}` : "";
+  return api<PrPreflightResponse>(withProjectId(`/tasks/${id}/pr/preflight${baseParam}`, projectId));
+}
+
+/** Fetch PR creation options (branches/reviewers/assignees/labels) for a task */
+export function fetchPrOptions(id: string, projectId?: string): Promise<PrOptionsResponse> {
+  return api<PrOptionsResponse>(withProjectId(`/tasks/${id}/pr/options`, projectId));
+}
+
 /** Create a GitHub PR for a task */
 export function createPr(
   id: string,
-  params: { title: string; body?: string; base?: string },
+  params: CreatePrParams,
   projectId?: string,
 ): Promise<PrInfo> {
   return api<PrInfo>(withProjectId(`/tasks/${id}/pr/create`, projectId), {
