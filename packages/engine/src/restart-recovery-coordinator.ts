@@ -21,7 +21,7 @@ function isNoTaskDoneFailure(task: Task): boolean {
  * - Refusing to start coding agent in incomplete worktree:
  * - Refusing to start coding agent in unregistered git worktree:
  */
-const MISSING_WORKTREE_SESSION_PREFIXES = [
+export const MISSING_WORKTREE_SESSION_PREFIXES = [
   "Refusing to start coding agent in missing worktree:",
   "Refusing to start coding agent in incomplete worktree:",
   "Refusing to start coding agent in unregistered git worktree:",
@@ -41,6 +41,18 @@ export function isMissingWorktreeSessionStartFailure(error: unknown): boolean {
     return false;
   }
   return findMissingWorktreeSessionPrefix(error) !== null;
+}
+
+export function classifyMissingWorktreeSessionStartFailure(error: unknown): "missing" | "incomplete" | "unregistered" | "unknown" {
+  const text = typeof error === "string"
+    ? error
+    : error instanceof Error
+      ? error.message
+      : "";
+  if (text.startsWith(MISSING_WORKTREE_SESSION_PREFIXES[0])) return "missing";
+  if (text.startsWith(MISSING_WORKTREE_SESSION_PREFIXES[1])) return "incomplete";
+  if (text.startsWith(MISSING_WORKTREE_SESSION_PREFIXES[2])) return "unregistered";
+  return "unknown";
 }
 
 export function extractMissingWorktreePathFromSessionStartFailure(error: unknown): string | null {

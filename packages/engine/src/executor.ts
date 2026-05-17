@@ -84,10 +84,12 @@ import type { AgentReflectionService } from "./agent-reflection.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./run-audit.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import {
+  classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
 } from "./restart-recovery-coordinator.js";
 import { BranchWorktreeAutoRecoveryHandler } from "./auto-recovery-handlers/branch-worktree.js";
+import { autoRecoverWorktreeSessionStartFailure, MAX_WORKTREE_SESSION_RETRIES } from "./self-healing.js";
 import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/contamination.js";
 import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
@@ -3672,40 +3674,51 @@ export class TaskExecutor {
 
         // sessionFile must be let because it's destructured alongside session which is reassigned
         // eslint-disable-next-line prefer-const
-        let { session, sessionFile } = await createResolvedAgentSession({
-          sessionPurpose: "executor",
-          runtimeHint: executorRuntimeHint,
-          pluginRunner: this.options.pluginRunner,
-          cwd: worktreePath,
-          systemPrompt: executorSystemPromptFinal,
-          systemPromptLayers: executorLayers,
-          tools: "coding",
-          customTools,
-          onText: agentLogger.onText,
-          onThinking: agentLogger.onThinking,
-          onToolStart: agentLogger.onToolStart,
-          onToolEnd: agentLogger.onToolEnd,
-          defaultProvider: executorProvider,
-          defaultModelId: executorModelId,
-          fallbackProvider: executorFallbackProvider,
-          fallbackModelId: executorFallbackModelId,
-          defaultThinkingLevel: executorThinkingLevel,
-          sessionManager,
-          taskEnv,
-          // Skill selection: use assigned agent skills if available, otherwise role fallback
-          ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
-          actionGateContext: this.buildActionGateContext(task.id, assignedAgent, settings.defaultAgentPermissionPolicy),
-          permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, assignedAgent, settings.defaultAgentPermissionPolicy),
-          taskId: task.id,
-          taskTitle: detail.title,
-          onFallbackModelUsed: createFallbackModelObserver({
-            agent: "executor",
-            label: "executor",
-            store: this.store,
+        let session: AgentSession;
+        let sessionFile: string | null | undefined;
+        try {
+          const createdSession = await createResolvedAgentSession({
+            sessionPurpose: "executor",
+            runtimeHint: executorRuntimeHint,
+            pluginRunner: this.options.pluginRunner,
+            cwd: worktreePath,
+            systemPrompt: executorSystemPromptFinal,
+            systemPromptLayers: executorLayers,
+            tools: "coding",
+            customTools,
+            onText: agentLogger.onText,
+            onThinking: agentLogger.onThinking,
+            onToolStart: agentLogger.onToolStart,
+            onToolEnd: agentLogger.onToolEnd,
+            defaultProvider: executorProvider,
+            defaultModelId: executorModelId,
+            fallbackProvider: executorFallbackProvider,
+            fallbackModelId: executorFallbackModelId,
+            defaultThinkingLevel: executorThinkingLevel,
+            sessionManager,
+            taskEnv,
+            // Skill selection: use assigned agent skills if available, otherwise role fallback
+            ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+            actionGateContext: this.buildActionGateContext(task.id, assignedAgent, settings.defaultAgentPermissionPolicy),
+            permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, assignedAgent, settings.defaultAgentPermissionPolicy),
             taskId: task.id,
             taskTitle: detail.title,
-          }),
-        });
+            onFallbackModelUsed: createFallbackModelObserver({
+              agent: "executor",
+              label: "executor",
+              store: this.store,
+              taskId: task.id,
+              taskTitle: detail.title,
+            }),
+          });
+          session = createdSession.session;
+          sessionFile = createdSession.sessionFile;
+        } catch (sessionStartError) {
+          if (await this.recoverMissingWorktreeSessionStartFailure(task, worktreePath, sessionStartError, audit)) {
+            return;
+          }
+          throw sessionStartError;
+        }
 
         const executorModelDesc = describeModel(session);
         const executorModelMarker = `Executor using model: ${executorModelDesc}`;
@@ -4134,25 +4147,13 @@ export class TaskExecutor {
                   role: "executor",
                 });
               } catch (retryError) {
-                const retryErrorText = retryError instanceof Error ? retryError.message : String(retryError);
-                if (!isMissingWorktreeSessionStartFailure(retryErrorText)) {
-                  throw retryError;
-                }
-                const recoveredPath = extractMissingWorktreePathFromSessionStartFailure(retryErrorText) ?? worktreePath;
-                const reclaimMessage = `${task.id}: no-fn_task_done retry hit missing worktree session-start failure (${recoveredPath}) — clearing stale metadata and requeueing`;
-                executorLog.log(reclaimMessage);
-                await this.store.logEntry(task.id, reclaimMessage, undefined, this.currentRunContext);
-                await this.store.updateTask(task.id, {
-                  sessionFile: null,
-                  worktree: null,
-                  branch: null,
-                  baseCommitSha: null,
-                });
                 this.deleteActiveSession(task.id);
                 this.tokenUsageBaselines.delete(task.id);
                 retrySession?.dispose();
-                retryAbortedDueToReclaim = true;
-                break;
+                if (await this.recoverMissingWorktreeSessionStartFailure(task, worktreePath, retryError, audit)) {
+                  return;
+                }
+                throw retryError;
               }
 
               if (!taskDone) {
@@ -8177,6 +8178,76 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       );
       return null;
     }
+  }
+
+  private async recoverMissingWorktreeSessionStartFailure(
+    task: Task,
+    worktreePath: string,
+    error: unknown,
+    audit: RunAuditor,
+  ): Promise<boolean> {
+    const errorText = error instanceof Error ? error.message : String(error);
+    if (!isMissingWorktreeSessionStartFailure(errorText)) return false;
+
+    const classification = classifyMissingWorktreeSessionStartFailure(errorText);
+    const staleWorktreePath = extractMissingWorktreePathFromSessionStartFailure(errorText) ?? worktreePath;
+
+    await audit.git({
+      type: "worktree:incomplete-detected",
+      target: staleWorktreePath,
+      metadata: { classification, reason: errorText, source: "session-start", taskId: task.id },
+    });
+
+    if (isInsideWorktreesDir(this.rootDir, staleWorktreePath)) {
+      try {
+        await removeWorktree({
+          rootDir: this.rootDir,
+          worktreePath: staleWorktreePath,
+          settings: await this.store.getSettings(),
+          reason: RemovalReason.PoolPrune,
+          taskId: task.id,
+          audit,
+        });
+      } catch (removeErr) {
+        executorLog.warn(`${task.id}: failed to remove unusable session-start worktree ${staleWorktreePath}: ${formatError(removeErr)}`);
+      }
+    }
+
+    const recovery = await autoRecoverWorktreeSessionStartFailure(this.store, task, {
+      failure: error,
+      source: "executor-session-start",
+      auditor: null,
+    });
+
+    await audit.git({
+      type: "worktree:auto-recovered",
+      target: staleWorktreePath,
+      metadata: {
+        classification: recovery.classification,
+        action: recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo",
+        retries: recovery.retries,
+        maxRetries: MAX_WORKTREE_SESSION_RETRIES,
+        staleWorktree: staleWorktreePath,
+        taskId: task.id,
+      },
+    });
+
+    if (recovery.outcome === "escalate-exhausted") {
+      await this.store.logEntry(
+        task.id,
+        `Worktree session-start auto-recovery exhausted (${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES}); task left for human inspection`,
+        undefined,
+        this.currentRunContext,
+      );
+    } else {
+      await this.store.logEntry(
+        task.id,
+        `Worktree was ${classification} at session start; requeued to todo for clean retry (attempt ${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES})`,
+        undefined,
+        this.currentRunContext,
+      );
+    }
+    return true;
   }
 
   private async emitStaleLockAudit(

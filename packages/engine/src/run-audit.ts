@@ -62,10 +62,35 @@ export interface EngineRunContext {
 
 // ── Git mutation types ─────────────────────────────────────────────────────────
 
+/**
+ * Additional worktree session-start recovery metadata:
+ *
+ * ```ts
+ * // worktree:incomplete-detected
+ * metadata: {
+ *   classification: "missing" | "incomplete" | "unregistered";
+ *   reason?: string;
+ *   source: "pool-acquire" | "resume" | "session-start";
+ *   taskId?: string;
+ * }
+ *
+ * // worktree:auto-recovered
+ * metadata: {
+ *   classification: "missing" | "incomplete" | "unregistered" | "unknown";
+ *   action: "requeue-todo" | "escalate-exhausted";
+ *   retries: number;
+ *   maxRetries: number;
+ *   staleWorktree?: string;
+ *   taskId?: string;
+ * }
+ * ```
+ */
 export type GitMutationType =
   | "worktree:create"
   | "worktree:remove"
   | "worktree:reuse"
+  | "worktree:incomplete-detected"
+  | "worktree:auto-recovered"
   /**
    * worktrunk run-audit metadata shape:
    *
