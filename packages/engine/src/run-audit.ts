@@ -189,6 +189,7 @@ export type DatabaseMutationType =
   | "agent:delete:requested"
   | "agent:delete:approved"
   | "agent:delete:denied"
+  | "task:pr-conflict-reclaim"
   | "room:ambiguity:branch";
 
 // ── Filesystem mutation types ─────────────────────────────────────────────────

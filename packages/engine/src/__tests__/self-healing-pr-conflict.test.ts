@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
+import { AutoRecoveryDispatcher } from "../auto-recovery.js";
 import * as branchConflicts from "../branch-conflicts.js";
 import * as worktreePool from "../worktree-pool.js";
 
@@ -73,6 +74,36 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(task.id);
     expect(result).toEqual({ outcome: "skipped", reason: "user-paused" });
+  });
+
+  it("delegates tip-already-merged through reclaim sweep", async () => {
+    const task = makeTask();
+    const store = makeStore(task);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({ kind: "tip-already-merged", livePath: null, tipSha: "abc123", integrationRef: "main" } as any);
+    const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+    const sweepSpy = vi.spyOn(manager, "reclaimSelfOwnedBranchConflicts").mockResolvedValue(1);
+    const result = await manager.reclaimPrConflictForTask(task.id);
+    expect(result.outcome).toBe("tip-already-merged");
+    expect(sweepSpy).toHaveBeenCalled();
+  });
+
+  it("returns paused-unrecoverable when conflict is unrecoverable and dispatcher pauses", async () => {
+    const task = makeTask();
+    const store = makeStore(task);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({ kind: "live-foreign", error: new Error("unrecoverable") } as any);
+    vi.spyOn(AutoRecoveryDispatcher.prototype, "dispatch").mockResolvedValue({ action: "pause", reason: "test" } as any);
+    const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+    const result = await manager.reclaimPrConflictForTask(task.id);
+    expect(result.outcome).toBe("paused-unrecoverable");
+    expect((store.updateTask as any).mock.calls.some((c: any[]) => c[1]?.pausedReason === "branch-conflict-unrecoverable")).toBe(true);
+  });
+
+  it("skips worktrunk operation failed paused tasks", async () => {
+    const task = makeTask({ pausedReason: "worktrunk_operation_failed" as any });
+    const store = makeStore(task);
+    const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+    const result = await manager.reclaimPrConflictForTask(task.id);
+    expect(result).toEqual({ outcome: "skipped", reason: "worktrunk-paused" });
   });
 
   it("skips when global pause is active", async () => {
