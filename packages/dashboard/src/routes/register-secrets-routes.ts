@@ -166,11 +166,11 @@ export const registerSecretsRoutes: ApiRouteRegistrar = (ctx) => {
       const { store: scopedStore } = await getProjectContext(req);
       const secretsStore = await scopedStore.getSecretsStore();
       const secret = await secretsStore.revealSecret(id, scope, {
-        userId: req.user?.id ?? null,
+        userId: null,
       });
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Pragma", "no-cache");
-      res.json({ key: secret.key, value: secret.value });
+      res.json({ key: secret.key, value: secret.plaintextValue });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       if (err instanceof SecretsStoreError) mapSecretsError(err);
