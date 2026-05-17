@@ -36,6 +36,7 @@ import {
   mockedIsUsableTaskWorktree,
   mockedClassifyStaleLock,
   mockedTryRemoveStaleLock,
+  mockedInstallTaskWorktreeIdentityGuard,
   mockExecuteAll,
   mockTerminateAllSessions,
   mockCleanup,
@@ -2155,6 +2156,9 @@ describe("TaskExecutor worktree pool integration", () => {
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
     );
     expect(worktreeAddCalls.length).toBeGreaterThan(0);
+    expect(mockedInstallTaskWorktreeIdentityGuard).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: "FN-020" }),
+    );
 
     // Should log worktree creation, NOT pool acquisition
     expect(store.logEntry).toHaveBeenCalledWith(

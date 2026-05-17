@@ -1173,7 +1173,9 @@ describe("StepSessionExecutor", () => {
         expect.stringContaining("git worktree add"),
         expect.anything(),
       );
-      expect(mockedInstallTaskWorktreeIdentityGuard).toHaveBeenCalled();
+      expect(mockedInstallTaskWorktreeIdentityGuard).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: "FN-001" }),
+      );
     });
 
     it("handles parallel step failure: successful step cherry-picked, failed cleaned up", async () => {
