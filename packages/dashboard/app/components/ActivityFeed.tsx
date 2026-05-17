@@ -32,6 +32,7 @@ const TYPE_CONFIG: Record<ActivityFeedEntry["type"], {
   "task:merged": { label: "Merged", icon: GitMerge, color: "var(--color-success)" },
   "task:failed": { label: "Failed", icon: AlertTriangle, color: "var(--color-error)" },
   "settings:updated": { label: "Settings", icon: Settings, color: "var(--text-muted)" },
+  "project:isolation-transition": { label: "Isolation", icon: Folder, color: "var(--color-info)" },
 };
 
 function formatRelativeTime(timestamp: string): string {

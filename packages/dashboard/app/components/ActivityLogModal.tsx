@@ -31,6 +31,7 @@ const EVENT_TYPE_LABELS: Record<ActivityEventType, string> = {
   "task:merged": "Task Merged",
   "task:failed": "Task Failed",
   "settings:updated": "Settings Updated",
+  "project:isolation-transition": "Project Isolation Transition",
 };
 
 const EVENT_TYPE_ICONS: Record<ActivityEventType, React.ReactNode> = {
@@ -41,6 +42,7 @@ const EVENT_TYPE_ICONS: Record<ActivityEventType, React.ReactNode> = {
   "task:merged": <CheckCircle size={14} className="activity-icon merged" />,
   "task:failed": <XCircle size={14} className="activity-icon failed" />,
   "settings:updated": <Settings size={14} className="activity-icon settings" />,
+  "project:isolation-transition": <Folder size={14} className="activity-icon settings" />,
 };
 
 function formatTimestamp(timestamp: string): string {
