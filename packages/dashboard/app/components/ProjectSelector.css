@@ -493,9 +493,3 @@
   }
 }
 
-@media (min-width: 769px) and (max-width: 1024px) {
-  /* Hide project selector on tablet (controlled by React rendering too) */
-  .project-selector {
-    display: none;
-  }
-}

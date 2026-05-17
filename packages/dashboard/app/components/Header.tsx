@@ -948,8 +948,8 @@ export function Header({
           </div>
         )}
 
-        {/* Project Selector - Back button when project selected, dropdown when 2+ projects (desktop only) */}
-        {!isCompact && projects.length >= 1 && onViewAllProjects && (
+        {/* Project Selector - Back button when project selected, dropdown when 2+ projects (tablet + desktop) */}
+        {!isMobile && projects.length >= 1 && onViewAllProjects && (
           <ProjectSelector
             projects={projects}
             currentProject={currentProject ?? null}
@@ -1713,7 +1713,7 @@ export function Header({
             aria-label="Additional header actions"
           >
             {/* Projects - in overflow on mobile */}
-            {projects.length >= 1 && onViewAllProjects && (
+            {isMobile && projects.length >= 1 && onViewAllProjects && (
               <button
                 className="mobile-overflow-item"
                 onClick={() => handleOverflowAction(onViewAllProjects)}

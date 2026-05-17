@@ -389,7 +389,7 @@ describe("tablet header controls", () => {
 
   // ── Tablet project-switch affordances ──────────────────────────
 
-  it("does not render project selector on tablet", () => {
+  it("renders project selector on tablet with multiple projects", () => {
     const projects = [
       { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
       { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
@@ -400,7 +400,7 @@ describe("tablet header controls", () => {
       onSelectProject: noop,
       onViewAllProjects: noop,
     });
-    expect(screen.queryByTestId("project-selector-trigger")).toBeNull();
+    expect(screen.getByTestId("project-selector-trigger")).toBeDefined();
   });
 
   it("does not render back to projects button on tablet", () => {
@@ -412,7 +412,7 @@ describe("tablet header controls", () => {
     expect(screen.queryByTestId("back-to-projects-btn")).toBeNull();
   });
 
-  it("shows switch project in overflow menu when multiple projects on tablet", () => {
+  it("does not show projects entry in overflow menu on tablet", () => {
     const projects = [
       { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
       { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
@@ -424,9 +424,7 @@ describe("tablet header controls", () => {
       onViewAllProjects,
     });
     fireEvent.click(screen.getByTitle("More header actions"));
-    const btn = screen.getByTestId("overflow-project-selector-btn");
-    expect(btn).toBeDefined();
-    expect(btn.textContent).toContain("Projects");
+    expect(screen.queryByTestId("overflow-project-selector-btn")).toBeNull();
   });
 
   it("does not render mobile project switch trigger on tablet", () => {
@@ -438,9 +436,10 @@ describe("tablet header controls", () => {
       projects,
       currentProject: projects[0],
       onSelectProject: vi.fn(),
+      onViewAllProjects: noop,
     });
     expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
-    expect(screen.queryByTestId("project-selector-trigger")).toBeNull();
+    expect(screen.getByTestId("project-selector-trigger")).toBeDefined();
   });
 
   // ── Desktop still shows everything inline ──────────────────────
