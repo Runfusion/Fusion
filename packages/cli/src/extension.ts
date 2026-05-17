@@ -67,8 +67,16 @@ const MIME_TYPES: Record<string, string> = {
   ".xml": "application/xml",
 };
 
+let warnedMissingProjectRootResolver = false;
+
 function resolveProjectRoot(cwd: string): string {
-  const worktreeProjectRoot = getProjectRootFromWorktree(cwd);
+  const worktreeProjectRoot = typeof getProjectRootFromWorktree === "function"
+    ? getProjectRootFromWorktree(cwd)
+    : null;
+  if (typeof getProjectRootFromWorktree !== "function" && !warnedMissingProjectRootResolver) {
+    warnedMissingProjectRootResolver = true;
+    console.warn("[fusion-extension] @fusion/core.getProjectRootFromWorktree is unavailable; using filesystem fallback resolution.");
+  }
   if (worktreeProjectRoot && existsSync(join(worktreeProjectRoot, ".fusion"))) {
     return worktreeProjectRoot;
   }
