@@ -130,6 +130,7 @@ export type DatabaseMutationType =
   | "task:auto-recover-already-merged"
   | "task:auto-recover-finalize-already-on-main"
   | "task:auto-recover-branch-misbound"
+  | "task:auto-recover-node-unreachable"
   | "task:auto-recover-completion-fanout"
   | "task:auto-recover-worktree-session-exhausted"
   | "task:auto-recover-starved-refinement"
