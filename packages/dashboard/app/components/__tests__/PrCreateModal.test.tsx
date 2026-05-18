@@ -129,6 +129,18 @@ describe("PrCreateModal", () => {
     fireEvent.change(screen.getByPlaceholderText("Filter labels"), { target: { value: "bug" } });
     fireEvent.click(screen.getByRole("button", { name: "bug" }));
 
+    const labelChip = screen.getByLabelText(/remove bug/i).closest("span");
+    expect(labelChip).toHaveClass("pr-create-modal__chip--colored");
+    expect(labelChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("#ff0000");
+
+    const reviewerChip = screen.getByLabelText(/remove reviewer 1/i).closest("span");
+    expect(reviewerChip).not.toHaveClass("pr-create-modal__chip--colored");
+    expect(reviewerChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("");
+
+    const assigneeChip = screen.getByLabelText(/remove assignee 1/i).closest("span");
+    expect(assigneeChip).not.toHaveClass("pr-create-modal__chip--colored");
+    expect(assigneeChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("");
+
     const submitButton = screen.getByRole("button", { name: "Create draft PR" });
     expect(submitButton).toHaveClass("btn-primary");
     fireEvent.click(submitButton);
