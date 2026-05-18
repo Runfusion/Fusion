@@ -435,7 +435,11 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   const created = await createWorktreeImpl(branchName, worktreePath, task.id, baseBranch ?? undefined, allowSiblingBranchRename);
   worktreePath = created.path;
   branch = created.branch;
-  await store.updateTask(task.id, { worktree: created.path, branch: created.branch });
+  await store.updateTask(task.id, {
+    worktree: created.path,
+    branch: created.branch,
+    executionStartBranch: task.executionStartBranch ?? created.branch,
+  });
   await audit?.git({ type: "worktree:create", target: created.path, metadata: { branch: created.branch } });
   await audit?.git({ type: "branch:create", target: created.branch });
   if (created.branch !== branchName) {

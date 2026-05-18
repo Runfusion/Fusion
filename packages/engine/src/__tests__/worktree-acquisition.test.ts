@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { promisify } from "node:util";
 import { acquireTaskWorktree } from "../worktree-acquisition.js";
 import { classifyTaskWorktree, PoolDoubleLeaseError } from "../worktree-pool.js";
+import { hydrateWorktreeDb } from "../worktree-db-hydrate.js";
 import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
 
 vi.mock("../worktree-pool.js", async () => {
@@ -188,7 +189,7 @@ describe("acquireTaskWorktree", () => {
     });
     expect(result.source).toBe("fresh");
     expect(createWorktree).toHaveBeenCalled();
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/new", branch: "fusion/fn-1" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/new", branch: "fusion/fn-1", executionStartBranch: "fusion/fn-1" });
   });
 
   it("skips init command when runInitCommand false", async () => {
@@ -268,6 +269,57 @@ describe("acquireTaskWorktree", () => {
     const failureCall = store.logEntry.mock.calls.find((call: unknown[]) => String(call[1]).startsWith("Worktree init command failed"));
     expect(failureCall).toBeDefined();
     expect(failureCall?.[2]).toContain("ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE");
+  });
+
+  it("FN-043: fresh acquisition persists worktree, branch, and executionStartBranch before hydration", async () => {
+    const createWorktree = vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" });
+    await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: {},
+      createWorktree,
+    });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
+      worktree: "/tmp/new",
+      branch: "fusion/fn-1",
+      executionStartBranch: "fusion/fn-1",
+    });
+    const updateOrder = store.updateTask.mock.invocationCallOrder[0];
+    const hydrateOrder = vi.mocked(hydrateWorktreeDb).mock.invocationCallOrder[0];
+    expect(updateOrder).toBeLessThan(hydrateOrder);
+  });
+
+  it("FN-043: fresh acquisition defaults executionStartBranch to resolved branch when renamed", async () => {
+    const createWorktree = vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1-renamed" });
+    await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: {},
+      createWorktree,
+    });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
+      worktree: "/tmp/new",
+      branch: "fusion/fn-1-renamed",
+      executionStartBranch: "fusion/fn-1-renamed",
+    });
+  });
+
+  it("FN-043: fresh acquisition preserves existing executionStartBranch", async () => {
+    const createWorktree = vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" });
+    await acquireTaskWorktree({
+      task: { ...task, executionStartBranch: "fusion/fn-0" },
+      rootDir: process.cwd(),
+      store,
+      settings: {},
+      createWorktree,
+    });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
+      worktree: "/tmp/new",
+      branch: "fusion/fn-1",
+      executionStartBranch: "fusion/fn-0",
+    });
   });
 });
 
