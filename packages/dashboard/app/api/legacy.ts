@@ -65,8 +65,7 @@ import type {
   ResearchRunStatus,
   TaskPriority,
   TaskSourceIssue,
-  PrConflictState,
-  PrStatus,
+  PrInfo,
   ManagedDockerNodeInput,
   DockerNodeConfig,
   DockerHostConfig,
@@ -2183,28 +2182,6 @@ export function updateGitRemoteUrl(name: string, url: string, projectId?: string
 
 // --- PR Management API ---
 
-/** PR info returned by PR endpoints */
-export interface PrInfo {
-  url: string;
-  number: number;
-  status: PrStatus;
-  title: string;
-  headBranch: string;
-  baseBranch: string;
-  commentCount: number;
-  isDraft?: boolean;
-  draft?: boolean;
-  autoMergeOnGreen?: boolean;
-  autoMergeStrategy?: "merge" | "squash" | "rebase";
-  lastMergeError?: string;
-  lastMergeErrorAt?: string;
-  checkRollup?: "success" | "failure" | "pending" | "none";
-  mergeable?: PrConflictState;
-  lastCommentAt?: string;
-  lastCheckedAt?: string;
-  lastReviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-}
-
 export interface PrCheckStatus {
   name: string;
   required: boolean;
@@ -2403,7 +2380,7 @@ export function fetchPrReviews(id: string, projectId?: string): Promise<PrReview
 // --- Issue Management API ---
 
 /** Re-export GitHub badge-related types for convenience */
-export type { IssueInfo, BatchStatusResult, BatchStatusEntry } from "@fusion/core";
+export type { IssueInfo, BatchStatusResult, BatchStatusEntry, PrInfo } from "@fusion/core";
 
 /** Fetch cached issue status for a task */
 export function fetchIssueStatus(id: string, projectId?: string): Promise<{ issueInfo: import("@fusion/core").IssueInfo; stale: boolean }> {
