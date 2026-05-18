@@ -2242,7 +2242,7 @@ describe("TaskExecutor worktree pool integration", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
-    expect(releaseSpy).toHaveBeenCalledWith("/tmp/test/.worktrees/bad-wt");
+    expect(releaseSpy).toHaveBeenCalledWith("/tmp/test/.worktrees/bad-wt", "FN-020");
 
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),

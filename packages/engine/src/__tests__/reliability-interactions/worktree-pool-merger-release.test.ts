@@ -44,9 +44,10 @@ describe("FN-4954 reliability interactions: merger pooled release ordering", () 
 
       await mkdir(join(rootDir, ".worktrees"), { recursive: true });
       git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
-      await store.updateTask(task.id, { branch, worktree: worktreePath, column: "in-review" });
+      await store.updateTask(task.id, { branch, worktree: worktreePath });
+      await store.moveTask(task.id, "in-review");
 
-      const pool = new WorktreePool(rootDir);
+      const pool = new WorktreePool();
       const result = await aiMergeTask(store, rootDir, task.id, { pool });
       expect(result.merged).toBe(true);
       expect(result.worktreeRemoved).toBe(false);
