@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Column, Task, TaskStore } from "@fusion/core";
+import { computeContentFingerprint } from "@fusion/core";
 
 import { request as performRequest } from "../test-request.js";
 import { registerTaskWorkflowRoutes } from "../routes/register-task-workflow-routes.js";
@@ -33,6 +34,20 @@ function buildApp(seed: Task[] = []) {
 
   const store: Partial<TaskStore> = {
     searchTasks: vi.fn().mockImplementation(async () => tasks),
+    findRecentTasksByContentFingerprint: vi.fn().mockImplementation(async (fingerprint: string, options?: { windowMs?: number; includeArchived?: boolean }) => {
+      const windowMs = Math.max(1, Math.min(300_000, Math.trunc(options?.windowMs ?? 60_000)));
+      const cutoff = Date.now() - windowMs;
+      return tasks.filter((task) => {
+        const taskFingerprint = task.source?.sourceMetadata?.contentFingerprint;
+        if (taskFingerprint !== fingerprint) {
+          return false;
+        }
+        if ((options?.includeArchived ?? false) !== true && task.column === "archived") {
+          return false;
+        }
+        return Date.parse(task.createdAt) >= cutoff;
+      });
+    }),
     getSettingsFast: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
     createTask: vi.fn().mockImplementation(async (input: { title?: string; description: string; source?: Record<string, unknown> }) => {
       const task = createTaskFixture({
@@ -204,6 +219,44 @@ describe("task duplicate detection routes", () => {
     expect(res.status).toBe(201);
     const created = res.body as Task;
     expect(created.source?.sourceMetadata?.duplicateWarningOverridden).toBeUndefined();
+  });
+
+  it("deterministic check still blocks when only similarity duplicate is acknowledged", async () => {
+    const fingerprint = computeContentFingerprint({
+      title: "Move retry counter badge next to GitHub tracking badge",
+      description: "Move the retry counter badge to the left of the GitHub tracking badge",
+    }) as string;
+    const { app } = buildApp([
+      createTaskFixture({
+        id: "FN-31",
+        title: "Similar title",
+        description: "Move the retry counter badge left of GitHub tracking badge",
+        column: "todo",
+      }),
+      createTaskFixture({
+        id: "FN-32",
+        title: "Move retry counter badge next to GitHub tracking badge",
+        description: "Move the retry counter badge to the left of the GitHub tracking badge",
+        column: "todo",
+        source: { sourceType: "api", sourceMetadata: { contentFingerprint: fingerprint } },
+      }),
+    ]);
+
+    const res = await performRequest(
+      app,
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        title: "Move retry counter badge next to GitHub tracking badge",
+        description: "Move the retry counter badge to the left of the GitHub tracking badge",
+        acknowledgedDuplicates: ["FN-31"],
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(409);
+    const body = res.body as { details: { matches: Array<{ id: string; deterministic?: boolean }> } };
+    expect(body.details.matches[0]).toMatchObject({ id: "FN-32", deterministic: true });
   });
 
   it("done tasks do not trigger conflict", async () => {

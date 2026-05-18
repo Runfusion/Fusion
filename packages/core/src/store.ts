@@ -4020,6 +4020,33 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return limit >= 0 ? matches.slice(0, limit) : matches;
   }
 
+  async findRecentTasksByContentFingerprint(
+    fingerprint: string,
+    options?: { windowMs?: number; includeArchived?: boolean },
+  ): Promise<Task[]> {
+    const trimmedFingerprint = fingerprint.trim();
+    if (trimmedFingerprint.length === 0) {
+      return [];
+    }
+
+    const requestedWindowMs = options?.windowMs ?? 60_000;
+    const windowMs = Math.max(1, Math.min(300_000, Math.trunc(requestedWindowMs)));
+    const cutoffIso = new Date(Date.now() - windowMs).toISOString();
+    const includeArchived = options?.includeArchived ?? false;
+    const selectClause = this.getTaskSelectClause(false, "t");
+
+    const rows = this.db.prepare(`
+      SELECT ${selectClause}
+      FROM tasks t
+      WHERE json_extract(t.sourceMetadata, '$.contentFingerprint') = ?
+        AND t.createdAt >= ?
+        ${includeArchived ? "" : "AND t.\"column\" != 'archived'"}
+      ORDER BY t.createdAt ASC
+    `).all(trimmedFingerprint, cutoffIso) as TaskRow[];
+
+    return rows.map((row) => this.rowToTask(row));
+  }
+
   async getTasksByAssignedAgent(
     agentId: string,
     options?: { pausedOnly?: boolean; excludeArchived?: boolean },

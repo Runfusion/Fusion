@@ -131,7 +131,9 @@ export {
   SelfDefeatingDependencyError,
 } from "./store.js";
 export {
+  computeContentFingerprint,
   findDuplicateMatches,
+  type ContentFingerprintInput,
   type DuplicateCandidate,
   type DuplicateMatch,
   type DuplicateMatchInput,

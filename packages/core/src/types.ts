@@ -875,6 +875,7 @@ export type ActivityEventType =
   | "task:merged"
   | "task:failed"
   | "task:duplicate-warning-overridden"
+  | "task:auto-archived-deterministic-duplicate"
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   | "settings:updated"

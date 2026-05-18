@@ -3,6 +3,7 @@ import type {
   TaskStore,
   Task,
   TaskDetail,
+  TaskSource,
   Column,
   TaskReviewData,
   TaskReviewItem,
@@ -23,6 +24,7 @@ import {
   formatRoleMismatchReason,
   getCurrentRepo,
   findDuplicateMatches,
+  computeContentFingerprint,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
@@ -36,6 +38,7 @@ const REVIEW_BLOCK_RE = /##\s+(Code|Plan)\s+Review:[\s\S]*?(?=\n##\s+(?:Code|Pla
 const REVIEW_VERDICT_RE = /###\s+Verdict:\s*(APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
 const REVIEW_STEP_RE = /^(plan|code) review Step (\d+): (APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
 const DUPLICATE_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "to", "for", "in", "is", "on", "with", "fn"]);
+const fingerprintCreateLocks = new Map<string, Promise<void>>();
 
 function buildDuplicateQuery(title: string | undefined, description: string): string {
   const tokens = `${title ?? ""} ${description}`
@@ -81,6 +84,21 @@ async function computeDuplicateMatches(
       limit: input.limit ?? 5,
     },
   );
+}
+
+async function findOlderSameFingerprintSibling(
+  scopedStore: TaskStore,
+  fingerprint: string,
+  taskId: string,
+  createdAt: string,
+  windowMs: number,
+): Promise<Task | null> {
+  const siblings = await scopedStore.findRecentTasksByContentFingerprint(fingerprint, {
+    windowMs,
+    includeArchived: false,
+  });
+
+  return siblings.find((sibling) => sibling.id !== taskId && sibling.createdAt < createdAt) ?? null;
 }
 
 function buildReviewerAgentItemId(input: { index: number; reviewType: "plan" | "code"; step?: number; verdict?: string; createdAt?: string }): string {
@@ -249,7 +267,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Create task
   router.post("/tasks", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, projectId } = await getProjectContext(req);
       const {
         title,
         description,
@@ -406,7 +424,52 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const normalizedDescription = description.trim();
       const normalizedTitle = typeof title === "string" ? title : undefined;
+      const contentFingerprint = computeContentFingerprint({
+        title: normalizedTitle,
+        description: normalizedDescription,
+      });
       const acknowledgedDuplicateIds = acknowledgedDuplicates ?? [];
+
+      if (bypassDuplicateCheck !== true && contentFingerprint) {
+        const fingerprintLockKey = `${projectId}:${contentFingerprint}`;
+        const existingLock = fingerprintCreateLocks.get(fingerprintLockKey);
+        if (existingLock) {
+          await existingLock;
+        }
+
+        let releaseLock: (() => void) | undefined;
+        const gate = new Promise<void>((resolve) => {
+          releaseLock = resolve;
+        });
+        fingerprintCreateLocks.set(fingerprintLockKey, gate);
+        try {
+          const deterministicMatches = await scopedStore.findRecentTasksByContentFingerprint(contentFingerprint, {
+            windowMs: 60_000,
+            includeArchived: false,
+          });
+          const deterministicConflict = deterministicMatches.find(
+            (match) => !acknowledgedDuplicateIds.includes(match.id),
+          );
+          if (deterministicConflict) {
+            throw conflict("duplicate_candidates", {
+              matches: [{
+                id: deterministicConflict.id,
+                title: deterministicConflict.title ?? "",
+                description: deterministicConflict.description ?? "",
+                column: deterministicConflict.column,
+                score: 1,
+                deterministic: true,
+              }],
+            });
+          }
+        } finally {
+          if (releaseLock) {
+            releaseLock();
+          }
+          fingerprintCreateLocks.delete(fingerprintLockKey);
+        }
+      }
+
       const duplicateMatches = bypassDuplicateCheck === true
         ? []
         : await computeDuplicateMatches(scopedStore, {
@@ -418,6 +481,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw conflict("duplicate_candidates", { matches: matchesAfterAckFilter });
       }
 
+      const normalizedTaskSource = normalizedSource as TaskSource;
       const createInput = {
         title: normalizedTitle,
         description: normalizedDescription,
@@ -437,17 +501,19 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         reviewLevel: reviewLevel ?? undefined,
         executionMode: executionMode || undefined,
         priority: priority ?? undefined,
-        source:
-          acknowledgedDuplicateIds.length > 0
-            ? {
-                ...(normalizedSource as Record<string, unknown>),
-                sourceMetadata: {
-                  ...((normalizedSource as { sourceMetadata?: Record<string, unknown> }).sourceMetadata ?? {}),
+        source: {
+          ...normalizedTaskSource,
+          sourceMetadata: {
+            ...(normalizedTaskSource.sourceMetadata ?? {}),
+            ...(contentFingerprint ? { contentFingerprint } : {}),
+            ...(acknowledgedDuplicateIds.length > 0
+              ? {
                   duplicateWarningOverridden: true,
                   acknowledgedDuplicateIds,
-                },
-              }
-            : normalizedSource,
+                }
+              : {}),
+          },
+        },
         branch: normalizedBranch,
         baseBranch: normalizedBaseBranch,
         ...(typeof nodeId === "string" && nodeId.trim().length > 0 ? { nodeId: nodeId.trim() } : {}),
@@ -458,6 +524,52 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         createInput,
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } },
       );
+
+      if (bypassDuplicateCheck !== true && contentFingerprint) {
+        try {
+          const olderSibling = await findOlderSameFingerprintSibling(
+            scopedStore,
+            contentFingerprint,
+            task.id,
+            task.createdAt,
+            60_000,
+          );
+
+          if (olderSibling) {
+            await scopedStore.updateTask(task.id, {
+              sourceMetadataPatch: {
+                contentFingerprint,
+                deterministicDuplicateOf: olderSibling.id,
+              },
+            });
+            await scopedStore.moveTask(task.id, "archived");
+            try {
+              await scopedStore.recordActivity({
+                type: "task:auto-archived-deterministic-duplicate",
+                taskId: task.id,
+                taskTitle: task.title,
+                details: `Auto-archived as deterministic duplicate of ${olderSibling.id}`,
+                metadata: { canonicalTaskId: olderSibling.id, contentFingerprint },
+              });
+            } catch (error) {
+              runtimeLogger.warn("Failed to record deterministic-duplicate activity", {
+                taskId: task.id,
+                canonicalTaskId: olderSibling.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+
+            res.status(200).json(olderSibling);
+            return;
+          }
+        } catch (error) {
+          // FN-4918: fail open if reconciliation cannot complete after create.
+          runtimeLogger.warn("Deterministic duplicate reconciliation failed; returning created task", {
+            taskId: task.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       if (acknowledgedDuplicateIds.length > 0) {
         try {
