@@ -3989,8 +3989,7 @@ export async function assertSquashOverlapsFileScope(params: {
     encoding: "utf-8",
   });
   const stagedFiles = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-  const scopedStagedFiles = stagedFiles.filter((file) => !file.startsWith(".changeset/"));
-  const hasOverlap = scopedStagedFiles.some((file) => matchesScope(file, declaredScope));
+  const hasOverlap = stagedFiles.some((file) => matchesScope(file, declaredScope));
   if (!hasOverlap) {
     throw new FileScopeViolationError(taskId, stagedFiles, declaredScope);
   }
