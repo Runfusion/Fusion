@@ -773,6 +773,7 @@ For UI-level details, see [Dashboard Guide](./dashboard-guide.md).
 Use `noCommitsExpected: true` for tasks where the deliverable is a decision/report, not code changes.
 
 - Meaning: executor allows `fn_task_done` with zero commits for that task.
+- **Worktree context**: since 0.32.0, `noCommitsExpected: true` also bypasses the `wrong_toplevel` guard, allowing no-commit/infra tasks to finalize from the main repo path instead of requiring a dedicated worktree. Normal code tasks still require the correct worktree context.
 - Triage auto-sets it only when the task is clearly decision-shaped (e.g. "Decide whether...", "Evaluate...", "Verify...", "Audit...") with explicitly observational acceptance criteria and explicit no-code language.
 - Ambiguous/forked tasks (e.g. "Investigate..." or "Investigate and fix if needed") leave it unset by default.
 - You can manually set/clear it in Task Detail via **No commits expected (decision-only task)**.
