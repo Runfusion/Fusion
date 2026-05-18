@@ -246,6 +246,29 @@ test("planShardAssignments: FN-5036 keeps split engine slices from co-locating w
   }
 });
 
+test("planShardAssignments: FN-5033 regression workload stays below 5% 4-shard variance", () => {
+  const packages = [
+    { name: "@fusion/dashboard", testFileCount: 608 },
+    { name: "@fusion/engine", testFileCount: 380 },
+    { name: "@fusion/core", testFileCount: 202 },
+    { name: "@runfusion/fusion", testFileCount: 120 },
+    { name: "tail-a", testFileCount: 90 },
+    { name: "tail-b", testFileCount: 80 },
+    { name: "tail-c", testFileCount: 70 },
+    { name: "tail-d", testFileCount: 70 },
+  ];
+
+  const shards = planShardAssignments(packages, 4);
+  const totals = shards.map((entries) => entries.reduce((sum, entry) => sum + entry.weight, 0));
+  const perShardBudget = totals.reduce((sum, weight) => sum + weight, 0) / totals.length;
+  const varianceRatio = (Math.max(...totals) - Math.min(...totals)) / perShardBudget;
+
+  assert.ok(
+    varianceRatio < 0.05,
+    `expected <5% variance but got ${(varianceRatio * 100).toFixed(2)}% (${totals.join("/")})`,
+  );
+});
+
 test("planShardAssignments: best-fit places unsplit large package on tightest under-budget shard", () => {
   const packages = [
     { name: "anchor", testFileCount: 290 },
