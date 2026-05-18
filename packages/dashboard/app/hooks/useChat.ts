@@ -630,10 +630,12 @@ export function useChat(
     });
 
     setIsStreaming(false);
+    isStreamingRef.current = false;
     setStreamingText("");
     setStreamingThinking("");
     setStreamingToolCalls([]);
-  }, [activeSession, projectId]);
+    flushPendingMessage();
+  }, [activeSession, projectId, flushPendingMessage]);
 
   /**
    * Send a user message to the active chat session.

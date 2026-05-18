@@ -1138,6 +1138,41 @@ describe("useChat", () => {
       expect(result.current.isStreaming).toBe(false);
       expect(result.current.streamingText).toBe("");
       expect(result.current.streamingThinking).toBe("");
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("stopStreaming with no pendingMessage cancels stream without sending anything", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+    const closeFn = vi.fn();
+    mockStreamChatResponse.mockReturnValue({ close: closeFn, isConnected: () => true });
+
+    const { result } = renderHook(() => useChat("proj-123"));
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.id).toBe("session-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello!");
+      result.current.stopStreaming();
+    });
+
+    await waitFor(() => {
+      expect(closeFn).toHaveBeenCalledTimes(1);
+      expect(result.current.pendingMessage).toBe("");
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1441,10 +1476,10 @@ describe("useChat", () => {
     });
   });
 
-  it("queued message is not auto-sent after user-initiated stop", async () => {
+  it("stopStreaming sends queued pendingMessage after cancelling the stream", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
-    mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
 
     const handlers: Array<Parameters<typeof mockStreamChatResponse>[2]> = [];
     const closeFn = vi.fn();
@@ -1480,14 +1515,15 @@ describe("useChat", () => {
       result.current.stopStreaming();
     });
 
-    act(() => {
-      handlers[0]?.onError?.("Generation cancelled");
-    });
-
     await waitFor(() => {
       expect(closeFn).toHaveBeenCalled();
-      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
-      expect(result.current.pendingMessage).toBe("Queued follow-up");
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
+      expect(mockStreamChatResponse.mock.calls[1]?.[1]).toBe("Queued follow-up");
+      expect(result.current.pendingMessage).toBe("");
+    });
+
+    act(() => {
+      handlers[1]?.onDone?.({ messageId: "msg-queued" });
     });
   });
 
@@ -1583,10 +1619,10 @@ describe("useChat", () => {
     expect(result.current.pendingMessage).toBe("");
   });
 
-  it("stopStreaming preserves pendingMessage", async () => {
+  it("stopStreaming flushes pendingMessage", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
-    mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
 
     mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
 
@@ -1618,7 +1654,9 @@ describe("useChat", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.pendingMessage).toBe("Queued follow-up");
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
+      expect(mockStreamChatResponse.mock.calls[1]?.[1]).toBe("Queued follow-up");
+      expect(result.current.pendingMessage).toBe("");
     });
   });
 
