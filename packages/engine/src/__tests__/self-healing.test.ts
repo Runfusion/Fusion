@@ -1867,6 +1867,11 @@ describe("SelfHealingManager", () => {
   });
 
   describe("recoverMissingWorktreeReviewFailures", () => {
+    it("does not hard-code unusable-worktree assertion literals in self-healing", async () => {
+      const source = await readFile(join(process.cwd(), "packages/engine/src/self-healing.ts"), "utf8");
+      expect(source).not.toMatch(/Refusing to start coding agent/);
+    });
+
     it("requeues failed in-review tasks with unusable-worktree session-start errors", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",

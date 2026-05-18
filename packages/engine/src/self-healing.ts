@@ -31,6 +31,7 @@ import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { RemovalReason, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 import {
+  classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
   isRecoverableMissingWorktreeReviewFailureNoProgress,
@@ -310,18 +311,6 @@ function bumpTaskPriority(priority: TaskPriority | undefined): TaskPriority {
   }
 }
 
-function classifyWorktreeSessionStartFailure(error: unknown): "missing" | "incomplete" | "unregistered" | "unknown" {
-  const text = typeof error === "string"
-    ? error
-    : error instanceof Error
-      ? error.message
-      : String(error);
-  if (text.startsWith("Refusing to start coding agent in missing worktree:")) return "missing";
-  if (text.startsWith("Refusing to start coding agent in incomplete worktree:")) return "incomplete";
-  if (text.startsWith("Refusing to start coding agent in unregistered git worktree:")) return "unregistered";
-  return "unknown";
-}
-
 export async function autoRecoverWorktreeSessionStartFailure(
   store: TaskStore,
   task: Task,
@@ -331,7 +320,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
     auditor: RunAuditor | null;
   },
 ): Promise<{ outcome: "requeue-todo" | "escalate-exhausted"; retries: number; classification: "missing" | "incomplete" | "unregistered" | "unknown" }> {
-  const classification = classifyWorktreeSessionStartFailure(opts.failure);
+  const classification = classifyMissingWorktreeSessionStartFailure(opts.failure);
   const nextCount = (task.worktreeSessionRetryCount ?? 0) + 1;
   if (nextCount > MAX_WORKTREE_SESSION_RETRIES) {
     await store.logEntry(
@@ -5396,9 +5385,10 @@ export class SelfHealingManager {
    * Recover failed `in-review` retries that point at an unusable worktree path.
    *
    * This is a narrow guard for session-start failures thrown by
-   * assertValidWorktreeSession() (`Refusing to start coding agent in missing worktree:`,
-   * `Refusing to start coding agent in incomplete worktree:`, and
-   * `Refusing to start coding agent in unregistered git worktree:`).
+   * `assertValidWorktreeSession()` in `pi.ts`, classified centrally via
+   * `MISSING_WORKTREE_SESSION_PREFIXES` /
+   * `classifyMissingWorktreeSessionStartFailure()` in
+   * `restart-recovery-coordinator.ts`.
    * We clear stale worktree metadata and failure state, keep step progress and
    * retry counters, then requeue to todo for a clean retry.
    */
