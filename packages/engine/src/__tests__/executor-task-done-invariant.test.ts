@@ -119,6 +119,22 @@ describe("FN-4114 fn_task_done invariants", () => {
     expect(revListCalled).toBe(false);
   });
 
+  it("FN-049 allows wrong_toplevel bypass when noCommitsExpected is true", async () => {
+    const { store, tool } = await setup({ noCommitsExpected: true });
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo\n");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-4114\n");
+      if (cmd.includes("rev-list --count")) return Buffer.from("0\n");
+      if (cmd.includes("rev-parse HEAD")) return Buffer.from("def456\n");
+      return Buffer.from("");
+    });
+
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.updateStep).toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
+  });
+
   it("FN-4114 still refuses wrong_branch even when noCommitsExpected is true", async () => {
     const { store, tool } = await setup({ noCommitsExpected: true });
     mockedExecSync.mockImplementation((cmd: string) => {

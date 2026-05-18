@@ -109,6 +109,22 @@ describe("FN-4115 wrong-checkout completion rejection", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-4115", "todo", { preserveProgress: true });
   });
 
+  it("FN-049: fn_task_done allows wrong_toplevel bypass when noCommitsExpected is true", async () => {
+    const { store, tool } = await setup({ noCommitsExpected: true });
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo\n");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-4115\n");
+      if (cmd.includes("rev-list --count")) return Buffer.from("0\n");
+      if (cmd.includes("rev-parse HEAD")) return Buffer.from("def456\n");
+      return Buffer.from("");
+    });
+
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.updateStep).toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4115", "todo", { preserveProgress: true });
+  });
+
   it("FN-4115: fn_task_done completes on valid worktree branch and commit state", async () => {
     const { store, tool } = await setup();
     const result = await tool.execute("id", {});

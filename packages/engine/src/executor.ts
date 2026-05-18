@@ -5301,50 +5301,54 @@ export class TaskExecutor {
       };
     }
 
-    const expectedRoot = canonicalizePath(this.rootDir);
-    let expectedWorktreeRealpath: string;
-    try {
-      expectedWorktreeRealpath = canonicalizePath(worktreePath);
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "wrong_toplevel",
-        observed: `unresolvable task.worktree (${worktreePath}): ${error instanceof Error ? error.message : String(error)}`,
-        expected: `resolvable task worktree under ${resolveWorktreesDir(this.rootDir, settings)}/*`,
-      };
-    }
-
-    try {
-      const { stdout } = await execAsync("git rev-parse --show-toplevel", {
-        cwd: worktreePath,
-        encoding: "utf-8",
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const observedTopLevelRaw = stdout.trim();
-      if (observedTopLevelRaw) {
-        const observedTopLevel = canonicalizePath(observedTopLevelRaw);
-
-        if (
-          observedTopLevel === expectedRoot ||
-          !isInsideWorktreesDir(this.rootDir, observedTopLevel, settings) ||
-          observedTopLevel !== expectedWorktreeRealpath
-        ) {
-          return {
-            ok: false,
-            reason: "wrong_toplevel",
-            observed: observedTopLevel,
-            expected: expectedWorktreeRealpath,
-          };
-        }
+    if (task.noCommitsExpected === true) {
+      executorLog.log(`${task.id}: fn_task_done wrong_toplevel guard skipped (noCommitsExpected=true)`);
+    } else {
+      const expectedRoot = canonicalizePath(this.rootDir);
+      let expectedWorktreeRealpath: string;
+      try {
+        expectedWorktreeRealpath = canonicalizePath(worktreePath);
+      } catch (error) {
+        return {
+          ok: false,
+          reason: "wrong_toplevel",
+          observed: `unresolvable task.worktree (${worktreePath}): ${error instanceof Error ? error.message : String(error)}`,
+          expected: `resolvable task worktree under ${resolveWorktreesDir(this.rootDir, settings)}/*`,
+        };
       }
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "wrong_toplevel",
-        observed: error instanceof Error ? error.message : String(error),
-        expected: expectedWorktreeRealpath,
-      };
+
+      try {
+        const { stdout } = await execAsync("git rev-parse --show-toplevel", {
+          cwd: worktreePath,
+          encoding: "utf-8",
+          timeout: 10_000,
+          maxBuffer: 1024 * 1024,
+        });
+        const observedTopLevelRaw = stdout.trim();
+        if (observedTopLevelRaw) {
+          const observedTopLevel = canonicalizePath(observedTopLevelRaw);
+
+          if (
+            observedTopLevel === expectedRoot ||
+            !isInsideWorktreesDir(this.rootDir, observedTopLevel, settings) ||
+            observedTopLevel !== expectedWorktreeRealpath
+          ) {
+            return {
+              ok: false,
+              reason: "wrong_toplevel",
+              observed: observedTopLevel,
+              expected: expectedWorktreeRealpath,
+            };
+          }
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          reason: "wrong_toplevel",
+          observed: error instanceof Error ? error.message : String(error),
+          expected: expectedWorktreeRealpath,
+        };
+      }
     }
 
     try {
