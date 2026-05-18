@@ -361,6 +361,7 @@ describe("TaskExecutor worktree naming", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-030", {
       worktree: "/tmp/test/.worktrees/swift-falcon",
       branch: "fusion/fn-030",
+      executionStartBranch: "fusion/fn-030",
     });
     expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
   });
@@ -453,6 +454,7 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-042", {
         worktree: "/tmp/test/.worktrees/fn-042",
         branch: "fusion/fn-042",
+        executionStartBranch: "fusion/fn-042",
       });
       // Should NOT call generateWorktreeName when using task-id
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
@@ -480,6 +482,7 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-043", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
         branch: "fusion/fn-043",
+        executionStartBranch: "fusion/fn-043",
       });
       expect(mockedGenerateWorktreeName).not.toHaveBeenCalled();
     });
@@ -508,6 +511,7 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-044", {
         worktree: `/tmp/test/.worktrees/${expectedSlug}`,
         branch: "fusion/fn-044",
+        executionStartBranch: "fusion/fn-044",
       });
     });
 
@@ -529,6 +533,7 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-045", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-045",
+        executionStartBranch: "fusion/fn-045",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
     });
@@ -551,6 +556,7 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-046", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-046",
+        executionStartBranch: "fusion/fn-046",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
     });
@@ -587,6 +593,7 @@ describe("TaskExecutor worktree naming", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-047", {
         worktree: "/tmp/test/.worktrees/swift-falcon",
         branch: "fusion/fn-047",
+        executionStartBranch: "fusion/fn-047",
       });
       expect(mockedGenerateWorktreeName).toHaveBeenCalledWith("/tmp/test", expect.any(Object));
     });

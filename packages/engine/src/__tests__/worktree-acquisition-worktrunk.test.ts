@@ -139,6 +139,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", {
       worktree: "/repo/.worktrees/custom/fusion-fn-1",
       branch: "fusion/fn-1",
+      executionStartBranch: "fusion/fn-1",
     });
   });
 
