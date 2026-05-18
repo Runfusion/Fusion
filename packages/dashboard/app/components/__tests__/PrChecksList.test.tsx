@@ -45,6 +45,13 @@ describe("PrChecksList", () => {
     expect(detailsLink).not.toHaveClass("btn", "btn-sm");
   });
 
+  it("FN-5024: wires focus-visible ring token to refresh/retry/details controls", () => {
+    const css = loadAllAppCss();
+    expect(css).toContain(".pr-checks__header-actions .btn:focus-visible");
+    expect(css).toContain(".pr-checks__error .btn:focus-visible");
+    expect(css).toContain(".pr-checks__details-link:focus-visible");
+    expect(css).toContain("box-shadow: var(--focus-ring-strong);");
+  });
 
   it("shows empty state", () => {
     render(<PrChecksList checks={[]} rollup="unknown" loading={false} onRefresh={() => {}} />);
