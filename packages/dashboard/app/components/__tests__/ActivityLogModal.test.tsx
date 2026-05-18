@@ -138,8 +138,11 @@ describe("ActivityLogModal", () => {
       />,
     );
 
-    expect(await screen.findByText("Task Auto-Archived (Ghost Bug)")).toBeTruthy();
-    expect(await screen.findByText("Task Auto-Archived (Duplicate)")).toBeTruthy();
+    await waitFor(() => {
+      const labels = Array.from(container.querySelectorAll(".activity-log-entry-type")).map((node) => node.textContent);
+      expect(labels).toContain("Task Auto-Archived (Ghost Bug)");
+      expect(labels).toContain("Task Auto-Archived (Duplicate)");
+    });
 
     const icons = container.querySelectorAll(".activity-log-entry-icon .activity-icon");
     expect(icons).toHaveLength(2);
