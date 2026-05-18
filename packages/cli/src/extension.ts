@@ -549,10 +549,10 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Update Task",
     description:
       "Update fields on an existing task. Supports modifying the title, " +
-      "description, dependencies, and assigned agent after task creation.",
+      "description, dependencies, assigned agent, and priority after task creation.",
     promptSnippet: "Update fields on an existing Fusion task",
     promptGuidelines: [
-      "Use fn_task_update to modify task title, description, dependencies, or assigned agent after creation.",
+      "Use fn_task_update to modify task title, description, dependencies, assigned agent, or priority after creation.",
       "At least one field must be provided to update.",
     ],
     parameters: Type.Object({
@@ -576,6 +576,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         Type.Union([Type.String(), Type.Null()], {
           description: "Node ID override for this task, or null to clear",
         }),
+      ),
+      priority: Type.Optional(
+        StringEnum([...TASK_PRIORITIES], { description: "Task priority (low, normal, high, urgent)" }) as unknown as TSchema,
       ),
     }),
 
@@ -638,10 +641,14 @@ export default function kbExtension(pi: ExtensionAPI) {
         updates.nodeId = normalizedNodeId;
         updatedFields.push("nodeId");
       }
+      if (params.priority !== undefined) {
+        updates.priority = params.priority;
+        updatedFields.push("priority");
+      }
 
       if (updatedFields.length === 0) {
         return {
-          content: [{ type: "text", text: "No fields to update. Provide at least one of: title, description, depends, agentId, nodeId." }],
+          content: [{ type: "text", text: "No fields to update. Provide at least one of: title, description, depends, agentId, nodeId, priority." }],
           isError: true,
           details: { error: "No fields provided" },
         };
