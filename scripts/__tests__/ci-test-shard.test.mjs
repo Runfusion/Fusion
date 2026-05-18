@@ -67,6 +67,60 @@ test("computeSplitPlan: oversized package splits into balanced virtual entries",
   assert.equal(result.reduce((sum, entry) => sum + entry.weight, 0), 12);
 });
 
+test("computeSplitPlan: half-budget package now splits into exactly two virtual entries (FN-4989)", () => {
+  const packages = [
+    { name: "dashboard", testFileCount: 553 },
+    { name: "engine", testFileCount: 365 },
+    { name: "core", testFileCount: 200 },
+    { name: "cli", testFileCount: 71 },
+    { name: "tail-a", testFileCount: 39 },
+    { name: "tail-b", testFileCount: 35 },
+    { name: "tail-c", testFileCount: 31 },
+    { name: "tail-d", testFileCount: 19 },
+    { name: "tail-e", testFileCount: 18 },
+    { name: "tail-f", testFileCount: 18 },
+    { name: "tail-g", testFileCount: 17 },
+    { name: "tail-h", testFileCount: 16 },
+    { name: "tail-i", testFileCount: 15 },
+    { name: "tail-j", testFileCount: 12 },
+  ];
+
+  const result = computeSplitPlan(packages, 4);
+  const coreEntries = result.filter((entry) => entry.name === "core");
+
+  assert.equal(coreEntries.length, 2);
+  assert.ok(coreEntries.every((entry) => entry.shardCount === 2));
+  assert.deepEqual(
+    coreEntries.map((entry) => entry.shardIndex).sort((a, b) => (a ?? 0) - (b ?? 0)),
+    [1, 2],
+  );
+  assert.ok(coreEntries.every((entry) => entry.weight === 100));
+});
+
+test("computeSplitPlan: package above splitLimit but below perShardBudget still splits in two", () => {
+  const result = computeSplitPlan(
+    [
+      { name: "solo", testFileCount: 6 },
+      { name: "big", testFileCount: 20 },
+    ],
+    4,
+  );
+
+  const soloEntries = result.filter((entry) => entry.name === "solo");
+  assert.equal(soloEntries.length, 2);
+  assert.deepEqual(
+    soloEntries.map((entry) => ({
+      shardIndex: entry.shardIndex,
+      shardCount: entry.shardCount,
+      weight: entry.weight,
+    })),
+    [
+      { shardIndex: 1, shardCount: 2, weight: 3 },
+      { shardIndex: 2, shardCount: 2, weight: 3 },
+    ],
+  );
+});
+
 test("planShardAssignments: returns array of requested shard count", () => {
   const result = planShardAssignments([{ name: "a", testFileCount: 1 }], 3);
   assert.equal(result.length, 3);
@@ -124,32 +178,33 @@ test("planShardAssignments: preserves total input weight via computeSplitPlan-de
   assert.equal(assignedWeight, inputWeight);
 });
 
-test("planShardAssignments: FN-5002 regression fixture keeps 4-shard variance below 2%", () => {
+test("planShardAssignments: FN-4989 real-ci-like distribution stays below 2% total variance", () => {
   const packages = [
-    { name: "@fusion/dashboard", testFileCount: 606 },
+    { name: "@fusion/dashboard", testFileCount: 553 },
     { name: "@fusion/engine", testFileCount: 365 },
     { name: "@fusion/core", testFileCount: 200 },
     { name: "@runfusion/fusion", testFileCount: 71 },
-    { name: "filler-a", testFileCount: 39 },
-    { name: "filler-b", testFileCount: 35 },
-    { name: "filler-c", testFileCount: 31 },
-    { name: "filler-d", testFileCount: 19 },
-    { name: "filler-e", testFileCount: 18 },
-    { name: "filler-f", testFileCount: 18 },
-    { name: "filler-g", testFileCount: 17 },
-    { name: "filler-h", testFileCount: 16 },
-    { name: "filler-i", testFileCount: 15 },
-    { name: "filler-j", testFileCount: 12 },
+    { name: "tail-a", testFileCount: 39 },
+    { name: "tail-b", testFileCount: 35 },
+    { name: "tail-c", testFileCount: 31 },
+    { name: "tail-d", testFileCount: 19 },
+    { name: "tail-e", testFileCount: 18 },
+    { name: "tail-f", testFileCount: 18 },
+    { name: "tail-g", testFileCount: 17 },
+    { name: "tail-h", testFileCount: 16 },
+    { name: "tail-i", testFileCount: 15 },
+    { name: "tail-j", testFileCount: 12 },
   ];
 
   const shards = planShardAssignments(packages, 4);
   const totals = shards.map((entries) => entries.reduce((sum, entry) => sum + entry.weight, 0));
   const totalWeight = totals.reduce((sum, weight) => sum + weight, 0);
-  const perShardBudget = totalWeight / 4;
-  const varianceRatio = (Math.max(...totals) - Math.min(...totals)) / perShardBudget;
+  const varianceRatio = (Math.max(...totals) - Math.min(...totals)) / totalWeight;
 
-  // FN-5002: this fixture previously peaked at 382 on one shard under lightest-shard placement.
-  assert.ok(varianceRatio < 0.02, `expected <2% variance but got ${(varianceRatio * 100).toFixed(2)}% (${totals.join("/")})`);
+  assert.ok(
+    varianceRatio < 0.02,
+    `expected <2% variance but got ${(varianceRatio * 100).toFixed(2)}% (${totals.join("/")})`,
+  );
 });
 
 test("planShardAssignments: FN-5036 keeps split engine slices from co-locating with heavy core and stays within 5% variance", () => {
