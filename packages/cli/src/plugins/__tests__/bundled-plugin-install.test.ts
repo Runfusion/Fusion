@@ -534,7 +534,11 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
     expect(registerCall.path).toContain(`${HERMES_PLUGIN_ID}/bundled.js`);
   });
 
-  it("loads the real bundled dependency graph plugin and persists a started state", async () => {
+  // Heavy integration test: runs esbuild to bundle the real dependency-graph
+  // plugin and load it through a live PluginLoader. ~18s wall on a fast laptop.
+  // The other tests in this file cover the install/upgrade logic with mocks;
+  // this one is gated behind FUSION_RUN_SLOW_TESTS=1 so day-to-day runs stay fast.
+  it.skipIf(process.env.FUSION_RUN_SLOW_TESTS !== "1")("loads the real bundled dependency graph plugin and persists a started state", async () => {
     const { existsSync, mkdtempSync, statSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
     const { cp, mkdir, readFile, rm, stat, copyFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
     const { tmpdir } = await import("node:os");

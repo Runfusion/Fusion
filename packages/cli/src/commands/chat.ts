@@ -11,6 +11,7 @@ const HISTORY_LIMIT = 20;
 export interface ChatInteractiveOptions {
   project?: string;
   pollIntervalMs?: number;
+  replyTimeoutMs?: number;
   once?: boolean;
   nonInteractive?: boolean;
   input?: NodeJS.ReadableStream;
@@ -151,7 +152,7 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
       });
 
       output.write(`you → ${agentId}: ${content}\n`);
-      const timeoutMs = Math.max(pollIntervalMs * 10, 30_000);
+      const timeoutMs = options.replyTimeoutMs ?? Math.max(pollIntervalMs * 10, 30_000);
       const replied = await waitForReply(messageStore, agentId, printedIds, output, pollIntervalMs, timeoutMs);
       if (!replied) {
         console.error(`No reply within ${Math.ceil(timeoutMs / 1000)}s`);

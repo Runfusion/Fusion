@@ -227,12 +227,13 @@ describe("runChatInteractive", () => {
       nonInteractive: true,
       input,
       output: new PassThrough(),
-      pollIntervalMs: 1000,
+      pollIntervalMs: 10,
+      replyTimeoutMs: 200,
     });
 
     expect(code).toBe(0);
-    expect(errorSpy).toHaveBeenCalledWith("No reply within 30s");
-  }, 40_000);
+    expect(errorSpy).toHaveBeenCalledWith("No reply within 1s");
+  });
 
   it("refuses oversized messages", async () => {
     const oversized = "x".repeat(8193);
