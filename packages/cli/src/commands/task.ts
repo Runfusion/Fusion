@@ -1528,7 +1528,7 @@ export async function runTaskPrCreate(id: string, options: PrCreateOptions = {},
     try {
       const repoRoot = await getProjectPath(projectName);
       const settings = "getSettings" in store ? await store.getSettings() : {};
-      const generated = await dashboard.generatePrMetadata({ task, repoRoot, settings });
+      const generated = await dashboard.generatePrMetadata({ task, repoRoot, settings: settings as Settings });
       if (!options.title) {
         resolvedTitle = generated.title;
       }
