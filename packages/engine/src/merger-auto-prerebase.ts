@@ -46,7 +46,7 @@ export async function probeDivergence(opts: {
 }
 
 export function decideAutoPrerebase(input: {
-  settings: ProjectSettings;
+  settings: Pick<ProjectSettings, "prerebaseAutoEnabled" | "prerebaseHotFiles" | "prerebaseDivergenceThreshold">;
   baseCommitSha: string | null | undefined;
   commitsBehind: number;
   changedFiles: string[];
