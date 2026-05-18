@@ -853,6 +853,7 @@ describe("Workflow Steps Execution", () => {
     });
 
     const executor = new TaskExecutor(store, "/tmp/test", {});
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue(["packages/engine/src/foo.ts"]);
     const executeStepSpy = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task, "/tmp/test", {});
@@ -974,6 +975,7 @@ describe("Workflow Steps Execution", () => {
     });
 
     const executor = new TaskExecutor(store, "/tmp/test", {});
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue(["packages/engine/src/foo.ts"]);
     const executeStepSpy = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(pausedTask, "/tmp/test", {});

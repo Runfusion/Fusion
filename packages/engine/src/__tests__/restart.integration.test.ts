@@ -708,6 +708,9 @@ describe("In-progress task resume after restart", () => {
     }));
 
     const executor = new TaskExecutor(store, "/tmp/test");
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue([
+      "packages/dashboard/app/components/SettingsModal.tsx",
+    ]);
     const executeSpy = vi.spyOn(executor, "execute");
 
     mockedExecSync.mockImplementation((command) => {
