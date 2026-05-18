@@ -9417,6 +9417,23 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
           }
         }
 
+        const refreshedTask = await this.store.getTask(task.id);
+        const prevCurrentStep = refreshedTask.currentStep;
+        if (refreshedTask.steps.length > 0) {
+          const firstPendingStep = refreshedTask.steps.findIndex((s) => s.status === "pending");
+          const newCurrentStep = firstPendingStep >= 0 ? firstPendingStep : 0;
+          if (newCurrentStep !== prevCurrentStep) {
+            await this.store.updateTask(task.id, { currentStep: newCurrentStep });
+            executorLog.log(
+              `${task.id}: reset currentStep to ${newCurrentStep} after lost-work reset (was ${prevCurrentStep})`,
+            );
+            await this.store.logEntry(
+              task.id,
+              `Reset currentStep to ${newCurrentStep} after lost-work step reset (was ${prevCurrentStep})`,
+            );
+          }
+        }
+
         await this.store.logEntry(
           task.id,
           `Reset ${completedSteps.length} step(s) to pending — branch had no commits (uncommitted work lost with worktree)`,
