@@ -15,6 +15,7 @@ import {
   resolveWorktreeBackend as resolveWorktreeBackendViaSettings,
 } from "./worktree-backend.js";
 import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
+import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import type { RunAuditor } from "./run-audit.js";
 
 export {
@@ -410,13 +411,16 @@ export class WorktreePool {
    * the task's branch based on the given start point (or `main` by default).
    * This ensures the new task starts from the correct base with a clean
    * working directory, while preserving untracked build caches
-   * (node_modules, target/, dist/).
+   * (node_modules, target/, dist/). As an explicit carve-out, this
+   * preparation removes `packages/desktop/dist` and
+   * `packages/desktop/dist-electron`.
    *
    * Steps performed:
    * 1. `git checkout -- .` — discard tracked file modifications
    * 2. `git clean -fd` — remove untracked files (but not .gitignore'd caches)
-   * 3. `git checkout --detach <startPoint>` — move HEAD to the latest base commit
-   * 4. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
+   * 3. Remove `packages/desktop/dist` + `packages/desktop/dist-electron` if present
+   * 4. `git checkout --detach <startPoint>` — move HEAD to the latest base commit
+   * 5. `git checkout -B <branchName> <startPoint>` — create/reset branch from start point
    *
    * Returns the actual branch name used. This may differ from `branchName`
    * when legacy conflict recovery is explicitly enabled and generates a suffixed
@@ -444,6 +448,7 @@ export class WorktreePool {
 
     // Remove untracked files (but not .gitignore'd build caches)
     await execAsync("git clean -fd", { cwd: worktreePath });
+    await removeDesktopBuildArtifacts(worktreePath, worktreePoolLog);
 
     const base = startPoint || "main";
     await execAsync(`git checkout --detach ${base}`, {

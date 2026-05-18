@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { promisify } from "node:util";
 import { acquireTaskWorktree } from "../worktree-acquisition.js";
 import { classifyTaskWorktree, PoolDoubleLeaseError } from "../worktree-pool.js";
+import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
 
 vi.mock("../worktree-pool.js", async () => {
   const actual = await vi.importActual<any>("../worktree-pool.js");
@@ -16,6 +17,10 @@ vi.mock("../worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 1, documentsCopied: 1 }),
 }));
 
+vi.mock("../worktree-desktop-artifacts.js", () => ({
+  removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
+}));
+
 describe("acquireTaskWorktree", () => {
   const task = {
     id: "FN-1",
@@ -27,6 +32,8 @@ describe("acquireTaskWorktree", () => {
 
   let store: any;
   beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(desktopArtifacts.removeDesktopBuildArtifacts).mockResolvedValue({ removed: [], skipped: [], failures: [] });
     store = {
       updateTask: vi.fn().mockResolvedValue(undefined),
       logEntry: vi.fn().mockResolvedValue(undefined),
@@ -69,6 +76,7 @@ describe("acquireTaskWorktree", () => {
       expect.objectContaining({ requestingTaskId: "FN-1" }),
     );
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled", branch: "fusion/fn-1" });
+    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/pooled", undefined);
   });
 
   it("releases acquired pooled worktree when prepareForTask returns reclaimed path", async () => {
@@ -194,6 +202,48 @@ describe("acquireTaskWorktree", () => {
       runConfiguredCommand,
       runInitCommand: false,
     });
+    expect(runConfiguredCommand).not.toHaveBeenCalled();
+  });
+
+  it("invokes desktop artifact cleanup before init command for fresh acquisition", async () => {
+    const runConfiguredCommand = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: { worktreeInitCommand: "pnpm install" } as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/new", branch: "fusion/fn-1" }),
+      runConfiguredCommand,
+      runInitCommand: true,
+    });
+
+    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/new", undefined);
+    const cleanupOrder = vi.mocked(desktopArtifacts.removeDesktopBuildArtifacts).mock.invocationCallOrder[0];
+    const initOrder = runConfiguredCommand.mock.invocationCallOrder[0];
+    expect(cleanupOrder).toBeLessThan(initOrder);
+  });
+
+  it("invokes desktop artifact cleanup once for pooled acquisition", async () => {
+    const runConfiguredCommand = vi.fn();
+
+    await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: { recycleWorktrees: true, worktreeInitCommand: "pnpm install" } as any,
+      pool: {
+        acquire: (_taskId: string) => "/tmp/pooled",
+        prepareForTask: vi.fn().mockResolvedValue({ branch: "fusion/fn-1", worktreePath: "/tmp/pooled", reclaimed: false }),
+        release: vi.fn(),
+      } as any,
+      createWorktree: vi.fn(),
+      runConfiguredCommand,
+      runInitCommand: true,
+    });
+
+    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledTimes(1);
+    expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/pooled", undefined);
     expect(runConfiguredCommand).not.toHaveBeenCalled();
   });
 

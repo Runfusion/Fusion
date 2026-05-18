@@ -38,6 +38,10 @@ vi.mock("node:child_process", async () => {
   return { execSync: execSyncFn, exec: execFn };
 });
 
+vi.mock("../worktree-desktop-artifacts.js", () => ({
+  removeDesktopBuildArtifacts: vi.fn().mockResolvedValue({ removed: [], skipped: [], failures: [] }),
+}));
+
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   lstatSync: vi.fn().mockReturnValue({ isDirectory: () => true, isSymbolicLink: () => false }),
@@ -45,6 +49,7 @@ vi.mock("node:fs", () => ({
   rmSync: vi.fn(),
 }));
 
+import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
 import {
   WorktreePool,
   getRegisteredWorktreeBranchMap,
@@ -86,6 +91,7 @@ describe("WorktreePool", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(desktopArtifacts.removeDesktopBuildArtifacts).mockResolvedValue({ removed: [], skipped: [], failures: [] });
     mockedExistsSync.mockReturnValue(true);
     pool = new WorktreePool();
   });
@@ -215,6 +221,21 @@ describe("WorktreePool", () => {
       const calls = mockedExecSync.mock.calls.map((c) => c[0]);
       expect(calls).toContain("git checkout -- .");
       expect(calls).toContain("git clean -fd");
+    });
+
+    it("removes desktop artifacts after git clean and before detach checkout", async () => {
+      await pool.prepareForTask("/tmp/wt", "fusion/fn-042");
+
+      expect(desktopArtifacts.removeDesktopBuildArtifacts).toHaveBeenCalledWith("/tmp/wt", expect.anything());
+      const cleanOrder = mockedExecSync.mock.calls.find((c) => c[0] === "git clean -fd");
+      const detachOrder = mockedExecSync.mock.calls.find((c) => c[0] === "git checkout --detach main");
+      expect(cleanOrder).toBeDefined();
+      expect(detachOrder).toBeDefined();
+      const cleanupOrder = vi.mocked(desktopArtifacts.removeDesktopBuildArtifacts).mock.invocationCallOrder[0];
+      const cleanCallOrder = mockedExecSync.mock.invocationCallOrder[mockedExecSync.mock.calls.findIndex((c) => c[0] === "git clean -fd")];
+      const detachCallOrder = mockedExecSync.mock.invocationCallOrder[mockedExecSync.mock.calls.findIndex((c) => c[0] === "git checkout --detach main")];
+      expect(cleanCallOrder).toBeLessThan(cleanupOrder);
+      expect(cleanupOrder).toBeLessThan(detachCallOrder);
     });
 
     it("creates branch from main with force-reset", async () => {

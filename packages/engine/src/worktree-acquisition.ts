@@ -33,6 +33,7 @@ import {
 } from "./worktrunk-failure-handler.js";
 import type { RunAuditor } from "./run-audit.js";
 import { writeSecretsEnvFile } from "./secrets-env-writer.js";
+import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 
 const execAsync = promisify(exec);
 
@@ -252,6 +253,10 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
   if (task.worktree && isResume) {
     logger?.log(`Reusing existing worktree: ${worktreePath}`);
+    const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
+    if (cleanup.removed.length > 0) {
+      await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
+    }
     const hydrated = await hydrate(worktreePath);
     // FN-4912: resume path reuses the prior on-disk .env (and its fingerprint sidecar). Rewrite is owned by the next fresh acquisition.
     return { worktreePath, branch: task.branch ?? branchName, source: "existing", hydrated, isResume: true };
@@ -330,6 +335,10 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
             await store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath} (branch conflict: using ${branch})`, undefined, runContext);
           } else {
             await store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`, undefined, runContext);
+          }
+          const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
+          if (cleanup.removed.length > 0) {
+            await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
           }
           await maybeWarnForeignTaskStartPoint({
             baseBranch,
@@ -436,6 +445,11 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     await store.logEntry(task.id, `Worktree created at ${worktreePath} (based on ${baseBranch})`, undefined, runContext);
   } else {
     await store.logEntry(task.id, `Worktree created at ${worktreePath}`, undefined, runContext);
+  }
+
+  const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
+  if (cleanup.removed.length > 0) {
+    await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
   }
 
   if (runInitCommand && settings.worktreeInitCommand && runConfiguredCommand) {
