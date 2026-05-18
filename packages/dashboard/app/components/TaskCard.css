@@ -1202,9 +1202,8 @@
   overflow: hidden;
 }
 
-.card-action-row .card-send-back-menu {
-  left: 0;
-  right: auto;
+.card-action-row .card-send-back {
+  margin-left: auto;
 }
 
 .card-send-back-menu-item {

@@ -1732,7 +1732,7 @@ describe("TaskCard", () => {
   });
 
   it("renders Create PR before Move inside card-action-row", () => {
-    render(
+    const { container } = render(
       <TaskCard
         task={makeTask({ column: "in-review", paused: false, userPaused: false, prInfo: undefined as any })}
         onOpenDetail={noop}
@@ -1750,6 +1750,16 @@ describe("TaskCard", () => {
     expect(actionRow).not.toBeNull();
     expect(moveButton.closest(".card-action-row")).toBe(actionRow);
     expect(createPrButton.compareDocumentPosition(moveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const moveControl = container.querySelector(".card-action-row .card-send-back") as HTMLElement | null;
+    expect(moveControl).not.toBeNull();
+    expect(getComputedStyle(moveControl as HTMLElement).marginLeft).toBe("auto");
+
+    fireEvent.click(moveButton);
+    const menu = screen.getByRole("menu");
+    const menuStyle = getComputedStyle(menu);
+    expect(menuStyle.right).toBe("0px");
+    expect(menuStyle.left).not.toBe("0px");
   });
 
   it.each([
