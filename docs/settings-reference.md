@@ -393,12 +393,6 @@ Default notes:
 | `taskEvaluationRetention` | `number` | `undefined` | Legacy flat eval key. Prefer `evalSettings.retentionDays`. |
 | `memoryEnabled` | `boolean` | `true` | Enable project memory integration. |
 
-### Backlog-pressure alerts
-
-- Detection condition: `todoCount >= backlogPressureMinTodoCount` **and** `todoCount / max(inProgressCount, 1) > backlogPressureRatioThreshold`.
-- Surfacing: emits a project insight (`category="workflow"`, title `Backlog pressure detected YYYY-MM-DD`) whose `content` is a JSON string containing counts, ratio, ISO `detectedAt`, and candidate tasks; if `InsightStore` is unavailable it falls back to writing the same JSON payload into `store.logEntry(...)` for the top candidate task.
-- Cooldown semantics: alerts are suppressed for `backlogPressureAlertCooldownMs` (default `86400000`), and same-day detections upsert the existing day-bucket insight idempotently.
-- Disable by setting `backlogPressureAlertEnabled: false`.
 | `memoryBackendType` | `string` | `"qmd"` | Memory backend type. Built-ins include `qmd` (Quantized Memory Distillation, default), `file`, and `readonly`; custom backends can also be registered. |
 | `memoryAutoSummarizeEnabled` | `boolean` | `false` | Enable automatic memory summarization when memory exceeds threshold. |
 | `memoryAutoSummarizeThresholdChars` | `number` | `50000` | Character threshold for auto-summarization. |
@@ -430,6 +424,17 @@ Default notes:
 | `researchDefaultTimeout` | `number` | `undefined` | Project-level default run timeout in milliseconds. |
 | `researchMaxSourcesPerRun` | `number` | `undefined` | Project-level max sources per run. |
 | `researchMaxSynthesisRounds` | `number` | `undefined` | Project-level max synthesis rounds. |
+
+### Backlog health alerts
+
+> Draft — finalize once FN-5009 / FN-5034 have shipped.
+
+Backlog health is the alert family for scheduler/backlog imbalance and stale paused Todo work. It is distinct from `capacityRiskBannerEnabled` / `capacityRiskTodoThreshold` (UI capacity-risk banner) and `stalePausedReviewThresholdMs` (paused `in-review` detector).
+
+| Detector | Trigger condition | Settings | Severity | Surfacing channel | Cooldown / suppression |
+| --- | --- | --- | --- | --- | --- |
+| Backlog-pressure imbalance | TODO(FN-5009): finalize from `packages/engine/src/backlog-pressure-reporter.ts` trigger predicate implementation. | TODO(FN-5009): finalize from `packages/core/src/settings-schema.ts` backlog-pressure keys/defaults. | TODO(FN-5009): finalize from reporter title/content fields and fallback log-entry payload shape. | TODO(FN-5009): finalize from reporter insight category/fingerprint + fallback log-entry prefix behavior. | TODO(FN-5009): finalize from reporter cooldown and dedupe gates (`backlogPressureAlertCooldownMs`, enable/disable semantics). |
+| Stale paused Todo | TODO(FN-5034): finalize from `packages/core/src/stale-paused-todo.ts` signal threshold predicate and trigger semantics. | TODO(FN-5034): finalize from `packages/core/src/settings-schema.ts` `stalePausedTodoThresholdMs` row/default. | TODO(FN-5034): finalize from stale-paused-todo signal `code` + surfaced log payload fields. | TODO(FN-5034): finalize from `packages/engine/src/self-healing.ts` `surfaceStalePausedTodos` `logEntry` format and channel. | TODO(FN-5034): finalize from per-task suppression logic (history/code-change checks) in `surfaceStalePausedTodos`. |
 
 ### Per-task token budget
 
