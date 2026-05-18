@@ -342,7 +342,7 @@ PR:
   fn git fetch [remote]      Fetch from remote (default: origin)
   fn agent stop <id>                Stop a running agent (pause execution)
   fn agent start <id>               Start a stopped agent (resume execution)
-  fn agent import <path> [--dry-run] [--skip-existing]
+  fn agent import <path> [--dry-run] [--skip-existing] [--update-existing]
                                       Import agents from an Agent Companies package (directory, archive, or AGENTS.md file)
   fn agent export <dir> [--company-name <name>] [--company-slug <slug>]
                                       Export Fusion agents to an Agent Companies package directory
@@ -1489,11 +1489,12 @@ async function main() {
           }
           case "import": {
             const source = args[2];
-            if (!source) { console.error("Usage: fn agent import <path> [--dry-run] [--skip-existing]"); process.exit(1); }
+            if (!source) { console.error("Usage: fn agent import <path> [--dry-run] [--skip-existing] [--update-existing]"); process.exit(1); }
             const importArgs = args.slice(3);
             const dryRun = importArgs.includes("--dry-run");
             const skipExisting = importArgs.includes("--skip-existing");
-            await runAgentImport(source, { dryRun, skipExisting, project: projectName });
+            const updateExisting = importArgs.includes("--update-existing");
+            await runAgentImport(source, { dryRun, skipExisting, updateExisting, project: projectName });
             break;
           }
           case "export": {

@@ -2,7 +2,7 @@
  * CLI command for importing agents from Agent Companies packages.
  *
  * Usage:
- *   fn agent import <source> [--dry-run] [--skip-existing] [--project <name>]
+ *   fn agent import <source> [--dry-run] [--skip-existing] [--update-existing] [--project <name>]
  *
  * @module agent-import
  */
@@ -17,7 +17,7 @@ import {
   prepareAgentCompaniesImport,
   AgentCompaniesParseError,
 } from "@fusion/core";
-import type { AgentCreateInput } from "@fusion/core";
+import type { AgentCreateInput, AgentUpdateInput } from "@fusion/core";
 import type { SkillManifest } from "@fusion/core";
 import { stringify as stringifyYaml } from "yaml";
 import { resolveProject } from "../project-context.js";
@@ -177,6 +177,7 @@ function printSummary(
   agentCount: number,
   teamCount: number,
   created: string[],
+  updated: string[],
   skipped: string[],
   errors: Array<{ name: string; error: string }>,
   dryRun: boolean,
@@ -190,6 +191,12 @@ function printSummary(
   console.log(`  ${prefix}Created: ${created.length}`);
   for (const name of created) {
     console.log(`    ✓ ${name}`);
+  }
+  if (updated.length > 0) {
+    console.log(`  ${prefix}Updated: ${updated.length}`);
+    for (const name of updated) {
+      console.log(`    ↻ ${name}`);
+    }
   }
   if (skipped.length > 0) {
     console.log(`  ${prefix}Skipped: ${skipped.length}`);
@@ -233,11 +240,18 @@ export async function runAgentImport(
   options?: {
     dryRun?: boolean;
     skipExisting?: boolean;
+    updateExisting?: boolean;
     project?: string;
   },
 ): Promise<void> {
   const dryRun = options?.dryRun ?? false;
   const skipExisting = options?.skipExisting ?? false;
+  const updateExisting = options?.updateExisting ?? false;
+
+  if (skipExisting && updateExisting) {
+    console.error("Error: --skip-existing and --update-existing are mutually exclusive");
+    process.exit(1);
+  }
 
   const sourcePath = resolve(source);
   if (!existsSync(sourcePath)) {
@@ -245,7 +259,7 @@ export async function runAgentImport(
     process.exit(1);
   }
 
-  // Get existing agent names for skip logic
+  // Get existing agent names for skip/update logic
   const projectPath = await getProjectPath(options?.project);
   const agentStore = new AgentStore({ rootDir: projectPath + "/.fusion" });
   await agentStore.init();
@@ -254,6 +268,7 @@ export async function runAgentImport(
   const existingNames = new Set(existingAgents.map((a) => a.name));
   const conversionOptions = {
     ...(skipExisting ? { skipExisting: [...existingNames] } : {}),
+    ...(updateExisting ? { updateExisting: true } : {}),
     existingAgents,
   };
 
@@ -263,7 +278,9 @@ export async function runAgentImport(
   let teamCount = 0;
   let importItems: Array<{
     manifestKey: string;
-    input: AgentCreateInput;
+    input: AgentCreateInput | AgentUpdateInput;
+    mode: "create" | "update";
+    existingAgentId?: string;
     reportsTo?: {
       raw: string;
       resolvedAgentId?: string;
@@ -272,10 +289,12 @@ export async function runAgentImport(
   }> = [];
   let result: {
     created: string[];
+    updated: string[];
     skipped: string[];
     errors: Array<{ name: string; error: string }>;
   } = {
     created: [],
+    updated: [],
     skipped: [],
     errors: [],
   };
@@ -336,7 +355,7 @@ export async function runAgentImport(
     process.exit(1);
   }
 
-  if (result.created.length === 0 && result.skipped.length === 0 && result.errors.length === 0) {
+  if (result.created.length === 0 && result.updated.length === 0 && result.skipped.length === 0 && result.errors.length === 0) {
     console.log();
     console.log("  No agents found in manifest");
     console.log();
@@ -348,19 +367,43 @@ export async function runAgentImport(
     const skillResult = isPackageImport
       ? await importSkillsToProject(projectPath, skills, companySlug, true)
       : undefined;
-    printSummary(companyName, agentCount, teamCount, result.created, result.skipped, result.errors, true, skillResult);
+    printSummary(companyName, agentCount, teamCount, result.created, result.updated, result.skipped, result.errors, true, skillResult);
     return;
   }
 
-  // Create agents
+  // Create or update agents
   const created: string[] = [];
+  const updated: string[] = [];
   const errors: Array<{ name: string; error: string }> = [...result.errors];
   const createdAgentIdsByManifestKey = new Map<string, string>();
 
   for (const item of importItems) {
     try {
-      // Double-check for duplicates if not using skipExisting
-      if (!skipExisting && existingNames.has(item.input.name)) {
+      if (item.mode === "update" && item.existingAgentId) {
+        // For updates, resolve deferred reportsTo references using already-updated agents
+        const input = { ...item.input } as AgentUpdateInput;
+        if (item.reportsTo?.deferredManifestKey) {
+          const resolvedReportsTo = createdAgentIdsByManifestKey.get(item.reportsTo.deferredManifestKey);
+          if (!resolvedReportsTo) {
+            errors.push({
+              name: input.name ?? "(unknown)",
+              error: `Could not resolve reportsTo reference "${item.reportsTo.raw}" because the manager was not created`,
+            });
+            continue;
+          }
+          input.reportsTo = resolvedReportsTo;
+        } else if (item.reportsTo?.resolvedAgentId) {
+          input.reportsTo = item.reportsTo.resolvedAgentId;
+        }
+
+        await agentStore.updateAgent(item.existingAgentId, input);
+        updated.push(input.name ?? item.existingAgentId);
+        createdAgentIdsByManifestKey.set(item.manifestKey, item.existingAgentId);
+        continue;
+      }
+
+      // Double-check for duplicates if not using skipExisting or updateExisting
+      if (!skipExisting && !updateExisting && existingNames.has(item.input.name)) {
         errors.push({ name: item.input.name, error: "Agent with this name already exists" });
         continue;
       }
@@ -388,7 +431,7 @@ export async function runAgentImport(
       created.push(input.name);
       createdAgentIdsByManifestKey.set(item.manifestKey, agent.id);
     } catch (err) {
-      errors.push({ name: item.input.name, error: (err as Error).message });
+      errors.push({ name: (item.input as AgentCreateInput).name ?? "(unknown)", error: (err as Error).message });
     }
   }
 
@@ -397,5 +440,5 @@ export async function runAgentImport(
     ? await importSkillsToProject(projectPath, skills, companySlug, false)
     : undefined;
 
-  printSummary(companyName, agentCount, teamCount, created, result.skipped, errors, false, skillResult);
+  printSummary(companyName, agentCount, teamCount, created, updated, result.skipped, errors, false, skillResult);
 }

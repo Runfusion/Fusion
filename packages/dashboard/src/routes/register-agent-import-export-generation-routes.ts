@@ -470,8 +470,10 @@ async function persistImportedSkills(
 
       const existingAgents = await agentStore.listAgents();
       const existingNames = new Set(existingAgents.map((a) => a.name));
+      const updateExisting = req.body?.updateExisting === true;
       const conversionOptions = {
         ...(skipExisting ? { skipExisting: [...existingNames] } : {}),
+        ...(updateExisting ? { updateExisting: true } : {}),
         existingAgents,
       };
 
@@ -764,6 +766,7 @@ async function persistImportedSkills(
           agents: agentPreview,
           skills: skillPreview,
           created: result.created,
+          updated: result.updated,
           skipped: result.skipped,
           errors: result.errors,
         });
@@ -771,11 +774,46 @@ async function persistImportedSkills(
       }
 
       const created: Array<{ id: string; name: string }> = [];
+      const updated: Array<{ id: string; name: string }> = [];
       const errors: Array<{ name: string; error: string }> = [...result.errors];
       const createdAgentIdsByManifestKey = new Map<string, string>();
 
       for (const item of importItems) {
-        if (!skipExisting && existingNames.has(item.input.name)) {
+        if (item.mode === "update" && item.existingAgentId) {
+          const input = {
+            ...item.input,
+            ...(item.input.metadata ? { metadata: { ...item.input.metadata } } : {}),
+          };
+
+          if (item.reportsTo?.deferredManifestKey) {
+            const resolvedReportsTo = createdAgentIdsByManifestKey.get(item.reportsTo.deferredManifestKey);
+            if (!resolvedReportsTo) {
+              errors.push({
+                name: item.input.name ?? "(unknown)",
+                error: `Could not resolve reportsTo reference "${item.reportsTo.raw}" because the manager was not created`,
+              });
+              continue;
+            }
+            input.reportsTo = resolvedReportsTo;
+          } else if (item.reportsTo?.resolvedAgentId) {
+            input.reportsTo = item.reportsTo.resolvedAgentId;
+          }
+
+          try {
+            const agent = await agentStore.updateAgent(item.existingAgentId, input);
+            updated.push({ id: agent.id, name: agent.name });
+            createdAgentIdsByManifestKey.set(item.manifestKey, agent.id);
+          } catch (err: unknown) {
+            if (err instanceof ApiError) {
+              throw err;
+            }
+            const message = err instanceof Error ? err.message : String(err);
+            errors.push({ name: item.input.name ?? "(unknown)", error: message });
+          }
+          continue;
+        }
+
+        if (!skipExisting && !updateExisting && existingNames.has(item.input.name)) {
           errors.push({ name: item.input.name, error: "Agent with this name already exists" });
           continue;
         }
@@ -830,6 +868,7 @@ async function persistImportedSkills(
         companyName,
         ...(companySlug ? { companySlug } : {}),
         created,
+        updated,
         skipped: result.skipped,
         errors,
         skillsCount: (pkg.skills ?? []).length,

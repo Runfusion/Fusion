@@ -21,7 +21,7 @@ import type {
   TaskManifest,
   TeamManifest,
 } from "./agent-companies-types.js";
-import type { AgentCapability, AgentCreateInput } from "./types.js";
+import type { AgentCapability, AgentCreateInput, AgentUpdateInput } from "./types.js";
 
 export class AgentCompaniesParseError extends Error {
   constructor(message: string) {
@@ -236,8 +236,8 @@ function topologicallySortImportPlanItems<T extends PreparedAgentCompaniesImport
     .filter((item) => !orderedItems.some((ordered) => ordered.manifestKey === item.manifestKey))
     .sort((a, b) => a.index - b.index)
     .map((item) => ({
-      name: item.input.name,
-      error: `Could not resolve reportsTo hierarchy for ${item.input.name} because the import graph contains a cycle involving "${item.reportsTo?.raw ?? "unknown"}"`,
+      name: item.input.name ?? "(unknown)",
+      error: `Could not resolve reportsTo hierarchy for ${item.input.name ?? "(unknown)"} because the import graph contains a cycle involving "${item.reportsTo?.raw ?? "unknown"}"`,
     }));
 
   return { orderedItems, cycleErrors };
@@ -246,8 +246,10 @@ function topologicallySortImportPlanItems<T extends PreparedAgentCompaniesImport
 export interface PreparedAgentCompaniesImportItem {
   manifestKey: string;
   aliases: string[];
-  input: AgentCreateInput;
+  input: AgentCreateInput | AgentUpdateInput;
   index: number;
+  mode: "create" | "update";
+  existingAgentId?: string;
   reportsTo?: {
     raw: string;
     resolvedAgentId?: string;
@@ -597,14 +599,105 @@ export function agentManifestToAgentCreateInput(agent: AgentManifest): AgentCrea
     ...(typeof agent.memory === "string" && agent.memory.trim().length > 0
       ? { memory: agent.memory.trim() }
       : {}),
+    ...(typeof agent.soul === "string" && agent.soul.trim().length > 0
+      ? { soul: agent.soul.trim() }
+      : {}),
+    ...(typeof agent.personality === "string" && agent.personality.trim().length > 0
+      ? { soul: agent.personality.trim() }
+      : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
+}
+
+export function agentManifestToAgentUpdateInput(agent: AgentManifest): AgentUpdateInput {
+  const metadata: Record<string, unknown> = {};
+
+  if (Array.isArray(agent.skills) && agent.skills.length > 0) {
+    metadata.skills = agent.skills;
+  }
+  if (Array.isArray(agent.metadata?.sources) && agent.metadata.sources.length > 0) {
+    metadata.sources = agent.metadata.sources;
+  }
+  if (typeof agent.slug === "string" && agent.slug.trim().length > 0) {
+    metadata.agentCompaniesSlug = agent.slug.trim();
+  }
+
+  const updates: AgentUpdateInput = {};
+
+  if (typeof agent.name === "string" && agent.name.trim().length > 0) {
+    updates.name = agent.name.trim();
+  }
+  if (typeof agent.role === "string" && agent.role.trim().length > 0) {
+    updates.role = mapRoleToCapability(agent.role);
+  }
+  if (typeof agent.title === "string" && agent.title.trim().length > 0) {
+    updates.title = agent.title.trim();
+  }
+  if (typeof agent.icon === "string" && agent.icon.trim().length > 0) {
+    updates.icon = agent.icon.trim();
+  }
+  if (typeof agent.reportsTo === "string" && agent.reportsTo.trim().length > 0) {
+    updates.reportsTo = agent.reportsTo.trim();
+  }
+  if (typeof agent.instructionBody === "string" && agent.instructionBody.trim().length > 0) {
+    updates.instructionsText = agent.instructionBody.trim();
+  }
+  if (typeof agent.memory === "string" && agent.memory.trim().length > 0) {
+    updates.memory = agent.memory.trim();
+  }
+  if (typeof agent.soul === "string" && agent.soul.trim().length > 0) {
+    updates.soul = agent.soul.trim();
+  }
+  if (typeof agent.personality === "string" && agent.personality.trim().length > 0) {
+    updates.soul = agent.personality.trim();
+  }
+  if (Object.keys(metadata).length > 0) {
+    updates.metadata = metadata;
+  }
+
+  return updates;
+}
+
+/**
+ * Find an existing agent that matches a manifest by name or alias.
+ * Returns the matched agent id, or undefined if no match.
+ */
+export function findExistingAgentIdByManifest(
+  manifest: AgentManifest,
+  existingAgents: Array<{
+    id: string;
+    name: string;
+    title?: string;
+    metadata?: Record<string, unknown>;
+  }>,
+): { id: string; ambiguous?: false } | { ambiguous: true } | undefined {
+  const manifestAliases = new Set(collectAgentManifestAliases(manifest));
+  const matches = new Set<string>();
+
+  for (const agent of existingAgents) {
+    const agentAliases = new Set(collectExistingAgentAliases(agent));
+    for (const alias of manifestAliases) {
+      if (agentAliases.has(alias)) {
+        matches.add(agent.id);
+        break;
+      }
+    }
+  }
+
+  if (matches.size === 1) {
+    return { id: [...matches][0] };
+  }
+  if (matches.size > 1) {
+    return { ambiguous: true };
+  }
+  return undefined;
 }
 
 export function prepareAgentCompaniesImport(
   pkg: AgentCompaniesPackage,
   options?: {
     skipExisting?: string[];
+    updateExisting?: boolean;
     existingAgents?: Array<{
       id: string;
       name: string;
@@ -614,6 +707,7 @@ export function prepareAgentCompaniesImport(
   },
 ): PreparedAgentCompaniesImportResult {
   const existingNames = new Set(options?.skipExisting ?? []);
+  const updateExisting = options?.updateExisting ?? false;
   const existingAliasIndex = new Map<string, Set<string>>();
   const existingAgentsById = new Map(
     (options?.existingAgents ?? []).map((agent) => [agent.id, agent]),
@@ -629,6 +723,7 @@ export function prepareAgentCompaniesImport(
   const usedManifestKeys = new Set<string>();
   const result: AgentCompaniesImportResult = {
     created: [],
+    updated: [],
     skipped: [],
     errors: [],
   };
@@ -639,16 +734,35 @@ export function prepareAgentCompaniesImport(
       continue;
     }
 
+    // When updateExisting is enabled, try to match an existing agent by alias
+    let existingMatch: { id: string } | { ambiguous: true } | undefined;
+    if (updateExisting) {
+      existingMatch = findExistingAgentIdByManifest(agent, options?.existingAgents ?? []);
+      if (existingMatch && "ambiguous" in existingMatch) {
+        result.errors.push({
+          name: agent.name,
+          error: `Manifest "${agent.name}" matches multiple existing agents; cannot determine which to update`,
+        });
+        continue;
+      }
+    }
+
     const aliases = collectAgentManifestAliases(agent);
     const baseKey = aliases[0] ?? createUniqueManifestKey(`agent-${index + 1}`, usedManifestKeys);
     const manifestKey = createUniqueManifestKey(baseKey, usedManifestKeys);
 
-    const planned = {
+    const planned: PreparedAgentCompaniesImportItem & { manifest: AgentManifest } = {
       manifest: agent,
       manifestKey,
       aliases,
-      input: agentManifestToAgentCreateInput(agent),
+      input: existingMatch && "id" in existingMatch
+        ? agentManifestToAgentUpdateInput(agent)
+        : agentManifestToAgentCreateInput(agent),
       index,
+      mode: existingMatch && "id" in existingMatch ? "update" : "create",
+      ...(existingMatch && "id" in existingMatch
+        ? { existingAgentId: existingMatch.id }
+        : {}),
     };
 
     addAliases(manifestAliasIndex, manifestKey, aliases);
@@ -656,21 +770,98 @@ export function prepareAgentCompaniesImport(
   }
 
   for (const planned of plannedAgents) {
+    // For updates, preserve existing reportsTo unless manifest explicitly overrides it
+    if (planned.mode === "update") {
+      const rawReportsTo = typeof planned.manifest.reportsTo === "string"
+        ? planned.manifest.reportsTo.trim()
+        : undefined;
+
+      if (!rawReportsTo) {
+        delete planned.input.reportsTo;
+        pendingAgents.push(planned);
+        continue;
+      }
+
+      const existingManagerMatch = resolveUniqueAlias(existingAliasIndex, rawReportsTo);
+      if (existingManagerMatch.ambiguous) {
+        result.errors.push({
+          name: planned.input.name ?? planned.manifest.name,
+          error: `reportsTo reference "${rawReportsTo}" is ambiguous among existing Fusion agents`,
+        });
+        continue;
+      }
+      if (existingManagerMatch.value) {
+        planned.input.reportsTo = existingManagerMatch.value;
+        planned.reportsTo = {
+          raw: rawReportsTo,
+          resolvedAgentId: existingManagerMatch.value,
+        };
+        result.updated.push(planned.manifest.name);
+        pendingAgents.push(planned);
+        continue;
+      }
+
+      const manifestManagerMatch = resolveUniqueAlias(manifestAliasIndex, rawReportsTo);
+      if (manifestManagerMatch.ambiguous) {
+        result.errors.push({
+          name: planned.input.name ?? planned.manifest.name,
+          error: `reportsTo reference "${rawReportsTo}" matches multiple imported agents`,
+        });
+        continue;
+      }
+      if (manifestManagerMatch.value) {
+        if (manifestManagerMatch.value === planned.manifestKey) {
+          result.errors.push({
+            name: planned.input.name ?? planned.manifest.name,
+            error: `reportsTo reference "${rawReportsTo}" resolves to the agent itself`,
+          });
+          continue;
+        }
+
+        delete planned.input.reportsTo;
+        planned.reportsTo = {
+          raw: rawReportsTo,
+          deferredManifestKey: manifestManagerMatch.value,
+        };
+        result.updated.push(planned.manifest.name);
+        pendingAgents.push(planned);
+        continue;
+      }
+
+      if (looksLikeFusionAgentId(rawReportsTo) && !existingAgentsById.has(rawReportsTo)) {
+        planned.input.reportsTo = rawReportsTo;
+        planned.reportsTo = {
+          raw: rawReportsTo,
+          resolvedAgentId: rawReportsTo,
+        };
+        result.updated.push(planned.manifest.name);
+        pendingAgents.push(planned);
+        continue;
+      }
+
+      result.errors.push({
+        name: planned.input.name ?? planned.manifest.name,
+        error: `Could not resolve reportsTo reference "${rawReportsTo}" to an imported or existing Fusion agent`,
+      });
+      continue;
+    }
+
+    // Create mode: original reportsTo resolution logic
     const rawReportsTo = typeof planned.manifest.reportsTo === "string"
       ? planned.manifest.reportsTo.trim()
       : undefined;
 
     if (!rawReportsTo) {
       delete planned.input.reportsTo;
+      result.created.push(planned.input.name ?? planned.manifest.name);
       pendingAgents.push(planned);
-      result.created.push(planned.input.name);
       continue;
     }
 
     const existingMatch = resolveUniqueAlias(existingAliasIndex, rawReportsTo);
     if (existingMatch.ambiguous) {
       result.errors.push({
-        name: planned.input.name,
+        name: planned.input.name ?? planned.manifest.name,
         error: `reportsTo reference "${rawReportsTo}" is ambiguous among existing Fusion agents`,
       });
       continue;
@@ -681,15 +872,15 @@ export function prepareAgentCompaniesImport(
         raw: rawReportsTo,
         resolvedAgentId: existingMatch.value,
       };
+      result.created.push(planned.input.name ?? planned.manifest.name);
       pendingAgents.push(planned);
-      result.created.push(planned.input.name);
       continue;
     }
 
     const manifestMatch = resolveUniqueAlias(manifestAliasIndex, rawReportsTo);
     if (manifestMatch.ambiguous) {
       result.errors.push({
-        name: planned.input.name,
+        name: planned.input.name ?? planned.manifest.name,
         error: `reportsTo reference "${rawReportsTo}" matches multiple imported agents`,
       });
       continue;
@@ -697,7 +888,7 @@ export function prepareAgentCompaniesImport(
     if (manifestMatch.value) {
       if (manifestMatch.value === planned.manifestKey) {
         result.errors.push({
-          name: planned.input.name,
+          name: planned.input.name ?? planned.manifest.name,
           error: `reportsTo reference "${rawReportsTo}" resolves to the agent itself`,
         });
         continue;
@@ -708,8 +899,8 @@ export function prepareAgentCompaniesImport(
         raw: rawReportsTo,
         deferredManifestKey: manifestMatch.value,
       };
+      result.created.push(planned.input.name ?? planned.manifest.name);
       pendingAgents.push(planned);
-      result.created.push(planned.input.name);
       continue;
     }
 
@@ -719,13 +910,13 @@ export function prepareAgentCompaniesImport(
         raw: rawReportsTo,
         resolvedAgentId: rawReportsTo,
       };
+      result.created.push(planned.input.name ?? planned.manifest.name);
       pendingAgents.push(planned);
-      result.created.push(planned.input.name);
       continue;
     }
 
     result.errors.push({
-      name: planned.input.name,
+      name: planned.input.name ?? planned.manifest.name,
       error: `Could not resolve reportsTo reference "${rawReportsTo}" to an imported or existing Fusion agent`,
     });
   }
@@ -734,6 +925,7 @@ export function prepareAgentCompaniesImport(
   for (const error of cycleErrors) {
     result.errors.push(error);
     result.created = result.created.filter((name) => name !== error.name);
+    result.updated = result.updated.filter((name) => name !== error.name);
   }
 
   return {
@@ -746,6 +938,7 @@ export function convertAgentCompanies(
   pkg: AgentCompaniesPackage,
   options?: {
     skipExisting?: string[];
+    updateExisting?: boolean;
     existingAgents?: Array<{
       id: string;
       name: string;
@@ -756,7 +949,7 @@ export function convertAgentCompanies(
 ): { inputs: AgentCreateInput[]; result: AgentCompaniesImportResult } {
   const { items, result } = prepareAgentCompaniesImport(pkg, options);
   return {
-    inputs: items.map((item) => item.input),
+    inputs: items.filter((item) => item.mode === "create").map((item) => item.input as AgentCreateInput),
     result,
   };
 }

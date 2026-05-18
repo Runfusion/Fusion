@@ -614,6 +614,7 @@ name: Nested Archive CEO
       expect(inputs[0]?.name).toBe("New Agent");
       expect(result).toEqual({
         created: ["New Agent"],
+        updated: [],
         skipped: ["Existing"],
         errors: [],
       });
@@ -689,6 +690,7 @@ name: Nested Archive CEO
       expect(items).toEqual([]);
       expect(result).toEqual({
         created: [],
+        updated: [],
         skipped: [],
         errors: [
           {

@@ -58,6 +58,8 @@ export interface AgentManifest extends AgentCompaniesFrontmatter {
   skills?: string[];
   instructionBody?: string;
   memory?: string;
+  soul?: string;
+  personality?: string;
 }
 
 export type ProjectManifest = AgentCompaniesFrontmatter;
@@ -86,6 +88,7 @@ export interface AgentCompaniesPackage {
 
 export interface AgentCompaniesImportResult {
   created: string[];
+  updated: string[];
   skipped: string[];
   errors: Array<{ name: string; error: string }>;
 }

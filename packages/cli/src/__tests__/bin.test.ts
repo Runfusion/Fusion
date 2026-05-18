@@ -436,6 +436,7 @@ describe("bin command routing and fallbacks", () => {
     expect(commandMocks.runAgentImport).toHaveBeenCalledWith("company.md", {
       dryRun: true,
       skipExisting: false,
+      updateExisting: false,
       project: "demo",
     });
     expect(commandMocks.runAgentMailbox).toHaveBeenCalledWith("agent-1", "demo");
