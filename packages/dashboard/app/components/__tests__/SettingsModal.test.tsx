@@ -1967,6 +1967,7 @@ describe("SettingsModal", () => {
 
       render(<SettingsModal onClose={noop} addToast={addToast} />);
       await waitForSettingsModalReady();
+      await userEvent.click(screen.getByRole("button", { name: "Authentication" }));
 
       const copilotCard = screen.getByTestId("auth-provider-icon-github-copilot").closest(".auth-provider-card") as HTMLElement;
       await userEvent.click(within(copilotCard).getByRole("button", { name: "Login" }));
@@ -1996,7 +1997,11 @@ describe("SettingsModal", () => {
         configurable: true,
         value: undefined,
       });
-      const execSpy = vi.spyOn(document, "execCommand").mockReturnValue(true);
+      const execSpy = vi.fn().mockReturnValue(true);
+      Object.defineProperty(document, "execCommand", {
+        configurable: true,
+        value: execSpy,
+      });
       mockFetchAuthStatus
         .mockResolvedValueOnce({ providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth" }] })
         .mockResolvedValueOnce({ providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth", loginInProgress: true }] });
@@ -2007,6 +2012,7 @@ describe("SettingsModal", () => {
 
       render(<SettingsModal onClose={noop} addToast={addToast} />);
       await waitForSettingsModalReady();
+      await userEvent.click(screen.getByRole("button", { name: "Authentication" }));
       const copilotCard = screen.getByTestId("auth-provider-icon-github-copilot").closest(".auth-provider-card") as HTMLElement;
       await userEvent.click(within(copilotCard).getByRole("button", { name: "Login" }));
       await within(copilotCard).findByText("ABCD-1234");
@@ -2023,7 +2029,10 @@ describe("SettingsModal", () => {
         configurable: true,
         value: { writeText },
       });
-      vi.spyOn(document, "execCommand").mockReturnValue(false);
+      Object.defineProperty(document, "execCommand", {
+        configurable: true,
+        value: vi.fn().mockReturnValue(false),
+      });
       mockFetchAuthStatus
         .mockResolvedValueOnce({ providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth" }] })
         .mockResolvedValueOnce({ providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth", loginInProgress: true }] });
@@ -2034,6 +2043,7 @@ describe("SettingsModal", () => {
 
       render(<SettingsModal onClose={noop} addToast={addToast} />);
       await waitForSettingsModalReady();
+      await userEvent.click(screen.getByRole("button", { name: "Authentication" }));
       const copilotCard = screen.getByTestId("auth-provider-icon-github-copilot").closest(".auth-provider-card") as HTMLElement;
       await userEvent.click(within(copilotCard).getByRole("button", { name: "Login" }));
       await within(copilotCard).findByText("ABCD-1234");

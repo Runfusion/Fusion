@@ -5,6 +5,15 @@ import { copyTextToClipboard } from "../copyToClipboard";
 describe("copyTextToClipboard", () => {
   const originalClipboard = navigator.clipboard;
 
+  function mockExecCommand(result: boolean) {
+    const execCommand = vi.fn().mockReturnValue(result);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    return execCommand;
+  }
+
   afterEach(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -30,7 +39,7 @@ describe("copyTextToClipboard", () => {
       configurable: true,
       value: undefined,
     });
-    const execSpy = vi.spyOn(document, "execCommand").mockReturnValue(true);
+    const execSpy = mockExecCommand(true);
 
     await expect(copyTextToClipboard("fallback")).resolves.toBe(true);
     expect(execSpy).toHaveBeenCalledWith("copy");
@@ -42,7 +51,7 @@ describe("copyTextToClipboard", () => {
       configurable: true,
       value: { writeText },
     });
-    const execSpy = vi.spyOn(document, "execCommand").mockReturnValue(false);
+    const execSpy = mockExecCommand(false);
 
     await expect(copyTextToClipboard("reject-path")).resolves.toBe(false);
     expect(writeText).toHaveBeenCalledWith("reject-path");
@@ -54,7 +63,7 @@ describe("copyTextToClipboard", () => {
       configurable: true,
       value: undefined,
     });
-    vi.spyOn(document, "execCommand").mockReturnValue(false);
+    mockExecCommand(false);
 
     await expect(copyTextToClipboard("nope")).resolves.toBe(false);
   });
@@ -65,7 +74,7 @@ describe("copyTextToClipboard", () => {
       value: undefined,
     });
 
-    const execSpy = vi.spyOn(document, "execCommand").mockReturnValue(true);
+    const execSpy = mockExecCommand(true);
     await copyTextToClipboard("cleanup-success");
     expect(execSpy).toHaveBeenCalledWith("copy");
     expect(document.querySelector("textarea")).toBeNull();

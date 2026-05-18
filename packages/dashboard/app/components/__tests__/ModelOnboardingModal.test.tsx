@@ -887,9 +887,11 @@ describe("ModelOnboardingModal", () => {
       expect(writeText).toHaveBeenCalledTimes(1);
 
       fireEvent.click(within(copilotCard).getByRole("button", { name: "Copy code" }));
-      expect(writeText).toHaveBeenCalledWith("ABCD-1234");
-      expect(writeText).toHaveBeenCalledTimes(2);
-      expect(addToast).toHaveBeenCalledWith("Copied code to clipboard", "success");
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith("ABCD-1234");
+        expect(writeText).toHaveBeenCalledTimes(2);
+        expect(addToast).toHaveBeenCalledWith("Copied code to clipboard", "success");
+      });
 
       fireEvent.click(within(copilotCard).getByRole("button", { name: "Open GitHub" }));
       expect(mockWindowOpen).toHaveBeenCalledWith("https://github.com/login/device", "_blank");
@@ -901,7 +903,11 @@ describe("ModelOnboardingModal", () => {
         configurable: true,
         value: undefined,
       });
-      const execSpy = vi.spyOn(document, "execCommand").mockReturnValue(true);
+      const execSpy = vi.fn().mockReturnValue(true);
+      Object.defineProperty(document, "execCommand", {
+        configurable: true,
+        value: execSpy,
+      });
 
       mockFetchAuthStatus
         .mockResolvedValueOnce({ providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth" }] })
@@ -922,8 +928,10 @@ describe("ModelOnboardingModal", () => {
       await within(copilotCard).findByText("ABCD-1234");
 
       fireEvent.click(within(copilotCard).getByRole("button", { name: "Copy code" }));
-      expect(execSpy).toHaveBeenCalledWith("copy");
-      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Copied"), "success");
+      await waitFor(() => {
+        expect(execSpy).toHaveBeenCalledWith("copy");
+        expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Copied"), "success");
+      });
     });
 
     it("shows error toast in onboarding when clipboard and fallback fail", async () => {
@@ -933,7 +941,10 @@ describe("ModelOnboardingModal", () => {
         configurable: true,
         value: { writeText },
       });
-      vi.spyOn(document, "execCommand").mockReturnValue(false);
+      Object.defineProperty(document, "execCommand", {
+        configurable: true,
+        value: vi.fn().mockReturnValue(false),
+      });
 
       mockFetchAuthStatus
         .mockResolvedValueOnce({ providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth" }] })
@@ -954,7 +965,9 @@ describe("ModelOnboardingModal", () => {
       await within(copilotCard).findByText("ABCD-1234");
 
       fireEvent.click(within(copilotCard).getByRole("button", { name: "Copy code" }));
-      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("manually"), "error");
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith(expect.stringContaining("manually"), "error");
+      });
     });
 
     it("keeps OpenAI Codex manual-code UX available in onboarding", async () => {
