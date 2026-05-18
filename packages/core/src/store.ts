@@ -8546,6 +8546,80 @@ ${notificationsSection}`;
     }));
   }
 
+  async getTaskMovedCountsByDay(options: {
+    since: string;
+    until: string;
+    fromColumn?: string;
+    toColumn?: string;
+  }): Promise<Record<string, number>> {
+    let sql =
+      "SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS count FROM activityLog WHERE type = 'task:moved' AND timestamp > ? AND timestamp <= ?";
+    const params: (string | number)[] = [options.since, options.until];
+
+    if (options.fromColumn) {
+      sql += " AND json_extract(metadata, '$.from') = ?";
+      params.push(options.fromColumn);
+    }
+
+    if (options.toColumn) {
+      sql += " AND json_extract(metadata, '$.to') = ?";
+      params.push(options.toColumn);
+    }
+
+    sql += " GROUP BY substr(timestamp, 1, 10)";
+
+    const rows = this.db.prepare(sql).all(...params) as Array<{ day: string; count: number }>;
+    const countsByDay: Record<string, number> = {};
+    for (const row of rows) {
+      countsByDay[row.day] = row.count;
+    }
+    return countsByDay;
+  }
+
+  async getInReviewDurationEvents(options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM activityLog
+         WHERE type = 'task:moved'
+           AND timestamp > ?
+           AND timestamp <= ?
+           AND (
+             json_extract(metadata, '$.to') = 'in-review'
+             OR (
+               json_extract(metadata, '$.from') = 'in-review'
+               AND json_extract(metadata, '$.to') = 'done'
+             )
+           )
+         ORDER BY timestamp ASC
+         LIMIT ?`,
+      )
+      .all(options.since, options.until, 200_000) as unknown as ActivityLogRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      type: row.type as ActivityEventType,
+      taskId: row.taskId || undefined,
+      taskTitle: row.taskTitle || undefined,
+      details: row.details,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+    }));
+  }
+
+  async getTaskMergedTaskIds(options: { since: string; until: string }): Promise<Set<string>> {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT taskId FROM activityLog
+         WHERE type = 'task:merged'
+           AND timestamp > ?
+           AND timestamp <= ?
+           AND taskId IS NOT NULL`,
+      )
+      .all(options.since, options.until) as Array<{ taskId: string }>;
+
+    return new Set(rows.map((row) => row.taskId));
+  }
+
   /**
    * Clear all activity log entries.
    * Use with caution - this permanently deletes activity history.
