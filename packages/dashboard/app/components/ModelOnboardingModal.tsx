@@ -31,6 +31,7 @@ import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { PluginSlot } from "./PluginSlot";
 import { appendTokenQuery } from "../auth";
+import { copyTextToClipboard } from "../utils/copyToClipboard";
 import { filterVisibleOnboardingAndSettingsProviders } from "./providerVisibility";
 import { useShellConnection } from "../hooks/useShellConnection";
 import { useConfirm } from "../hooks/useConfirm";
@@ -645,7 +646,7 @@ export function ModelOnboardingModal({
     }
 
     lastAutoCopiedDeviceCodesRef.current["github-copilot"] = copilotDeviceCode.userCode;
-    void navigator.clipboard?.writeText(copilotDeviceCode.userCode);
+    void copyTextToClipboard(copilotDeviceCode.userCode);
   }, [deviceCodes]);
 
   // Initialize skippedProviders from persisted state
@@ -2013,7 +2014,19 @@ export function ModelOnboardingModal({
             <strong>Enter this code on GitHub</strong>
             <div className="auth-device-code-pill">{deviceCodes[provider.id].userCode}</div>
             <div className="auth-provider-actions-row">
-              <button className="btn btn-sm" onClick={() => { void navigator.clipboard?.writeText(deviceCodes[provider.id].userCode); }}>
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  void (async () => {
+                    const copied = await copyTextToClipboard(deviceCodes[provider.id].userCode);
+                    if (copied) {
+                      addToast("Copied code to clipboard", "success");
+                      return;
+                    }
+                    addToast("Failed to copy code — copy it manually from the box above", "error");
+                  })();
+                }}
+              >
                 Copy code
               </button>
               <button className="btn btn-sm" onClick={() => window.open(appendTokenQuery(deviceCodes[provider.id].verificationUri), "_blank")}>
