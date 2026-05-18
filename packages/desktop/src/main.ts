@@ -267,6 +267,10 @@ export function run(): void {
 }
 
 const modulePath = fileURLToPath(import.meta.url);
-if (process.argv[1] && resolve(process.argv[1]) === modulePath) {
+const isElectronMain =
+  (process as NodeJS.Process & { type?: string }).type === "browser";
+const isDirectInvocation =
+  !!process.argv[1] && resolve(process.argv[1]) === modulePath;
+if (isElectronMain || isDirectInvocation) {
   run();
 }

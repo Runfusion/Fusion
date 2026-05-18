@@ -48,5 +48,8 @@ export async function buildDashboard(): Promise<void> {
 }
 
 export async function buildDashboardClient(): Promise<void> {
-  await runWorkspaceBin("vite", ["build"], resolve(workspaceRoot, "packages", "dashboard"));
+  // Desktop loads index.html via file:// from inside the asar, so absolute
+  // asset paths (/assets/...) resolve to the filesystem root and fail. Build
+  // with a relative base so the bundled HTML references ./assets/... instead.
+  await runWorkspaceBin("vite", ["build", "--base", "./"], resolve(workspaceRoot, "packages", "dashboard"));
 }
