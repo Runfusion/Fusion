@@ -194,7 +194,7 @@ async function finalizePullRequestMerge(
     branchDeleted: false,
     mergeConfirmed: mergedTask.mergeDetails?.mergeConfirmed ?? true,
     mergedAt: mergedTask.mergeDetails?.mergedAt,
-    mergeTargetBranch,
+    mergeTargetBranch: mergeTargetBranch.branch,
   } as MergeResult);
 }
 

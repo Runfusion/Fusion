@@ -4,6 +4,11 @@ _Date: 2026-04-08_
 
 ## 1) Executive Summary
 
+### FN-5048 test-speed hardening update (2026-05-18)
+
+- See `docs/test-speed-audit-FN-5048.md` for full baseline + post-change timing tables, offender classifications (`keep/rewrite/delete`), and landed rewrite/trim outcomes.
+- Contributor prevention policy was codified in `AGENTS.md` under **Standing Rule: Do Not Add Slow Tests (FN-5048)**.
+
 ### FN-3978 TaskStore suite split follow-up (2026-05-10)
 
 - Decomposed `packages/core/src/__tests__/store.test.ts` into focused suites: `store-plugin-routing.test.ts`, `store-prompt-generation.test.ts`, `store-priority.test.ts`, `store-token-usage.test.ts`, `store-persistence.test.ts`, `store-settings.test.ts`, `store-attachments.test.ts`, `store-watcher.test.ts`, and `store-migration.test.ts`.

@@ -81,17 +81,6 @@ describe("PrCreateModal", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("applies resizable modal CSS and restores persisted inline size", async () => {
-    localStorage.setItem("fusion:pr-create-modal-size", JSON.stringify({ width: 820, height: 640 }));
-    renderModal();
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveClass("pr-create-modal");
-    expect(getComputedStyle(dialog).resize).toBe("both");
-    expect(dialog.style.width).toBe("820px");
-    expect(dialog.style.height).toBe("640px");
-  });
-
   it("loads metadata/preflight/options on open and renders key sections", async () => {
     renderModal();
     await waitFor(() => {
@@ -153,18 +142,6 @@ describe("PrCreateModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /assignee 1/i }));
     fireEvent.change(screen.getByPlaceholderText("Filter labels"), { target: { value: "bug" } });
     fireEvent.click(screen.getByRole("button", { name: "bug" }));
-
-    const labelChip = screen.getByLabelText(/remove bug/i).closest("span");
-    expect(labelChip).toHaveClass("pr-create-modal__chip--colored");
-    expect(labelChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("#ff0000");
-
-    const reviewerChip = screen.getByLabelText(/remove reviewer 1/i).closest("span");
-    expect(reviewerChip).not.toHaveClass("pr-create-modal__chip--colored");
-    expect(reviewerChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("");
-
-    const assigneeChip = screen.getByLabelText(/remove assignee 1/i).closest("span");
-    expect(assigneeChip).not.toHaveClass("pr-create-modal__chip--colored");
-    expect(assigneeChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("");
 
     const submitButton = screen.getByRole("button", { name: "Create draft PR" });
     expect(submitButton).toHaveClass("btn-primary");

@@ -158,6 +158,15 @@ Prefer `it.each` over copy-pasted `it()` blocks. When trimming, keep: first case
 - Integration tests exercising real SQLite, real worker pool, or spawned processes.
 - Lean core/engine unit tests with low mock burden.
 
+### Standing Rule: Do Not Add Slow Tests (FN-5048)
+
+- Default new tests to narrow seams, in-memory fakes, shared harnesses, and targeted assertions.
+- Prefer fake timers over real polling/time waits (FN-2707 pattern: advance timers inside `act(...)`, restore with `afterEach(() => vi.useRealTimers())`).
+- Do **not** mask slowness by raising worker/concurrency knobs (`FUSION_TEST_TOTAL_WORKERS`, `FUSION_TEST_CONCURRENCY`, `VITEST_MAX_WORKERS`, workspace concurrency settings).
+- Do **not** add net-new real-network calls, real-`setTimeout` polling loops, or mock-the-world component shells when a narrower seam exists.
+- Use the canonical taxonomy in **What NOT to write** and **What TO keep unconditionally** when deciding trim vs keep.
+- See `docs/test-speed-audit-FN-5048.md` for the measured baseline offender list and optimization priorities.
+
 ## Port 4040 is Reserved
 
 Port 4040 is the production dashboard port. A user's live session is typically running there. **Agents must NEVER:**

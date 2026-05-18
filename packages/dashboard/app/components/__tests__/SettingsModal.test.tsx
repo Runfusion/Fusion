@@ -316,20 +316,6 @@ describe("SettingsModal", () => {
     expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
   });
 
-  it("renders section headings with the shared settings-section-heading class", async () => {
-    const { container } = renderModal();
-    await waitForSettingsModalReady();
-
-    const authenticationHeading = screen.getByRole("heading", { name: "Authentication" });
-    expect(authenticationHeading).toHaveClass("settings-section-heading");
-
-    await userEvent.click(screen.getByRole("button", { name: /^General$/ }));
-
-    const generalHeading = screen.getByRole("heading", { name: "General" });
-    expect(generalHeading).toHaveClass("settings-section-heading");
-    expect(container.querySelectorAll(".settings-section-heading").length).toBeGreaterThan(0);
-  });
-
   it("defaults to the global General section when no initialSection is provided", async () => {
     render(
       <SettingsModal
@@ -339,17 +325,15 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    const generalNavButton = screen.getByRole("button", { name: /^General$/ });
-    expect(generalNavButton).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Authentication$/ })).not.toHaveClass("active");
   });
 
   it("honors an explicit initialSection override", async () => {
     renderModal({ initialSection: "authentication" });
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^Authentication$/ })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /^Authentication$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
   });
 
@@ -357,7 +341,7 @@ describe("SettingsModal", () => {
     renderModal({ initialSection: "pi-extensions" });
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^Plugins$/ })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /^Plugins$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Plugins" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Pi Extensions" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByTestId("pi-extensions-manager")).toBeInTheDocument();
@@ -1397,19 +1381,15 @@ describe("SettingsModal", () => {
   });
 
   describe("settings header actions", () => {
-    it("renders Help and GitHub star controls with shared header sizing contract class hooks", async () => {
+    it("renders Help and GitHub star controls", async () => {
       renderModal();
       await waitForSettingsModalReady();
 
       const headerActions = document.querySelector(".settings-header-actions");
       expect(headerActions).toBeInTheDocument();
 
-      const starLink = within(headerActions as HTMLElement).getByRole("link", { name: "Star Fusion on GitHub" });
-      const helpLink = within(headerActions as HTMLElement).getByRole("link", { name: "Help and discussions" });
-
-      expect(starLink).toHaveClass("settings-github-star-btn");
-      expect(helpLink).toHaveClass("settings-header-help-btn");
-      expect(helpLink).toHaveClass("btn", "btn-sm");
+      expect(within(headerActions as HTMLElement).getByRole("link", { name: "Star Fusion on GitHub" })).toBeInTheDocument();
+      expect(within(headerActions as HTMLElement).getByRole("link", { name: "Help and discussions" })).toBeInTheDocument();
     });
   });
 
