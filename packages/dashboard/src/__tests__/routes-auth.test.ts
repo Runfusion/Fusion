@@ -562,23 +562,71 @@ function createMockAuthStorage(overrides: Partial<AuthStorageLike> = {}): AuthSt
 describe("GET /auth/status", () => {
   let store: TaskStore;
   let authStorage: AuthStorageLike;
+  let app: express.Express;
 
-  beforeEach(() => {
-    store = createMockStore();
-    authStorage = createMockAuthStorage();
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  function buildApp() {
-    const app = express();
+  beforeAll(() => {
+    store = createMockStore();
+    authStorage = createMockAuthStorage();
+    app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store, { authStorage }));
-    return app;
-  }
+  });
+
+  beforeEach(() => {
+    vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+
+    vi.mocked(authStorage.reload).mockReset();
+    vi.mocked(authStorage.getOAuthProviders).mockReset();
+    vi.mocked(authStorage.hasAuth).mockReset();
+    vi.mocked(authStorage.get).mockReset();
+    vi.mocked(authStorage.login).mockReset();
+    vi.mocked(authStorage.getApiKeyProviders).mockReset();
+    vi.mocked(authStorage.hasApiKey).mockReset();
+    vi.mocked(authStorage.setApiKey).mockReset();
+    vi.mocked(authStorage.clearApiKey).mockReset();
+
+    vi.mocked(authStorage.reload).mockResolvedValue(undefined);
+    vi.mocked(authStorage.getOAuthProviders).mockReturnValue([{ id: "github-copilot", name: "GitHub Copilot" }]);
+    vi.mocked(authStorage.hasAuth).mockReturnValue(false);
+    vi.mocked(authStorage.get).mockReturnValue(undefined);
+    vi.mocked(authStorage.login).mockImplementation((_provider: string, callbacks: any) => {
+      callbacks.onAuth({ url: "https://auth.example.com/login", instructions: "Open in browser" });
+      return Promise.resolve();
+    });
+    vi.mocked(authStorage.getApiKeyProviders).mockReturnValue([
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "kimi-coding", name: "Kimi" },
+    ]);
+    vi.mocked(authStorage.hasApiKey).mockReturnValue(false);
+  });
 
   it("returns provider list with auth status", async () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     // Filter out synthetic CLI providers — they have dedicated route tests.
@@ -598,7 +646,7 @@ describe("GET /auth/status", () => {
     ]);
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "github-copilot");
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const githubCopilot = res.body.providers.find((p: any) => p.id === "github-copilot");
@@ -624,7 +672,7 @@ describe("GET /auth/status", () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "github-copilot");
     (authStorage.hasApiKey as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "acme-extension");
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "llama-cpp");
@@ -650,8 +698,8 @@ describe("GET /auth/status", () => {
       ]);
 
       const res = origin
-        ? await REQUEST(buildApp(), "GET", "/api/auth/status", undefined, { Origin: origin })
-        : await REQUEST(buildApp(), "GET", "/api/auth/status");
+        ? await REQUEST(app, "GET", "/api/auth/status", undefined, { Origin: origin })
+        : await REQUEST(app, "GET", "/api/auth/status");
 
       expect(res.status).toBe(200);
       const openAiCodex = res.body.providers.find((p: any) => p.id === "openai-codex");
@@ -671,7 +719,7 @@ describe("GET /auth/status", () => {
   it("returns unauthenticated status", async () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     expect(res.body.providers[0].authenticated).toBe(false);
@@ -685,7 +733,7 @@ describe("GET /auth/status", () => {
         : undefined,
     );
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const githubCopilot = res.body.providers.find((p: any) => p.id === "github-copilot");
@@ -703,7 +751,6 @@ describe("GET /auth/status", () => {
       },
     );
 
-    const app = buildApp();
     const loginRequest = REQUEST(app, "POST", "/api/auth/login", JSON.stringify({ provider: "github-copilot" }), {
       "Content-Type": "application/json",
     });
@@ -721,7 +768,7 @@ describe("GET /auth/status", () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(false);
     (authStorage.hasApiKey as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const openrouter = res.body.providers.find((p: any) => p.id === "openrouter");
@@ -735,7 +782,7 @@ describe("GET /auth/status", () => {
       { id: "tavily", name: "Tavily" },
     ]);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     expect(res.body.providers).toEqual(
@@ -750,7 +797,7 @@ describe("GET /auth/status", () => {
       throw new Error("storage error");
     });
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("storage error");
@@ -3049,6 +3096,7 @@ describe("Pause/Unpause endpoints", () => {
         getTask: vi.fn(),
         updatePrInfo: vi.fn(),
         getRootDir: vi.fn().mockReturnValue("/fake/root"),
+        getSettings: vi.fn().mockResolvedValue({}),
       });
     });
 
@@ -3072,6 +3120,11 @@ describe("Pause/Unpause endpoints", () => {
     it("returns merge readiness details for PR-first UI refreshes", async () => {
       const originalRepo = process.env.GITHUB_REPOSITORY;
       process.env.GITHUB_REPOSITORY = "owner/repo";
+      vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
+        decision: "CHANGES_REQUESTED",
+        reviewers: [],
+        items: [],
+      });
       vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
         prInfo: mockPrInfo,
         mergeReady: false,

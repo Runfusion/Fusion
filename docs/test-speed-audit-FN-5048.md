@@ -108,6 +108,14 @@
 - `@fusion/core` no-regression gate satisfied after harness correction (baseline **26.29s** → post-change **23.08s**).
 - Dashboard lane remains unstable from pre-existing repository-level failures in planning/tracking/interview route tests and unrelated UI suites; no FN-5048 file changes were made in those failing areas.
 
+## FN-5074 follow-up results
+- Isolated re-measure after targeted rewrites (same command family used in FN-5074 preflight):
+  - `routes-auth.test.ts`: **94.53s → 15.76s** (164 tests)
+  - `routes-agents.test.ts`: **9.72s → 10.58s** (344 tests; stable/slightly higher in this sampled rerun)
+  - `SettingsModal.test.tsx`: **43.40s → 48.60s** (438 tests; sampled rerun regressed due to remaining long-running device-code path)
+  - `ChatView.test.tsx`: **12.53s → 14.66s** (390 tests; sampled rerun modestly higher while preserving coverage)
+- FN-5074 preserved FN-tagged coverage and frozen-button assertions; all four files pass in isolation and full verification gates remained green in task execution.
+
 ## Notes
 - Dashboard `vitest run` baseline and post-change measurements both surfaced broad failing suites outside this task’s implementation scope; timing evidence is still captured from the same command family.
 - Standing prevention rule: see `AGENTS.md` → **Standing Rule: Do Not Add Slow Tests (FN-5048)**.

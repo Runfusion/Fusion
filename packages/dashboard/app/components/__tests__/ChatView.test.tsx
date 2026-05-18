@@ -4270,13 +4270,13 @@ describe("ChatView mobile behavior", () => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
       fireEvent(document, new Event("visibilitychange"));
       await act(async () => {
-        vi.runOnlyPendingTimers();
+        await vi.runOnlyPendingTimersAsync();
       });
 
       scrollHeightValue = 1500;
       await act(async () => {
-        vi.advanceTimersByTime(260);
-        vi.runOnlyPendingTimers();
+        await vi.advanceTimersByTimeAsync(260);
+        await vi.runOnlyPendingTimersAsync();
       });
 
       expect(scrollTopValue).toBe(1500);
