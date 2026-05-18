@@ -1367,7 +1367,18 @@ export class ProjectEngine {
               );
               await store.updateTask(taskId, { paused: false, status: null, error: null });
               try {
-                await store.moveTask(taskId, "done");
+                const movedTask = await store.moveTask(taskId, "done");
+                const mergedTask = movedTask ?? (await store.getTask(taskId).catch(() => null)) ?? task;
+                store.emit("task:merged", {
+                  task: mergedTask,
+                  branch: mergedTask.branch ?? task.branch ?? "",
+                  merged: true,
+                  worktreeRemoved: false,
+                  branchDeleted: false,
+                  mergeConfirmed: true,
+                  mergedAt: mergedTask.mergeDetails?.mergedAt,
+                  mergeTargetBranch: mergedTask.mergeDetails?.mergeTargetBranch,
+                } as MergeResult);
               } catch (error) {
                 if (isInvalidDoneTransitionError(error)) {
                   const latest = await store.getTask(taskId).catch(() => null);
@@ -1447,6 +1458,19 @@ export class ProjectEngine {
             const result = await this.options.processPullRequestMerge(store, cwd, taskId);
             if (result === "merged") {
               runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
+              const mergedTask = await store.getTask(taskId).catch(() => null);
+              if (mergedTask) {
+                store.emit("task:merged", {
+                  task: mergedTask,
+                  branch: mergedTask.branch ?? "",
+                  merged: true,
+                  worktreeRemoved: false,
+                  branchDeleted: false,
+                  mergeConfirmed: mergedTask.mergeDetails?.mergeConfirmed,
+                  mergedAt: mergedTask.mergeDetails?.mergedAt,
+                  mergeTargetBranch: mergedTask.mergeDetails?.mergeTargetBranch,
+                } as MergeResult);
+              }
             } else if (result === "waiting") {
               runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge PR waiting: ${taskId}`);
             }

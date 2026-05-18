@@ -52,7 +52,7 @@ function makeStore(task: MockTask, settings: Record<string, unknown> = {}) {
       updates.push({ id, patch });
     }),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
-    moveTask: vi.fn().mockResolvedValue(undefined),
+    moveTask: vi.fn(async (_id: string, column: string) => ({ ...task, column })),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     _updates: updates,
@@ -74,6 +74,7 @@ function makeStatefulStore(task: MockTask, settings: Record<string, unknown> = {
     }),
     moveTask: vi.fn(async (_id: string, column: string) => {
       state = { ...state, column };
+      return structuredClone(state);
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
@@ -732,6 +733,11 @@ describe("processPullRequestMergeTask", () => {
       mergePr: vi.fn(async () => mergedPr),
     };
 
+    const mergedEvents: unknown[] = [];
+    store.on("task:merged", (result) => {
+      mergedEvents.push(result);
+    });
+
     const result = await processPullRequestMergeTask(
       store as never,
       "/repo",
@@ -746,6 +752,13 @@ describe("processPullRequestMergeTask", () => {
     expect(persisted.prInfo?.number).toBe(123);
     expect(persisted.prInfo?.url).toBe("https://github.com/x/y/pull/123");
     expect(store.updatePrInfo).toHaveBeenCalledTimes(3);
+    expect(mergedEvents).toHaveLength(1);
+    expect(mergedEvents[0]).toEqual(
+      expect.objectContaining({
+        merged: true,
+        task: expect.objectContaining({ id: task.id, column: "done" }),
+      }),
+    );
   });
 
   describe("requirePrApproval", () => {

@@ -6241,8 +6241,7 @@ export async function aiMergeTask(
       };
       await store.updateTask(taskId, { mergeDetails });
       await store.logEntry(taskId, `Auto-finalized: recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
-      await store.moveTask(taskId, "done");
-      return {
+      const result: MergeResult = {
         task,
         branch,
         merged: true,
@@ -6252,6 +6251,8 @@ export async function aiMergeTask(
         mergedAt: mergeDetails.mergedAt,
         mergeTargetBranch: aheadInfo.baseRef,
       };
+      await completeTask(store, taskId, result);
+      return result;
     }
 
     if (classification.kind === "proven-no-op" || classification.kind === "no-changes-finalized") {
@@ -6275,8 +6276,7 @@ export async function aiMergeTask(
           ? `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`
           : "Auto-finalized verification-only no-change task: branch absent with no owned commits; modifiedFiles cleared",
       );
-      await store.moveTask(taskId, "done");
-      return {
+      const result: MergeResult = {
         task,
         branch,
         merged: true,
@@ -6289,6 +6289,8 @@ export async function aiMergeTask(
         mergedAt: mergeDetails.mergedAt,
         mergeTargetBranch: classification.baseRef,
       };
+      await completeTask(store, taskId, result);
+      return result;
     }
 
     const unprovenError = `finalize-unproven: ${classification.reason}`;

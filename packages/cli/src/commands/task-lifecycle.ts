@@ -18,7 +18,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import type { TaskStore } from "@fusion/core";
 import { resolveTaskMergeTarget } from "@fusion/core";
-import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
+import type { Settings, TaskDetail, PrInfo, MergeResult } from "@fusion/core";
 
 /**
  * Minimal interface for GitHub operations needed by the PR merge workflow.
@@ -179,8 +179,23 @@ async function finalizePullRequestMerge(
 ): Promise<void> {
   await cleanupMergedTaskArtifacts(cwd, task);
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-  await store.moveTask(task.id, "done");
+  const movedTask = await store.moveTask(task.id, "done");
+  const mergedTask = movedTask ?? (await store.getTask(task.id));
   await store.logEntry(task.id, message, `PR #${prInfo.number}: ${prInfo.url}`);
+  const settings = await store.getSettings();
+  const mergeTargetBranch = resolveTaskMergeTarget(mergedTask, {
+    projectDefaultBranch: typeof settings.baseBranch === "string" ? settings.baseBranch : undefined,
+  });
+  store.emit("task:merged", {
+    task: mergedTask,
+    branch: mergedTask.branch ?? getTaskBranchName(task.id),
+    merged: true,
+    worktreeRemoved: false,
+    branchDeleted: false,
+    mergeConfirmed: mergedTask.mergeDetails?.mergeConfirmed ?? true,
+    mergedAt: mergedTask.mergeDetails?.mergedAt,
+    mergeTargetBranch,
+  } as MergeResult);
 }
 
 /**

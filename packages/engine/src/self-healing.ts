@@ -28,7 +28,7 @@ import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, countRecentIdenticalStallEntries, detectSelfDefeatingDependency, getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, countRecentIdenticalStallEntries, detectSelfDefeatingDependency, getInReviewStallReason, getStalePausedReviewSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { RemovalReason, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
@@ -528,6 +528,21 @@ export class SelfHealingManager {
     private store: TaskStore,
     private options: SelfHealingOptions,
   ) {}
+
+  private emitTaskMerged(task: Task | undefined | null, overrides: Partial<MergeResult> = {}): void {
+    if (!task) return;
+    this.store.emit("task:merged", {
+      task,
+      branch: task.branch ?? "",
+      merged: true,
+      worktreeRemoved: false,
+      branchDeleted: false,
+      mergeConfirmed: task.mergeDetails?.mergeConfirmed,
+      mergedAt: task.mergeDetails?.mergedAt,
+      mergeTargetBranch: task.mergeDetails?.mergeTargetBranch,
+      ...overrides,
+    } as MergeResult);
+  }
 
   // ── Lifecycle ───────────────────────────────────────────────────────
 
@@ -3142,7 +3157,8 @@ export class SelfHealingManager {
           await this.store.logEntry(task.id, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`);
         }
 
-        await this.store.moveTask(task.id, "done");
+        const movedTask = await this.store.moveTask(task.id, "done");
+        this.emitTaskMerged(movedTask, { mergeConfirmed: true });
         recovered++;
       }
 
@@ -3801,7 +3817,8 @@ export class SelfHealingManager {
               mergeRetries: 0,
               mergeDetails,
             });
-            await this.store.moveTask(task.id, "done");
+            const movedTask = await this.store.moveTask(task.id, "done");
+            this.emitTaskMerged(movedTask, { mergeConfirmed: true });
             await this.cleanupInterruptedMergeArtifacts(task);
             await this.store.logEntry(
               task.id,
@@ -4082,7 +4099,8 @@ export class SelfHealingManager {
             error: null,
             mergeRetries: 0,
           });
-          await this.store.moveTask(task.id, "done");
+          const movedTask = await this.store.moveTask(task.id, "done");
+          this.emitTaskMerged(movedTask, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
             `Auto-finalized from in-review/paused: content proven via mergeConfirmed metadata. Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`,
@@ -4192,7 +4210,8 @@ export class SelfHealingManager {
               branch: null,
               mergeDetails,
             });
-            await this.store.moveTask(task.id, "done");
+            const movedTask = await this.store.moveTask(task.id, "done");
+            this.emitTaskMerged(movedTask, { mergeConfirmed: true });
             await this.cleanupInterruptedMergeArtifacts(task);
 
             const clearedDependents: string[] = [];
@@ -4369,7 +4388,8 @@ export class SelfHealingManager {
             mergeRetries: 0,
             mergeDetails,
           });
-          await this.store.moveTask(task.id, "done");
+          const movedTask = await this.store.moveTask(task.id, "done");
+          this.emitTaskMerged(movedTask, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
             `Auto-finalized from in-review/paused: content proven on ${baseBranch} (${landed.sha.slice(0, 8)}). Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`,
@@ -4506,7 +4526,8 @@ export class SelfHealingManager {
             mergeDetails,
           });
           const worktreeHint = task.worktree;
-          await this.store.moveTask(task.id, "done");
+          const movedTask = await this.store.moveTask(task.id, "done");
+          this.emitTaskMerged(movedTask, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
             `Auto-finalized from in-review/paused: content proven on ${baseBranch} (${landed.sha.slice(0, 8)}). Cleared soft state paused=${clearedFlags.paused}, status=${clearedFlags.status}, error=${clearedFlags.error}`,
@@ -4703,7 +4724,8 @@ export class SelfHealingManager {
 
           await this.clearCompletionBranchIfSubsumed(task, branch).catch(() => false);
 
-          await this.store.moveTask(task.id, "done");
+          const movedTask = await this.store.moveTask(task.id, "done");
+          this.emitTaskMerged(movedTask, { mergeConfirmed: true });
           await this.store.logEntry(
             task.id,
             `Auto-recovered: branch tip misbound but content found on ${baseBranch} at ${check.landed.sha.slice(0, 8)} via ${check.landed.strategy}`,

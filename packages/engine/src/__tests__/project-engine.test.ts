@@ -153,6 +153,7 @@ function createMockStore(initialSettings: Record<string, unknown>) {
       return structuredClone(settings);
     }),
     logEntry: vi.fn(async () => undefined),
+    emit: vi.fn(),
     addTaskComment: vi.fn(async () => undefined),
     getActiveMergingTask: vi.fn(() => null),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void | Promise<void>) => {
@@ -1417,6 +1418,82 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await taskUpdatedHandler({ id: "FN-unpause", column: "in-review", paused: false, status: null });
 
     expect(enqueueSpy).toHaveBeenCalledWith("FN-unpause");
+
+    await engine.stop();
+  });
+
+  it("emits task:merged when mergeConfirmed fast-path finalizes to done", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.getTask.mockResolvedValueOnce({
+      id: "FN-merged",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+      branch: "fusion/fn-merged",
+      mergeDetails: { mergeConfirmed: true, mergedAt: "2026-05-18T00:00:00.000Z", mergeTargetBranch: "main" },
+    });
+    mockStore.store.moveTask.mockResolvedValueOnce({
+      id: "FN-merged",
+      column: "done",
+      branch: "fusion/fn-merged",
+      mergeDetails: { mergeConfirmed: true, mergedAt: "2026-05-18T00:00:00.000Z", mergeTargetBranch: "main" },
+    });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+    engine.enqueueMerge("FN-merged");
+
+    await vi.waitFor(() => {
+      expect(mockStore.store.emit).toHaveBeenCalledWith(
+        "task:merged",
+        expect.objectContaining({
+          merged: true,
+          task: expect.objectContaining({ id: "FN-merged", column: "done" }),
+        }),
+      );
+    });
+
+    await engine.stop();
+  });
+
+  it("emits task:merged when PR merge strategy returns merged", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.getTask
+      .mockResolvedValueOnce({
+        id: "FN-pr",
+        column: "in-review",
+        paused: false,
+        mergeRetries: 0,
+        status: null,
+        branch: "fusion/fn-pr",
+      })
+      .mockResolvedValue({
+        id: "FN-pr",
+        column: "done",
+        paused: false,
+        mergeRetries: 0,
+        status: null,
+        branch: "fusion/fn-pr",
+        mergeDetails: { mergeConfirmed: true, mergedAt: "2026-05-18T00:00:00.000Z", mergeTargetBranch: "main" },
+      });
+    mocks.currentStore = mockStore.store;
+
+    const processPullRequestMerge = vi.fn(async () => "merged" as const);
+    const engine = createEngine({ processPullRequestMerge, getMergeStrategy: () => "pull-request" });
+    await engine.start();
+    engine.enqueueMerge("FN-pr");
+
+    await vi.waitFor(() => {
+      expect(mockStore.store.emit).toHaveBeenCalledWith(
+        "task:merged",
+        expect.objectContaining({
+          merged: true,
+          task: expect.objectContaining({ id: "FN-pr" }),
+        }),
+      );
+    });
 
     await engine.stop();
   });
