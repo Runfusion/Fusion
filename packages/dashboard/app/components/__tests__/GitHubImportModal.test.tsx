@@ -678,6 +678,115 @@ describe("GitHubImportModal", () => {
     });
   });
 
+  describe("list pane resize handle", () => {
+    const originalInnerWidth = window.innerWidth;
+
+    const setViewportWidth = (width: number) => {
+      Object.defineProperty(window, "innerWidth", {
+        writable: true,
+        configurable: true,
+        value: width,
+      });
+      window.dispatchEvent(new Event("resize"));
+    };
+
+    const renderWithIssues = async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 1, title: "Resize Test Issue", body: "Body", html_url: "https://github.com/owner/repo/issues/1", labels: [] },
+      ]);
+
+      const rendered = render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Resize Test Issue")).toBeTruthy();
+      });
+
+      return rendered;
+    };
+
+    beforeEach(() => {
+      window.localStorage.removeItem("fusion:github-import-list-pane-width");
+      setViewportWidth(1200);
+    });
+
+    afterEach(() => {
+      window.localStorage.removeItem("fusion:github-import-list-pane-width");
+      setViewportWidth(originalInnerWidth);
+    });
+
+    it("renders handle on desktop and hides it on mobile", async () => {
+      await renderWithIssues();
+      expect(screen.getByTestId("github-import-resize-handle")).toBeTruthy();
+
+      setViewportWidth(480);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("github-import-resize-handle")).toBeNull();
+      });
+    });
+
+    it.each([
+      [{ key: "ArrowRight" }, 370],
+      [{ key: "ArrowLeft" }, 350],
+      [{ key: "ArrowRight", shiftKey: true }, 410],
+    ])("handles keyboard nudge %#", async (eventInit, expected) => {
+      await renderWithIssues();
+      const handle = screen.getByTestId("github-import-resize-handle");
+
+      fireEvent.keyDown(handle, eventInit);
+
+      expect(handle.getAttribute("aria-valuenow")).toBe(String(expected));
+    });
+
+    it("supports Home and End keys", async () => {
+      await renderWithIssues();
+      const handle = screen.getByTestId("github-import-resize-handle");
+
+      fireEvent.keyDown(handle, { key: "Home" });
+      expect(handle.getAttribute("aria-valuenow")).toBe("240");
+
+      fireEvent.keyDown(handle, { key: "End" });
+      expect(handle.getAttribute("aria-valuenow")).toBe("640");
+    });
+
+    it("clamps keyboard resizing to min and max bounds", async () => {
+      await renderWithIssues();
+      const handle = screen.getByTestId("github-import-resize-handle");
+
+      for (let i = 0; i < 30; i += 1) {
+        fireEvent.keyDown(handle, { key: "ArrowLeft" });
+      }
+      expect(handle.getAttribute("aria-valuenow")).toBe("240");
+
+      for (let i = 0; i < 60; i += 1) {
+        fireEvent.keyDown(handle, { key: "ArrowRight" });
+      }
+      expect(handle.getAttribute("aria-valuenow")).toBe("640");
+    });
+
+    it("persists width across remounts", async () => {
+      const mounted = await renderWithIssues();
+      let handle = screen.getByTestId("github-import-resize-handle");
+
+      fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+      expect(handle.getAttribute("aria-valuenow")).toBe("410");
+
+      mounted.unmount();
+
+      await renderWithIssues();
+      handle = await screen.findByTestId("github-import-resize-handle");
+      expect(handle.getAttribute("aria-valuenow")).toBe("410");
+    });
+
+    it("falls back to default width for invalid stored values", async () => {
+      window.localStorage.setItem("fusion:github-import-list-pane-width", "not-a-number");
+      await renderWithIssues();
+
+      expect(screen.getByTestId("github-import-resize-handle").getAttribute("aria-valuenow")).toBe("360");
+    });
+  });
+
   describe("modal actions", () => {
     it("closes modal on Cancel button click", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
