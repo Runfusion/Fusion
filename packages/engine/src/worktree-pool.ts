@@ -2,7 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { basename, join, relative, resolve, isAbsolute } from "node:path";
-import type { Column, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
+import type { Column, SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
 import { worktreePoolLog } from "./logger.js";
 import { isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree-paths.js";
@@ -15,6 +15,7 @@ import {
   resolveWorktreeBackend as resolveWorktreeBackendViaSettings,
 } from "./worktree-backend.js";
 import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
+import type { RunAuditor } from "./run-audit.js";
 
 export {
   NativeWorktreeBackend,
@@ -263,10 +264,17 @@ export class PoolDoubleLeaseError extends Error {
   }
 }
 
+export interface WorktreePoolOptions {
+  auditFactory?: (taskId: string) => Pick<RunAuditor, "filesystem">;
+  secretsStore?: Pick<SecretsStore, "listEnvExportable">;
+}
+
 export class WorktreePool {
   private idle = new Set<string>();
   private leased = new Map<string, string>();
   private invariantViolationHandler?: (violation: PoolInvariantViolation) => void;
+
+  constructor(_options: WorktreePoolOptions = {}) {}
 
   /**
    * Acquire an idle worktree from the pool.
@@ -655,6 +663,22 @@ export async function cleanupOrphanedWorktrees(
   for (const worktreePath of candidates) {
     try {
       if (registeredWorktrees.has(resolve(worktreePath))) {
+        const orphanTaskId = `orphan:${basename(worktreePath)}`;
+        try {
+          await cleanupSecretsEnvFile({
+            worktreePath,
+            taskId: orphanTaskId,
+            expectedFingerprint: null,
+            filename: ".env",
+            audit: undefined,
+            logger: worktreePoolLog,
+          });
+        } catch (error) {
+          worktreePoolLog.warn(
+            `secrets-env cleanup failed for registered orphan ${worktreePath}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
         await removeWorktreeViaBackend({
           rootDir,
           worktreePath,

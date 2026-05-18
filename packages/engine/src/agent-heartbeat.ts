@@ -802,6 +802,7 @@ export class HeartbeatMonitor {
   private selfImproveService?: SelfImproveServiceLike;
   private approvalRequestStore?: ApprovalRequestStore;
   private snapshotManager?: AutoClaimSnapshotManager;
+  private secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
 
   private trackedAgents: Map<string, TrackedAgent> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
@@ -831,6 +832,7 @@ export class HeartbeatMonitor {
     this.reflectionService = options.reflectionService;
     this.selfImproveService = options.selfImproveService;
     this.snapshotManager = options.snapshotManager ?? (this.taskStore ? new AutoClaimSnapshotManager({ taskStore: this.taskStore }) : undefined);
+    this.secretsStore = options.secretsStore;
   }
 
   getChatStore(): ChatStore | undefined {
@@ -2398,7 +2400,7 @@ export class HeartbeatMonitor {
               audit,
               runContext,
               runInitCommand: false,
-              secretsStore: this.options.secretsStore,
+              secretsStore: this.secretsStore,
             });
             sessionCwd = acquisition.worktreePath;
           } catch (worktreeErr) {

@@ -309,7 +309,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
                 settings,
                 reason: RemovalReason.PoolPrune,
                 taskId: task.id,
-                audit,
+                audit: undefined,
               });
             } catch (removeErr) {
               logger?.warn(`${task.id}: failed to remove unusable pooled worktree ${worktreePath}: ${formatError(removeErr)}`);
