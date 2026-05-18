@@ -29,6 +29,7 @@ import { hasSyncPassphraseConfigured } from "./secrets-sync-passphrase.js";
 import { getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
 import { getInReviewStallReason } from "./in-review-stall.js";
 import { getStalePausedReviewSignal } from "./stale-paused-review.js";
+import { getStalePausedTodoSignal } from "./stale-paused-todo.js";
 import { getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds } from "./task-age-staleness.js";
 import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
@@ -3690,6 +3691,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
       });
+      task.stalePausedTodo = getStalePausedTodoSignal(task, {
+        now,
+        thresholdMs: settings.stalePausedTodoThresholdMs,
+      });
       if (!disableAgeStalenessHydration) {
         try {
           task.ageStaleness = getTaskAgeStalenessSignal(task, { now, thresholds: staleThresholds });
@@ -3872,6 +3877,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
       });
+      task.stalePausedTodo = getStalePausedTodoSignal(task, {
+        now,
+        thresholdMs: settings.stalePausedTodoThresholdMs,
+      });
       if (!disableAgeStalenessHydration) {
         try {
           task.ageStaleness = getTaskAgeStalenessSignal(task, { now, thresholds: staleThresholds });
@@ -4009,6 +4018,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+      });
+      task.stalePausedTodo = getStalePausedTodoSignal(task, {
+        now,
+        thresholdMs: settings.stalePausedTodoThresholdMs,
       });
       if (!disableAgeStalenessHydration) {
         try {
