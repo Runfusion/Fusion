@@ -3643,7 +3643,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let disableAgeStalenessHydration = false;
     const activeTasks = await Promise.all((rows as unknown as TaskRow[]).map(async (row) => {
       const task = this.rowToTask(row);
-      task.inReviewStall = getInReviewStallReason(task, { now });
+      task.inReviewStall = getInReviewStallReason(task, { now, autoMerge: settings.autoMerge });
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
@@ -3825,7 +3825,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let disableAgeStalenessHydration = false;
     const tasks = rows.slice(0, resolvedLimit).map((row) => {
       const task = this.rowToTask(row);
-      task.inReviewStall = getInReviewStallReason(task, { now });
+      task.inReviewStall = getInReviewStallReason(task, { now, autoMerge: settings.autoMerge });
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
@@ -3963,7 +3963,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let disableAgeStalenessHydration = false;
     const activeMatches = await Promise.all(rows.map(async (row) => {
       const task = this.rowToTask(row);
-      task.inReviewStall = getInReviewStallReason(task, { now });
+      task.inReviewStall = getInReviewStallReason(task, { now, autoMerge: settings.autoMerge });
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
