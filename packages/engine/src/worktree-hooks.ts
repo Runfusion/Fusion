@@ -15,7 +15,17 @@ function toShellCasePattern(pattern: string): string {
     .replace(/\[a-z0-9-\]\+/g, "[a-z0-9-]*");
 }
 
-export function buildIdentityGuardHook(taskId: string, allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS): string {
+/**
+ * Build a task-agnostic pre-commit identity guard hook.
+ *
+ * The generated hook derives the expected branch from the worktree-local
+ * `fusion-task-id` metadata at commit time, so the same hook content is
+ * safe to share across all linked worktrees. Installing the guard for
+ * different task IDs with the same allowed branch patterns produces
+ * identical hook content (except metadata), eliminating shared-hook
+ * overwrite churn.
+ */
+export function buildIdentityGuardHook(allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS): string {
   const allowChecks = allowedBranchPatterns.map((pattern) => `  ${toShellCasePattern(pattern)}) exit 0 ;;`).join("\n");
 
   return `#!/bin/sh
@@ -28,14 +38,10 @@ if [ ! -f "$TASK_FILE" ]; then
 fi
 
 WORKTREE_TASK_ID=$(cat "$TASK_FILE")
-EXPECTED_BRANCH="fusion/${taskId.toLowerCase()}"
+EXPECTED_BRANCH="fusion/$(printf '%s\\n' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"
 
 if ! HEAD_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
   HEAD_BRANCH="detached"
-fi
-
-if [ "$WORKTREE_TASK_ID" != "${taskId}" ] && [ "$WORKTREE_TASK_ID" != "${taskId.toLowerCase()}" ]; then
-  EXPECTED_BRANCH="fusion/$WORKTREE_TASK_ID"
 fi
 
 if [ "$HEAD_BRANCH" = "$EXPECTED_BRANCH" ]; then
@@ -46,7 +52,7 @@ case "$HEAD_BRANCH" in
 ${allowChecks}
 esac
 
-printf '%s\n' "fusion: refusing commit — worktree owns $WORKTREE_TASK_ID but HEAD is $HEAD_BRANCH" >&2
+printf '%s\\n' "fusion: refusing commit — worktree owns $WORKTREE_TASK_ID but HEAD is $HEAD_BRANCH" >&2
 exit 1
 `;
 }
@@ -75,7 +81,7 @@ export async function installTaskWorktreeIdentityGuard(input: {
   taskId: string;
   allowedBranchPatterns?: readonly string[];
 }): Promise<void> {
-  const hook = buildIdentityGuardHook(input.taskId, input.allowedBranchPatterns ?? DEFAULT_ALLOWED_BRANCH_PATTERNS);
+  const hook = buildIdentityGuardHook(input.allowedBranchPatterns ?? DEFAULT_ALLOWED_BRANCH_PATTERNS);
   const metadataPath = await resolveGitPath(input.worktreePath, "fusion-task-id");
   const hookPath = await resolveGitPath(input.worktreePath, "hooks/pre-commit");
 
