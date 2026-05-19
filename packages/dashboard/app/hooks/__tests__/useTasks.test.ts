@@ -1262,7 +1262,7 @@ describe("useTasks", () => {
 
       const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
 
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-AAA", "FN-DELETED"]);
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-AAA"]);
     });
   });
 
