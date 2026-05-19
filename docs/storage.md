@@ -323,7 +323,7 @@ The `tasks.githubTracking` JSON column stores per-task GitHub tracking state (`e
 | `secrets` | Encrypted secret KV rows (`key` unique) with raw BLOB `value_ciphertext` + per-row random `nonce` (AES-256-GCM), per-secret `access_policy` CHECK (`auto`/`prompt`/`deny`), env-materialization metadata (`env_exportable`, `env_export_key`), and read-audit fields (`last_read_at`, `last_read_by`). Plaintext is never written to the database. |
 | `task_documents` | Task-scoped document metadata/content keyed by `(taskId, key)` with current revision pointer. |
 | `task_document_revisions` | Immutable revision history for task documents (content snapshots by revision). |
-| `__meta` | Schema version + monotonic `lastModified` change detector. |
+| `__meta` | Schema version + monotonic `lastModified` change detector, plus one-time bootstrap metadata such as `bootstrappedAt`. |
 | `missions` | Mission-level planning hierarchy root. |
 | `milestones` | Milestones under missions, including dependency lists and validation state. |
 | `slices` | Slices under milestones with plan-state/activation metadata. |
