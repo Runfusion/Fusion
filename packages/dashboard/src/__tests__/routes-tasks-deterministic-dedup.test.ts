@@ -258,7 +258,7 @@ describe("task deterministic dedup", () => {
       expect(store.createTask).toHaveBeenCalledTimes(1);
       expect(runtimeLogger.warn).toHaveBeenCalledTimes(1);
       expect(runtimeLogger.warn).toHaveBeenCalledWith(
-        "FN-5084 deterministic pre-check failed; proceeding",
+        "Deterministic duplicate pre-check failed; proceeding",
         expect.objectContaining({
           lockKey: expect.stringContaining(FINGERPRINT),
           error: "transient sqlite error",
@@ -274,7 +274,7 @@ describe("task deterministic dedup", () => {
       const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({ title: TITLE, description: DESCRIPTION }), { "content-type": "application/json" });
       expect(res.status).toBe(409);
       expect(runtimeLogger.warn).not.toHaveBeenCalledWith(
-        "FN-5084 deterministic pre-check failed; proceeding",
+        "Deterministic duplicate pre-check failed; proceeding",
         expect.anything(),
       );
     });
