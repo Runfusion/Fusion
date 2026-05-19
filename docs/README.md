@@ -58,6 +58,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Contributing](./contributing.md) | Local development setup, testing, release flow, and contributor conventions |
 | [Docker](./docker.md) | Container builds, deployment, and persistence configuration |
 | [Code Signing](./CODE_SIGNING.md) | macOS and Windows code signing configuration for release binaries |
+| [Diagnostics](./diagnostics.md) | Engine diagnostic logging subsystems, structured log keys, and key diagnostic points catalog |
 | [Sandbox Backends](./sandbox.md) | Pluggable sandbox backends for executor command isolation (bubblewrap, spawn-based) |
 | [Secrets](./secrets.md) | Encrypted secrets storage, per-secret access policies, scopes, and agent tool wiring |
 | [Mobile](../MOBILE.md) | Capacitor/PWA mobile development setup and workflow |
@@ -103,6 +104,8 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Distributed Multi-Node Coordination Gap (FN-4819)](./design/fn-4819-distributed-multi-node-coordination-gap.md) | Gap analysis for distributed multi-node agent coordination and cross-node task assignment |
 | [Cross-Node Assignment Wake Contract (FN-4824)](./design/fn-4824-cross-node-assignment-wake-contract.md) | Contract specification for cross-node task assignment wake signaling |
 | [Multi-Node Coordination Validation Findings (FN-4820)](./findings/fn-4820-multi-node-coordination-validation.md) | Validation findings from multi-node coordination testing and edge-case analysis |
+| [Secrets Sync Auth Parity Review (FN-4886)](./reviews/fn-4886-secrets-sync-auth-parity.md) | Review of node secrets sync API authentication parity and security boundaries |
+| [Test Speed Audit (FN-5048)](./test-speed-audit-FN-5048.md) | Measured baseline test performance, offender list, and optimization priorities |
 
 ## External Resources
 

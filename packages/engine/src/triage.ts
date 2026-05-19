@@ -2368,8 +2368,9 @@ export class TriageProcessor {
           const taskCreatedAt = Date.parse(task.createdAt);
           const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
           const isStrictlyOlderOrTieCanonical = (candidate: NearDuplicateCandidate): boolean => {
-            const candidateCreatedAt = candidate.createdAt;
-            if (typeof candidateCreatedAt !== "number" || Number.isNaN(candidateCreatedAt)) {
+            const candidateCreatedAt =
+              typeof candidate.createdAt === "number" ? candidate.createdAt : Number.NaN;
+            if (Number.isNaN(candidateCreatedAt)) {
               return false;
             }
             if (candidateCreatedAt < taskCreatedAt) return true;
