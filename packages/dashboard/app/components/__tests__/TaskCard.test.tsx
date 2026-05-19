@@ -1692,25 +1692,46 @@ describe("TaskCard", () => {
     expect(actionsContainer?.contains(archiveBtn)).toBe(true);
   });
 
-  it("renders in-review Move control inside card-action-row when meta row is visible", () => {
+  it("renders in-review Move control inline in card-meta for overlap-blocked tasks", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ column: "in-review", blockedBy: "FN-777" })}
+        task={makeTask({ column: "in-review", overlapBlockedBy: "FN-OVER", blockedBy: undefined })}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={vi.fn()}
       />,
     );
 
-    const moveButton = screen.getByRole("button", { name: "Move task" });
+    const moveControl = container.querySelector(".card-send-back");
     const metaRow = container.querySelector(".card-meta");
-    const actionRow = container.querySelector(".card-action-row");
 
     expect(metaRow).not.toBeNull();
-    expect(metaRow?.contains(moveButton)).toBe(false);
-    expect(actionRow).not.toBeNull();
-    expect(actionRow?.contains(moveButton)).toBe(true);
-    expect(moveButton.closest(".card-action-row")).not.toBeNull();
+    expect(moveControl).not.toBeNull();
+    expect(metaRow?.contains(moveControl as HTMLElement)).toBe(true);
+    expect(container.querySelector(".card-action-row")).toBeNull();
+  });
+
+  it("renders in-review Move control after queued badge in card-meta", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "in-review", status: "queued" as any, dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined })}
+        queued={true}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={vi.fn()}
+      />,
+    );
+
+    const metaRow = container.querySelector(".card-meta");
+    const queuedBadge = container.querySelector(".queued-badge");
+    const moveControl = container.querySelector(".card-send-back");
+
+    expect(metaRow).not.toBeNull();
+    expect(queuedBadge).not.toBeNull();
+    expect(moveControl).not.toBeNull();
+    expect(metaRow?.contains(moveControl as HTMLElement)).toBe(true);
+    expect(queuedBadge?.compareDocumentPosition(moveControl as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector(".card-action-row")).toBeNull();
   });
 
   it("keeps in-review Move control in card-action-row when meta row is not visible", () => {
@@ -1751,23 +1772,24 @@ describe("TaskCard", () => {
     expect(moveButton.closest(".card-action-row")).toBe(actionRow);
     expect(createPrButton.compareDocumentPosition(moveButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    const moveControl = container.querySelector(".card-action-row .card-send-back") as HTMLElement | null;
+    const moveControl = moveButton.closest(".card-send-back") as HTMLElement | null;
     expect(moveControl).not.toBeNull();
     expect(getComputedStyle(moveControl as HTMLElement).marginLeft).toBe("auto");
 
     fireEvent.click(moveButton);
     const menu = screen.getByRole("menu");
+    expect(moveControl?.contains(menu)).toBe(true);
     const menuStyle = getComputedStyle(menu);
     expect(menuStyle.right).toBe("0px");
     expect(menuStyle.left).not.toBe("0px");
   });
 
   it.each([
-    { name: "meta-row-visible variant", task: makeTask({ column: "in-review", blockedBy: "FN-777" }) },
-    { name: "no-meta variant", task: makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any }) },
-  ])("keeps Move dropdown behavior for $name", ({ task }) => {
+    { name: "meta-row-visible variant", task: makeTask({ column: "in-review", blockedBy: "FN-777" }), expectedContainer: ".card-meta" },
+    { name: "no-meta variant", task: makeTask({ column: "in-review", dependencies: [], blockedBy: undefined, overlapBlockedBy: undefined, status: undefined as any }), expectedContainer: ".card-action-row" },
+  ])("keeps Move dropdown behavior for $name", ({ task, expectedContainer }) => {
     const onMoveTask = vi.fn();
-    render(
+    const { container } = render(
       <TaskCard
         task={task}
         onOpenDetail={noop}
@@ -1776,7 +1798,11 @@ describe("TaskCard", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Move task" }));
+    const host = container.querySelector(expectedContainer);
+    const moveButton = screen.getByRole("button", { name: "Move task" });
+    expect(host?.contains(moveButton)).toBe(true);
+
+    fireEvent.click(moveButton);
 
     expect(screen.getAllByRole("menuitem").length).toBeGreaterThan(0);
 

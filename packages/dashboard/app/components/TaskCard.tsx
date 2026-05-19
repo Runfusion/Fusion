@@ -1088,6 +1088,37 @@ function TaskCardComponent({
     || Boolean(task.blockedBy)
     || Boolean(task.overlapBlockedBy)
     || Boolean(fanout && fanout.totalCount > 0);
+  const shouldRenderActionRow = showCreatePrQuickAction || (showInReviewMoveControl && !metaRowVisible);
+
+  const renderInReviewMoveControl = () => (
+    <div className="card-send-back" ref={sendBackRef}>
+      <button
+        className="card-send-back-btn"
+        onClick={handleSendBackClick}
+        title="Move task"
+        aria-label="Move task"
+        aria-haspopup="menu"
+        aria-expanded={showSendBackMenu}
+      >
+        Move
+        <ChevronDown size={10} />
+      </button>
+      {showSendBackMenu && (
+        <div className="card-send-back-menu" role="menu">
+          {VALID_TRANSITIONS["in-review"].map((col) => (
+            <button
+              key={col}
+              className="card-send-back-menu-item"
+              role="menuitem"
+              onClick={(e) => handleSendBackOptionClick(e, col)}
+            >
+              {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   const enterEditMode = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -1897,7 +1928,7 @@ function TaskCardComponent({
             </span>
           )}
           {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
-          
+          {showInReviewMoveControl && renderInReviewMoveControl()}
         </div>
       )}
       {(task.assignedAgentId || taskProviders.length > 0) && (
@@ -1923,7 +1954,7 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {(showCreatePrQuickAction || showInReviewMoveControl) && (
+      {shouldRenderActionRow && (
         <div className="card-action-row">
           {showCreatePrQuickAction && (
             <button
@@ -1940,35 +1971,7 @@ function TaskCardComponent({
               Create PR
             </button>
           )}
-          {showInReviewMoveControl && (
-            <div className="card-send-back" ref={sendBackRef}>
-              <button
-                className="card-send-back-btn"
-                onClick={handleSendBackClick}
-                title="Move task"
-                aria-label="Move task"
-                aria-haspopup="menu"
-                aria-expanded={showSendBackMenu}
-              >
-                Move
-                <ChevronDown size={10} />
-              </button>
-              {showSendBackMenu && (
-                <div className="card-send-back-menu" role="menu">
-                  {VALID_TRANSITIONS["in-review"].map((col) => (
-                    <button
-                      key={col}
-                      className="card-send-back-menu-item"
-                      role="menuitem"
-                      onClick={(e) => handleSendBackOptionClick(e, col)}
-                    >
-                      {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {showInReviewMoveControl && !metaRowVisible && renderInReviewMoveControl()}
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />
