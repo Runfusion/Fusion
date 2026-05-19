@@ -14,6 +14,8 @@ type ShutdownReason =
   | { kind: "test"; label: string };
 
 export interface SuperviseSpawnOptions extends Omit<SpawnOptions, "detached"> {
+  /** Override spawn for tests or alternate process factories. */
+  spawnImpl?: typeof spawn;
   /**
    * Grace period between SIGTERM and SIGKILL when the supervisor tears a child
    * down because the parent is exiting or a lifetime limit expires.
@@ -246,11 +248,12 @@ export function superviseSpawn(
   const {
     killGraceMs = DEFAULT_KILL_GRACE_MS,
     maxLifetimeMs = DEFAULT_MAX_LIFETIME_MS,
+    spawnImpl = spawn,
     ...spawnOptions
   } = options;
 
   const processGroup = usesProcessGroup();
-  const child = spawn(command, [...args], {
+  const child = spawnImpl(command, [...args], {
     ...spawnOptions,
     detached: processGroup,
   });

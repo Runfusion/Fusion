@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { exec, execFile, spawn, type ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
 import { promisify } from "node:util";
+import { superviseSpawn } from "@fusion/core";
 import { remoteTunnelLog } from "../logger.js";
 import {
   getTunnelProviderAdapter,
@@ -306,13 +307,15 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
 
     this.emitLog("info", "manager", `Starting ${provider} tunnel: ${command.redactedPreview}`);
 
-    const child = this.spawnImpl(command.command, command.args, {
+    const supervised = superviseSpawn(command.command, command.args, {
       cwd: command.cwd,
       env: command.env,
-      detached: process.platform !== "win32",
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      maxLifetimeMs: 24 * 60 * 60 * 1_000,
+      spawnImpl: this.spawnImpl,
     });
+    const child = supervised.child;
 
     this.processHandle = {
       provider,

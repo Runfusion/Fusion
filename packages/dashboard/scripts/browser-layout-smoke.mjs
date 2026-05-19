@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { superviseSpawn } from "@fusion/core";
 import { readFile, rm, stat, mkdtemp } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
@@ -469,7 +470,7 @@ async function findBrowserExecutable() {
 
 async function launchBrowser(executable) {
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), "fusion-dashboard-browser-smoke-"));
-  const browser = spawn(executable, [
+  const supervised = superviseSpawn(executable, [
     "--headless=new",
     "--disable-gpu",
     "--disable-dev-shm-usage",
@@ -480,7 +481,9 @@ async function launchBrowser(executable) {
     "about:blank",
   ], {
     stdio: ["ignore", "pipe", "pipe"],
+    maxLifetimeMs: 60_000,
   });
+  const browser = supervised.child;
 
   try {
     const wsUrl = await new Promise((resolve, reject) => {
