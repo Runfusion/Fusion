@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync, spawnSync } from "node:child_process";
-import { BranchAttributionError, filterFilesToOwnTaskCommits } from "../../branch-attribution.js";
+import { filterFilesToOwnTaskCommits } from "../../branch-attribution.js";
 
 const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -82,8 +82,26 @@ describeIfGit("FN-5103 reliability interaction: landed-files attribution", () =>
     expect(attribution.foreignCommits.length).toBe(1);
   });
 
-  it("supports attribution failure fallback signal path", async () => {
-    const error = new BranchAttributionError("synthetic attribution failure");
-    expect(error.message).toContain("synthetic attribution failure");
+  it("surfaces attribution failure when git reads fail", async () => {
+    const { repoDir, baseSha } = await initRepo("fn-5103-ri-");
+    dirs.push(repoDir);
+    const taskId = "FN-5103";
+
+    git(repoDir, `git checkout -b fusion/${taskId.toLowerCase()}`);
+    await commitFile(repoDir, "task-owned.ts", "owned\n", "feat(FN-5103): own", taskId);
+
+    await expect(
+      filterFilesToOwnTaskCommits({
+        worktreePath: repoDir,
+        baseRef: baseSha,
+        taskId,
+        execAsyncImpl: async () => {
+          throw new Error("forced attribution failure");
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "BranchAttributionError",
+      message: expect.stringContaining("forced attribution failure"),
+    });
   });
 });
