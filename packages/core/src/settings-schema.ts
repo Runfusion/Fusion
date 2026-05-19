@@ -285,6 +285,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   taskStuckTimeoutMs: 600_000,
   inReviewStallDeadlockThreshold: 3,
   stalePausedReviewThresholdMs: 24 * 60 * 60_000,
+  inReviewStalledThresholdMs: 24 * 60 * 60_000,
   stalePausedTodoThresholdMs: 24 * 60 * 60_000,
   pausedScopeDecayMs: 30 * 60_000,
   metaTaskStallAutoCloseMs: 2 * 60 * 60_000,

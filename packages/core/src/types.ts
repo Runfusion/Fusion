@@ -1,4 +1,5 @@
 import type { InReviewStallSignal } from "./in-review-stall.js";
+import type { InReviewStalledSignal } from "./in-review-stalled.js";
 import type { StalePausedReviewSignal } from "./stale-paused-review.js";
 import type { StalePausedTodoSignal } from "./stale-paused-todo.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
@@ -1597,6 +1598,9 @@ export interface Task {
   /** Server-computed stale paused review diagnostic signal. Undefined when no rule matches.
    *  Diagnostic-only: must not trigger automatic state mutation. */
   stalePausedReview?: StalePausedReviewSignal;
+  /** Server-computed in-review quiet-window diagnostic signal. Undefined when no rule matches.
+   *  Diagnostic-only: must not trigger automatic state mutation. */
+  inReviewStalled?: InReviewStalledSignal;
   /** Server-computed stale paused todo diagnostic signal. Undefined when no rule matches.
    *  Diagnostic-only: must not trigger automatic state mutation. */
   stalePausedTodo?: StalePausedTodoSignal;
@@ -2975,6 +2979,11 @@ export interface ProjectSettings {
    *  Age is measured from columnMovedAt when present, otherwise updatedAt.
    *  Default: 86400000 (24 hours). Set to 0 or undefined to disable surfacing. */
   stalePausedReviewThresholdMs?: number;
+  /** Threshold in milliseconds for surfacing unpaused in-review tasks quiet beyond a time window.
+   *  Default: 86400000 (24 hours). Set to 0 to disable. Gates `surfaceInReviewStalled`
+   *  and the `Task.inReviewStalled` hydration.
+   */
+  inReviewStalledThresholdMs?: number;
   /** Threshold in milliseconds for surfacing paused todo tasks as stale.
    *  Age is measured from columnMovedAt when present, otherwise updatedAt.
    *  Default: 86400000 (24 hours). Set to 0 or undefined to disable surfacing. */

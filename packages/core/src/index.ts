@@ -248,6 +248,11 @@ export {
 } from "./stale-paused-review.js";
 export type { StalePausedReviewCode, StalePausedReviewSignal } from "./stale-paused-review.js";
 export {
+  getInReviewStalledSignal,
+  DEFAULT_IN_REVIEW_STALLED_THRESHOLD_MS,
+} from "./in-review-stalled.js";
+export type { InReviewStalledCode, InReviewStalledSignal } from "./in-review-stalled.js";
+export {
   getStalePausedTodoSignal,
   DEFAULT_STALE_PAUSED_TODO_THRESHOLD_MS,
 } from "./stale-paused-todo.js";
