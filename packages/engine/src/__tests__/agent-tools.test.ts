@@ -174,6 +174,29 @@ describe("createTaskCreateTool", () => {
     }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
   });
 
+  it("surfaces linked-existing text when deterministic duplicate is found", async () => {
+    const existing = { id: "PROJ-500", description: "duplicate", dependencies: [], column: "triage" };
+    vi.spyOn(core, "runDeterministicDuplicateGuard").mockResolvedValueOnce({
+      action: "duplicate",
+      fingerprint: "fp",
+      existing: existing as any,
+      releaseLock: vi.fn(),
+    });
+
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
+      getRootDir: vi.fn().mockReturnValue("/tmp"),
+      createTask: vi.fn(),
+    };
+
+    const tool = createTaskCreateTool(store as any);
+    const result = await tool.execute("call-1", { description: "duplicate" } as any, undefined, undefined, {} as any);
+
+    const responseText = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(responseText).toContain("Linked existing PROJ-500: duplicate");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
   it("createAgentTask returns existing task on deterministic duplicate", async () => {
     const created = { id: "FN-200", description: "duplicate", dependencies: [], column: "triage" };
     vi.spyOn(core, "runDeterministicDuplicateGuard")
@@ -231,6 +254,30 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
     }), expect.any(Object));
+  });
+
+  it("uses linked-existing wording when delegated task is a deterministic duplicate", async () => {
+    vi.spyOn(core, "runDeterministicDuplicateGuard").mockResolvedValueOnce({
+      action: "duplicate",
+      fingerprint: "fp",
+      existing: { id: "FN-200", dependencies: [], description: "Delegated", column: "todo" } as any,
+      releaseLock: vi.fn(),
+    });
+
+    const agentStore = {
+      getAgent: vi.fn().mockResolvedValue({ id: "agent-1", name: "Worker", role: "executor", state: "idle" }),
+    };
+    const taskStore = {
+      getSettings: vi.fn().mockResolvedValue({ autoSummarizeTitles: false }),
+      getRootDir: vi.fn().mockReturnValue("/tmp"),
+      createTask: vi.fn(),
+    };
+
+    const tool = createDelegateTaskTool(agentStore as any, taskStore as any);
+    const result = await tool.execute("call-1", { agent_id: "agent-1", description: "Delegated" } as any, undefined, undefined, {} as any);
+    const responseText = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(responseText).toContain("Linked existing FN-200");
+    expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
   it("wires title summarization callback when rootDir is provided", async () => {
