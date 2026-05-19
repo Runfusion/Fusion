@@ -1447,7 +1447,11 @@ function TaskCardComponent({
       // "touched during execution" and never as landed "files changed".
       let displayCount: number | undefined;
       if (diffStats) {
-        displayCount = diffStats.filesChanged;
+        const landed = task.mergeDetails?.landedFiles;
+        const restricted = task.mergeDetails?.landedFilesAttributionRestricted === true;
+        displayCount = (restricted && Array.isArray(landed))
+          ? Math.min(diffStats.filesChanged, landed.length)
+          : diffStats.filesChanged;
       } else if (diffLoading) {
         displayCount = task.mergeDetails?.filesChanged ?? undefined;
       } else {
