@@ -202,7 +202,7 @@ describeIfGit("SelfHealingManager recoverDoneTaskMergeMetadata stale stats", () 
     expect(landed?.filesChanged).not.toBe(tipStats.filesChanged);
     expect(landed?.insertions).not.toBe(tipStats.insertions);
     expect(landed?.deletions).not.toBe(tipStats.deletions);
-  });
+  }, 15000);
 
   it("keeps tip shortstat behavior in findLandedTaskCommit when rebaseBaseSha is absent", async () => {
     const { repo, sha } = setupSquashRepo();

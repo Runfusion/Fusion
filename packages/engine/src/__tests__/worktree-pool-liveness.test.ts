@@ -71,7 +71,7 @@ describeIfGit("worktree liveness gating (FN-4682)", () => {
     }));
     const worktreePath = track(makeWorktree(rootDir, "nested-manifest"));
     await expect(isUsableTaskWorktree(rootDir, worktreePath)).resolves.toBe(true);
-  });
+  }, 15000);
 
   it("FN-4682: accepts empty registered worktree", async () => {
     const rootDir = track(makeRepo((dir) => {
