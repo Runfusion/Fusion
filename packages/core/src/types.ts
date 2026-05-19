@@ -1783,6 +1783,7 @@ export interface Task {
    *  Set once on first transition to `done`; may be cleared on reopen to
    *  todo/triage when resume state is not preserved. */
   executionCompletedAt?: string;
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
