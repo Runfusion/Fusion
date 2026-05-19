@@ -5735,6 +5735,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         this.emit("task:updated", dependentTask);
       }
 
+      const linkedFeature = this.missionStore?.getFeatureByTaskId(id);
+      if (linkedFeature) {
+        this.missionStore?.unlinkFeatureFromTask(linkedFeature.id);
+      }
+
       this.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
       return task;
     });

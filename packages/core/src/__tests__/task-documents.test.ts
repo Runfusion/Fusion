@@ -51,7 +51,7 @@ describe("TaskStore task documents", () => {
 
     expect(tableNames.has("task_documents")).toBe(true);
     expect(tableNames.has("task_document_revisions")).toBe(true);
-    expect(db.getSchemaVersion()).toBe(86);
+    expect(db.getSchemaVersion()).toBe(87);
 
     const index = db
       .prepare(
@@ -280,17 +280,17 @@ describe("TaskStore task documents", () => {
     );
   });
 
-  it("deletes task documents via foreign key cascade when a task is deleted", async () => {
-    const task = await store.createTask({ description: "Cascade task" });
+  it("preserves task documents when a task is soft-deleted", async () => {
+    const task = await store.createTask({ description: "Soft delete docs task" });
     await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
 
     await store.deleteTask(task.id);
 
     const documents = await store.getTaskDocuments(task.id);
-    expect(documents).toEqual([]);
+    expect(documents).toHaveLength(1);
 
     const document = await store.getTaskDocument(task.id, "plan");
-    expect(document).toBeNull();
+    expect(document?.content).toBe("v1");
   }, 15_000);
 
   it("accepts valid key edge cases and rejects invalid ones", async () => {

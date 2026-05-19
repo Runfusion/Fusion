@@ -1360,28 +1360,36 @@ export class Database {
         )
       `);
 
+      const hasTaskTitle = this.hasColumn("tasks", "title");
+      const hasDeletedAt = this.hasColumn("tasks", "deletedAt");
+      const insertWhenClause = hasDeletedAt ? "WHEN NEW.deletedAt IS NULL " : "";
+
       this.db.exec(`
         CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks
-        WHEN NEW.deletedAt IS NULL BEGIN
+        ${insertWhenClause}BEGIN
           INSERT INTO tasks_fts(rowid, id, title, description, comments)
           VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
         END
       `);
 
-      const hasTaskTitle = this.hasColumn("tasks", "title");
       const updateColumns = hasTaskTitle
-        ? "id, title, description, comments, deletedAt"
-        : "id, description, comments, deletedAt";
+        ? hasDeletedAt
+          ? "id, title, description, comments, deletedAt"
+          : "id, title, description, comments"
+        : hasDeletedAt
+          ? "id, description, comments, deletedAt"
+          : "id, description, comments";
       const oldTitle = hasTaskTitle ? "COALESCE(old.title, '')" : "''";
       const newTitle = hasTaskTitle ? "COALESCE(new.title, '')" : "''";
 
+      const liveRowPredicate = hasDeletedAt ? "new.deletedAt IS NULL" : "1 = 1";
       this.db.exec(`
         CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE OF ${updateColumns} ON tasks BEGIN
           INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
             VALUES('delete', old.rowid, old.id, ${oldTitle}, old.description, COALESCE(old.comments, '[]'));
           INSERT INTO tasks_fts(rowid, id, title, description, comments)
             SELECT new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]')
-            WHERE new.deletedAt IS NULL;
+            WHERE ${liveRowPredicate};
         END
       `);
 
@@ -2013,31 +2021,38 @@ export class Database {
         }
 
         // AFTER INSERT trigger - index new tasks
+        const hasTaskTitle = this.hasColumn("tasks", "title");
+        const hasDeletedAt = this.hasColumn("tasks", "deletedAt");
+        const insertWhenClause = hasDeletedAt ? "WHEN NEW.deletedAt IS NULL " : "";
         this.db.exec(`
           CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks
-          WHEN NEW.deletedAt IS NULL BEGIN
+          ${insertWhenClause}BEGIN
             INSERT INTO tasks_fts(rowid, id, title, description, comments)
             VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
           END
         `);
 
-        const hasTaskTitle = this.hasColumn("tasks", "title");
         const updateColumns = hasTaskTitle
-          ? "id, title, description, comments, deletedAt"
-          : "id, description, comments, deletedAt";
+          ? hasDeletedAt
+            ? "id, title, description, comments, deletedAt"
+            : "id, title, description, comments"
+          : hasDeletedAt
+            ? "id, description, comments, deletedAt"
+            : "id, description, comments";
         const oldTitle = hasTaskTitle ? "COALESCE(old.title, '')" : "''";
         const newTitle = hasTaskTitle ? "COALESCE(new.title, '')" : "''";
 
         // AFTER UPDATE trigger - reindex updated tasks (delete old + insert new).
         // Restrict this to searchable columns so log/status churn does not bloat
         // the FTS index during long-running executor activity.
+        const liveRowPredicate = hasDeletedAt ? "new.deletedAt IS NULL" : "1 = 1";
         this.db.exec(`
           CREATE TRIGGER IF NOT EXISTS tasks_fts_au AFTER UPDATE OF ${updateColumns} ON tasks BEGIN
             INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
               VALUES('delete', old.rowid, old.id, ${oldTitle}, old.description, COALESCE(old.comments, '[]'));
             INSERT INTO tasks_fts(rowid, id, title, description, comments)
               SELECT new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]')
-              WHERE new.deletedAt IS NULL;
+              WHERE ${liveRowPredicate};
           END
         `);
 
@@ -2471,12 +2486,18 @@ export class Database {
           return;
         }
         const hasTaskTitle = this.hasColumn("tasks", "title");
+        const hasDeletedAt = this.hasColumn("tasks", "deletedAt");
         const updateColumns = hasTaskTitle
-          ? "id, title, description, comments, deletedAt"
-          : "id, description, comments, deletedAt";
+          ? hasDeletedAt
+            ? "id, title, description, comments, deletedAt"
+            : "id, title, description, comments"
+          : hasDeletedAt
+            ? "id, description, comments, deletedAt"
+            : "id, description, comments";
         const oldTitle = hasTaskTitle ? "COALESCE(old.title, '')" : "''";
         const newTitle = hasTaskTitle ? "COALESCE(new.title, '')" : "''";
 
+        const liveRowPredicate = hasDeletedAt ? "new.deletedAt IS NULL" : "1 = 1";
         this.db.exec(`
           DROP TRIGGER IF EXISTS tasks_fts_au;
           CREATE TRIGGER tasks_fts_au AFTER UPDATE OF ${updateColumns} ON tasks BEGIN
@@ -2484,7 +2505,7 @@ export class Database {
               VALUES('delete', old.rowid, old.id, ${oldTitle}, old.description, COALESCE(old.comments, '[]'));
             INSERT INTO tasks_fts(rowid, id, title, description, comments)
               SELECT new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]')
-              WHERE new.deletedAt IS NULL;
+              WHERE ${liveRowPredicate};
           END;
         `);
 
