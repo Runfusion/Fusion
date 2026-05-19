@@ -2,7 +2,7 @@ import "./InlineCreateCard.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskCreateInput, type TaskPriority, type Settings } from "@fusion/core";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { checkDuplicateTasks, fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents, DuplicateCandidatesError } from "../api";
@@ -22,11 +22,9 @@ interface PendingImage {
   previewUrl: string;
 }
 
-type InlineCreateTaskInput = TaskCreateInput & { acknowledgedDuplicates?: string[] };
-
 interface InlineCreateCardProps {
   tasks: Task[];
-  onSubmit: (input: TaskCreateInput) => Promise<Task>;
+  onSubmit: (input: CreateTaskInput) => Promise<Task>;
   onCancel: () => void;
   addToast: (msg: string, type?: ToastType) => void;
   projectId?: string;

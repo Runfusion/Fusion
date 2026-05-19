@@ -277,7 +277,7 @@ describe("task deterministic dedup", () => {
     });
 
     it("returns 500 when synthetic leader lock rejection is injected", async () => {
-      const { app, store, runtimeLogger } = buildApp();
+      const { app, store } = buildApp();
       const lockKey = `p-1:${FINGERPRINT}`;
       const rejectedLeaderLock = Promise.reject(new Error("leader lock failed"));
       rejectedLeaderLock.catch(() => {});
@@ -289,13 +289,8 @@ describe("task deterministic dedup", () => {
 
       const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({ title: TITLE, description: DESCRIPTION }), { "content-type": "application/json" });
 
-      expect(res.status).toBe(201);
-      expect(store.createTask).toHaveBeenCalledTimes(1);
-      expect(runtimeLogger.warn).toHaveBeenCalledTimes(1);
-      expect(runtimeLogger.warn).toHaveBeenCalledWith(
-        "Deterministic duplicate pre-check failed; proceeding",
-        expect.objectContaining({ lockKey: expect.stringContaining(FINGERPRINT) }),
-      );
+      expect(res.status).toBe(500);
+      expect(store.createTask).not.toHaveBeenCalled();
     });
 
     it("releases lock on fail-open path so follow-up request resolves", async () => {

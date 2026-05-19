@@ -79,7 +79,7 @@ describe("POST /api/tasks/:id/recover-branch-binding", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns 404 when recover-branch-binding route is unavailable", async () => {
+  it("returns 400 when task is not in-review", async () => {
     const store = new MockStore();
     store.addTask(makeTask({ id: "FN-1", column: "todo" }));
     const app = createServer(store as any, {
@@ -90,10 +90,10 @@ describe("POST /api/tasks/:id/recover-branch-binding", () => {
     });
     const { request } = await import("../test-request.js");
     const response = await request(app, "POST", "/api/tasks/FN-1/recover-branch-binding");
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(400);
   });
 
-  it("returns 404 even when self-healing manager is provided", async () => {
+  it("returns 200 and invokes rebind when self-healing manager is provided", async () => {
     const store = new MockStore();
     store.addTask(makeTask({ id: "FN-2" }));
     const reconcile = vi.fn().mockResolvedValue({ repaired: 1, outcomes: [] });
@@ -105,11 +105,11 @@ describe("POST /api/tasks/:id/recover-branch-binding", () => {
     });
     const { request } = await import("../test-request.js");
     const response = await request(app, "POST", "/api/tasks/FN-2/recover-branch-binding");
-    expect(response.status).toBe(404);
-    expect(reconcile).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(reconcile).toHaveBeenCalledWith({ includeTaskIds: new Set(["FN-2"]) });
   });
 
-  it("returns 404 regardless of ambiguous candidate payload", async () => {
+  it("returns 200 for ambiguous candidate payload", async () => {
     const store = new MockStore();
     store.addTask(makeTask({ id: "FN-3" }));
     const app = createServer(store as any, {
@@ -133,6 +133,6 @@ describe("POST /api/tasks/:id/recover-branch-binding", () => {
     });
     const { request } = await import("../test-request.js");
     const response = await request(app, "POST", "/api/tasks/FN-3/recover-branch-binding");
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
   });
 });
