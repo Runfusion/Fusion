@@ -284,6 +284,7 @@ export function useChat(
 
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+  const lastAttachedGenerationRef = useRef<{ sessionId: string; replayFromEventId: number | null } | null>(null);
   const cancelledByUserRef = useRef(false);
   const pendingMessageRef = useRef("");
   // Cancel any pending requestAnimationFrame flushes from the active stream.
@@ -388,6 +389,7 @@ export function useChat(
 
   useEffect(() => {
     hasRestoredActiveSessionRef.current = false;
+    lastAttachedGenerationRef.current = null;
   }, [projectId]);
 
   useEffect(() => {
@@ -498,6 +500,7 @@ export function useChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
+        lastAttachedGenerationRef.current = null;
         void loadMessages(sessionId);
         flushPendingMessage();
       },
@@ -508,6 +511,7 @@ export function useChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
+        lastAttachedGenerationRef.current = null;
         const failureInfo = normalizeFailureInfo(data);
         if (!options?.silent) {
           addToast?.(failureInfo.summary, "error");
@@ -523,6 +527,12 @@ export function useChat(
         : {}),
     });
     streamRef.current = stream;
+    lastAttachedGenerationRef.current = {
+      sessionId,
+      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
+        ? inFlightGeneration.replayFromEventId
+        : null,
+    };
     return true;
   }, [addToast, loadMessages, projectId, flushPendingMessage]);
 
@@ -539,6 +549,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
 
       // Find and set active session
       const session = sessionOverride ?? sessions.find((s) => s.id === id);
@@ -586,6 +597,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
       const newSession: ChatSessionInfo = {
         id: data.session.id,
         title: data.session.title,
@@ -619,6 +631,7 @@ export function useChat(
       setSessions((prev) => prev.filter((s) => s.id !== id));
       // If it was the active session, clear it
       if (activeSession?.id === id) {
+        lastAttachedGenerationRef.current = null;
         setActiveSession(null);
         setMessages([]);
       }
@@ -633,6 +646,9 @@ export function useChat(
       if (activeSession?.id === id && streamRef.current) {
         streamRef.current.close();
         streamRef.current = null;
+      }
+      if (activeSession?.id === id) {
+        lastAttachedGenerationRef.current = null;
       }
 
       await deleteChatSession(id, projectId);
@@ -661,6 +677,7 @@ export function useChat(
     cancelStreamingFlushesRef.current = null;
     streamRef.current?.close();
     streamRef.current = null;
+    lastAttachedGenerationRef.current = null;
 
     void cancelChatResponse(activeSession.id, projectId).catch(() => {
       // Best-effort cancellation; ignore backend errors.
@@ -738,6 +755,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
 
       // Optimistically add user message
       const tempId = `temp-${Date.now()}`;
@@ -803,6 +821,7 @@ export function useChat(
           setIsStreaming(false);
           isStreamingRef.current = false;
           streamRef.current = null;
+          lastAttachedGenerationRef.current = null;
 
           // Clean up tracked ID after a short delay (SSE event should arrive quickly)
           setTimeout(() => {
@@ -841,6 +860,7 @@ export function useChat(
           setIsStreaming(false);
           isStreamingRef.current = false;
           streamRef.current = null;
+          lastAttachedGenerationRef.current = null;
           console.error("[useChat] Stream error:", data);
 
           if (shouldSuppressSuspensionError) {
@@ -879,6 +899,22 @@ export function useChat(
           s.agentId.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : sessions;
+
+  useEffect(() => {
+    if (!activeSession?.id || activeSession.isGenerating !== true || streamRef.current) {
+      return;
+    }
+
+    const replayFromEventId = typeof activeSession.inFlightGeneration?.replayFromEventId === "number"
+      ? activeSession.inFlightGeneration.replayFromEventId
+      : null;
+    const lastAttached = lastAttachedGenerationRef.current;
+    if (lastAttached?.sessionId === activeSession.id && lastAttached.replayFromEventId === replayFromEventId) {
+      return;
+    }
+
+    attachIfGenerating(activeSession.id, activeSession.inFlightGeneration, { silent: true });
+  }, [activeSession?.id, activeSession?.isGenerating, activeSession?.inFlightGeneration, attachIfGenerating]);
 
   // Recovery mode polling: if reloaded mid-generation, keep waiting state alive
   // until generation finishes and messages can be reloaded.
@@ -1092,6 +1128,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
     };
   }, []);
 
