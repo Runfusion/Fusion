@@ -3430,8 +3430,8 @@ export class SelfHealingManager {
   async finalizeNoOpReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
-      if (!settings.autoMerge) return 0;
       if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
 
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((t) =>
@@ -3684,8 +3684,8 @@ export class SelfHealingManager {
       // PR-based review flow (`autoMerge: false`, `mergeStrategy:
       // "pull-request"`) — see GitHub issue #21.
       const settings = await this.store.getSettings();
-      if (!settings.autoMerge) return 0;
       if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
 
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
@@ -3790,6 +3790,7 @@ export class SelfHealingManager {
    * per-task `postReviewFixCount` so a persistently-failing verifier cannot
    * ping-pong a task forever.
    *
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    * @returns Number of tasks sent back for fix
    */
   async recoverReviewTasksWithFailedPreMergeSteps(): Promise<number> {
@@ -3798,6 +3799,8 @@ export class SelfHealingManager {
 
     try {
       const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
       const maxFixes = settings.maxPostReviewFixes ?? 1;
       if (!Number.isFinite(maxFixes) || maxFixes <= 0) return 0;
 
@@ -3881,10 +3884,13 @@ export class SelfHealingManager {
    *
    * Moving them back to `todo` lets the normal scheduler/executor resume the
    * incomplete step instead of leaving the task stranded in review.
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    */
   async recoverStaleIncompleteReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
       const timeoutMs = settings.taskStuckTimeoutMs;
       if (!timeoutMs || timeoutMs <= 0) return 0;
 
@@ -4239,12 +4245,16 @@ export class SelfHealingManager {
     }
   }
 
+  /**
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
+   */
   async recoverGhostReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
       const timeoutMs = settings.taskStuckTimeoutMs;
       if (!timeoutMs || timeoutMs <= 0) return 0;
       if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
 
       const now = Date.now();
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
@@ -4302,11 +4312,14 @@ export class SelfHealingManager {
    * If no landed commit is found, it only clears the stale transient status so
    * the normal mergeable-review recovery can retry the merge.
    *
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    * @returns Number of tasks finalized or unblocked
    */
   async recoverInterruptedMergingTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
       const timeoutMs = settings.taskStuckTimeoutMs;
       if (!timeoutMs || timeoutMs <= 0) return 0;
 
@@ -4586,10 +4599,15 @@ export class SelfHealingManager {
    * but a later transition failed or another process moved the task before the
    * final `in-review` → `done` update completed.
    *
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    * @returns Number of tasks recovered
    */
   async recoverMergedReviewTasks(): Promise<number> {
     try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
+
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const mergedButNotDone = tasks.filter((t) =>
@@ -4680,10 +4698,14 @@ export class SelfHealingManager {
    * Recover deadlocked retry-exhausted merge failures that are still blocking
    * dispatch via `blockedBy` or retained worktree ownership.
    */
+  /**
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
+   */
   async recoverStuckMergeDeadlocks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
 
       const now = Date.now();
       const inReview = await this.store.listTasks({ column: "in-review", slim: true });
@@ -4832,10 +4854,14 @@ export class SelfHealingManager {
     return { declaredScope, stagedFiles };
   }
 
+  /**
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
+   */
   async recoverOrphanOnlyScopeViolations(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
@@ -4987,11 +5013,13 @@ export class SelfHealingManager {
    *
    * Idempotency: recovered tasks are moved to `done`, status/error are cleared,
    * and mergeRetries reset to 0, so subsequent sweeps will not match them.
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    */
   async recoverAlreadyMergedReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
@@ -5107,7 +5135,14 @@ export class SelfHealingManager {
     }
   }
 
+  /**
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
+   */
   async recoverCompletionHandoffLimbo(): Promise<void> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return;
+    if (!settings.autoMerge) return;
+
     const tasks = await this.store.listTasks({ column: "in-review", slim: false });
     const now = Date.now();
 
@@ -6024,9 +6059,14 @@ export class SelfHealingManager {
    * `restart-recovery-coordinator.ts`.
    * We clear stale worktree metadata and failure state, keep step progress and
    * retry counters, then requeue to todo for a clean retry.
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    */
   async recoverMissingWorktreeReviewFailures(): Promise<number> {
     try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
+
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
         isRecoverableMissingWorktreeReviewFailureWithProgress(task)
@@ -6088,10 +6128,15 @@ export class SelfHealingManager {
    * - `recoverNoProgressNoTaskDoneFailures`: `in-progress` with zero progress → clean requeue.
    * - This one: `in-review` with partial progress → bounded requeue preserving work.
    *
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
    * @returns Number of tasks requeued for retry
    */
   async recoverPartialProgressNoTaskDoneFailures(): Promise<number> {
     try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (!settings.autoMerge) return 0;
+
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const candidates = tasks.filter((task) =>
