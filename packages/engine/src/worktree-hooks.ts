@@ -35,7 +35,7 @@ if ! HEAD_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
 fi
 
 if [ "$WORKTREE_TASK_ID" != "${taskId}" ] && [ "$WORKTREE_TASK_ID" != "${taskId.toLowerCase()}" ]; then
-  EXPECTED_BRANCH="fusion/$WORKTREE_TASK_ID"
+  EXPECTED_BRANCH="fusion/$(printf '%s\n' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"
 fi
 
 if [ "$HEAD_BRANCH" = "$EXPECTED_BRANCH" ]; then
