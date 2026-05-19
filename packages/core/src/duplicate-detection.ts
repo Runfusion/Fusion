@@ -30,7 +30,7 @@ export interface ContentFingerprintInput {
 const DEFAULT_THRESHOLD = 0.45;
 const DEFAULT_LIMIT = 5;
 const DEFAULT_EXCLUDE_COLUMNS: Column[] = ["done", "archived"];
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   "a",
   "an",
   "the",
@@ -74,7 +74,7 @@ export function computeContentFingerprint(
     .digest("hex");
 }
 
-function tokenize(value: string): string[] {
+export function tokenize(value: string): string[] {
   return value
     .toLowerCase()
     .split(/\W+/)

@@ -131,6 +131,8 @@ export {
   SelfDefeatingDependencyError,
 } from "./store.js";
 export {
+  STOPWORDS,
+  tokenize,
   computeContentFingerprint,
   findDuplicateMatches,
   type ContentFingerprintInput,
@@ -138,6 +140,14 @@ export {
   type DuplicateMatch,
   type DuplicateMatchInput,
 } from "./duplicate-detection.js";
+export {
+  extractIntentSignature,
+  findNearDuplicates,
+  type IntentSignature,
+  type NearDuplicateInput,
+  type NearDuplicateCandidate,
+  type NearDuplicateMatch,
+} from "./near-duplicate.js";
 export { getTaskDuplicateLineage } from "./duplicate-lineage.js";
 export {
   __getDeterministicGuardMutexSize,
