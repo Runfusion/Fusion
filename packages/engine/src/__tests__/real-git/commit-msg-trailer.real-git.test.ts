@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { execSync } from "node:child_process";
 import { installTaskWorktreeIdentityGuard } from "../../worktree-hooks.js";
 
@@ -43,6 +43,12 @@ describe("commit-msg trailer hook (real git)", () => {
       const rewrittenBody = git(worktreeDir, "git log -1 --format=%B");
       expect(rewrittenBody).toContain("feat(KB-7): rewritten");
       expect((rewrittenBody.match(/Fusion-Task-Id:\s*KB-7/g) ?? []).length).toBe(1);
+
+      const taskFile = git(worktreeDir, "git rev-parse --git-path fusion-task-id");
+      writeFileSync(isAbsolute(taskFile) ? taskFile : resolve(worktreeDir, taskFile), "kb-7\n");
+      git(worktreeDir, "git commit --allow-empty -m 'feat(KB-7): lowercase metadata' --allow-empty");
+      const lowercaseBody = git(worktreeDir, "git log -1 --format=%B");
+      expect(lowercaseBody).toContain("Fusion-Task-Id: KB-7");
 
       writeFileSync(join(rootDir, "outside.txt"), "outside\n");
       git(rootDir, "git add outside.txt && git commit -m 'chore: root commit'");
