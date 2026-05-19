@@ -396,29 +396,37 @@ describe("branch-conflicts", () => {
     });
   });
 
-  it("assertCleanBranchAtBase passes when no foreign task commits exist", async () => {
+  it.each([
+    {
+      name: "passes when attribution comes from subject token",
+      log: "aaa111\u001ffeat(FN-4068): own\u001f\n",
+      expectForeign: false,
+    },
+    {
+      name: "passes when attribution comes from trailer token",
+      log: "aaa111\u001ffeat: own\u001fFusion-Task-Id: FN-4068\n",
+      expectForeign: false,
+    },
+    {
+      name: "throws when commit is attributed to a foreign task",
+      log: "bbb222\u001ffeat(FN-4386): foreign\u001fFusion-Task-Id: FN-4386\n",
+      expectForeign: true,
+    },
+  ])("assertCleanBranchAtBase $name", async ({ log, expectForeign }) => {
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command.includes("git log --format=%H%x1f%s%x1f%b 'main..fusion/fn-4068'")) {
-        return Buffer.from("aaa111\u001ffeat(FN-4068): own\u001fFusion-Task-Id: FN-4068\n");
+        return Buffer.from(log);
       }
       throw new Error(`Unexpected command: ${command}`);
     });
 
-    await expect(assertCleanBranchAtBase("/tmp/repo", "fusion/fn-4068", "main", "FN-4068")).resolves.toBeUndefined();
-  });
-
-  it("assertCleanBranchAtBase throws BranchCrossContaminationError for foreign commits", async () => {
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes("git log --format=%H%x1f%s%x1f%b 'main..fusion/fn-4068'")) {
-        return Buffer.from("bbb222\u001ffeat(FN-4386): foreign\u001fFusion-Task-Id: FN-4386\n");
-      }
-      throw new Error(`Unexpected command: ${command}`);
-    });
-
-    await expect(assertCleanBranchAtBase("/tmp/repo", "fusion/fn-4068", "main", "FN-4068"))
-      .rejects.toBeInstanceOf(BranchCrossContaminationError);
+    const assertion = assertCleanBranchAtBase("/tmp/repo", "fusion/fn-4068", "main", "FN-4068");
+    if (expectForeign) {
+      await expect(assertion).rejects.toBeInstanceOf(BranchCrossContaminationError);
+      return;
+    }
+    await expect(assertion).resolves.toBeUndefined();
   });
 
   it("lists canonical and sibling recovery candidates with worktrees and stranded commits", async () => {
