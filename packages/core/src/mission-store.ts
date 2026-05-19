@@ -3128,7 +3128,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const milestone = slice ? this.getMilestone(slice.milestoneId) : undefined;
     const missionId = milestone?.missionId;
 
-    const lockScope = missionId ? `mission:${missionId}` : `mission-store:${this.db.dbPath}`;
+    const lockScope = missionId ? `mission:${missionId}` : `mission-store:${this.taskStore.getRootDir()}`;
     const guard = await runDeterministicDuplicateGuard(this.taskStore, {
       title: taskTitle || feature.title,
       description,

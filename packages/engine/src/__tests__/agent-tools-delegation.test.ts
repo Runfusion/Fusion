@@ -183,13 +183,13 @@ describe("createDelegateTaskTool", () => {
       description: "Write tests",
     }, undefined as any, undefined as any, undefined as any);
 
-    expect(taskStore.createTask).toHaveBeenCalledWith({
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: "Write tests",
       dependencies: undefined,
       column: "todo",
       assignedAgentId: "agent-001",
-      source: { sourceType: "api" },
-    }, expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+      source: expect.objectContaining({ sourceType: "api" }),
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
 
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain("Delegated to Bob (agent-001)");
@@ -295,7 +295,7 @@ describe("createDelegateTaskTool", () => {
 
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       assignedAgentId: "agent-009",
-      source: { sourceType: "api" },
+      source: expect.objectContaining({ sourceType: "api" }),
     }), expect.anything());
   });
 
@@ -338,7 +338,10 @@ describe("createDelegateTaskTool", () => {
     }, undefined as any, undefined as any, undefined as any);
 
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
-      source: { sourceType: "api", sourceMetadata: { executorRoleOverride: true } },
+      source: expect.objectContaining({
+        sourceType: "api",
+        sourceMetadata: expect.objectContaining({ executorRoleOverride: true }),
+      }),
     }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
   });
 
@@ -364,13 +367,13 @@ describe("createDelegateTaskTool", () => {
       dependencies: ["FN-010"],
     }, undefined as any, undefined as any, undefined as any);
 
-    expect(taskStore.createTask).toHaveBeenCalledWith({
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: "Integration test",
       dependencies: ["FN-010"],
       column: "todo",
       assignedAgentId: "agent-001",
-      source: { sourceType: "api" },
-    }, expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+      source: expect.objectContaining({ sourceType: "api" }),
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
 
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain("depends on: FN-010");

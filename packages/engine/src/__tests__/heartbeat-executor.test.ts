@@ -3085,17 +3085,17 @@ describe("executeHeartbeat", () => {
 
       await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
 
-      expect(mockTaskStore.createTask).toHaveBeenCalledWith({
+      expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
         description: "Follow-up task",
         dependencies: undefined,
         column: "triage",
         priority: undefined,
-        source: {
+        source: expect.objectContaining({
           sourceType: "agent_heartbeat",
           sourceAgentId: "agent-001",
           sourceRunId: undefined,
-        },
-      }, expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+        }),
+      }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
     });
 
     it("forwards explicit priority when fn_task_create tool is called", async () => {

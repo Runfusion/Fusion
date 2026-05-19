@@ -132,17 +132,17 @@ describe("createHeartbeatTools", () => {
 
     const result = await createTool.execute("call-1", { description: "Follow-up task" }, undefined as any, undefined as any, undefined as any);
 
-    expect(mockTaskStore.createTask).toHaveBeenCalledWith({
+    expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: "Follow-up task",
       dependencies: undefined,
       column: "triage",
       priority: undefined,
-      source: {
+      source: expect.objectContaining({
         sourceType: "agent_heartbeat",
         sourceAgentId: "agent-001",
         sourceRunId: undefined,
-      },
-    }, expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+      }),
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
 
     const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
     expect(responseText).toContain("Created FN-100");

@@ -595,6 +595,8 @@ async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryCon
 
 type AgentTaskCreationOptions = {
   rootDir?: string;
+  bypassDuplicateCheck?: boolean;
+  acknowledgedDuplicates?: string[];
 };
 
 export async function createAgentTask(
@@ -611,8 +613,8 @@ export async function createAgentTask(
     description: input.description,
   }, {
     lockScope: rootDir ?? store.getRootDir?.() ?? "agent-tools",
-    bypass: input.bypassDuplicateCheck === true,
-    acknowledgedDuplicates: input.acknowledgedDuplicates,
+    bypass: options?.bypassDuplicateCheck === true,
+    acknowledgedDuplicates: options?.acknowledgedDuplicates,
     logger: log,
   });
 
@@ -625,9 +627,9 @@ export async function createAgentTask(
       ...(input.source?.sourceMetadata ?? {}),
       ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
     };
-    const nextSource = input.source || Object.keys(sourceMetadata).length > 0
+    const nextSource = input.source
       ? {
-          ...(input.source ?? {}),
+          ...input.source,
           sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
         }
       : undefined;
