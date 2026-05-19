@@ -59,7 +59,10 @@ export class DependencyBlockedTodoReporter {
         return { alerted: false, reason: "invalid-config" };
       }
 
-      const maxAutoMergeRetries = settings.maxAutoMergeRetries ?? 3;
+      const configuredMaxAutoMergeRetries = Number(settings.maxAutoMergeRetries);
+      const maxAutoMergeRetries = Number.isFinite(configuredMaxAutoMergeRetries)
+        ? configuredMaxAutoMergeRetries
+        : 3;
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const taskById = new Map(tasks.map((task) => [task.id, task]));
       const nowMs = this.now();
