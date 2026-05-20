@@ -56,7 +56,7 @@ case "$HEAD_BRANCH" in
 ${allowChecks}
 esac
 
-printf '%s\n' "fusion: refusing commit — worktree owns $WORKTREE_TASK_ID but HEAD is $HEAD_BRANCH" >&2
+printf '%s\\n' "fusion: refusing commit — worktree owns $WORKTREE_TASK_ID but HEAD is $HEAD_BRANCH" >&2
 exit 1
 `;
 }

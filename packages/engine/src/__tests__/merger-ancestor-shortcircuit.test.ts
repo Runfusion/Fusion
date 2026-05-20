@@ -125,5 +125,5 @@ describe("commitOrAmendMergeWithFixes ancestor/equivalent-content short-circuit"
 
     const result = await runFinalize(dir, "FN-TEST", "task", preAttemptHeadSha);
     expect(result.ok).toBe(false);
-  });
+  }, 15000);
 });

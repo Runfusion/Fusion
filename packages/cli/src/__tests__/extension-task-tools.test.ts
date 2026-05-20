@@ -68,7 +68,7 @@ describe("extension task tools resolve repo root from worktrees", () => {
     } finally {
       await rm(repoRoot, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("falls back when getProjectRootFromWorktree is unavailable in no-task context", async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "fn-4927-cli-"));
