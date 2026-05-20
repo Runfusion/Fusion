@@ -159,7 +159,7 @@ describe("session reconnect + replay", () => {
 
     __setCreateFnAgent(async () => makePlanningAgent(planningResponses));
 
-    const { sessionId } = await createSession("127.0.0.11", "Build reconnect tests", undefined, "/tmp/project");
+    const { sessionId } = await createSession("127.0.0.11", "Build reconnect tests", store, "/tmp/project");
     await submitResponse(sessionId, { "q-1": "medium" }, "/tmp/project");
     await submitResponse(sessionId, { "q-2": "none" }, "/tmp/project");
 
