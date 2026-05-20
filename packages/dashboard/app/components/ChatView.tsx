@@ -28,7 +28,7 @@ import { useChat, type ChatMessageInfo, type FailureInfo, type ToolCallInfo } fr
 import { useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useViewportMode } from "./Header";
-import { updateGlobalSettings } from "../api";
+import { updateGlobalSettings, type DiscoveredSkill } from "../api";
 import type { Agent } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";

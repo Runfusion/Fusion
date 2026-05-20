@@ -2353,6 +2353,149 @@ describe("AgentsView", () => {
     });
   });
 
+  describe("bulk agent controls", () => {
+    const bulkAgents: Agent[] = [
+      {
+        id: "bulk-active",
+        name: "Active Agent",
+        role: "executor" as AgentCapability,
+        state: "active" as AgentState,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      },
+      {
+        id: "bulk-running",
+        name: "Running Agent",
+        role: "reviewer" as AgentCapability,
+        state: "running" as AgentState,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      },
+      {
+        id: "bulk-paused",
+        name: "Paused Agent",
+        role: "triage" as AgentCapability,
+        state: "paused" as AgentState,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      },
+      {
+        id: "bulk-idle",
+        name: "Idle Agent",
+        role: "engineer" as AgentCapability,
+        state: "idle" as AgentState,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      },
+      {
+        id: "bulk-system",
+        name: "System Worker",
+        role: "executor" as AgentCapability,
+        state: "active" as AgentState,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: { agentKind: "task-worker" },
+      },
+    ];
+
+    it("loads bulk eligibility when controls open and shows count hints", async () => {
+      mockFetchAgents.mockResolvedValue(bulkAgents);
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+
+      const initialFetchCount = mockFetchAgents.mock.calls.length;
+      await openControlsPanel();
+
+      await waitFor(() => {
+        expect(mockFetchAgents.mock.calls.length).toBeGreaterThan(initialFetchCount);
+        expect(screen.getByText("Pause 2 active/running agents")).toBeInTheDocument();
+        expect(screen.getByText("Resume 1 paused agent")).toBeInTheDocument();
+      });
+    });
+
+    it("disables pause and resume actions when no agents are eligible", async () => {
+      mockFetchAgents.mockResolvedValue([
+        { ...bulkAgents[3] },
+        { ...bulkAgents[4], state: "paused" as AgentState },
+      ]);
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      await openControlsPanel();
+
+      await waitFor(() => {
+        expect(screen.getByRole("menuitem", { name: /Pause All Agents/i })).toBeDisabled();
+        expect(screen.getByRole("menuitem", { name: /Resume All Agents/i })).toBeDisabled();
+      });
+      expect(screen.getByText("No active or running project agents to pause")).toBeInTheDocument();
+      expect(screen.getByText("No paused project agents to resume")).toBeInTheDocument();
+    });
+
+    it("pauses eligible non-ephemeral agents after confirmation", async () => {
+      mockFetchAgents.mockResolvedValue(bulkAgents);
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      await openControlsPanel();
+
+      fireEvent.click(screen.getByRole("menuitem", { name: /Pause All Agents/i }));
+
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
+          title: "Pause All Agents",
+          danger: true,
+        }));
+      });
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledTimes(2);
+      });
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("bulk-active", "paused", projectId);
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("bulk-running", "paused", projectId);
+      expect(mockUpdateAgentState).not.toHaveBeenCalledWith("bulk-system", "paused", projectId);
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith("Paused 2 agents; skipped 2", "success");
+      });
+    });
+
+    it("resumes paused agents only", async () => {
+      mockFetchAgents.mockResolvedValue(bulkAgents);
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      await openControlsPanel();
+
+      fireEvent.click(screen.getByRole("menuitem", { name: /Resume All Agents/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("bulk-paused", "active", projectId);
+      expect(mockUpdateAgentState).not.toHaveBeenCalledWith("bulk-active", "active", projectId);
+      expect(mockUpdateAgentState).not.toHaveBeenCalledWith("bulk-system", "active", projectId);
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith("Resumed 1 agent; skipped 3", "success");
+      });
+    });
+
+    it("shows aggregate failure details when a bulk action partially fails", async () => {
+      mockFetchAgents.mockResolvedValue(bulkAgents);
+      mockUpdateAgentState.mockImplementation(async (agentId, newState) => {
+        if (agentId === "bulk-running") {
+          throw new Error("network boom");
+        }
+        return { ...bulkAgents[0], id: agentId, state: newState };
+      });
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      await openControlsPanel();
+
+      fireEvent.click(screen.getByRole("menuitem", { name: /Pause All Agents/i }));
+
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith(
+          "Paused 1 agent; skipped 2; failed 1 (Running Agent: network boom)",
+          "error",
+        );
+      });
+    });
+  });
+
   describe("global heartbeat multiplier", () => {
     it("renders the global heartbeat speed control", async () => {
       mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
