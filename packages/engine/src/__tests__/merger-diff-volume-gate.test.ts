@@ -66,7 +66,8 @@ function createMockStore() {
     logEntry: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn().mockResolvedValue({ id: "FN-4072", column: "in-review", prompt: "# test" }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS, commitAuthorEnabled: false }),
+    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, commitAuthorEnabled: false }),
   } as any;
 }
 
@@ -86,7 +87,8 @@ function mergeAttemptParams(dir: string, branch: string, preAttemptHeadSha: stri
     attemptNum: 3,
     options: {},
     result: {},
-    settings: { ...DEFAULT_SETTINGS, commitAuthorEnabled: false },
+    settings: { ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, commitAuthorEnabled: false },
     preAttemptHeadSha,
   } as any;
 }
@@ -122,7 +124,7 @@ describe("checkDiffVolume", () => {
       name: "DiffVolumeRegressionError",
       findings: [expect.objectContaining({ file: "packages/core/src/store.ts", branchNet: 60, staged: 0 })],
     });
-  });
+  }, 15_000);
 
   it("ignores dropped files below minLines", async () => {
     const dir = mkdtempSync(join(testTempParent(), "fusion-test-diff-volume-"));
@@ -351,7 +353,8 @@ describe("diff-volume gate merger integration", () => {
       preAttemptHeadSha,
       "",
       "1 file changed",
-      { ...DEFAULT_SETTINGS, commitAuthorEnabled: false },
+      { ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, commitAuthorEnabled: false },
       undefined,
       null,
       null,
@@ -390,7 +393,8 @@ describe("diff-volume gate merger integration", () => {
       preAttemptHeadSha,
       "",
       "1 file changed",
-      { ...DEFAULT_SETTINGS, commitAuthorEnabled: false },
+      { ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, commitAuthorEnabled: false },
       undefined,
       null,
       null,

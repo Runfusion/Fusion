@@ -1,0 +1,101 @@
+/* === DbCorruptionBanner === */
+.db-corruption-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-md);
+  border-radius: var(--radius-md);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-error) 24%, transparent);
+  border-inline-start: var(--space-xs) solid var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  box-shadow: var(--shadow-md);
+}
+
+.db-corruption-banner__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.db-corruption-banner__headline-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.db-corruption-banner__headline-copy,
+.db-corruption-banner__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.db-corruption-banner__headline,
+.db-corruption-banner__footer-label {
+  color: var(--text);
+}
+
+.db-corruption-banner__headline {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.db-corruption-banner__meta,
+.db-corruption-banner__body,
+.db-corruption-banner__footer,
+.db-corruption-banner__error {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.db-corruption-banner__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0;
+  padding-inline-start: calc(var(--space-lg) + var(--space-xs));
+}
+
+.db-corruption-banner__error-code,
+.db-corruption-banner__inline-code {
+  font-family: var(--font-mono);
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.db-corruption-banner__refresh,
+.db-corruption-banner__refresh-icon {
+  flex-shrink: 0;
+}
+
+.db-corruption-banner__refresh-icon--spinning {
+  animation: status-dot-pulse var(--transition-slow) ease-in-out infinite;
+}
+
+.db-corruption-banner__link {
+  color: var(--text);
+}
+
+.db-corruption-banner__error {
+  color: var(--color-error);
+}
+
+@media (max-width: 768px) {
+  .db-corruption-banner {
+    padding: var(--space-md);
+  }
+
+  .db-corruption-banner__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .db-corruption-banner__refresh {
+    width: 100%;
+    justify-content: center;
+  }
+}

@@ -318,6 +318,15 @@ interface Session {
   error?: string;
   /** AI agent session for real-time interaction */
   agent?: AgentResult;
+  /**
+   * TaskStore reference captured at session creation. Used by
+   * ensureSessionAgent to rebuild the agent after rehydration (when no
+   * store is plumbed through the submitResponse/retry/rewind call sites).
+   * Not persisted — restored only for the lifetime of the in-memory session.
+   */
+  store?: TaskStore;
+  /** Project root captured at session creation; mirrors `store` for agent rebuild. */
+  rootDir?: string;
   /** Callback for streaming events to SSE clients */
   streamCallback?: PlanningStreamCallback;
   /** Accumulated thinking output for display */
@@ -777,6 +786,8 @@ export async function createSession(
     lastGeneratedThinking: "",
     createdAt: new Date(),
     updatedAt: new Date(),
+    store,
+    rootDir,
   };
 
   sessions.set(sessionId, session);
@@ -1372,19 +1383,24 @@ async function ensureSessionAgent(
     return;
   }
 
-  if (!rootDir) {
+  // Fall back to session-captured context for rehydrated sessions whose
+  // submitResponse/retry/rewind call sites don't plumb rootDir/store.
+  const effectiveRootDir = rootDir ?? session.rootDir;
+  const effectiveStore = store ?? session.store;
+
+  if (!effectiveRootDir) {
     throw new InvalidSessionStateError(
       "Planning session has no AI agent and cannot be resumed without project context",
     );
   }
 
-  if (!store) {
+  if (!effectiveStore) {
     throw new InvalidSessionStateError(
       "Planning session has no task store and cannot be resumed without project context",
     );
   }
 
-  session.agent = await createPlanningAgent(session, rootDir, store, undefined, undefined, promptOverrides);
+  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, promptOverrides);
 
   if (historyForReplay.length === 0) {
     return;
@@ -1884,11 +1900,18 @@ export async function submitResponse(
   responses: Record<string, unknown>,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
+  store?: TaskStore,
 ): Promise<PlanningResponse> {
   const session = getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
+
+  // Stash store/rootDir on the session so subsequent ensureSessionAgent calls
+  // (after the agent is disposed for retry/rewind) can rebuild without the
+  // caller having to thread context through every API.
+  if (store && !session.store) session.store = store;
+  if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
   if (!session.currentQuestion) {
     if (!isRefineRequest(responses) || !session.summary) {
@@ -1898,7 +1921,7 @@ export async function submitResponse(
     session.error = undefined;
     persistSession(session, "generating");
 
-    await ensureSessionAgent(session, rootDir, session.history, promptOverrides);
+    await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
     const refineMessage = formatRefineRequestForAgent(session.summary);
     await continueAgentConversation(session, refineMessage);
   } else {
@@ -1913,7 +1936,7 @@ export async function submitResponse(
 
     if (!session.agent) {
       const replayHistory = session.history.slice(0, -1);
-      await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides);
+      await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides, store);
     }
 
     const message = formatResponseForAgent(session.currentQuestion, responses);
@@ -1936,11 +1959,15 @@ export async function retrySession(
   sessionId: string,
   rootDir: string,
   promptOverrides?: PromptOverrideMap,
+  store?: TaskStore,
 ): Promise<void> {
   const session = getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
+
+  if (store && !session.store) session.store = store;
+  if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
   const persisted = _aiSessionStore?.get(sessionId);
   if (persisted && persisted.type !== "planning") {
@@ -1960,7 +1987,7 @@ export async function retrySession(
   persistSession(session, "generating");
 
   if (session.history.length === 0) {
-    await ensureSessionAgent(session, rootDir, [], promptOverrides);
+    await ensureSessionAgent(session, rootDir, [], promptOverrides, store);
     await continueAgentConversation(session, session.initialPlan);
     return;
   }
@@ -1968,7 +1995,7 @@ export async function retrySession(
   const replayHistory = session.history.slice(0, -1);
   const lastEntry = session.history[session.history.length - 1];
 
-  await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides);
+  await ensureSessionAgent(session, rootDir, replayHistory, promptOverrides, store);
   const replayMessage = formatResponseForAgent(
     lastEntry.question,
     coerceResponseRecord(lastEntry.question, lastEntry.response),
@@ -1985,11 +2012,15 @@ export async function rewindSession(
   sessionId: string,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
+  store?: TaskStore,
 ): Promise<PlanningRewindResult> {
   const session = getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
+
+  if (store && !session.store) session.store = store;
+  if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
   if (session.history.length === 0) {
     throw new InvalidSessionStateError("Planning session has no previous question to rewind to");
@@ -2010,7 +2041,7 @@ export async function rewindSession(
   session.updatedAt = new Date();
 
   if (!session.agent && rootDir) {
-    await ensureSessionAgent(session, rootDir, session.history, promptOverrides);
+    await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
   }
 
   persistSession(session, "awaiting_input");

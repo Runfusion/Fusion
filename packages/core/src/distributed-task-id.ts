@@ -113,6 +113,7 @@ function getKnownPrefixes(db: Database): Set<string> {
 
   addFromQuery("SELECT prefix FROM distributed_task_id_state", (row) => row.prefix as string | undefined);
   addFromQuery("SELECT prefix FROM distributed_task_id_reservations", (row) => row.prefix as string | undefined);
+  // FN-5105: intentionally includes soft-deleted rows so reserved IDs/prefixes remain reserved.
   addFromQuery("SELECT id FROM tasks", (row) => parseTaskId(String(row.id ?? ""))?.prefix);
   addFromQuery("SELECT id FROM archivedTasks", (row) => parseTaskId(String(row.id ?? ""))?.prefix);
 

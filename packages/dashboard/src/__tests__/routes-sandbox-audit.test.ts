@@ -12,6 +12,7 @@ vi.mock("@fusion/core", () => ({
   ChatStore: class MockChatStore {
     init = vi.fn().mockResolvedValue(undefined);
   },
+  deterministicGuardLocks: new Map(),
 }));
 
 vi.mock("../project-store-resolver.js", () => ({
@@ -27,6 +28,16 @@ class MockStore {
   }
   getFusionDir() {
     return "/tmp/fn-4640-test/.fusion";
+  }
+  getDatabase() {
+    return {
+      exec: vi.fn(),
+      prepare: vi.fn().mockReturnValue({
+        run: vi.fn().mockReturnValue({ changes: 0 }),
+        get: vi.fn(),
+        all: vi.fn().mockReturnValue([]),
+      }),
+    };
   }
 }
 

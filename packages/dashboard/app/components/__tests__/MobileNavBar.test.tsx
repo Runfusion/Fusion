@@ -121,6 +121,16 @@ describe("MobileNavBar", () => {
     expect(onOpenTodos).toHaveBeenCalled();
   });
 
+  it("shows secrets in More and routes to secrets view", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-secrets"));
+
+    expect(props.onChangeView).toHaveBeenCalledWith("secrets");
+  });
+
   it("shows mailbox pending-approval indicator when mailbox tab is inactive", () => {
     render(<MobileNavBar {...createDefaultProps()} mailboxPendingApprovalCount={2} />);
     expect(screen.getByLabelText("Pending approvals")).toBeInTheDocument();

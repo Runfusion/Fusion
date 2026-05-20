@@ -15,14 +15,15 @@ vi.mock("../worktree-db-hydrate.js", () => ({
   hydrateWorktreeDb: vi.fn().mockResolvedValue({ degraded: false, tasksCopied: 1, documentsCopied: 1 }),
 }));
 
-const { execMock, existsSyncMock } = vi.hoisted(() => {
+const { execMock, existsSyncMock, accessMock } = vi.hoisted(() => {
   const mock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
-  return { execMock: mock, existsSyncMock: vi.fn() };
+  return { execMock: mock, existsSyncMock: vi.fn(), accessMock: vi.fn().mockResolvedValue(undefined) };
 });
 
 vi.mock("node:child_process", () => ({ exec: execMock }));
 vi.mock("node:fs", () => ({ existsSync: existsSyncMock }));
+vi.mock("node:fs/promises", () => ({ access: accessMock }));
 
 describe("acquireTaskWorktree backend wiring", () => {
   const task = { id: "FN-1", title: "Task", description: "Desc", branch: null, worktree: null } as any;
@@ -36,6 +37,8 @@ describe("acquireTaskWorktree backend wiring", () => {
     execMock.mockReset();
     existsSyncMock.mockReset();
     existsSyncMock.mockReturnValue(true);
+    accessMock.mockReset();
+    accessMock.mockResolvedValue(undefined);
     store.updateTask.mockClear();
     store.logEntry.mockClear();
     store.pauseTask.mockClear();
@@ -92,11 +95,11 @@ describe("acquireTaskWorktree backend wiring", () => {
       task,
       rootDir: "/repo",
       store,
-      settings: { worktreeNaming: "task-id", worktrunk: { enabled: true, binaryPath: "worktrunk" } } as any,
+      settings: { worktreeNaming: "task-id", worktrunk: { enabled: true, binaryPath: "wt" } } as any,
       audit,
     });
 
-    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"worktrunk" "switch" "--create" "fusion/fn-1"'))).toBe(true);
+    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"wt" "switch" "--create" "fusion/fn-1"'))).toBe(true);
     expect(audit.git).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "worktree:worktrunk-create",
@@ -126,13 +129,14 @@ describe("acquireTaskWorktree backend wiring", () => {
 
   it("throws worktrunk_operation_failed and preserves stderr", async () => {
     execMock.mockRejectedValue({ stderr: "worktrunk exploded", status: 17 });
+    const explicitBinaryPath = "/opt/wt";
 
     await expect(
       acquireTaskWorktree({
         task,
         rootDir: "/repo",
         store,
-        settings: { worktreeNaming: "task-id", worktrunk: { enabled: true, binaryPath: "worktrunk" } } as any,
+        settings: { worktreeNaming: "task-id", worktrunk: { enabled: true, binaryPath: explicitBinaryPath } } as any,
       }),
     ).rejects.toMatchObject({
       name: "WorktrunkOperationError",
@@ -140,6 +144,7 @@ describe("acquireTaskWorktree backend wiring", () => {
       stderr: "worktrunk exploded",
       exitCode: 17,
     });
+    expect(execMock.mock.calls.some((call) => String(call[0]).includes(`"${explicitBinaryPath}" "switch" "--create"`))).toBe(true);
   });
 
   it("uses explicit backend override", async () => {

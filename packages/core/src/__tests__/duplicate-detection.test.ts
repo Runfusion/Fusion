@@ -1,9 +1,81 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  computeContentFingerprint,
   findDuplicateMatches,
   type DuplicateCandidate,
 } from "../duplicate-detection.js";
+
+describe("computeContentFingerprint", () => {
+  it("returns identical fingerprint for identical title and description", () => {
+    const first = computeContentFingerprint({
+      title: "Duplicate warning route",
+      description: "Warn before creating duplicate tasks",
+    });
+    const second = computeContentFingerprint({
+      title: "Duplicate warning route",
+      description: "Warn before creating duplicate tasks",
+    });
+
+    expect(first).toBe(second);
+  });
+
+  it("normalizes whitespace, casing, and trailing punctuation", () => {
+    const first = computeContentFingerprint({
+      title: "Duplicate Warning Route",
+      description: "Warn before creating duplicate tasks!!!",
+    });
+    const second = computeContentFingerprint({
+      title: "  duplicate warning route   ",
+      description: "warn before creating duplicate tasks",
+    });
+
+    expect(first).toBe(second);
+  });
+
+  it("returns different fingerprints for different titles", () => {
+    const first = computeContentFingerprint({
+      title: "Duplicate warning route",
+      description: "Warn before creating duplicate tasks",
+    });
+    const second = computeContentFingerprint({
+      title: "Retry counter badge placement",
+      description: "Warn before creating duplicate tasks",
+    });
+
+    expect(first).not.toBe(second);
+  });
+
+  it("returns null for empty or whitespace-only descriptions", () => {
+    expect(
+      computeContentFingerprint({
+        title: "Duplicate warning route",
+        description: "   ",
+      }),
+    ).toBeNull();
+    expect(
+      computeContentFingerprint({
+        title: "Duplicate warning route",
+        description: "...",
+      }),
+    ).toBeNull();
+  });
+
+  it("matches the FN-4909/FN-4910 reproduction pair", () => {
+    const first = computeContentFingerprint({
+      title: "Move retry counter badge next to GitHub tracking badge",
+      description:
+        "Move the retry counter badge to the left of the GitHub tracking badge",
+    });
+    const second = computeContentFingerprint({
+      title: "Move retry counter badge next to GitHub tracking badge",
+      description:
+        "Move the retry counter badge to the left of the GitHub tracking badge.",
+    });
+
+    expect(first).toBe(second);
+  });
+});
 
 describe("findDuplicateMatches", () => {
   it("returns high-similarity title+description matches", () => {

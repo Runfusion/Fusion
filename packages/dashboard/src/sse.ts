@@ -134,7 +134,7 @@ function safeWrite(res: Response, data: string): SafeWriteResult {
   }
 }
 
-function stripTaskListHeavyFields<T>(task: T): T {
+export function stripTaskListHeavyFields<T>(task: T): T {
   if (!task || typeof task !== "object" || Array.isArray(task)) {
     return task;
   }
@@ -156,7 +156,14 @@ function stripTaskListHeavyFields<T>(task: T): T {
       ? existingTimed
       : sumTimedLogEntries(candidate.log);
 
-  return { ...task, log: [], timedExecutionMs, tokenUsage: candidate.tokenUsage, workflowStepResults: candidate.workflowStepResults } as T;
+  return {
+    ...task,
+    // FN-5105/FN-5135: preserve deletedAt in SSE slim payloads for soft-delete suppression.
+    log: [],
+    timedExecutionMs,
+    tokenUsage: candidate.tokenUsage,
+    workflowStepResults: candidate.workflowStepResults,
+  } as T;
 }
 
 function sumTimedLogEntries(log: unknown): number {

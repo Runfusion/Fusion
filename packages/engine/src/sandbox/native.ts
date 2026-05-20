@@ -1,5 +1,6 @@
-import { exec, spawn } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { superviseSpawn } from "@fusion/core";
 
 import type {
   SandboxBackend,
@@ -84,18 +85,18 @@ export class NativeSandboxBackend implements SandboxBackend {
     }
 
     return await new Promise((resolve) => {
-      const useProcessGroup = process.platform !== "win32";
-      const child = spawn(command, {
+      const supervised = superviseSpawn(command, [], {
         cwd: options.cwd,
         shell: true,
-        detached: useProcessGroup,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
           ...(options.env ?? {}),
         },
+        maxLifetimeMs: options.timeout + 6_000,
       });
+      const child = supervised.child;
 
       let stdout = "";
       let stderr = "";
@@ -106,16 +107,7 @@ export class NativeSandboxBackend implements SandboxBackend {
       let settled = false;
 
       const killTree = (sig: NodeJS.Signals) => {
-        if (child.pid === undefined) return;
-        try {
-          if (useProcessGroup) {
-            process.kill(-child.pid, sig);
-          } else {
-            child.kill(sig);
-          }
-        } catch {
-          // group may already be gone
-        }
+        supervised.kill(sig);
       };
 
       const timer = setTimeout(() => {

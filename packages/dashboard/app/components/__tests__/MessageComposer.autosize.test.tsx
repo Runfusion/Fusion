@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { MessageComposer } from "../MessageComposer";
@@ -13,6 +13,16 @@ const defaultProps = {
   addToast: vi.fn(),
 };
 
+const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
+
+afterEach(() => {
+  if (originalScrollHeightDescriptor) {
+    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeightDescriptor);
+  } else {
+    Reflect.deleteProperty(HTMLTextAreaElement.prototype, "scrollHeight");
+  }
+});
+
 describe("MessageComposer autosize", () => {
   it("grows and caps height as content wraps, then resets for short content", async () => {
     render(<MessageComposer {...defaultProps} />);
@@ -23,7 +33,8 @@ describe("MessageComposer autosize", () => {
       get() {
         const value = (this as HTMLTextAreaElement).value;
         if (!value || value.length <= 4) return 24;
-        if (value.includes("\n\n")) return 900;
+        if (value.includes("\n\nline three")) return 900;
+        if (value.includes("line medium")) return 500;
         return 180;
       },
     });
@@ -31,12 +42,17 @@ describe("MessageComposer autosize", () => {
     await userEvent.type(textarea, "line one\nline two");
     await waitFor(() => {
       expect(Number.parseInt(textarea.style.height, 10)).toBeGreaterThanOrEqual(68);
-      expect(Number.parseInt(textarea.style.height, 10)).toBeLessThanOrEqual(320);
+      expect(Number.parseInt(textarea.style.height, 10)).toBeLessThanOrEqual(640);
+    });
+
+    await userEvent.type(textarea, "\nline medium");
+    await waitFor(() => {
+      expect(textarea.style.height).toBe("500px");
     });
 
     await userEvent.type(textarea, "\n\nline three");
     await waitFor(() => {
-      expect(textarea.style.height).toBe("320px");
+      expect(textarea.style.height).toBe("640px");
     });
 
     await userEvent.clear(textarea);

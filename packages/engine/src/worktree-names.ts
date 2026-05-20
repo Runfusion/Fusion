@@ -29,6 +29,10 @@ export const NOUNS = [
   "thorn", "tiger", "trail", "trout", "wren",
 ];
 
+export function canonicalFusionBranchName(taskId: string): string {
+  return `fusion/${taskId.toLowerCase()}`;
+}
+
 /**
  * Convert a string to a URL-friendly slug.
  *

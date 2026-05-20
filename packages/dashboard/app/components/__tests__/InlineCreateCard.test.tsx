@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { InlineCreateCard } from "../InlineCreateCard";
 import type { Task, Column } from "@fusion/core";
-import { fetchModels, fetchSettings, fetchAgents } from "../../api";
+import { fetchModels, fetchSettings, fetchAgents, checkDuplicateTasks } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import type { ModelInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -117,6 +117,14 @@ vi.mock("../../api", () => ({
   uploadAttachment: vi.fn(),
   updateGlobalSettings: vi.fn(),
   fetchAgents: vi.fn().mockResolvedValue([]),
+  checkDuplicateTasks: vi.fn().mockResolvedValue([]),
+  DuplicateCandidatesError: class DuplicateCandidatesError extends Error {
+    matches: unknown[];
+    constructor(matches: unknown[]) {
+      super("duplicate_candidates");
+      this.matches = matches;
+    }
+  },
 }));
 
 const TEST_PROJECT_ID = "proj-123";
@@ -203,6 +211,7 @@ beforeEach(() => {
     unregister: vi.fn(),
     healthCheck: vi.fn(),
   });
+  vi.mocked(checkDuplicateTasks).mockResolvedValue([]);
   vi.mocked(fetchSettings).mockResolvedValue({
     modelPresets: [],
     autoSelectModelPreset: false,
@@ -308,6 +317,76 @@ describe("InlineCreateCard dep-dropdown focus retention", () => {
     fireEvent.focusOut(textarea, { relatedTarget: null });
 
     expect(props.onCancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("InlineCreateCard duplicate warning", () => {
+  it("shows duplicate modal and blocks submit when duplicate check finds matches", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-001" } as Task);
+    vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([{ id: "FN-002", title: "dup", description: "dup", column: "todo", score: 1 }]);
+
+    renderCard([], { onSubmit });
+    expandCard();
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "duplicate" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    expect(await screen.findByText(/Possible duplicates/i)).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with acknowledgedDuplicates from duplicate modal", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-001" } as Task);
+    vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([{ id: "FN-002", title: "dup", description: "dup", column: "todo", score: 1 }]);
+
+    renderCard([], { onSubmit });
+    expandCard();
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "duplicate" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    const proceed = await screen.findByRole("button", { name: /Create anyway/i });
+    fireEvent.click(proceed);
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ acknowledgedDuplicates: ["FN-002"] })));
+  });
+
+  it("dismisses modal and avoids submit when cancel is clicked", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-001" } as Task);
+    vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([{ id: "FN-002", title: "dup", description: "dup", column: "todo", score: 1 }]);
+
+    renderCard([], { onSubmit });
+    expandCard();
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "duplicate" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByText(/Possible duplicates/i)).toBeNull();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("fails open when duplicate check throws", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-001" } as Task);
+    vi.mocked(checkDuplicateTasks).mockRejectedValueOnce(new Error("boom"));
+
+    renderCard([], { onSubmit });
+    expandCard();
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "new task" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+  });
+
+  it("submits immediately when duplicate check returns no matches", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-001" } as Task);
+    vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([]);
+
+    renderCard([], { onSubmit });
+    expandCard();
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "brand new" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(screen.queryByText(/Possible duplicates/i)).toBeNull();
   });
 });
 

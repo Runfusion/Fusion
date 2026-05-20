@@ -35,6 +35,15 @@ export {
   type AutostashOrphanRecord,
 } from "./merger.js";
 export {
+  resolveMergeIntegrationRoot,
+  resolveIntegrationRemote,
+  acquireReuseHandoff,
+  releaseReuseHandoff,
+  MergeHandoffRefusedError,
+  type HandoffResult,
+  type MergeIntegrationRootResolution,
+} from "./merger-integration-worktree.js";
+export {
   auditSquashMerge,
   formatSquashAuditReport,
   type SquashAuditFindings,
@@ -92,7 +101,25 @@ export {
   ensureDefaultHeartbeatProcedureFile,
 } from "./agent-instructions.js";
 export { HEARTBEAT_PROCEDURE, HEARTBEAT_SYSTEM_PROMPT, HEARTBEAT_NO_TASK_SYSTEM_PROMPT } from "./agent-heartbeat.js";
+export {
+  MOCK_PROVIDER_ID,
+  MOCK_SYNTHETIC_TOKEN_USAGE,
+  MockAgentRuntime,
+  MockAgentSession,
+  mockScriptRegistry,
+  setMockScript,
+  clearMockScript,
+  resetMockScripts,
+  resolveMockScript,
+  type MockScript,
+  type MockScriptContext,
+} from "./providers/index.js";
 export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree-pool.js";
+export {
+  pruneWorktreeAdminEntries,
+  pruneWorktreeAdminEntriesSync,
+  type PruneWorktreeAdminEntriesOptions,
+} from "./worktree-prune.js";
 export {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -119,9 +146,11 @@ export {
   clearWorktrunkResolveCache,
   requestWorktrunkInstallApproval,
   executeApprovedWorktrunkInstall,
+  validateWorktrunkManifest,
   WorktrunkBinaryUnavailableError,
   WorktrunkInstallDeniedError,
   WorktrunkInstallFailedError,
+  WORKTRUNK_BINARY_NAME,
   WORKTRUNK_INSTALL_DIR,
   WORKTRUNK_INSTALL_PATH,
   WORKTRUNK_PINNED_RELEASE,
@@ -129,6 +158,10 @@ export {
   WORKTRUNK_DOWNLOAD_TIMEOUT_MS,
   WORKTRUNK_DOWNLOAD_MAX_BYTES,
   WORKTRUNK_CARGO_TIMEOUT_MS,
+  type WorktrunkReleaseAsset,
+  type WorktrunkReleaseManifest,
+  type WorktrunkManifestValidationError,
+  type WorktrunkManifestValidationResult,
 } from "./worktrunk-installer.js";
 export {
   handleWorktrunkOperationFailure,
@@ -233,7 +266,7 @@ export { RoutineScheduler, type RoutineSchedulerOptions } from "./routine-schedu
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./stuck-task-detector.js";
 export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./token-cap-detector.js";
-export { SelfHealingManager, type SelfHealingOptions } from "./self-healing.js";
+export { SelfHealingManager, type SelfHealingOptions, type RebindResult } from "./self-healing.js";
 export { PluginRunner, type PluginRunnerOptions } from "./plugin-runner.js";
 // Agent runtime abstraction
 export { type AgentRuntime, type AgentRuntimeOptions, type AgentSessionResult } from "./agent-runtime.js";
@@ -258,6 +291,13 @@ export {
 export { ProjectManager } from "./project-manager.js";
 export { ProjectEngine, type ProjectEngineOptions } from "./project-engine.js";
 export { ProjectEngineManager, type EngineManagerOptions } from "./project-engine-manager.js";
+export {
+  acquireEngineSingleton,
+  computeEngineLockFilePath,
+  computeEngineSocketPath,
+  EngineAlreadyRunningError,
+  type EngineSingletonLock,
+} from "./engine-singleton-lock.js";
 export { NodeHealthMonitor } from "./node-health-monitor.js";
 export {
   HybridExecutor,

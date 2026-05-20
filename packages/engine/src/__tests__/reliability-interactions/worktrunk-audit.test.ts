@@ -16,14 +16,14 @@ describe("reliability interactions: worktrunk audit correlation", () => {
 
     await auditor.git({
       type: "worktree:worktrunk-install",
-      target: "/usr/local/bin/worktrunk",
-      metadata: { op: "install", binaryPath: "/usr/local/bin/worktrunk", installSource: "release-binary", durationMs: 90 },
+      target: "/usr/local/bin/wt",
+      metadata: { op: "install", binaryPath: "/usr/local/bin/wt", installSource: "release-binary", durationMs: 90 },
     });
 
     await auditor.git({
       type: "worktree:worktrunk-create",
       target: "/repo/.worktrees/fn-4626",
-      metadata: { op: "create", binaryPath: "/usr/local/bin/worktrunk", worktreePath: "/repo/.worktrees/fn-4626", durationMs: 35 },
+      metadata: { op: "create", binaryPath: "/usr/local/bin/wt", worktreePath: "/repo/.worktrees/fn-4626", durationMs: 35 },
     });
 
     expect(events.map((event) => event.mutationType)).toEqual([
@@ -51,7 +51,7 @@ describe("reliability interactions: worktrunk audit correlation", () => {
         cause: new Error("create failed"),
         stderr: "x".repeat(5000),
         exitCode: 9,
-        binaryPath: "/usr/local/bin/worktrunk",
+        binaryPath: "/usr/local/bin/wt",
         worktreePath: "/repo/.worktrees/fn-4626",
       },
       task: { id: "FN-4626", worktrunkFallbackAlertedAt: null } as any,

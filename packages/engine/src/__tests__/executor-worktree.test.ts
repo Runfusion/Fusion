@@ -36,6 +36,7 @@ import {
   mockedIsUsableTaskWorktree,
   mockedClassifyStaleLock,
   mockedTryRemoveStaleLock,
+  mockedRecoverStaleRegistration,
   mockedInstallTaskWorktreeIdentityGuard,
   mockExecuteAll,
   mockTerminateAllSessions,
@@ -1304,6 +1305,63 @@ describe("TaskExecutor worktree recovery", () => {
       );
       expect(mockedTryRemoveStaleLock).not.toHaveBeenCalled();
     });
+  });
+
+  describe("stale registration recovery", () => {
+    it("recovers stale registration and retries git worktree add", async () => {
+      const store = createMockStore();
+      let addCalls = 0;
+      mockedRecoverStaleRegistration.mockResolvedValue({ recovered: true, actions: ["prune", "remove-force"] });
+
+      mockedExecSync.mockImplementation((cmd: string | string[]) => {
+        const command = typeof cmd === "string" ? cmd : cmd[0];
+        if (command.includes("git worktree add") && addCalls++ === 0) {
+          const error: any = new Error("fatal: '/tmp/test/.worktrees/swift-falcon' is a missing but already registered worktree");
+          error.stderr = Buffer.from("fatal: '/tmp/test/.worktrees/swift-falcon' is a missing but already registered worktree");
+          throw error;
+        }
+        return Buffer.from("");
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      await executor.execute(makeTask());
+
+      expect(mockedRecoverStaleRegistration).toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-050",
+        "Recovered stale worktree registration and retrying",
+        "/tmp/test/.worktrees/swift-falcon",
+        expect.anything(),
+      );
+      const worktreeAddCalls = mockedExecSync.mock.calls
+        .map((call) => String(call[0]))
+        .filter((command) => command.includes("git worktree add -b"));
+      expect(worktreeAddCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("preserves existing failure path when stale registration persists", async () => {
+      const store = createMockStore();
+      mockedRecoverStaleRegistration.mockResolvedValue({ recovered: false, actions: ["prune"], reason: "still registered" });
+
+      mockedExecSync.mockImplementation((cmd: string | string[]) => {
+        const command = typeof cmd === "string" ? cmd : cmd[0];
+        if (command.includes("git worktree add")) {
+          const error: any = new Error("fatal: '/tmp/test/.worktrees/swift-falcon' is a missing but already registered worktree");
+          error.stderr = Buffer.from("fatal: '/tmp/test/.worktrees/swift-falcon' is a missing but already registered worktree");
+          throw error;
+        }
+        return Buffer.from("");
+      });
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      (executor as any).MAX_WORKTREE_RETRIES = 1;
+
+      await expect(
+        (executor as any).createWorktree("fusion/fn-050", "/tmp/test/.worktrees/swift-falcon", "FN-050"),
+      ).rejects.toThrow("Failed to create worktree after 1 attempts");
+
+      expect(mockedRecoverStaleRegistration).toHaveBeenCalled();
+    }, 20000);
   });
 
   it("removes stale branch and retries when branch exists without worktree", async () => {

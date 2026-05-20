@@ -17,6 +17,7 @@ vi.mock("@fusion/core", () => ({
     done: "Done",
     archived: "Archived",
   },
+  deterministicGuardLocks: new Map(),
 }));
 
 // Mock @fusion/dashboard/planning

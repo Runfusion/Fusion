@@ -12,6 +12,7 @@ import {
   type PrPreflightResponse,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import "./PrCreateModal.css";
 
 interface PrCreateModalProps {
@@ -77,7 +78,7 @@ function OptionChips<T extends { login?: string; name?: string; color?: string }
               className={`pr-create-modal__chip${hasColor ? " pr-create-modal__chip--colored" : ""}`}
               style={chipStyle}
             >
-              {getLabel(item)}
+              <span className="pr-create-modal__chip-label">{getLabel(item)}</span>
               <button
                 type="button"
                 className="btn btn-icon pr-create-modal__chip-remove"
@@ -148,6 +149,8 @@ export function PrCreateModal({
   const [reviewers, setReviewers] = useState<PrOptionsUser[]>([]);
   const [assignees, setAssignees] = useState<PrOptionsUser[]>([]);
   const [labels, setLabels] = useState<PrOptionsLabel[]>([]);
+
+  useModalResizePersist(modalRef, open, "fusion:pr-create-modal-size");
 
   const loadData = useCallback(async (baseOverride?: string) => {
     const requestId = ++requestSeqRef.current;
@@ -336,9 +339,10 @@ export function PrCreateModal({
           </button>
         </div>
 
-        {loading ? <div className="pr-create-modal__loading">Loading PR metadata…</div> : (
-          <>
-            <section className="pr-create-modal__section">
+        <div className="pr-create-modal__body">
+          {loading ? <div className="pr-create-modal__loading">Loading PR metadata…</div> : (
+            <>
+              <section className="pr-create-modal__section">
               <h3 className="pr-create-modal__section-title">Pre-flight checks</h3>
               <div className="pr-create-modal__preflight">
                 {checks.map((check) => (
@@ -441,20 +445,21 @@ export function PrCreateModal({
               </div>
             </details>
 
-            {error && (
-              <div className="form-error pr-error" role="alert">
-                <p>{error}</p>
-                {lastGhError?.hint ? <p className="pr-error__hint">{lastGhError.hint}</p> : null}
-                <div className="pr-error__actions">
-                  {lastGhError?.action?.kind === "shell" ? <p>Action: run <code>{lastGhError.action.command}</code></p> : null}
-                  {lastGhError?.action?.kind === "open" ? <p>Action: open <a href={lastGhError.action.url} target="_blank" rel="noreferrer">docs</a></p> : null}
-                  {lastGhError?.retryable ? <button type="button" className="btn btn-sm pr-error__retry" onClick={() => void submit()}>Retry</button> : null}
-                  <button type="button" className="btn btn-sm pr-error__dismiss" onClick={() => { setLastGhError(null); setError(null); }} aria-label="Dismiss PR error">×</button>
+              {error && (
+                <div className="form-error pr-error" role="alert">
+                  <p>{error}</p>
+                  {lastGhError?.hint ? <p className="pr-error__hint">{lastGhError.hint}</p> : null}
+                  <div className="pr-error__actions">
+                    {lastGhError?.action?.kind === "shell" ? <p>Action: run <code>{lastGhError.action.command}</code></p> : null}
+                    {lastGhError?.action?.kind === "open" ? <p>Action: open <a href={lastGhError.action.url} target="_blank" rel="noreferrer">docs</a></p> : null}
+                    {lastGhError?.retryable ? <button type="button" className="btn btn-sm pr-error__retry" onClick={() => void submit()}>Retry</button> : null}
+                    <button type="button" className="btn btn-sm pr-error__dismiss" onClick={() => { setLastGhError(null); setError(null); }} aria-label="Dismiss PR error">×</button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </>
-        )}
+              )}
+            </>
+          )}
+        </div>
 
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose} disabled={submitting}>Cancel</button>

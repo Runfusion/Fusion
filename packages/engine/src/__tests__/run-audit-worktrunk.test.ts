@@ -17,28 +17,28 @@ describe("run-audit worktrunk lifecycle events", () => {
   it.each<WorktrunkLifecycleCase>([
     {
       type: "worktree:worktrunk-install",
-      target: "/usr/local/bin/worktrunk",
-      metadata: { op: "install", binaryPath: "/usr/local/bin/worktrunk", durationMs: 12, installSource: "cargo" },
+      target: "/usr/local/bin/wt",
+      metadata: { op: "install", binaryPath: "/usr/local/bin/wt", durationMs: 12, installSource: "cargo" },
     },
     {
       type: "worktree:worktrunk-create",
       target: "/repo/.worktrees/fn-1",
-      metadata: { op: "create", binaryPath: "/usr/local/bin/worktrunk", worktreePath: "/repo/.worktrees/fn-1", durationMs: 31 },
+      metadata: { op: "create", binaryPath: "/usr/local/bin/wt", worktreePath: "/repo/.worktrees/fn-1", durationMs: 31 },
     },
     {
       type: "worktree:worktrunk-sync",
       target: "/repo/.worktrees/fn-1",
-      metadata: { op: "sync", binaryPath: "/usr/local/bin/worktrunk", worktreePath: "/repo/.worktrees/fn-1", durationMs: 44 },
+      metadata: { op: "sync", binaryPath: "/usr/local/bin/wt", worktreePath: "/repo/.worktrees/fn-1", durationMs: 44 },
     },
     {
       type: "worktree:worktrunk-prune",
       target: "worktrunk-prune",
-      metadata: { op: "prune", binaryPath: "/usr/local/bin/worktrunk", durationMs: 20, prunedCount: 3 },
+      metadata: { op: "prune", binaryPath: "/usr/local/bin/wt", durationMs: 20, prunedCount: 3 },
     },
     {
       type: "worktree:worktrunk-remove",
       target: "/repo/.worktrees/fn-1",
-      metadata: { op: "remove", binaryPath: "/usr/local/bin/worktrunk", worktreePath: "/repo/.worktrees/fn-1", durationMs: 13 },
+      metadata: { op: "remove", binaryPath: "/usr/local/bin/wt", worktreePath: "/repo/.worktrees/fn-1", durationMs: 13 },
     },
   ])("persists $type with metadata", async ({ type, target, metadata }) => {
     const recordRunAuditEvent = vi.fn(async (_event: RunAuditEventInput) => undefined);

@@ -104,6 +104,7 @@ vi.mock("../../api", () => ({
     { id: "agent-002", name: "Beta", role: "reviewer", state: "idle", icon: undefined, createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z", metadata: {} },
   ]),
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
+  fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
 }));
 
@@ -3683,6 +3684,57 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
+  it("FN-5155: mobile mode does not apply keyboard-active styles for impossible mid-transition viewport samples", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const { mockVV } = mockMobileVisualViewport({
+      innerHeight: 844,
+      vvHeight: 844,
+    });
+
+    try {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const thread = document.querySelector(".chat-thread") as HTMLDivElement;
+      expect(thread).toBeInTheDocument();
+
+      const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+      await act(async () => {
+        textarea.focus();
+      });
+
+      Object.defineProperty(mockVV, "offsetTop", {
+        value: 180,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 820,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        document.dispatchEvent(new Event("focusin"));
+      });
+
+      await waitFor(() => {
+        // FN-5155 fix keeps transient impossible metrics out of ChatView until
+        // the viewport settles, so the composer never floats above the keyboard.
+        expect(thread.classList.contains("chat-thread--keyboard-active")).toBe(false);
+        expect(thread.style.getPropertyValue("--vv-height")).toBe("");
+        expect(thread.style.getPropertyValue("--vv-offset-top")).toBe("");
+        expect(thread.style.getPropertyValue("--keyboard-overlap")).toBe("");
+      });
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("mobile mode: removes keyboard-active class immediately on blur even before visualViewport settles", async () => {
     const restoreMatchMedia = mockMobileViewport();
     const { listeners, mockVV } = mockMobileVisualViewport({
@@ -4270,13 +4322,13 @@ describe("ChatView mobile behavior", () => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
       fireEvent(document, new Event("visibilitychange"));
       await act(async () => {
-        vi.runOnlyPendingTimers();
+        await vi.runOnlyPendingTimersAsync();
       });
 
       scrollHeightValue = 1500;
       await act(async () => {
-        vi.advanceTimersByTime(260);
-        vi.runOnlyPendingTimers();
+        await vi.advanceTimersByTimeAsync(260);
+        await vi.runOnlyPendingTimersAsync();
       });
 
       expect(scrollTopValue).toBe(1500);

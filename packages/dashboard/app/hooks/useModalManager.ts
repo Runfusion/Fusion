@@ -247,7 +247,13 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setDetailTaskOrigin(null);
   }, []);
   const updateDetailTask = useCallback((updated: Partial<TaskDetail>) => {
-    setDetailTask((prev) => (prev ? { ...prev, ...updated } : prev));
+    setDetailTask((prev) => {
+      if (!prev) return prev;
+      if (updated.id !== undefined && updated.id !== prev.id) {
+        return prev;
+      }
+      return { ...prev, ...updated };
+    });
   }, []);
   const closeDetailTask = useCallback(() => {
     setDetailTask(null);

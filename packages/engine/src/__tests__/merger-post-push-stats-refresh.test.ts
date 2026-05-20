@@ -32,7 +32,13 @@ describe("aiMergeTask — post-push mergeDetails stats refresh", () => {
       prompt: "# test",
     } as Task;
     (store.getTask as any).mockResolvedValue(task);
-    (store.getSettings as any).mockResolvedValue({ pushAfterMerge: true, pushRemote: "origin", includeTaskIdInCommit: true, mergeConflictStrategy: "smart-prefer-main" });
+    (store.getSettings as any).mockResolvedValue({
+      pushAfterMerge: true,
+      pushRemote: "origin",
+      includeTaskIdInCommit: true,
+      mergeConflictStrategy: "smart-prefer-main",
+      mergeIntegrationWorktree: "cwd-main" as const,
+    });
     return store;
   }
 

@@ -184,7 +184,10 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -469,6 +472,7 @@ describe("aiMergeTask — post-merge workflow steps", () => {
     store.getTask = vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" });
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       defaultProviderOverride: "openai",
       defaultModelIdOverride: "gpt-4o-mini",
       defaultProvider: "anthropic",
@@ -681,6 +685,7 @@ describe("aiMergeTask — post-merge workflow steps", () => {
     // Override settings to include scripts
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       scripts: { build: "pnpm build" },
     });
 

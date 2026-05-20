@@ -2,12 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeEvalFollowUpText } from "@fusion/core";
 import { materializeEvalFollowUps, normalizeEvalFollowUps, resolveEvalFollowUpPolicyMode } from "../eval-followups.js";
 
-function makeStore(params: { openTasks?: Array<{ id: string; column: string; title?: string; description: string }>; priorDedupeKeys?: string[] }) {
+function makeStore(params: {
+  openTasks?: Array<Record<string, unknown>>;
+  priorDedupeKeys?: string[];
+  taskLogsById?: Record<string, Array<{ action: string; timestamp: string }>>;
+}) {
   const openTasks = params.openTasks ?? [];
   const priorDedupeKeys = params.priorDedupeKeys ?? [];
+  const taskLogsById = params.taskLogsById ?? {};
   return {
     listTasks: async () => openTasks,
     createTask: vi.fn(async () => ({ id: "FN-created" })),
+    getTask: vi.fn(async (id: string) => ({ id, log: taskLogsById[id] ?? [] })),
+    logEntry: vi.fn(async () => undefined),
+    recordRunAuditEvent: vi.fn(async () => undefined),
     getEvalStore: () => ({
       listTaskResults: () => [{ followUps: priorDedupeKeys.map((dedupeKey) => ({ dedupeKey })) }],
     }),
@@ -114,5 +122,47 @@ describe("normalizeEvalFollowUps", () => {
     });
     expect(created?.state).toBe("created");
     expect(created?.createdTaskId).toBe("FN-created");
+  });
+
+  it("reuses an existing task when the suggestion id already has an open follow-up", async () => {
+    const store = makeStore({
+      openTasks: [{
+        id: "FN-existing",
+        column: "todo",
+        description: "existing eval follow-up",
+        sourceParentTaskId: "FN-parent",
+        sourceMetadata: { suggestionId: "efs-1" },
+      }],
+    });
+
+    const [created] = await materializeEvalFollowUps({
+      parentTaskId: "FN-parent",
+      runId: "ER-5",
+      policyMode: "create_all_non_duplicates",
+      overallScore: 42,
+      store,
+      followUps: [{
+        suggestionId: "efs-1",
+        dedupeKey: "k",
+        title: "Investigate issue",
+        description: "Investigate issue found by eval.",
+        priority: "high",
+        severity: "weak",
+        rationale: "Signals showed repeated failures.",
+        evidenceRefs: [{ evidenceId: "workflow-1", source: "other" }],
+        recommendation: { shouldCreate: true, reason: "qualified", policyQualified: true },
+        state: "suggested",
+        policyMode: "create_all_non_duplicates",
+      }],
+    });
+
+    expect(store.createTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-existing",
+      expect.stringContaining("[verification recurrence] signature=none"),
+      expect.stringContaining("kind=eval; parentTaskId=FN-parent"),
+    );
+    expect(created?.createdTaskId).toBe("FN-existing");
+    expect(created?.recommendation.reason).toContain("Reused existing follow-up FN-existing");
   });
 });

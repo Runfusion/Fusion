@@ -1,6 +1,7 @@
 import type { TaskStore } from "@fusion/core";
 import type { PrInfo } from "@fusion/core";
 import { prMonitorLog } from "./logger.js";
+import { createAutomatedFollowup } from "./verification-followup-dedup.js";
 
 interface PrComment {
   id: number;
@@ -228,19 +229,28 @@ ${summary}
 Please review the PR comments and address any remaining issues.`;
 
     try {
-      const task = await this.store.createTask({
-        title: `Follow-up: Address PR #${prInfo.number} feedback`,
-        description,
-        column: "triage",
-        dependencies: [originalTaskId],
-        source: {
-          sourceType: "api",
-          sourceParentTaskId: originalTaskId,
-          sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
+      const result = await createAutomatedFollowup(this.store, {
+        kind: "pr-comment",
+        parentTaskId: originalTaskId,
+        extraMatchKeys: { prNumber: prInfo.number },
+        createInput: {
+          title: `Follow-up: Address PR #${prInfo.number} feedback`,
+          description,
+          column: "triage",
+          dependencies: [originalTaskId],
+          source: {
+            sourceType: "api",
+            sourceParentTaskId: originalTaskId,
+            sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
+          },
         },
       });
 
-      prMonitorLog.log(`Created follow-up task ${task.id} for PR #${prInfo.number}`);
+      if (result.outcome === "created") {
+        prMonitorLog.log(`Created follow-up task ${result.task.id} for PR #${prInfo.number}`);
+      } else {
+        prMonitorLog.log(`Reused follow-up task ${result.existingTaskId} for PR #${prInfo.number}`);
+      }
     } catch (err) {
       prMonitorLog.error(`Failed to create follow-up task:`, err);
     }

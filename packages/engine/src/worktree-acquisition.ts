@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { RunMutationContext, Settings, Task, TaskStore, SecretsStore } from "@fusion/core";
-import { generateWorktreeName, slugify } from "./worktree-names.js";
+import { canonicalFusionBranchName, generateWorktreeName, slugify } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "./logger.js";
@@ -202,7 +202,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
     throw error;
   }
-  const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+  const branchName = task.branch || canonicalFusionBranchName(task.id);
   const naming = settings.worktreeNaming || "random";
   const allowSiblingBranchRename = settings.executorAllowSiblingBranchRename === true;
   const baseBranch = task.executionStartBranch || null;

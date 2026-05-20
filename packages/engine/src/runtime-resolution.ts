@@ -9,9 +9,23 @@
 
 import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "./agent-runtime.js";
 import type { PluginRunner } from "./plugin-runner.js";
+import * as fusionCore from "@fusion/core";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { createLogger } from "./logger.js";
 import { createFnAgent, promptWithFallback, describeModel } from "./pi.js";
+
+const MOCK_PROVIDER_ID = (() => {
+  try {
+    const value = Reflect.get(fusionCore as object, "MOCK_PROVIDER_ID");
+    return typeof value === "string" && value.trim().length > 0 ? value : "mock";
+  } catch {
+    return "mock";
+  }
+})();
+
+export function isMockProviderId(provider: string | undefined): boolean {
+  return provider?.trim().toLowerCase() === MOCK_PROVIDER_ID;
+}
 
 /** Logger for the runtime resolution subsystem */
 const runtimeLog = createLogger("runtime-resolver");

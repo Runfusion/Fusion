@@ -10,12 +10,14 @@ import { resolveTaskWorktreePath } from "./worktree-paths.js";
 import { inspectBranchConflict } from "./branch-conflicts.js";
 import { formatError } from "./logger.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
+import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 import {
   StaleWorktreeIndexLockError,
   classifyStaleLock,
   parseIndexLockPath,
   tryRemoveStaleLock,
 } from "./worktree-stale-lock.js";
+import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree-stale-registration.js";
 
 const execAsync = promisify(exec);
 const NATIVE_TIMEOUT_MS = 120_000;
@@ -170,7 +172,7 @@ export class NativeWorktreeBackend implements WorktreeBackend {
   constructor(
     private readonly deps: {
       logger?: { log: (m: string) => void; warn: (m: string) => void };
-      settings?: Pick<Settings, "worktreesDir">;
+      settings?: Partial<Pick<Settings, "worktreesDir" | "commitMsgHookEnabled" | "taskPrefix" | "taskAttributionTrailerNames">>;
       audit?: Pick<RunAuditor, "git">;
     } = {},
   ) {}
@@ -179,13 +181,26 @@ export class NativeWorktreeBackend implements WorktreeBackend {
     const startArg = input.startPoint ? ` ${quoteShellArg(input.startPoint)}` : "";
     const installGuardOrCleanup = async (worktreePath: string) => {
       try {
-        await installTaskWorktreeIdentityGuard({ worktreePath, taskId: input.taskId });
+        await installTaskWorktreeIdentityGuard({
+          worktreePath,
+          taskId: input.taskId,
+          commitMsgHookEnabled: this.deps.settings?.commitMsgHookEnabled,
+          taskPrefix: this.deps.settings?.taskPrefix,
+          taskAttributionTrailerName: this.deps.settings?.taskAttributionTrailerNames?.[0],
+        });
       } catch (error) {
         await execAsync(`rm -rf ${quoteShellArg(worktreePath)}`, {
           cwd: input.rootDir,
           encoding: "utf-8",
           timeout: REMOVE_TIMEOUT_MS,
           maxBuffer: MAX_BUFFER,
+        }).catch(() => undefined);
+        await pruneWorktreeAdminEntries({
+          rootDir: input.rootDir,
+          auditor: this.deps.audit,
+          reason: "backend-guard-failed",
+          target: worktreePath,
+          logger: this.deps.logger,
         }).catch(() => undefined);
         throw error;
       }
@@ -203,7 +218,18 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       return { path: input.worktreePath, branch: branchName };
     };
 
+    const createWithBranchForce = async (branchName: string): Promise<WorktreeCreateResult> => {
+      await execAsync(`git worktree add -f ${quoteShellArg(input.worktreePath)} ${quoteShellArg(branchName)}`, {
+        cwd: input.rootDir,
+        encoding: "utf-8",
+        timeout: NATIVE_TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+      });
+      return { path: input.worktreePath, branch: branchName };
+    };
+
     let staleLockRecoveryAttempted = false;
+    let staleRegistrationRecoveryAttempted = false;
     try {
       const created = await createWithBranch(input.branch);
       await installGuardOrCleanup(created.path);
@@ -272,6 +298,61 @@ export class NativeWorktreeBackend implements WorktreeBackend {
             reason: classification.reason,
           });
         }
+      }
+
+      const combinedErrorOutput = `${(error as { message?: string })?.message ?? ""}\n${getErrorStderr(error) ?? ""}`;
+      const staleRegistrationPath = parseStaleRegistrationPath(combinedErrorOutput);
+      if (staleRegistrationPath && !staleRegistrationRecoveryAttempted) {
+        staleRegistrationRecoveryAttempted = true;
+        await this.deps.audit?.git({
+          type: "worktree:stale-registration-detected",
+          target: input.worktreePath,
+          metadata: { staleRegistrationPath, worktreePath: input.worktreePath },
+        });
+        const recovery = await recoverStaleRegistration({
+          rootDir: input.rootDir,
+          worktreePath: input.worktreePath,
+          logger: this.deps.logger,
+        });
+        if (recovery.recovered) {
+          try {
+            const created = await createWithBranch(input.branch);
+            await this.deps.audit?.git({
+              type: "worktree:stale-registration-recovered",
+              target: input.worktreePath,
+              metadata: { actions: recovery.actions },
+            });
+            await installGuardOrCleanup(created.path);
+            return created;
+          } catch (retryError) {
+            const actionsWithForce = [...recovery.actions, "add-force-retry"];
+            try {
+              const created = await createWithBranchForce(input.branch);
+              await this.deps.audit?.git({
+                type: "worktree:stale-registration-recovered",
+                target: input.worktreePath,
+                metadata: { actions: actionsWithForce },
+              });
+              await installGuardOrCleanup(created.path);
+              return created;
+            } catch (forceError) {
+              await this.deps.audit?.git({
+                type: "worktree:stale-registration-recovery-failed",
+                target: input.worktreePath,
+                metadata: {
+                  actions: actionsWithForce,
+                  reason: `${formatError(retryError).detail}; force-retry: ${formatError(forceError).detail}`,
+                },
+              });
+              throw error;
+            }
+          }
+        }
+        await this.deps.audit?.git({
+          type: "worktree:stale-registration-recovery-failed",
+          target: input.worktreePath,
+          metadata: { actions: recovery.actions, reason: recovery.reason ?? "unknown" },
+        });
       }
 
       if (!input.allowSiblingBranchRename) {
@@ -363,6 +444,7 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
     private readonly deps: {
       binaryPath: string | (() => Promise<string | null>) | null;
       logger?: { log: (m: string) => void; warn: (m: string) => void };
+      audit?: Pick<RunAuditor, "git">;
     },
   ) {}
 
@@ -467,13 +549,23 @@ export class WorktrunkWorktreeBackend implements WorktreeBackend {
     }
 
     try {
-      await installTaskWorktreeIdentityGuard({ worktreePath: resolvedPath, taskId: input.taskId });
+      await installTaskWorktreeIdentityGuard({
+        worktreePath: resolvedPath,
+        taskId: input.taskId,
+      });
     } catch (error) {
       await execAsync(`rm -rf ${quoteShellArg(resolvedPath)}`, {
         cwd: input.rootDir,
         encoding: "utf-8",
         timeout: REMOVE_TIMEOUT_MS,
         maxBuffer: MAX_BUFFER,
+      }).catch(() => undefined);
+      await pruneWorktreeAdminEntries({
+        rootDir: input.rootDir,
+        auditor: this.deps.audit,
+        reason: "backend-guard-failed",
+        target: resolvedPath,
+        logger: this.deps.logger,
       }).catch(() => undefined);
       throw error;
     }

@@ -33,6 +33,7 @@ function openInBrowser(url: string): void {
     args = [url];
   }
   try {
+    // process-supervisor-allowlist: user-facing browser opener must outlive the TUI process
     const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
     child.unref();
   } catch {

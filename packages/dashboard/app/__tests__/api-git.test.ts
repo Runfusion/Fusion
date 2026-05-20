@@ -510,6 +510,18 @@ describe("Git Management API", () => {
       });
     });
 
+    it("sends removeLineageReferences=true when archive lineage unlink is requested", async () => {
+      const archivedTask: Task = { ...FAKE_DETAIL, column: "archived" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, archivedTask));
+
+      await archiveTask("FN-001", undefined, { removeLineageReferences: true });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/archive?removeLineageReferences=true", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    });
+
     it("throws on error", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not in done" }, 400));
 
@@ -571,6 +583,18 @@ describe("Git Management API", () => {
       await deleteTask("FN-001", undefined, { githubIssueAction: "delete" });
 
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?githubIssueAction=delete", {
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+    });
+
+    it("sends removeLineageReferences=true when lineage unlink is requested", async () => {
+      const deletedTask: Task = { ...FAKE_DETAIL, column: "done" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, deletedTask));
+
+      await deleteTask("FN-001", undefined, { removeLineageReferences: true });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?removeLineageReferences=true", {
         headers: { "Content-Type": "application/json" },
         method: "DELETE",
       });

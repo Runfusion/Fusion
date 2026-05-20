@@ -16,6 +16,7 @@ import {
   LayoutGrid,
   Lightbulb,
   Loader2,
+  Lock,
   Mail,
   MessageSquare,
   MoreHorizontal,
@@ -236,6 +237,7 @@ export function MobileNavBar({
     || view === "research"
     || view === "insights"
     || view === "memory"
+    || view === "secrets"
     || view === "devserver"
     || view === "dev-server"
     || (todosOpen && todoViewEnabled)
@@ -702,6 +704,16 @@ export function MobileNavBar({
                 <span>Memory</span>
               </button>
             )}
+
+            <button
+              type="button"
+              className="mobile-more-item"
+              data-testid="mobile-more-item-secrets"
+              onClick={() => handleMoreAction(() => onChangeView("secrets"))}
+            >
+              <Lock />
+              <span>Secrets</span>
+            </button>
 
             {experimentalFeatures?.devServerView && (
               <button

@@ -3,6 +3,7 @@ import type {
   TaskStore,
   Task,
   TaskDetail,
+  TaskSource,
   Column,
   TaskReviewData,
   TaskReviewItem,
@@ -15,6 +16,7 @@ import {
   COLUMNS,
   TASK_PRIORITIES,
   VALID_TRANSITIONS,
+  computeContentFingerprint,
   isTaskPriority,
   REPO_OVERRIDE_RE,
   resolveTitleSummarizerSettingsModel,
@@ -23,11 +25,19 @@ import {
   formatRoleMismatchReason,
   getCurrentRepo,
   findDuplicateMatches,
+  deterministicGuardLocks,
+  runDeterministicDuplicateGuard,
+  reconcileDeterministicDuplicate,
+  extractIntentSignature,
+  findNearDuplicates,
+  isEphemeralAgent,
+  type NearDuplicateCandidate,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
 import { planTaskWorktreePath } from "@fusion/engine";
+import type { RunAuditEventInput } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchSelection } from "./branch-selection.js";
@@ -36,6 +46,84 @@ const REVIEW_BLOCK_RE = /##\s+(Code|Plan)\s+Review:[\s\S]*?(?=\n##\s+(?:Code|Pla
 const REVIEW_VERDICT_RE = /###\s+Verdict:\s*(APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
 const REVIEW_STEP_RE = /^(plan|code) review Step (\d+): (APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
 const DUPLICATE_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "to", "for", "in", "is", "on", "with", "fn"]);
+
+export const __fingerprintCreateLocksForTests = deterministicGuardLocks;
+
+const RESET_TASK_FIELDS = {
+  worktree: null,
+  branch: null,
+  currentStep: 0,
+  status: null,
+  error: null,
+  stuckKillCount: 0,
+  taskDoneRetryCount: null,
+  worktreeSessionRetryCount: null,
+  workflowStepRetries: undefined,
+  recoveryRetryCount: null,
+  nextRecoveryAt: null,
+  postReviewFixCount: 0,
+  verificationFailureCount: 0,
+  mergeConflictBounceCount: 0,
+  checkedOutBy: null,
+  executionStartedAt: null,
+  sessionFile: null,
+} as const;
+
+const RESET_DRIFT_CORRECTION_FIELDS = {
+  column: "todo" as const,
+  worktree: null,
+  branch: null,
+  status: null,
+  error: null,
+  checkedOutBy: null,
+  executionStartedAt: null,
+  taskDoneRetryCount: null,
+  worktreeSessionRetryCount: null,
+  sessionFile: null,
+} as const;
+
+async function emitResetDriftAudit(
+  scopedStore: TaskStore,
+  taskId: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const recordRunAuditEvent = (scopedStore as TaskStore & {
+    recordRunAuditEvent?: (input: RunAuditEventInput) => Promise<void>;
+  }).recordRunAuditEvent;
+  if (typeof recordRunAuditEvent !== "function") {
+    return;
+  }
+  await recordRunAuditEvent({
+    taskId,
+    agentId: "system",
+    runId: `synthetic-dashboard-reset-${taskId}-${Date.now()}`,
+    domain: "database",
+    mutationType: "task:auto-recover-reset-drift",
+    target: taskId,
+    metadata,
+  });
+}
+
+async function releaseExecutionAgentBindings(
+  engine: { getAgentStore?: () => { listAgents: (input: { includeEphemeral?: boolean }) => Promise<Array<{ id: string; taskId?: string }>>; syncExecutionTaskLink: (agentId: string, taskId: string | undefined) => Promise<unknown>; deleteAgent: (agentId: string) => Promise<unknown>; getAgent?: (agentId: string) => Promise<unknown>; } | undefined } | undefined,
+  taskId: string,
+): Promise<void> {
+  const agentStore = engine?.getAgentStore?.();
+  if (!agentStore) {
+    return;
+  }
+
+  const linkedAgents = (await agentStore.listAgents({ includeEphemeral: true }))
+    .filter((agent) => agent.taskId === taskId);
+
+  for (const agent of linkedAgents) {
+    if (isEphemeralAgent(agent as never)) {
+      await agentStore.deleteAgent(agent.id);
+      continue;
+    }
+    await agentStore.syncExecutionTaskLink(agent.id, undefined);
+  }
+}
 
 function buildDuplicateQuery(title: string | undefined, description: string): string {
   const tokens = `${title ?? ""} ${description}`
@@ -163,6 +251,10 @@ interface TaskWorkflowRouteDeps {
   runGitCommand: (args: string[], cwd: string, timeoutMs: number) => Promise<string>;
   trimTaskDetailActivityLog: (task: TaskDetail) => TaskDetail;
   triggerCommentWakeForAssignedAgent: (scopedStore: TaskStore, task: Task, wake: { triggeringCommentType: "steering" | "task" | "pr"; triggeringCommentIds?: string[]; triggerDetail: string }) => Promise<void>;
+  resolveSelfHealingManager: (scopedStore: TaskStore) => {
+    rootDir: string;
+    reconcileInReviewBranchRebind: (opts?: { includeTaskIds?: Set<string> }) => Promise<import("@fusion/engine").RebindResult>;
+  } | undefined;
 }
 
 export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWorkflowRouteDeps): void {
@@ -176,6 +268,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     runGitCommand,
     trimTaskDetailActivityLog,
     triggerCommentWakeForAssignedAgent,
+    resolveSelfHealingManager: _resolveSelfHealingManager,
   } = deps;
   const TASK_DETAIL_ACTIVITY_LOG_LIMIT = taskDetailActivityLogLimit;
 
@@ -249,7 +342,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Create task
   router.post("/tasks", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, projectId } = await getProjectContext(req);
       const {
         title,
         description,
@@ -407,17 +500,164 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const normalizedDescription = description.trim();
       const normalizedTitle = typeof title === "string" ? title : undefined;
       const acknowledgedDuplicateIds = acknowledgedDuplicates ?? [];
-      const duplicateMatches = bypassDuplicateCheck === true
-        ? []
-        : await computeDuplicateMatches(scopedStore, {
-            title: normalizedTitle,
-            description: normalizedDescription,
-          });
-      const matchesAfterAckFilter = duplicateMatches.filter((match) => !acknowledgedDuplicateIds.includes(match.id));
-      if (matchesAfterAckFilter.length > 0) {
-        throw conflict("duplicate_candidates", { matches: matchesAfterAckFilter });
+      let intentSignature: ReturnType<typeof extractIntentSignature> = {
+        routePaths: [],
+        filePaths: [],
+        identifiers: [],
+        titleTokens: [],
+      };
+      try {
+        intentSignature = extractIntentSignature({
+          title: normalizedTitle,
+          description: normalizedDescription,
+        });
+      } catch (error) {
+        runtimeLogger.warn("Near-duplicate intent guard failed; proceeding", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
+      const contentFingerprintSeed = computeContentFingerprint({
+        title: normalizedTitle,
+        description: normalizedDescription,
+      });
+      const preexistingLockKey = contentFingerprintSeed ? `${projectId}:${contentFingerprintSeed}` : null;
+
+      let deterministicGuard: Awaited<ReturnType<typeof runDeterministicDuplicateGuard>>;
+      let contentFingerprint: string | null = null;
+      if (preexistingLockKey) {
+        const preexistingLock = __fingerprintCreateLocksForTests.get(preexistingLockKey);
+        if (preexistingLock) {
+          await preexistingLock;
+        }
+      }
+
+      try {
+        deterministicGuard = await runDeterministicDuplicateGuard(
+          scopedStore,
+          {
+            title: normalizedTitle,
+            description: normalizedDescription,
+          },
+          {
+            lockScope: projectId,
+            acknowledgedDuplicates: acknowledgedDuplicateIds,
+            bypass: bypassDuplicateCheck === true,
+            logger: runtimeLogger,
+          },
+        );
+      } catch (error) {
+        runtimeLogger.warn("Deterministic duplicate pre-check failed; proceeding", {
+          lockKey: preexistingLockKey,
+          contentFingerprint,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        deterministicGuard = {
+          action: "proceed",
+          fingerprint: contentFingerprintSeed,
+          releaseLock: () => {},
+        };
+      }
+      contentFingerprint = deterministicGuard.fingerprint;
+
+      let matchesAfterAckFilter: DuplicateMatch[] = [];
+      try {
+        if (deterministicGuard.action === "duplicate" && deterministicGuard.existing) {
+          throw conflict("duplicate_candidates", {
+            matches: [{
+              id: deterministicGuard.existing.id,
+              title: deterministicGuard.existing.title ?? "",
+              description: deterministicGuard.existing.description ?? "",
+              column: deterministicGuard.existing.column,
+              score: 1,
+              deterministic: true,
+            }],
+          });
+        }
+
+        const duplicateMatches = bypassDuplicateCheck === true
+          ? []
+          : await computeDuplicateMatches(scopedStore, {
+              title: normalizedTitle,
+              description: normalizedDescription,
+            });
+        matchesAfterAckFilter = duplicateMatches.filter((match) => !acknowledgedDuplicateIds.includes(match.id));
+        if (matchesAfterAckFilter.length > 0) {
+          throw conflict("duplicate_candidates", { matches: matchesAfterAckFilter });
+        }
+
+      // FN-5152: layered dedup ordering remains deterministic -> similarity -> near-duplicate intent.
+      // This guard is fail-open so intake cannot be blocked by extraction/query errors.
+      if (bypassDuplicateCheck !== true) {
+        try {
+          const signalCount = intentSignature.routePaths.length + intentSignature.filePaths.length + intentSignature.identifiers.length;
+          if (signalCount > 0) {
+            const duplicateQuery = buildDuplicateQuery(normalizedTitle, normalizedDescription);
+            const nearDuplicateQueryTokens = [
+              duplicateQuery,
+              ...intentSignature.routePaths,
+              ...intentSignature.identifiers,
+            ].filter((token) => token.trim().length > 0);
+            let candidateRows = await scopedStore.searchTasks(nearDuplicateQueryTokens.join(" "), {
+              slim: true,
+              includeArchived: false,
+              limit: 50,
+            });
+            if (candidateRows.length === 0) {
+              candidateRows = await scopedStore.listTasks({ slim: true, includeArchived: false, limit: 50 });
+            }
+            const fullRows = await scopedStore.listTasks({ slim: false, includeArchived: false });
+            const byId = new Map(fullRows.map((row) => [row.id, row]));
+            const candidateMap = new Map<string, NearDuplicateCandidate>();
+            for (const row of candidateRows) {
+              if (acknowledgedDuplicateIds.includes(row.id)) {
+                continue;
+              }
+              const full = byId.get(row.id);
+              candidateMap.set(row.id, {
+                id: row.id,
+                title: row.title ?? "",
+                description: row.description ?? "",
+                column: row.column,
+                createdAt: full?.createdAt ? Date.parse(full.createdAt) : undefined,
+                fileScope: Array.isArray(full?.sourceMetadata?.fileScope)
+                  ? full.sourceMetadata.fileScope.filter((entry): entry is string => typeof entry === "string")
+                  : undefined,
+              });
+            }
+            const nearMatches = findNearDuplicates(
+              { title: normalizedTitle, description: normalizedDescription },
+              Array.from(candidateMap.values()),
+              { windowMs: 7 * 24 * 60 * 60 * 1000 },
+            );
+            if (nearMatches.length > 0) {
+              throw conflict("duplicate_candidates", {
+                matches: nearMatches.map((match) => {
+                  const candidate = candidateMap.get(match.id);
+                  return {
+                    id: match.id,
+                    title: candidate?.title ?? "",
+                    description: candidate?.description ?? "",
+                    column: candidate?.column ?? "triage",
+                    score: match.score,
+                    reason: "near-duplicate-intent",
+                    sharedTokens: match.sharedTokens,
+                  };
+                }),
+              });
+            }
+          }
+        } catch (error) {
+          if (error instanceof ApiError) {
+            throw error;
+          }
+          runtimeLogger.warn("Near-duplicate intent guard failed; proceeding", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      const normalizedTaskSource = normalizedSource as TaskSource;
       const createInput = {
         title: normalizedTitle,
         description: normalizedDescription,
@@ -437,17 +677,22 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         reviewLevel: reviewLevel ?? undefined,
         executionMode: executionMode || undefined,
         priority: priority ?? undefined,
-        source:
-          acknowledgedDuplicateIds.length > 0
-            ? {
-                ...(normalizedSource as Record<string, unknown>),
-                sourceMetadata: {
-                  ...((normalizedSource as { sourceMetadata?: Record<string, unknown> }).sourceMetadata ?? {}),
+        source: {
+          ...normalizedTaskSource,
+          sourceMetadata: {
+            ...(normalizedTaskSource.sourceMetadata ?? {}),
+            ...(contentFingerprint ? { contentFingerprint } : {}),
+            ...(intentSignature.routePaths.length + intentSignature.filePaths.length + intentSignature.identifiers.length > 0
+              ? { intentSignature }
+              : {}),
+            ...(acknowledgedDuplicateIds.length > 0
+              ? {
                   duplicateWarningOverridden: true,
                   acknowledgedDuplicateIds,
-                },
-              }
-            : normalizedSource,
+                }
+              : {}),
+          },
+        },
         branch: normalizedBranch,
         baseBranch: normalizedBaseBranch,
         ...(typeof nodeId === "string" && nodeId.trim().length > 0 ? { nodeId: nodeId.trim() } : {}),
@@ -459,28 +704,42 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } },
       );
 
-      if (acknowledgedDuplicateIds.length > 0) {
-        try {
-          await scopedStore.recordActivity({
-            type: "task:duplicate-warning-overridden",
-            taskId: task.id,
-            taskTitle: task.title,
-            details: `Created despite ${acknowledgedDuplicateIds.length} possible duplicate(s): ${acknowledgedDuplicateIds.join(", ")}`,
-            metadata: {
-              acknowledgedDuplicateIds,
-              matches: matchesAfterAckFilter.map((match) => ({ id: match.id, score: match.score })),
-            },
-          });
-        } catch (error) {
-          runtimeLogger.warn("Failed to record duplicate warning override activity", {
-            taskId: task.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+      const deterministicReconcile = await reconcileDeterministicDuplicate(scopedStore, {
+        createdTask: task,
+        fingerprint: bypassDuplicateCheck === true ? null : contentFingerprint,
+        windowMs: 60_000,
+        logger: runtimeLogger,
+      });
+        if (deterministicReconcile.outcome === "archived") {
+          res.status(200).json(deterministicReconcile.canonical);
+          return;
         }
-      }
 
-      res.status(201).json(task);
-      return;
+        if (acknowledgedDuplicateIds.length > 0) {
+          try {
+            await scopedStore.recordActivity({
+              type: "task:duplicate-warning-overridden",
+              taskId: task.id,
+              taskTitle: task.title,
+              details: `Created despite ${acknowledgedDuplicateIds.length} possible duplicate(s): ${acknowledgedDuplicateIds.join(", ")}`,
+              metadata: {
+                acknowledgedDuplicateIds,
+                matches: matchesAfterAckFilter.map((match) => ({ id: match.id, score: match.score })),
+              },
+            });
+          } catch (error) {
+            runtimeLogger.warn("Failed to record duplicate warning override activity", {
+              taskId: task.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        res.status(201).json(task);
+        return;
+      } finally {
+        deterministicGuard.releaseLock();
+      }
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -677,7 +936,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Nuclear reset — erase all progress and allocate a fresh worktree+branch on next run
   router.post("/tasks/:id/reset", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
 
       const { confirm: confirmed } = (req.body ?? {}) as { confirm?: boolean };
       if (!confirmed) {
@@ -695,28 +954,56 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      await scopedStore.updateTask(req.params.id, {
-        worktree: null,
-        branch: null,
-        currentStep: 0,
-        status: null,
-        error: null,
-        stuckKillCount: 0,
-        taskDoneRetryCount: null,
-        workflowStepRetries: undefined,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-        postReviewFixCount: 0,
-        verificationFailureCount: 0,
-        mergeConflictBounceCount: 0,
-      });
+      await scopedStore.updateTask(req.params.id, RESET_TASK_FIELDS);
 
       await scopedStore.logEntry(
         req.params.id,
         "Task reset by user — all progress cleared, fresh worktree and branch will be allocated",
       );
 
-      const updated = await scopedStore.moveTask(req.params.id, "todo");
+      await scopedStore.moveTask(req.params.id, "todo");
+      await releaseExecutionAgentBindings(engine, req.params.id);
+      let updated = await scopedStore.getTask(req.params.id);
+      if (!updated) {
+        throw notFound(`Task ${req.params.id} not found after reset`);
+      }
+
+      const needsDriftCorrection = updated.column !== "todo"
+        || (updated.worktree ?? null) !== null
+        || (updated.branch ?? null) !== null
+        || (updated.checkedOutBy ?? null) !== null
+        || (updated.executionStartedAt ?? null) !== null;
+
+      if (needsDriftCorrection) {
+        const offendingSnapshot = {
+          column: updated.column,
+          worktree: updated.worktree ?? null,
+          branch: updated.branch ?? null,
+          checkedOutBy: updated.checkedOutBy ?? null,
+          executionStartedAt: updated.executionStartedAt ?? null,
+          taskDoneRetryCount: updated.taskDoneRetryCount ?? null,
+          worktreeSessionRetryCount: updated.worktreeSessionRetryCount ?? null,
+          sessionFile: updated.sessionFile ?? null,
+        };
+        await scopedStore.updateTask(req.params.id, RESET_DRIFT_CORRECTION_FIELDS);
+        await scopedStore.logEntry(
+          req.params.id,
+          "Auto-corrected reset drift after moveTask — normalized task back to todo with cleared worktree/branch bindings",
+          JSON.stringify(offendingSnapshot),
+        );
+        await emitResetDriftAudit(scopedStore, req.params.id, offendingSnapshot);
+        updated = await scopedStore.getTask(req.params.id);
+        if (!updated) {
+          throw notFound(`Task ${req.params.id} not found after reset drift correction`);
+        }
+      }
+
+      if (updated.column !== "todo" || (updated.worktree ?? null) !== null || (updated.branch ?? null) !== null) {
+        throw conflict(
+          `Reset refused to return task ${req.params.id} in limbo state (${updated.column}, branch=${updated.branch ?? "null"}, worktree=${updated.worktree ?? "null"})`,
+        );
+      }
+
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -731,6 +1018,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const newTask = await scopedStore.duplicateTask(req.params.id);
+      // Fire github tracking explicitly so duplicates created through the
+      // route (which may not pass through TaskStore.createTask's hook
+      // invocation in mocked test setups) still produce a tracking issue
+      // when the source task had tracking enabled. Best-effort.
+      try {
+        await createTrackingIssueForTask(scopedStore, newTask, { githubToken: options?.githubToken });
+      } catch {
+        // never block duplicate response
+      }
       res.status(201).json(newTask);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -758,6 +1054,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const refinedTask = await scopedStore.refineTask(req.params.id, trimmedFeedback);
       await scopedStore.logEntry(req.params.id, "Refinement requested", trimmedFeedback);
+      // Fire github tracking explicitly so refinements get a tracking issue
+      // when the source task had tracking enabled. Best-effort.
+      try {
+        await createTrackingIssueForTask(scopedStore, refinedTask, { githubToken: options?.githubToken });
+      } catch {
+        // never block refine response
+      }
       res.status(201).json(refinedTask);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -776,12 +1079,31 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/archive", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.archiveTask(req.params.id);
+      const removeLineageReferences = req.query.removeLineageReferences === "1"
+        || req.query.removeLineageReferences === "true";
+      const task = await scopedStore.archiveTask(req.params.id, {
+        cleanup: true,
+        removeLineageReferences,
+      });
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
+      const isTaskHasLineageChildrenError =
+        err instanceof Error
+        && err.name === "TaskHasLineageChildrenError"
+        && Array.isArray((err as { childIds?: unknown }).childIds);
+
+      if (isTaskHasLineageChildrenError) {
+        const childIds = (err as unknown as { childIds: string[] }).childIds;
+        throw new ApiError(409, err instanceof Error ? err.message : "Task has lineage children", {
+          code: "TASK_HAS_LINEAGE_CHILDREN",
+          taskId: req.params.id,
+          lineageChildIds: childIds,
+        });
+      }
+
       const status = (err instanceof Error ? err.message : String(err)).includes("must be in") ? 400 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
@@ -1195,6 +1517,34 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
       const updated = await scopedStore.pauseTask(req.params.id, false);
       res.json(updated);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.post("/tasks/:id/recover-branch-binding", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      if (task.column !== "in-review") {
+        throw badRequest("Task must be in 'in-review' column to recover branch binding");
+      }
+
+      const selfHealingManager = _resolveSelfHealingManager(scopedStore);
+      if (!selfHealingManager) {
+        throw badRequest("Self-healing manager unavailable");
+      }
+
+      const result = await selfHealingManager.reconcileInReviewBranchRebind({
+        includeTaskIds: new Set([task.id]),
+      });
+      res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -2516,9 +2866,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Delete task
   router.delete("/tasks/:id", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
       const removeDependencyReferences = req.query.removeDependencyReferences === "1"
         || req.query.removeDependencyReferences === "true";
+      const removeLineageReferences = req.query.removeLineageReferences === "1"
+        || req.query.removeLineageReferences === "true";
       const githubIssueActionRaw = req.query.githubIssueAction;
       const githubIssueActionValues: readonly GithubIssueAction[] = ["close", "delete", "leave", "auto"];
       let githubIssueAction: GithubIssueAction | undefined;
@@ -2528,7 +2880,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
         githubIssueAction = githubIssueActionRaw as GithubIssueAction;
       }
-      const task = await scopedStore.deleteTask(req.params.id, { removeDependencyReferences, githubIssueAction });
+      const task = await scopedStore.deleteTask(req.params.id, {
+        removeDependencyReferences,
+        removeLineageReferences,
+        githubIssueAction,
+        auditContext: {
+          agentId: "system",
+          runId: `synthetic-dashboard-delete-${req.params.id}-${Date.now()}`,
+        },
+      });
+      await releaseExecutionAgentBindings(engine, req.params.id);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -2545,6 +2906,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           code: "TASK_HAS_DEPENDENTS",
           taskId: req.params.id,
           dependentIds,
+        });
+      }
+
+      const isTaskHasLineageChildrenError =
+        err instanceof Error
+        && err.name === "TaskHasLineageChildrenError"
+        && Array.isArray((err as { childIds?: unknown }).childIds);
+
+      if (isTaskHasLineageChildrenError) {
+        const childIds = (err as unknown as { childIds: string[] }).childIds;
+        throw new ApiError(409, err instanceof Error ? err.message : "Task has lineage children", {
+          code: "TASK_HAS_LINEAGE_CHILDREN",
+          taskId: req.params.id,
+          lineageChildIds: childIds,
         });
       }
 

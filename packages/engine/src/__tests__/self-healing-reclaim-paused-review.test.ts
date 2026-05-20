@@ -11,6 +11,9 @@ function createStore(): TaskStore & EventEmitter {
   (emitter as any).listTasks = vi.fn();
   (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).handoffToReview = vi.fn().mockImplementation(async (taskId: string) => {
+    await (emitter as any).moveTask(taskId, "in-review");
+  });
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
   return emitter;

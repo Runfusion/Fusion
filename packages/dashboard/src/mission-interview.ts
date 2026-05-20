@@ -264,6 +264,12 @@ interface MissionInterviewSession {
   /** Model override for this interview session */
   modelProvider?: string;
   modelId?: string;
+  /**
+   * Captured at session creation so rehydrated sessions can rebuild their
+   * agent without the caller threading context through every API.
+   */
+  store?: TaskStore;
+  rootDir?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -910,18 +916,21 @@ async function ensureMissionInterviewAgent(
     return;
   }
 
-  if (!rootDir) {
+  const effectiveRootDir = rootDir ?? session.rootDir;
+  const effectiveStore = store ?? session.store;
+
+  if (!effectiveRootDir) {
     throw new InvalidSessionStateError(
       "AI agent not available for this session and cannot be resumed without project context",
     );
   }
-  if (!store) {
+  if (!effectiveStore) {
     throw new InvalidSessionStateError(
       "AI agent not available for this session and cannot be resumed without task store context",
     );
   }
 
-  session.agent = await createMissionInterviewAgent(session, rootDir, store, promptOverrides);
+  session.agent = await createMissionInterviewAgent(session, effectiveRootDir, effectiveStore, promptOverrides);
 
   if (historyForReplay.length === 0) {
     return;
@@ -1159,6 +1168,8 @@ export async function createMissionInterviewSession(
     lastGeneratedThinking: "",
     modelProvider,
     modelId,
+    store,
+    rootDir,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -1194,6 +1205,9 @@ export async function submitMissionInterviewResponse(
   if (!session) {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
   }
+
+  if (store && !session.store) session.store = store;
+  if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
   if (!session.currentQuestion) {
     throw new InvalidSessionStateError("No active question in session");
@@ -1244,6 +1258,9 @@ export async function retryMissionInterviewSession(
   if (!session) {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
   }
+
+  if (store && !session.store) session.store = store;
+  if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
   const persisted = _aiSessionStore?.get(sessionId);
   if (persisted && persisted.type !== "mission_interview") {

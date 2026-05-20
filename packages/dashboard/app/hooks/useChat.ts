@@ -9,7 +9,6 @@ import {
   attachChatStream,
   streamChatResponse,
   cancelChatResponse,
-  fetchAgents,
   type ChatFailureInfo,
   type ChatSessionListResponse,
 } from "../api";
@@ -41,6 +40,7 @@ import type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from ".
 import { createChatStreamHandlers } from "./createChatStreamHandlers";
 import { isLikelyTabSuspensionError, useTabVisibilitySuspension } from "./visibilitySuspension";
 import { clearCache, readCache, SWR_CACHE_KEYS, SWR_TASKS_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { useAgentsMapCache } from "./useAgentsMapCache";
 
 export interface UseChatReturn {
   // Session state
@@ -246,6 +246,11 @@ export function useChat(
     (targetProjectId?: string) => (targetProjectId ? `${SWR_CACHE_KEYS.CHAT_SESSIONS_PREFIX}${targetProjectId}` : null),
     [],
   );
+  const getChatMessagesCacheKey = useCallback(
+    (targetProjectId?: string, sessionId?: string | null) =>
+      targetProjectId && sessionId ? `${SWR_CACHE_KEYS.CHAT_MESSAGES_PREFIX}${targetProjectId}:${sessionId}` : null,
+    [],
+  );
 
   const readCachedSessions = useCallback(
     (targetProjectId?: string) => {
@@ -280,10 +285,11 @@ export function useChat(
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
 
   // Agent name resolution map
-  const [agentsMap, setAgentsMap] = useState<Map<string, Agent>>(new Map());
+  const { agentsMap } = useAgentsMapCache(projectId);
 
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+  const lastAttachedGenerationRef = useRef<{ sessionId: string; replayFromEventId: number | null } | null>(null);
   const cancelledByUserRef = useRef(false);
   const pendingMessageRef = useRef("");
   // Cancel any pending requestAnimationFrame flushes from the active stream.
@@ -294,9 +300,11 @@ export function useChat(
   // Refs for SSE event handlers to access current state
   const sessionsRef = useRef(sessions);
   const activeSessionRef = useRef(activeSession);
+  const messagesRef = useRef(messages);
   const isStreamingRef = useRef(isStreaming);
   sessionsRef.current = sessions;
   activeSessionRef.current = activeSession;
+  messagesRef.current = messages;
   isStreamingRef.current = isStreaming;
 
   useEffect(() => {
@@ -318,24 +326,6 @@ export function useChat(
     previousProjectIdRef.current = projectId;
     projectContextVersionRef.current++;
   }
-
-  // Fetch agents on mount for name resolution (project-scoped with stale-request protection)
-  useEffect(() => {
-    const contextVersionAtStart = projectContextVersionRef.current;
-    fetchAgents(undefined, projectId)
-      .then((agents) => {
-        // Ignore response if project changed during fetch
-        if (projectContextVersionRef.current !== contextVersionAtStart) return;
-        const map = new Map<string, Agent>();
-        for (const agent of agents) {
-          map.set(agent.id, agent);
-        }
-        setAgentsMap(map);
-      })
-      .catch(() => {
-        // Silently fail - keep empty map
-      });
-  }, [projectId]);
 
   // Fetch sessions
   const refreshSessions = useCallback(async () => {
@@ -388,6 +378,7 @@ export function useChat(
 
   useEffect(() => {
     hasRestoredActiveSessionRef.current = false;
+    lastAttachedGenerationRef.current = null;
   }, [projectId]);
 
   useEffect(() => {
@@ -409,27 +400,72 @@ export function useChat(
     hasRestoredActiveSessionRef.current = true;
   }, [sessionsLoading, sessions, projectId]);
 
+  const readCachedMessages = useCallback(
+    (targetProjectId?: string, sessionId?: string | null) => {
+      const cacheKey = getChatMessagesCacheKey(targetProjectId, sessionId);
+      if (!cacheKey) {
+        return [] as ChatMessageInfo[];
+      }
+
+      return readCache<ChatMessageInfo[]>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS }) ?? [];
+    },
+    [getChatMessagesCacheKey],
+  );
+
+  const hydrateMessagesFromCache = useCallback(
+    (sessionId?: string | null) => {
+      const cachedMessages = readCachedMessages(projectId, sessionId);
+      if (cachedMessages.length > 0) {
+        setMessages(cachedMessages);
+        setMessagesLoading(false);
+        return true;
+      }
+
+      setMessages([]);
+      return false;
+    },
+    [projectId, readCachedMessages],
+  );
+
   // Load messages when active session changes
   const loadMessages = useCallback(
     async (sessionId: string, opts?: { offset?: number }) => {
-      setMessagesLoading(true);
+      const isPaginationRequest = typeof opts?.offset === "number" && opts.offset > 0;
+      const cacheKey = getChatMessagesCacheKey(projectId, sessionId);
+      const cachedMessages = !isPaginationRequest ? readCachedMessages(projectId, sessionId) : [];
+      const hasCachedMessages = cachedMessages.length > 0;
+
+      if (!isPaginationRequest && hasCachedMessages) {
+        setMessages(cachedMessages);
+        setMessagesLoading(false);
+      } else {
+        setMessagesLoading(true);
+      }
+
       try {
         const data = await fetchChatMessages(sessionId, { limit: 50, ...opts }, projectId);
         const mappedMessages = data.messages.map(mapChatMessageToInfo);
-        if (opts?.offset && opts.offset > 0) {
+        if (isPaginationRequest) {
           // Prepend older messages
           setMessages((prev) => [...mappedMessages, ...prev]);
         } else {
           setMessages(mappedMessages);
+          if (cacheKey) {
+            writeCache(cacheKey, mappedMessages, { maxBytes: 500_000 });
+          }
         }
         setHasMoreMessages(data.messages.length >= 50);
       } catch {
+        if (!isPaginationRequest && messagesRef.current.length === 0 && hasCachedMessages) {
+          setMessages(cachedMessages);
+          setMessagesLoading(false);
+        }
         // Silently fail
       } finally {
         setMessagesLoading(false);
       }
     },
-    [projectId],
+    [getChatMessagesCacheKey, projectId, readCachedMessages],
   );
 
   const resetTransientComposerState = useCallback(() => {
@@ -498,6 +534,7 @@ export function useChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
+        lastAttachedGenerationRef.current = null;
         void loadMessages(sessionId);
         flushPendingMessage();
       },
@@ -508,6 +545,7 @@ export function useChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
+        lastAttachedGenerationRef.current = null;
         const failureInfo = normalizeFailureInfo(data);
         if (!options?.silent) {
           addToast?.(failureInfo.summary, "error");
@@ -523,6 +561,12 @@ export function useChat(
         : {}),
     });
     streamRef.current = stream;
+    lastAttachedGenerationRef.current = {
+      sessionId,
+      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
+        ? inFlightGeneration.replayFromEventId
+        : null,
+    };
     return true;
   }, [addToast, loadMessages, projectId, flushPendingMessage]);
 
@@ -539,10 +583,32 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
 
       // Find and set active session
       const session = sessionOverride ?? sessions.find((s) => s.id === id);
       setActiveSession(session || null);
+
+      if (id) {
+        void fetchChatSession(id, projectId)
+          .then(({ session: refreshedSession }) => {
+            if (!refreshedSession.isGenerating || !refreshedSession.inFlightGeneration) {
+              return;
+            }
+            setActiveSession((prev) => {
+              if (!prev || prev.id !== id) {
+                return prev;
+              }
+              return {
+                ...prev,
+                ...refreshedSession,
+              };
+            });
+          })
+          .catch(() => {
+            // Ignore stale-cache recovery fetch failures.
+          });
+      }
 
       // Reset transient state
       resetTransientComposerState();
@@ -550,6 +616,7 @@ export function useChat(
 
       // Load messages for this session
       if (id) {
+        hydrateMessagesFromCache(id);
         loadMessages(id);
       } else {
         setMessages([]);
@@ -570,7 +637,7 @@ export function useChat(
         removeScopedItem(ACTIVE_SESSION_STORAGE_KEY, projectId);
       }
     },
-    [attachIfGenerating, sessions, loadMessages, projectId, resetTransientComposerState],
+    [attachIfGenerating, hydrateMessagesFromCache, sessions, loadMessages, projectId, resetTransientComposerState],
   );
 
   // Update the ref to point to the actual selectSession function
@@ -586,6 +653,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
       const newSession: ChatSessionInfo = {
         id: data.session.id,
         title: data.session.title,
@@ -604,7 +672,6 @@ export function useChat(
 
       resetTransientComposerState();
       selectSession(newSession.id, newSession);
-      setMessages([]);
 
       return newSession;
     },
@@ -619,6 +686,7 @@ export function useChat(
       setSessions((prev) => prev.filter((s) => s.id !== id));
       // If it was the active session, clear it
       if (activeSession?.id === id) {
+        lastAttachedGenerationRef.current = null;
         setActiveSession(null);
         setMessages([]);
       }
@@ -634,8 +702,15 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      if (activeSession?.id === id) {
+        lastAttachedGenerationRef.current = null;
+      }
 
       await deleteChatSession(id, projectId);
+      const cacheKey = getChatMessagesCacheKey(projectId, id);
+      if (cacheKey) {
+        clearCache(cacheKey);
+      }
       // Remove from sessions list
       setSessions((prev) => prev.filter((s) => s.id !== id));
       // If it was the active session, clear it
@@ -644,7 +719,7 @@ export function useChat(
         setMessages([]);
       }
     },
-    [activeSession, projectId],
+    [activeSession, getChatMessagesCacheKey, projectId],
   );
 
   // Load more messages (pagination)
@@ -661,6 +736,7 @@ export function useChat(
     cancelStreamingFlushesRef.current = null;
     streamRef.current?.close();
     streamRef.current = null;
+    lastAttachedGenerationRef.current = null;
 
     void cancelChatResponse(activeSession.id, projectId).catch(() => {
       // Best-effort cancellation; ignore backend errors.
@@ -738,6 +814,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
 
       // Optimistically add user message
       const tempId = `temp-${Date.now()}`;
@@ -803,6 +880,7 @@ export function useChat(
           setIsStreaming(false);
           isStreamingRef.current = false;
           streamRef.current = null;
+          lastAttachedGenerationRef.current = null;
 
           // Clean up tracked ID after a short delay (SSE event should arrive quickly)
           setTimeout(() => {
@@ -841,6 +919,7 @@ export function useChat(
           setIsStreaming(false);
           isStreamingRef.current = false;
           streamRef.current = null;
+          lastAttachedGenerationRef.current = null;
           console.error("[useChat] Stream error:", data);
 
           if (shouldSuppressSuspensionError) {
@@ -879,6 +958,22 @@ export function useChat(
           s.agentId.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : sessions;
+
+  useEffect(() => {
+    if (!activeSession?.id || activeSession.isGenerating !== true || streamRef.current) {
+      return;
+    }
+
+    const replayFromEventId = typeof activeSession.inFlightGeneration?.replayFromEventId === "number"
+      ? activeSession.inFlightGeneration.replayFromEventId
+      : null;
+    const lastAttached = lastAttachedGenerationRef.current;
+    if (lastAttached?.sessionId === activeSession.id && lastAttached.replayFromEventId === replayFromEventId) {
+      return;
+    }
+
+    attachIfGenerating(activeSession.id, activeSession.inFlightGeneration, { silent: true });
+  }, [activeSession?.id, activeSession?.isGenerating, activeSession?.inFlightGeneration, attachIfGenerating]);
 
   // Recovery mode polling: if reloaded mid-generation, keep waiting state alive
   // until generation finishes and messages can be reloaded.
@@ -998,6 +1093,10 @@ export function useChat(
       if (isStale()) return;
       const { id: sessionId }: { id: string } = JSON.parse(e.data);
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      const cacheKey = getChatMessagesCacheKey(projectId, sessionId);
+      if (cacheKey) {
+        clearCache(cacheKey);
+      }
       // If this was the active session, clear it
       if (activeSessionRef.current?.id === sessionId) {
         setActiveSession(null);
@@ -1083,7 +1182,7 @@ export function useChat(
     });
 
     return unsubscribe;
-  }, [attachIfGenerating, projectId, flushPendingMessage]);
+  }, [attachIfGenerating, getChatMessagesCacheKey, projectId, flushPendingMessage]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1092,6 +1191,7 @@ export function useChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
     };
   }, []);
 

@@ -4,16 +4,22 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QuickChatFAB, clampQuickChatInputHeight } from "../QuickChatFAB";
 
-vi.mock("../../api", () => ({
-  fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
-  fetchModels: vi.fn().mockResolvedValue({
-    models: [],
-    favoriteProviders: [],
-    favoriteModels: [],
-    defaultProvider: "",
-    defaultModelId: "",
-  }),
-}));
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
+    fetchTasks: vi.fn().mockResolvedValue([]),
+    searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+    fetchModels: vi.fn().mockResolvedValue({
+      models: [],
+      favoriteProviders: [],
+      favoriteModels: [],
+      defaultProvider: "",
+      defaultModelId: "",
+    }),
+  };
+});
 
 vi.mock("../../hooks/useQuickChat", () => ({
   FN_AGENT_ID: "__fn_agent__",
@@ -54,18 +60,18 @@ vi.mock("../../hooks/useAgents", () => ({
 vi.mock("../../hooks/useFileMention", () => ({
   useFileMention: vi.fn(() => ({
     mentionActive: false,
+    tasks: [],
     files: [],
+    combinedItems: [],
+    loading: false,
+    mentionQuery: "",
     selectedIndex: 0,
+    setSelectedIndex: vi.fn(),
     detectMention: vi.fn(),
     dismissMention: vi.fn(),
     handleKeyDown: vi.fn(),
+    selectTask: vi.fn((task: { id?: string }, text: string) => `${text}${task.id ?? ""}`),
     selectFile: vi.fn((file: { path?: string }, text: string) => `${text}${file.path ?? ""}`),
-    selectHighlighted: vi.fn(),
-    closeMention: vi.fn(),
-    openMention: vi.fn(),
-    hasResults: false,
-    isLoading: false,
-    query: "",
   })),
 }));
 
@@ -93,12 +99,13 @@ describe("QuickChatFAB autosize", () => {
     const textareaRule = quickChatCss.match(/\.quick-chat-textarea\s*\{[^}]*\}/);
 
     expect(textareaRule).not.toBeNull();
-    expect(textareaRule?.[0]).toContain("max-height: 320px");
+    expect(textareaRule?.[0]).toContain("max-height: 640px");
     expect(textareaRule?.[0]).toContain("min-height: 40px");
   });
 
   it("clamps composer heights to the expected floor and cap", () => {
-    expect(clampQuickChatInputHeight(600)).toBe(320);
+    expect(clampQuickChatInputHeight(600)).toBe(600);
+    expect(clampQuickChatInputHeight(800)).toBe(640);
     expect(clampQuickChatInputHeight(80)).toBe(80);
     expect(clampQuickChatInputHeight(20)).toBe(40);
   });
@@ -116,5 +123,19 @@ describe("QuickChatFAB autosize", () => {
 
     expect(input.tagName).toBe("TEXTAREA");
     expect((input as HTMLTextAreaElement).style.height).toMatch(/^\d+px$/);
+  });
+
+  it("keeps quick chat text visible for growth between old and new caps", () => {
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" open />);
+
+    const input = screen.getByTestId("quick-chat-input") as HTMLTextAreaElement;
+    Object.defineProperty(input, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+
+    fireEvent.change(input, { target: { value: "line 1\nline 2\nline 3\nline 4" } });
+
+    expect(input.style.height).toBe("500px");
   });
 });

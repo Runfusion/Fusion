@@ -1,5 +1,11 @@
 # @fusion/core
 
+## 0.32.0
+
+### Patch Changes
+
+- 1f0bb7e: Stop `MasterKeyManager` from probing the real macOS/Linux keychain during tests. A new `FUSION_MASTER_KEY_DISABLE_KEYCHAIN=1` env var forces the file backend, and the core vitest setup sets it so tests no longer hang for 15s in `keytar.getPassword(...)` on machines without a usable keychain.
+
 ## 0.31.0
 
 ## 0.30.0

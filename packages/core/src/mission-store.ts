@@ -53,6 +53,7 @@ import {
   validateSnapshotEnvelope,
   type MissionHierarchySnapshot,
 } from "./shared-mesh-state.js";
+import { reconcileDeterministicDuplicate, runDeterministicDuplicateGuard } from "./duplicate-guard.js";
 // ── Constants ────────────────────────────────────────────────────────
 
 /**
@@ -775,7 +776,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     // 4. Batch query all failed task IDs
     const failedTaskRows = this.db.prepare(
-      "SELECT id FROM tasks WHERE status = 'failed'"
+      "SELECT id FROM tasks WHERE status = 'failed' AND \"deletedAt\" IS NULL"
     ).all() as Array<{ id: string }>;
     const failedTaskIds = new Set(failedTaskRows.map((row) => row.id));
 
@@ -1033,7 +1034,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       const failedTaskRows = this.db.prepare(`
         SELECT id
         FROM tasks
-        WHERE status = 'failed' AND id IN (${placeholders})
+        WHERE "deletedAt" IS NULL AND status = 'failed' AND id IN (${placeholders})
       `).all(...uniqueTaskIds) as Array<{ id: string }>;
       const failedTaskIds = new Set(failedTaskRows.map((row) => row.id));
       tasksFailed = featureTaskIds.filter((taskId) => failedTaskIds.has(taskId)).length;
@@ -1893,7 +1894,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
       // Also update the task's mission/slice linkage for bidirectional linking.
       this.db.prepare(`
-        UPDATE tasks SET missionId = ?, sliceId = ? WHERE id = ?
+        UPDATE tasks SET missionId = ?, sliceId = ? WHERE id = ? AND "deletedAt" IS NULL
       `).run(linkage.missionId, linkage.sliceId, taskId);
       this.db.bumpLastModified();
 
@@ -1934,7 +1935,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       // Clear the task's mission/slice linkage together.
       if (taskId) {
         this.db.prepare(`
-          UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ?
+          UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND "deletedAt" IS NULL
         `).run(taskId);
         this.db.bumpLastModified();
       }
@@ -3127,26 +3128,52 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const milestone = slice ? this.getMilestone(slice.milestoneId) : undefined;
     const missionId = milestone?.missionId;
 
-    // Create the task
-    const task = await this.taskStore.createTask({
+    const lockScope = missionId ? `mission:${missionId}` : `mission-store:${this.taskStore.getRootDir()}`;
+    const guard = await runDeterministicDuplicateGuard(this.taskStore, {
       title: taskTitle || feature.title,
       description,
-      branch: branchOptions?.branch,
-      baseBranch: branchOptions?.baseBranch,
-      ...(missionId
-        ? {
-            branchContext: {
-              groupId: `mission:${missionId}`,
-              source: "mission" as const,
-              assignmentMode: branchOptions?.assignmentMode ?? "shared",
-              inheritedBaseBranch: branchOptions?.baseBranch,
-            },
-          }
-        : {}),
-    });
+    }, { lockScope });
 
-    // Link the feature to the new task (this also updates feature status to "triaged")
-    const updated = this.linkFeatureToTask(featureId, task.id);
+    let linkedTaskId: string;
+    try {
+      if (guard.action === "duplicate" && guard.existing) {
+        linkedTaskId = guard.existing.id;
+      } else {
+        const createdTask = await this.taskStore.createTask({
+          title: taskTitle || feature.title,
+          description,
+          branch: branchOptions?.branch,
+          baseBranch: branchOptions?.baseBranch,
+          ...(missionId
+            ? {
+                branchContext: {
+                  groupId: `mission:${missionId}`,
+                  source: "mission" as const,
+                  assignmentMode: branchOptions?.assignmentMode ?? "shared",
+                  inheritedBaseBranch: branchOptions?.baseBranch,
+                },
+              }
+            : {}),
+        });
+
+        if (guard.fingerprint) {
+          await this.taskStore.updateTask(createdTask.id, {
+            sourceMetadataPatch: { contentFingerprint: guard.fingerprint },
+          });
+        }
+
+        const reconcile = await reconcileDeterministicDuplicate(this.taskStore, {
+          createdTask,
+          fingerprint: guard.fingerprint,
+        });
+        linkedTaskId = reconcile.canonical.id;
+      }
+    } finally {
+      guard.releaseLock();
+    }
+
+    // Link the feature to the task (this also updates feature status to "triaged")
+    const updated = this.linkFeatureToTask(featureId, linkedTaskId);
 
     return updated;
   }

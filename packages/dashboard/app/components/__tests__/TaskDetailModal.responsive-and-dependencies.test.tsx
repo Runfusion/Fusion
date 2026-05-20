@@ -9,6 +9,7 @@ import {
   noopMove,
   noopOpenDetail,
   mockConfirm,
+  mockConfirmWithChoice,
   mockUsePluginUiSlots,
   expectBaseRule,
   readDashboardStylesSource,
@@ -269,6 +270,7 @@ describe("TaskDetailModal", () => {
         expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-099", { githubIssueAction: "delete" });
         expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
           removeDependencyReferences: true,
+          removeLineageReferences: true,
           githubIssueAction: "delete",
         });
         expect(noop).toHaveBeenCalledWith("Deleted FN-099 after removing dependency references", "info");
@@ -305,6 +307,43 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledTimes(2);
+        expect(onDeleteTask).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("does not retry delete when lineage-force confirmation is canceled", async () => {
+      const onDeleteTask = vi.fn();
+      const conflict = new Error("Cannot delete task FN-099: still referenced as a lineage parent by FN-104.") as Error & {
+        status: number;
+        details: { code: string; lineageChildIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-104"] };
+      onDeleteTask.mockRejectedValue(conflict);
+
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ githubTracking: { enabled: true, issue: { owner: "owner", repo: "repo", number: 42, url: "https://github.com/owner/repo/issues/42", createdAt: "2026-01-01T00:00:00.000Z" } } })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledTimes(3);
         expect(onDeleteTask).toHaveBeenCalledTimes(1);
       });
     });
@@ -341,8 +380,121 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", { removeDependencyReferences: true });
+        expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
+          removeDependencyReferences: true,
+          removeLineageReferences: true,
+        });
         expect(noop).toHaveBeenCalledWith("Retry failed", "error");
+      });
+    });
+
+    it("retries delete after lineage-conflict confirmation", async () => {
+      const onDeleteTask = vi.fn();
+      const conflict = new Error("Cannot delete task FN-099: still referenced as a lineage parent by FN-103.") as Error & {
+        status: number;
+        details: { code: string; lineageChildIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-103"] };
+      onDeleteTask
+        .mockRejectedValueOnce(conflict)
+        .mockResolvedValueOnce({} as Task);
+
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ githubTracking: { enabled: true, issue: { owner: "owner", repo: "repo", number: 42, url: "https://github.com/owner/repo/issues/42", createdAt: "2026-01-01T00:00:00.000Z" } } })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
+          removeDependencyReferences: true,
+          removeLineageReferences: true,
+          githubIssueAction: "close",
+        });
+      });
+    });
+
+    it("retries archive after lineage-conflict confirmation", async () => {
+      const onArchiveTask = vi.fn();
+      const conflict = new Error("Cannot archive task FN-099: still referenced as a lineage parent by FN-201.") as Error & {
+        status: number;
+        details: { code: string; lineageChildIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-201"] };
+      onArchiveTask
+        .mockRejectedValueOnce(conflict)
+        .mockResolvedValueOnce({} as Task);
+      mockConfirmWithChoice.mockResolvedValueOnce("tertiary");
+      mockConfirm.mockResolvedValueOnce(true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "done" as any })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onArchiveTask={onArchiveTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onArchiveTask).toHaveBeenNthCalledWith(2, "FN-099", { removeLineageReferences: true });
+      });
+    });
+
+    it("does not retry archive when lineage-force confirmation is canceled", async () => {
+      const onArchiveTask = vi.fn();
+      const conflict = new Error("Cannot archive task FN-099: still referenced as a lineage parent by FN-202.") as Error & {
+        status: number;
+        details: { code: string; lineageChildIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-202"] };
+      onArchiveTask.mockRejectedValue(conflict);
+      mockConfirmWithChoice.mockResolvedValueOnce("tertiary");
+      mockConfirm.mockResolvedValueOnce(false);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "done" as any })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onArchiveTask={onArchiveTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onArchiveTask).toHaveBeenCalledTimes(1);
+        expect(mockConfirm).toHaveBeenCalledTimes(1);
       });
     });
 

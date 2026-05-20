@@ -146,7 +146,7 @@ describe("NativeSandboxBackend.runStreaming", () => {
     child.emit("close", null, "SIGTERM");
 
     await expect(promise).resolves.toMatchObject({ outcome: "timeout", timeoutMs: 100 });
-    expect(spawnMock).toHaveBeenCalledWith("sleep", expect.objectContaining({ detached: false }));
+    expect(spawnMock).toHaveBeenCalledWith("sleep", [], expect.objectContaining({ detached: false }));
   });
 
   it("returns spawn-error", async () => {

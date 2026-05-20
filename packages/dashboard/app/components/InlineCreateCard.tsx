@@ -2,14 +2,15 @@ import "./InlineCreateCard.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskCreateInput, type TaskPriority, type Settings } from "@fusion/core";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents } from "../api";
-import type { ModelInfo, Agent, NodeInfo } from "../api";
+import { checkDuplicateTasks, fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents, DuplicateCandidatesError } from "../api";
+import type { CreateTaskInput, ModelInfo, Agent, NodeInfo, DuplicateMatch } from "../api";
 import { useNodes } from "../hooks/useNodes";
 import { ModelSelectionModal } from "./ModelSelectionModal";
 import { NodeHealthDot } from "./NodeHealthDot";
+import { DuplicateWarningModal } from "./DuplicateWarningModal";
 import { applyPresetToSelection } from "../utils/modelPresets";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 
@@ -23,7 +24,7 @@ interface PendingImage {
 
 interface InlineCreateCardProps {
   tasks: Task[];
-  onSubmit: (input: TaskCreateInput) => Promise<Task>;
+  onSubmit: (input: CreateTaskInput) => Promise<Task>;
   onCancel: () => void;
   addToast: (msg: string, type?: ToastType) => void;
   projectId?: string;
@@ -118,6 +119,8 @@ export function InlineCreateCard({
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   // Track textarea focus for expand button visibility
   const [isDescriptionFocused, setIsDescriptionFocused] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
+  const [pendingSubmit, setPendingSubmit] = useState<CreateTaskInput | null>(null);
   const justResetRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -330,24 +333,10 @@ export function InlineCreateCard({
     });
   }, []);
 
-  const handleSubmit = useCallback(async () => {
-    if (!description.trim() || submitting) return;
+  const submitTask = useCallback(async (input: CreateTaskInput) => {
     setSubmitting(true);
     try {
-      const task = await onSubmit({
-        description: description.trim(),
-        column: "triage",
-        dependencies: dependencies.length ? dependencies : undefined,
-        ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
-        modelPresetId: selectedPresetId,
-        modelProvider: hasExecutorOverride ? executorProvider : undefined,
-        modelId: hasExecutorOverride ? executorModelId : undefined,
-        validatorModelProvider: hasValidatorOverride ? validatorProvider : undefined,
-        validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
-        enabledWorkflowSteps: browserVerification ? ["browser-verification"] : undefined,
-        priority,
-        nodeId,
-      });
+      const task = await onSubmit(input);
 
       // Upload pending images as attachments
       if (pendingImages.length > 0) {
@@ -397,30 +386,78 @@ export function InlineCreateCard({
         removeScopedItem(STORAGE_KEY, projectId);
       }
     } catch (err) {
-      addToast(getErrorMessage(err), "error");
+      if (err instanceof DuplicateCandidatesError && err.matches.length > 0) {
+        setDuplicateMatches(err.matches);
+        addToast(`Linked existing ${err.matches[0]?.id ?? "task"}`, "success");
+      } else {
+        addToast(getErrorMessage(err), "error");
+      }
     } finally {
       setSubmitting(false);
     }
   }, [
-    description,
-    dependencies,
-    selectedAgentId,
-    hasExecutorOverride,
-    executorProvider,
-    executorModelId,
-    hasValidatorOverride,
-    validatorProvider,
-    validatorModelId,
-    browserVerification,
-    priority,
-    submitting,
     pendingImages,
     onSubmit,
     addToast,
     projectId,
-    selectedPresetId,
-    nodeId,
   ]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!description.trim() || submitting) return;
+
+    const input: CreateTaskInput = {
+      description: description.trim(),
+      column: "triage",
+      dependencies: dependencies.length ? dependencies : undefined,
+      ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
+      modelPresetId: selectedPresetId,
+      modelProvider: hasExecutorOverride ? executorProvider : undefined,
+      modelId: hasExecutorOverride ? executorModelId : undefined,
+      validatorModelProvider: hasValidatorOverride ? validatorProvider : undefined,
+      validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
+      enabledWorkflowSteps: browserVerification ? ["browser-verification"] : undefined,
+      priority,
+      nodeId,
+    };
+
+    try {
+      const matches = await checkDuplicateTasks({ description: description.trim() }, projectId);
+      if (matches.length > 0) {
+        setDuplicateMatches(matches);
+        setPendingSubmit(input);
+        return;
+      }
+    } catch {
+      addToast("Duplicate check failed; creating task anyway.", "error");
+    }
+
+    await submitTask(input);
+  }, [description, submitting, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, browserVerification, priority, nodeId, projectId, addToast, submitTask]);
+
+  const handleDuplicateProceed = useCallback(async () => {
+    const matches = duplicateMatches;
+    const input = pendingSubmit;
+    setDuplicateMatches(null);
+    setPendingSubmit(null);
+    if (!matches || !input || matches.length === 0) return;
+    await submitTask({
+      ...input,
+      acknowledgedDuplicates: matches.map((match) => match.id),
+    });
+  }, [duplicateMatches, pendingSubmit, submitTask]);
+
+  const handleDuplicateCancel = useCallback(() => {
+    setDuplicateMatches(null);
+    setPendingSubmit(null);
+  }, []);
+
+  const handleDuplicateOpen = useCallback((taskId: string) => {
+    if (typeof window !== "undefined") {
+      window.location.hash = `#/tasks/${taskId}`;
+    }
+    setDuplicateMatches(null);
+    setPendingSubmit(null);
+  }, []);
 
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent) => {
@@ -1112,6 +1149,15 @@ export function InlineCreateCard({
             document.body,
           )
         : null}
+
+      {duplicateMatches && duplicateMatches.length > 0 ? (
+        <DuplicateWarningModal
+          matches={duplicateMatches}
+          onProceed={handleDuplicateProceed}
+          onCancel={handleDuplicateCancel}
+          onOpen={handleDuplicateOpen}
+        />
+      ) : null}
     </div>
   );
 }

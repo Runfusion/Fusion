@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { SecretsView } from "../SecretsView";
 
 type JsonResponse = {
@@ -17,9 +18,40 @@ function mockJsonResponse({ ok, status = ok ? 200 : 400, body }: JsonResponse): 
   } as unknown as Response;
 }
 
+function installAllCss() {
+  const style = document.createElement("style");
+  style.setAttribute("data-test-all-app-css", "true");
+  style.textContent = loadAllAppCss();
+  document.head.appendChild(style);
+}
+
+function removeAllCss() {
+  document.head.querySelector('[data-test-all-app-css="true"]')?.remove();
+}
+
+function expectVisibleActionIcon(button: HTMLElement) {
+  const svg = button.querySelector("svg");
+  expect(svg).not.toBeNull();
+  const svgStyle = getComputedStyle(svg as SVGElement);
+  const buttonStyle = getComputedStyle(button);
+  expect(svg).toHaveClass("secrets-action-icon");
+  expect(Number.parseFloat(svgStyle.width)).toBeGreaterThan(0);
+  expect(Number.parseFloat(svgStyle.height)).toBeGreaterThan(0);
+  expect(svgStyle.display).toBe("block");
+  expect(svgStyle.stroke.toLowerCase()).not.toBe("none");
+  expect(svgStyle.stroke).not.toBe(buttonStyle.backgroundColor);
+}
+
 describe("SecretsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    document.documentElement.dataset.theme = "dark";
+    installAllCss();
+  });
+
+  afterEach(() => {
+    removeAllCss();
+    delete document.documentElement.dataset.theme;
   });
 
   it("renders Not configured status", async () => {
@@ -49,6 +81,22 @@ describe("SecretsView", () => {
 
     expect(await screen.findByText("Configured")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+  });
+
+  it("FN-5222: does not render a docs link in the cross-node sync card", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { secrets: [] } }))
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } })),
+    );
+
+    render(<SecretsView addToast={vi.fn()} />);
+
+    await screen.findByText("Not configured");
+    expect(screen.queryByRole("link", { name: "Learn more" })).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="/docs/secrets.md"]')).toBeNull();
   });
 
   it("submitting matching passphrases issues PUT and re-fetches status", async () => {
@@ -144,5 +192,54 @@ describe("SecretsView", () => {
 
     expect(await screen.findByText("VISIBLE")).toBeInTheDocument();
     expect(screen.queryByText("__sync_passphrase__")).not.toBeInTheDocument();
+  });
+
+  it.each(["dark", "light"] as const)("keeps header and row action icons visible in %s theme", async (theme) => {
+    document.documentElement.dataset.theme = theme;
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          mockJsonResponse({
+            ok: true,
+            body: {
+              secrets: [
+                { id: "secret-1", key: "VISIBLE", scope: "project", description: null, accessPolicy: "prompt", envExportable: false, envExportKey: null, lastReadAt: null },
+              ],
+            },
+          }),
+        )
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } })),
+    );
+
+    render(<SecretsView addToast={vi.fn()} />);
+    await screen.findByText("VISIBLE");
+
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Refresh" }));
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Add Secret" }));
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Reveal" }));
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Copy" }));
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Edit" }));
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Delete" }));
+  });
+
+  it.each(["dark", "light"] as const)("keeps the modal value toggle icon visible in %s theme", async (theme) => {
+    document.documentElement.dataset.theme = theme;
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { secrets: [] } }))
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } })),
+    );
+
+    render(<SecretsView addToast={vi.fn()} />);
+    await screen.findByText("Not configured");
+
+    await userEvent.click(screen.getByRole("button", { name: "Add Secret" }));
+    expectVisibleActionIcon(screen.getByRole("button", { name: "Show value" }));
   });
 });

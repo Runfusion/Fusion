@@ -191,6 +191,19 @@ export class GitHubTrackingCommentService {
     this.store.off("task:moved", this.onTaskMoved);
   }
 
+  private async safeLogDeletedTaskEntry(taskId: string, message: string, details: string): Promise<void> {
+    try {
+      await this.store.logEntry(taskId, message, details);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes(`Task ${taskId} not found`)) {
+        console.warn(`[github-tracking-comments] Unable to write log entry for deleted task ${taskId}: ${message}`);
+        return;
+      }
+      throw error;
+    }
+  }
+
   private async handleTaskMoved(event: TaskMovedEvent): Promise<void> {
     if (event.from === event.to) {
       return;
@@ -211,7 +224,7 @@ export class GitHubTrackingCommentService {
 
     const { owner, repo, number } = issue;
     if (!owner || !repo || !number) {
-      await this.store.logEntry(
+      await this.safeLogDeletedTaskEntry(
         event.task.id,
         "Failed to post GitHub tracking comment",
         "Linked issue metadata is incomplete",
@@ -228,7 +241,7 @@ export class GitHubTrackingCommentService {
       const globalSettings = (await this.store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
       if (!resolution.ok) {
-        await this.store.logEntry(event.task.id, "Skipped GitHub tracking comment", resolution.message);
+        await this.safeLogDeletedTaskEntry(event.task.id, "Skipped GitHub tracking comment", resolution.message);
         return;
       }
 
@@ -236,14 +249,14 @@ export class GitHubTrackingCommentService {
         ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
         : new GitHubClient({ forceMode: "gh-cli" });
       await client.commentOnIssue(owner, repo, number, body);
-      await this.store.logEntry(
+      await this.safeLogDeletedTaskEntry(
         event.task.id,
         "Posted GitHub tracking comment",
         `${owner}/${repo}#${number} (${event.to})`,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.store.logEntry(
+      await this.safeLogDeletedTaskEntry(
         event.task.id,
         "Failed to post GitHub tracking comment",
         message,

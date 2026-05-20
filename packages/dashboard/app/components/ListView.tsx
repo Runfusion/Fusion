@@ -16,7 +16,7 @@ import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { useConfirm } from "../hooks/useConfirm";
-import { extractDependencyDeleteConflict } from "../utils/taskDelete";
+import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -180,10 +180,14 @@ interface ListViewProps {
   tasks: Task[];
   onMoveTask: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
+  onDeleteTask: (id: string, options?: {
+    removeDependencyReferences?: boolean;
+    removeLineageReferences?: boolean;
+    githubIssueAction?: GithubIssueAction;
+  }) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
-  onArchiveTask?: (id: string) => Promise<Task>;
+  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onResetTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
@@ -745,8 +749,34 @@ export function ListView({
           try {
             await onArchiveTask(task.id);
             archivedIds.push(task.id);
-          } catch {
-            failedIds.push(task.id);
+          } catch (err) {
+            const lineageConflict = extractLineageDeleteConflict(err);
+            if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+              failedIds.push(task.id);
+              continue;
+            }
+
+            const confirmedArchive = await confirm({
+              title: "Force Delete Task",
+              message:
+                `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+                "Archive anyway by unlinking these references first?",
+              confirmLabel: "Archive",
+              cancelLabel: "Skip",
+              danger: true,
+            });
+
+            if (!confirmedArchive) {
+              failedIds.push(task.id);
+              continue;
+            }
+
+            try {
+              await onArchiveTask(task.id, { removeLineageReferences: true });
+              archivedIds.push(task.id);
+            } catch {
+              failedIds.push(task.id);
+            }
           }
         }
       }
@@ -756,15 +786,73 @@ export function ListView({
           await onDeleteTask(task.id);
           deletedIds.push(task.id);
         } catch (err) {
-          const conflict = extractDependencyDeleteConflict(err);
-          if (!conflict) {
+          const dependencyConflict = extractDependencyDeleteConflict(err);
+          if (dependencyConflict) {
+            const forceDelete = await confirm({
+              title: "Force Delete Task",
+              message: `Task ${task.id} has dependents: ${dependencyConflict.dependentIds.join(", ")}. Remove dependency references and force delete?`,
+              confirmLabel: "Force Delete",
+              cancelLabel: "Skip",
+              danger: true,
+            });
+
+            if (!forceDelete) {
+              failedIds.push(task.id);
+              continue;
+            }
+
+            try {
+              await onDeleteTask(task.id, {
+                removeDependencyReferences: true,
+                removeLineageReferences: true,
+              });
+              deletedIds.push(task.id);
+            } catch (retryErr) {
+              const lineageConflict = extractLineageDeleteConflict(retryErr);
+              if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+                failedIds.push(task.id);
+                continue;
+              }
+
+              const forceLineageDelete = await confirm({
+                title: "Force Delete Task",
+                message:
+                  `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+                  "Delete anyway by unlinking these references first?",
+                confirmLabel: "Force Delete",
+                cancelLabel: "Skip",
+                danger: true,
+              });
+
+              if (!forceLineageDelete) {
+                failedIds.push(task.id);
+                continue;
+              }
+
+              try {
+                await onDeleteTask(task.id, {
+                  removeDependencyReferences: true,
+                  removeLineageReferences: true,
+                });
+                deletedIds.push(task.id);
+              } catch {
+                failedIds.push(task.id);
+              }
+            }
+            continue;
+          }
+
+          const lineageConflict = extractLineageDeleteConflict(err);
+          if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
             failedIds.push(task.id);
             continue;
           }
 
           const forceDelete = await confirm({
             title: "Force Delete Task",
-            message: `Task ${task.id} has dependents: ${conflict.dependentIds.join(", ")}. Remove dependency references and force delete?`,
+            message:
+              `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+              "Delete anyway by unlinking these references first?",
             confirmLabel: "Force Delete",
             cancelLabel: "Skip",
             danger: true,
@@ -776,7 +864,10 @@ export function ListView({
           }
 
           try {
-            await onDeleteTask(task.id, { removeDependencyReferences: true });
+            await onDeleteTask(task.id, {
+              removeDependencyReferences: true,
+              removeLineageReferences: true,
+            });
             deletedIds.push(task.id);
           } catch {
             failedIds.push(task.id);
@@ -946,8 +1037,34 @@ export function ListView({
         try {
           await onArchiveTask(task.id);
           archivedIds.push(task.id);
-        } catch {
-          failedIds.push(task.id);
+        } catch (err) {
+          const lineageConflict = extractLineageDeleteConflict(err);
+          if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+            failedIds.push(task.id);
+            continue;
+          }
+
+          const confirmedArchive = await confirm({
+            title: "Force Delete Task",
+            message:
+              `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+              "Archive anyway by unlinking these references first?",
+            confirmLabel: "Archive",
+            cancelLabel: "Skip",
+            danger: true,
+          });
+
+          if (!confirmedArchive) {
+            failedIds.push(task.id);
+            continue;
+          }
+
+          try {
+            await onArchiveTask(task.id, { removeLineageReferences: true });
+            archivedIds.push(task.id);
+          } catch {
+            failedIds.push(task.id);
+          }
         }
       }
     } finally {
@@ -1611,16 +1728,18 @@ export function ListView({
                         <div className="list-empty-cell list-card-empty">No tasks</div>
                       ) : (
                         columnTasks.map((task) => {
-                          const isFailed = task.status === "failed";
-                          const isPaused = task.paused === true;
+                          const isDoneColumn = task.column === "done";
+                          const visualStatus = isDoneColumn ? "done" : task.status;
+                          const isFailed = !isDoneColumn && task.status === "failed";
+                          const isPaused = !isDoneColumn && task.paused === true;
                           const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
                           const isAgentActive =
                             !globalPaused &&
                             !isFailed &&
                             !isPaused &&
                             !isStuckState &&
-                            (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
-                          const hasStatus = typeof task.status === "string" && task.status.trim().length > 0;
+                            (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
+                          const hasStatus = typeof visualStatus === "string" && visualStatus.trim().length > 0;
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
                           const hasProgress = taskProgress.hasProgress;
@@ -1668,7 +1787,7 @@ export function ListView({
                                   <span className="list-status-badge stuck">Stuck</span>
                                 ) : hasStatus ? (
                                   <span className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}>
-                                    {getTaskStatusLabel(task.status ?? "")}
+                                    {getTaskStatusLabel(visualStatus ?? "")}
                                   </span>
                                 ) : null}
                               </div>
@@ -1801,15 +1920,17 @@ export function ListView({
                           </tr>
                         ) : (
                           columnTasks.map((task) => {
-                            const isFailed = task.status === "failed";
-                            const isPaused = task.paused === true;
+                            const isDoneColumn = task.column === "done";
+                            const visualStatus = isDoneColumn ? "done" : task.status;
+                            const isFailed = !isDoneColumn && task.status === "failed";
+                            const isPaused = !isDoneColumn && task.paused === true;
                             const isStuckState = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
                             const isAgentActive =
                               !globalPaused &&
                               !isFailed &&
                               !isPaused &&
                               !isStuckState &&
-                              (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
+                              (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
                             const isDragging = draggingTaskId === task.id;
 
                             return (
@@ -1869,13 +1990,13 @@ export function ListView({
                                       <span className="list-status-badge stuck">
                                         Stuck
                                       </span>
-                                    ) : task.status ? (
+                                    ) : visualStatus ? (
                                       <span
                                         className={`list-status-badge list-status-badge--${task.column}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
                                       >
-                                        {getTaskStatusLabel(task.status ?? "")}
+                                        {getTaskStatusLabel(visualStatus ?? "")}
                                       </span>
                                     ) : (
                                       <span className="list-status-badge">-</span>

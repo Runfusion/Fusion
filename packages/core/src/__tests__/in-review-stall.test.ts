@@ -123,6 +123,51 @@ describe("getInReviewStallReason", () => {
     expect(signal?.reason).toContain("failed pre-merge workflow steps");
   });
 
+  it("suppresses merge-blocker when autoMerge is disabled", () => {
+    const signal = getInReviewStallReason({
+      ...baseTask,
+      workflowStepResults: [{ workflowStepId: "WS-1", workflowStepName: "gate", status: "failed", phase: "pre-merge" as const }],
+    }, { now: NOW, autoMerge: false });
+    expect(signal).toBeUndefined();
+  });
+
+  it("suppresses transient-merge-status-no-owner when autoMerge is disabled", () => {
+    const signal = getInReviewStallReason({
+      ...baseTask,
+      status: "merging",
+      updatedAt: new Date(NOW - DEFAULT_STALE_MERGING_MIN_AGE_MS - 60_000).toISOString(),
+    }, { now: NOW, autoMerge: false });
+    expect(signal).toBeUndefined();
+  });
+
+  it("suppresses merge-retries-exhausted when autoMerge is disabled", () => {
+    const signal = getInReviewStallReason({
+      ...baseTask,
+      mergeRetries: DEFAULT_MAX_AUTO_MERGE_RETRIES,
+      mergeDetails: { mergeConfirmed: false },
+    }, { now: NOW, autoMerge: false });
+    expect(signal).toBeUndefined();
+  });
+
+  it("suppresses no-worktree-no-merge-confirmed when autoMerge is disabled", () => {
+    const signal = getInReviewStallReason({
+      ...baseTask,
+      worktree: undefined,
+      mergeDetails: {},
+    }, { now: NOW, autoMerge: false });
+    expect(signal).toBeUndefined();
+  });
+
+  it("preserves legacy behavior when autoMerge is true or omitted", () => {
+    const stalledTask = {
+      ...baseTask,
+      mergeRetries: DEFAULT_MAX_AUTO_MERGE_RETRIES,
+      mergeDetails: { mergeConfirmed: false },
+    };
+    expect(getInReviewStallReason(stalledTask, { now: NOW, autoMerge: true })?.code).toBe("merge-retries-exhausted");
+    expect(getInReviewStallReason(stalledTask, { now: NOW })?.code).toBe("merge-retries-exhausted");
+  });
+
   it("returns undefined when all clear", () => {
     expect(getInReviewStallReason({ ...baseTask }, { now: NOW })).toBeUndefined();
   });

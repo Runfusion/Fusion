@@ -164,6 +164,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
+  const submitInFlightRef = useRef(false);
   const { nodes } = useNodes();
   // AI Refinement state
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
@@ -506,7 +507,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
 
     const originalDescription = description;
-    setIsSubmitting(true);
     setDescription("");
     try {
       const createdTask = await onCreate({
@@ -548,6 +548,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       setDescription(originalDescription);
       addToast(getErrorMessage(err) || "Failed to create task", "error");
     } finally {
+      submitInFlightRef.current = false;
       setIsSubmitting(false);
     }
   }, [
@@ -577,21 +578,40 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   ]);
 
   const handleSubmit = useCallback(async () => {
-    const trimmed = description.trim();
-    if (!trimmed || isSubmitting || !onCreate) return;
+    if (submitInFlightRef.current) {
+      return;
+    }
 
+    submitInFlightRef.current = true;
+    setIsSubmitting(true);
+
+    const trimmed = description.trim();
+    if (!trimmed || !onCreate) {
+      submitInFlightRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
+
+    let releaseLockOnExit = true;
     try {
       const matches = await checkDuplicateTasks({ description: trimmed }, projectId);
       if (matches.length > 0) {
         setDuplicateMatches(matches);
+        releaseLockOnExit = false;
         return;
       }
     } catch (_error) {
       addToast("Duplicate check failed; creating task anyway.", "error");
     }
 
+    releaseLockOnExit = false;
     await submitCreateTask(trimmed);
-  }, [description, isSubmitting, onCreate, projectId, submitCreateTask, addToast]);
+
+    if (releaseLockOnExit) {
+      submitInFlightRef.current = false;
+      setIsSubmitting(false);
+    }
+  }, [description, onCreate, projectId, submitCreateTask, addToast]);
 
   const handleDuplicateOpen = useCallback((taskId: string) => {
     if (onOpenTask) {
@@ -607,14 +627,22 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     const matches = duplicateMatches;
     if (!trimmed || !matches || matches.length === 0) {
       setDuplicateMatches(null);
+      submitInFlightRef.current = false;
+      setIsSubmitting(false);
       return;
     }
+
     setDuplicateMatches(null);
+    // Keep optimistic submit lock active while duplicate-confirmed creation is in flight.
+    submitInFlightRef.current = true;
+    setIsSubmitting(true);
     await submitCreateTask(trimmed, { acknowledgedDuplicates: matches.map((match) => match.id) });
   }, [description, duplicateMatches, submitCreateTask]);
 
   const handleDuplicateCancel = useCallback(() => {
     setDuplicateMatches(null);
+    submitInFlightRef.current = false;
+    setIsSubmitting(false);
   }, []);
 
   const handleKeyDown = useCallback(
@@ -627,6 +655,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         }
         // Enter without Shift submits
         e.preventDefault();
+        if (duplicateMatches || submitInFlightRef.current) {
+          return;
+        }
         handleSubmit();
       } else if (e.key === "Escape") {
         e.preventDefault();
@@ -695,6 +726,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       showPriorityPicker,
       projectId,
       setIsDisclosureExpanded,
+      duplicateMatches,
     ],
   );
 

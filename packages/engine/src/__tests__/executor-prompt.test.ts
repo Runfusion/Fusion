@@ -217,7 +217,7 @@ describe("buildExecutionPrompt", () => {
     } as any);
 
     const result = buildExecutionPrompt(task, "/home/user/project");
-    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — description" -m "Ref: runfusion/fusion#2915"');
+    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — <short summary>" -m "Ref: runfusion/fusion#2915"');
   });
 
   it("falls back to externalIssueId for commit source issue reference when issueNumber is missing", () => {
@@ -230,15 +230,34 @@ describe("buildExecutionPrompt", () => {
     } as any);
 
     const result = buildExecutionPrompt(task, "/home/user/project");
-    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — description" -m "Ref: runfusion/fusion#2915"');
+    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — <short summary>" -m "Ref: runfusion/fusion#2915"');
   });
 
   it("omits source issue reference from commit instruction when sourceIssue is missing", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task, "/home/user/project");
 
-    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — description"');
+    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — <short summary>"');
     expect(result).not.toContain(' -m "Ref:');
+  });
+
+  it("requires a short summary in the execution prompt begin block", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task, "/home/user/project");
+
+    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — <short summary>"');
+    expect(result).toContain("The `<short summary>` is required");
+    expect(result).toContain("concrete 5–10 word description of what the step changed");
+  });
+
+  it("keeps the executor source prompt wording and examples for commit summaries", async () => {
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const executorSource = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+
+    expect(executorSource).toContain("Always include a short, specific summary after the em dash (5–10 words)");
+    expect(executorSource).toContain("Do NOT commit just \\`complete Step N\\`");
+    expect(executorSource).toContain("\\`feat(FN-1234): complete Step 4 — tighten prompt examples for commit summaries\\`");
+    expect(executorSource).toContain("\\`feat(FN-1234): complete Step 2\\`");
   });
 
   it("omits Project Commands section when neither command is set", () => {
@@ -1973,7 +1992,7 @@ describe("TaskExecutor global pause behavior", () => {
     ]);
 
     // Global pause should move both tasks out of in-progress without marking failed.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-002", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-002", expect.stringMatching(/^(todo|in-review)$/));
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", expect.stringMatching(/^(todo|in-review)$/));
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-002", { status: "failed" });

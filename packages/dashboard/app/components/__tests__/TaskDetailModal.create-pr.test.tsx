@@ -137,7 +137,7 @@ describe("TaskDetailModal create-PR wiring", () => {
     }));
   });
 
-  it("opens the same PrCreateModal from TaskReviewTab and closes via onClose", async () => {
+  it("opens the same PrCreateModal from TaskReviewTab without leaving the Review tab and closes via onClose", async () => {
     const task = makeTask({ id: "FN-5021", prInfo: undefined, column: "in-review" });
 
     render(
@@ -156,13 +156,18 @@ describe("TaskDetailModal create-PR wiring", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     await waitFor(() => expect(screen.getByTestId("task-review-create-pr")).toBeInTheDocument());
+    expect(screen.queryByTestId("pr-create-modal-stub")).toBeNull();
 
     fireEvent.click(screen.getByTestId("task-review-create-pr"));
-    expect(screen.getByTestId("pr-create-modal-stub")).toBeInTheDocument();
+
+    expect(await screen.findByTestId("pr-create-modal-stub")).toBeInTheDocument();
+    expect(prCreateModalState.latestProps?.open).toBe(true);
     expect(prCreateModalState.latestProps?.taskId).toBe("FN-5021");
     expect(prCreateModalState.latestProps?.projectId).toBe("project-123");
     expect(prCreateModalState.latestProps?.defaultBaseBranch).toBeUndefined();
     expect(taskReviewTabState.latestProps?.prAuthAvailable).toBe(true);
+    expect(taskReviewTabState.latestProps?.autoMergeEnabled).toBe(false);
+    expect(screen.getByTestId("task-review-create-pr")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Stub close" }));
     expect(screen.queryByTestId("pr-create-modal-stub")).toBeNull();

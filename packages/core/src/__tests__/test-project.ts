@@ -5,7 +5,6 @@ import { isAbsolute, join } from "node:path";
 
 import { TaskStore } from "../store.js";
 import {
-  DEFAULT_PROJECT_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
   type GlobalSettings,
   type Settings,
@@ -42,7 +41,7 @@ function splitSettings(settings?: Partial<Settings>): {
   projectPatch: Partial<Settings>;
 } {
   const globalPatch: Partial<GlobalSettings> = {};
-  const projectPatch: Partial<Settings> = { ...DEFAULT_PROJECT_SETTINGS };
+  const projectPatch: Partial<Settings> = {};
 
   for (const [key, value] of Object.entries(settings ?? {})) {
     if (isGlobalSettingsKey(key)) {
@@ -89,7 +88,9 @@ export async function createTestProject(
     await store.init();
 
     const { globalPatch, projectPatch } = splitSettings(options.settings);
-    await store.updateSettings(projectPatch);
+    if (Object.keys(projectPatch).length > 0) {
+      await store.updateSettings(projectPatch);
+    }
 
     if (Object.keys(globalPatch).length > 0) {
       await store.updateGlobalSettings(globalPatch);

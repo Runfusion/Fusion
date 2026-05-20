@@ -320,8 +320,80 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("FN-5216 File Scope sanitization on copy paths", () => {
+    const validScopeEntry = "packages/cli/src/extension.ts";
+    const invalidScopeEntries = [
+      "pr/create",
+      "pr/refresh",
+      "listBranches",
+      "listRepoLabels",
+      "listAssignableUsers",
+      "getRepoMetadata",
+      "baseUrl",
+      "classifyGhError",
+      ".fusion/tasks/FN-5149/",
+      "fn_task_document_write",
+    ];
+
+    const buildLegacyPrompt = (taskId: string) => `# ${taskId}: Legacy file scope
+
+## Mission
+
+Keep the tool names \`pr/create\` and \`classifyGhError\` in this section.
+
+## File Scope
+
+- \`${validScopeEntry}\`
+${invalidScopeEntries.map((entry) => `- \`${entry}\``).join("\n")}
+
+## Steps
+
+### Step 0: Preflight
+- [ ] Mention \`fn_task_document_write\` outside File Scope
+`;
+
+    it("FN-5216 duplicateTask sanitizes invalid File Scope entries without touching other backticks", async () => {
+      const task = await store.createTask({ description: "duplicate legacy scope" });
+      const sourcePromptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(sourcePromptPath, buildLegacyPrompt(task.id));
+
+      const duplicated = await store.duplicateTask(task.id);
+      const duplicatedPromptPath = join(rootDir, ".fusion", "tasks", duplicated.id, "PROMPT.md");
+      const duplicatedPrompt = await readFile(duplicatedPromptPath, "utf-8");
+
+      expect(duplicatedPrompt).toContain(`- \`${validScopeEntry}\``);
+      for (const entry of invalidScopeEntries) {
+        expect(duplicatedPrompt).not.toContain(`- \`${entry}\``);
+      }
+      expect(duplicatedPrompt).toContain("Keep the tool names `pr/create` and `classifyGhError` in this section.");
+      expect(duplicatedPrompt).toContain("- [ ] Mention `fn_task_document_write` outside File Scope");
+      await expect(store.parseFileScopeFromPrompt(duplicated.id)).resolves.toEqual([validScopeEntry]);
+    });
+
+    it("FN-5216 restoreFromArchive sanitizes invalid File Scope entries on unarchive", async () => {
+      const task = await store.createTask({ description: "restore legacy scope" });
+      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(promptPath, buildLegacyPrompt(task.id));
+
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id, true);
+      const restored = await store.unarchiveTask(task.id);
+      const restoredPromptPath = join(rootDir, ".fusion", "tasks", restored.id, "PROMPT.md");
+      const restoredPrompt = await readFile(restoredPromptPath, "utf-8");
+
+      expect(restoredPrompt).toContain(`- \`${validScopeEntry}\``);
+      for (const entry of invalidScopeEntries) {
+        expect(restoredPrompt).not.toContain(`- \`${entry}\``);
+      }
+      expect(restoredPrompt).toContain("Keep the tool names `pr/create` and `classifyGhError` in this section.");
+      await expect(store.parseFileScopeFromPrompt(restored.id)).resolves.toEqual([validScopeEntry]);
+    });
+  });
+
   describe("File Scope validation at write time", () => {
-    it("createTask rejects invalid File Scope entries and rolls back", async () => {
+    it("FN-5216 createTask rejects invalid File Scope entries and rolls back", async () => {
       const badPrompt = `# Bad prompt\n\n## File Scope\n\n- \`packages/core/src/store.ts\`\n- \`origin/fusion/fn-4280\`\n`;
 
       await expect(store.createTaskWithReservedId({ description: "bad create" }, { taskId: "FN-999", prompt: badPrompt }))
@@ -331,7 +403,7 @@ describe("TaskStore", () => {
       expect(existsSync(join(rootDir, ".fusion", "tasks", "FN-999"))).toBe(false);
     });
 
-    it("updateTask rejects invalid File Scope prompt and preserves existing PROMPT.md", async () => {
+    it("FN-5216 updateTask rejects invalid File Scope prompt and preserves existing PROMPT.md", async () => {
       const task = await store.createTask({ description: "update scope" });
       const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
       const originalPrompt = await readFile(promptPath, "utf-8");

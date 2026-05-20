@@ -14,7 +14,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { ChevronDown, Eye, EyeOff, Hash, MessageSquare, Paperclip, Plus, Send, Square, Wrench, X } from "lucide-react";
-import { attachmentBaseUrlForRoom, fetchDiscoveredSkills, fetchModels, type Agent, type ModelInfo } from "../api";
+import { attachmentBaseUrlForRoom, type Agent, type ModelInfo } from "../api";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
@@ -22,6 +22,8 @@ import { AgentMentionPopup } from "./AgentMentionPopup";
 import { matchesAgentMentionFilter } from "./mentionMatching";
 import { FN_AGENT_ID, useQuickChat, type ChatMessageInfo, type ToolCallInfo } from "../hooks/useQuickChat";
 import { useAgents } from "../hooks/useAgents";
+import { useModelsCache } from "../hooks/useModelsCache";
+import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { FileMentionPopup } from "./FileMentionPopup";
 import { useFileMention } from "../hooks/useFileMention";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
@@ -104,7 +106,9 @@ function formatModelTagName(modelInfo: ModelInfo | null, parsedSelection: Parsed
 }
 
 export function clampQuickChatInputHeight(scrollHeight: number): number {
-  return Math.max(40, Math.min(scrollHeight, 320));
+  // Match ChatView's 640px cap so pasted multi-paragraph text remains visible,
+  // while keeping an upper bound that protects message visibility on short screens.
+  return Math.max(40, Math.min(scrollHeight, 640));
 }
 
 function truncateToolValue(value: string, maxLength: number): string {
@@ -901,6 +905,13 @@ export function QuickChatFAB({
   roomContext = null,
 }: QuickChatFABProps) {
   const { agents } = useAgents(projectId);
+  const {
+    models,
+    defaultProvider,
+    defaultModelId,
+    loading: modelsLoading,
+  } = useModelsCache();
+  const { skills: discoveredSkills, loading: skillsLoading } = useDiscoveredSkillsCache(projectId);
   // Internal state for uncontrolled mode, controlled state when open prop is provided
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = open !== undefined;
@@ -931,13 +942,9 @@ export function QuickChatFAB({
   const [newSessionMode, setNewSessionMode] = useState<"agent" | "model">("model");
   const [newSessionAgentId, setNewSessionAgentId] = useState<string>("");
   const [newSessionModel, setNewSessionModel] = useState<string>("");
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [configuredDefaultModelSelection, setConfiguredDefaultModelSelection] = useState<string>("");
   const [messageInput, setMessageInput] = useState("");
-  const [discoveredSkills, setDiscoveredSkills] = useState<DiscoveredSkill[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(false);
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
   const [highlightedSkillIndex, setHighlightedSkillIndex] = useState(0);
@@ -1209,86 +1216,46 @@ export function QuickChatFAB({
     }
   }, [agents, hasPersistedAgentSessionSelection, selectedAgentId]);
 
-  // Lazy-load models on first panel open.
   useEffect(() => {
-    if (!isOpen || modelsRequestedRef.current) {
+    if (!isOpen) {
       return;
     }
 
-    modelsRequestedRef.current = true;
-    modelsInitSettledRef.current = false;
-    setModelsLoading(true);
+    if (!modelsRequestedRef.current) {
+      modelsRequestedRef.current = true;
+      modelsInitSettledRef.current = false;
+    }
 
-    fetchModels()
-      .then((response) => {
-        const loadedModels = response.models ?? [];
-        setModels(loadedModels);
+    if (modelsLoading || !modelsRequestedRef.current || modelsInitSettledRef.current) {
+      return;
+    }
 
-        if (selectedModelRef.current || loadedModels.length === 0) {
+    if (!selectedModelRef.current && models.length > 0) {
+      if (defaultProvider && defaultModelId) {
+        const defaultSelection = `${defaultProvider}/${defaultModelId}`;
+        const hasDefaultModel = models.some((model) => `${model.provider}/${model.id}` === defaultSelection);
+        if (hasDefaultModel) {
+          setConfiguredDefaultModelSelection(defaultSelection);
+          if (!selectedModelRef.current) {
+            setSelectedModel(defaultSelection);
+          }
+          if (!hasAppliedInitialSessionRef.current) {
+            setChatMode("model");
+          }
+          modelsInitSettledRef.current = true;
           return;
         }
+      }
 
-        const defaultProvider = response.defaultProvider;
-        const defaultModelId = response.defaultModelId;
-        if (defaultProvider && defaultModelId) {
-          const defaultSelection = `${defaultProvider}/${defaultModelId}`;
-          const hasDefaultModel = loadedModels.some(
-            (model) => `${model.provider}/${model.id}` === defaultSelection,
-          );
-          if (hasDefaultModel) {
-            setConfiguredDefaultModelSelection(defaultSelection);
-            if (!selectedModelRef.current) {
-              setSelectedModel(defaultSelection);
-            }
-            // Switch to model mode regardless of whether agents are present —
-            // a configured default model is an explicit user preference and
-            // should drive the panel to its corresponding mode immediately,
-            // otherwise the tag/dropdown auto-selection would be invisible
-            // until the user manually toggles modes.
-            if (!hasAppliedInitialSessionRef.current) {
-              setChatMode("model");
-            }
-            return;
-          }
-        }
-
-        setConfiguredDefaultModelSelection("");
-
-        // Always pre-select the first model so users can start chatting in model mode
-        // without having to manually pick from the dropdown.
-        const firstModel = loadedModels[0];
-        if (firstModel && !selectedModelRef.current) {
-          setSelectedModel(`${firstModel.provider}/${firstModel.id}`);
-        }
-      })
-      .catch((error: unknown) => {
-        console.error("[QuickChatFAB] Failed to load models:", error);
-        setModels([]);
-        setConfiguredDefaultModelSelection("");
-      })
-      .finally(() => {
-        modelsInitSettledRef.current = true;
-        setModelsLoading(false);
-      });
-  }, [isOpen, agents.length, selectedModel]);
-
-  useEffect(() => {
-    if (!isOpen || !projectId) {
-      return;
+      setConfiguredDefaultModelSelection("");
+      const firstModel = models[0];
+      if (firstModel && !selectedModelRef.current) {
+        setSelectedModel(`${firstModel.provider}/${firstModel.id}`);
+      }
     }
 
-    setSkillsLoading(true);
-    fetchDiscoveredSkills(projectId)
-      .then((skills) => {
-        setDiscoveredSkills(skills);
-      })
-      .catch(() => {
-        setDiscoveredSkills([]);
-      })
-      .finally(() => {
-        setSkillsLoading(false);
-      });
-  }, [isOpen, projectId]);
+    modelsInitSettledRef.current = true;
+  }, [defaultModelId, defaultProvider, isOpen, models, modelsLoading]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -2155,6 +2122,29 @@ export function QuickChatFAB({
     [mentionStartPos, messageInput, resizeQuickChatComposer],
   );
 
+  const insertHashMention = useCallback(
+    (nextInput: string, insertedToken: string) => {
+      const input = inputRef.current;
+      const cursorPos = input?.selectionStart ?? mentionCursorPosRef.current;
+      const mentionStart = messageInput.lastIndexOf("#", cursorPos);
+      const nextCursorPos = mentionStart >= 0
+        ? mentionStart + insertedToken.length
+        : nextInput.length;
+
+      setMessageInput(nextInput);
+      fileMention.dismissMention();
+      setFileMentionPopupVisible(false);
+
+      window.requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        resizeQuickChatComposer(inputRef.current);
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
+      });
+    },
+    [fileMention, messageInput, resizeQuickChatComposer],
+  );
+
   const handleInputChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const nextValue = event.target.value;
@@ -2315,16 +2305,14 @@ export function QuickChatFAB({
       mentionCursorPosRef.current = event.currentTarget.selectionStart ?? mentionCursorPosRef.current;
 
       // Handle file mention popup keyboard navigation first
-      if (fileMention.mentionActive && fileMention.files.length > 0) {
+      if (fileMention.mentionActive && fileMention.combinedItems.length > 0) {
         fileMention.handleKeyDown(event, messageInput);
         if (event.key === "Enter" || event.key === "Tab") {
-          // Select the highlighted file
-          const file = fileMention.files[fileMention.selectedIndex];
-          if (file) {
-            const newText = fileMention.selectFile(file, messageInput);
-            setMessageInput(newText);
-            fileMention.dismissMention();
-            setFileMentionPopupVisible(false);
+          const item = fileMention.combinedItems[fileMention.selectedIndex];
+          if (item?.kind === "task") {
+            insertHashMention(fileMention.selectTask(item.task, messageInput), `#${item.task.id}`);
+          } else if (item?.kind === "file") {
+            insertHashMention(fileMention.selectFile(item.file, messageInput), `#${item.file.path}`);
           }
         }
         return;
@@ -2405,6 +2393,7 @@ export function QuickChatFAB({
       handleMentionSelect,
       handleSendMessage,
       fileMention,
+      insertHashMention,
       messageInput,
       showSkillMenu,
       filteredSkills,
@@ -3068,14 +3057,14 @@ export function QuickChatFAB({
               <FileMentionPopup
                 visible={fileMention.mentionActive && !mentionPopupVisible}
                 position={fileMentionPosition}
+                tasks={fileMention.tasks}
                 files={fileMention.files}
                 selectedIndex={fileMention.selectedIndex}
-                onSelect={(file) => {
-                  const newText = fileMention.selectFile(file, messageInput);
-                  setMessageInput(newText);
-                  fileMention.dismissMention();
-                  setFileMentionPopupVisible(false);
-                  inputRef.current?.focus();
+                onSelectTask={(task) => {
+                  insertHashMention(fileMention.selectTask(task, messageInput), `#${task.id}`);
+                }}
+                onSelectFile={(file) => {
+                  insertHashMention(fileMention.selectFile(file, messageInput), `#${file.path}`);
                 }}
                 loading={fileMention.loading}
               />

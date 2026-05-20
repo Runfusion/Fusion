@@ -136,7 +136,7 @@ describe("test-project fixture", () => {
     const projectCountBefore = countTmpDirs(projectPrefix);
     const globalCountBefore = countTmpDirs(globalPrefix);
     const error = new Error("boom");
-    const spy = vi.spyOn(TaskStore.prototype, "updateSettings").mockRejectedValueOnce(error);
+    const spy = vi.spyOn(TaskStore.prototype, "init").mockRejectedValueOnce(error);
 
     try {
       await expect(

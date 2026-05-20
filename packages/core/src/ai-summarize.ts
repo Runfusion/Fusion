@@ -12,7 +12,7 @@
  */
 
 import { getFnAgent, type AgentMessage } from "./ai-engine-loader.js";
-import { stripEmptyPlaceholders } from "./task-title-id-drift.js";
+import { DANGLING_TAIL_STOPWORDS, stripDanglingTail, stripEmptyPlaceholders } from "./task-title-id-drift.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -882,10 +882,23 @@ export function sanitizeTitle(raw: string | undefined | null): string | null {
   }
 
   title = stripEmptyPlaceholders(title);
+  const beforeDanglingTail = title;
+  const beforeTail = beforeDanglingTail.split(/\s+/).filter(Boolean).at(-1)?.toLowerCase();
+  const hadDanglingStopwordTail = Boolean(beforeTail && DANGLING_TAIL_STOPWORDS.has(beforeTail));
+  title = stripDanglingTail(title);
 
   // Drop trailing punctuation that summary-like sentences leave behind.
   title = title.replace(/[.!?,;:]+$/, "").trim();
   if (!title) return null;
+
+  const words = title.split(/\s+/).filter(Boolean);
+  if (
+    (hadDanglingStopwordTail && title !== beforeDanglingTail)
+    || /^close\s+as\s+duplicate(?:\s+of)?$/i.test(title)
+    || (words.length === 1 && DANGLING_TAIL_STOPWORDS.has(words[0]!.toLowerCase()))
+  ) {
+    return null;
+  }
 
   if (title.length > MAX_TITLE_LENGTH) {
     title = title.slice(0, MAX_TITLE_LENGTH).trim();

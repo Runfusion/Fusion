@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { superviseSpawn } from "./process-supervisor.js";
 
 export interface RunCommandOptions {
   cwd?: string;
@@ -48,27 +48,18 @@ export function runCommandAsync(
     let bufferExceeded = false;
     let timedOut = false;
     let forceKillTimer: NodeJS.Timeout | null = null;
-    const useProcessGroup = process.platform !== "win32";
 
-    const child = spawn(command, {
+    const supervised = superviseSpawn(command, [], {
       cwd: options.cwd,
       env: options.env,
-      detached: useProcessGroup,
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
+      maxLifetimeMs: (options.timeoutMs ?? 0) > 0 ? options.timeoutMs! + FORCE_KILL_DELAY_MS + 1_000 : undefined,
     });
+    const child = supervised.child;
 
     const signalProcessGroup = (signal: NodeJS.Signals): void => {
-      if (!child.pid) return;
-      try {
-        if (useProcessGroup) {
-          process.kill(-child.pid, signal);
-        } else {
-          child.kill(signal);
-        }
-      } catch {
-        // The command may already have exited and cleaned up its process group.
-      }
+      supervised.kill(signal);
     };
 
     const scheduleForceKill = (delayMs: number): void => {

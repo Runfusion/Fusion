@@ -353,6 +353,26 @@ describe("useViewState", () => {
     expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("graph");
   });
 
+  it("hydrates secrets from ?view and persists scoped round-trip", async () => {
+    const originalSearch = window.location.search;
+    window.history.replaceState({}, "", "?view=secrets");
+
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("secrets");
+    });
+
+    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("secrets");
+    window.history.replaceState({}, "", originalSearch ? `?${originalSearch.replace(/^\?/, "")}` : "/");
+  });
+
   it("restores and persists plugin task views using the canonical composite key", async () => {
     localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "plugin:fusion-plugin-dependency-graph:graph");
 

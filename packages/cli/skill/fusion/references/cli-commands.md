@@ -27,7 +27,7 @@ fn task duplicate FN-001                  # Copy task to triage
 fn task refine FN-001 --feedback "..."    # Create follow-up task
 fn task archive FN-001                    # Move done → archived
 fn task unarchive FN-001                  # Move archived → done
-fn task delete FN-001 [--force]           # Permanently delete
+fn task delete FN-001 [--force]           # Soft delete (recoverable via DB)
 fn task retry FN-001                      # Retry failed task → todo
 fn task comment FN-001 "text"             # Add general comment
 fn task comments FN-001                   # List task comments

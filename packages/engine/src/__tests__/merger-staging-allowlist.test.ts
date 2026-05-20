@@ -86,6 +86,7 @@ function assertIsolatedWorkspace(dir: string): void {
 
 const STUB_SETTINGS = {
   ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
   commitAuthorEnabled: false, // skip --author flag to avoid user config issues
 };
 

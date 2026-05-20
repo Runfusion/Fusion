@@ -92,6 +92,15 @@ if (typeof window !== "undefined") {
       dispatchEvent: vi.fn(),
     })),
   });
+
+  class MockResizeObserver {
+    observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  }
+
+  (window as typeof window & { ResizeObserver?: typeof MockResizeObserver }).ResizeObserver = MockResizeObserver;
+  (globalThis as typeof globalThis & { ResizeObserver?: typeof MockResizeObserver }).ResizeObserver = MockResizeObserver;
 }
 
 // Global MockEventSource for tests

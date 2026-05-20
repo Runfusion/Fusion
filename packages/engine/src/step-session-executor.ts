@@ -50,6 +50,7 @@ import {
   createTaskLogTool,
 } from "./agent-tools.js";
 import { RemovalReason, removeWorktree } from "./worktree-backend.js";
+import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
 
 const stepExecLog = createLogger("step-session-executor");
@@ -506,7 +507,7 @@ function countSteps(prompt: string): number {
  * Extract a named section from the prompt (e.g. "File Scope", "Do NOT").
  * Returns the section from the heading to the next ## or ### heading, or end.
  */
-function extractSection(prompt: string, sectionName: string): string {
+export function extractSection(prompt: string, sectionName: string): string {
   // Match ## Section Name or **Section Name** as a heading
   const regex = new RegExp(`^## ${escapeRegex(sectionName)}\\s*$`, "m");
   const match = regex.exec(prompt);
@@ -1343,6 +1344,12 @@ Follow instructions precisely and avoid unrelated changes.`,
         // best-effort cleanup; log but don't mask the original error
         stepExecLog.log(`Warning: failed to remove partial worktree directory after creation failure: ${worktreePath}`);
       }
+      await pruneWorktreeAdminEntries({
+        rootDir,
+        reason: "step-session-create-failed",
+        target: worktreePath,
+        logger: stepExecLog,
+      }).catch(() => undefined);
       throw err;
     }
 
@@ -1350,6 +1357,9 @@ Follow instructions precisely and avoid unrelated changes.`,
       await installTaskWorktreeIdentityGuard({
         worktreePath,
         taskId: this.options.taskDetail.id,
+        commitMsgHookEnabled: settings.commitMsgHookEnabled,
+        taskPrefix: settings.taskPrefix,
+        taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],
       });
     } catch (err) {
       try {
@@ -1357,6 +1367,12 @@ Follow instructions precisely and avoid unrelated changes.`,
       } catch {
         stepExecLog.log(`Warning: failed to remove worktree after identity-guard install failure: ${worktreePath}`);
       }
+      await pruneWorktreeAdminEntries({
+        rootDir,
+        reason: "step-session-guard-failed",
+        target: worktreePath,
+        logger: stepExecLog,
+      }).catch(() => undefined);
       throw err;
     }
 

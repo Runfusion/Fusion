@@ -200,7 +200,7 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     description: "Test",
     column: "in-review",
     dependencies: [],
-    worktree: "/tmp/root/.worktrees/KB-050",
+    worktree: "/tmp/root",
     steps: [],
     currentStep: 0,
     log: [],
@@ -217,7 +217,10 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -328,7 +331,7 @@ describe("aiMergeTask pre-merge fetch + fast-forward (smart strategies)", () => 
       if (cmdStr.includes("rev-list --left-right --count")) {
         return `${behind}\t${ahead}` as any;
       }
-      if (cmdStr.includes("git fetch origin")) {
+      if (cmdStr.includes('git fetch "origin" "main"') || cmdStr.includes("git fetch origin main")) {
         fetchCalled = true;
         if (fetchFails) throw new Error("fatal: unable to access remote");
         return Buffer.from("");
@@ -359,8 +362,8 @@ describe("aiMergeTask pre-merge fetch + fast-forward (smart strategies)", () => 
 
   it("fast-forwards local main when origin is strictly ahead (default smart-prefer-main)", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     const probe = setupSyncMock({ behind: 2, ahead: 0 });
 
@@ -372,8 +375,8 @@ describe("aiMergeTask pre-merge fetch + fast-forward (smart strategies)", () => 
 
   it("skips fast-forward when local main has unpushed commits (divergent)", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     const probe = setupSyncMock({ behind: 1, ahead: 1 });
 
@@ -385,8 +388,8 @@ describe("aiMergeTask pre-merge fetch + fast-forward (smart strategies)", () => 
 
   it("continues merge when fetch fails (graceful degrade)", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     const probe = setupSyncMock({ behind: 0, ahead: 0, fetchFails: true });
 
@@ -399,11 +402,12 @@ describe("aiMergeTask pre-merge fetch + fast-forward (smart strategies)", () => 
 
   it("does not fetch for ai-only strategy", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "ai-only",
     });
     const probe = setupSyncMock({ behind: 5, ahead: 0 });
@@ -415,11 +419,12 @@ describe("aiMergeTask pre-merge fetch + fast-forward (smart strategies)", () => 
 
   it("normalizes legacy 'smart' setting and still fetches", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart" as any,
     });
     const probe = setupSyncMock({ behind: 1, ahead: 0 });
@@ -463,6 +468,7 @@ describe("aiMergeTask abort handling", () => {
     const store = createMockStore();
     store.getSettings = vi.fn().mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "pnpm test",
     });
 
@@ -507,7 +513,7 @@ describe("aiMergeTask autostash cleanup", () => {
   });
 
   it("drops task autostash after successful merge restore", async () => {
-    const store = createMockStore({ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" });
+    const store = createMockStore({ id: "FN-050", worktree: "/tmp/root" });
     const stashSha = "1111111111111111111111111111111111111111";
     let dropped = false;
 
@@ -564,7 +570,7 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 
   it("does NOT remove worktree when another task references the same path", async () => {
-    const worktreePath = "/tmp/root/.worktrees/KB-050";
+    const worktreePath = "/tmp/root";
     const store = createMockStore(
       { id: "FN-050", worktree: worktreePath },
       [
@@ -584,7 +590,7 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 
   it("removes worktree when no other task references it", async () => {
-    const worktreePath = "/tmp/root/.worktrees/KB-050";
+    const worktreePath = "/tmp/root";
     const store = createMockStore(
       { id: "FN-050", worktree: worktreePath },
       [
@@ -602,7 +608,7 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 
   it("clears task.worktree/branch after the worktree is removed", async () => {
-    const worktreePath = "/tmp/root/.worktrees/KB-050";
+    const worktreePath = "/tmp/root";
     const store = createMockStore(
       { id: "FN-050", worktree: worktreePath },
       [
@@ -625,7 +631,7 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 
   it("always deletes the branch regardless of worktree sharing", async () => {
-    const worktreePath = "/tmp/root/.worktrees/KB-050";
+    const worktreePath = "/tmp/root";
     const store = createMockStore(
       { id: "FN-050", worktree: worktreePath },
       [
@@ -645,7 +651,7 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
   });
 
   it("result.worktreeRemoved is false when worktree is retained", async () => {
-    const worktreePath = "/tmp/root/.worktrees/KB-050";
+    const worktreePath = "/tmp/root";
     const store = createMockStore(
       { id: "FN-050", worktree: worktreePath },
       [
@@ -675,12 +681,13 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
 
   it("attempts rebase abort in the task worktree and continues merge when abort succeeds", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     // Fall-through is only allowed for prefer-branch; prefer-main hard-fails (see test below).
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-branch",
     });
 
@@ -718,7 +725,7 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
           && typeof options === "object"
           && options !== null
           && "cwd" in options
-          && (options as { cwd?: string }).cwd === "/tmp/root/.worktrees/KB-050",
+          && (options as { cwd?: string }).cwd === "/tmp/root",
       ),
     ).toBe(true);
     expect(mockedExecSync.mock.calls.some(([command]) => String(command).includes("merge --squash"))).toBe(true);
@@ -726,11 +733,12 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
 
   it("logs abort cleanup failure details but still falls through to merge", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-branch",
     });
 
@@ -783,11 +791,12 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
     // successfully. Only when BOTH are explicitly disabled is the
     // configuration incoherent.
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
       worktreeRebaseBeforeMerge: false,
       worktreeRebaseLocalBase: false,
@@ -811,11 +820,12 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
     // the stages are independent — local-base runs even when remote can't
     // resolve, providing prefer-main with a usable safety net.
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
     });
 
@@ -855,11 +865,12 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
 
   it("does not silently fall through to -X ours when smart-prefer-main rebase aborts and recovery layers 1+2 fail", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
     });
 
@@ -919,6 +930,7 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
     });
 
@@ -996,8 +1008,8 @@ describe("aiMergeTask — task.branch field", () => {
 
   it("uses task.branch when set instead of deriving from task ID", async () => {
     const store = createMockStore(
-      { id: "FN-050", branch: "fusion/fn-050-2", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", branch: "fusion/fn-050-2", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1019,8 +1031,8 @@ describe("aiMergeTask — task.branch field", () => {
 
   it("falls back to conventional branch name when task.branch is not set", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1048,7 +1060,7 @@ describe("aiMergeTask — merge-target branch resolution", () => {
       id: "FN-050",
       branch: "feature/fn-050-work",
       baseBranch: "release/2026-05",
-      worktree: "/tmp/root/.worktrees/KB-050",
+      worktree: "/tmp/root",
     });
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1077,7 +1089,7 @@ describe("aiMergeTask — merge-target branch resolution", () => {
       id: "FN-050",
       branch: "feature/fn-050-work",
       baseBranch: undefined,
-      worktree: "/tmp/root/.worktrees/KB-050",
+      worktree: "/tmp/root",
     });
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1269,8 +1281,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 1 success: sets resolutionStrategy to 'ai' and attemptsMade to 1", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     // Clean merge with no conflicts - simulate empty diff for conflicts
@@ -1300,11 +1312,12 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("with autoResolveConflicts disabled: only makes 1 attempt on conflict", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       autoResolveConflicts: false, // Disabled
     });
 
@@ -1367,8 +1380,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     // the cascade fell into "all conflicts auto-resolved" and returned true,
     // recording merge metadata for a merge that never happened.
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     let mergeCallCount = 0;
@@ -1399,8 +1412,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 1 fails, attempt 2 auto-resolves lock files: sets resolutionStrategy to 'auto-resolve'", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     let mergeCallCount = 0;
@@ -1446,13 +1459,14 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 3 uses -X theirs strategy: sets resolutionStrategy to 'theirs'", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     // Pin the strategy: default is now "smart-prefer-main" (-X ours), but
     // this test specifically exercises the -X theirs fallback path.
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-branch",
     });
 
@@ -1534,12 +1548,13 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("attempt 3 under smart-prefer-main restores overlapping files from the branch by default", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
       mergeStrategyOverlapBehavior: "flip-to-prefer-branch",
     });
@@ -1606,12 +1621,13 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("warn-only logs overlap but keeps legacy -X ours fallback", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
       mergeStrategyOverlapBehavior: "warn-only",
     });
@@ -1667,12 +1683,13 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("ignore preserves legacy behavior and skips overlap detection", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-main",
       mergeStrategyOverlapBehavior: "ignore",
     });
@@ -1720,8 +1737,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("final cleanup reset succeeds after all 3 attempts fail", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const resetCalls: string[] = [];
@@ -1788,8 +1805,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("final cleanup reset failure is logged but does not change thrown error", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const resetFailureMessage = "reset failed: dirty worktree";
@@ -1859,8 +1876,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("retry-cleanup reset failure after attempt 1 is logged and merge continues to attempt 2", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const warnSpy = vi.spyOn(mergerLog, "warn");
@@ -1919,12 +1936,13 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("build-retry reset failure is logged when build verification fails", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildRetryCount: 1,
       verificationFixRetries: 0,
     });
@@ -1985,8 +2003,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("error-path retry cleanup reset failure is logged and merge still retries", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const warnSpy = vi.spyOn(mergerLog, "warn");
@@ -2072,8 +2090,8 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
 
   it("tracks resolutionStrategy as 'ai' when attempt 1 succeeds even with autoResolve enabled", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     // Clean merge with no conflicts
@@ -2109,8 +2127,8 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
 
   it("retry-cleanup reset failure after failed attempt is logged", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const warnSpy = vi.spyOn(mergerLog, "warn");
@@ -2192,8 +2210,8 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
 
   it("error-path retry cleanup reset failure is logged", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
 
     const warnSpy = vi.spyOn(mergerLog, "warn");
@@ -2266,11 +2284,12 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
 
   it("build-verification reset failure is logged in executeMergeAttempt", async () => {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+      { id: "FN-050", worktree: "/tmp/root" },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review" } as Task],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
       buildRetryCount: 0,
       verificationFixRetries: 0,
@@ -2405,11 +2424,12 @@ describe("aiMergeTask post-squash audit gate", () => {
     taskOverrides: Partial<Task> & { prompt?: string } = {},
   ) {
     const store = createMockStore(
-      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", ...taskOverrides } as Task & { prompt?: string },
-      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review", ...taskOverrides } as Task & { prompt?: string }],
+      { id: "FN-050", worktree: "/tmp/root", ...taskOverrides } as Task & { prompt?: string },
+      [{ id: "FN-050", worktree: "/tmp/root", column: "in-review", ...taskOverrides } as Task & { prompt?: string }],
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "pnpm test",
       mergeConflictStrategy: "ai-only",
       worktreeRebaseBeforeMerge: false,

@@ -16,6 +16,12 @@ const DEFAULT_ACTOR: ApprovalRequestActorSnapshot = {
   actorName: "User",
 };
 
+function worktrunkInstallDedupeKey(): string {
+  return WORKTRUNK_PINNED_RELEASE.version
+    ? `worktrunk_install:${WORKTRUNK_PINNED_RELEASE.version}`
+    : "worktrunk_install:pending";
+}
+
 export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
   const { router, getProjectContext, rethrowAsApiError } = ctx;
 
@@ -31,7 +37,7 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
         const probe = await probeWorktrunk(resolved.binaryPath);
         res.json({
           status: "installed",
-          version: probe.version ?? WORKTRUNK_PINNED_RELEASE.version,
+          version: probe.version ?? WORKTRUNK_PINNED_RELEASE.version ?? "pending",
           installPath: resolved.binaryPath,
         });
         return;
@@ -41,7 +47,7 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
 
       const pending = approvalStore.findLatestByDedupeKey({
         requesterActorId: DEFAULT_ACTOR.actorId,
-        dedupeKey: `worktrunk_install:${WORKTRUNK_PINNED_RELEASE.version}`,
+        dedupeKey: worktrunkInstallDedupeKey(),
       });
 
       if (pending?.status === "pending") {
@@ -79,7 +85,11 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
 
       try {
         const resolved = await resolveWorktrunkBinary({ settings: worktrunkSettings });
-        res.json({ status: "installed", installPath: resolved.binaryPath, version: WORKTRUNK_PINNED_RELEASE.version });
+        res.json({
+          status: "installed",
+          installPath: resolved.binaryPath,
+          version: WORKTRUNK_PINNED_RELEASE.version ?? "pending",
+        });
         return;
       } catch {
         // proceed with approval request

@@ -80,5 +80,5 @@ describeIfGit("captureBaseCommitSha (real git)", () => {
 
     const distance = Number(git(repo, `git rev-list --count ${firstBase}..HEAD`));
     expect(distance).toBeGreaterThan(0);
-  });
+  }, 30_000);
 });

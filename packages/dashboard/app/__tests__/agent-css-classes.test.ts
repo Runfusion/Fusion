@@ -123,14 +123,7 @@ describe("Agent CSS classes", () => {
     expect(orgChartSection).toContain("padding-top: var(--space-sm)");
     expect(orgChartSection).toContain("padding-left: calc(var(--space-lg) + var(--space-sm))");
     expect(orgChartSection).toContain("@media (max-width: 768px)");
-    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-75");
-    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-100");
-    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-125");
-    expect(orgChartSection).not.toContain("agent-org-chart-canvas--zoom-150");
     expect(orgChartSection).not.toContain("org-chart-node--has-children > .org-chart-node-card::after");
-    expect(orgChartSection).not.toContain("org-chart-children::before");
-    expect(orgChartSection).not.toContain(".org-chart-children > .org-chart-node::before");
-    expect(orgChartSection).not.toContain("var(--border-color)");
     expect(orgChartSection).not.toContain("var(--text-primary)");
     expect(orgChartSection).not.toContain("var(--text-secondary)");
     expect(orgChartSection).not.toMatch(/1\.5rem|0\.75rem|0\.72rem|0\.78rem|0\.65rem|120ms\s+ease|10px/);

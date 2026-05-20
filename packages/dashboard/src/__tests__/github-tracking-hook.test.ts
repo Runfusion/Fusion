@@ -368,6 +368,31 @@ describe("registerGithubTrackingHook", () => {
     );
   });
 
+  it("invokes maybeCreateTrackingIssue for api-source tasks when default tracking is enabled", async () => {
+    registerGithubTrackingHook();
+
+    await store.updateSettings({
+      githubTrackingEnabledByDefault: true,
+      githubTrackingDefaultRepo: "owner/repo",
+      githubAuthMode: "token",
+      githubAuthToken: "tok",
+    });
+
+    const spy = vi.spyOn(githubTracking, "maybeCreateTrackingIssue");
+    const created = await store.createTask({
+      description: "api sourced task",
+      source: { sourceType: "api" },
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: created.id, sourceType: "api" }),
+      expect.objectContaining({
+        projectSettings: expect.objectContaining({ githubTrackingDefaultRepo: "owner/repo" }),
+      }),
+    );
+  });
+
   it("keeps inline enabled=false without flipping back on", async () => {
     registerGithubTrackingHook();
 

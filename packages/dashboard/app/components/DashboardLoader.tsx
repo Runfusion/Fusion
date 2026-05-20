@@ -54,6 +54,10 @@ export function DashboardLoader({ stage }: DashboardLoaderProps) {
       clearCache(SWR_CACHE_KEYS.CHAT_ROOMS);
       clearCache(SWR_CACHE_KEYS.ACTIVE_CHAT_ROOM_ID);
       clearCache(SWR_CACHE_KEYS.CHAT_SESSIONS_PREFIX);
+      clearCache(SWR_CACHE_KEYS.CHAT_MESSAGES_PREFIX);
+      clearCache(SWR_CACHE_KEYS.CHAT_AGENTS_MAP_PREFIX);
+      clearCache(SWR_CACHE_KEYS.MODELS);
+      clearCache(SWR_CACHE_KEYS.DISCOVERED_SKILLS_PREFIX);
       clearCache(SWR_CACHE_KEYS.INSIGHTS_PREFIX);
       clearCache(SWR_CACHE_KEYS.INSIGHT_LATEST_RUN_PREFIX);
       clearCache(SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX);

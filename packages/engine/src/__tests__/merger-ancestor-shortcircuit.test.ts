@@ -42,6 +42,7 @@ function runFinalize(dir: string, taskId: string, branch: string, preAttemptHead
     undefined,
     {
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       commitAuthorEnabled: false,
     },
     undefined,

@@ -1144,6 +1144,153 @@ describe("useTasks", () => {
     });
   });
 
+  describe("FN-5135: deletedAt payloads must not resurrect tasks", () => {
+    it("removes an existing task when task:updated carries deletedAt", async () => {
+      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-AAA", column: "todo" as Column })]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+
+      act(() => {
+        MockEventSource.instances[0]._emit(
+          "task:updated",
+          createMockTask({
+            id: "FN-AAA",
+            column: "todo" as Column,
+            updatedAt: "2026-05-19T00:00:00.000Z",
+            deletedAt: "2026-05-19T00:00:00.000Z",
+          }),
+        );
+      });
+
+      expect(result.current.tasks.find((task) => task.id === "FN-AAA")).toBeUndefined();
+    });
+
+    it("does not append unknown task:updated payloads with deletedAt", async () => {
+      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-AAA", column: "todo" as Column })]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+
+      act(() => {
+        MockEventSource.instances[0]._emit(
+          "task:updated",
+          createMockTask({
+            id: "FN-BBB",
+            column: "todo" as Column,
+            updatedAt: "2026-05-19T00:00:00.000Z",
+            deletedAt: "2026-05-19T00:00:00.000Z",
+          }),
+        );
+      });
+
+      expect(result.current.tasks).toHaveLength(1);
+      expect(result.current.tasks[0].id).toBe("FN-AAA");
+    });
+
+    it("treats task:created with deletedAt as a no-op", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(0));
+
+      act(() => {
+        MockEventSource.instances[0]._emit(
+          "task:created",
+          createMockTask({
+            id: "FN-AAA",
+            column: "todo" as Column,
+            deletedAt: "2026-05-19T00:00:00.000Z",
+          }),
+        );
+      });
+
+      expect(result.current.tasks).toHaveLength(0);
+    });
+
+    it("removes an existing task when task:moved carries deletedAt", async () => {
+      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-AAA", column: "todo" as Column })]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+
+      act(() => {
+        MockEventSource.instances[0]._emit("task:moved", {
+          task: createMockTask({
+            id: "FN-AAA",
+            column: "todo" as Column,
+            deletedAt: "2026-05-19T00:00:00.000Z",
+          }),
+          from: "todo" as Column,
+          to: "in-progress" as Column,
+        });
+      });
+
+      expect(result.current.tasks.find((task) => task.id === "FN-AAA")).toBeUndefined();
+    });
+
+    it("removes an existing task when task:merged carries deletedAt", async () => {
+      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-AAA", column: "in-review" as Column })]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+
+      act(() => {
+        MockEventSource.instances[0]._emit("task:merged", {
+          task: createMockTask({
+            id: "FN-AAA",
+            column: "in-review" as Column,
+            deletedAt: "2026-05-19T00:00:00.000Z",
+          }),
+          branch: "fusion/fn-aaa",
+          merged: true,
+          worktreeRemoved: true,
+          branchDeleted: true,
+        });
+      });
+
+      expect(result.current.tasks.find((task) => task.id === "FN-AAA")).toBeUndefined();
+    });
+
+    it("drops soft-deleted entries from the SWR cache seed", () => {
+      const cachedTasks = [
+        createMockTask({ id: "FN-AAA", column: "todo" as Column }),
+        createMockTask({ id: "FN-DELETED", column: "todo" as Column, deletedAt: "2026-05-19T00:00:00.000Z" }),
+      ];
+      mockReadCache.mockReturnValue(cachedTasks);
+      mockFetchTasks.mockReturnValue(new Promise(() => {}) as Promise<Task[]>);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-AAA"]);
+    });
+
+    it("search-active updates refresh from server instead of mutating local state", async () => {
+      mockFetchTasks
+        .mockResolvedValueOnce([createMockTask({ id: "FN-AAA", column: "todo" as Column })])
+        .mockReturnValueOnce(new Promise(() => {}) as Promise<Task[]>);
+
+      const { result } = renderHook(() => useTasks({ searchQuery: "deleted" }));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      mockFetchTasks.mockClear();
+
+      act(() => {
+        MockEventSource.instances[0]._emit(
+          "task:updated",
+          createMockTask({
+            id: "FN-AAA",
+            column: "todo" as Column,
+            updatedAt: "2026-05-19T00:00:00.000Z",
+            deletedAt: "2026-05-19T00:00:00.000Z",
+          }),
+        );
+      });
+
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-AAA"]);
+    });
+  });
+
   describe("SSE event: task:merged", () => {
     it("ensures column is always done after merge", async () => {
       const initialTask = createMockTask({

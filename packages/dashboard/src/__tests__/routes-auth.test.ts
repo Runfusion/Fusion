@@ -224,6 +224,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     upsertTaskDocument: vi.fn(),
     deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    updatePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
+    addPrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
@@ -562,23 +564,71 @@ function createMockAuthStorage(overrides: Partial<AuthStorageLike> = {}): AuthSt
 describe("GET /auth/status", () => {
   let store: TaskStore;
   let authStorage: AuthStorageLike;
+  let app: express.Express;
 
-  beforeEach(() => {
-    store = createMockStore();
-    authStorage = createMockAuthStorage();
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  function buildApp() {
-    const app = express();
+  beforeAll(() => {
+    store = createMockStore();
+    authStorage = createMockAuthStorage();
+    app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store, { authStorage }));
-    return app;
-  }
+  });
+
+  beforeEach(() => {
+    vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+
+    vi.mocked(authStorage.reload).mockReset();
+    vi.mocked(authStorage.getOAuthProviders).mockReset();
+    vi.mocked(authStorage.hasAuth).mockReset();
+    vi.mocked(authStorage.get).mockReset();
+    vi.mocked(authStorage.login).mockReset();
+    vi.mocked(authStorage.getApiKeyProviders).mockReset();
+    vi.mocked(authStorage.hasApiKey).mockReset();
+    vi.mocked(authStorage.setApiKey).mockReset();
+    vi.mocked(authStorage.clearApiKey).mockReset();
+
+    vi.mocked(authStorage.reload).mockResolvedValue(undefined);
+    vi.mocked(authStorage.getOAuthProviders).mockReturnValue([{ id: "github-copilot", name: "GitHub Copilot" }]);
+    vi.mocked(authStorage.hasAuth).mockReturnValue(false);
+    vi.mocked(authStorage.get).mockReturnValue(undefined);
+    vi.mocked(authStorage.login).mockImplementation((_provider: string, callbacks: any) => {
+      callbacks.onAuth({ url: "https://auth.example.com/login", instructions: "Open in browser" });
+      return Promise.resolve();
+    });
+    vi.mocked(authStorage.getApiKeyProviders).mockReturnValue([
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "kimi-coding", name: "Kimi" },
+    ]);
+    vi.mocked(authStorage.hasApiKey).mockReturnValue(false);
+  });
 
   it("returns provider list with auth status", async () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     // Filter out synthetic CLI providers — they have dedicated route tests.
@@ -598,7 +648,7 @@ describe("GET /auth/status", () => {
     ]);
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "github-copilot");
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const githubCopilot = res.body.providers.find((p: any) => p.id === "github-copilot");
@@ -624,7 +674,7 @@ describe("GET /auth/status", () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "github-copilot");
     (authStorage.hasApiKey as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "acme-extension");
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "llama-cpp");
@@ -650,8 +700,8 @@ describe("GET /auth/status", () => {
       ]);
 
       const res = origin
-        ? await REQUEST(buildApp(), "GET", "/api/auth/status", undefined, { Origin: origin })
-        : await REQUEST(buildApp(), "GET", "/api/auth/status");
+        ? await REQUEST(app, "GET", "/api/auth/status", undefined, { Origin: origin })
+        : await REQUEST(app, "GET", "/api/auth/status");
 
       expect(res.status).toBe(200);
       const openAiCodex = res.body.providers.find((p: any) => p.id === "openai-codex");
@@ -671,7 +721,7 @@ describe("GET /auth/status", () => {
   it("returns unauthenticated status", async () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     expect(res.body.providers[0].authenticated).toBe(false);
@@ -685,7 +735,7 @@ describe("GET /auth/status", () => {
         : undefined,
     );
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const githubCopilot = res.body.providers.find((p: any) => p.id === "github-copilot");
@@ -703,7 +753,6 @@ describe("GET /auth/status", () => {
       },
     );
 
-    const app = buildApp();
     const loginRequest = REQUEST(app, "POST", "/api/auth/login", JSON.stringify({ provider: "github-copilot" }), {
       "Content-Type": "application/json",
     });
@@ -721,7 +770,7 @@ describe("GET /auth/status", () => {
     (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockReturnValue(false);
     (authStorage.hasApiKey as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     const openrouter = res.body.providers.find((p: any) => p.id === "openrouter");
@@ -735,7 +784,7 @@ describe("GET /auth/status", () => {
       { id: "tavily", name: "Tavily" },
     ]);
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
     expect(res.body.providers).toEqual(
@@ -750,7 +799,7 @@ describe("GET /auth/status", () => {
       throw new Error("storage error");
     });
 
-    const res = await GET(buildApp(), "/api/auth/status");
+    const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("storage error");
@@ -2447,7 +2496,7 @@ describe("Pause/Unpause endpoints", () => {
     }
 
     describe("GET /tasks/:id/documents", () => {
-      it("returns empty array when no documents", async () => {
+      it("returns empty array when the store hides documents for a soft-deleted parent", async () => {
         (store.getTaskDocuments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
         const res = await GET(buildApp(), "/api/tasks/KB-001/documents");
         expect(res.status).toBe(200);
@@ -2474,7 +2523,7 @@ describe("Pause/Unpause endpoints", () => {
         expect(res.body).toEqual(doc);
       });
 
-      it("returns 404 when document not found", async () => {
+      it("returns 404 when the store hides a document for a soft-deleted parent", async () => {
         (store.getTaskDocument as ReturnType<typeof vi.fn>).mockResolvedValue(null);
         const res = await GET(buildApp(), "/api/tasks/KB-001/documents/missing");
         expect(res.status).toBe(404);
@@ -2494,7 +2543,14 @@ describe("Pause/Unpause endpoints", () => {
         expect(res.body).toEqual(revisions);
       });
 
-      it("returns empty array for nonexistent document", async () => {
+      it("returns empty array when the store hides revisions for a soft-deleted parent", async () => {
+        (store.getTaskDocumentRevisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        const res = await GET(buildApp(), "/api/tasks/KB-001/documents/missing/revisions");
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+      });
+
+      it("returns empty array for nonexistent document errors", async () => {
         (store.getTaskDocumentRevisions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("not found"));
         const res = await GET(buildApp(), "/api/tasks/KB-001/documents/missing/revisions");
         // Per spec: "Return empty array if document doesn't exist (not an error)"
@@ -2618,7 +2674,7 @@ describe("Pause/Unpause endpoints", () => {
         expect(res.body).toEqual([]);
       });
 
-      it("returns documents across multiple tasks", async () => {
+      it("returns only the live-parent documents surfaced by the store", async () => {
         const mockDocs = [
           {
             id: "doc-1",
@@ -2632,25 +2688,11 @@ describe("Pause/Unpause endpoints", () => {
             taskTitle: "Task One",
             taskColumn: "triage",
           },
-          {
-            id: "doc-2",
-            taskId: "KB-002",
-            key: "notes",
-            content: "Notes content",
-            revision: 1,
-            author: "agent",
-            createdAt: "2024-01-02T00:00:00.000Z",
-            updatedAt: "2024-01-02T00:00:00.000Z",
-            taskTitle: "Task Two",
-            taskColumn: "in-progress",
-          },
         ];
         (store.getAllDocuments as ReturnType<typeof vi.fn>).mockResolvedValue(mockDocs);
         const res = await GET(buildApp(), "/api/documents");
         expect(res.status).toBe(200);
-        expect(res.body).toHaveLength(2);
-        expect(res.body[0].taskTitle).toBe("Task One");
-        expect(res.body[1].taskTitle).toBe("Task Two");
+        expect(res.body).toEqual(mockDocs);
       });
 
       it("filters by search query", async () => {
@@ -2763,7 +2805,11 @@ describe("Pause/Unpause endpoints", () => {
       expect(res.body.error).toContain("in-review");
     });
 
-    it("returns 409 if task already has a PR", async () => {
+    it("allows adding another PR even when a task already has one (multi-PR support)", async () => {
+      // FN-4967 added multi-PR support: the route no longer rejects in-review
+      // tasks that already have a primary PR. The handler reaches the GitHub
+      // calls and, with no real git remote configured, fails downstream
+      // (400/500). Just verify the early 409 is gone.
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...FAKE_TASK_DETAIL,
         column: "in-review",
@@ -2778,8 +2824,7 @@ describe("Pause/Unpause endpoints", () => {
         { "Content-Type": "application/json" }
       );
 
-      expect(res.status).toBe(409);
-      expect(res.body.error).toContain("already has PR");
+      expect(res.status).not.toBe(409);
     });
 
     it("returns 400 if title is missing", async () => {
@@ -3049,6 +3094,7 @@ describe("Pause/Unpause endpoints", () => {
         getTask: vi.fn(),
         updatePrInfo: vi.fn(),
         getRootDir: vi.fn().mockReturnValue("/fake/root"),
+        getSettings: vi.fn().mockResolvedValue({}),
       });
     });
 
@@ -3072,6 +3118,11 @@ describe("Pause/Unpause endpoints", () => {
     it("returns merge readiness details for PR-first UI refreshes", async () => {
       const originalRepo = process.env.GITHUB_REPOSITORY;
       process.env.GITHUB_REPOSITORY = "owner/repo";
+      vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
+        decision: "CHANGES_REQUESTED",
+        reviewers: [],
+        items: [],
+      });
       vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
         prInfo: mockPrInfo,
         mergeReady: false,

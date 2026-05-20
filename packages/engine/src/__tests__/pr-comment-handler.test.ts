@@ -7,6 +7,9 @@ const mockStore = {
   getTask: vi.fn<(id: string) => Promise<Task>>().mockResolvedValue({ id: "FN-001", review: undefined } as Task),
   updateTask: vi.fn<(id: string, updates: Partial<Task>) => Promise<Task>>().mockResolvedValue({ id: "FN-001" } as Task),
   createTask: vi.fn<(input: Parameters<TaskStore["createTask"]>[0]) => Promise<Task>>().mockResolvedValue({ id: "FN-123" } as Task),
+  listTasks: vi.fn<() => Promise<Task[]>>().mockResolvedValue([]),
+  logEntry: vi.fn<(id: string, action: string, outcome?: string) => Promise<Task>>().mockResolvedValue({ id: "FN-001" } as Task),
+  recordRunAuditEvent: vi.fn<(event: unknown) => Promise<void>>().mockResolvedValue(),
   moveTask: vi.fn<(id: string, column: Task["column"]) => Promise<Task>>().mockResolvedValue({ id: "FN-001", column: "in-progress" } as Task),
 } as unknown as TaskStore;
 
@@ -15,6 +18,10 @@ describe("PrCommentHandler", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "FN-001", review: undefined } as Task);
+    (mockStore.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "FN-123" } as Task);
+    (mockStore.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "FN-001" } as Task);
     handler = new PrCommentHandler(mockStore);
   });
 
@@ -287,6 +294,35 @@ describe("PrCommentHandler", () => {
       expect(description).toContain("@reviewer2");
       expect(description).toContain("First issue");
       expect(description).toContain("Second issue");
+    });
+
+    it("reuses an existing PR follow-up when the same parent/prNumber is still open", async () => {
+      (mockStore.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-existing",
+        column: "todo",
+        description: "existing pr follow-up",
+        sourceParentTaskId: "FN-001",
+        sourceMetadata: { prNumber: 42 },
+      }]);
+      (mockStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "FN-existing", log: [] } as unknown as Task);
+
+      await handler.createFollowUpTask("FN-001", mockPrInfo, [
+        {
+          id: 1,
+          body: "This needs fixing",
+          user: { login: "reviewer" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          html_url: "https://github.com/owner/repo/pull/42#issuecomment-1",
+        },
+      ]);
+
+      expect(mockStore.createTask).not.toHaveBeenCalled();
+      expect(mockStore.logEntry).toHaveBeenCalledWith(
+        "FN-existing",
+        expect.stringContaining("[verification recurrence] signature=none"),
+        expect.stringContaining("kind=pr-comment; parentTaskId=FN-001"),
+      );
     });
   });
 });

@@ -92,6 +92,7 @@ describe("executor workflow step scope gating", () => {
     mockDiffFiles(diffFiles);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue(diffFiles);
     const executeStepSpy = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task as any, "/tmp/test", {} as any);
@@ -117,6 +118,7 @@ describe("executor workflow step scope gating", () => {
     mockDiffFiles(["packages/engine/src/executor.ts"]);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue(["packages/engine/src/executor.ts"]);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task as any, "/tmp/test", { workflowStepScopeEnforcement: "block" } as any);
@@ -133,6 +135,9 @@ describe("executor workflow step scope gating", () => {
     mockDiffSequence([], ["packages/dashboard/app/components/TaskDetailModal.tsx"]);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
+    vi.spyOn(executor as any, "captureModifiedFiles")
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(["packages/dashboard/app/components/TaskDetailModal.tsx"]);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task as any, "/tmp/test", { workflowStepScopeEnforcement: "block" } as any);
@@ -154,6 +159,9 @@ describe("executor workflow step scope gating", () => {
     );
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
+    vi.spyOn(executor as any, "captureModifiedFiles")
+      .mockResolvedValueOnce(["packages/engine/src/executor.ts"])
+      .mockResolvedValueOnce(["packages/engine/src/executor.ts", "packages/dashboard/app/components/TaskDetailModal.tsx"]);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task as any, "/tmp/test", { workflowStepScopeEnforcement: "block" } as any);
@@ -171,6 +179,9 @@ describe("executor workflow step scope gating", () => {
     mockDiffSequence([], ["packages/dashboard/app/components/TaskDetailModal.tsx"]);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
+    vi.spyOn(executor as any, "captureModifiedFiles")
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(["packages/dashboard/app/components/TaskDetailModal.tsx"]);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task as any, "/tmp/test", { workflowStepScopeEnforcement: "warn" } as any);

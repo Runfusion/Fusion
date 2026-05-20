@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const IOS_FALLBACK_MIN_GAP_PX = 30;
 const IOS_FALLBACK_MIN_FOCUSED_GAP_PX = 16;
 const IOS_VIEWPORT_SHRINK_MIN_PX = 16;
+const IMPOSSIBLE_VIEWPORT_EPSILON_PX = 2;
 
 /** Whether the current device is likely mobile (touch-primary, small viewport). */
 function isMobileDevice(): boolean {
@@ -50,9 +51,24 @@ interface KeyboardMetrics {
   vvOffsetTop: number;
 }
 
-function getKeyboardMetrics(): KeyboardMetrics {
+const CLOSED_KEYBOARD_METRICS: KeyboardMetrics = {
+  overlap: 0,
+  open: false,
+  vvHeight: null,
+  vvOffsetTop: 0,
+};
+
+function hasImpossibleViewportSample(): boolean {
   if (typeof window === "undefined" || !window.visualViewport) {
-    return { overlap: 0, open: false, vvHeight: null, vvOffsetTop: 0 };
+    return false;
+  }
+
+  return window.visualViewport.offsetTop + window.visualViewport.height > window.innerHeight + IMPOSSIBLE_VIEWPORT_EPSILON_PX;
+}
+
+function getKeyboardMetrics(previousMetrics: KeyboardMetrics = CLOSED_KEYBOARD_METRICS): KeyboardMetrics {
+  if (typeof window === "undefined" || !window.visualViewport) {
+    return CLOSED_KEYBOARD_METRICS;
   }
 
   const vv = window.visualViewport;
@@ -62,6 +78,13 @@ function getKeyboardMetrics(): KeyboardMetrics {
   // Only refresh baseline while keyboard is likely closed.
   if (!focused) {
     updateBaselineViewportHeight(vv.height);
+  }
+
+  // FN-5155: iOS focus/restore can briefly report offsetTop from the keyboard
+  // transition while height is still near the pre-keyboard baseline. Reject
+  // that impossible snapshot and keep the last stable metrics until settle.
+  if (focused && hasImpossibleViewportSample()) {
+    return previousMetrics;
   }
 
   // Android/Chrome style overlap. Only treat as open while an input is
@@ -95,7 +118,7 @@ function getKeyboardMetrics(): KeyboardMetrics {
     return { overlap: 0, open: true, vvHeight: vv.height, vvOffsetTop: offsetTop };
   }
 
-  return { overlap: 0, open: false, vvHeight: null, vvOffsetTop: 0 };
+  return CLOSED_KEYBOARD_METRICS;
 }
 
 /** Reset cached viewport baseline. Exported for tests only. */
@@ -114,6 +137,7 @@ export function useMobileKeyboard(
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [viewportOffsetTop, setViewportOffsetTop] = useState(0);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const stableMetricsRef = useRef<KeyboardMetrics>(CLOSED_KEYBOARD_METRICS);
 
   useEffect(() => {
     if (!enabled || !isMobileDevice()) {
@@ -130,18 +154,23 @@ export function useMobileKeyboard(
       setViewportHeight(null);
       setViewportOffsetTop(0);
       setKeyboardOpen(false);
+      stableMetricsRef.current = CLOSED_KEYBOARD_METRICS;
       return;
     }
+
+    const commitMetrics = (metrics: KeyboardMetrics) => {
+      stableMetricsRef.current = metrics;
+      setKeyboardOverlap(metrics.overlap);
+      setViewportHeight(metrics.vvHeight);
+      setViewportOffsetTop(metrics.vvOffsetTop);
+      setKeyboardOpen(metrics.open);
+    };
 
     // Full update — used on resize and focus transitions. These are the
     // events that signal an actual keyboard open/close, so we want to
     // re-snapshot offsetTop/height/overlap.
     const update = () => {
-      const metrics = getKeyboardMetrics();
-      setKeyboardOverlap(metrics.overlap);
-      setViewportHeight(metrics.vvHeight);
-      setViewportOffsetTop(metrics.vvOffsetTop);
-      setKeyboardOpen(metrics.open);
+      commitMetrics(getKeyboardMetrics(stableMetricsRef.current));
     };
 
     // Scroll-only update — fires on every visualViewport pan (60fps on
@@ -152,7 +181,8 @@ export function useMobileKeyboard(
     // update height/keyboardOpen if those changed; offsetTop stays
     // pinned to whatever resize/focus last set it.
     const updateScrollOnly = () => {
-      const metrics = getKeyboardMetrics();
+      const metrics = getKeyboardMetrics(stableMetricsRef.current);
+      stableMetricsRef.current = metrics;
       setKeyboardOverlap(metrics.overlap);
       setViewportHeight(metrics.vvHeight);
       setKeyboardOpen(metrics.open);
@@ -180,9 +210,16 @@ export function useMobileKeyboard(
     //      (e.g. switching tabs back with the keyboard up) where the
     //      timed reads miss the right window.
     let rafId: number | null = null;
+    let headRafId: number | null = null;
     let pollDeadline = 0;
     let lastOffsetTop = -1;
     let stableFrames = 0;
+    const cancelHeadUpdate = () => {
+      if (headRafId !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(headRafId);
+        headRafId = null;
+      }
+    };
     const cancelPoll = () => {
       if (rafId !== null && typeof window !== "undefined") {
         window.cancelAnimationFrame(rafId);
@@ -214,7 +251,18 @@ export function useMobileKeyboard(
       rafId = window.requestAnimationFrame(pollFrame);
     };
     const updateWithTail = () => {
-      update();
+      cancelHeadUpdate();
+      if (isKeyboardFocusableElement(document.activeElement) && hasImpossibleViewportSample()) {
+        // FN-5155: focusin/page-restore can arrive before visualViewport height
+        // catches up to the keyboard transition. Defer the head commit one frame
+        // so the tail/poll can converge instead of publishing the stale sample.
+        headRafId = window.requestAnimationFrame(() => {
+          headRafId = null;
+          update();
+        });
+      } else {
+        update();
+      }
       scheduleUpdate(50);
       scheduleUpdate(200);
       scheduleUpdate(500);
@@ -244,7 +292,9 @@ export function useMobileKeyboard(
       for (const timeoutId of timeoutIds) {
         clearTimeout(timeoutId);
       }
+      cancelHeadUpdate();
       cancelPoll();
+      stableMetricsRef.current = CLOSED_KEYBOARD_METRICS;
       setKeyboardOverlap(0);
       setViewportHeight(null);
       setViewportOffsetTop(0);

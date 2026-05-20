@@ -308,9 +308,10 @@ describe("TaskCard mobile", () => {
     }
   });
 
-  it("keeps TaskCard footer row on one line", () => {
+  it("wraps TaskCard footer chips instead of overflowing", () => {
     const css = loadAllAppCss();
-    expectRuleToContain(css, ".card-footer-row", "flex-wrap: nowrap;");
+    expectRuleToContain(css, ".card-footer-row", "flex-wrap: wrap;");
+    expectRuleToContain(css, ".card-footer-row", "row-gap: var(--space-xs);");
   });
 
   it("keeps TaskCard footer-chip cluster anchored by first chip rules", () => {

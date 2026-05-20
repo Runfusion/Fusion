@@ -72,7 +72,7 @@ describe("MissionManager cache hydration", () => {
     );
 
     await screen.findByText("Mission 0");
-    const cachedP1 = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.MISSIONS_PREFIX}p1`) ?? "[]");
+    const cachedP1 = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.MISSIONS_PREFIX}p1`) ?? "{}").data;
     expect(cachedP1).toHaveLength(200);
 
     localStorage.setItem(`${SWR_CACHE_KEYS.MISSIONS_PREFIX}p2`, JSON.stringify([{ id: "M-P2", title: "Project Two Mission", description: "", status: "planning", milestones: [] }]));

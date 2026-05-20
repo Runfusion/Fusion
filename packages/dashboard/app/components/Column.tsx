@@ -36,9 +36,13 @@ interface ColumnProps {
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onArchiveTask?: (id: string) => Promise<Task>;
+  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: {
+    removeDependencyReferences?: boolean;
+    removeLineageReferences?: boolean;
+    githubIssueAction?: GithubIssueAction;
+  }) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -505,6 +509,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   workflowStepNameLookup={workflowStepNameLookup}
                   blockerFanoutMap={blockerFanoutMap}
                   prAuthAvailable={prAuthAvailable}
+                  autoMergeEnabled={Boolean(autoMerge)}
                 />
               ))
             )
@@ -533,6 +538,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   workflowStepNameLookup={workflowStepNameLookup}
                   fanout={blockerFanoutMap?.get(task.id)}
                   prAuthAvailable={prAuthAvailable}
+                  autoMergeEnabled={Boolean(autoMerge)}
                 />
               ))}
               {shouldPaginate && hiddenTaskCount > 0 && (

@@ -232,13 +232,12 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
     vi.clearAllMocks();
   });
 
-  it("emits run_audit event on file-scope violation", async () => {
+  it("emits run_audit event on file-scope violation but continues", async () => {
     const store = createInvariantStore(["packages/engine/src/merger.ts"]);
     const auditor = { git: vi.fn().mockResolvedValue(undefined) };
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr === "git diff --cached --name-only") return "packages/core/src/store.ts";
-      if (cmdStr === "git reset --merge") return "";
       return "";
     });
 
@@ -249,8 +248,15 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
       auditor: auditor as any,
-    })).rejects.toBeInstanceOf(FileScopeViolationError);
+    })).resolves.toBeUndefined();
 
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-4073",
+      expect.stringContaining("Warning only — continuing merge."),
+      "text",
+      expect.stringContaining("declaredScope:"),
+      "merger",
+    );
     expect(auditor.git).toHaveBeenCalledTimes(1);
     expect(auditor.git).toHaveBeenCalledWith({
       type: "merge:file-scope-violation",
@@ -261,6 +267,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
         declaredScope: ["packages/engine/src/merger.ts"],
         stagedFileCount: 1,
         declaredScopeCount: 1,
+        warningOnly: true,
       },
     });
   });
@@ -282,13 +289,12 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
     expect(auditor.git).not.toHaveBeenCalled();
   });
 
-  it("does not mask original violation when audit emission fails", async () => {
+  it("does not fail when audit emission fails", async () => {
     const store = createInvariantStore(["packages/engine/src/merger.ts"]);
     const auditor = { git: vi.fn().mockRejectedValue(new Error("audit boom")) };
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr === "git diff --cached --name-only") return "packages/core/src/store.ts";
-      if (cmdStr === "git reset --merge") return "";
       return "";
     });
 
@@ -299,12 +305,12 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
       auditor: auditor as any,
-    })).rejects.toBeInstanceOf(FileScopeViolationError);
+    })).resolves.toBeUndefined();
 
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
       expect.stringContaining("File-scope invariant violation"),
-      "tool_error",
+      "text",
       expect.stringContaining("declaredScope:"),
       "merger",
     );
@@ -315,7 +321,6 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr === "git diff --cached --name-only") return "packages/core/src/store.ts";
-      if (cmdStr === "git reset --merge") return "";
       return "";
     });
 
@@ -325,7 +330,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       rootDir: "/tmp/root",
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
-    })).rejects.toBeInstanceOf(FileScopeViolationError);
+    })).resolves.toBeUndefined();
   });
 });
 
@@ -334,7 +339,7 @@ describe("file-scope invariant wiring", () => {
     vi.clearAllMocks();
   });
 
-  it("blocks the standard merge AI path before the commit when staged files are out of scope", async () => {
+  it("warns but allows the standard merge AI path when staged files are out of scope", async () => {
     const store = createInvariantStore(["packages/engine/src/merger.ts"]);
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
@@ -358,16 +363,16 @@ describe("file-scope invariant wiring", () => {
       options: {},
       result,
       settings: { ...DEFAULT_SETTINGS },
-    }, { aiWasInvoked: false })).rejects.toBeInstanceOf(FileScopeViolationError);
+    }, { aiWasInvoked: false })).resolves.toEqual(expect.any(Boolean));
 
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
-      expect.stringContaining("File-scope invariant violation"),
-      "tool_error",
+      expect.stringContaining("Warning only — continuing merge."),
+      "text",
       expect.stringContaining("declaredScope:"),
       "merger",
     );
-    expect(mockedExecSync).toHaveBeenCalledWith("git reset --merge", expect.objectContaining({ cwd: "/tmp/root" }));
+    expect(mockedExecSync).not.toHaveBeenCalledWith("git reset --merge", expect.objectContaining({ cwd: "/tmp/root" }));
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
@@ -449,7 +454,7 @@ describe("file-scope invariant wiring", () => {
     );
   });
 
-  it("blocks verification-fix finalization when staged files are out of scope", async () => {
+  it("warns but allows verification-fix finalization when staged files are out of scope", async () => {
     const store = createInvariantStore(["packages/engine/src/merger.ts"]);
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
@@ -477,15 +482,15 @@ describe("file-scope invariant wiring", () => {
       undefined,
       new Set(),
       store as never,
-    )).rejects.toBeInstanceOf(FileScopeViolationError);
+    )).resolves.toMatchObject({ ok: true, reason: "committed" });
 
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-4073",
-      expect.stringContaining("File-scope invariant violation"),
-      "tool_error",
+      expect.stringContaining("Warning only — continuing merge."),
+      "text",
       expect.stringContaining("stagedFiles:"),
       "merger",
     );
-    expect(mockedExecSync).toHaveBeenCalledWith("git reset --merge", expect.objectContaining({ cwd: "/tmp/root" }));
+    expect(mockedExecSync).not.toHaveBeenCalledWith("git reset --merge", expect.objectContaining({ cwd: "/tmp/root" }));
   });
 });

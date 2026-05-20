@@ -121,6 +121,10 @@ describe("swrCache", () => {
     expect(SWR_CACHE_KEYS.MISSIONS_PREFIX).toBe("kb-dashboard-missions-cache:");
     expect(SWR_CACHE_KEYS.MISSIONS_SELECTED_ID_PREFIX).toBe("kb-dashboard-mission-selected-cache:");
     expect(SWR_CACHE_KEYS.CHAT_SESSIONS_PREFIX).toBe("kb-dashboard-chat-sessions-cache:");
+    expect(SWR_CACHE_KEYS.CHAT_MESSAGES_PREFIX).toBe("kb-dashboard-chat-messages-cache:");
+    expect(SWR_CACHE_KEYS.CHAT_AGENTS_MAP_PREFIX).toBe("kb-dashboard-chat-agents-map-cache:");
+    expect(SWR_CACHE_KEYS.MODELS).toBe("kb-dashboard-models-cache");
+    expect(SWR_CACHE_KEYS.DISCOVERED_SKILLS_PREFIX).toBe("kb-dashboard-discovered-skills-cache:");
     expect(SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX).toBe("kb-dashboard-mailbox-inbox-cache:");
     expect(SWR_CACHE_KEYS.MAILBOX_OUTBOX_PREFIX).toBe("kb-dashboard-mailbox-outbox-cache:");
     expect(SWR_CACHE_KEYS.MAILBOX_UNREAD_COUNT_PREFIX).toBe("kb-dashboard-mailbox-unread-cache:");

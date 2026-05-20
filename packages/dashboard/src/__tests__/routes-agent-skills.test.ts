@@ -57,6 +57,7 @@ vi.mock("@fusion/core", () => {
         ? `.fusion/agents/${agentName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}-${agentId}/HEARTBEAT.md`
         : `.fusion/agents/${agentId}/HEARTBEAT.md`,
     getSafeAgentAssetIdSegment: (agentId: string) => agentId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent",
+    deterministicGuardLocks: new Map(),
   };
 });
 

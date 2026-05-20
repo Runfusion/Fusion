@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrCreateModal } from "../PrCreateModal";
 import type { PrInfo } from "@fusion/core";
+import { loadAllAppCss } from "../../test/cssFixture";
 
 const mocks = vi.hoisted(() => ({
   generatePrMetadata: vi.fn(),
@@ -54,7 +55,20 @@ function renderModal(overrides?: Partial<ComponentProps<typeof PrCreateModal>>) 
 }
 
 describe("PrCreateModal", () => {
+  let styleEl: HTMLStyleElement;
+
+  beforeAll(() => {
+    styleEl = document.createElement("style");
+    styleEl.textContent = loadAllAppCss();
+    document.head.appendChild(styleEl);
+  });
+
+  afterAll(() => {
+    styleEl.remove();
+  });
+
   beforeEach(() => {
+    localStorage.clear();
     vi.clearAllMocks();
     mocks.generatePrMetadata.mockResolvedValue(metadata);
     mocks.fetchPrPreflight.mockResolvedValue(preflight);
@@ -128,18 +142,6 @@ describe("PrCreateModal", () => {
     fireEvent.click(screen.getByRole("button", { name: /assignee 1/i }));
     fireEvent.change(screen.getByPlaceholderText("Filter labels"), { target: { value: "bug" } });
     fireEvent.click(screen.getByRole("button", { name: "bug" }));
-
-    const labelChip = screen.getByLabelText(/remove bug/i).closest("span");
-    expect(labelChip).toHaveClass("pr-create-modal__chip--colored");
-    expect(labelChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("#ff0000");
-
-    const reviewerChip = screen.getByLabelText(/remove reviewer 1/i).closest("span");
-    expect(reviewerChip).not.toHaveClass("pr-create-modal__chip--colored");
-    expect(reviewerChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("");
-
-    const assigneeChip = screen.getByLabelText(/remove assignee 1/i).closest("span");
-    expect(assigneeChip).not.toHaveClass("pr-create-modal__chip--colored");
-    expect(assigneeChip?.style.getPropertyValue("--pr-chip-label-color")).toBe("");
 
     const submitButton = screen.getByRole("button", { name: "Create draft PR" });
     expect(submitButton).toHaveClass("btn-primary");

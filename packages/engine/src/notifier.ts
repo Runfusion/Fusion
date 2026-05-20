@@ -29,6 +29,7 @@ export const DEFAULT_NTFY_EVENTS: readonly NtfyNotificationEvent[] = [
   "planning-awaiting-input",
   "gridlock",
   "board-stall-unrecovered",
+  "db-corruption-detected",
   "fallback-used",
   "token-budget",
   "message:agent-to-user",

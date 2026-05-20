@@ -109,6 +109,58 @@ test("shouldForceFullSuite: returns true when a GitHub workflow changed", () => 
   assert.equal(shouldForceFullSuite([".github/workflows/ci.yml"]), true);
 });
 
+test("shouldForceFullSuite: returns false for .changeset/*.md summary files", () => {
+  assert.equal(shouldForceFullSuite([".changeset/fn-5157-test-changed-allowlist.md"]), false);
+});
+
+test("shouldForceFullSuite: still returns true for .changeset/config.json", () => {
+  assert.equal(shouldForceFullSuite([".changeset/config.json"]), true);
+});
+
+test("shouldForceFullSuite: returns false for allowlisted root markdown files", () => {
+  for (const file of ["AGENTS.md", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"]) {
+    assert.equal(shouldForceFullSuite([file]), false, `${file} should stay on changed-only mode`);
+  }
+});
+
+test("shouldForceFullSuite: returns false for .fusion artifacts", () => {
+  assert.equal(shouldForceFullSuite([".fusion/memory/MEMORY.md"]), false);
+  assert.equal(shouldForceFullSuite([".fusion/tasks/FN-5157/PROMPT.md"]), false);
+});
+
+test("shouldForceFullSuite: still returns true for root config edges", () => {
+  for (const file of ["tsconfig.json", ".npmrc", "Dockerfile"]) {
+    assert.equal(shouldForceFullSuite([file]), true, `${file} should still force the full suite`);
+  }
+});
+
+test("shouldForceFullSuite: mixed diff with only allowlisted root paths returns false", () => {
+  assert.equal(
+    shouldForceFullSuite(["AGENTS.md", ".changeset/foo.md", ".fusion/tasks/FN-5154/task.json"]),
+    false,
+  );
+});
+
+test("shouldForceFullSuite: mixed diff with allowlisted root path plus explicit trigger returns true", () => {
+  assert.equal(shouldForceFullSuite(["AGENTS.md", "pnpm-lock.yaml"]), true);
+});
+
+test("shouldForceFullSuite: FN-5157 reproduction keeps FN-5154 diff in changed-only mode", () => {
+  // FN-5157: AGENTS.md + changeset summaries previously tripped the root catch-all and forced a full suite for the FN-5154 diff.
+  assert.equal(
+    shouldForceFullSuite([
+      "AGENTS.md",
+      ".changeset/FN-5136-quick-entry-submit-lock.md",
+      ".changeset/FN-5141-soft-delete-terminology.md",
+      ".changeset/fn-5146-chat-composer-expand.md",
+      "docs/storage.md",
+      "docs/task-management.md",
+      "packages/dashboard/src/routes/register-session-diff-routes.ts",
+    ]),
+    false,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // resolveAffectedPackages
 // ---------------------------------------------------------------------------
@@ -220,6 +272,30 @@ test("decideExecutionPlan: shared infra changed → full", () => {
   });
   assert.equal(plan.mode, "full");
   assert.equal(plan.reason, "shared-infra-changed");
+});
+
+test("decideExecutionPlan: FN-5154 reproduction stays in changed mode", () => {
+  const plan = decideExecutionPlan({
+    forceFullSuite: false,
+    comparisonBase: "abc123",
+    changedFiles: [
+      "AGENTS.md",
+      ".changeset/FN-5136-quick-entry-submit-lock.md",
+      ".changeset/FN-5141-soft-delete-terminology.md",
+      ".changeset/fn-5146-chat-composer-expand.md",
+      "docs/storage.md",
+      "docs/task-management.md",
+      "packages/dashboard/src/routes/register-session-diff-routes.ts",
+    ],
+    packageNameByDir: pkgMap([
+      ["packages/engine", "@fusion/engine"],
+      ["packages/core", "@fusion/core"],
+      ["packages/dashboard", "@fusion/dashboard"],
+    ]),
+    reverseDependencyMap: new Map([["@fusion/dashboard", []]]),
+  });
+  assert.equal(plan.mode, "changed");
+  assert.deepEqual(plan.packages, ["@fusion/dashboard"]);
 });
 
 test("decideExecutionPlan: only package files changed → changed mode", () => {
@@ -673,6 +749,20 @@ test("createIsolatedHomeEnv: returns temp HOME/USERPROFILE pair without mutating
   assert.equal(baseEnv.HOME, undefined);
   assert.equal(baseEnv.USERPROFILE, undefined);
   assert.match(isolatedHome, /fusion-test-home-root-/);
+
+  rmSync(isolatedHome, { recursive: true, force: true });
+});
+
+
+test("createIsolatedHomeEnv: preserves a stable COREPACK_HOME outside the isolated HOME", () => {
+  const baseEnv = {
+    PATH: process.env.PATH || "",
+    HOME: "/tmp/original-home",
+  };
+  const { env, isolatedHome } = createIsolatedHomeEnv(baseEnv);
+
+  assert.equal(env.HOME, isolatedHome);
+  assert.equal(env.COREPACK_HOME, path.join(baseEnv.HOME, ".cache", "node", "corepack"));
 
   rmSync(isolatedHome, { recursive: true, force: true });
 });

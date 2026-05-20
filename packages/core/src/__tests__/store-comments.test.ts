@@ -868,6 +868,44 @@ describe("TaskStore", () => {
       expect(fetched.prInfo).toEqual(prInfo);
     });
 
+    it("round-trips PR conflict diagnostics and keeps the field optional", async () => {
+      const task = await createTestTask();
+      const prInfo = {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open" as const,
+        title: "Fix the bug",
+        headBranch: "kb-001-fix-bug",
+        baseBranch: "main",
+        commentCount: 5,
+        mergeable: "conflicting" as const,
+        conflictDiagnostics: {
+          conflictingFiles: ["packages/dashboard/src/github.ts"],
+          suggestedCommands: ["git fetch origin", "git rebase origin/main"],
+          capturedAt: "2026-05-18T00:00:00.000Z",
+        },
+      };
+
+      await store.updatePrInfo(task.id, prInfo);
+      const fetched = await store.getTask(task.id);
+      expect(fetched.prInfo).toEqual(prInfo);
+
+      const taskJsonPath = join(rootDir, ".fusion", "tasks", task.id, "task.json");
+      const raw = await readFile(taskJsonPath, "utf-8");
+      const serialized = JSON.parse(raw) as Task;
+      expect(serialized.prInfo?.conflictDiagnostics?.conflictingFiles).toEqual(["packages/dashboard/src/github.ts"]);
+
+      const prInfoWithoutDiagnostics = {
+        ...prInfo,
+        mergeable: "clean" as const,
+        conflictDiagnostics: undefined,
+      };
+      await store.updatePrInfo(task.id, prInfoWithoutDiagnostics);
+
+      const fetchedWithoutDiagnostics = await store.getTask(task.id);
+      expect(fetchedWithoutDiagnostics.prInfo?.conflictDiagnostics).toBeUndefined();
+    });
+
     it("updates updatedAt timestamp", async () => {
       const task = await createTestTask();
       const before = task.updatedAt;

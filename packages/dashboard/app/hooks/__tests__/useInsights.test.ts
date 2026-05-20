@@ -87,21 +87,24 @@ describe("useInsights", () => {
     it("hydrates cached insights without loading", () => {
       localStorage.setItem(
         `${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`,
-        JSON.stringify([
-          {
-            id: "INS-C",
-            projectId: "project-1",
-            title: "Cached",
-            content: "cached",
-            category: "features",
-            status: "generated",
-            fingerprint: "fp-c",
-            provenance: { trigger: "manual" },
-            lastRunId: null,
-            createdAt: "2024-01-01T00:00:00Z",
-            updatedAt: "2024-01-01T00:00:00Z",
-          },
-        ]),
+        JSON.stringify({
+          savedAt: Date.now(),
+          data: [
+            {
+              id: "INS-C",
+              projectId: "project-1",
+              title: "Cached",
+              content: "cached",
+              category: "features",
+              status: "generated",
+              fingerprint: "fp-c",
+              provenance: { trigger: "manual" },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        }),
       );
       mockFetchInsights.mockImplementation(() => new Promise(() => {}));
       mockFetchInsightRuns.mockImplementation(() => new Promise(() => {}));
@@ -187,8 +190,10 @@ describe("useInsights", () => {
       expect(architectureSection?.items).toHaveLength(1);
       expect(architectureSection?.items[0].id).toBe("INS-2");
 
-      const cached = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`) ?? "[]");
-      expect(cached[0]?.id).toBe("INS-1");
+      const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`) ?? "{}");
+      expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+      const cached = envelope.data;
+      expect(cached?.[0]?.id).toBe("INS-1");
       expect(cached).not.toHaveProperty("dismissStates");
     });
 
@@ -212,14 +217,22 @@ describe("useInsights", () => {
       renderHook(() => useInsights("project-1"));
 
       await waitFor(() => {
-        const cached = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`) ?? "[]");
+        const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`) ?? "{}");
+        expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+        const cached = envelope.data;
         expect(cached).toHaveLength(500);
       });
     });
 
     it("isolates cache by project", () => {
-      localStorage.setItem(`${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`, JSON.stringify([{ id: "INS-P1", projectId: "project-1", title: "P1", content: "", category: "features", status: "generated", fingerprint: "fp1", provenance: { trigger: "manual" }, lastRunId: null, createdAt: "", updatedAt: "" }]));
-      localStorage.setItem(`${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-2`, JSON.stringify([{ id: "INS-P2", projectId: "project-2", title: "P2", content: "", category: "features", status: "generated", fingerprint: "fp2", provenance: { trigger: "manual" }, lastRunId: null, createdAt: "", updatedAt: "" }]));
+      localStorage.setItem(
+        `${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-1`,
+        JSON.stringify({ savedAt: Date.now(), data: [{ id: "INS-P1", projectId: "project-1", title: "P1", content: "", category: "features", status: "generated", fingerprint: "fp1", provenance: { trigger: "manual" }, lastRunId: null, createdAt: "", updatedAt: "" }] }),
+      );
+      localStorage.setItem(
+        `${SWR_CACHE_KEYS.INSIGHTS_PREFIX}project-2`,
+        JSON.stringify({ savedAt: Date.now(), data: [{ id: "INS-P2", projectId: "project-2", title: "P2", content: "", category: "features", status: "generated", fingerprint: "fp2", provenance: { trigger: "manual" }, lastRunId: null, createdAt: "", updatedAt: "" }] }),
+      );
       mockFetchInsights.mockImplementation(() => new Promise(() => {}));
       mockFetchInsightRuns.mockImplementation(() => new Promise(() => {}));
 

@@ -28,7 +28,8 @@ vi.mock("node:child_process", async () => {
 });
 
 // Mock @fusion/core before importing the module under test
-vi.mock("@fusion/core", () => {
+vi.mock("@fusion/core", async (importActual) => {
+  const actual = await importActual<typeof import("@fusion/core")>();
   const COLUMNS = ["triage", "specified", "in-progress", "review", "done"];
   const COLUMN_LABELS: Record<string, string> = {
     triage: "Triage",
@@ -39,9 +40,25 @@ vi.mock("@fusion/core", () => {
   };
 
   return {
+    ...actual,
     TaskStore: vi.fn(),
     COLUMNS,
     COLUMN_LABELS,
+    runDeterministicDuplicateGuard: vi.fn(),
+    reconcileDeterministicDuplicate: vi.fn(),
+    extractIntentSignature: vi.fn(),
+    findNearDuplicates: vi.fn(),
+    getTaskDuplicateLineage: vi.fn((task: { sourceType?: string; sourceParentTaskId?: string; sourceMetadata?: any }) => {
+      const ids: string[] = [];
+      if (task.sourceType === "task_duplicate" && task.sourceParentTaskId) ids.push(task.sourceParentTaskId);
+      const metadata = task.sourceMetadata?.duplicateOfTaskIds;
+      if (Array.isArray(metadata)) {
+        for (const id of metadata) {
+          if (typeof id === "string" && !ids.includes(id)) ids.push(id);
+        }
+      }
+      return ids;
+    }),
     CentralCore: vi.fn().mockImplementation(function() {
       return {
         init: vi.fn().mockResolvedValue(undefined),
@@ -102,7 +119,7 @@ vi.mock("../../project-context.js", () => ({
 }));
 
 import { createInterface } from "node:readline/promises";
-import { TaskStore, CentralCore } from "@fusion/core";
+import { TaskStore, CentralCore, extractIntentSignature, findNearDuplicates, runDeterministicDuplicateGuard, reconcileDeterministicDuplicate } from "@fusion/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
 import { exec } from "node:child_process";
 import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskBranchRecovery, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskArchive, runTaskUnarchive, runTaskSteer, runTaskSetNode, runTaskClearNode, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "../task.js";
@@ -133,6 +150,25 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({
+    action: "proceed",
+    fingerprint: null,
+    releaseLock: vi.fn(),
+  });
+  vi.mocked(reconcileDeterministicDuplicate).mockImplementation(async (_store, args) => ({
+    outcome: "kept",
+    canonical: args.createdTask,
+  }));
+  vi.mocked(extractIntentSignature).mockReturnValue({
+    routePaths: [],
+    filePaths: [],
+    identifiers: [],
+    titleTokens: [],
+  });
+  vi.mocked(findNearDuplicates).mockReturnValue([]);
+});
 
 describe("runTaskShow", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -218,6 +254,28 @@ describe("runTaskShow", () => {
 
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).not.toContain("Source:");
+  });
+
+  it("prints duplicate lineage from metadata and task_duplicate parent", async () => {
+    mockTaskStoreGetTask(makeTask({
+      sourceType: "task_duplicate",
+      sourceParentTaskId: "FN-2905",
+      sourceMetadata: { duplicateOfTaskIds: ["FN-9"] },
+    }));
+
+    await runTaskShow("FN-001");
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Duplicate of: FN-2905, FN-9");
+  });
+
+  it("prints duplicate lineage from metadata list", async () => {
+    mockTaskStoreGetTask(makeTask({ sourceMetadata: { duplicateOfTaskIds: ["FN-1", "FN-2"] } }));
+
+    await runTaskShow("FN-001");
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Duplicate of: FN-1, FN-2");
   });
 });
 
@@ -455,18 +513,29 @@ describe("project-aware task command behavior", () => {
     const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-002", description: "test task" }));
     const mockAddAttachment = vi.fn();
 
+    vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({
+      action: "proceed",
+      fingerprint: "fp-1",
+      releaseLock: vi.fn(),
+    });
+    vi.mocked(reconcileDeterministicDuplicate).mockResolvedValue({ outcome: "kept", canonical: makeTask({ id: "FN-002", description: "test task" }) });
+
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj_test",
       projectPath: "/test",
       projectName: "demo-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, addAttachment: mockAddAttachment } as unknown as TaskStore,
+      store: { createTask: mockCreateTask, addAttachment: mockAddAttachment, getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
     });
 
     await runTaskCreate("test task", undefined, undefined, "demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "test task", dependencies: undefined, source: { sourceType: "cli" } });
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      description: "test task",
+      dependencies: undefined,
+      source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-1" } },
+    });
     expect(logSpy.mock.calls.some((call) => String(call[0]).includes("Project: demo-project"))).toBe(true);
 
     logSpy.mockRestore();
@@ -474,24 +543,30 @@ describe("project-aware task command behavior", () => {
 
   it("runTaskCreate without project flag uses shared resolution flow", async () => {
     const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-003", description: "default task" }));
+    vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({ action: "proceed", fingerprint: null, releaseLock: vi.fn() });
+    vi.mocked(reconcileDeterministicDuplicate).mockResolvedValue({ outcome: "kept", canonical: makeTask({ id: "FN-003", description: "default task" }) });
+
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj_default",
       projectPath: "/default/project",
       projectName: "default-project",
       isRegistered: true,
-      store: { createTask: mockCreateTask, addAttachment: vi.fn() } as unknown as TaskStore,
+      store: { createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/default/project") } as unknown as TaskStore,
     });
 
     await runTaskCreate("default task");
 
     expect(resolveProject).toHaveBeenCalledWith(undefined);
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "default task", dependencies: undefined, source: { sourceType: "cli" } });
+    expect(mockCreateTask).toHaveBeenCalledWith({ description: "default task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: undefined } });
   });
 
   it("runTaskCreate without project flag falls back to TaskStore(process.cwd()) when resolution fails", async () => {
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/current/project");
     const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-004", description: "local task" }));
     const init = vi.fn();
+
+    vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({ action: "proceed", fingerprint: "fp-local", releaseLock: vi.fn() });
+    vi.mocked(reconcileDeterministicDuplicate).mockResolvedValue({ outcome: "kept", canonical: makeTask({ id: "FN-004", description: "local task" }) });
 
     vi.mocked(resolveProject).mockRejectedValueOnce(
       new Error("No fn project found in current directory. Use --project or run from a project directory.")
@@ -501,6 +576,7 @@ describe("project-aware task command behavior", () => {
       init,
       createTask: mockCreateTask,
       addAttachment: vi.fn(),
+      getRootDir: vi.fn().mockReturnValue(projectPath),
       projectPath,
     }));
 
@@ -509,8 +585,329 @@ describe("project-aware task command behavior", () => {
     expect(resolveProject).toHaveBeenCalledWith(undefined);
     expect(TaskStore).toHaveBeenCalledWith("/current/project");
     expect(init).toHaveBeenCalledOnce();
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "local task", dependencies: undefined, source: { sourceType: "cli" } });
+    expect(mockCreateTask).toHaveBeenCalledWith({ description: "local task", dependencies: undefined, source: { sourceType: "cli", sourceMetadata: { contentFingerprint: "fp-local" } } });
     cwdSpy.mockRestore();
+  });
+
+  it("runTaskCreate links existing task on deterministic duplicate", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const existing = makeTask({ id: "FN-777", description: "same task", column: "todo" });
+    const mockCreateTask = vi.fn();
+
+    vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({
+      action: "duplicate",
+      fingerprint: "fp-dupe",
+      existing,
+      releaseLock: vi.fn(),
+    });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("same task");
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.some((call) => String(call[0]).includes("Linked existing FN-777"))).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("runTaskCreate proceeds when no high-signal tokens are present", async () => {
+    const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-007", description: "plain task" }));
+    const listTasks = vi.fn();
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("plain task");
+
+    expect(findNearDuplicates).not.toHaveBeenCalled();
+    expect(listTasks).not.toHaveBeenCalled();
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+  });
+
+  it("runTaskCreate blocks near-duplicates in non-interactive mode", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as unknown) as (code?: string | number | null | undefined) => never);
+    const originalInTTY = process.stdin.isTTY;
+    const originalOutTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+
+    const mockCreateTask = vi.fn();
+    const listTasks = vi.fn().mockResolvedValue([
+      makeTask({ id: "FN-9001", title: "Add /pr/options preflight flow", description: "touch /pr/options and /pr/preflight", column: "todo" }),
+    ]);
+    vi.mocked(extractIntentSignature).mockReturnValue({
+      routePaths: ["/pr/options", "/pr/preflight"],
+      filePaths: [],
+      identifiers: [],
+      titleTokens: [],
+    });
+    vi.mocked(findNearDuplicates).mockReturnValue([
+      { id: "FN-9001", score: 0.7, sharedTokens: ["/pr/options", "/pr/preflight"], titleScore: 0.5, reason: "near-duplicate-intent" },
+    ]);
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await expect(runTaskCreate("Investigate /pr/options /pr/preflight flow")).rejects.toThrow("exit:1");
+
+    expect(mockCreateTask).not.toHaveBeenCalled();
+    const errorOutput = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(errorOutput).toContain("FN-9001");
+    expect(errorOutput).toContain("/pr/options");
+    expect(errorOutput).toContain("--no-dedup");
+
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalInTTY });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: originalOutTTY });
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("runTaskCreate proceeds on TTY when user confirms near-duplicate creation", async () => {
+    const originalInTTY = process.stdin.isTTY;
+    const originalOutTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+
+    const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-008", description: "same task" }));
+    const listTasks = vi.fn().mockResolvedValue([
+      makeTask({ id: "FN-9001", title: "Add /pr/options preflight flow", description: "touch /pr/options and /pr/preflight", column: "todo" }),
+    ]);
+    const close = vi.fn();
+    vi.mocked(createInterface).mockReturnValue({
+      question: vi.fn().mockResolvedValue("y"),
+      close,
+    } as never);
+    vi.mocked(extractIntentSignature).mockReturnValue({
+      routePaths: ["/pr/options", "/pr/preflight"],
+      filePaths: [],
+      identifiers: [],
+      titleTokens: [],
+    });
+    vi.mocked(findNearDuplicates).mockReturnValue([
+      { id: "FN-9001", score: 0.7, sharedTokens: ["/pr/options", "/pr/preflight"], titleScore: 0.5, reason: "near-duplicate-intent" },
+    ]);
+    vi.mocked(reconcileDeterministicDuplicate).mockResolvedValue({ outcome: "kept", canonical: makeTask({ id: "FN-008", description: "same task" }) });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("Investigate /pr/options /pr/preflight flow");
+
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({
+        sourceMetadata: expect.objectContaining({
+          intentSignature: expect.objectContaining({ routePaths: ["/pr/options", "/pr/preflight"] }),
+        }),
+      }),
+    }));
+    expect(close).toHaveBeenCalled();
+
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalInTTY });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: originalOutTTY });
+  });
+
+  it("runTaskCreate cancels on TTY when user declines near-duplicate creation", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as unknown) as (code?: string | number | null | undefined) => never);
+    const originalInTTY = process.stdin.isTTY;
+    const originalOutTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+
+    const mockCreateTask = vi.fn();
+    const listTasks = vi.fn().mockResolvedValue([
+      makeTask({ id: "FN-9001", title: "Add /pr/options preflight flow", description: "touch /pr/options and /pr/preflight", column: "todo" }),
+    ]);
+    vi.mocked(createInterface).mockReturnValue({
+      question: vi.fn().mockResolvedValue(""),
+      close: vi.fn(),
+    } as never);
+    vi.mocked(extractIntentSignature).mockReturnValue({
+      routePaths: ["/pr/options", "/pr/preflight"],
+      filePaths: [],
+      identifiers: [],
+      titleTokens: [],
+    });
+    vi.mocked(findNearDuplicates).mockReturnValue([
+      { id: "FN-9001", score: 0.7, sharedTokens: ["/pr/options", "/pr/preflight"], titleScore: 0.5, reason: "near-duplicate-intent" },
+    ]);
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await expect(runTaskCreate("Investigate /pr/options /pr/preflight flow")).rejects.toThrow("exit:0");
+    expect(mockCreateTask).not.toHaveBeenCalled();
+
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: originalInTTY });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: originalOutTTY });
+    exitSpy.mockRestore();
+  });
+
+  it("runTaskCreate --no-dedup bypasses deterministic and near-duplicate guards but still stamps signature", async () => {
+    const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-008", description: "same task" }));
+
+    vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({
+      action: "proceed",
+      fingerprint: "fp-no-dedup",
+      releaseLock: vi.fn(),
+    });
+    vi.mocked(extractIntentSignature).mockReturnValue({
+      routePaths: ["/pr/options", "/pr/preflight"],
+      filePaths: [],
+      identifiers: [],
+      titleTokens: [],
+    });
+    vi.mocked(reconcileDeterministicDuplicate).mockResolvedValue({ outcome: "kept", canonical: makeTask({ id: "FN-008", description: "same task" }) });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("same task", undefined, undefined, undefined, undefined, true);
+
+    expect(runDeterministicDuplicateGuard).toHaveBeenCalledWith(expect.anything(), { description: "same task" }, expect.objectContaining({ bypass: true }));
+    expect(findNearDuplicates).not.toHaveBeenCalled();
+    expect(extractIntentSignature).toHaveBeenCalledWith({ description: "same task" });
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({
+        sourceMetadata: expect.objectContaining({
+          contentFingerprint: "fp-no-dedup",
+          intentSignature: expect.objectContaining({ routePaths: ["/pr/options", "/pr/preflight"] }),
+        }),
+      }),
+    }));
+  });
+
+  it("runTaskCreate fails open when listTasks throws during near-duplicate checking", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-008", description: "same task" }));
+    vi.mocked(extractIntentSignature).mockReturnValue({
+      routePaths: ["/pr/options", "/pr/preflight"],
+      filePaths: [],
+      identifiers: [],
+      titleTokens: [],
+    });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks: vi.fn().mockRejectedValue(new Error("list boom")), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("Investigate /pr/options /pr/preflight flow");
+
+    expect(errorSpy.mock.calls.map((call) => call.join(" ")).join("\n")).toContain("near-duplicate check failed (list boom)");
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+    errorSpy.mockRestore();
+  });
+
+  it("runTaskCreate fails open when intent extraction throws", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const mockCreateTask = vi.fn().mockResolvedValue(makeTask({ id: "FN-008", description: "same task" }));
+    vi.mocked(extractIntentSignature).mockImplementation(() => {
+      throw new Error("extract boom");
+    });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("Investigate /pr/options /pr/preflight flow");
+
+    expect(errorSpy.mock.calls.map((call) => call.join(" ")).join("\n")).toContain("near-duplicate check failed (extract boom)");
+    expect(mockCreateTask).toHaveBeenCalledOnce();
+    errorSpy.mockRestore();
+  });
+
+  it("runTaskCreate keeps deterministic duplicate short-circuit ahead of near-duplicate checks", async () => {
+    const existing = makeTask({ id: "FN-777", description: "same task", column: "todo" });
+
+    vi.mocked(runDeterministicDuplicateGuard).mockResolvedValue({
+      action: "duplicate",
+      fingerprint: "fp-dupe",
+      existing,
+      releaseLock: vi.fn(),
+    });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: vi.fn(), listTasks: vi.fn(), addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("same task");
+
+    expect(extractIntentSignature).not.toHaveBeenCalled();
+    expect(findNearDuplicates).not.toHaveBeenCalled();
+  });
+
+  it("runTaskCreate creates separate tasks when description differs", async () => {
+    const mockCreateTask = vi
+      .fn()
+      .mockResolvedValueOnce(makeTask({ id: "FN-010", description: "task a" }))
+      .mockResolvedValueOnce(makeTask({ id: "FN-011", description: "task b" }));
+
+    vi.mocked(runDeterministicDuplicateGuard)
+      .mockResolvedValueOnce({ action: "proceed", fingerprint: "fp-a", releaseLock: vi.fn() })
+      .mockResolvedValueOnce({ action: "proceed", fingerprint: "fp-b", releaseLock: vi.fn() });
+    vi.mocked(reconcileDeterministicDuplicate)
+      .mockResolvedValueOnce({ outcome: "kept", canonical: makeTask({ id: "FN-010", description: "task a" }) })
+      .mockResolvedValueOnce({ outcome: "kept", canonical: makeTask({ id: "FN-011", description: "task b" }) });
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: { createTask: mockCreateTask, addAttachment: vi.fn(), getRootDir: vi.fn().mockReturnValue("/test") } as unknown as TaskStore,
+    });
+
+    await runTaskCreate("task a");
+    await runTaskCreate("task b");
+
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
   });
 
   it("runTaskLogs uses resolved project path in follow mode", async () => {
@@ -757,7 +1154,12 @@ describe("project-aware task command behavior", () => {
     await runTaskDelete("FN-123", true, "demo-project");
 
     expect(getTask).toHaveBeenCalledWith("FN-123");
-    expect(deleteTask).toHaveBeenCalledWith("FN-123");
+    expect(deleteTask).toHaveBeenCalledWith("FN-123", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "cli",
+        runId: expect.stringMatching(/^synthetic-cli-delete-FN-123-/),
+      }),
+    }));
   });
 
   it("runTaskComment, runTaskComments, and runTaskSteer use resolved project store", async () => {
@@ -1827,7 +2229,12 @@ describe("runTaskDelete", () => {
     expect(mockGetTask).toHaveBeenCalledWith("FN-001");
     expect(mockRlQuestion).not.toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
-    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "cli",
+        runId: expect.stringMatching(/^synthetic-cli-delete-FN-001-/),
+      }),
+    }));
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
@@ -1845,7 +2252,12 @@ describe("runTaskDelete", () => {
     expect(mockRlQuestion).toHaveBeenCalledWith("Are you sure you want to delete FN-001? [y/N] ");
     expect(mockRlClose).toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
-    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "cli",
+        runId: expect.stringMatching(/^synthetic-cli-delete-FN-001-/),
+      }),
+    }));
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),

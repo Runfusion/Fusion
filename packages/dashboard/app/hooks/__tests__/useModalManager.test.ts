@@ -284,4 +284,64 @@ describe("useModalManager", () => {
     });
     expect(result.current.detailTask).toBeNull();
   });
+
+  it("does not merge updates targeted at a different task id (FN-5148)", () => {
+    const taskA = createTaskDetail("FN-A");
+    const taskB = createTaskDetail("FN-B");
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openDetailTask(taskA);
+    });
+
+    act(() => {
+      result.current.updateDetailTask({
+        id: "FN-A",
+        githubTracking: {
+          enabled: true,
+          issue: {
+            owner: "o",
+            repo: "r",
+            number: 1,
+            url: "u",
+            title: "t",
+            state: "open",
+          },
+        },
+      });
+    });
+
+    expect(result.current.detailTask?.githubTracking?.enabled).toBe(true);
+
+    act(() => {
+      result.current.openDetailTask(taskB);
+    });
+
+    act(() => {
+      result.current.updateDetailTask({ id: "FN-A", title: "A (late)", githubTracking: { enabled: true } });
+    });
+
+    expect(result.current.detailTask?.id).toBe("FN-B");
+    expect(result.current.detailTask?.title).toBe("Task FN-B");
+  });
+
+  it("still merges detail task patches when no id is provided (FN-5148)", () => {
+    const taskB = createTaskDetail("FN-B");
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openDetailTask(taskB);
+    });
+
+    act(() => {
+      result.current.updateDetailTask({ title: "renamed" });
+    });
+
+    expect(result.current.detailTask?.id).toBe("FN-B");
+    expect(result.current.detailTask?.title).toBe("renamed");
+  });
 });

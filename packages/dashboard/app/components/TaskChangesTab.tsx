@@ -28,9 +28,8 @@ interface TaskChangesTabProps {
    *
    * Done-task sources of truth:
    * - Authoritative landed diff: `/api/tasks/:id/diff` lineage union.
-   * - Fallback labels: `Final commit summary` (`mergeDetails`) or
-   *   `files touched during execution` (`modifiedFiles`).
-   * - Never present fallback values as bare landed `files changed`.
+   * - Fallback views keep a consistent `N file(s) changed` headline.
+   * - Provenance is disclosed in `task-changes-state-hint` text.
    */
   modifiedFiles?: string[];
 }
@@ -73,7 +72,7 @@ function renderModifiedFilesFallback(
       )}
       <div className="task-changes-state task-changes-state--empty">
         <FileCode size={24} />
-        <p>{fileList.length} file{fileList.length === 1 ? "" : "s"} {source === "landed" ? "in the merged commit" : "modified during execution"}.</p>
+        <p>{fileList.length} file{fileList.length === 1 ? "" : "s"} changed.</p>
         <span className="task-changes-state-hint">
           {isDone
             // FN-4647: done-task fallback must explicitly describe executor-captured scope.
@@ -371,6 +370,12 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
             <div className="commit-diff-timestamp">
               Merged {new Date(mergeDetails.mergedAt).toLocaleString()}
             </div>
+          )}
+          {mergeDetails.noOpVerifiedShortCircuit && (
+            <div className="text-muted">Verified short-circuit — work was already on main (rebase walked foreign commits).</div>
+          )}
+          {mergeDetails.landedFilesCaptureFallback === "attribution-failed" && (
+            <div className="text-muted">Landed-files set may include foreign commits (attribution unavailable).</div>
           )}
         </div>
       )}

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import express from "express";
 import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,8 @@ import { TaskStore as TaskStoreClass } from "@fusion/core";
 import * as coreModule from "@fusion/core";
 import { request } from "../test-request.js";
 import { createServer } from "../server.js";
+import { createInsightsRouter } from "../insights-routes.js";
+import { DEFAULT_SWEEP_INTERVAL_MS } from "../insight-run-sweeper.js";
 
 const piMocks = vi.hoisted(() => ({
   createFnAgent: vi.fn(),
@@ -68,6 +71,7 @@ vi.mock("../project-store-resolver.js", async () => {
 
 describe("Insights routes", () => {
   let rootA: string;
+  const disposableRouters: Array<{ __disposeSweeper?: () => void }> = [];
   let rootB: string;
   let storeA: TaskStore;
   let storeB: TaskStore;
@@ -79,6 +83,15 @@ describe("Insights routes", () => {
   const buildPromptSpy = vi.spyOn(coreModule, "buildInsightExtractionPrompt");
   const parseResponseSpy = vi.spyOn(coreModule, "parseInsightExtractionResponse");
   const mergeInsightsSpy = vi.spyOn(coreModule, "mergeInsights");
+
+  function createInsightsOnlyApp(store: TaskStore) {
+    const app = express();
+    app.use(express.json());
+    const router = createInsightsRouter(store) as ReturnType<typeof createInsightsRouter> & { __disposeSweeper?: () => void };
+    disposableRouters.push(router);
+    app.use("/api/insights", router);
+    return app;
+  }
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -120,6 +133,10 @@ describe("Insights routes", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
+    while (disposableRouters.length > 0) {
+      disposableRouters.pop()?.__disposeSweeper?.();
+    }
     try {
       storeA.close();
     } catch {
@@ -192,6 +209,99 @@ describe("Insights routes", () => {
     const paged = await request(app, "GET", "/api/insights/runs?limit=1&offset=1");
     expect(paged.status).toBe(200);
     expect((paged.body as { runs: unknown[] }).runs).toHaveLength(1);
+  });
+
+  it("runs startup sweep when creating insights router", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    storeA.getDatabase().prepare(`
+      INSERT INTO project_insight_runs (id, projectId, trigger, status, summary, error, insightsCreated, insightsUpdated, inputMetadata, outputMetadata, createdAt, startedAt, completedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "INSR-STALE-STARTUP",
+      "",
+      "manual",
+      "pending",
+      null,
+      null,
+      0,
+      0,
+      null,
+      null,
+      oneHourAgo,
+      null,
+      null,
+    );
+
+    createInsightsOnlyApp(storeA);
+
+    const run = storeA.getInsightStore().getRun("INSR-STALE-STARTUP");
+    expect(run?.status).toBe("failed");
+    expect(run?.lifecycle.terminalCause).toBe("orphaned_active_run_recovered");
+    const events = storeA.getInsightStore().listRunEvents("INSR-STALE-STARTUP");
+    expect(events.some((event) => event.metadata?.recoverySource === "startup")).toBe(true);
+  });
+
+  it("runs drive-by sweep on GET /api/insights/runs", async () => {
+    // Create the insights app first so its startup sweep runs against an
+    // empty insight store. Then insert the stale run; only the subsequent
+    // GET request's drive-by sweep should observe it.
+    const insightsApp = createInsightsOnlyApp(storeA);
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    storeA.getDatabase().prepare(`
+      INSERT INTO project_insight_runs (id, projectId, trigger, status, summary, error, insightsCreated, insightsUpdated, inputMetadata, outputMetadata, createdAt, startedAt, completedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "INSR-STALE-DRIVEBY",
+      "",
+      "manual",
+      "pending",
+      null,
+      null,
+      0,
+      0,
+      null,
+      null,
+      oneHourAgo,
+      null,
+      null,
+    );
+    const response = await request(insightsApp, "GET", "/api/insights/runs");
+    expect(response.status).toBe(200);
+
+    const run = storeA.getInsightStore().getRun("INSR-STALE-DRIVEBY");
+    expect(run?.status).toBe("failed");
+    const events = storeA.getInsightStore().listRunEvents("INSR-STALE-DRIVEBY");
+    expect(events.some((event) => event.metadata?.recoverySource === "drive_by")).toBe(true);
+  });
+
+  it("runs periodic sweep and recover later stale rows", async () => {
+    vi.useFakeTimers();
+
+    const insightsApp = createInsightsOnlyApp(storeA);
+    const first = storeA.getInsightStore().createRun("", { trigger: "manual" });
+    storeA.getDatabase().prepare("UPDATE project_insight_runs SET createdAt = ? WHERE id = ?").run(
+      new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      first.id,
+    );
+
+    vi.advanceTimersByTime(DEFAULT_SWEEP_INTERVAL_MS + 100);
+
+    expect(storeA.getInsightStore().getRun(first.id)?.status).toBe("failed");
+
+    const second = storeA.getInsightStore().createRun("", { trigger: "manual" });
+    storeA.getDatabase().prepare("UPDATE project_insight_runs SET createdAt = ? WHERE id = ?").run(
+      new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      second.id,
+    );
+
+    vi.advanceTimersByTime(DEFAULT_SWEEP_INTERVAL_MS + 100);
+
+    expect(storeA.getInsightStore().getRun(second.id)?.status).toBe("failed");
+    const events = storeA.getInsightStore().listRunEvents(second.id);
+    expect(events.some((event) => event.metadata?.recoverySource === "periodic")).toBe(true);
+
+    expect(insightsApp).toBeTruthy();
   });
 
   it("GET /api/insights and /api/insights/runs resolve projectId-scoped stores", async () => {

@@ -332,8 +332,11 @@ describe("core modals mobile css coverage", () => {
 
     const modalRuleMatch = mobileBlock.match(/\.agent-error-modal\s*\{[^}]+\}/s);
     expect(modalRuleMatch).not.toBeNull();
-    expect(modalRuleMatch![0]).toContain("height: 100%");
-    expect(modalRuleMatch![0]).toContain("max-height: 100%");
+    // The mobile rule now subtracts mobile-nav-height and safe-area-inset-bottom
+    // from the parent container; assert both height and max-height are
+    // calc(100% - ...) rather than the simpler `100%`.
+    expect(modalRuleMatch![0]).toMatch(/height:\s*calc\(100%/);
+    expect(modalRuleMatch![0]).toMatch(/max-height:\s*calc\(100%/);
     expect(modalRuleMatch![0]).toContain("min-height: 0");
 
     const contentRuleMatch = css.match(/\.agent-error-modal__content\s*\{[^}]+\}/s);

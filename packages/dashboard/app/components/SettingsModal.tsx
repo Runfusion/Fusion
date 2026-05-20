@@ -10,6 +10,7 @@ import {
   resolvePersistAgentThinkingLog,
   resolveProjectDefaultModel,
   resolveTitleSummarizerSettingsModel,
+  normalizeMergeIntegrationWorktreeMode,
 } from "@fusion/core";
 import type { AgentPermissionPolicyRules, Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchProjects, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, killExternalTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
@@ -393,6 +394,8 @@ interface SettingsModalProps {
   onReopenOnboarding?: () => void;
   /** Optional callback to open approvals/mailbox view. */
   onOpenApprovals?: (approvalId?: string) => void;
+  /** Optional callback to navigate from settings to Secrets view. */
+  onNavigateToSecrets?: () => void;
 }
 
 export function SettingsModal({
@@ -408,6 +411,7 @@ export function SettingsModal({
   onDashboardFontScaleChange,
   onReopenOnboarding,
   onOpenApprovals,
+  onNavigateToSecrets,
 }: SettingsModalProps) {
   const { confirm } = useConfirm();
   const worktrunkInstall = useWorktrunkInstallStatus(projectId);
@@ -438,6 +442,7 @@ export function SettingsModal({
     overlapIgnorePaths: [],
     autoMerge: true,
     mergeStrategy: "direct",
+    mergeIntegrationWorktree: "reuse-task-worktree",
     recycleWorktrees: false,
     executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
@@ -676,10 +681,22 @@ export function SettingsModal({
     // Load both merged and scoped settings to enable inheritance detection
     Promise.all([fetchSettings(projectId), fetchSettingsByScope(projectId)])
       .then(([s, scoped]) => {
-        setForm(s);
-        setInitialValues(s); // Store initial values to detect explicit clears
+        const normalizedSettings = {
+          ...s,
+          mergeIntegrationWorktree: normalizeMergeIntegrationWorktreeMode(s.mergeIntegrationWorktree),
+        };
+        setForm(normalizedSettings);
+        setInitialValues(normalizedSettings); // Store initial values to detect explicit clears
         setScopedSettings(scoped);
-        setInitialScopedValues(scoped); // Store initial scoped values for null-as-delete
+        setInitialScopedValues({
+          ...scoped,
+          project: {
+            ...scoped.project,
+            mergeIntegrationWorktree: scoped.project.mergeIntegrationWorktree === undefined
+              ? undefined
+              : normalizeMergeIntegrationWorktreeMode(scoped.project.mergeIntegrationWorktree),
+          },
+        }); // Store initial scoped values for null-as-delete
         setLoading(false);
       })
       .catch((err) => {
@@ -4531,30 +4548,52 @@ export function SettingsModal({
               </details>
             </div>
             {form.mergeStrategy !== "pull-request" && (
-              <div className="form-group">
-                <label htmlFor="directMergeCommitStrategy">Direct merge commit routing</label>
-                <select
-                  id="directMergeCommitStrategy"
-                  className="select"
-                  value={form.directMergeCommitStrategy ?? "auto"}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      directMergeCommitStrategy: e.target.value as "auto" | "always-squash" | "always-rebase",
-                    }))
-                  }
-                >
-                  <option value="auto">Auto — squash single-substantive branches, preserve multi-substantive history</option>
-                  <option value="always-squash">Always squash direct merges</option>
-                  <option value="always-rebase">Always preserve direct-merge commit history</option>
-                </select>
-                <details className="settings-option-details">
-                  <summary>More details</summary>
+              <>
+                <div className="form-group">
+                  <label htmlFor="directMergeCommitStrategy">Direct merge commit routing</label>
+                  <select
+                    id="directMergeCommitStrategy"
+                    className="select"
+                    value={form.directMergeCommitStrategy ?? "auto"}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        directMergeCommitStrategy: e.target.value as "auto" | "always-squash" | "always-rebase",
+                      }))
+                    }
+                  >
+                    <option value="auto">Auto — squash single-substantive branches, preserve multi-substantive history</option>
+                    <option value="always-squash">Always squash direct merges</option>
+                    <option value="always-rebase">Always preserve direct-merge commit history</option>
+                  </select>
+                  <details className="settings-option-details">
+                    <summary>More details</summary>
+                    <small>
+                      Auto keeps today&apos;s squash behavior for branches with zero or one substantive commit, but switches multi-substantive branches to a history-preserving rebase-and-merge path. Individual tasks can override this in PROMPT.md with <code>**Direct Merge Commit Strategy:** auto|always-squash|always-rebase</code>.
+                    </small>
+                  </details>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="mergeIntegrationWorktree">Integration worktree</label>
+                  <select
+                    id="mergeIntegrationWorktree"
+                    className="select"
+                    value={form.mergeIntegrationWorktree ?? "reuse-task-worktree"}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        mergeIntegrationWorktree: e.target.value as Settings["mergeIntegrationWorktree"],
+                      }))
+                    }
+                  >
+                    <option value="reuse-task-worktree">Reuse task worktree (default)</option>
+                    <option value="cwd-main">Use project root (legacy)</option>
+                  </select>
                   <small>
-                    Auto keeps today&apos;s squash behavior for branches with zero or one substantive commit, but switches multi-substantive branches to a history-preserving rebase-and-merge path. Individual tasks can override this in PROMPT.md with <code>**Direct Merge Commit Strategy:** auto|always-squash|always-rebase</code>.
+                    Auto-merge runs in the task worktree by default. Switch to the legacy project-root path only if you need the pre-FN-5279 fallback; worktrunk-managed projects still defer to worktrunk.
                   </small>
-                </details>
-              </div>
+                </div>
+              </>
             )}
             {form.mergeStrategy === "pull-request" && (
               <div className="form-group">
@@ -5872,16 +5911,15 @@ export function SettingsModal({
                   id="failureNotificationMode"
                   value={form.failureNotificationMode ?? "sticky-only"}
                   onChange={(e) => {
-                    const value = e.target.value as "sticky-only" | "all";
+                    const value = e.target.value as "sticky-only" | "all" | "terminal-only";
                     setForm((f) => ({ ...f, failureNotificationMode: value }));
                   }}
                 >
                   <option value="sticky-only">Sticky failures only (default)</option>
+                  <option value="terminal-only">Terminal failures only (suppress auto-retried)</option>
                   <option value="all">All failures (legacy)</option>
                 </select>
-                <small>
-                  Sticky-only suppresses notifications for transient failures that the engine auto-recovers. Choose &quot;All failures&quot; for the legacy immediate-notification behavior.
-                </small>
+                <small>Sticky-only suppresses recovered failures; terminal-only waits for paused/in-review failed tasks; all restores legacy alerts.</small>
               </div>
               <div className="form-group">
                 <label htmlFor="failureNotificationDelayMs">Failure notification delay (ms)</label>
@@ -7220,6 +7258,16 @@ export function SettingsModal({
         )}
         <div className="modal-actions">
           <div className="modal-actions-left">
+            <a
+              href="?view=secrets"
+              className="settings-inline-link"
+              onClick={(event) => {
+                event.preventDefault();
+                onNavigateToSecrets?.();
+              }}
+            >
+              Manage secrets
+            </a>
             <button
               type="button"
               className="btn btn-sm"

@@ -460,6 +460,19 @@ describe("TaskStore", () => {
       expect(updatedTask.title).toBeUndefined();
     });
 
+    it("FN-5077: malformed drift-stripped fragment title is not persisted", async () => {
+      const description = "Extend deterministic content-fingerprint dedup guard beyond dashboard POST /tasks to remaining intake surfaces (CLI direct-store create path, planning/subtask flow, InlineCreateCard, mission feature-triage).";
+      const task = await store.createTask(
+        { title: "Close as duplicate of FN-5060", description },
+        { onSummarize: vi.fn().mockResolvedValue(null), settings: { autoSummarizeTitles: true } },
+      );
+
+      expect(task.title).toBeUndefined();
+      const persisted = await store.getTask(task.id);
+      expect(persisted.title).toBeUndefined();
+      expect(persisted.description).toBe(description);
+    });
+
     it("should handle onSummarize returning null", async () => {
       const mockOnSummarize = vi.fn().mockResolvedValue(null);
 

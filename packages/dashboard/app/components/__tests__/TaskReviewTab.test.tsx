@@ -551,6 +551,16 @@ describe("TaskReviewTab", () => {
     expect(screen.queryByTestId("task-review-create-pr")).toBeNull();
   });
 
+  it("hides create PR action when auto-merge is enabled", async () => {
+    const task = makeTask({ column: "in-review", prInfo: undefined });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+
+    render(<TaskReviewTab task={task} addToast={vi.fn()} prAuthAvailable onRequestCreatePr={vi.fn()} autoMergeEnabled />);
+
+    await screen.findByRole("button", { name: "Refresh" });
+    expect(screen.queryByTestId("task-review-create-pr")).toBeNull();
+  });
+
   it("submits reviewer-agent selections through same revision action", async () => {
     const task = makeTask();
     apiMocks.fetchTaskReview.mockResolvedValue({

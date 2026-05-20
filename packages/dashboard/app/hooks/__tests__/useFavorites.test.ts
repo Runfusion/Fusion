@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useFavorites } from "../useFavorites";
+import { useModelsCache } from "../useModelsCache";
 import * as api from "../../api";
 
 vi.mock("../../api", () => ({
@@ -14,6 +15,7 @@ const mockUpdateGlobalSettings = vi.mocked(api.updateGlobalSettings);
 describe("useFavorites", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
 
     mockFetchModels.mockResolvedValue({
       models: [
@@ -39,6 +41,18 @@ describe("useFavorites", () => {
       expect(result.current.availableModels).toHaveLength(1);
       expect(result.current.favoriteProviders).toEqual(["openai"]);
       expect(result.current.favoriteModels).toEqual(["gpt-4o"]);
+    });
+
+    expect(mockFetchModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("deduplicates fetchModels across useFavorites and useModelsCache mounts", async () => {
+    const favoritesHook = renderHook(() => useFavorites());
+    const modelsHook = renderHook(() => useModelsCache());
+
+    await waitFor(() => {
+      expect(favoritesHook.result.current.favoriteProviders).toEqual(["openai"]);
+      expect(modelsHook.result.current.models).toHaveLength(1);
     });
 
     expect(mockFetchModels).toHaveBeenCalledTimes(1);

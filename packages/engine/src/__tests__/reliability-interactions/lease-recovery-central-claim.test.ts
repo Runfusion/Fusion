@@ -89,6 +89,7 @@ describe("reliability interactions: lease recovery central claim", () => {
       parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
       on: vi.fn(),
       off: vi.fn(),
+      getRootDir: vi.fn().mockReturnValue("/test/project"),
     } as unknown as TaskStore;
 
     const reconcileLeaseRow = vi.fn().mockResolvedValue(true);

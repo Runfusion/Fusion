@@ -460,7 +460,7 @@ describe("milestone-slice-interview module", () => {
 
       mockCreateFnAgent.mockImplementation(async () => createMockAgent([createQuestionJson()]));
 
-      await expect(retryTargetInterviewSession(sessionId, "/tmp/project")).resolves.not.toThrow();
+      await expect(retryTargetInterviewSession(sessionId, "/tmp/project", MOCK_TASK_STORE)).resolves.not.toThrow();
     });
 
     it("throws when retrying a non-error session", async () => {

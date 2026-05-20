@@ -43,8 +43,10 @@ export function AgentOnboardingModal({ isOpen, onClose, onCreated, addToast, pro
   const [runtimeMode, setRuntimeMode] = useState<"model" | "runtime">("model");
   const [model, setModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const { ref: intentAutosizeRef } = useAutosizeTextarea({ value: intent, minHeight: 120, maxHeight: 320 });
-  const { ref: answerAutosizeRef } = useAutosizeTextarea({ value: answer, minHeight: 120, maxHeight: 320, deps: [currentQuestionId] });
+  // Align onboarding long-form textareas with FN-5146's 640px chat composer cap
+  // so multi-paragraph intent and answer drafts stay visible while typing.
+  const { ref: intentAutosizeRef } = useAutosizeTextarea({ value: intent, minHeight: 120, maxHeight: 640 });
+  const { ref: answerAutosizeRef } = useAutosizeTextarea({ value: answer, minHeight: 120, maxHeight: 640, deps: [currentQuestionId] });
   const setIntentRef = useCallback((node: HTMLTextAreaElement | null) => {
     intentAutosizeRef(node);
   }, [intentAutosizeRef]);

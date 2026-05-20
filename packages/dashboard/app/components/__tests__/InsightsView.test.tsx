@@ -72,6 +72,9 @@ vi.mock("lucide-react", () => ({
   Settings: ({ size = 24, className = "" }: { size?: number; className?: string }) => (
     <span data-testid="settings-icon" className={className}>{`Settings-${size}`}</span>
   ),
+  Activity: ({ size = 24, className = "" }: { size?: number; className?: string }) => (
+    <span data-testid="activity-icon" className={className}>{`Activity-${size}`}</span>
+  ),
 }));
 
 import { useInsights } from "../../hooks/useInsights";
@@ -1064,6 +1067,159 @@ describe("InsightsView", () => {
       await waitFor(() => {
         expect(screen.getByTestId("insights-status")).toHaveTextContent("Create failed");
       });
+    });
+  });
+
+  describe("backlog-health filter", () => {
+    const backlogInsight = {
+      id: "INS-BACKLOG",
+      projectId: "test",
+      title: "Backlog pressure detected 2026-05-18",
+      content: "Backlog health content",
+      category: "workflow" as const,
+      status: "generated" as const,
+      fingerprint: "fp-backlog",
+      provenance: { trigger: "manual" as const },
+      lastRunId: null,
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    };
+
+    const nonBacklogInsight = {
+      id: "INS-QUALITY",
+      projectId: "test",
+      title: "Improve test coverage",
+      content: "Quality content",
+      category: "quality" as const,
+      status: "generated" as const,
+      fingerprint: "fp-quality",
+      provenance: { trigger: "manual" as const },
+      lastRunId: null,
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-01-01T00:00:00Z",
+    };
+
+    const workflowSection = {
+      category: "workflow" as const,
+      label: "Workflow",
+      items: [backlogInsight],
+      isLoading: false,
+      error: null,
+    };
+
+    const qualitySection = {
+      category: "quality" as const,
+      label: "Quality",
+      items: [nonBacklogInsight],
+      isLoading: false,
+      error: null,
+    };
+
+    it("hides toggle when no backlog-health insights exist", () => {
+      mockUseInsights.mockReturnValue({
+        sections: [qualitySection, ...mockSections],
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 1,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      expect(screen.queryByTestId("toggle-backlog-health")).not.toBeInTheDocument();
+    });
+
+    it("shows toggle with count and toggles filtered/unfiltered view", async () => {
+      mockUseInsights.mockReturnValue({
+        sections: [qualitySection, workflowSection, ...mockSections],
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 2,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      const toggle = screen.getByTestId("toggle-backlog-health");
+      expect(toggle).toHaveTextContent("Backlog Health (1)");
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByTestId("insights-category-quality")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-workflow")).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("insights-category-quality"));
+      });
+      expect(screen.getByTestId("insights-section-quality")).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      expect(toggle).toHaveTextContent("All Insights (1)");
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByTestId("insights-category-quality")).not.toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-workflow")).toBeInTheDocument();
+      expect(screen.queryByText("Improve test coverage")).not.toBeInTheDocument();
+      expect(screen.getByText("Backlog pressure detected 2026-05-18")).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByTestId("insights-category-quality")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-workflow")).toBeInTheDocument();
+    });
+
+    it("resets selected category when active category has no backlog-health matches", async () => {
+      mockUseInsights.mockReturnValue({
+        sections: [qualitySection, workflowSection, ...mockSections],
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 2,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("insights-category-quality"));
+      });
+      expect(screen.getByTestId("insights-section-quality")).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("toggle-backlog-health"));
+      });
+
+      expect(screen.getByTestId("insights-section-workflow")).toBeInTheDocument();
+      expect(screen.queryByTestId("insights-section-quality")).not.toBeInTheDocument();
     });
   });
 

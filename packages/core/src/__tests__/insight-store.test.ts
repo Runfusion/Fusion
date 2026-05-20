@@ -713,6 +713,120 @@ describe("InsightStore Run CRUD", () => {
     });
   });
 
+  describe("listStalePendingRuns", () => {
+    it("returns pending/running runs older than threshold", () => {
+      store.getDatabase().prepare(`
+        INSERT INTO project_insight_runs (id, projectId, trigger, status, summary, error, insightsCreated, insightsUpdated, inputMetadata, outputMetadata, createdAt, startedAt, completedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "INSR-OLD-PENDING",
+        "proj",
+        "manual",
+        "pending",
+        null,
+        null,
+        0,
+        0,
+        null,
+        null,
+        "2025-01-01T00:00:00.000Z",
+        null,
+        null,
+      );
+
+      store.getDatabase().prepare(`
+        INSERT INTO project_insight_runs (id, projectId, trigger, status, summary, error, insightsCreated, insightsUpdated, inputMetadata, outputMetadata, createdAt, startedAt, completedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "INSR-OLD-RUNNING",
+        "proj",
+        "schedule",
+        "running",
+        null,
+        null,
+        0,
+        0,
+        null,
+        null,
+        "2025-01-01T00:00:00.000Z",
+        "2025-01-01T12:00:00.000Z",
+        null,
+      );
+
+      const stale = store.listStalePendingRuns("2025-01-02T00:00:00.000Z");
+      expect(stale.map((run) => run.id)).toEqual(expect.arrayContaining(["INSR-OLD-PENDING", "INSR-OLD-RUNNING"]));
+    });
+
+    it("excludes terminal statuses", () => {
+      const terminal = store.createRun("proj", { trigger: "manual" });
+      store.updateRun(terminal.id, { status: "failed", error: "boom" });
+
+      const stale = store.listStalePendingRuns("9999-01-01T00:00:00.000Z");
+      expect(stale.some((run) => run.id === terminal.id)).toBe(false);
+    });
+
+    it("honors projectId filter", () => {
+      const projectRun = store.createRun("proj-a", { trigger: "manual" });
+      store.createRun("proj-b", { trigger: "manual" });
+
+      const stale = store.listStalePendingRuns("9999-01-01T00:00:00.000Z", { projectId: "proj-a" });
+      expect(stale.map((run) => run.id)).toEqual([projectRun.id]);
+    });
+
+    it("honors limit", () => {
+      for (let i = 0; i < 3; i++) {
+        store.createRun("proj", { trigger: "manual" });
+      }
+
+      const stale = store.listStalePendingRuns("9999-01-01T00:00:00.000Z", { limit: 2 });
+      expect(stale).toHaveLength(2);
+    });
+
+    it("uses startedAt when present, otherwise createdAt", () => {
+      store.getDatabase().prepare(`
+        INSERT INTO project_insight_runs (id, projectId, trigger, status, summary, error, insightsCreated, insightsUpdated, inputMetadata, outputMetadata, createdAt, startedAt, completedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "INSR-STALE-CREATED",
+        "proj",
+        "manual",
+        "pending",
+        null,
+        null,
+        0,
+        0,
+        null,
+        null,
+        "2025-01-01T00:00:00.000Z",
+        null,
+        null,
+      );
+
+      store.getDatabase().prepare(`
+        INSERT INTO project_insight_runs (id, projectId, trigger, status, summary, error, insightsCreated, insightsUpdated, inputMetadata, outputMetadata, createdAt, startedAt, completedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "INSR-RECENT-START",
+        "proj",
+        "manual",
+        "running",
+        null,
+        null,
+        0,
+        0,
+        null,
+        null,
+        "2025-01-01T00:00:00.000Z",
+        "2025-01-03T00:00:00.000Z",
+        null,
+      );
+
+      const stale = store.listStalePendingRuns("2025-01-02T00:00:00.000Z");
+      expect(stale.map((run) => run.id)).toContain("INSR-STALE-CREATED");
+      expect(stale.map((run) => run.id)).not.toContain("INSR-RECENT-START");
+    });
+  });
+
   describe("updateRun", () => {
     it("updates mutable fields", () => {
       const run = store.createRun("proj", { trigger: "manual" });
@@ -886,7 +1000,7 @@ describe("Migration: pre-33 DB upgrade", () => {
       // Step 1: Create a fresh database at v33 (runs all migrations up to 33)
       const db1 = createDatabase(legacyDir);
       db1.init();
-      expect(db1.getSchemaVersion()).toBe(85);
+      expect(db1.getSchemaVersion()).toBe(89);
       db1.close();
 
       // Step 2: Manually downgrade to version 32 and drop insight tables
@@ -921,7 +1035,7 @@ describe("Migration: pre-33 DB upgrade", () => {
       expect(tableNamesBefore).not.toContain("project_insight_runs");
       // Now run init — this triggers the v32→v33 migration
       db3.init();
-      expect(db3.getSchemaVersion()).toBe(85);
+      expect(db3.getSchemaVersion()).toBe(89);
 
       // Step 4: Verify insight tables exist after migration
       const tablesAfter = db3.prepare(
@@ -952,12 +1066,12 @@ describe("Migration: pre-33 DB upgrade", () => {
     try {
       const db1 = createDatabase(testDir);
       db1.init();
-      expect(db1.getSchemaVersion()).toBe(85);
+      expect(db1.getSchemaVersion()).toBe(89);
       db1.close();
 
       const db2 = createDatabase(testDir);
       expect(() => db2.init()).not.toThrow();
-      expect(db2.getSchemaVersion()).toBe(85);
+      expect(db2.getSchemaVersion()).toBe(89);
       db2.close();
     } finally {
       rmSync(testDir, { recursive: true, force: true });
@@ -971,7 +1085,7 @@ describe("Migration: pre-33 DB upgrade", () => {
       // Step 1: Create a fresh DB and run migrations
       const db1 = createDatabase(compatDir);
       db1.init();
-      expect(db1.getSchemaVersion()).toBe(85);
+      expect(db1.getSchemaVersion()).toBe(89);
 
       // Step 2: Strip lifecycle and cancelledAt columns by recreating the
       // table without them. This simulates a DB that was created before the

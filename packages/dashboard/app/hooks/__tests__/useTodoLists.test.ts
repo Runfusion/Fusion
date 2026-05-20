@@ -61,6 +61,8 @@ function makeItem(id: string, listId: string, text: string, completed = false, s
 describe("useTodoLists", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset SWR cache so prior tests' todo lists don't pre-hydrate into state.
+    localStorage.clear();
     mockUpdateTodoList.mockResolvedValue({} as TodoList);
     mockDeleteTodoItem.mockResolvedValue();
   });

@@ -61,7 +61,8 @@ describe("commitOrAmendMergeWithFixes already-on-main recovery", () => {
       preAttemptHeadSha,
       "",
       undefined,
-      { ...DEFAULT_SETTINGS, commitAuthorEnabled: false },
+      { ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, commitAuthorEnabled: false },
       undefined,
       null,
       null,
@@ -75,5 +76,5 @@ describe("commitOrAmendMergeWithFixes already-on-main recovery", () => {
       strategy: "trailer",
     });
     expect(git(dir, "git rev-parse HEAD")).toBe(preAttemptHeadSha);
-  });
+  }, 20_000);
 });

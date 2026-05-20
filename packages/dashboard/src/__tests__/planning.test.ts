@@ -959,7 +959,7 @@ describe("planning module", () => {
       const createFnAgentSpy = vi.fn(async () => resumedAgent);
       __setCreateFnAgent(createFnAgentSpy as any);
 
-      const response = await submitResponse(row.id, { refine: true }, TEST_ROOT_DIR);
+      const response = await submitResponse(row.id, { refine: true }, TEST_ROOT_DIR, undefined, MOCK_TASK_STORE);
       expect(response.type).toBe("question");
       if (response.type === "question") {
         expect(response.data.id).toBe("q-refine-rehydrated");
@@ -1016,6 +1016,8 @@ describe("planning module", () => {
         row.id,
         { "q-2": "Must run on mobile" },
         TEST_ROOT_DIR,
+        undefined,
+        MOCK_TASK_STORE,
       );
 
       expect(response.type).toBe("question");
@@ -1177,7 +1179,7 @@ describe("planning module", () => {
       ]);
       __setCreateFnAgent(async () => resumedAgent);
 
-      await retrySession(row.id, TEST_ROOT_DIR);
+      await retrySession(row.id, TEST_ROOT_DIR, undefined, MOCK_TASK_STORE);
 
       expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
       expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toContain("What should we build?");
@@ -1216,7 +1218,7 @@ describe("planning module", () => {
       ]);
       __setCreateFnAgent(async () => resumedAgent);
 
-      await retrySession(row.id, TEST_ROOT_DIR);
+      await retrySession(row.id, TEST_ROOT_DIR, undefined, MOCK_TASK_STORE);
 
       expect(resumedAgent.session.prompt).toHaveBeenCalledTimes(1);
       expect(resumedAgent.session.prompt.mock.calls[0]?.[0]).toBe("Ship notifications");
@@ -1271,7 +1273,7 @@ describe("planning module", () => {
       const createFnAgentSpy = vi.fn(async () => resumedAgent);
       __setCreateFnAgent(createFnAgentSpy as any);
 
-      await retrySession(row.id, TEST_ROOT_DIR, promptOverrides);
+      await retrySession(row.id, TEST_ROOT_DIR, promptOverrides, MOCK_TASK_STORE);
 
       expect(createFnAgentSpy).toHaveBeenCalledTimes(1);
       const callArg = createFnAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;
@@ -1314,7 +1316,7 @@ describe("planning module", () => {
       const createFnAgentSpy = vi.fn(async () => resumedAgent);
       __setCreateFnAgent(createFnAgentSpy as any);
 
-      await retrySession(row.id, TEST_ROOT_DIR);
+      await retrySession(row.id, TEST_ROOT_DIR, undefined, MOCK_TASK_STORE);
 
       expect(createFnAgentSpy).toHaveBeenCalledTimes(1);
       const callArg = createFnAgentSpy.mock.calls[0]?.[0] as Record<string, unknown>;

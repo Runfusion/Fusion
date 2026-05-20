@@ -451,6 +451,147 @@ describe("useMobileKeyboard", () => {
     input.remove();
   });
 
+  it("FN-5155: ignores impossible focusin samples until the visualViewport settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { mockVV } = setupMobileVisualViewport({
+        innerHeight: 844,
+        vvHeight: 844,
+      });
+
+      const input = document.createElement("textarea");
+      document.body.appendChild(input);
+
+      const { result } = renderHook(() => useMobileKeyboard());
+
+      expect(result.current.keyboardOpen).toBe(false);
+
+      input.focus();
+      Object.defineProperty(mockVV, "offsetTop", {
+        value: 180,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 820,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        document.dispatchEvent(new Event("focusin"));
+      });
+
+      // FN-5155: current main incorrectly treats this as open via the
+      // viewport-shrink fallback even though offsetTop + height exceeds the
+      // window height, so the impossible sample must be ignored.
+      expect(result.current.keyboardOpen).toBe(false);
+      expect(result.current.viewportHeight).toBeNull();
+      expect(result.current.viewportOffsetTop).toBe(0);
+
+      Object.defineProperty(mockVV, "offsetTop", {
+        value: 0,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 520,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: 520,
+        writable: true,
+        configurable: true,
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60);
+      });
+
+      expect(result.current.keyboardOpen).toBe(true);
+      expect(result.current.keyboardOverlap).toBe(324);
+      expect(result.current.viewportHeight).toBe(520);
+      expect(result.current.viewportOffsetTop).toBe(0);
+
+      input.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("FN-5155: converges from stale visibility-restore metrics to the settled keyboard-open viewport", async () => {
+    vi.useFakeTimers();
+    try {
+      const { listeners, mockVV } = setupMobileVisualViewport({
+        innerHeight: 844,
+        vvHeight: 844,
+      });
+
+      const input = document.createElement("textarea");
+      document.body.appendChild(input);
+
+      const { result } = renderHook(() => useMobileKeyboard());
+
+      expect(result.current.keyboardOpen).toBe(false);
+
+      input.focus();
+      Object.defineProperty(mockVV, "offsetTop", {
+        value: 160,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 820,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      // FN-5155: page-restore can surface the same impossible transient sample
+      // before resize settles; keep the hook closed until metrics agree.
+      expect(result.current.keyboardOpen).toBe(false);
+      expect(result.current.viewportHeight).toBeNull();
+      expect(result.current.viewportOffsetTop).toBe(0);
+
+      Object.defineProperty(mockVV, "offsetTop", {
+        value: 0,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 520,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: 520,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60);
+      });
+
+      expect(result.current.keyboardOpen).toBe(true);
+      expect(result.current.keyboardOverlap).toBe(324);
+      expect(result.current.viewportHeight).toBe(520);
+      expect(result.current.viewportOffsetTop).toBe(0);
+
+      input.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // FN-3290 regression: focusout must reset keyboard state when input blurs
   describe("FN-3290: focusout resets keyboard state", () => {
     it("resets keyboardOpen to false on focusout when viewport returns to baseline", async () => {

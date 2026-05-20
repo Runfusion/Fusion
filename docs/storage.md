@@ -8,6 +8,41 @@
 - Startup/store-open allocator reconciliation bumps each active prefix sequence to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)` so stale allocator rows self-heal before local task creation resumes.
 - Create-class task persistence is intentionally non-destructive: new tasks use plain `INSERT` semantics, while `ON CONFLICT(id) DO UPDATE` remains update-only. If counters drift and a reserved ID still collides, the create fails and the existing SQLite row / task directory stays intact.
 
+## Soft-deleted tasks (FN-5105)
+
+- User-initiated `TaskStore.deleteTask` is a **soft delete**: the task row stays in `tasks` and `deletedAt` is set.
+- Active task readers (`getTask`, `listTasks`, search, dependency scans, scheduler/watcher reads, mission task aggregations) must filter with `deletedAt IS NULL`.
+- Archived-task flows (`archiveTask`, archived cleanup/migration) still hard-delete from the active `tasks` table after copying to cold storage (`archive.db`).
+- ID reservation is unchanged: soft-deleted IDs remain reserved. `distributed-task-id` and `task-id-integrity` intentionally scan all task rows (including soft-deleted rows), and must not filter on `deletedAt`.
+
+### Agent log clearing (FN-5143)
+
+- `TaskStore.deleteTask` now clears `agentLogEntries` rows for the soft-deleted task in the same transaction that writes `deletedAt`, so downstream `getAgentLogs*` / `getAgentLogCount` calls observe zero logs immediately.
+- This is soft-delete-specific cleanup; archived-task agent log snapshot behavior (`taskToArchiveEntry` / `archiveTask`) is unchanged.
+
+### Dashboard delete-event handling (FN-5135)
+
+- Dashboard clients treat any SSE payload with `deletedAt != null` (`task:created`, `task:updated`, `task:moved`, `task:merged`) as a delete-equivalent and remove/suppress that task locally.
+- SSE slim serialization (`stripTaskListHeavyFields`) must preserve `deletedAt`; dropping it can resurrect soft-deleted cards on live boards.
+- Client-side SWR cache hydration also filters `deletedAt` rows before normalization as defense-in-depth; REST slim `listTasks` remains server-filtered with `deletedAt IS NULL`.
+
+### Lineage children (FN-5129)
+
+- `deleteTask` and `archiveTask` now enforce lineage integrity for `sourceParentTaskId` links.
+- Default behavior: if a task still has **live lineage children** (`deletedAt IS NULL` and `column != 'archived'`) that reference it as parent, deletion/archive throws `TaskHasLineageChildrenError`.
+- Opt-in unlink behavior: pass `removeLineageReferences: true` to `deleteTask` or `archiveTask` to clear live children (`sourceParentTaskId = NULL`, `updatedAt` bumped, `task:updated` emitted) before removing the parent.
+- Gate boundary: soft-deleted children and archived-column children do **not** block parent removal; only live non-archived children block.
+- `cleanupArchivedTasks` intentionally tolerates dangling lineage pointers in historical/archive cleanup flows; it does not run lineage rewrites.
+- For forensic reads, soft-deleted parents remain accessible through `readTaskFromDb(id, { includeDeleted: true })`.
+
+### Documents under soft-deleted tasks (FN-5140)
+
+- Soft-deleting a task preserves its `task_documents` and `task_document_revisions` rows; document storage is not hard-deleted as part of `TaskStore.deleteTask`.
+- Normal live-reader APIs must hide those rows by enforcing the parent-task active filter through `ACTIVE_TASKS_WHERE`: `getAllDocuments`, `getTaskDocuments`, `getTaskDocument`, and `getTaskDocumentRevisions` all treat a soft-deleted parent as out of scope for ordinary reads.
+- The HTTP surface inherits the same contract: `GET /api/documents` excludes documents whose parent task is soft-deleted, while per-task document GET routes behave like "task not found" (`[]` for list/revisions and `404 Document not found` for the single-document read).
+- No public forensic flag is exposed on document read methods or routes. Forensic access remains an internal/operator concern via `readTaskFromDb(id, { includeDeleted: true })` plus direct SQL against the preserved document tables.
+- Write semantics stay intentionally asymmetric: `upsertTaskDocument` still refuses soft-deleted parents, while `deleteTaskDocument` remains allowed so forensic cleanup can scrub preserved document rows when needed.
+
 ### Task-ID integrity detection
 
 Fusion runs a read-only task-ID integrity detector at startup and on demand to surface allocator regressions before operators lose track of overwritten cards. The detector checks for:
@@ -81,7 +116,9 @@ Important execution nuance:
 - `task.modifiedFiles` stores the executor's last captured worktree snapshot. During in-progress/in-review this is the primary fallback and may include files later reverted before merge or changed by verification rebuilds.
 - `task.mergeDetails.landedFiles` stores the authoritative landed file list on the merge target:
   - squash path: `git show --name-only --format= <commitSha>`
-  - rebase/cherry-pick path: `git diff --name-only <rebaseBaseSha>..<commitSha>`
+  - rebase/cherry-pick path: union of files from task-attributable commits returned by `filterFilesToOwnTaskCommits` (`landedFilesAttributionRestricted: true`)
+  - attribution fallback path: if commit attribution fails, merger falls back to `git diff --name-only <rebaseBaseSha>..<commitSha>` and sets `landedFilesCaptureFallback: "attribution-failed"`
+- `mergeDetails.noOpVerifiedShortCircuit` marks rebase captures where zero commits are attributable to the task (`landedFiles: []`, stats zero); this indicates the branch's work was already on main.
 - After merge (and during self-healing reconciliation), Fusion updates `task.modifiedFiles` to match `landedFiles` when the landed set is available and non-empty.
 - Consumer guidance:
   - done tasks: prefer `mergeDetails.landedFiles`
@@ -109,7 +146,7 @@ Important execution nuance:
 - **Backend settings keys defined in `@fusion/core`:** **78** total
   - **Global settings:** 17 (`GlobalSettings`)
   - **Project settings:** 61 (`ProjectSettings`)
-- **SQLite tables in project DB schema (`packages/core/src/db.ts`):** **45** (including migration-created tables)
+- **SQLite tables in project DB schema (`packages/core/src/db.ts`):** **46** (including migration-created tables)
 - **Issues identified:** **9**
   - High: 2
   - Medium: 5
@@ -277,6 +314,9 @@ Additional backend notes:
 | Table | Purpose |
 |---|---|
 | `tasks` | Core task metadata and JSON-backed nested fields (priority, dependencies, steps, log, attachments, comments, model overrides, workflow results, merge details, assignment, mission linkage). |
+| `mergeQueue` | Durable merge handoff queue keyed by `taskId`. Stores enqueue ordering (`enqueuedAt`, mirrored `priority`), single-owner lease state (`leasedBy`, `leasedAt`, `leaseExpiresAt`), and retry diagnostics (`attemptCount`, `lastError`). Leasing is priority-first + FIFO within priority, and expired leases are recoverable without incrementing attempts. FN-5242 adds the persistence/lease primitive; FN-5241 and FN-5243 wire executor enqueue + merger consumption. |
+
+FN-5240/FN-5241/FN-5242 establish the handoff invariant: the only legal executor/self-healing path into `in-review` after execution finishes is `TaskStore.handoffToReview(...)`. That helper runs the column move, `mergeQueue` insert, and handoff audit fan-out inside one `BEGIN IMMEDIATE` transaction so observers never see `column = "in-review"` without the matching queue row. Direct `moveTask(taskId, "in-review")` writes remain allowed for explicit non-handoff/test paths but emit `task:handoff-invariant-violation` run-audit events unless the caller opts into the narrow allowlist flag.
 
 The `tasks.githubTracking` JSON column stores per-task GitHub tracking state (`enabled`, optional `repoOverride`, linked issue metadata, and `unlinkedAt`). It is additive and default-off; imported-source issue metadata remains in `issueInfo` / `sourceIssue`. Behavior wiring (issue creation/lifecycle sync and UI surfacing) lands in FN-3870/FN-3873/FN-3874.
 | `config` | Single-row project configuration (`nextId`, settings payload, workflow step counters). |
@@ -291,7 +331,7 @@ The `tasks.githubTracking` JSON column stores per-task GitHub tracking state (`e
 | `secrets` | Encrypted secret KV rows (`key` unique) with raw BLOB `value_ciphertext` + per-row random `nonce` (AES-256-GCM), per-secret `access_policy` CHECK (`auto`/`prompt`/`deny`), env-materialization metadata (`env_exportable`, `env_export_key`), and read-audit fields (`last_read_at`, `last_read_by`). Plaintext is never written to the database. |
 | `task_documents` | Task-scoped document metadata/content keyed by `(taskId, key)` with current revision pointer. |
 | `task_document_revisions` | Immutable revision history for task documents (content snapshots by revision). |
-| `__meta` | Schema version + monotonic `lastModified` change detector. |
+| `__meta` | Schema version + monotonic `lastModified` change detector, plus one-time bootstrap metadata such as `bootstrappedAt`. |
 | `missions` | Mission-level planning hierarchy root. |
 | `milestones` | Milestones under missions, including dependency lists and validation state. |
 | `slices` | Slices under milestones with plan-state/activation metadata. |

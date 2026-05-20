@@ -49,7 +49,12 @@ vi.mock("node:fs", () => ({
   rmSync: vi.fn(),
 }));
 
+vi.mock("../worktree-prune.js", () => ({
+  pruneWorktreeAdminEntries: vi.fn().mockResolvedValue(undefined),
+}));
+
 import * as desktopArtifacts from "../worktree-desktop-artifacts.js";
+import * as worktreePrune from "../worktree-prune.js";
 import {
   WorktreePool,
   getRegisteredWorktreeBranchMap,
@@ -71,6 +76,7 @@ const mockedExistsSync = vi.mocked(existsSync);
 const mockedLstatSync = vi.mocked(lstatSync);
 const mockedReaddirSync = vi.mocked(readdirSync);
 const mockedRmSync = vi.mocked(rmSync);
+const mockedPruneWorktreeAdminEntries = vi.mocked(worktreePrune.pruneWorktreeAdminEntries);
 const TEST_TASK_ID = "FN-test";
 
 let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -847,6 +853,7 @@ describe("cleanupOrphanedWorktrees", () => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
     mockRegisteredWorktrees("/root", []);
+    mockedPruneWorktreeAdminEntries.mockResolvedValue(undefined);
   });
 
   it("removes worktrees not assigned to any active task", async () => {
@@ -997,6 +1004,9 @@ describe("cleanupOrphanedWorktrees", () => {
       recursive: true,
       force: true,
     });
+    expect(mockedPruneWorktreeAdminEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "pool-cleanup-orphan", target: "/root/.worktrees/broken-wt" }),
+    );
   });
 });
 
@@ -1189,6 +1199,9 @@ describe("reapOrphanWorktrees", () => {
       recursive: true,
       force: true,
     });
+    expect(mockedPruneWorktreeAdminEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "pool-reap-orphan", target: "/root/.worktrees/pale-raven" }),
+    );
   });
 
   it("does NOT remove a directory that is a registered git worktree", async () => {

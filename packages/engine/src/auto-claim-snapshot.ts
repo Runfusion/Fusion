@@ -86,6 +86,7 @@ export class AutoClaimSnapshotManager {
         && candidate.paused !== true
         && !candidate.assignedAgentId
         && !candidate.checkedOutBy
+        && !candidate.deletedAt
         && candidate.dependencies.every((dependencyId) => {
           const dependency = tasksById.get(dependencyId);
           return dependency?.column === "done" || dependency?.column === "archived";

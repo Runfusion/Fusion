@@ -180,11 +180,14 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
     listTasks: vi.fn().mockResolvedValue(allTasks),
     updateTask: vi.fn().mockResolvedValue(baseTask),
-    moveTask: vi.fn().mockResolvedValue(baseTask),
+    moveTask: vi.fn().mockResolvedValue({ ...baseTask, column: "done" }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -297,6 +300,7 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       includeTaskIdInCommit: false,
     });
 
@@ -359,6 +363,7 @@ describe("aiMergeTask — includeTaskIdInCommit setting", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       includeTaskIdInCommit: false,
     });
 
@@ -399,6 +404,7 @@ describe("aiMergeTask — model settings threading", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       defaultProvider: "openai",
       defaultModelId: "gpt-4o",
     });
@@ -782,6 +788,7 @@ describe("aiMergeTask — merge details collection", () => {
     mockedExistsSync.mockReturnValue(false);
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       directMergeCommitStrategy: "always-rebase",
     });
 
@@ -816,6 +823,7 @@ describe("aiMergeTask — merge details collection", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       useAiMergeCommitSummary: true,
     });
 
@@ -846,6 +854,26 @@ describe("aiMergeTask — merge details collection", () => {
     expect(mergeDetailsCall?.[1].mergeDetails.mergeCommitMessage).toBe("AI summary of merged work.");
   });
 
+  it("emits task:merged once when completeTask finalizes a successful merge", async () => {
+    const store = createMockStore(
+      { id: "FN-777", worktree: "/tmp/root/.worktrees/FN-777" },
+      [{ id: "FN-777", worktree: "/tmp/root/.worktrees/FN-777", column: "in-review" } as Task],
+    );
+    setupHappyPathExecSync();
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-777");
+
+    expect(result.merged).toBe(true);
+    const mergedEvents = (store.emit as ReturnType<typeof vi.fn>).mock.calls.filter((call: any[]) => call[0] === "task:merged");
+    expect(mergedEvents).toHaveLength(1);
+    expect(mergedEvents[0][1]).toEqual(
+      expect.objectContaining({
+        merged: true,
+        task: expect.objectContaining({ column: "done" }),
+      }),
+    );
+  });
+
   it("falls back to raw commit log when AI merge summary returns null", async () => {
     const store = createMockStore(
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
@@ -853,6 +881,7 @@ describe("aiMergeTask — merge details collection", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       useAiMergeCommitSummary: true,
     });
 
@@ -952,6 +981,7 @@ describe("aiMergeTask — merge details collection", () => {
     // test isn't about prefer-main semantics, so opt out.
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeConflictStrategy: "smart-prefer-branch",
     });
 

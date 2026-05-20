@@ -272,8 +272,7 @@ Public API surface:
 
 Settings boundary:
 - Global default policy: `GlobalSettings.secretsAccessPolicy` (used by `resolveSecretAccessPolicy`).
-- Project-level secrets settings: `ProjectSettings.secretsEnv` and `ProjectSettings.secretsSyncPassphrase` (`packages/core/src/types.ts:2599-2609`).
-- `secretsSyncPassphrase` must be pre-wrapped ciphertext under local master key by caller (`packages/core/src/types.ts:2602-2604`).
+- Project-level secrets settings: `ProjectSettings.secretsEnv`. Cross-node sync passphrase state surfaces read-only via `GlobalSettings.secretsSyncPassphraseConfigured` (derived from `hasSyncPassphraseConfigured(secretsStore)` against the reserved `__sync_passphrase__` row in `secrets_global`).
 - Agent secret reads are exposed via `fn_secret_get` (`packages/cli/src/extension.ts:1542-1629`).
 - Cross-node sync routes ship at `/api/nodes/:id/secrets/push`, `/api/nodes/:id/secrets/pull`, `/api/secrets/sync-receive`, `/api/secrets/sync-export` with inbound Bearer apiKey validation (`packages/dashboard/src/routes/register-secrets-sync-inbound-routes.ts:99-114`, `:181-196`).
 
@@ -313,6 +312,7 @@ Intentional exclusions from shared snapshots:
 - `chat_sessions.inFlightGeneration` stores a durable JSON snapshot while generation is active: latest streamed text/thinking, tool-call state, and `replayFromEventId` for SSE resume.
 - `ChatManager.sendMessage()` updates that snapshot during streaming (debounced) and clears it on done/error/cancel so stale partial state does not survive completion.
 - When the active session is still generating after reload/reconnect (`isGenerating: true`), `useChat`/`useQuickChat` hydrate the UI from `inFlightGeneration` immediately, then reconnect `/api/chat/sessions/:id/stream` with `Last-Event-ID = replayFromEventId` to avoid re-appending already-known deltas.
+- Hooks also auto-reattach if a stale cached session is selected and a later refresh (or session re-fetch) flips `isGenerating` to true with an `inFlightGeneration` snapshot; dedupe is guarded by a last-attached `(sessionId, replayFromEventId)` ref so snapshot checkpoint bumps do not open duplicate SSE streams.
 - Chat message submission uses SSE streaming responses from dashboard chat routes.
 - Direct-chat terminal failures now persist as a distinct assistant message with `metadata.failureInfo` (`summary`, optional `errorClass`, optional `code`, optional `detail`, optional reference metadata) so the chat thread remains the durable primary failure surface after reload/reconnect.
 - `ChatManager.sendMessage()` preserves any interrupted partial assistant output as its own message, then appends a separate persisted failure bubble instead of overwriting the partial reply.
@@ -361,6 +361,7 @@ Intentional exclusions from shared snapshots:
   - true live conflicts continue returning HTTP 409 with structured payload details `{ code: "ACTIVE_RUN_CONFLICT", activeRunId, activeRunStatus, trigger }` so the dashboard can hydrate and display the existing active run instead of surfacing a raw backend exception
 - `POST /api/insights/:id/create-task` remains a draft-payload endpoint (returns `suggestedTitle`/`suggestedDescription`); the dashboard `InsightsView` now uses that payload to create a real task through the normal app task-creation path (`column: triage`, `sourceType: dashboard_ui`, source metadata indicating insights origin)
 - Backed by `project_insights`, `project_insight_runs`, and `project_insight_run_events`
+- **Architecture invariant:** stale `pending`/`running` insight runs auto-recover at dashboard startup and on periodic/drive-by sweeps; active-row conflicts must be evaluated by age plus live `activeRunControllers` ownership instead of assuming all active rows block forever.
 
 ### Research Runs
 
@@ -673,6 +674,7 @@ When stuck-kill retries are exhausted, `checkStuckBudget()` marks the task `stat
   - `recoverMergeableReviewTasks()` only re-enqueues truly eligible tasks; retry-exhausted review tasks are skipped to avoid re-enqueue/no-op loops that keep refreshing `updatedAt`.
   - `recoverAlreadyMergedReviewTasks()` auto-finalizes retry-exhausted `in-review` tasks when self-healing can prove their work already landed on the merge target. On this landed-content path it clears soft blockers (`paused`, stale `status: "failed"`, and residual `error`) before moving to `done`; true hard blockers (for example incomplete steps, awaiting-user-review, or failed pre-merge workflow steps) still park the task in stable `in-review/failed` state with a blocker error instead of entering an auto-finalize loop.
   - `reconcileTaskWorktreeMetadata()` (FN-4962) reconciles stale `task.worktree`/`task.branch` rows against authoritative `git worktree list --porcelain` branch mappings during startup recovery, periodic maintenance, and completion fan-out. The stage must run before `reclaim-stale-active-branches`: stale rows rebound to live `fusion/<id>` worktrees emit `task:auto-recover-worktree-metadata-rebound`; stale rows with no live branch mapping are nulled (`worktree=null`, `branch=null`, `baseCommitSha` unchanged) and emit `task:auto-recover-worktree-metadata-cleared`.
+  - `recoverInProgressLimbo()` (FN-5219) is the safety net for stranded executor rows: reset/requeue paths must never leave a task in `in-progress` without a runnable execution context. After metadata reconcile, stale `in-progress` tasks with null branch, missing/cleared worktree metadata, no live executor claim, and all-pending steps are audited and moved back to `todo`.
 
 ##### Orphan-only scope-violation auto-recovery
 `recoverOrphanOnlyScopeViolations()` handles the narrow FN-4350 shape without weakening the file-scope invariant: it runs only when all of these predicates hold — task is `column === "in-review"`; task is failed (`status === "failed"`, with engine/global pause both off); error evidence is a FileScopeViolation (`tool_error` agent-log payload from `formatFileScopeViolationAgentLog`, with `task.error` prefix fallback); `task.scopeOverride !== true`; task is not actively executing and `mergeDetails.mergeConfirmed !== true`. It then verifies the task's specific work is already on `main` using `findAlreadyMergedTaskCommit` (Fusion-Task-Id trailer / ancestry / patch-id / tree-equality proof). Only when staged files are orphan-only (no declared-scope overlap after excluding `.changeset/*`) and main-branch proof is positive does it finalize as a no-op (`resolutionStrategy: "orphan-discard-no-op"`), append an explicit auto-recovery log line, and tear down the task worktree so orphan staging is discarded.
@@ -683,21 +685,24 @@ Guardrails: this routine does **not** retry merges, does **not** apply to mixed/
   - `clearStaleBlockedBy()` clears `blockedBy` (and transient `status`) on todo tasks when their blocker is missing, done, archived, paused in-review, or failed in-review with merge retries exhausted. FN-3924 extends this with a dependency-integrity guard: if a task has explicit dependencies and `blockedBy` is not one of the currently unresolved deps, the stale marker is cleared. FN-4091 broadens the sweep to active `in-progress` and un-paused `in-review` tasks as well, but those repairs only null `blockedBy` (they do not rewrite scheduler-owned queued state). This repairs rows corrupted by historical overlap re-stamping and lets scheduler re-evaluate from live dependency state. The ad-hoc `scripts/recover-stale-blocked-by.mjs` remains a manual backstop for filesystem/db audits, not the primary repair path.
   - `inspectBranchConflict()` now treats self-owned zero-attribution collisions as reclaimable (instead of foreign) when ownership is proven by task/worktree identity, so stranded self-branches do not enter unrecoverable loops.
   - `reclaimSelfOwnedBranchConflicts()` includes paused `branch-conflict-unrecoverable` tasks (not just todo/in-progress), clearing paused/error state in one update and requeueing only when parked in `in-review`.
-  - `cleanupOrphanedBranches()` uses a three-way decision table: (1) subsumed/no-unique-commits branches are pruned with `branch:orphan-prune`, (2) unique-commit branches with no matching task row are rescued as new triage tasks with `branch:orphan-rescued`, and (3) unique-commit branches tied to archived tasks are left intact with one-time acknowledgement metadata.
+  - `cleanupOrphanedBranches()` uses a three-way decision table: (1) subsumed/no-unique-commits branches are pruned with `branch:orphan-prune`, (2) unique-commit branches with no matching task row are rescued as new triage tasks with `branch:orphan-rescued`, and (3) unique-commit branches tied to archived tasks are left intact with one-time acknowledgement metadata. FN-5188 adds a fresh-DB gate: when `__meta.bootstrappedAt` is current-process-fresh and the task table is empty, orphan rescue/prune is skipped entirely and emits `self-healing:orphan-rescue-skipped-fresh-db`.
   - Together, `recoverAlreadyMergedReviewTasks()`, `clearStaleBlockedBy()`, and paused-aware in-review scheduling prevent merge-deadlock loops by finalizing already-landed work, clearing stale dependency blockers, reclaiming self-owned conflicts, and avoiding paused review cards re-blocking overlap dispatch.
   - Merge commit attribution is ownership-aware: a `mergeDetails.commitSha` is trusted only when reachable from `HEAD` **and** attributable to the task via `Fusion-Task-Id` trailer or task-ID-bearing subject. Reachable-but-unowned SHAs are rejected to prevent sibling done tasks from sharing misleading merge metadata.
   - FN-4948 adds a task-worktree pre-commit branch-identity guard: provisioning paths (`NativeWorktreeBackend.create`, executor branch creation, and `StepSessionExecutor.createStepWorktree`) install a `pre-commit` hook plus `fusion-task-id` metadata under the worktree's git-path. Commits are refused unless HEAD matches `fusion/<task-id>` or the allowlist (`fusion/step-<n>-<slug>` by default).
+  - FN-5089 adds an optional task-worktree `commit-msg` hook (default enabled via `commitMsgHookEnabled`) installed by the same provisioning path; when enabled it appends the configured task attribution trailer (defaults to `Fusion-Task-Id: <task-id>`) without duplicating existing trailers. Attribution remains branch/subject resilient when the hook is disabled.
   - FN-4948 extends contamination auto-recovery with an `obviously-misrouted` bucket: foreign-attributed commits are auto-dropped only when attribution resolves to another task and every changed path is inside `.changeset/fn-<foreign-id>-*.md`. Any shared/non-namespaced path stays in the unique bucket and escalates to human adjudication. The single-attempt contamination invariant is unchanged.
 - `ProjectEngine` settings lifecycle handlers (`project-engine.ts`) treat `enginePaused` as a soft pause: clearing it dispatches runtime resume and, when `autoMerge` is enabled, performs an `in-review` eligibility sweep to requeue mergeable review tasks.
 - `UsageLimitPauser` (`usage-limit-detector.ts`) and `withRateLimitRetry` (`rate-limit-retry.ts`)
 
 ### Worktree and naming helpers
 - `WorktreePool` (`worktree-pool.ts`) — idle worktree reuse
-- `WorktreeBackend` (`worktree-backend.ts`) — abstraction for worktree operations used by `acquireTaskWorktree`. `native` (default) preserves existing `git worktree` behavior (including sibling-branch retry semantics), while `resolveWorktreeBackend(settings)` selects `worktrunk` when `settings.worktrunk?.enabled === true`.
+- `WorktreeBackend` (`worktree-backend.ts`) — abstraction for worktree operations used by `acquireTaskWorktree`. `native` (default) preserves existing `git worktree` behavior (including sibling-branch retry semantics), while `resolveWorktreeBackend(settings)` selects [worktrunk](https://github.com/max-sixty/worktrunk) when `settings.worktrunk?.enabled === true`.
   - Worktrunk path delegates five decisions with per-op timeouts: `create` (120s), `sync` (180s), `prune` (60s), `remove` (60s), and layout resolution (5s).
   - Direct worktrunk CLI delegates: `create` → `wt switch --create ... --no-hooks --no-cd`, `remove` → `wt remove --foreground`.
+  - Fusion probes the canonical `wt` binary on `$PATH`; explicit `worktrunk.binaryPath` overrides still win when operators pin a different location.
   - Worktrunk-aware fallback implementations where worktrunk lacks a dedicated primitive: `sync` uses git fetch+rebase semantics, and `prune` uses `git worktree list --porcelain` plus per-branch `remove` calls.
   - Layout precedence: when `worktrunk.enabled=true`, `resolveTaskWorktreePathForBackend(...)` defers to backend `resolveWorktreePath(...)` (using `wt config show --format json` template data with default `{{ repo_path }}/.worktrees/{{ branch | sanitize }}` fallback); otherwise it remains byte-identical to FN-4606 `resolveTaskWorktreePath(...)` behavior.
+  - Auto-install remains fail-closed while the pinned release manifest is `upstream-pending-verification`: the pre-approved install path now rejects missing asset URLs/checksums instead of fabricating a local binary. This preserves the FN-4704/FN-4705 disabled-install contract until a human verifies a real upstream release manifest.
   - `worktrunk.onFailure` controls fail-hard vs fallback-native create behavior and emits `worktree:worktrunk-*` run-audit events for create/fallback paths.
 - `WorktreeNames` (`worktree-names.ts`) — deterministic worktree/branch naming
 
@@ -710,9 +715,10 @@ Guardrails: this routine does **not** retry merges, does **not** apply to mixed/
 - `[self-healing]` — startup/maintenance recovery pass outcomes.
 - `[worktree-metadata-reconcile]` — FN-4962 stale `task.worktree`/`task.branch` rebind-or-clear decisions and audit emission failures.
 - `[scheduler]`, `[executor]`, `[merger]` — core execution/dispatch/merge lanes.
+- `[insight-sweeper]` — startup/periodic/drive-by stale insight-run recovery outcomes and fail-soft sweep errors.
 - `Notifier` (`notifier.ts`) — legacy ntfy compatibility shim (`NtfyNotifier`) plus shared ntfy helpers
   - Runtime ownership: `NtfyNotifier` no longer owns an independent task-lifecycle listener graph; `ProjectEngine` injects the canonical `NotificationService` instance so task lifecycle notifications (`task:moved`, `task:updated`, `task:merged`) are emitted through a single path.
-  - Merge dedup safety: `ProjectEngine.start()` is idempotent, so repeated start calls do not wire a second `NotificationService`/`NtfyNotifier` pair. A successful merge therefore emits exactly one canonical `merged` ntfy lifecycle notification per task.
+  - Merge dedup safety: all merge-success → done code paths (direct merger completion, owned/no-op auto-finalize, mergeConfirmed fast-path, PR-strategy finalize, and merge-success self-healing finalizers) emit `store.emit("task:merged", result)` with a merged `MergeResult`. `NotificationService.notifiedEvents` remains the single dedup source of truth, so duplicate upstream emits still produce exactly one canonical `merged` ntfy lifecycle notification per task.
   - Compatibility scope: `NtfyNotifier` remains responsible for gridlock-only compatibility notifications (`notifyGridlock`) and legacy helper APIs.
   - Legacy gridlock ntfy delivery is cooldown-throttled: first detection notifies immediately, subsequent detections are suppressed for 15 minutes (even if blocked-task membership changes), and the cooldown resets as soon as gridlock fully clears.
 - `NotificationService` (`notification/notification-service.ts`) — provider lifecycle + event dispatch orchestration
@@ -966,9 +972,11 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 ### Health and monitoring endpoints
 - **Health check**: `GET /api/health`
   - Returns liveness status for load balancers and monitoring
-  - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, isRunning: boolean, lastCheckedAt: string | null } }`
+  - Response: `{ status: "ok" | "degraded", version: string, uptime: number, database: { healthy: boolean, corruptionDetected: boolean, corruptionErrors: string[], isRunning: boolean, lastCheckedAt: string | null }, taskIdIntegrity: { status: "ok" | "anomaly", checkedAt: string | null, anomalies: [...], recommendedAction: string | null } }`
   - Startup does not block on full `PRAGMA integrity_check(100)`; Fusion schedules it in the background shortly after boot.
-  - Background integrity checks are deduplicated process-wide per on-disk SQLite path: multiple `Database` instances sharing the same `fusion.db` join one shared run, and each instance still updates the underlying integrity state (`integrityCheckPending`, `integrityCheckLastRunAt`, `corruptionDetected`) that maps to `database.isRunning`, `database.lastCheckedAt`, and `database.healthy`.
+  - Background integrity checks are deduplicated process-wide per on-disk SQLite path: multiple `Database` instances sharing the same `fusion.db` join one shared run, and each instance still updates the underlying integrity state (`integrityCheckPending`, `integrityCheckLastRunAt`, `corruptionDetected`, `integrityCheckErrors`) that maps to `database.isRunning`, `database.lastCheckedAt`, `database.healthy`, `database.corruptionDetected`, and `database.corruptionErrors`.
+  - Self-healing watches `store.getDatabaseHealth()` during maintenance. Each fresh corruption detection emits a `task:auto-db-corruption-detected` run-audit database event and attempts a `db-corruption-detected` notification through the active notification service (or the ntfy fallback) with a one-hour cooldown between repeats until the health state clears.
+  - `POST /api/health/refresh` recomputes the task-ID integrity section on demand and returns the same top-level shape, including the current database corruption fields.
   - No authentication required
 
 ### Custom Provider endpoints
@@ -1046,8 +1054,10 @@ Mesh configuration and post-provision managed-node operations are registered sep
 ### Run Audit API
 The run-audit system records every mutation performed by the engine across four domains:
 - **Database** — task:create, task:update, task:move, etc. Node handoff/recovery emits structured events: `node:handoff:parked` (handoff denied/parked), `node:handoff:reassign-local` (local takeover approved), `node:handoff:reassign-any` (any-healthy takeover approved), and `node:lease:recovered` (abandoned lease cleared and task requeued). Scheduler dispatch contention also emits `scheduler:dispatch-queued-concurrency` (debounced per task+reason): metadata includes `bindingGates` (`maxConcurrent`/`maxWorktrees`/`semaphore`), per-gate `{ used, limit, slack }`, `holders`, and computed `available`.
-- **Git** — worktree:create, commit:create, merge:resolve, merge:audit-failure, and worktrunk lifecycle events (`worktree:worktrunk-install|create|sync|prune|remove`, plus `worktree:worktrunk-fallback`, `worktree:worktrunk-failure`, and `worktree:worktrunk-fallback-native`). Worktrunk events share metadata `{ op, binaryPath?, worktreePath?, durationMs?, exitCode?, stderrPreview?, installSource?, prunedCount? }` with `installSource` (`"release-binary" | "cargo"`) limited to successful `worktree:worktrunk-install` events and `prunedCount` limited to successful prune events when known. `worktree:worktrunk-install` is emitted only for true install actions; cache hits, configured `worktrunk.binaryPath` overrides, and `$PATH` resolutions intentionally remain silent. Dirty post-merge audit outcomes emit `merge:audit-failure` with metadata `{ mode, strategy, action, reason, issueCount, duplicateSubjectCount, touchedFileOverlapCount, verificationPassed, auditTargetLabel }`.
+- **Git** — worktree:create, commit:create, merge:resolve, merge:audit-failure, and worktrunk lifecycle events (`worktree:worktrunk-install|create|sync|prune|remove`, plus `worktree:worktrunk-fallback`, `worktree:worktrunk-failure`, and `worktree:worktrunk-fallback-native`). Worktrunk events share metadata `{ op, binaryPath?, worktreePath?, durationMs?, exitCode?, stderrPreview?, installSource?, prunedCount? }` with `installSource` (`"release-binary" | "cargo"`) limited to successful `worktree:worktrunk-install` events and `prunedCount` limited to successful prune events when known. `worktree:worktrunk-install` is emitted only for true install actions; cache hits, configured `worktrunk.binaryPath` overrides, and `$PATH` resolutions intentionally remain silent. Dirty post-merge audit outcomes emit `merge:audit-failure` with metadata `{ mode, strategy, action, reason, issueCount, duplicateSubjectCount, touchedFileOverlapCount, verificationPassed, auditTargetLabel }`. FN-5279 adds `merge:reuse-handoff-acquired`, `merge:reuse-handoff-refused`, `merge:reuse-handoff-released`, and `merge:reuse-handoff-deferred-to-worktrunk` for task-worktree auto-merge handoff visibility.
 - **Git / `merge:file-scope-violation`** — emitted by the merger when `FileScopeViolationError` aborts a squash. `target` is the task ID; metadata includes `stagedFiles`, `declaredScope`, `resetLabel`, `stagedFileCount`, and `declaredScopeCount`. Consumed by `fileScopeInvariantFailuresPerDay` in `GET /api/health/reliability` (FN-4360).
+- **Git / `merge:no-op-attribution-mismatch`** — emitted by the rebase landed-files attribution guard (FN-5304) when `<rebaseBaseSha>..HEAD` has zero attributable own commits but the source `fusion/<id>` tip still carries attributable own commits. `target` is the task ID; metadata includes `recordedSha`, `rebaseMergeBaseSha`, `sourceBranchRef`, `sourceBranchOwnCommitCount`, and `sourceBranchOwnCommitShas`.
+- **Git / `merge:no-op-attribution-mismatch-skipped`** — emitted when the FN-5304 source-tip guard cannot run because the source branch ref is unavailable (for example already pruned). `target` is the task ID; metadata includes `reason` (`"source-ref-unavailable"`).
 - **Database / `task:auto-recover-misrouted-foreign-commit`** — emitted per dropped misrouted commit during FN-4948 contamination recovery. `target` is the recovering task; metadata carries `{ droppedSha, foreignTaskId, paths }`.
 - **Filesystem** — file:write, prompt:write, attachment:create, etc.
 - **Sandbox** — backend lifecycle events from `SandboxBackend` wiring in executor/merger/routine-runner (`sandbox:prepare`, `sandbox:run`, `sandbox:failure`, `sandbox:fallback`) introduced after FN-4636.
@@ -1381,13 +1391,16 @@ Done-task file-count surfaces intentionally distinguish three data sources:
 
 1. **`/api/tasks/:id/diff` (lineage union, authoritative landed diff)**
    - This route aggregates the task's landed lineage and returns `stats.filesChanged` plus the file list used by the Changes tab.
-   - Task cards and done-task diff views should treat this as the canonical "files changed" source.
+   - Done-task cards and diff views should treat this as the canonical "files changed" source.
 2. **`task.mergeDetails.filesChanged` / `insertions` / `deletions` (final-commit shortstat)**
    - These fields describe only the recorded final merge/squash commit shortstat.
-   - In multi-commit lineages this can undercount the full landed diff and is therefore labeled as commit-level metadata (for example, "Files in merge commit" / "Final commit summary").
-3. **`task.modifiedFiles` (execution-time worktree snapshot)**
+   - On done cards, `mergeDetails.filesChanged` is only a transient loading placeholder until `/api/tasks/:id/diff` resolves.
+3. **`task.mergeDetails.landedFiles` (recorded committed file list)**
+   - When live diff stats are unavailable, done-task cards may fall back to the recorded landed file list length.
+   - This remains committed-diff metadata; transient executor worktree captures are not surfaced as a done-card files chip.
+4. **`task.modifiedFiles` (execution-time worktree snapshot)**
    - Captured in the executor worktree during implementation (`git diff <base>..HEAD` snapshot), before final merge outcomes are known.
-   - Can include transient/superset paths that did not land; UI labels this as "files touched during execution" rather than "files changed" for done tasks.
+   - Can include transient/superset paths that did not land; done-task cards must not use it for the files-changed chip.
 
 **FN-4647 decision:** `mergeDetails` shortstat fields remain commit-level metadata. No additional persisted lineage-level summary field is introduced at this time; done-task landed totals continue to be served live via `/api/tasks/:id/diff`.
 
@@ -1525,7 +1538,7 @@ The GitHub tracking state listener now attaches to every registered project stor
 
 #### WorktreeBackend abstraction
 - Backend contract: `WorktreeBackend` (`packages/engine/src/worktree-backend.ts`, re-exported via `packages/engine/src/worktree-pool.ts`).
-- Implementations: `NativeWorktreeBackend` (Fusion-managed `git worktree` flow) and `WorktrunkWorktreeBackend` (delegates to external `worktrunk` CLI).
+- Implementations: `NativeWorktreeBackend` (Fusion-managed `git worktree` flow) and `WorktrunkWorktreeBackend` (delegates to the external `wt` CLI from [max-sixty/worktrunk](https://github.com/max-sixty/worktrunk)).
 - Backend selection is driven by `worktrunk.enabled`; when enabled, worktrunk-managed layout overrides `worktreesDir` for delegated operations.
 - Worktrunk layout is authoritative on create: after `wt switch --create`, Fusion resolves the actual registered worktree path via `git worktree list --porcelain` and uses that path (instead of assuming `resolveTaskWorktreePath` alignment).
 - Delegated operation surface in the interface: `create`, `sync`, `prune`, `remove` (plus backend path resolution via `resolveWorktreePath`).
@@ -1533,13 +1546,14 @@ The GitHub tracking state listener now attaches to every registered project stor
 - Worktree removal is backend-mediated across merger, self-healing, worktree-pool, executor, and step-session cleanup paths via `removeWorktree(...)` (`WorktreeBackend.remove()`).
 - Self-healing is worktrunk-aware for failure recovery: tasks paused with `pausedReason: "worktrunk_operation_failed"` are explicitly skipped in reclaim sweeps (`self-healing.ts`) until operator intervention.
 - Failure contract: delegated worktrunk errors preserve stderr context (`WorktrunkOperationError`) and are handled by `worktrunk.onFailure` — `"fail"` pauses the task, while `"fallback-native"` retries on the native backend and emits one-shot fallback telemetry.
+- Install contract: Fusion only auto-installs from a source-of-truth manifest. The shipped placeholder manifest intentionally stays in `upstream-pending-verification` until a human verifies upstream asset URLs and checksums, so install attempts fail closed rather than guessing release metadata.
 
 #### Stale `index.lock` recovery on worktree create
 - Native worktree create paths now classify `git worktree add` failures containing `.../index.lock: File exists` before falling back to generic branch-conflict handling.
 - Classifier gates are deterministic: the lock must exist, be older than the stale threshold (default 30s), not be owned by a live `activeSessionRegistry` session, and resolve to a normalized lock/worktree path.
 - If classified `stale`, Fusion removes the lock and retries create exactly once.
 - If staleness cannot be proven, lock removal is refused and the flow raises `StaleWorktreeIndexLockError` so task failure messaging can escalate with manual remediation guidance.
-- Run-audit events emitted by the create path: `worktree:stale-lock-detected`, `worktree:stale-lock-recovered`, `worktree:stale-lock-recovery-failed`, `worktree:stale-lock-refused`.
+- Run-audit events emitted by the create path: `worktree:stale-lock-detected`, `worktree:stale-lock-recovered`, `worktree:stale-lock-recovery-failed`, `worktree:stale-lock-refused`, `worktree:stale-registration-detected`, `worktree:stale-registration-recovered`, `worktree:stale-registration-recovery-failed`.
 
 #### Branch-conflict inspection and auto-reclaim
 - `inspectBranchConflict` classifies branch collisions as `stale`, `stale-resolved`, `reclaimable`, or `live-foreign`.
@@ -1550,6 +1564,7 @@ The GitHub tracking state listener now attaches to every registered project stor
 ### Merge strategies
 - Setting type: `MergeStrategy = "direct" | "pull-request"` (`types.ts`)
 - `aiMergeTask()` in `merger.ts` performs merge flow
+- FN-5279 adds `mergeIntegrationWorktree` for auto-merge only. Default `reuse-task-worktree` hands merger ownership from executor to the merger inside the task worktree after five gates (clean tree, expected branch, no live executor session, canonical branch/worktree binding, lease handoff). Refusals emit `merge:reuse-handoff-refused`, leave the task in `in-review`, and do **not** silently fall back to project-root merge mode. `cwd-main` preserves the legacy project-root path. When `worktrunk.enabled=true`, worktrunk-managed merge/worktree behavior still wins and the handoff path emits a defer event instead of taking over.
 - `merger.ts` also exposes a test-only `__test__` helper object for internal merger unit/integration coverage (for example autostash orphan cleanup behavior)
 - Supports workflow-step execution after merge (post-merge phase)
 - Deterministic verification now runs a bootstrap preamble (`node scripts/ensure-test-artifacts.mjs`) before configured `testCommand`/`buildCommand`, then self-heals Vite `Failed to resolve entry for package "@fusion/..."` workspace-entry faults by rebuilding the missing package once and retrying the failed command. If that retry still reports the same missing-entry fault, merger raises a typed environment fault and `ProjectEngine` leaves the task in-review (no verificationFailureCount increment or in-progress bounce) so the next recovery sweep can retry after other runs rebuild artifacts.
@@ -1575,9 +1590,16 @@ The GitHub tracking state listener now attaches to every registered project stor
 - Existing task-scoped surfacing remains: merger warnings still log to `mergerLog.warn` and `store.logEntry` for the active merge task.
 - New global surfacing adds `merger:autostashOrphans` TaskStore events, engine helpers (`listAutostashOrphans`, `getAutostashDiff`, `applyAutostashBySha`, `dropAutostashBySha`), and dashboard API endpoints under `/api/stash-recovery/*`.
 - `merger:autostashOrphans` records now include provenance fields (`sourcePhase`, `detectedByTaskId`, `detectedAt`) so operators can attribute leftovers to the merge phase and surfacing task/session.
-- `ProjectEngine` consumes the orphan event stream and auto-creates deduplicated `sourceType: "recovery"` follow-up tasks keyed by `sourceParentTaskId` for live leftovers, so repeated detections do not spam the board.
+- `ProjectEngine` consumes the orphan event stream and auto-creates deduplicated `sourceType: "recovery"` follow-up tasks for live leftovers, so repeated detections do not spam the board.
 - Dashboard operators can inspect orphan counts, review diffs, apply stashes, and explicitly drop entries with confirmation.
 - Decision: recovery stays user-gated. Auto-apply was rejected because clean-tree checks are racy, stash placement is ambiguous after source task merge, and apply conflicts can produce hard-to-untangle state. `sweepAutostashOrphans` continues to auto-drop only subsumed entries while preserving live developer work.
+
+#### Automated follow-up dedup (FN-5232)
+- Engine-side automated follow-up creation now routes through `packages/engine/src/verification-followup-dedup.ts` instead of calling `TaskStore.createTask()` directly from recovery/eval/PR-comment paths.
+- Verification-style follow-ups stamp `sourceMetadata.verificationFailureSignature`, a deterministic SHA-256 digest over `{ lane, sorted failing test basenames }` (or `lane|no-files` when no files can be parsed). Open matches reuse the existing task and append at most one `[verification recurrence]` log entry per hour; closed/done/archived matches within 24 hours create a fresh task with `sourceMetadata.supersedesTaskId` pointing at the prior task.
+- Non-verification automated follow-ups can supply `extraMatchKeys` (for example eval `suggestionId` or PR `prNumber`) so dedup stays deterministic even when no test-file signature exists.
+- This layer composes with FN-4892 same-agent intake dedup in `@fusion/core`: engine dedup prevents repeated automated recovery spam up front, while store-side same-agent dedup still archives newly-created near-duplicates when `sourceAgentId` is present.
+- Run-audit emits `verification:followup-created` and `verification:followup-deduped` database events with hashed signature metadata only; no raw stdout/stderr or secret material is persisted in the audit payload.
 
 ### Conflict handling
 `merger.ts` includes conflict classification and auto-resolution helpers:
@@ -1591,6 +1613,7 @@ The GitHub tracking state listener now attaches to every registered project stor
 - Badge snapshots are streamed via `/api/ws` and `useBadgeWebSocket.ts`
 
 #### PR checks API
+- Tasks now support multiple linked PRs via `Task.prInfos` (canonical list). `Task.prInfo` remains as a back-compat primary mirror and should be treated as `prInfos[0]` when present.
 - `GET /api/tasks/:id/pr/checks` returns live PR check data for the task PR:
   - `checks: PrCheckStatus[]` (required and non-required checks)
   - `rollup: "success" | "pending" | "failure" | "unknown"` derived from **required checks only** (merge-readiness semantics)
@@ -1600,9 +1623,10 @@ The GitHub tracking state listener now attaches to every registered project stor
   - `429` when `githubRateLimiter` denies the repo request window, including `retryAfter`/`resetAt` details
 
 #### PR review ingestion and auto-transition
-- `POST /api/tasks/:id/pr/refresh` and background `refreshPrInBackground()` call `getPrReviewSnapshot()` and sync review data into task comments with idempotency on `(source, externalId)`.
+- `POST /api/tasks/:id/pr/refresh` and background `refreshPrInBackground()` refresh every linked PR (`prInfos`) in bounded batches, return a primary entry plus `all` entries, then sync review data into task comments with idempotency on `(source, externalId)`.
 - Synced comment sources are `github-review` and `github-review-comment`; refinement auto-creation is skipped for these external comments.
 - `GET /api/tasks/:id/pr/reviews` returns the live GitHub review snapshot plus the Fusion-threaded stored review comments for the task.
+- `POST /api/tasks/:id/pr/:number/unlink` removes only the task↔PR link (does not close the PR) and returns the updated `prInfos` list.
 - When review decision transitions to `CHANGES_REQUESTED` while the task is in `in-review`, Fusion auto-moves the task back to `todo` with `preserveProgress` and `preserveWorktree`, writes a `review-feedback` task document, and records run-audit mutation `pr:changes-requested-auto-move`.
 
 ---

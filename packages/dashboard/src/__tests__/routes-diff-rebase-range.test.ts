@@ -110,9 +110,9 @@ describe("FN-4754 rebase range diff display", () => {
 
       commitFile(rootDir, "base.txt", "base\n", "base");
       git(rootDir, "checkout", "-b", "task");
-      commitFile(rootDir, "task.txt", "line 1\n", "task-1");
-      commitFile(rootDir, "task.txt", "line 1\nline 2\n", "task-2");
-      commitFile(rootDir, "task2.txt", "line a\n", "task-3");
+      commitFile(rootDir, "task.txt", "line 1\n", "feat(FN-4754): task-1");
+      commitFile(rootDir, "task.txt", "line 1\nline 2\n", "feat(FN-4754): task-2");
+      commitFile(rootDir, "task2.txt", "line a\n", "feat(FN-4754): task-3");
 
       git(rootDir, "checkout", "main");
       commitFile(rootDir, "main.txt", "main advance\n", "main-advance");
@@ -164,7 +164,7 @@ describe("FN-4754 rebase range diff display", () => {
 
       commitFile(rootDir, "base.txt", "base\n", "base");
       git(rootDir, "checkout", "-b", "task");
-      const commitSha = commitFile(rootDir, "task.txt", "task\n", "task-1");
+      const commitSha = commitFile(rootDir, "task.txt", "task\n", "feat(FN-4754): task-1");
       git(rootDir, "checkout", "main");
       const nonAncestor = commitFile(rootDir, "foreign.txt", "foreign\n", "foreign");
 

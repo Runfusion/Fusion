@@ -42,7 +42,7 @@ function createStore(tasks: TaskMap, settings: Partial<Settings> = {}): TaskStor
     enginePaused: false,
     maintenanceIntervalMs: 0,
     taskStuckTimeoutMs: 60_000,
-    autoMerge: false,
+    autoMerge: true,
     ...settings,
   } as Settings;
 
@@ -254,7 +254,7 @@ describeIfGit("SelfHealingManager recoverAlreadyMergedReviewTasks (real git)", (
     git(repo, `git worktree add ${JSON.stringify(worktreePath)} fusion/fn-test-misbound`);
 
     const tasks: TaskMap = new Map([
-      ["FN-TEST-MISBOUND", makeTask({ id: "FN-TEST-MISBOUND", column: "in-review", paused: false, baseBranch: "main", branch: "fusion/fn-test-misbound", worktree: worktreePath })],
+      ["FN-TEST-MISBOUND", makeTask({ id: "FN-TEST-MISBOUND", column: "in-review", status: "failed", paused: false, baseBranch: "main", branch: "fusion/fn-test-misbound", worktree: worktreePath })],
     ]);
     const store = createStore(tasks);
     const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
@@ -302,12 +302,12 @@ describeIfGit("SelfHealingManager recoverAlreadyMergedReviewTasks (real git)", (
       ["FN-TEST-5", makeTask({ id: "FN-TEST-5", column: "in-review", status: "failed", mergeRetries: 3, paused: false, baseBranch: "main", branch: "fusion/fn-test-5" })],
     ]);
 
-    const globalPausedStore = createStore(tasks, { globalPause: true, enginePaused: false });
+    const globalPausedStore = createStore(tasks, { autoMerge: true, globalPause: true, enginePaused: false });
     const globalPausedManager = new SelfHealingManager(globalPausedStore, { rootDir: repo, getExecutingTaskIds: () => new Set() });
     await globalPausedManager.recoverAlreadyMergedReviewTasks();
     expect(globalPausedStore.listTasks).not.toHaveBeenCalled();
 
-    const enginePausedStore = createStore(tasks, { globalPause: false, enginePaused: true });
+    const enginePausedStore = createStore(tasks, { autoMerge: true, globalPause: false, enginePaused: true });
     const enginePausedManager = new SelfHealingManager(enginePausedStore, { rootDir: repo, getExecutingTaskIds: () => new Set() });
     await enginePausedManager.recoverAlreadyMergedReviewTasks();
     expect(enginePausedStore.listTasks).not.toHaveBeenCalled();

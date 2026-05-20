@@ -98,6 +98,8 @@ describe("inReviewStallCopy", () => {
     ["merge-blocker", undefined, true],
     ["merge-retries-exhausted", "merging", true],
     ["transient-merge-status-no-owner", "merging", true],
+    ["no-worktree-no-merge-confirmed", undefined, false],
+    ["no-worktree-no-merge-confirmed", "merging", false],
   ] as const)("badge visibility for %s with status %s is %s", (code, status, expected) => {
     expect(
       shouldShowInReviewStallBadge({

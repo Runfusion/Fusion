@@ -1,6 +1,8 @@
 import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 
+import { canonicalFusionBranchName } from "./worktree-names.js";
+
 const execAsync = promisify(exec);
 
 export type AlreadyMergedDetectionStrategy = "trailer" | "ancestry" | "patch-id" | "tree-equal";
@@ -82,7 +84,7 @@ export async function findAlreadyMergedTaskCommit(
   }
 
   let branchTip: string | null = null;
-  const branchName = taskBranch || `fusion/${taskId.toLowerCase()}`;
+  const branchName = taskBranch || canonicalFusionBranchName(taskId);
   try {
     branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
       cwd: repoDir,
@@ -182,7 +184,7 @@ export async function findAlreadyMergedTaskCommit(
   }
 
   try {
-    const treeBranchName = taskBranch || `fusion/${taskId.toLowerCase()}`;
+    const treeBranchName = taskBranch || canonicalFusionBranchName(taskId);
     execSync(`git rev-parse --verify ${shellQuote(treeBranchName)}`, {
       cwd: repoDir,
       encoding: "utf-8",

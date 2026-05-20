@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, chmodSync, readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
@@ -10,6 +11,106 @@ function git(dir: string, cmd: string): string {
 }
 
 describe("pre-commit identity guard (real git)", () => {
+  it("uses per-worktree metadata so a shared stale hook still allows sibling owner commits", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-5266-precommit-"));
+    const staleDir = join(rootDir, "wt-stale");
+    const activeDir = join(rootDir, "wt-active");
+
+    try {
+      git(rootDir, "git init -b main");
+      git(rootDir, 'git config user.email "test@example.com"');
+      git(rootDir, 'git config user.name "Test"');
+      writeFileSync(join(rootDir, "README.md"), "init\n");
+      git(rootDir, "git add README.md && git commit -m 'init'");
+
+      git(rootDir, "git worktree add -b fusion/fn-stale wt-stale HEAD");
+      await installTaskWorktreeIdentityGuard({ worktreePath: staleDir, taskId: "FN-STALE" });
+
+      git(rootDir, "git worktree add -b fusion/fn-active wt-active HEAD");
+      await installTaskWorktreeIdentityGuard({ worktreePath: activeDir, taskId: "FN-ACTIVE" });
+
+      const staleHookRawPath = git(staleDir, "git rev-parse --git-path hooks/pre-commit");
+      const staleHookPath = isAbsolute(staleHookRawPath) ? staleHookRawPath : resolve(staleDir, staleHookRawPath);
+      const activeHookRawPath = git(activeDir, "git rev-parse --git-path hooks/pre-commit");
+      const activeHookPath = isAbsolute(activeHookRawPath) ? activeHookRawPath : resolve(activeDir, activeHookRawPath);
+      expect(activeHookPath).toBe(staleHookPath);
+
+      const activeTaskIdPathRaw = git(activeDir, "git rev-parse --git-path fusion-task-id");
+      const activeTaskIdPath = isAbsolute(activeTaskIdPathRaw) ? activeTaskIdPathRaw : resolve(activeDir, activeTaskIdPathRaw);
+      // Mirror the common on-disk state where fusion-task-id preserves the original uppercase task id.
+      await writeFile(activeTaskIdPath, "FN-ACTIVE\n", "utf-8");
+      expect(readFileSync(activeTaskIdPath, "utf-8")).toBe("FN-ACTIVE\n");
+
+      writeFileSync(join(activeDir, "active.txt"), "active branch\n");
+      git(activeDir, "git add active.txt");
+      git(activeDir, "git commit -m 'feat(FN-ACTIVE): owner commit'");
+
+      writeFileSync(join(staleDir, "stale.txt"), "stale branch\n");
+      git(staleDir, "git add stale.txt");
+      git(staleDir, "git commit -m 'feat(FN-STALE): owner commit'");
+
+      git(activeDir, "git checkout -b fusion/fn-other");
+      writeFileSync(join(activeDir, "other.txt"), "other branch\n");
+      git(activeDir, "git add other.txt");
+
+      const blockedCommit = spawnSync("git", ["commit", "-m", "feat(FN-ACTIVE): blocked"], {
+        cwd: activeDir,
+        encoding: "utf-8",
+      });
+      expect(blockedCommit.status).not.toBe(0);
+      expect(`${blockedCommit.stderr}${blockedCommit.stdout}`).toContain(
+        "fusion: refusing commit — worktree owns FN-ACTIVE but HEAD is fusion/fn-other",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("FN-5271 accepts canonical lowercase task branches when fusion-task-id casing drifts, while still blocking other branches", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "fn-5271-precommit-"));
+    const worktreeDir = join(rootDir, "wt-fn-5271");
+
+    try {
+      git(rootDir, "git init -b main");
+      git(rootDir, 'git config user.email "test@example.com"');
+      git(rootDir, 'git config user.name "Test"');
+      writeFileSync(join(rootDir, "README.md"), "init\n");
+      git(rootDir, "git add README.md && git commit -m 'init'");
+
+      git(rootDir, "git worktree add -b fusion/fn-5271 wt-fn-5271 HEAD");
+      await installTaskWorktreeIdentityGuard({ worktreePath: worktreeDir, taskId: "FN-5271" });
+
+      const taskIdPathRaw = git(worktreeDir, "git rev-parse --git-path fusion-task-id");
+      const taskIdPath = isAbsolute(taskIdPathRaw) ? taskIdPathRaw : resolve(worktreeDir, taskIdPathRaw);
+      await writeFile(taskIdPath, "FN-5210\n", "utf-8");
+
+      git(worktreeDir, "git checkout -B fusion/fn-5210");
+      writeFileSync(join(worktreeDir, "owner.txt"), "owner branch\n");
+      git(worktreeDir, "git add owner.txt");
+
+      const allowedCommit = spawnSync("git", ["commit", "-m", "fix(FN-5210): allow canonical lowercase branch"], {
+        cwd: worktreeDir,
+        encoding: "utf-8",
+      });
+      expect(allowedCommit.status).toBe(0);
+
+      git(worktreeDir, "git checkout -B fusion/fn-other");
+      writeFileSync(join(worktreeDir, "other.txt"), "other branch\n");
+      git(worktreeDir, "git add other.txt");
+
+      const blockedCommit = spawnSync("git", ["commit", "-m", "fix(FN-5210): blocked other branch"], {
+        cwd: worktreeDir,
+        encoding: "utf-8",
+      });
+      expect(blockedCommit.status).not.toBe(0);
+      expect(`${blockedCommit.stderr}${blockedCommit.stdout}`).toContain(
+        "fusion: refusing commit — worktree owns FN-5210 but HEAD is fusion/fn-other",
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("blocks misbound task-branch commits while allowing owner and step branches", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "fn-4948-precommit-"));
     const worktreeDir = join(rootDir, "wt-fn-a");
@@ -74,5 +175,5 @@ describe("pre-commit identity guard (real git)", () => {
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

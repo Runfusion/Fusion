@@ -1890,8 +1890,28 @@ describe("MissionStore", () => {
       expect(task!.description).toBe("Custom description for the task");
     });
 
-    it("emits feature:linked event", async () => {
+    it("links duplicate feature triage calls to the same canonical task", async () => {
       const { TaskStore } = await import("../store.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission" });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const featureA = msWithTs.addFeature(slice.id, { title: "Feature A" });
+      const featureB = msWithTs.addFeature(slice.id, { title: "Feature B" });
+
+      const first = await msWithTs.triageFeature(featureA.id, "Same Task", "Same deterministic description");
+      const second = await msWithTs.triageFeature(featureB.id, "Same Task", "Same deterministic description");
+
+      expect(first.taskId).toBeTruthy();
+      expect(second.taskId).toBe(first.taskId);
+
+      const tasks = await ts.listTasks({ slim: true });
+      expect(tasks).toHaveLength(1);
+    });
+
+    it("emits feature:linked event", async () => {      const { TaskStore } = await import("../store.js");
       const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
       const msWithTs = ts.getMissionStore();
 
@@ -2801,7 +2821,7 @@ describe("MissionStore", () => {
 
   describe("Loop State & Validator Run Schema (v31)", () => {
     it("schema version is 40 after migration", () => {
-      expect(db.getSchemaVersion()).toBe(85);
+      expect(db.getSchemaVersion()).toBe(89);
     });
 
     it("mission_features table has loop state columns", () => {

@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import { TaskStore } from "@fusion/core";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
 
+type GitHubIssueActionPayload = Record<string, unknown>;
+type StoreEventApi = {
+  on: (event: string, listener: (payload: GitHubIssueActionPayload) => void) => void;
+  off: (event: string, listener: (payload: GitHubIssueActionPayload) => void) => void;
+};
+
 const { mockSetIssueState, mockGetIssue, mockResolveGithubTrackingAuth } = vi.hoisted(() => ({
   mockSetIssueState: vi.fn(),
   mockGetIssue: vi.fn(),
@@ -27,8 +33,44 @@ function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "kb-dashboard-github-tracking-delete-test-"));
 }
 
-async function flushAsync(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+function waitForGithubIssueAction(
+  store: TaskStore,
+  predicate: (payload: GitHubIssueActionPayload) => boolean,
+  { timeoutMs = 2_000, timeoutMessage = "Timed out waiting for github-issue:action event" } = {},
+): Promise<GitHubIssueActionPayload> {
+  const eventStore = store as unknown as StoreEventApi;
+
+  return new Promise((resolve, reject) => {
+    const onAction = (payload: GitHubIssueActionPayload) => {
+      if (!predicate(payload)) {
+        return;
+      }
+
+      clearTimeout(timeoutId);
+      eventStore.off("github-issue:action", onAction);
+      resolve(payload);
+    };
+
+    const timeoutId = setTimeout(() => {
+      eventStore.off("github-issue:action", onAction);
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    eventStore.on("github-issue:action", onAction);
+  });
+}
+
+async function expectNoGithubIssueAction(
+  store: TaskStore,
+  predicate: (payload: GitHubIssueActionPayload) => boolean,
+  timeoutMessage: string,
+): Promise<void> {
+  await expect(
+    waitForGithubIssueAction(store, predicate, {
+      timeoutMs: 150,
+      timeoutMessage,
+    }),
+  ).rejects.toThrow(timeoutMessage);
 }
 
 describe("github tracking delete flow", () => {
@@ -51,7 +93,6 @@ describe("github tracking delete flow", () => {
 
   afterEach(async () => {
     stateService.stop();
-    await flushAsync();
     store.close();
     await rm(rootDir, { recursive: true, force: true });
     await rm(globalDir, { recursive: true, force: true });
@@ -71,8 +112,14 @@ describe("github tracking delete flow", () => {
       createdAt: new Date().toISOString(),
     });
 
+    const closeAction = waitForGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "success",
+      { timeoutMessage: `Timed out waiting for close action for deleted task ${task.id}` },
+    );
+
     await store.deleteTask(task.id);
-    await flushAsync();
+    await closeAction;
 
     expect(mockSetIssueState).toHaveBeenCalledTimes(1);
     expect(mockSetIssueState).toHaveBeenCalledWith("octocat", "hello-world", 7, "closed", "not_planned");
@@ -85,7 +132,11 @@ describe("github tracking delete flow", () => {
     });
 
     await store.deleteTask(task.id);
-    await flushAsync();
+    await expectNoGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id,
+      `Unexpected github-issue:action event for tracking-disabled deleted task ${task.id}`,
+    );
 
     expect(mockSetIssueState).not.toHaveBeenCalled();
   });
@@ -97,7 +148,11 @@ describe("github tracking delete flow", () => {
     });
 
     await store.deleteTask(task.id);
-    await flushAsync();
+    await expectNoGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id,
+      `Unexpected github-issue:action event for deleted task without linked issue ${task.id}`,
+    );
 
     expect(mockSetIssueState).not.toHaveBeenCalled();
   });
@@ -124,8 +179,15 @@ describe("github tracking delete flow", () => {
     process.on("unhandledRejection", onUnhandledRejection);
 
     try {
+      const failedCloseAction = waitForGithubIssueAction(
+        store,
+        (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "failed",
+        { timeoutMessage: `Timed out waiting for failed close action for deleted task ${task.id}` },
+      );
+
       await store.deleteTask(task.id);
-      await flushAsync();
+      await failedCloseAction;
+
       expect(mockSetIssueState).toHaveBeenCalledWith("octocat", "hello-world", 8, "closed", "not_planned");
       expect(unhandledRejections).toHaveLength(0);
     } finally {
@@ -148,15 +210,24 @@ describe("github tracking delete flow", () => {
     });
 
     const events: Array<Record<string, unknown>> = [];
-    (store as unknown as { on: (event: string, listener: (payload: Record<string, unknown>) => void) => void }).on(
-      "github-issue:action",
-      (payload) => {
-        events.push(payload);
-      },
-    );
+    const eventStore = store as unknown as StoreEventApi;
+    const onAction = (payload: Record<string, unknown>) => {
+      events.push(payload);
+    };
+    eventStore.on("github-issue:action", onAction);
 
-    await store.deleteTask(task.id);
-    await flushAsync();
+    try {
+      const closeAction = waitForGithubIssueAction(
+        store,
+        (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "success",
+        { timeoutMessage: `Timed out waiting for emitted close action for deleted task ${task.id}` },
+      );
+
+      await store.deleteTask(task.id);
+      await closeAction;
+    } finally {
+      eventStore.off("github-issue:action", onAction);
+    }
 
     expect(events).toContainEqual({
       taskId: task.id,

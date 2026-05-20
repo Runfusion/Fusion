@@ -34,16 +34,16 @@ Auth/ownership parity between settings-sync and secrets-sync routes is **impleme
 
 ## 4) Multi-node Behavior
 - Shared passphrase requirement is implementation-enforced via local reserved secret lookup (`getSyncPassphrase`) and unwrap failure semantics (`packages/core/src/secrets-sync-passphrase.ts:9-24`, `packages/core/src/secrets-sync.ts:107-110`). Docs state both nodes must share passphrase (`docs/secrets.md:115-121`).
-- Planning expected a `secretsSyncPassphrase` settings key, but shipped implementation uses reserved secret `__sync_passphrase__` + `getSyncPassphrase` instead (`packages/core/src/secrets-sync-passphrase.ts:1-24`). `docs/settings-reference.md` still labels `secretsSyncPassphrase` as planned (`docs/settings-reference.md:91,198`).
+- Planning expected a writable settings key, but shipped implementation stores the passphrase only in reserved secret `__sync_passphrase__` and now exposes state through read-only `GlobalSettings.secretsSyncPassphraseConfigured` (`packages/core/src/secrets-sync-passphrase.ts:1-24`).
 - No dedicated dashboard passphrase UX surfaced in routes/components reviewed; configuration remains implicit through secret storage primitives, so multi-node setup discoverability is partial.
 - Pull path handles remote envelope version mismatch because `unwrapSecretsBundle` throws `version-mismatch` on non-v1 (`packages/core/src/secrets-sync.ts:82-84`) and route maps `SecretsSyncError.code` to 400 (`register-secrets-sync-routes.ts:139-144`).
 - Audit payload hygiene: push logs only `{ nodeId, recordCount }` (`register-secrets-sync-routes.ts:92`); pull logs `{ nodeId, key, scope }` (`register-secrets-sync-routes.ts:180`); inbound receive logs `{ nodeId, key, scope }` (`register-secrets-sync-inbound-routes.ts:155-159`). No plaintext/ciphertext/passphrase fields are emitted.
-- `secretsSyncPassphrase` does not cross wire in route payload construction: outbound push sends envelope + `sourceNodeId`/`exportedAt` only (`register-secrets-sync-routes.ts:83-89`); inbound export returns envelope + metadata (`register-secrets-sync-inbound-routes.ts:209-213`). Passphrase itself is only used locally in wrap/unwrap calls.
+- Sync passphrase material does not cross wire in route payload construction: outbound push sends envelope + `sourceNodeId`/`exportedAt` only (`register-secrets-sync-routes.ts:83-89`); inbound export returns envelope + metadata (`register-secrets-sync-inbound-routes.ts:209-213`). Passphrase material is only used locally in wrap/unwrap calls.
 
 ## 5) Gaps & Follow-ups
 - [FN-4981] Add secrets-sync tests for outbound missing-remote-apiKey failure paths for push/pull. ✅ Landed (routes-secrets-sync now covers undefined/""/null apiKey plus guard-ordering invariant).
 - [FN-4980] Add secrets-sync tests for full inbound auth-cascade on `GET /api/secrets/sync-export`.
-- [FN-4982] Update stale settings-reference rows that still mark `secretsSyncPassphrase` as planned.
+- [FN-4982/FN-5035] Reconciled settings-reference docs with implementation: read-only global probe (`secretsSyncPassphraseConfigured`) + reserved-secret storage model.
 - [FN-4984] Add/clarify dashboard UX for configuring the shared sync passphrase (or equivalent guided setup).
 
 ## 6) References

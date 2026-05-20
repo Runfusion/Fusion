@@ -37,6 +37,7 @@ function createStore(task: Task, settings: Partial<Settings>): TaskStore {
   let currentTask = { ...task };
   const mergedSettings: Settings = {
     ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     mergeStrategy: "direct",
     directMergeCommitStrategy: "auto",
     autoMerge: true,

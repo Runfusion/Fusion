@@ -20,6 +20,14 @@ function normalizeTask(task: Task): Task {
   };
 }
 
+function isSoftDeleted(task: Task): boolean {
+  return Boolean(task.deletedAt);
+}
+
+function filterActiveTasks(tasks: Task[]): Task[] {
+  return tasks.filter((task) => !isSoftDeleted(task));
+}
+
 /**
  * Compare two ISO timestamp strings.
  * Returns positive if a is newer than b, negative if b is newer, 0 if equal.
@@ -105,7 +113,7 @@ export function useTasks(options?: UseTasksOptions) {
       loggedTaskCacheHitProjects.add(projectId);
       console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
     }
-    return Array.isArray(cachedTasks) ? cachedTasks.map(normalizeTask) : [];
+    return Array.isArray(cachedTasks) ? filterActiveTasks(cachedTasks.map(normalizeTask)) : [];
   });
   const [isStale, setIsStale] = useState(true);
   const [lastRefreshErrorAt, setLastRefreshErrorAt] = useState<number | null>(null);
@@ -157,7 +165,7 @@ export function useTasks(options?: UseTasksOptions) {
       if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
         return;
       }
-      const normalizedFetchedTasks = fetchedTasks.map(normalizeTask);
+      const normalizedFetchedTasks = filterActiveTasks(fetchedTasks.map(normalizeTask));
       setTasks(normalizedFetchedTasks);
       if (requestProjectId) {
         const cachedPayload = fetchedTasks.length > 500 ? fetchedTasks.slice(0, 500) : fetchedTasks;
@@ -217,7 +225,7 @@ export function useTasks(options?: UseTasksOptions) {
         loggedTaskCacheHitProjects.add(projectId);
         console.info("[swr-cache] hit tasks=", cachedTasks.length, "projectId=", projectId);
       }
-      setTasks(cachedTasks.map(normalizeTask));
+      setTasks(filterActiveTasks(cachedTasks.map(normalizeTask)));
     }
     setIsStale(true);
   }, [projectId]);
@@ -303,6 +311,11 @@ export function useTasks(options?: UseTasksOptions) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
+      if (isSoftDeleted(task)) {
+        setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
+        pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:created", id: task.id });
+        return;
+      }
       setTasks((prev) => {
         const existingIndex = prev.findIndex((candidate) => candidate.id === task.id);
         if (existingIndex === -1) {
@@ -333,6 +346,11 @@ export function useTasks(options?: UseTasksOptions) {
       }
       const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
+      if (isSoftDeleted(normalizedTask)) {
+        setTasks((prev) => prev.filter((candidate) => candidate.id !== normalizedTask.id));
+        pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:moved", id: normalizedTask.id });
+        return;
+      }
       const movedTask = { ...normalizedTask, column: normalizeColumn(to, normalizedTask.column) };
       setTasks((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === movedTask.id);
@@ -358,6 +376,12 @@ export function useTasks(options?: UseTasksOptions) {
         return;
       }
       const incoming = normalizeTask(JSON.parse(e.data) as Task);
+      if (isSoftDeleted(incoming)) {
+        // FN-5135: treat deletedAt-bearing task:updated payloads as delete-equivalent.
+        setTasks((prev) => prev.filter((candidate) => candidate.id !== incoming.id));
+        pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:updated", id: incoming.id });
+        return;
+      }
       setTasks((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === incoming.id);
         if (existingIndex === -1) {
@@ -397,6 +421,11 @@ export function useTasks(options?: UseTasksOptions) {
       }
       const { task }: { task: Task } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
+      if (isSoftDeleted(normalizedTask)) {
+        setTasks((prev) => prev.filter((candidate) => candidate.id !== normalizedTask.id));
+        pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:merged", id: normalizedTask.id });
+        return;
+      }
       const mergedTask = { ...normalizedTask, column: "done" as Column };
       setTasks((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === mergedTask.id);
@@ -462,7 +491,11 @@ export function useTasks(options?: UseTasksOptions) {
 
   const deleteTask = useCallback(async (
     id: string,
-    options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction },
+    options?: {
+      removeDependencyReferences?: boolean;
+      removeLineageReferences?: boolean;
+      githubIssueAction?: GithubIssueAction;
+    },
   ): Promise<Task> => {
     return normalizeTask(await api.deleteTask(id, projectId, options));
   }, [projectId]);
@@ -519,8 +552,11 @@ export function useTasks(options?: UseTasksOptions) {
     }
   }, [projectId]);
 
-  const archiveTask = useCallback(async (id: string): Promise<Task> => {
-    const task = normalizeTask(await api.archiveTask(id, projectId));
+  const archiveTask = useCallback(async (
+    id: string,
+    options?: { removeLineageReferences?: boolean },
+  ): Promise<Task> => {
+    const task = normalizeTask(await api.archiveTask(id, projectId, options));
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? task : t))
     );
@@ -557,7 +593,7 @@ export function useTasks(options?: UseTasksOptions) {
       return;
     }
 
-    const normalizedTasks = incomingTasks.map(normalizeTask);
+    const normalizedTasks = filterActiveTasks(incomingTasks.map(normalizeTask));
     setTasks((prev) => {
       let next = prev;
 

@@ -15,16 +15,37 @@ export const WORKTRUNK_DOWNLOAD_TIMEOUT_MS = 60_000;
 export const WORKTRUNK_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
 export const WORKTRUNK_CARGO_TIMEOUT_MS = 10 * 60_000;
 export const WORKTRUNK_INSTALL_DIR = path.join(os.homedir(), ".fusion", "bin");
-export const WORKTRUNK_INSTALL_PATH = path.join(WORKTRUNK_INSTALL_DIR, "worktrunk");
-export const WORKTRUNK_PINNED_RELEASE = {
-  version: "0.4.2",
-  assets: {
-    unknown: {
-      url: "https://github.com/worktrunk/worktrunk/releases/download/v0.4.2/worktrunk.tar.gz",
-      sha256: "",
-    },
-  },
-} as const;
+export const WORKTRUNK_BINARY_NAME = "wt";
+export const WORKTRUNK_INSTALL_PATH = path.join(WORKTRUNK_INSTALL_DIR, WORKTRUNK_BINARY_NAME);
+
+export interface WorktrunkReleaseAsset {
+  url: string;
+  sha256: string;
+}
+
+export interface WorktrunkReleaseManifest {
+  source: "upstream-pending-verification" | "upstream-verified";
+  version: string | null;
+  verifiedAt: string | null;
+  assets: Record<string, WorktrunkReleaseAsset>;
+}
+
+export const WORKTRUNK_PINNED_RELEASE: WorktrunkReleaseManifest = {
+  source: "upstream-pending-verification",
+  version: null,
+  verifiedAt: null,
+  assets: {},
+};
+
+export interface WorktrunkManifestValidationError {
+  ok: false;
+  missingFields: Array<"source" | "version" | "verifiedAt" | "assets" | `assets.${string}.url` | `assets.${string}.sha256`>;
+  reason: string;
+}
+
+export type WorktrunkManifestValidationResult =
+  | { ok: true }
+  | WorktrunkManifestValidationError;
 
 const AUTO_INSTALL_DISABLED_MESSAGE =
   "worktrunk auto-install path disabled; set worktrunk.binaryPath or install worktrunk on PATH";
@@ -45,6 +66,11 @@ export class WorktrunkInstallDeniedError extends Error {
   }
 }
 
+/**
+ * Known `stage` values on details:
+ * - `auto-install-disabled`
+ * - `manifest-unverified`
+ */
 export class WorktrunkInstallFailedError extends Error {
   constructor(message: string, details?: Record<string, unknown>) {
     super(message);
@@ -54,6 +80,55 @@ export class WorktrunkInstallFailedError extends Error {
 }
 
 const resolveCache = new Map<string, { inputBinaryPath: string | null; path: string; resolvedAt: number }>();
+
+function worktrunkInstallDedupeKey(): string {
+  return WORKTRUNK_PINNED_RELEASE.version
+    ? `worktrunk_install:${WORKTRUNK_PINNED_RELEASE.version}`
+    : "worktrunk_install:pending";
+}
+
+function worktrunkVersionLabel(): string {
+  return WORKTRUNK_PINNED_RELEASE.version ?? "pending";
+}
+
+export function validateWorktrunkManifest(input: unknown): WorktrunkManifestValidationResult {
+  const missingFields: WorktrunkManifestValidationError["missingFields"] = [];
+  if (!input || typeof input !== "object") {
+    return {
+      ok: false,
+      missingFields: ["source", "version", "verifiedAt", "assets"],
+      reason: "Worktrunk release manifest must be an object with source, version, verifiedAt, and assets fields.",
+    };
+  }
+
+  const record = input as Record<string, unknown>;
+  if (typeof record.source !== "string") missingFields.push("source");
+  if (!(typeof record.version === "string" || record.version === null)) missingFields.push("version");
+  if (!(typeof record.verifiedAt === "string" || record.verifiedAt === null)) missingFields.push("verifiedAt");
+  if (!record.assets || typeof record.assets !== "object" || Array.isArray(record.assets)) {
+    missingFields.push("assets");
+  } else {
+    for (const [assetName, assetValue] of Object.entries(record.assets as Record<string, unknown>)) {
+      const assetRecord = assetValue as Record<string, unknown>;
+      if (!assetValue || typeof assetValue !== "object" || Array.isArray(assetValue) || typeof assetRecord.url !== "string") {
+        missingFields.push(`assets.${assetName}.url`);
+      }
+      if (!assetValue || typeof assetValue !== "object" || Array.isArray(assetValue) || typeof assetRecord.sha256 !== "string") {
+        missingFields.push(`assets.${assetName}.sha256`);
+      }
+    }
+  }
+
+  if (missingFields.length > 0) {
+    return {
+      ok: false,
+      missingFields,
+      reason: `Worktrunk release manifest is missing required fields: ${missingFields.join(", ")}`,
+    };
+  }
+
+  return { ok: true };
+}
 
 function homeKey(settings: WorktrunkSettings): string {
   return `${os.homedir()}::${settings.binaryPath ?? ""}`;
@@ -144,7 +219,7 @@ export async function resolveWorktrunkBinary(opts: {
   }
 
   logger.log("resolve: checking PATH");
-  const onPath = await lookupPath("worktrunk");
+  const onPath = await lookupPath(WORKTRUNK_BINARY_NAME);
   if (onPath) {
     const probe = await probeWorktrunk(onPath);
     if (probe.ok) return { binaryPath: onPath, source: "path" };
@@ -156,8 +231,15 @@ export async function resolveWorktrunkBinary(opts: {
   if (installProbe.ok) return { binaryPath: cachedInstallPath, source: "cached" };
 
   logger.log("resolve: install path disabled; failing");
-  await installWorktrunk(opts);
-  throw new WorktrunkInstallFailedError(AUTO_INSTALL_DISABLED_MESSAGE, { stage: "auto-install-disabled" });
+  try {
+    const installed = await installWorktrunk(opts);
+    return { binaryPath: installed.binaryPath, source: installed.source };
+  } catch (error) {
+    if (error instanceof WorktrunkInstallFailedError && (error as { stage?: string }).stage === "manifest-unverified") {
+      throw error;
+    }
+    throw new WorktrunkInstallFailedError(AUTO_INSTALL_DISABLED_MESSAGE, { stage: "auto-install-disabled" });
+  }
 }
 
 export async function requestWorktrunkInstallApproval(opts: {
@@ -165,7 +247,7 @@ export async function requestWorktrunkInstallApproval(opts: {
   actor: ApprovalRequestActorSnapshot;
   projectId?: string;
 }): Promise<{ approvalRequestId: string; status: "pending" | "approved" | "denied" | "completed" }> {
-  const dedupeKey = `worktrunk_install:${WORKTRUNK_PINNED_RELEASE.version}`;
+  const dedupeKey = worktrunkInstallDedupeKey();
   const existing = opts.approvalStore.findLatestByDedupeKey({
     requesterActorId: opts.actor.actorId,
     taskId: undefined,
@@ -180,7 +262,7 @@ export async function requestWorktrunkInstallApproval(opts: {
     targetAction: {
       category: "network_api",
       action: "worktrunk_install",
-      summary: `Install worktrunk v${WORKTRUNK_PINNED_RELEASE.version}`,
+      summary: `Install worktrunk ${worktrunkVersionLabel() === "pending" ? "(pending verification)" : `v${worktrunkVersionLabel()}`}`,
       resourceType: "binary",
       resourceId: WORKTRUNK_INSTALL_PATH,
       context: {
@@ -258,6 +340,36 @@ export async function installWorktrunk(opts: {
 }): Promise<{ binaryPath: string; source: "installed-release" | "installed-cargo" }> {
   const startedAt = Date.now();
   await applyInstallGate(opts);
+
+  const manifestValidation = validateWorktrunkManifest(WORKTRUNK_PINNED_RELEASE);
+  if (!manifestValidation.ok) {
+    throw new WorktrunkInstallFailedError(manifestValidation.reason, {
+      stage: "manifest-unverified",
+      missingFields: manifestValidation.missingFields,
+    });
+  }
+
+  const assets = Object.entries(WORKTRUNK_PINNED_RELEASE.assets);
+  if (assets.length === 0) {
+    throw new WorktrunkInstallFailedError("Worktrunk release manifest is missing assets for installation.", {
+      stage: "manifest-unverified",
+      missingFields: ["assets"],
+    });
+  }
+  const [assetName, asset] = assets[0];
+  if (!asset.url.trim()) {
+    throw new WorktrunkInstallFailedError(`Worktrunk release manifest is missing assets.${assetName}.url.`, {
+      stage: "manifest-unverified",
+      missingFields: [`assets.${assetName}.url`],
+    });
+  }
+  if (!asset.sha256.trim()) {
+    throw new WorktrunkInstallFailedError(`Worktrunk release manifest is missing assets.${assetName}.sha256.`, {
+      stage: "manifest-unverified",
+      missingFields: [`assets.${assetName}.sha256`],
+    });
+  }
+
   await emitBinaryAudit(opts.auditor, "binary:install-success", {
     source: "installed-release",
     binaryPath: WORKTRUNK_INSTALL_PATH,

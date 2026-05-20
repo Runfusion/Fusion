@@ -140,7 +140,8 @@ export class GitHubTrackingStateService {
 
     const { owner, repo, number } = issue;
     if (!owner || !repo || !number) {
-      await store.logEntry(
+      await this.safeLogDeletedTaskEntry(
+        store,
         event.task.id,
         "Failed to update GitHub tracking issue state",
         "Linked issue metadata is incomplete",
@@ -153,7 +154,7 @@ export class GitHubTrackingStateService {
       const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
       if (!resolution.ok) {
-        await store.logEntry(event.task.id, "Skipped GitHub tracking issue state update", resolution.message);
+        await this.safeLogDeletedTaskEntry(store, event.task.id, "Skipped GitHub tracking issue state update", resolution.message);
         return;
       }
 
@@ -164,7 +165,7 @@ export class GitHubTrackingStateService {
       if (decision.action === "close") {
         const existing = await client.getIssue(owner, repo, number);
         if (existing?.state === "closed") {
-          await store.logEntry(event.task.id, "Linked GitHub tracking issue already closed", `${owner}/${repo}#${number}`);
+          await this.safeLogDeletedTaskEntry(store, event.task.id, "Linked GitHub tracking issue already closed", `${owner}/${repo}#${number}`);
           return;
         }
       }
@@ -189,7 +190,8 @@ export class GitHubTrackingStateService {
         await updateIssueState();
       }
 
-      await store.logEntry(
+      await this.safeLogDeletedTaskEntry(
+        store,
         event.task.id,
         decision.action === "close"
           ? "Closed linked GitHub tracking issue"
@@ -197,7 +199,8 @@ export class GitHubTrackingStateService {
         `${owner}/${repo}#${number}`,
       );
     } catch (err) {
-      await store.logEntry(
+      await this.safeLogDeletedTaskEntry(
+        store,
         event.task.id,
         decision.action === "close"
           ? "Failed to close GitHub tracking issue"

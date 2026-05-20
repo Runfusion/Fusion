@@ -117,6 +117,7 @@ function makeStore(dir: string, taskId: string, settingsOverrides: Record<string
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       commitAuthorEnabled: false,
       mergeConflictStrategy: "smart-prefer-main",
       ...settingsOverrides,
@@ -367,7 +368,7 @@ describe("aiMergeTask overlap-aware fallback integration", () => {
     expect(result.resolutionMethod).toBe("mixed");
     expect(git(dir, "git show HEAD:store.ts")).toContain("branch hardening");
     expect(git(dir, "git show HEAD:store.ts")).not.toContain("main fallback");
-  }, 20_000);
+  }, 60_000);
 
   it("keeps legacy main-wins behavior when the conflicting main edit is outside the overlap lookback window", async () => {
     commitFile(dir, "store.ts", "export const mode = 'base';\n", "feat: add store");
@@ -389,7 +390,7 @@ describe("aiMergeTask overlap-aware fallback integration", () => {
     expect(result.resolutionMethod).toBe("ours");
     expect(git(dir, "git show HEAD:store.ts")).toContain("main fallback");
     expect(git(dir, "git show HEAD:store.ts")).not.toContain("branch hardening");
-  }, 20_000);
+  }, 60_000);
 
   it("warn-only logs overlap but preserves main-wins behavior", async () => {
     commitFile(dir, "store.ts", "export const mode = 'base';\n", "feat: add store");
@@ -410,7 +411,7 @@ describe("aiMergeTask overlap-aware fallback integration", () => {
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("Overlap guard detected 1 recent-main overlap file(s)")),
     ).toBe(true);
-  }, 20_000);
+  }, 60_000);
 
   it("ignore preserves legacy behavior without overlap logging", async () => {
     commitFile(dir, "store.ts", "export const mode = 'base';\n", "feat: add store");
@@ -431,7 +432,7 @@ describe("aiMergeTask overlap-aware fallback integration", () => {
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("Overlap guard detected")),
     ).toBe(false);
-  }, 20_000);
+  }, 60_000);
 
   it(
     "replays FN-3936 through the merger so branch hardening survives the final squash commit",

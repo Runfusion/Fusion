@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock } from "lucide-react";
 import "./Header.css";
 // Header renders an inline ProjectSelector dropdown using project-selector-* classes.
 import "./ProjectSelector.css";
@@ -1198,7 +1198,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${["research", "skills", "insights", "memory", "reliability", "dev-server", "devserver", "graph", "stash-recovery"].includes(view) || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || (todosEnabled && todosOpen) || isPluginViewId(view) ? " active" : ""}`}
+                  className={`view-toggle-btn${["research", "skills", "insights", "memory", "secrets", "reliability", "dev-server", "devserver", "graph", "stash-recovery"].includes(view) || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || (todosEnabled && todosOpen) || isPluginViewId(view) ? " active" : ""}`}
                   onClick={() => setIsViewOverflowOpen((prev) => !prev)}
                   title="More views"
                   aria-label="More views"
@@ -1314,6 +1314,18 @@ export function Header({
                         <span>Memory</span>
                       </button>
                     )}
+                    <button
+                      className={`view-toggle-overflow-item${view === "secrets" ? " active" : ""}`}
+                      onClick={() => {
+                        onChangeView("secrets");
+                        setIsViewOverflowOpen(false);
+                      }}
+                      role="menuitem"
+                      data-testid="view-overflow-secrets"
+                    >
+                      <Lock size={14} />
+                      <span>Secrets</span>
+                    </button>
                     <button
                       className={`view-toggle-overflow-item${view === "reliability" ? " active" : ""}`}
                       onClick={() => {

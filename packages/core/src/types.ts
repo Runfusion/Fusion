@@ -1,5 +1,7 @@
 import type { InReviewStallSignal } from "./in-review-stall.js";
+import type { InReviewStalledSignal } from "./in-review-stalled.js";
 import type { StalePausedReviewSignal } from "./stale-paused-review.js";
+import type { StalePausedTodoSignal } from "./stale-paused-todo.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
 import type { TaskAgeStalenessSignal } from "./task-age-staleness.js";
 
@@ -35,6 +37,55 @@ export type TaskPriority = (typeof TASK_PRIORITIES)[number];
  * callers omit the priority field.
  */
 export const DEFAULT_TASK_PRIORITY: TaskPriority = "normal";
+
+export interface MergeQueueEntry {
+  taskId: string;
+  enqueuedAt: string;
+  priority: TaskPriority;
+  leasedBy: string | null;
+  leasedAt: string | null;
+  leaseExpiresAt: string | null;
+  attemptCount: number;
+  lastError: string | null;
+}
+
+export interface MergeQueueEnqueueOptions {
+  priority?: TaskPriority;
+  now?: string;
+}
+
+export interface MergeQueueAcquireOptions {
+  leaseDurationMs: number;
+  now?: string;
+}
+
+export type MergeQueueReleaseOutcome =
+  | { kind: "success" }
+  | { kind: "failure"; error: string };
+
+export interface HandoffEvidence {
+  /** Reason text recorded on the run-audit event (for example "fn_task_done"). */
+  reason: string;
+  /** Optional run id captured for forensics. */
+  runId?: string;
+  /** Optional agent id captured for forensics. */
+  agentId?: string;
+}
+
+export interface HandoffToReviewOptions {
+  ownerAgentId: string | null;
+  evidence: HandoffEvidence;
+  moveOptions?: {
+    preserveResumeState?: boolean;
+    preserveProgress?: boolean;
+    preserveWorktree?: boolean;
+    preserveStatus?: boolean;
+    moveSource?: "user" | "engine";
+    skipMergeBlocker?: boolean;
+  };
+  /** Inject a clock for tests. */
+  now?: string;
+}
 
 /**
  * Dashboard high-fan-out blocker threshold. A blocker is considered high impact
@@ -128,6 +179,16 @@ export type ColorTheme = (typeof COLOR_THEMES)[number];
 
 export type PrStatus = "open" | "closed" | "merged" | "draft";
 export type MergeStrategy = "direct" | "pull-request";
+export type MergeIntegrationWorktreeMode = "reuse-task-worktree" | "cwd-main";
+
+export function normalizeMergeIntegrationWorktreeMode(
+  value: unknown,
+): MergeIntegrationWorktreeMode {
+  return value === "cwd-main" || value === "reuse-task-worktree"
+    ? value
+    : "reuse-task-worktree";
+}
+
 export const DIRECT_MERGE_COMMIT_STRATEGIES = ["auto", "always-squash", "always-rebase"] as const;
 export type DirectMergeCommitStrategy = (typeof DIRECT_MERGE_COMMIT_STRATEGIES)[number];
 /** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
@@ -353,6 +414,7 @@ export type NtfyNotificationEvent =
   | "planning-awaiting-input"
   | "gridlock"
   | "board-stall-unrecovered"
+  | "db-corruption-detected"
   | "fallback-used"
   | "memory-dreams-processed"
   | "token-budget"
@@ -371,6 +433,7 @@ export const NOTIFICATION_EVENTS = [
   "planning-awaiting-input",
   "gridlock",
   "board-stall-unrecovered",
+  "db-corruption-detected",
   "fallback-used",
   "memory-dreams-processed",
   "token-budget",
@@ -742,6 +805,12 @@ Do NOT spend time on nits when no real issues exist.`,
 
 export type PrConflictState = "clean" | "conflicting" | "behind" | "blocked" | "unknown";
 
+export interface PrConflictDiagnostics {
+  conflictingFiles: string[];
+  suggestedCommands: string[];
+  capturedAt: string;
+}
+
 export interface PrInfo {
   url: string;
   number: number;
@@ -758,6 +827,7 @@ export interface PrInfo {
   lastMergeErrorAt?: string;
   checkRollup?: "success" | "failure" | "pending" | "none";
   mergeable?: PrConflictState;
+  conflictDiagnostics?: PrConflictDiagnostics;
   lastCommentAt?: string;
   lastCheckedAt?: string;
   lastReviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
@@ -824,6 +894,7 @@ export interface BatchStatusRequest {
 export interface BatchStatusEntry {
   issueInfo?: IssueInfo;
   prInfo?: PrInfo;
+  prInfos?: PrInfo[];
   stale: boolean;
   error?: string;
 }
@@ -867,6 +938,8 @@ export type ActivityEventType =
   | "task:merged"
   | "task:failed"
   | "task:duplicate-warning-overridden"
+  | "task:auto-archived-deterministic-duplicate"
+  | "task:auto-archived-near-duplicate"
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   | "settings:updated"
@@ -1237,6 +1310,29 @@ export interface MergeDetails {
    * Use `/api/tasks/:id/diff` for lineage-backed landed totals.
    */
   deletions?: number;
+  /**
+   * True when rebase-strategy capture found zero commits attributable to this
+   * task — the branch's work was already on main (verified-short-circuit /
+   * already-on-main path). When true, `landedFiles` will be `[]` and stats
+   * will be 0. Squash-strategy merges never set this flag.
+   */
+  noOpVerifiedShortCircuit?: boolean;
+  /**
+   * True when `landedFiles` / `filesChanged` / `insertions` / `deletions` were
+   * captured from task-attributable commits only (rebase-strategy success path
+   * via `filterFilesToOwnTaskCommits`). Self-healing `recoverDoneTaskMergeMetadata`
+   * must NOT overwrite these values with the full `rebaseBaseSha..sha` range,
+   * which would re-inflate them.
+   */
+  landedFilesAttributionRestricted?: boolean;
+  /**
+   * Set ONLY when `filterFilesToOwnTaskCommits` threw and the merger fell back
+   * to the legacy unrestricted `<rebaseBaseSha>..<sha>` walk. Stored
+   * `landedFiles` / stats may include foreign commits; this flag opts
+   * self-healing back into reconcile (the inflated values are NOT intentional).
+   * Never set on success paths.
+   */
+  landedFilesCaptureFallback?: "attribution-failed";
   mergeCommitMessage?: string;
   mergedAt?: string;
   mergeConfirmed?: boolean;
@@ -1404,6 +1500,8 @@ export type SourceType =
   | "research"
   | "unknown";
 
+export const DUPLICATE_OF_METADATA_KEY = "duplicateOfTaskIds" as const;
+
 /** Provenance metadata for how a task was created. */
 export interface TaskSource {
   sourceType: SourceType;
@@ -1412,6 +1510,11 @@ export interface TaskSource {
   sourceSessionId?: string;
   sourceMessageId?: string;
   sourceParentTaskId?: string;
+  /**
+   * Reserved metadata keys:
+   * - `duplicateOfTaskIds: string[]` stores structured duplicate lineage captured
+   *   from triage parsing and backfills.
+   */
   sourceMetadata?: Record<string, unknown>;
 }
 
@@ -1506,10 +1609,10 @@ export interface Task {
    * task worktree (`TaskExecutor.captureModifiedFiles`).
    *
    * This may be a stale/transient superset of files that actually landed after
-   * merge resolution or follow-up commits. UI surfaces must label this as
-   * "files touched during execution" (never landed "files changed" for done
-   * tasks). The authoritative landed diff for done tasks is
-   * `/api/tasks/:id/diff`.
+   * merge resolution or follow-up commits. Done-task cards must not use this
+   * field for their files-changed chip; the authoritative landed diff comes
+   * from `/api/tasks/:id/diff`, with `mergeDetails.landedFiles` as committed
+   * metadata fallback when live stats are unavailable.
    */
   modifiedFiles?: string[];
   /** Opt out of the squash file-scope invariant for this task. */
@@ -1529,6 +1632,8 @@ export interface Task {
   reviewState?: TaskReviewState;
   /** PR information for tasks linked to GitHub pull requests */
   prInfo?: PrInfo;
+  /** Canonical list of linked PRs; prInfo mirrors the primary PR for back-compat. */
+  prInfos?: PrInfo[];
   mergeDetails?: MergeDetails;
   /** Issue information for tasks imported from GitHub issues */
   issueInfo?: IssueInfo;
@@ -1537,6 +1642,8 @@ export interface Task {
    * Distinct from issueInfo/sourceIssue, which describe imported source issues.
    */
   githubTracking?: TaskGithubTracking;
+  /** Durable source provenance for task creation/import metadata. */
+  source?: TaskSource;
   /** Durable source provenance for the originating external issue. */
   sourceIssue?: TaskSourceIssue;
   log: TaskLogEntry[];
@@ -1555,6 +1662,12 @@ export interface Task {
   /** Server-computed stale paused review diagnostic signal. Undefined when no rule matches.
    *  Diagnostic-only: must not trigger automatic state mutation. */
   stalePausedReview?: StalePausedReviewSignal;
+  /** Server-computed in-review quiet-window diagnostic signal. Undefined when no rule matches.
+   *  Diagnostic-only: must not trigger automatic state mutation. */
+  inReviewStalled?: InReviewStalledSignal;
+  /** Server-computed stale paused todo diagnostic signal. Undefined when no rule matches.
+   *  Diagnostic-only: must not trigger automatic state mutation. */
+  stalePausedTodo?: StalePausedTodoSignal;
   /** Heuristic stalled-review diagnostic signal (legacy compatibility contract). */
   stalledReview?: StalledReviewSignal;
   /** Durable aggregate token usage totals for the task. Undefined when no usage has been recorded yet. */
@@ -1734,6 +1847,7 @@ export interface Task {
    *  Set once on first transition to `done`; may be cleared on reopen to
    *  todo/triage when resume state is not preserved. */
   executionCompletedAt?: string;
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -2132,6 +2246,11 @@ export interface GlobalSettings {
    *  "prompt" (route through approvals), or "deny" (reject without prompt).
    *  Default when unset: "prompt". */
   secretsAccessPolicy?: SecretAccessPolicy;
+  /** Read-only derived probe for cross-node secrets sync passphrase state.
+   * Mirrors `hasSyncPassphraseConfigured(secretsStore)` against the reserved
+   * `__sync_passphrase__` row in `secrets_global`. Never includes plaintext and
+   * cannot be persisted via `updateSettings` / `updateGlobalSettings`. */
+  secretsSyncPassphraseConfigured?: boolean;
   /** Policy for recovering tasks whose existing owning node becomes unavailable. */
   owningNodeHandoffPolicy?: OwningNodeHandoffPolicy;
   /** How long a task must remain in `status='failed'` before a push notification fires.
@@ -2139,8 +2258,11 @@ export interface GlobalSettings {
   failureNotificationDelayMs?: number;
   /** `sticky-only` (default) defers failure notifications by `failureNotificationDelayMs`
    *  and suppresses them if the task self-recovers. `all` restores the legacy
-   *  immediate-dispatch behavior. */
-  failureNotificationMode?: "sticky-only" | "all";
+   *  immediate-dispatch behavior. `terminal-only` suppresses failure notifications
+   *  while the engine is still auto-retrying, and only notifies once the task is
+   *  parked paused (`task.paused === true`) or escalated (`column === "in-review"`
+   *  with `status === "failed"`). */
+  failureNotificationMode?: "sticky-only" | "all" | "terminal-only";
   /** When true, enables webhook notifications for task lifecycle events.
    *  Requires webhookUrl to be set. Default: false. */
   webhookEnabled?: boolean;
@@ -2579,6 +2701,11 @@ export interface ProjectSettings {
    *  - "always-rebase": always preserve individual branch commits during direct merges
    *  Only applies when mergeStrategy is "direct". Default: "auto". */
   directMergeCommitStrategy?: DirectMergeCommitStrategy;
+  /** Auto-merge integration-root mode.
+   *  - "reuse-task-worktree" (default): run the auto-merge cascade in the task worktree
+   *  - "cwd-main": preserve the legacy project-root integration flow
+   *  Auto-merge only; manual/direct merge entrypoints outside auto-merge are unchanged. */
+  mergeIntegrationWorktree?: MergeIntegrationWorktreeMode;
   /** When true, automatically push to the configured remote after a successful direct merge.
    *  The push process includes pulling the latest from the remote (rebase) first.
    *  If conflicts arise during the pull, they are resolved using the AI conflict resolution pipeline.
@@ -2603,16 +2730,6 @@ export interface ProjectSettings {
   researchSettings?: ResearchProjectSettings;
   /** Optional per-project `.env` materialization settings for exportable secrets. */
   secretsEnv?: SecretsEnvSettings;
-  /**
-   * Encrypted shared-passphrase blob used for cross-node secrets sync.
-   * The stored value MUST already be ciphertext wrapped under the local
-   * master key by the caller/settings writer; the settings store does not
-   * automatically wrap this field.
-   *
-   * This value MUST NEVER be transmitted over the network; only derived
-   * sync envelopes may cross the wire.
-   */
-  secretsSyncPassphrase?: string;
   /** Sandbox command-execution settings.
    *  When omitted, runtime behavior is preserved via native passthrough defaults. */
   sandbox?: SandboxProjectSettings;
@@ -2685,6 +2802,14 @@ export interface ProjectSettings {
    *  Defaults to `"KB"`. Only affects new tasks — existing tasks retain
    *  their original IDs. */
   taskPrefix?: string;
+  /** Preferred commit trailer keys for task attribution in priority order.
+   *  The first value is used by commit-msg hook installation when enabled.
+   *  Defaults to `["Fusion-Task-Id"]`. */
+  taskAttributionTrailerNames?: string[];
+  /** When true, Fusion installs a commit-msg hook in managed task worktrees
+   *  that appends the configured task attribution trailer (e.g. `Fusion-Task-Id: FN-123`).
+   *  Set to false for projects with custom hook infrastructure. Default: true. */
+  commitMsgHookEnabled?: boolean;
   /** When true, merge commit messages include the task ID as the conventional
    *  commit scope (e.g. `feat(KB-001): ...`). When false, the scope is
    *  omitted (e.g. `feat: ...`). Default: true. */
@@ -2924,6 +3049,15 @@ export interface ProjectSettings {
    *  Age is measured from columnMovedAt when present, otherwise updatedAt.
    *  Default: 86400000 (24 hours). Set to 0 or undefined to disable surfacing. */
   stalePausedReviewThresholdMs?: number;
+  /** Threshold in milliseconds for surfacing unpaused in-review tasks quiet beyond a time window.
+   *  Default: 86400000 (24 hours). Set to 0 to disable. Gates `surfaceInReviewStalled`
+   *  and the `Task.inReviewStalled` hydration.
+   */
+  inReviewStalledThresholdMs?: number;
+  /** Threshold in milliseconds for surfacing paused todo tasks as stale.
+   *  Age is measured from columnMovedAt when present, otherwise updatedAt.
+   *  Default: 86400000 (24 hours). Set to 0 or undefined to disable surfacing. */
+  stalePausedTodoThresholdMs?: number;
   /** Minimum age in milliseconds that a paused in-progress task may continue holding
    *  file-scope reservation while one or more followers are blocked by it.
    *  Self-healing rebounds qualifying holders to todo when this threshold is met.
@@ -2933,6 +3067,10 @@ export interface ProjectSettings {
    *  advancing before self-healing auto-archives it as superseded.
    *  Default: 7200000 (2 hours). Set to 0 to disable. */
   metaTaskStallAutoCloseMs?: number;
+  /** Grace period in milliseconds used by meta-task auto-archive guards to treat
+   *  recent executor activity as in-flight and skip destructive auto-archive.
+   *  Default: 1800000 (30 minutes). Set to 0 to disable this guard. */
+  metaTaskActiveExecutionGraceMs?: number;
   /** Rolling window in milliseconds for board-stall auto-recovery evaluation.
    *  Default: 7200000 (2 hours). */
   boardStallSweepWindowMs?: number;
@@ -2964,6 +3102,31 @@ export interface ProjectSettings {
    *  idle non-ephemeral agents available. Warning fires only when todo is strictly
    *  greater than this threshold. Default: 20. */
   capacityRiskTodoThreshold?: number;
+  /** Enables scheduler backlog-pressure imbalance alerts. Default: true. */
+  backlogPressureAlertEnabled?: boolean;
+  /** Todo/max(In-Progress,1) ratio above which backlog pressure alerting triggers.
+   *  Must be a positive finite number. Default: 10. */
+  backlogPressureRatioThreshold?: number;
+  /** Minimum todo inventory required before backlog pressure alerting can trigger.
+   *  Must be a positive finite number. Default: 5. */
+  backlogPressureMinTodoCount?: number;
+  /** Minimum cooldown in milliseconds between backlog-pressure alerts.
+   *  Default: 24 * 60 * 60_000. */
+  backlogPressureAlertCooldownMs?: number;
+  /** Enables dependency-blocked todo backlog-health reporting. Default: true. */
+  dependencyBlockedTodoReportEnabled?: boolean;
+  /** Blocker age in milliseconds below which dependency-blocked todo groups are fresh.
+   *  Default: 30 * 60_000 (30 minutes). */
+  dependencyBlockedTodoFreshAgeMs?: number;
+  /** Blocker age in milliseconds at or above which dependency-blocked todo groups are stale.
+   *  Default: 4 * 60 * 60_000 (4 hours). */
+  dependencyBlockedTodoStaleAgeMs?: number;
+  /** Minimum dependency-blocked todo count required to include a blocker group.
+   *  Default: 1. */
+  dependencyBlockedTodoMinCount?: number;
+  /** Minimum cooldown in milliseconds between dependency-blocked todo insight emissions.
+   *  Default: 6 * 60 * 60_000. */
+  dependencyBlockedTodoReportCooldownMs?: number;
   /** TTL in milliseconds for persisted AI planning/subtask/mission interview sessions.
    *  Sessions older than this cutoff are expired by the dashboard session cleanup loop.
    *  Valid range: 600000 (10 minutes) to 2592000000 (30 days).
@@ -3467,6 +3630,7 @@ export interface ArchivedTaskEntry {
    *  - "fast": Expedited execution with minimal overhead for simple tasks */
   executionMode?: ExecutionMode;
   prInfo?: PrInfo;
+  prInfos?: PrInfo[];
   issueInfo?: IssueInfo;
   githubTracking?: TaskGithubTracking;
   /** Durable source provenance for the originating external issue. */
@@ -3501,6 +3665,8 @@ export interface ArchivedTaskEntry {
   executionStartedAt?: string;
   /** First-time completion anchor; may be cleared on reopen. */
   executionCompletedAt?: string;
+  /** ISO timestamp set when the task is soft-deleted from active views. */
+  deletedAt?: string;
   /** Timestamp when the task was archived to the log */
   archivedAt: string;
   /** Optional: model preset and override fields for executor and validator */
@@ -4846,6 +5012,15 @@ export interface AgentPromptsConfig {
  *  - "sandbox": Sandbox backend lifecycle events for user-configured command execution */
 export type RunAuditDomain = "database" | "git" | "filesystem" | "sandbox";
 
+export type RunAuditMutationType =
+  | "mergeQueue:enqueue"
+  | "mergeQueue:lease-acquired"
+  | "mergeQueue:lease-released"
+  | "mergeQueue:lease-expired"
+  | "task:handoff"
+  | "task:handoff-invariant-violation"
+  | (string & {});
+
 /** Input for recording a run-audit event. */
 export interface RunAuditEventInput {
   /** ISO-8601 timestamp when the event occurred. Defaults to current time if not provided. */
@@ -4858,8 +5033,8 @@ export interface RunAuditEventInput {
   runId: string;
   /** The domain/category of the mutation. */
   domain: RunAuditDomain;
-  /** Type of mutation (e.g., "task:update", "git:commit", "file:write"). */
-  mutationType: string;
+  /** Type of mutation (for example "task:update", "task:move", "task:handoff", "task:handoff-invariant-violation", "mergeQueue:enqueue", "git:commit", or "file:write"). */
+  mutationType: RunAuditMutationType;
   /** Target of the mutation (e.g., task ID, file path, branch name). */
   target: string;
   /** Optional structured metadata about the mutation (compact, actionable data). */
@@ -4881,7 +5056,7 @@ export interface RunAuditEvent {
   /** The domain/category of the mutation */
   domain: RunAuditDomain;
   /** Type of mutation (e.g., "task:update", "git:commit", "file:write") */
-  mutationType: string;
+  mutationType: RunAuditMutationType;
   /** Target of the mutation (e.g., task ID, file path, branch name) */
   target: string;
   /** Optional structured metadata about the mutation */
@@ -4899,7 +5074,7 @@ export interface RunAuditEventFilter {
   /** Filter by domain. */
   domain?: RunAuditDomain;
   /** Filter by mutation type. */
-  mutationType?: string;
+  mutationType?: RunAuditMutationType;
   /** Start of time range (inclusive). */
   startTime?: string;
   /** End of time range (inclusive). */

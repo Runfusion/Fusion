@@ -75,7 +75,7 @@ export function usePrChecksStream({
     setError(null);
 
     try {
-      const response = await fetchPrChecks(taskId, projectId);
+      const response = await fetchPrChecks(taskId, projectId, prNumber);
       if (controller.signal.aborted) {
         return;
       }
@@ -110,7 +110,7 @@ export function usePrChecksStream({
         setLoading(false);
       }
     }
-  }, [computeSignature, projectId, shouldPoll, taskId]);
+  }, [computeSignature, prNumber, projectId, shouldPoll, taskId]);
 
   const poll = useCallback(async () => {
     await doFetch();

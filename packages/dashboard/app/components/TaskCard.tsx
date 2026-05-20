@@ -1,6 +1,6 @@
 import "./TaskCard.css";
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority, GithubIssueAction } from "@fusion/core";
 import {
   COLUMN_LABELS,
@@ -27,7 +27,7 @@ import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getActiveRuntimeMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
-import { extractDependencyDeleteConflict } from "../utils/taskDelete";
+import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { MAX_AUTO_MERGE_RETRIES, type BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import { useRetryWarning } from "../context/RetryWarningContext";
 
@@ -276,9 +276,13 @@ interface TaskCardProps {
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
-  onArchiveTask?: (id: string) => Promise<Task>;
+  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: {
+    removeDependencyReferences?: boolean;
+    removeLineageReferences?: boolean;
+    githubIssueAction?: GithubIssueAction;
+  }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
@@ -297,6 +301,12 @@ interface TaskCardProps {
   fanout?: BlockerFanoutEntry;
   /** Whether GitHub CLI auth is available for creating PRs from task cards. */
   prAuthAvailable?: boolean;
+  /** Whether project-level auto-merge is enabled (hides manual Create PR quick action when true). */
+  autoMergeEnabled?: boolean;
+}
+
+function getTaskPrimaryPrInfo(task: Pick<Task, "prInfo" | "prInfos">): PrInfo | undefined {
+  return task.prInfos?.[0] ?? task.prInfo;
 }
 
 function areTaskBadgeInfosEqual(
@@ -334,6 +344,57 @@ function areTaskWorkflowStepIdsEqual(previous?: string[], next?: string[]): bool
 function getIssueUrlFromMetadata(metadata: Task["sourceMetadata"]): string | undefined {
   const issueUrl = metadata?.issueUrl;
   return typeof issueUrl === "string" && issueUrl.length > 0 ? issueUrl : undefined;
+}
+
+const BROAD_SCOPE_REASON_LABELS: Record<string, string> = {
+  "size-l": "Size L",
+  "steps-high": "many steps",
+  "file-scope-high": "large file scope",
+  "failing-file-mentions-high": "many failing files mentioned",
+  "size-l-with-many-steps": "Size L + many steps",
+};
+
+function getBroadScopeFlag(sourceMetadata: Task["sourceMetadata"]): {
+  score: number;
+  reasons: string[];
+  signals?: {
+    size?: string | null;
+    stepCount?: number;
+    fileScopeCount?: number;
+    failingFileMentions?: number;
+  };
+} | null {
+  const candidate = sourceMetadata?.broadScopeFlag;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return null;
+  }
+
+  const score = (candidate as { score?: unknown }).score;
+  const reasons = (candidate as { reasons?: unknown }).reasons;
+  const signals = (candidate as { signals?: unknown }).signals;
+
+  if (typeof score !== "number" || !Number.isFinite(score) || !Array.isArray(reasons) || !reasons.every((reason) => typeof reason === "string")) {
+    return null;
+  }
+
+  if (signals != null && (typeof signals !== "object" || Array.isArray(signals))) {
+    return null;
+  }
+
+  return {
+    score,
+    reasons,
+    signals: signals as {
+      size?: string | null;
+      stepCount?: number;
+      fileScopeCount?: number;
+      failingFileMentions?: number;
+    } | undefined,
+  };
+}
+
+function formatBroadScopeReasons(reasons: string[]): string {
+  return reasons.map((reason) => BROAD_SCOPE_REASON_LABELS[reason] ?? reason).join(", ");
 }
 
 function parseGithubIssueUrl(url?: string): { owner: string; repo: string; number: number } | null {
@@ -425,6 +486,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.globalPaused === next.globalPaused &&
     previous.taskStuckTimeoutMs === next.taskStuckTimeoutMs &&
     previous.prAuthAvailable === next.prAuthAvailable &&
+    previous.autoMergeEnabled === next.autoMergeEnabled &&
     previous.onOpenDetail === next.onOpenDetail &&
     previous.addToast === next.addToast &&
     previous.onUpdateTask === next.onUpdateTask &&
@@ -481,6 +543,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.sourceAgentId === nextTask.sourceAgentId &&
     previousTask.sourceMetadata?.issueUrl === nextTask.sourceMetadata?.issueUrl &&
     previousTask.sourceMetadata?.agentName === nextTask.sourceMetadata?.agentName &&
+    previousTask.sourceMetadata?.broadScopeFlag === nextTask.sourceMetadata?.broadScopeFlag &&
     previousTask.stalledReview?.reason === nextTask.stalledReview?.reason &&
     previousTask.stalledReview?.heuristic === nextTask.stalledReview?.heuristic &&
     previousTask.stalledReview?.matchCount === nextTask.stalledReview?.matchCount &&
@@ -501,6 +564,11 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     areTaskWorkflowStepIdsEqual(previousTask.enabledWorkflowSteps, nextTask.enabledWorkflowSteps) &&
     areTaskWorkflowResultsEqual(previousTask.workflowStepResults, nextTask.workflowStepResults) &&
     areTaskBadgeInfosEqual(previousTask.prInfo, nextTask.prInfo) &&
+    ((previousTask.prInfos?.length ?? 0) === (nextTask.prInfos?.length ?? 0)) &&
+    (previousTask.prInfos ?? []).every((pr, index) => {
+      const nextPr = nextTask.prInfos?.[index];
+      return nextPr?.number === pr.number && nextPr?.status === pr.status;
+    }) &&
     areTaskBadgeInfosEqual(previousTask.issueInfo, nextTask.issueInfo)
   );
 }
@@ -526,6 +594,7 @@ function TaskCardComponent({
   disableDrag,
   fanout,
   prAuthAvailable,
+  autoMergeEnabled = false,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -549,7 +618,7 @@ function TaskCardComponent({
   const sendBackRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
-  const { confirm, confirmWithChoice } = useConfirm();
+  const { confirm } = useConfirm();
   const retryWarningThreshold = useRetryWarning();
 
   // Touch gesture detection refs
@@ -769,9 +838,11 @@ function TaskCardComponent({
     }
   }, [onOpenDetail, addToast]);
 
-  const isFailed = task.status === "failed";
-  const isPaused = task.paused === true || task.userPaused === true;
-  const pausedByAgent = Boolean(task.paused && task.pausedByAgentId);
+  const isDoneColumn = task.column === "done";
+  const visualStatus = isDoneColumn ? "done" : task.status;
+  const isFailed = !isDoneColumn && task.status === "failed";
+  const isPaused = !isDoneColumn && (task.paused === true || task.userPaused === true);
+  const pausedByAgent = Boolean(!isDoneColumn && task.paused && task.pausedByAgentId);
   const normalizedPriority = normalizeTaskPriorityValue(task.priority);
   const showPriorityBadge = normalizedPriority !== DEFAULT_TASK_PRIORITY;
   const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
@@ -790,7 +861,7 @@ function TaskCardComponent({
   const taskAgeStalenessCopy = getTaskAgeStalenessCopy(task.ageStaleness);
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
   const isArchived = task.column === "archived";
-  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
+  const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
   const isDraggable = !disableDrag && !queued && !isPaused && !isEditing && !isArchived; // Disable drag during edit/archived or host embedding
 
   // Check if this card can be edited inline
@@ -828,6 +899,10 @@ function TaskCardComponent({
   const isAgentCreated = isAgentCreatedTask(task);
   const sourceAgentName = getSourceAgentName(task);
   const agentCreatedTitle = sourceAgentName ? `Created by agent: ${sourceAgentName}` : "Created by agent";
+  const broadScopeFlag = getBroadScopeFlag(task.sourceMetadata);
+  const broadScopeTitle = broadScopeFlag
+    ? `Broad-scope advisory (score ${broadScopeFlag.score}): ${formatBroadScopeReasons(broadScopeFlag.reasons)}`
+    : null;
   const isAgentNameLoading = Boolean(task.assignedAgentId && agentName === null);
   const taskProviders = useMemo(() => {
     const providers: string[] = [];
@@ -968,7 +1043,7 @@ function TaskCardComponent({
 
   const hasEverHadGitHubBadgeSourceRef = useRef(false);
   const hasCurrentGitHubBadgeSource = Boolean(
-    task.prInfo
+    getTaskPrimaryPrInfo(task)
     || task.issueInfo
     || liveBadgeData?.prInfo
     || liveBadgeData?.issueInfo
@@ -1019,8 +1094,8 @@ function TaskCardComponent({
     const wsTimestamp = liveBadgeData?.timestamp;
     const batchInfo = batchData?.result?.prInfo;
     const batchTimestamp = batchData?.timestamp ? new Date(batchData.timestamp).toISOString() : undefined;
-    const taskInfo = task.prInfo;
-    const taskTimestamp = task.prInfo?.lastCheckedAt ?? task.updatedAt;
+    const taskInfo = getTaskPrimaryPrInfo(task);
+    const taskTimestamp = taskInfo?.lastCheckedAt ?? task.updatedAt;
 
     let bestData = taskInfo;
     let bestTimestamp = taskTimestamp;
@@ -1035,8 +1110,7 @@ function TaskCardComponent({
     }
 
     return bestData;
-  }, [liveBadgeData, batchData, task.prInfo, task.updatedAt]);
-
+  }, [liveBadgeData, batchData, task, task.updatedAt]);
   const liveIssueInfo = useMemo(() => {
     const wsData = liveBadgeData?.issueInfo;
     const wsTimestamp = liveBadgeData?.timestamp;
@@ -1063,6 +1137,7 @@ function TaskCardComponent({
   const showInReviewMoveControl = task.column === "in-review" && Boolean(onMoveTask);
   const showCreatePrQuickAction =
     task.column === "in-review"
+    && autoMergeEnabled !== true
     && !livePrInfo
     && prAuthAvailable === true
     && !isPaused
@@ -1074,8 +1149,38 @@ function TaskCardComponent({
     || task.status === "queued"
     || Boolean(task.blockedBy)
     || Boolean(task.overlapBlockedBy)
-    || Boolean(fanout && fanout.totalCount > 0)
-    || showCreatePrQuickAction;
+    || Boolean(fanout && fanout.totalCount > 0);
+  const shouldRenderActionRow = showCreatePrQuickAction || (showInReviewMoveControl && !metaRowVisible);
+
+  const renderInReviewMoveControl = () => (
+    <div className="card-send-back" ref={sendBackRef}>
+      <button
+        className="card-send-back-btn"
+        onClick={handleSendBackClick}
+        title="Move task"
+        aria-label="Move task"
+        aria-haspopup="menu"
+        aria-expanded={showSendBackMenu}
+      >
+        Move
+        <ChevronDown size={10} />
+      </button>
+      {showSendBackMenu && (
+        <div className="card-send-back-menu" role="menu">
+          {VALID_TRANSITIONS["in-review"].map((col) => (
+            <button
+              key={col}
+              className="card-send-back-menu-item"
+              role="menuitem"
+              onClick={(e) => handleSendBackOptionClick(e, col)}
+            >
+              {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   const enterEditMode = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -1169,10 +1274,32 @@ function TaskCardComponent({
 
     void onArchiveTask(task.id).then(() => {
       addToast(`Archived ${task.id}`, "success");
-    }).catch((err) => {
-      addToast(`Failed to archive ${task.id}: ${getErrorMessage(err)}`, "error");
+    }).catch(async (err) => {
+      const lineageConflict = extractLineageDeleteConflict(err);
+      if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+        addToast(`Failed to archive ${task.id}: ${getErrorMessage(err)}`, "error");
+        return;
+      }
+
+      const confirmed = await confirm({
+        title: "Force Delete Task",
+        message:
+          `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+          "Archive anyway by unlinking these references first?",
+        danger: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        await onArchiveTask(task.id, { removeLineageReferences: true });
+        addToast(`Archived ${task.id} after unlinking lineage references`, "success");
+      } catch (retryErr) {
+        addToast(`Failed to archive ${task.id}: ${getErrorMessage(retryErr)}`, "error");
+      }
     });
-  }, [addToast, onArchiveTask, task.id]);
+  }, [addToast, confirm, onArchiveTask, task.id]);
 
   const handleUnarchiveClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -1189,38 +1316,13 @@ function TaskCardComponent({
     e.stopPropagation();
     if (!onDeleteTask) return;
 
-    if (task.column === "done" && onArchiveTask) {
-      const deleteChoice = await confirmWithChoice({
-        title: "Delete Task",
-        message: `Delete ${task.id}?`,
-        confirmLabel: "Delete",
-        cancelLabel: "Cancel",
-        tertiaryLabel: "Archive Instead",
-        danger: true,
-      });
-
-      if (deleteChoice === "tertiary") {
-        try {
-          await onArchiveTask(task.id);
-          addToast(`Archived ${task.id}`, "success");
-        } catch (err) {
-          addToast(`Failed to archive ${task.id}: ${getErrorMessage(err)}`, "error");
-        }
-        return;
-      }
-
-      if (deleteChoice !== "primary") {
-        return;
-      }
-    } else {
-      const shouldDelete = await confirm({
-        title: "Delete Task",
-        message: `Delete ${task.id}?`,
-        danger: true,
-      });
-      if (!shouldDelete) {
-        return;
-      }
+    const shouldDelete = await confirm({
+      title: "Delete Task",
+      message: `Delete ${task.id}?`,
+      danger: true,
+    });
+    if (!shouldDelete) {
+      return;
     }
 
     const trackedIssue = task.githubTracking?.enabled === true ? task.githubTracking.issue : undefined;
@@ -1259,18 +1361,70 @@ function TaskCardComponent({
         : "";
       addToast(`Deleted ${task.id}${issueSuffix}`, "success");
     } catch (err) {
-      const conflict = extractDependencyDeleteConflict(err);
-      if (!conflict || conflict.dependentIds.length === 0) {
+      const dependencyConflict = extractDependencyDeleteConflict(err);
+      if (dependencyConflict && dependencyConflict.dependentIds.length > 0) {
+        const dependentList = dependencyConflict.dependentIds.join(", ");
+        const confirmed = await confirm({
+          title: "Force Delete Task",
+          message:
+            `${task.id} is a dependency of ${dependentList}.\n\n` +
+            "Delete anyway by removing these dependency references first?",
+          danger: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await onDeleteTask(task.id, {
+            removeDependencyReferences: true,
+            removeLineageReferences: true,
+            githubIssueAction,
+          });
+          addToast(`Deleted ${task.id} after removing dependency references`, "success");
+        } catch (retryErr) {
+          const lineageConflict = extractLineageDeleteConflict(retryErr);
+          if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+            addToast(`Failed to delete ${task.id}: ${getErrorMessage(retryErr)}`, "error");
+            return;
+          }
+
+          const confirmedLineage = await confirm({
+            title: "Force Delete Task",
+            message:
+              `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+              "Delete anyway by unlinking these references first?",
+            danger: true,
+          });
+          if (!confirmedLineage) {
+            return;
+          }
+
+          try {
+            await onDeleteTask(task.id, {
+              removeDependencyReferences: true,
+              removeLineageReferences: true,
+              githubIssueAction,
+            });
+            addToast(`Deleted ${task.id} after unlinking lineage references`, "success");
+          } catch (lineageRetryErr) {
+            addToast(`Failed to delete ${task.id}: ${getErrorMessage(lineageRetryErr)}`, "error");
+          }
+        }
+        return;
+      }
+
+      const lineageConflict = extractLineageDeleteConflict(err);
+      if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
         addToast(`Failed to delete ${task.id}: ${getErrorMessage(err)}`, "error");
         return;
       }
 
-      const dependentList = conflict.dependentIds.join(", ");
       const confirmed = await confirm({
         title: "Force Delete Task",
         message:
-          `${task.id} is a dependency of ${dependentList}.\n\n` +
-          "Delete anyway by removing these dependency references first?",
+          `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+          "Delete anyway by unlinking these references first?",
         danger: true,
       });
       if (!confirmed) {
@@ -1278,13 +1432,17 @@ function TaskCardComponent({
       }
 
       try {
-        await onDeleteTask(task.id, { removeDependencyReferences: true, githubIssueAction });
-        addToast(`Deleted ${task.id} after removing dependency references`, "success");
+        await onDeleteTask(task.id, {
+          removeDependencyReferences: true,
+          removeLineageReferences: true,
+          githubIssueAction,
+        });
+        addToast(`Deleted ${task.id} after unlinking lineage references`, "success");
       } catch (retryErr) {
         addToast(`Failed to delete ${task.id}: ${getErrorMessage(retryErr)}`, "error");
       }
     }
-  }, [addToast, confirm, confirmWithChoice, onArchiveTask, onDeleteTask, task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id]);
+  }, [addToast, confirm, onDeleteTask, task.githubTracking?.enabled, task.githubTracking?.issue, task.id]);
 
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1420,18 +1578,19 @@ function TaskCardComponent({
     }
 
     if (task.column === "done") {
-      // Per FN-4527/FN-4647: /api/tasks/:id/diff is authoritative for done-task
-      // landed file counts. mergeDetails.filesChanged can be stale after
-      // rebase-and-push (FN-4526), so only use it as a transient loading
-      // placeholder. Executor-captured modifiedFiles are labeled as
-      // "touched during execution" and never as landed "files changed".
+      // Done cards only display committed diff counts from authoritative lineage
+      // stats or recorded landed files; transient execution-touched files are not shown.
       let displayCount: number | undefined;
       if (diffStats) {
-        displayCount = diffStats.filesChanged;
+        const landed = task.mergeDetails?.landedFiles;
+        const restricted = task.mergeDetails?.landedFilesAttributionRestricted === true;
+        displayCount = (restricted && Array.isArray(landed))
+          ? Math.min(diffStats.filesChanged, landed.length)
+          : diffStats.filesChanged;
       } else if (diffLoading) {
         displayCount = task.mergeDetails?.filesChanged ?? undefined;
       } else {
-        displayCount = undefined;
+        displayCount = task.mergeDetails?.landedFiles?.length;
       }
       if (displayCount != null && displayCount > 0) {
         return (
@@ -1443,25 +1602,6 @@ function TaskCardComponent({
           >
             <Folder size={12} />
             <span>{displayCount} {displayCount === 1 ? "file" : "files"} changed</span>
-          </button>
-        );
-      }
-
-      const landedFallbackCount = task.mergeDetails?.landedFiles?.length;
-      const modifiedCount = landedFallbackCount && landedFallbackCount > 0
-        ? landedFallbackCount
-        : task.modifiedFiles?.length;
-      if (!diffLoading && (modifiedCount ?? 0) > 0) {
-        return (
-          <button
-            type="button"
-            className="card-session-files"
-            onClick={handleOpenFiles}
-            disabled={!onOpenDetailWithTab}
-            title="Captured from worktree during execution; may not match the landed diff. Open the task to view the recorded merge."
-          >
-            <Folder size={12} />
-            <span>{modifiedCount} {modifiedCount === 1 ? "file" : "files"} {landedFallbackCount ? "in merged commit" : "touched during execution"}</span>
           </button>
         );
       }
@@ -1534,11 +1674,11 @@ function TaskCardComponent({
             {pausedByAgent ? "paused by agent" : "paused"}
           </span>
         )}
-        {!isPaused && task.status && task.status !== "queued" && (
+        {!isPaused && visualStatus && visualStatus !== "queued" && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${ACTIVE_STATUSES.has(task.status) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
           >
-            {isStuck ? "Stuck" : isAwaitingApproval ? "Awaiting Approval" : getTaskStatusLabel(task.status)}
+            {isStuck ? "Stuck" : isAwaitingApproval ? "Awaiting Approval" : getTaskStatusLabel(visualStatus)}
           </span>
         )}
         {hasInReviewStall && stallCopy && (
@@ -1581,10 +1721,20 @@ function TaskCardComponent({
           </span>
         )}
         {(livePrInfo || liveIssueInfo) && (
-          <GitHubBadge
-            prInfo={livePrInfo}
-            issueInfo={liveIssueInfo}
-          />
+          <>
+            {livePrInfo && (task.prInfos?.length ?? 0) >= 2 ? (
+              <a className={`card-github-badge card-github-badge--${livePrInfo.status}`} title={`PR #${livePrInfo.number}: ${livePrInfo.title}`} href={livePrInfo.url} target="_blank" rel="noopener noreferrer">
+                <GitPullRequest size={10} />
+                <span>{`${task.prInfos?.length}x #${livePrInfo.number}`}</span>
+              </a>
+            ) : null}
+            {(task.prInfos?.length ?? 0) < 2 || liveIssueInfo ? (
+              <GitHubBadge
+                prInfo={(task.prInfos?.length ?? 0) >= 2 ? undefined : livePrInfo}
+                issueInfo={liveIssueInfo}
+              />
+            ) : null}
+          </>
         )}
         {isAgentCreated && (
           <span
@@ -1628,6 +1778,13 @@ function TaskCardComponent({
             {abbreviateMissionTitle(missionTitle ?? task.missionId)}
           </span>
         )}
+        {broadScopeFlag && broadScopeTitle && (
+          <span className="card-broad-scope-chip" title={broadScopeTitle} aria-label={broadScopeTitle}>
+            <AlertTriangle aria-hidden="true" />
+            <span className="card-broad-scope-chip-text" aria-hidden="true">Broad scope</span>
+            <span className="visually-hidden">{broadScopeTitle}</span>
+          </span>
+        )}
         <div className="card-header-actions">
           {canEdit && (
             <button
@@ -1639,7 +1796,7 @@ function TaskCardComponent({
               <Pencil size={12} />
             </button>
           )}
-          {(task.column === "triage" || task.column === "done") && onDeleteTask && (
+          {task.column === "triage" && onDeleteTask && (
             <button
               className="card-delete-btn"
               onClick={handleDeleteClick}
@@ -1819,49 +1976,68 @@ function TaskCardComponent({
               <ProviderIcon provider="github" size="sm" />
             </span>
           )}
-          {(showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue && (
-            <a
-              className="card-github-tracking-chip card-github-tracking-link"
-              href={githubTrackedIssue.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`Linked GitHub issue: ${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
-              aria-label={`Linked GitHub issue #${githubTrackedIssue.number}`}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ProviderIcon provider="github" size="sm" />
-              <span>{`#${githubTrackedIssue.number}`}</span>
-            </a>
-          )}
-          {(task.retrySummary?.total ?? 0) > 0 && (
-            <span
-              className={`card-retry-badge${(retryWarningThreshold != null && (task.retrySummary?.total ?? 0) >= retryWarningThreshold) ? " card-retry-badge--error" : " card-retry-badge--warning"}`}
-              onClick={handleOpenRetries}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onOpenDetailWithTab?.(task, "retries");
-                }
-              }}
-              aria-label={`${task.retrySummary?.total ?? 0} retries`}
-              title="Open retry breakdown"
-            >
-              <RotateCw size={11} />
-              <span>{task.retrySummary?.total ?? 0}</span>
-            </span>
-          )}
-          {timeIndicator && (
-            <span
-              className="card-time-indicator"
-              title={timeIndicator.title}
-              aria-label={timeIndicator.ariaLabel}
-            >
-              <Clock size={12} />
-              <span>{timeIndicator.label}</span>
-            </span>
+          {(((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0 || timeIndicator) && (
+            <div className="card-footer-row-right">
+              {chipFarRight && (showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue && (
+                <a
+                  className="card-github-tracking-chip card-github-tracking-link"
+                  href={githubTrackedIssue.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Linked GitHub issue: ${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
+                  aria-label={`Linked GitHub issue #${githubTrackedIssue.number}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <ProviderIcon provider="github" size="sm" />
+                  <span>{`#${githubTrackedIssue.number}`}</span>
+                </a>
+              )}
+              {(task.retrySummary?.total ?? 0) > 0 && (
+                <span
+                  className={`card-retry-badge${(retryWarningThreshold != null && (task.retrySummary?.total ?? 0) >= retryWarningThreshold) ? " card-retry-badge--error" : " card-retry-badge--warning"}`}
+                  onClick={handleOpenRetries}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onOpenDetailWithTab?.(task, "retries");
+                    }
+                  }}
+                  aria-label={`${task.retrySummary?.total ?? 0} retries`}
+                  title="Open retry breakdown"
+                >
+                  <RotateCw size={11} />
+                  <span>{task.retrySummary?.total ?? 0}</span>
+                </span>
+              )}
+              {(!chipFarRight || !((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue))
+                && (showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue && (
+                  <a
+                    className="card-github-tracking-chip card-github-tracking-link"
+                    href={githubTrackedIssue.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Linked GitHub issue: ${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
+                    aria-label={`Linked GitHub issue #${githubTrackedIssue.number}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <ProviderIcon provider="github" size="sm" />
+                    <span>{`#${githubTrackedIssue.number}`}</span>
+                  </a>
+                )}
+              {timeIndicator && (
+                <span
+                  className="card-time-indicator"
+                  title={timeIndicator.title}
+                  aria-label={timeIndicator.ariaLabel}
+                >
+                  <Clock size={12} />
+                  <span>{timeIndicator.label}</span>
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -1900,52 +2076,7 @@ function TaskCardComponent({
             </span>
           )}
           {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
-          {showCreatePrQuickAction && (
-            <button
-              type="button"
-              className="btn btn-sm"
-              title="Create a PR for this task"
-              aria-label="Create pull request"
-              onClick={(event) => {
-                event.stopPropagation();
-                setIsPrCreateOpen(true);
-              }}
-            >
-              <GitPullRequest />
-              Create PR
-            </button>
-          )}
-          {showInReviewMoveControl && (
-            <div className="card-meta-move">
-              <div className="card-send-back" ref={sendBackRef}>
-                <button
-                  className="card-send-back-btn"
-                  onClick={handleSendBackClick}
-                  title="Move task"
-                  aria-label="Move task"
-                  aria-haspopup="menu"
-                  aria-expanded={showSendBackMenu}
-                >
-                  Move
-                  <ChevronDown size={10} />
-                </button>
-                {showSendBackMenu && (
-                  <div className="card-send-back-menu" role="menu">
-                    {VALID_TRANSITIONS["in-review"].map((col) => (
-                      <button
-                        key={col}
-                        className="card-send-back-menu-item"
-                        role="menuitem"
-                        onClick={(e) => handleSendBackOptionClick(e, col)}
-                      >
-                        {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          {showInReviewMoveControl && renderInReviewMoveControl()}
         </div>
       )}
       {(task.assignedAgentId || taskProviders.length > 0) && (
@@ -1971,37 +2102,24 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {showInReviewMoveControl && !metaRowVisible && (
-        <div className="card-bottom-row">
-          <div className="card-bottom-right-row">
-            <div className="card-send-back" ref={sendBackRef}>
-              <button
-                className="card-send-back-btn"
-                onClick={handleSendBackClick}
-                title="Move task"
-                aria-label="Move task"
-                aria-haspopup="menu"
-                aria-expanded={showSendBackMenu}
-              >
-                Move
-                <ChevronDown size={10} />
-              </button>
-              {showSendBackMenu && (
-                <div className="card-send-back-menu" role="menu">
-                  {VALID_TRANSITIONS["in-review"].map((col) => (
-                    <button
-                      key={col}
-                      className="card-send-back-menu-item"
-                      role="menuitem"
-                      onClick={(e) => handleSendBackOptionClick(e, col)}
-                    >
-                      {col === "done" ? "Done (no merge)" : COLUMN_LABELS[col]}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+      {shouldRenderActionRow && (
+        <div className="card-action-row">
+          {showCreatePrQuickAction && (
+            <button
+              type="button"
+              className="card-create-pr-action"
+              title="Create a PR for this task"
+              aria-label="Create pull request"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsPrCreateOpen(true);
+              }}
+            >
+              <GitPullRequest size={12} />
+              Create PR
+            </button>
+          )}
+          {showInReviewMoveControl && !metaRowVisible && renderInReviewMoveControl()}
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />

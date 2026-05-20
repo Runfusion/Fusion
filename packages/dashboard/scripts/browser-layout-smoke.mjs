@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { superviseSpawn } from "@fusion/core";
 import { readFile, rm, stat, mkdtemp } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
@@ -469,7 +470,7 @@ async function findBrowserExecutable() {
 
 async function launchBrowser(executable) {
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), "fusion-dashboard-browser-smoke-"));
-  const browser = spawn(executable, [
+  const supervised = superviseSpawn(executable, [
     "--headless=new",
     "--disable-gpu",
     "--disable-dev-shm-usage",
@@ -480,7 +481,9 @@ async function launchBrowser(executable) {
     "about:blank",
   ], {
     stdio: ["ignore", "pipe", "pipe"],
+    maxLifetimeMs: 60_000,
   });
+  const browser = supervised.child;
 
   try {
     const wsUrl = await new Promise((resolve, reject) => {
@@ -860,6 +863,86 @@ async function runSmokeChecks(page, pageUrl) {
       && prChecksLayout.detailsLinkVisible === true
       && prChecksLayout.detailsLinkColor !== "rgb(255, 255, 255)",
     JSON.stringify(prChecksLayout),
+  );
+
+  const chatComposerLayout = await evaluate(page, `(() => {
+    const sandbox = document.createElement('section');
+    sandbox.setAttribute('data-smoke', 'chat-composer-fixture');
+    sandbox.style.position = 'fixed';
+    sandbox.style.left = '16px';
+    sandbox.style.bottom = '16px';
+    sandbox.style.width = '620px';
+    sandbox.style.maxWidth = 'calc(100vw - 32px)';
+    sandbox.style.zIndex = '5';
+    sandbox.style.background = 'var(--surface)';
+    sandbox.style.border = '1px solid var(--border)';
+    sandbox.innerHTML = [
+      '<div class="chat-input-area">',
+      '  <div class="chat-input-row" data-smoke="chat-direct-composer">',
+      '    <button type="button" class="btn-icon chat-attach-btn" aria-label="Attach files">+</button>',
+      '    <div class="chat-input-wrapper">',
+      '      <textarea class="chat-input-textarea" data-smoke="chat-direct-textarea" rows="1"></textarea>',
+      '    </div>',
+      '    <button type="button" class="chat-input-send" aria-label="Send">→</button>',
+      '  </div>',
+      '  <div class="chat-input-row" data-smoke="chat-room-composer">',
+      '    <div class="chat-input-wrapper">',
+      '      <textarea class="chat-input-textarea" data-smoke="chat-room-textarea" rows="1"></textarea>',
+      '    </div>',
+      '    <button type="button" class="chat-input-send" aria-label="Send">→</button>',
+      '  </div>',
+      '</div>',
+    ].join('');
+    document.body.appendChild(sandbox);
+
+    const tallDraft = Array.from({ length: 18 }, (_, index) => 'line ' + (index + 1)).join('\\n');
+    for (const textarea of sandbox.querySelectorAll('.chat-input-textarea')) {
+      textarea.value = tallDraft;
+      textarea.style.height = '500px';
+    }
+
+    const readLayout = (prefix) => {
+      const textarea = sandbox.querySelector('[data-smoke="' + prefix + '-textarea"]');
+      const wrapper = textarea.parentElement;
+      const textareaStyle = getComputedStyle(textarea);
+      const wrapperStyle = getComputedStyle(wrapper);
+      return {
+        textareaHeight: Math.round(textarea.getBoundingClientRect().height),
+        wrapperHeight: Math.round(wrapper.getBoundingClientRect().height),
+        textareaClientHeight: textarea.clientHeight,
+        wrapperClientHeight: wrapper.clientHeight,
+        textareaStyleHeight: textarea.style.height,
+        textareaFlexGrow: textareaStyle.flexGrow,
+        textareaFlexShrink: textareaStyle.flexShrink,
+        textareaFlexBasis: textareaStyle.flexBasis,
+        wrapperDisplay: wrapperStyle.display,
+        wrapperFlexDirection: wrapperStyle.flexDirection,
+      };
+    };
+
+    const result = {
+      direct: readLayout('chat-direct'),
+      room: readLayout('chat-room'),
+    };
+    sandbox.remove();
+    return result;
+  })()`);
+
+  assertSmokeResult(
+    "chat composer autosize geometry",
+    [chatComposerLayout.direct, chatComposerLayout.room].every((layout) =>
+      layout.textareaStyleHeight === "500px"
+      && layout.textareaHeight >= 500
+      && layout.wrapperHeight >= 500
+      && layout.textareaClientHeight >= 498
+      && layout.wrapperClientHeight >= 498
+      && layout.textareaFlexGrow === "0"
+      && layout.textareaFlexShrink === "0"
+      && layout.textareaFlexBasis === "auto"
+      && layout.wrapperDisplay === "flex"
+      && layout.wrapperFlexDirection === "column"
+    ),
+    JSON.stringify(chatComposerLayout),
   );
 }
 

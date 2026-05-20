@@ -9,6 +9,7 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
 
   (emitter as any).__auditEvents = auditEvents;
   (emitter as any).getSettings = vi.fn().mockResolvedValue({
+    autoMerge: true,
     globalPause: false,
     enginePaused: false,
     taskStuckTimeoutMs: 60_000,

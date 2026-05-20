@@ -92,7 +92,10 @@ function createMockStore(column: Task["column"]): TaskStore {
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),

@@ -44,7 +44,10 @@ describe("useResearch", () => {
 
   it("hydrates runs from cache without loading flip", async () => {
     const cacheKey = `${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p1`;
-    localStorage.setItem(cacheKey, JSON.stringify([{ id: "RR-C", query: "cached", title: "cached", status: "completed", createdAt: "", updatedAt: "" }]));
+    localStorage.setItem(
+      cacheKey,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "RR-C", query: "cached", title: "cached", status: "completed", createdAt: "", updatedAt: "" }] }),
+    );
     mockListResearchRuns.mockImplementation(() => new Promise(() => {}));
 
     const { result } = renderHook(() => useResearch({ projectId: "p1" }));
@@ -67,13 +70,21 @@ describe("useResearch", () => {
       expect(result.current.availability.available).toBe(true);
     });
 
-    const cached = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p1`) ?? "[]");
-    expect(cached[0]?.id).toBe("RR-1");
+    const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p1`) ?? "{}");
+    expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+    const cached = envelope.data;
+    expect(cached?.[0]?.id).toBe("RR-1");
   });
 
   it("isolates cache by project", async () => {
-    localStorage.setItem(`${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p1`, JSON.stringify([{ id: "RR-P1", query: "", title: "", status: "completed", createdAt: "", updatedAt: "" }]));
-    localStorage.setItem(`${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p2`, JSON.stringify([{ id: "RR-P2", query: "", title: "", status: "completed", createdAt: "", updatedAt: "" }]));
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p1`,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "RR-P1", query: "", title: "", status: "completed", createdAt: "", updatedAt: "" }] }),
+    );
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.RESEARCH_RUNS_PREFIX}p2`,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "RR-P2", query: "", title: "", status: "completed", createdAt: "", updatedAt: "" }] }),
+    );
     mockListResearchRuns.mockImplementation(() => new Promise(() => {}));
 
     const { result, rerender } = renderHook(({ projectId }) => useResearch({ projectId }), { initialProps: { projectId: "p1" } });

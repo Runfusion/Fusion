@@ -736,7 +736,7 @@
   flex: 1;
   min-width: 0;
   min-height: 40px;
-  max-height: 320px;
+  max-height: 640px;
   border-radius: var(--radius-sm);
   border: none;
   background: transparent;
@@ -913,7 +913,7 @@
 
   .quick-chat-textarea {
     min-height: 40px;
-    max-height: 320px;
+    max-height: 640px;
   }
 
   .quick-chat-attachment-previews {

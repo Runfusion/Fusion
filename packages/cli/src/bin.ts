@@ -262,7 +262,7 @@ Usage:
   fn desktop --paused                 Launch with automation paused
   fn update [--check] [--global] [--json]   Update Fusion to the latest version
   fn upgrade                           Alias for fn update
-  fn task create [desc] [opts]         Create a new task (goes to triage; supports --node <name>)
+  fn task create [desc] [opts]         Create a new task (goes to triage; supports --node <name>, --no-dedup)
   fn task plan [description] [opts]    Create task via AI-guided planning
   fn task list                        List all tasks
   fn task show <id>                   Show task details, steps, log
@@ -395,6 +395,7 @@ Options:
   --dev                      Start dashboard only (no AI engine)
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
+  --no-dedup                 Bypass deterministic duplicate guard on task create
   --feedback <text>          Refinement feedback (non-interactive mode)
   --yes                      Skip confirmation prompts (planning mode)
   --limit, -l <n>            Max issues to import (default: 30, max: 100)
@@ -1006,6 +1007,7 @@ async function main() {
             const attachFiles: string[] = [];
             const dependsIds: string[] = [];
             let nodeName: string | undefined;
+            let noDedup = false;
             const descParts: string[] = [];
             for (let i = 0; i < createArgs.length; i++) {
               if (createArgs[i] === "--attach" && i + 1 < createArgs.length) {
@@ -1017,12 +1019,14 @@ async function main() {
               } else if (createArgs[i] === "--node" && i + 1 < createArgs.length) {
                 nodeName = createArgs[i + 1];
                 i++; // skip the value
+              } else if (createArgs[i] === "--no-dedup") {
+                noDedup = true;
               } else {
                 descParts.push(createArgs[i]);
               }
             }
             const title = descParts.join(" ");
-            await runTaskCreate(title || undefined, attachFiles.length > 0 ? attachFiles : undefined, dependsIds.length > 0 ? dependsIds : undefined, projectName, nodeName);
+            await runTaskCreate(title || undefined, attachFiles.length > 0 ? attachFiles : undefined, dependsIds.length > 0 ? dependsIds : undefined, projectName, nodeName, noDedup);
             break;
           }
           case "plan": {

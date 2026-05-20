@@ -584,7 +584,8 @@ describe("TaskStore", () => {
       expect(updatedTwo.dependencies).toEqual([]);
       expect(updatedOne.dependencies).not.toContain(parent.id);
       expect(updatedTwo.dependencies).not.toContain(parent.id);
-      await expect(store.getTask(parent.id)).rejects.toThrow(`Task ${parent.id} not found`);
+      const deletedParent = await store.getTask(parent.id, { includeDeleted: true });
+      expect(deletedParent?.deletedAt).toBeDefined();
     });
 
     it("deleteTask allows deletion when a similarly-named id contains the target (substring false-positive guard)", async () => {
@@ -601,7 +602,7 @@ describe("TaskStore", () => {
       await expect(store.deleteTask(targetTask.id)).resolves.toMatchObject({ id: targetTask.id });
     });
 
-    it("deleting a task cascades agent log entry deletion", async () => {
+    it("deleting a task clears persisted agent log entries for soft-deleted rows", async () => {
       const task = await createTestTask();
       await store.appendAgentLog(task.id, "cascade me", "text");
       (store as any).flushAgentLogBuffer();
@@ -743,7 +744,7 @@ describe("TaskStore", () => {
         expect(count).toBe(1);
       });
 
-      it("auto-flushes before deleteTask so FK cascade finds the rows", async () => {
+      it("auto-flushes before deleteTask and soft-delete clears resulting rows", async () => {
         const task = await createTestTask();
 
         await store.appendAgentLog(task.id, "to be cascaded", "text");

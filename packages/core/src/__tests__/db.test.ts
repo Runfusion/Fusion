@@ -22,6 +22,8 @@ import { ensureRoadmapSchema } from "../../../../plugins/fusion-plugin-roadmap/s
 import { createSharedTaskStoreTestHarness } from "./store-test-helpers.js";
 
 const createdTmpDirs = new Set<string>();
+const TMP_DIR_RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
+const TMP_DIR_CLEANUP_HOOK_KEY = Symbol.for("fusion.core.db-test.tmp-cleanup-hooks-installed");
 
 function makeTmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "kb-db-test-"));
@@ -32,9 +34,13 @@ function makeTmpDir(): string {
 async function removeTrackedTmpDir(dir: string | undefined): Promise<void> {
   if (!dir) return;
   try {
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, TMP_DIR_RM_OPTIONS);
   } catch {
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      rmSync(dir, TMP_DIR_RM_OPTIONS);
+    } catch {
+      // best-effort fallback during teardown
+    }
   } finally {
     createdTmpDirs.delete(dir);
   }
@@ -48,7 +54,7 @@ async function cleanupTmpDirsAsync(): Promise<void> {
 function removeTrackedTmpDirSync(dir: string | undefined): void {
   if (!dir) return;
   try {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, TMP_DIR_RM_OPTIONS);
   } catch {
     // best-effort fallback during teardown
   } finally {
@@ -59,14 +65,19 @@ function removeTrackedTmpDirSync(dir: string | undefined): void {
 function cleanupTmpDirsSync(): void {
   const cleanup = Array.from(createdTmpDirs);
   for (const dir of cleanup) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // best-effort fallback during teardown
-    } finally {
-      createdTmpDirs.delete(dir);
-    }
+    removeTrackedTmpDirSync(dir);
   }
+}
+
+// Full-suite worker shutdown can skip Vitest's normal afterAll timing if the worker
+// is already draining, so keep a process-level sync cleanup backstop for kb-db-test-*.
+const processWithCleanupFlag = process as typeof process & {
+  [TMP_DIR_CLEANUP_HOOK_KEY]?: boolean;
+};
+if (!processWithCleanupFlag[TMP_DIR_CLEANUP_HOOK_KEY]) {
+  process.once("beforeExit", cleanupTmpDirsSync);
+  process.once("exit", cleanupTmpDirsSync);
+  processWithCleanupFlag[TMP_DIR_CLEANUP_HOOK_KEY] = true;
 }
 
 afterAll(() => {
@@ -189,8 +200,8 @@ describe("Database", () => {
       const autoCheckpoint = db.prepare("PRAGMA wal_autocheckpoint").get() as { wal_autocheckpoint: number };
       const journalSizeLimit = db.prepare("PRAGMA journal_size_limit").get() as { journal_size_limit: number };
 
-      expect(synchronous.synchronous).toBe(1); // NORMAL
-      expect(autoCheckpoint.wal_autocheckpoint).toBe(100);
+      expect(synchronous.synchronous).toBe(2); // FULL
+      expect(autoCheckpoint.wal_autocheckpoint).toBe(1000);
       expect(journalSizeLimit.journal_size_limit).toBe(4_194_304);
     });
 
@@ -291,7 +302,7 @@ describe("Database", () => {
     });
 
     it("seeds schema version", () => {
-      expect(db.getSchemaVersion()).toBe(85);
+      expect(db.getSchemaVersion()).toBe(89);
     });
 
     it("includes tokenUsageCacheWriteTokens on freshly initialized tasks table", () => {
@@ -303,6 +314,21 @@ describe("Database", () => {
       const ts = db.getLastModified();
       expect(ts).toBeGreaterThan(0);
       expect(ts).toBeLessThanOrEqual(Date.now());
+    });
+
+    it("seeds bootstrappedAt and preserves it across reopen", () => {
+      const bootstrappedAt = db.getBootstrappedAt();
+      expect(bootstrappedAt).toBeTypeOf("number");
+      expect(bootstrappedAt).toBeGreaterThan(0);
+      expect(bootstrappedAt).toBeLessThanOrEqual(Date.now());
+
+      const reopened = new Database(fusionDir);
+      reopened.init();
+      try {
+        expect(reopened.getBootstrappedAt()).toBe(bootstrappedAt);
+      } finally {
+        reopened.close();
+      }
     });
 
     it("seeds config row with all required fields", () => {
@@ -319,7 +345,7 @@ describe("Database", () => {
 
     it("is idempotent - calling init() twice does not fail", () => {
       expect(() => db.init()).not.toThrow();
-      expect(db.getSchemaVersion()).toBe(85);
+      expect(db.getSchemaVersion()).toBe(89);
     });
     it("does not overwrite existing config on re-init", () => {
       // Update the config
@@ -333,9 +359,9 @@ describe("Database", () => {
       expect(row.nextId).toBe(42);
     });
 
-    it("sets wal_autocheckpoint to 100", () => {
+    it("sets wal_autocheckpoint to 1000", () => {
       const row = db.prepare("PRAGMA wal_autocheckpoint").get() as { wal_autocheckpoint: number };
-      expect(row.wal_autocheckpoint).toBe(100);
+      expect(row.wal_autocheckpoint).toBe(1000);
     });
 
     it("sets journal_size_limit to 4 MB", () => {
@@ -343,9 +369,9 @@ describe("Database", () => {
       expect(row.journal_size_limit).toBe(4194304);
     });
 
-    it("sets synchronous to NORMAL (1)", () => {
+    it("sets synchronous to FULL (2)", () => {
       const row = db.prepare("PRAGMA synchronous").get() as { synchronous: number };
-      expect(row.synchronous).toBe(1); // NORMAL = 1
+      expect(row.synchronous).toBe(2); // FULL = 2
     });
 
     it("sets busy_timeout to 5000ms", () => {
@@ -439,6 +465,8 @@ describe("Database", () => {
         expect(dbB.integrityCheckLastRunAt).toBeTruthy();
         expect(dbA.corruptionDetected).toBe(false);
         expect(dbB.corruptionDetected).toBe(false);
+        expect(dbA.integrityCheckErrors).toEqual([]);
+        expect(dbB.integrityCheckErrors).toEqual([]);
       } finally {
         dbA.close();
         dbB.close();
@@ -452,7 +480,7 @@ describe("Database", () => {
       vi.useFakeTimers();
       const integritySpy = vi.spyOn(Database.prototype, "integrityCheck").mockReturnValue({
         ok: false,
-        errors: ["malformed database"],
+        errors: ["malformed database", "broken index"],
       });
       const freshDir = makeTmpDir();
       const freshFusionDir = join(freshDir, ".fusion");
@@ -472,6 +500,8 @@ describe("Database", () => {
         expect(dbB.integrityCheckLastRunAt).toBeTruthy();
         expect(dbA.corruptionDetected).toBe(true);
         expect(dbB.corruptionDetected).toBe(true);
+        expect(dbA.integrityCheckErrors).toEqual(["malformed database", "broken index"]);
+        expect(dbB.integrityCheckErrors).toEqual(["malformed database", "broken index"]);
       } finally {
         dbA.close();
         dbB.close();
@@ -1010,6 +1040,7 @@ describe("Database", () => {
     it("returns ok for healthy databases and leaves corruption flag false", () => {
       expect(db.corruptionDetected).toBe(false);
       expect(db.integrityCheck()).toEqual({ ok: true });
+      expect(db.integrityCheckErrors).toEqual([]);
     });
 
     it("keeps corruptionDetected false after init for healthy database", () => {
@@ -1384,7 +1415,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 29 (includes v1→v2 through v26→v29)
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -1409,11 +1440,11 @@ describe("schema migrations", () => {
     const db = new Database(fusionDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     // Re-init should not fail
     db.init();
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     db.close();
   });
@@ -1448,7 +1479,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     expect(cols.map((col) => col.name)).toContain("priority");
@@ -1489,7 +1520,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     const colNames = cols.map((col) => col.name);
@@ -1561,7 +1592,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     const colNames = cols.map((col) => col.name);
@@ -1801,7 +1832,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const cols = db.prepare("PRAGMA table_info(chat_messages)").all() as Array<{ name: string }>;
     expect(cols.map((col) => col.name)).toContain("attachments");
@@ -1875,7 +1906,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'agentRatings'").all() as Array<{ name: string }>;
     expect(tables).toEqual([{ name: "agentRatings" }]);
@@ -1899,7 +1930,7 @@ describe("schema migrations", () => {
 
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'mission_events'").all() as Array<{ name: string }>;
     expect(tables).toEqual([{ name: "mission_events" }]);
@@ -2003,7 +2034,7 @@ describe("schema migrations", () => {
     db.init();
 
     // Verify version bumped to 29
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     // Verify new columns exist and existing data is intact
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
@@ -2222,7 +2253,7 @@ describe("schema migrations", () => {
 
     localDb.init();
 
-    expect(localDb.getSchemaVersion()).toBe(85);
+    expect(localDb.getSchemaVersion()).toBe(89);
     const columns = localDb.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain("tokenUsageCacheWriteTokens");
 
@@ -2305,7 +2336,7 @@ describe("FTS5 full-text search", () => {
     expect(triggerNames).toContain("tasks_fts_ad");
 
     const updateTrigger = triggers.find((t) => t.name === "tasks_fts_au");
-    expect(updateTrigger?.sql).toContain("AFTER UPDATE OF id, title, description, comments ON tasks");
+    expect(updateTrigger?.sql).toContain("AFTER UPDATE OF id, title, description, comments");
   });
 
   it("populates FTS index from existing tasks on migration", () => {
@@ -2533,7 +2564,7 @@ describe("createDatabase factory", () => {
     const db = createDatabase(fusionDir);
     db.init();
 
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
     expect(db.getLastModified()).toBeGreaterThan(0);
 
     db.close();
@@ -2687,7 +2718,7 @@ describe("migration v77 task token budget columns", () => {
 
       migrated = new Database(fusion);
       migrated.init();
-      expect(migrated.getSchemaVersion()).toBe(85);
+      expect(migrated.getSchemaVersion()).toBe(89);
       const rows = migrated.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
       const names = new Set(rows.map((row) => row.name));
       expect(names.has("tokenBudgetSoftAlertedAt")).toBe(true);
@@ -2733,7 +2764,7 @@ describe("migration v67 drops orphan project auth tables", () => {
 
       migrated = new Database(fusion);
       migrated.init();
-      expect(migrated.getSchemaVersion()).toBe(85);
+      expect(migrated.getSchemaVersion()).toBe(89);
       const tables = migrated
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'project_auth_%'")
         .all() as Array<{ name: string }>;
@@ -2760,7 +2791,7 @@ describe("migration v67 drops orphan project auth tables", () => {
 
     try {
       fresh.init();
-      expect(fresh.getSchemaVersion()).toBe(85);
+      expect(fresh.getSchemaVersion()).toBe(89);
       const tables = fresh
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'project_auth_%'")
         .all() as Array<{ name: string }>;

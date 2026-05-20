@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
@@ -25,9 +25,12 @@ import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
 import { SecretsStore } from "./secrets-store.js";
 import { MasterKeyManager } from "./master-key.js";
+import { hasSyncPassphraseConfigured } from "./secrets-sync-passphrase.js";
 import { getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
 import { getInReviewStallReason } from "./in-review-stall.js";
+import { getInReviewStalledSignal } from "./in-review-stalled.js";
 import { getStalePausedReviewSignal } from "./stale-paused-review.js";
+import { getStalePausedTodoSignal } from "./stale-paused-todo.js";
 import { getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds } from "./task-age-staleness.js";
 import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
@@ -38,7 +41,10 @@ import { extractTaskIdTokens, normalizeTitleForTaskId } from "./task-title-id-dr
 import { resolveTitleSummarizerSettingsModel } from "./model-resolution.js";
 import { getErrorMessage } from "./error-message.js";
 import { getTaskCreatedHook } from "./task-creation-hooks.js";
-import { assertProjectRootDir } from "./project-root-guard.js";
+import {
+  assertNotLinkedWorktreeOfExistingProject,
+  assertProjectRootDir,
+} from "./project-root-guard.js";
 import { generateTaskLineageId, normalizeTaskCommitAssociation } from "./task-lineage.js";
 import { createDistributedTaskIdAllocator, reconcileTaskIdState, resolveLocalNodeId, type DistributedTaskIdAllocator } from "./distributed-task-id.js";
 import { detectStalledReview } from "./stalled-review-detector.js";
@@ -129,6 +135,7 @@ interface TaskRow {
   reviewState: string | null;
   workflowStepResults: string | null;
   prInfo: string | null;
+  prInfos: string | null;
   issueInfo: string | null;
   githubTracking: string | null;
   sourceIssueProvider: string | null;
@@ -164,6 +171,7 @@ interface TaskRow {
   checkoutRunId: string | null;
   checkoutLeaseRenewedAt: string | null;
   checkoutLeaseEpoch: number | null;
+  deletedAt: string | null;
 }
 
 /** Database row shape for the task_documents table. */
@@ -252,6 +260,17 @@ interface RunAuditEventRow {
   mutationType: string;
   target: string;
   metadata: string | null;
+}
+
+interface MergeQueueRow {
+  taskId: string;
+  enqueuedAt: string;
+  priority: string;
+  leasedBy: string | null;
+  leasedAt: string | null;
+  leaseExpiresAt: string | null;
+  attemptCount: number;
+  lastError: string | null;
 }
 
 /** Database row shape for the config table. */
@@ -591,6 +610,31 @@ export class TaskHasDependentsError extends Error {
   }
 }
 
+export class TaskDeletedError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly deletedAt: string,
+  ) {
+    super(`Task ${taskId} is soft-deleted (deletedAt=${deletedAt}) and cannot be read or mutated`);
+    this.name = "TaskDeletedError";
+  }
+}
+
+export class TaskHasLineageChildrenError extends Error {
+  readonly taskId: string;
+  readonly childIds: string[];
+
+  constructor(taskId: string, childIds: string[]) {
+    super(
+      `Cannot delete task ${taskId}: still referenced as a lineage parent by ${childIds.join(", ")}. ` +
+        `Pass { removeLineageReferences: true } to clear these references before deleting.`,
+    );
+    this.name = "TaskHasLineageChildrenError";
+    this.taskId = taskId;
+    this.childIds = childIds;
+  }
+}
+
 export class InvalidFileScopeError extends Error {
   readonly taskId: string;
   readonly invalidEntries: string[];
@@ -688,6 +732,38 @@ function validateFileScopeInPromptContent(prompt: string): { valid: string[]; in
   return { valid, invalid };
 }
 
+function sanitizeFileScopeInPromptContent(prompt: string): { sanitized: string; dropped: string[]; kept: string[] } {
+  const headingMatch = prompt.match(/^##\s+File\s+Scope\s*$/m);
+  if (!headingMatch) {
+    return { sanitized: prompt, dropped: [], kept: [] };
+  }
+
+  const startIdx = headingMatch.index! + headingMatch[0].length;
+  const rest = prompt.slice(startIdx);
+  const nextHeading = rest.search(/\n##?\s/);
+  const endIdx = nextHeading === -1 ? prompt.length : startIdx + nextHeading;
+  const section = prompt.slice(startIdx, endIdx);
+  const { valid: kept, invalid: dropped } = validateFileScopeInPromptContent(prompt);
+  if (dropped.length === 0) {
+    return { sanitized: prompt, dropped, kept };
+  }
+
+  const sanitizedSection = section
+    .split("\n")
+    .filter((line) => {
+      const tokens = Array.from(line.matchAll(/`([^`]+)`/g), (match) => match[1]);
+      if (tokens.length === 0) return true;
+      return tokens.every((token) => isValidFileScopeEntry(token));
+    })
+    .join("\n");
+
+  return {
+    sanitized: `${prompt.slice(0, startIdx)}${sanitizedSection}${prompt.slice(endIdx)}`,
+    dropped,
+    kept,
+  };
+}
+
 export const SELF_DEFEATING_OPERATION_VERBS = [
   "finalize", // Terminalize target task state
   "diagnose", // Investigate/diagnose target task failure
@@ -761,7 +837,68 @@ export function detectSelfDefeatingDependency(
   };
 }
 
+export class MergeQueueTaskNotFoundError extends Error {
+  constructor(public readonly taskId: string) {
+    super(`Cannot enqueue merge queue entry for missing task ${taskId}`);
+    this.name = "MergeQueueTaskNotFoundError";
+  }
+}
+
+export class MergeQueueLeaseOwnershipError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly workerId: string,
+    public readonly currentOwner: string | null,
+  ) {
+    super(
+      currentOwner
+        ? `Worker ${workerId} does not own merge queue lease for ${taskId}; current owner is ${currentOwner}`
+        : `Worker ${workerId} cannot release merge queue lease for ${taskId}; the entry is not currently leased`,
+    );
+    this.name = "MergeQueueLeaseOwnershipError";
+  }
+}
+
+export class InvalidMergeQueueLeaseDurationError extends Error {
+  constructor(public readonly leaseDurationMs: number) {
+    super(`merge queue leaseDurationMs must be > 0 (received ${leaseDurationMs})`);
+    this.name = "InvalidMergeQueueLeaseDurationError";
+  }
+}
+
+export class HandoffInvariantViolationError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly fromColumn: Column,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HandoffInvariantViolationError";
+  }
+}
+
+interface MoveTaskOptions {
+  preserveResumeState?: boolean;
+  preserveProgress?: boolean;
+  preserveWorktree?: boolean;
+  preserveStatus?: boolean;
+  allocateWorktree?: (reservedNames: Set<string>) => string | null;
+  moveSource?: "user" | "engine";
+  skipMergeBlocker?: boolean;
+  allowDirectInReviewMove?: boolean;
+}
+
+interface MoveTaskInternalOptions {
+  fromHandoff: boolean;
+  runContext?: Pick<RunMutationContext, "runId" | "agentId"> | { runId?: string; agentId?: string };
+  ownerAgentId?: string | null;
+  evidence?: HandoffToReviewOptions["evidence"];
+  now?: string;
+}
+
 export class TaskStore extends EventEmitter<TaskStoreEvents> {
+  private static readonly ACTIVE_TASKS_WHERE = '"deletedAt" IS NULL';
+
   static async getOrCreateForProject(
     projectId?: string,
     centralCore?: CentralCore,
@@ -812,6 +949,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /** SQLite database for structured data storage */
   private _db: Database | null = null;
   private activityListenersWired = false;
+  /**
+   * When true, the activity-log listeners skip recording. Set by the polling
+   * loop (`checkForChanges`) so that events re-emitted after observing another
+   * TaskStore instance's DB write don't double- or triple-log to activityLog.
+   * The in-process emit path (moveTask, updateTask, etc.) leaves this false
+   * and remains the sole source of truth for activity rows.
+   */
+  private suppressActivityLogForPollingEmit = false;
   /** Separate SQLite database for compact archived task snapshots. */
   private _archiveDb: ArchiveDatabase | null = null;
 
@@ -860,6 +1005,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private lastKnownModified: number = 0;
   /** ISO timestamp of last poll — used to filter changed tasks */
   private lastPollTime: string | null = null;
+  /** One-shot startup sweep flag for clearing stale pause fields on done tasks. */
+  private donePauseBackfillDone = false;
   /** Short-lived startup memo for repeated slim listTasks reads before steady-state watch/polling. */
   private startupSlimListMemo = new Map<string, { expiresAt: number; promise: Promise<Task[]> }>();
   private static readonly STARTUP_SLIM_LIST_MEMO_TTL_MS = 2_500;
@@ -923,6 +1070,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     super();
     this.setMaxListeners(100);
     assertProjectRootDir(rootDir, "TaskStore");
+    assertNotLinkedWorktreeOfExistingProject(rootDir, "TaskStore");
     this.fusionDir = join(rootDir, ".fusion");
     this.tasksDir = join(this.fusionDir, "tasks");
     this.configPath = join(this.fusionDir, "config.json");
@@ -1215,6 +1363,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       reviewState: normalizeTaskReviewState(fromJson<import("./types.js").TaskReviewState>(row.reviewState) ?? undefined),
       workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
       prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),
+      prInfos: (() => {
+        const multi = fromJson<import("./types.js").PrInfo[]>(row.prInfos);
+        if (multi && multi.length > 0) return multi;
+        const single = fromJson<import("./types.js").PrInfo>(row.prInfo);
+        return single ? [single] : undefined;
+      })(),
       issueInfo: fromJson<import("./types.js").IssueInfo>(row.issueInfo),
       githubTracking: fromJson<import("./types.js").TaskGithubTracking>(row.githubTracking) ?? undefined,
       sourceIssue: (() => {
@@ -1268,6 +1422,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       checkoutRunId: row.checkoutRunId || undefined,
       checkoutLeaseRenewedAt: row.checkoutLeaseRenewedAt || undefined,
       checkoutLeaseEpoch: row.checkoutLeaseEpoch ?? undefined,
+      deletedAt: row.deletedAt ?? undefined,
     };
   }
 
@@ -1285,6 +1440,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       size: entry.size,
       reviewLevel: entry.reviewLevel,
       prInfo: slim ? undefined : entry.prInfo,
+      prInfos: slim ? undefined : entry.prInfos,
       issueInfo: slim ? undefined : entry.issueInfo,
       githubTracking: entry.githubTracking,
       sourceIssue: slim ? undefined : entry.sourceIssue,
@@ -1414,6 +1570,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       size: task.size,
       reviewLevel: task.reviewLevel,
       prInfo: task.prInfo,
+      prInfos: task.prInfos,
       issueInfo: task.issueInfo,
       githubTracking: task.githubTracking,
       sourceIssue: task.sourceIssue,
@@ -1503,11 +1660,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
-      "attachments", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
+      "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
-      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch",
+      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt",
       // `log` is fetched in slim mode so the server can aggregate
       // `timedExecutionMs` from `[timing] … in <N>ms` entries before
       // returning. The log itself is stripped from the response —
@@ -1552,11 +1709,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
-      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch",
+      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt",
     ];
 
     const limitedLog = `
@@ -1655,6 +1812,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJsonNullable(task.reviewState),
       toJson(task.workflowStepResults || []),
       toJsonNullable(task.prInfo),
+      toJson(task.prInfos || []),
       toJsonNullable(task.issueInfo),
       toJsonNullable(task.githubTracking),
       task.sourceIssue?.provider ?? null,
@@ -1690,6 +1848,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.checkoutRunId ?? null,
       task.checkoutLeaseRenewedAt ?? null,
       task.checkoutLeaseEpoch ?? 0,
+      task.deletedAt ?? null,
     ];
   }
 
@@ -1710,9 +1869,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, tokenBudgetSoftAlertedAt, tokenBudgetHardAlertedAt, tokenBudgetOverride, createdAt, updatedAt, columnMovedAt,
         firstExecutionAt, cumulativeActiveMs, executionStartedAt, executionCompletedAt,
         dependencies, steps, log, attachments, steeringComments,
-        comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
+        comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt
       ) VALUES (${placeholders})
     `).run(...values);
     this.db.bumpLastModified();
@@ -1737,9 +1896,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, tokenBudgetSoftAlertedAt, tokenBudgetHardAlertedAt, tokenBudgetOverride, createdAt, updatedAt, columnMovedAt,
         firstExecutionAt, cumulativeActiveMs, executionStartedAt, executionCompletedAt,
         dependencies, steps, log, attachments, steeringComments,
-        comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
+        comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt
       ) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET
         lineageId = excluded.lineageId,
@@ -1813,6 +1972,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         reviewState = excluded.reviewState,
         workflowStepResults = excluded.workflowStepResults,
         prInfo = excluded.prInfo,
+        prInfos = excluded.prInfos,
         issueInfo = excluded.issueInfo,
         githubTracking = excluded.githubTracking,
         sourceIssueProvider = excluded.sourceIssueProvider,
@@ -1847,7 +2007,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         checkoutNodeId = excluded.checkoutNodeId,
         checkoutRunId = excluded.checkoutRunId,
         checkoutLeaseRenewedAt = excluded.checkoutLeaseRenewedAt,
-        checkoutLeaseEpoch = excluded.checkoutLeaseEpoch
+        checkoutLeaseEpoch = excluded.checkoutLeaseEpoch,
+        deletedAt = excluded.deletedAt
     `).run(...this.getTaskPersistValues(task));
     this.db.bumpLastModified();
   }
@@ -1936,11 +2097,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * Read a task from SQLite by ID.
    */
-  private readTaskFromDb(id: string, options?: { activityLogLimit?: number }): Task | undefined {
+  private readTaskFromDb(id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Task | undefined {
     const selectClause = options?.activityLogLimit
       ? this.getTaskSelectClauseWithActivityLogLimit(options.activityLogLimit)
       : "*";
-    const row = this.db.prepare(`SELECT ${selectClause} FROM tasks WHERE id = ?`).get(id) as unknown as TaskRow | undefined;
+    const whereClause = options?.includeDeleted ? "id = ?" : `id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`;
+    const row = this.db.prepare(`SELECT ${selectClause} FROM tasks WHERE ${whereClause}`).get(id) as unknown as TaskRow | undefined;
     if (!row) return undefined;
     return this.rowToTask(row);
   }
@@ -1955,7 +2117,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   private taskIdExistsAnywhere(id: string): boolean {
-    if (this.readTaskFromDb(id)) {
+    // FN-5105: include soft-deleted rows so IDs remain permanently reserved.
+    if (this.readTaskFromDb(id, { includeDeleted: true })) {
       return true;
     }
     if (this.isTaskIdPresentInArchivedTasksTable(id)) {
@@ -1971,7 +2134,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   private isTaskArchived(id: string): boolean {
-    const row = this.db.prepare('SELECT "column" FROM tasks WHERE id = ?').get(id) as { column: Column } | undefined;
+    const row = this.db.prepare(`SELECT "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(id) as { column: Column } | undefined;
     if (row) {
       return row.column === "archived";
     }
@@ -1988,7 +2151,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   private findLiveDependents(id: string): string[] {
     const rows = this.db
-      .prepare(`SELECT id, dependencies FROM tasks WHERE dependencies LIKE ? AND id != ?`)
+      .prepare(`SELECT id, dependencies FROM tasks WHERE dependencies LIKE ? AND id != ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`)
       .all(`%${id}%`, id) as Array<{ id: string; dependencies: string | null }>;
 
     const dependents: string[] = [];
@@ -2006,6 +2169,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return dependents;
   }
 
+  private findLiveLineageChildren(id: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM tasks WHERE sourceParentTaskId = ? AND id != ? AND "column" != 'archived' AND ${TaskStore.ACTIVE_TASKS_WHERE}`,
+      )
+      .all(id, id) as Array<{ id: string }>;
+
+    return rows.map((row) => row.id);
+  }
+
   /**
    * Set up event listeners for activity logging.
    * Call after init() to record task lifecycle events.
@@ -2020,6 +2193,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Task created
     this.on("task:created", (task) => {
+      if (this.suppressActivityLogForPollingEmit) return;
       this.recordActivityFromListener(
         {
           type: "task:created",
@@ -2033,6 +2207,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Task moved
     this.on("task:moved", (data) => {
+      if (this.suppressActivityLogForPollingEmit) return;
       this.recordActivityFromListener(
         {
           type: "task:moved",
@@ -2062,6 +2237,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Task updated (check for failures)
     this.on("task:updated", (task) => {
+      if (this.suppressActivityLogForPollingEmit) return;
       if (task.status === "failed") {
         this.recordActivityFromListener(
           {
@@ -2106,6 +2282,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Task deleted
     this.on("task:deleted", (task) => {
+      if (this.suppressActivityLogForPollingEmit) return;
       this.recordActivityFromListener(
         {
           type: "task:deleted",
@@ -2189,20 +2366,89 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
+  private getTaskIdFromDir(dir: string): string {
+    const parts = dir.replace(/\\/g, "/").split("/");
+    return parts[parts.length - 1];
+  }
+
+  private insertRunAuditEventRow(input: Omit<RunAuditEventInput, "agentId" | "runId"> & { agentId?: string; runId?: string }): void {
+    const eventId = randomUUID();
+    const timestamp = input.timestamp ?? new Date().toISOString();
+    const agentId = input.agentId ?? "store";
+    const runId = input.runId ?? `store:${input.mutationType}:${input.taskId ?? input.target}:${eventId}`;
+    this.db.prepare(`
+      INSERT INTO runAuditEvents (
+        id, timestamp, taskId, agentId, runId, domain, mutationType, target, metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      eventId,
+      timestamp,
+      input.taskId ?? null,
+      agentId,
+      runId,
+      input.domain,
+      input.mutationType,
+      input.target,
+      toJsonNullable(input.metadata),
+    );
+  }
+
+  private getSoftDeletedWriteConflict(id: string, task: Task): string | undefined {
+    const existing = this.readTaskFromDb(id, { includeDeleted: true });
+    if (!existing?.deletedAt || task.deletedAt !== undefined) {
+      return undefined;
+    }
+    return existing.deletedAt;
+  }
+
+  private throwSoftDeletedWriteBlocked(
+    id: string,
+    deletedAt: string,
+    operation: string,
+    auditInput?: {
+      agentId?: string;
+      runId?: string;
+      timestamp?: string;
+    },
+  ): never {
+    storeLog.warn(`[soft-delete-resurrection-blocked] refusing ${operation} for ${id}`, {
+      id,
+      deletedAt,
+      operation,
+    });
+    this.insertRunAuditEventRow({
+      taskId: id,
+      agentId: auditInput?.agentId,
+      runId: auditInput?.runId,
+      timestamp: auditInput?.timestamp,
+      domain: "database",
+      mutationType: "task:resurrection-blocked",
+      target: id,
+      metadata: {
+        id,
+        deletedAt,
+        operation,
+      },
+    });
+    throw new TaskDeletedError(id, deletedAt);
+  }
+
   /**
    * Read a task from SQLite by ID (extracted from dir path for backward compat).
-   * Falls back to file-based reading if not in DB.
+   * Falls back to file-based reading only when no DB row exists at all.
    */
   private async readTaskJson(dir: string): Promise<Task> {
-    // Extract task ID from directory path (handles both / and \ separators)
-    const parts = dir.replace(/\\/g, "/").split("/");
-    const id = parts[parts.length - 1];
-    
-    // Try SQLite first
+    const id = this.getTaskIdFromDir(dir);
+
     const task = this.readTaskFromDb(id);
     if (task) return task;
-    
-    // Fallback to file-based reading (for legacy compatibility)
+
+    const deletedTask = this.readTaskFromDb(id, { includeDeleted: true });
+    if (deletedTask?.deletedAt) {
+      throw new TaskDeletedError(id, deletedTask.deletedAt);
+    }
+
+    // Fallback to file-based reading (for legacy compatibility when no DB row exists).
     const filePath = join(dir, "task.json");
     const raw = await readFile(filePath, "utf-8");
     try {
@@ -2248,7 +2494,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * so duplicate IDs fail safely instead of overwriting existing rows.
    */
   private async atomicCreateTaskJson(dir: string, task: Task, operation: string): Promise<void> {
-    this.insertTaskWithFtsRecovery(task, operation);
+    const id = this.getTaskIdFromDir(dir);
+    let deletedAt: string | undefined;
+    this.db.transactionImmediate(() => {
+      deletedAt = this.getSoftDeletedWriteConflict(id, task);
+      if (deletedAt) return;
+      this.insertTaskWithFtsRecovery(task, operation);
+    });
+    if (deletedAt) {
+      this.throwSoftDeletedWriteBlocked(id, deletedAt, operation);
+    }
     await this.writeTaskJsonFile(dir, task);
   }
 
@@ -2257,7 +2512,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * for backward compatibility and debugging.
    */
   private async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
-    this.upsertTaskWithFtsRecovery(task);
+    const id = this.getTaskIdFromDir(dir);
+    let deletedAt: string | undefined;
+    this.db.transactionImmediate(() => {
+      // Soft-delete/restore state is written via direct SQL paths (deleteTask and
+      // future restore flows), so stale task.json upserts must never clear deletedAt.
+      deletedAt = this.getSoftDeletedWriteConflict(id, task);
+      if (deletedAt) return;
+      this.upsertTaskWithFtsRecovery(task);
+    });
+    if (deletedAt) {
+      this.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
+    }
     // Also write to disk for backward compatibility
     await this.writeTaskJsonFile(dir, task);
   }
@@ -2275,31 +2541,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     task: Task,
     auditInput?: RunAuditEventInput,
   ): Promise<void> {
+    const id = this.getTaskIdFromDir(dir);
+    let deletedAt: string | undefined;
     this.db.transactionImmediate(() => {
+      deletedAt = this.getSoftDeletedWriteConflict(id, task);
+      if (deletedAt) return;
+
       // Upsert the task
       this.upsertTaskWithFtsRecovery(task);
 
       // Optionally record the audit event in the same transaction
       if (auditInput) {
-        const eventId = randomUUID();
-        const timestamp = auditInput.timestamp ?? new Date().toISOString();
-        this.db.prepare(`
-          INSERT INTO runAuditEvents (
-            id, timestamp, taskId, agentId, runId, domain, mutationType, target, metadata
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          eventId,
-          timestamp,
-          auditInput.taskId ?? null,
-          auditInput.agentId,
-          auditInput.runId,
-          auditInput.domain,
-          auditInput.mutationType,
-          auditInput.target,
-          toJsonNullable(auditInput.metadata),
-        );
+        this.insertRunAuditEventRow(auditInput);
       }
     });
+    if (deletedAt) {
+      this.throwSoftDeletedWriteBlocked(id, deletedAt, auditInput?.mutationType ?? "atomicWriteTaskJsonWithAudit", {
+        agentId: auditInput?.agentId,
+        runId: auditInput?.runId,
+        timestamp: auditInput?.timestamp,
+      });
+    }
 
     // File writes are not part of the SQLite transaction
     await this.writeTaskJsonFile(dir, task);
@@ -2332,6 +2594,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         (projectSettings as Partial<Settings>).worktrunk,
       ),
     };
+    try {
+      merged.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await this.getSecretsStore());
+    } catch {
+      merged.secretsSyncPassphraseConfigured = false;
+    }
     return canonicalizeSettings(merged);
   }
 
@@ -2371,6 +2638,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       ...projectSettings,
       worktrunk: resolveWorktrunkSettings(globalSettings.worktrunk, projectSettings?.worktrunk),
     };
+    try {
+      merged.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await this.getSecretsStore());
+    } catch {
+      merged.secretsSyncPassphraseConfigured = false;
+    }
 
     return canonicalizeSettings(merged);
   }
@@ -2387,6 +2659,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.globalSettingsStore.getSettings(),
       this.readConfig(),
     ]);
+    try {
+      globalSettings.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await this.getSecretsStore());
+    } catch {
+      globalSettings.secretsSyncPassphraseConfigured = false;
+    }
 
     // Extract only project-level keys from config.settings
     const projectSettings: Partial<ProjectSettings> = {};
@@ -2424,6 +2701,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.globalSettingsStore.getSettings(),
       this.db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings?: string } | undefined,
     ]);
+    try {
+      globalSettings.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await this.getSecretsStore());
+    } catch {
+      globalSettings.secretsSyncPassphraseConfigured = false;
+    }
 
     const projectSettings = row?.settings ? fromJson<Settings>(row.settings) : undefined;
 
@@ -2556,6 +2838,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const previous: Settings = { ...DEFAULT_SETTINGS, ...previousGlobal, ...config.settings } as Settings;
 
     const globalPatch: Partial<GlobalSettings> = { ...patch };
+    delete globalPatch.secretsSyncPassphraseConfigured;
 
     // Handle deep merge + targeted null clear semantics for remoteAccess
     const incomingRemoteAccess = (globalPatch as Record<string, unknown>)["remoteAccess"];
@@ -2598,6 +2881,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const updatedGlobal = await this.globalSettingsStore.updateSettings(globalPatch);
     const merged: Settings = { ...DEFAULT_SETTINGS, ...updatedGlobal, ...config.settings } as Settings;
+    try {
+      merged.secretsSyncPassphraseConfigured = await hasSyncPassphraseConfigured(await this.getSecretsStore());
+    } catch {
+      merged.secretsSyncPassphraseConfigured = false;
+    }
 
     // Emit settings:updated so SSE listeners pick up the change
     this.emit("settings:updated", { settings: merged, previous });
@@ -3033,6 +3321,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           if (sanitizedTitle) {
             const currentTask = this.readTaskFromDb(id);
             if (currentTask && !currentTask.title) {
+              // FN-5077: normalizeTitleForTaskId may return null for dangling fragments; only persist usable titles.
               const normalizedTitle = normalizeTitleForTaskId(sanitizedTitle, id);
               if (normalizedTitle.title) {
                 await this.updateTask(id, { title: normalizedTitle.title });
@@ -3196,6 +3485,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     },
   ): Promise<Task> {
     const now = options?.createdAt ?? new Date().toISOString();
+    // FN-5077: null normalized titles are treated as "no title" and allow standard fallback/summarization behavior.
     const normalizedTitle = normalizeTitleForTaskId(title, id);
     const task: Task = {
       id,
@@ -3348,6 +3638,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     return this.createTaskWithDistributedReservation({ description: sourceTask.description }, {
       createTaskWithId: async (newId) => {
+        // FN-5077: duplicated drift-stripped fragments may normalize to null and should remain unset.
         const normalizedTitle = normalizeTitleForTaskId(sourceTask.title, newId);
         if (normalizedTitle.changed) {
           const removed = extractTaskIdTokens(sourceTask.title ?? "").filter((token) => token !== newId.toUpperCase());
@@ -3377,17 +3668,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
         const newDir = this.taskDir(newId);
         await this.atomicCreateTaskJson(newDir, newTask, "duplicateTask");
-        const validation = validateFileScopeInPromptContent(sourceTask.prompt);
-        if (validation.invalid.length > 0) {
-          this.deleteTaskById(newId);
-          const { rm } = await import("node:fs/promises");
-          if (existsSync(newDir)) {
-            await rm(newDir, { recursive: true, force: true });
-          }
-          throw new InvalidFileScopeError(newId, validation.invalid);
+        const sanitizedPrompt = sanitizeFileScopeInPromptContent(sourceTask.prompt);
+        if (sanitizedPrompt.dropped.length > 0) {
+          storeLog.log(`[file-scope-sanitize] duplicate ${newId} from ${id}: dropped=[${sanitizedPrompt.dropped.join(",")}]`);
         }
         await mkdir(newDir, { recursive: true });
-        await writeFile(join(newDir, "PROMPT.md"), sourceTask.prompt);
+        await writeFile(join(newDir, "PROMPT.md"), sanitizedPrompt.sanitized);
 
         if (this.isWatching) this.taskCache.set(newId, { ...newTask });
         this.emit("task:created", newTask);
@@ -3429,6 +3715,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     return this.createTaskWithDistributedReservation({ description: feedback.trim() }, {
       createTaskWithId: async (newId) => {
+        // FN-5077: keep deterministic "Refinement" fallback when normalized refinement label is unusable (null).
         const normalizedTitle = normalizeTitleForTaskId(`Refinement: ${sourceLabel}`, newId);
         if (normalizedTitle.changed) {
           const removed = extractTaskIdTokens(`Refinement: ${sourceLabel}`).filter((token) => token !== newId.toUpperCase());
@@ -3458,18 +3745,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         const newDir = this.taskDir(newId);
         await this.atomicCreateTaskJson(newDir, newTask, "refineTask");
         const prompt = `# ${newTask.title}\n\n${newTask.description}\n`;
-        // Defensive no-op for refine prompts, which typically have no File Scope section.
-        const validation = validateFileScopeInPromptContent(prompt);
-        if (validation.invalid.length > 0) {
-          this.deleteTaskById(newId);
-          const { rm } = await import("node:fs/promises");
-          if (existsSync(newDir)) {
-            await rm(newDir, { recursive: true, force: true });
-          }
-          throw new InvalidFileScopeError(newId, validation.invalid);
-        }
+        const sanitizedPrompt = sanitizeFileScopeInPromptContent(prompt);
         await mkdir(newDir, { recursive: true });
-        await writeFile(join(newDir, "PROMPT.md"), prompt);
+        await writeFile(join(newDir, "PROMPT.md"), sanitizedPrompt.sanitized);
 
         if (sourceTask.attachments && sourceTask.attachments.length > 0) {
           const sourceAttachDir = join(this.taskDir(id), "attachments");
@@ -3496,7 +3774,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * Read a task and its prompt content.
    */
-  async getTask(id: string, options?: { activityLogLimit?: number }): Promise<TaskDetail> {
+  async getTask(id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return this.withTaskLock(id, async () => {
       const task = this.readTaskFromDb(id, options);
       if (!task) {
@@ -3538,7 +3816,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const uniqueIds = [...new Set(ids)];
     const placeholders = uniqueIds.map(() => "?").join(",");
     const rows = this.db
-      .prepare(`SELECT id, "column" FROM tasks WHERE id IN (${placeholders})`)
+      .prepare(`SELECT id, "column" FROM tasks WHERE id IN (${placeholders}) AND ${TaskStore.ACTIVE_TASKS_WHERE}`)
       .all(...uniqueIds) as Array<{ id: string; column: Column }>;
 
     const activeById = new Map<string, Column>();
@@ -3622,6 +3900,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const selectClause = this.getTaskSelectClause(slim);
     const whereParts: string[] = [];
     const params: string[] = [];
+    whereParts.push(TaskStore.ACTIVE_TASKS_WHERE);
     if (columnFilter) {
       whereParts.push(`"column" = ?`);
       params.push(columnFilter);
@@ -3643,10 +3922,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let disableAgeStalenessHydration = false;
     const activeTasks = await Promise.all((rows as unknown as TaskRow[]).map(async (row) => {
       const task = this.rowToTask(row);
-      task.inReviewStall = getInReviewStallReason(task, { now });
+      task.inReviewStall = getInReviewStallReason(task, { now, autoMerge: settings.autoMerge });
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+      });
+      task.inReviewStalled = getInReviewStalledSignal(task, {
+        now,
+        thresholdMs: settings.inReviewStalledThresholdMs,
+        autoMerge: settings.autoMerge,
+      });
+      task.stalePausedTodo = getStalePausedTodoSignal(task, {
+        now,
+        thresholdMs: settings.stalePausedTodoThresholdMs,
       });
       if (!disableAgeStalenessHydration) {
         try {
@@ -3722,7 +4010,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const selectClause = this.getTaskSelectClause(false);
     const rows = this.db.prepare(
-      `SELECT ${selectClause} FROM tasks WHERE "sourceType" = 'task_refine' AND "column" = 'triage' ORDER BY createdAt ASC`,
+      `SELECT ${selectClause} FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND "sourceType" = 'task_refine' AND "column" = 'triage' ORDER BY createdAt ASC`,
     ).all() as unknown as TaskRow[];
 
     const now = Date.now();
@@ -3807,10 +4095,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const rows = includeArchived
       ? (this.db.prepare(
-        `SELECT ${selectClause} FROM tasks WHERE updatedAt > ? ORDER BY updatedAt ASC LIMIT ?`,
+        `SELECT ${selectClause} FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND updatedAt > ? ORDER BY updatedAt ASC LIMIT ?`,
       ).all(since, resolvedLimit + 1) as TaskRow[])
       : (this.db.prepare(
-        `SELECT ${selectClause} FROM tasks WHERE updatedAt > ? AND "column" != 'archived' ORDER BY updatedAt ASC LIMIT ?`,
+        `SELECT ${selectClause} FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND updatedAt > ? AND "column" != 'archived' ORDER BY updatedAt ASC LIMIT ?`,
       ).all(since, resolvedLimit + 1) as TaskRow[]);
 
     const hasMore = rows.length > resolvedLimit;
@@ -3825,10 +4113,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let disableAgeStalenessHydration = false;
     const tasks = rows.slice(0, resolvedLimit).map((row) => {
       const task = this.rowToTask(row);
-      task.inReviewStall = getInReviewStallReason(task, { now });
+      task.inReviewStall = getInReviewStallReason(task, { now, autoMerge: settings.autoMerge });
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+      });
+      task.inReviewStalled = getInReviewStalledSignal(task, {
+        now,
+        thresholdMs: settings.inReviewStalledThresholdMs,
+        autoMerge: settings.autoMerge,
+      });
+      task.stalePausedTodo = getStalePausedTodoSignal(task, {
+        now,
+        thresholdMs: settings.stalePausedTodoThresholdMs,
       });
       if (!disableAgeStalenessHydration) {
         try {
@@ -3866,8 +4163,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   getActiveMergingTask(excludeTaskId?: string): string | undefined {
     const sql = excludeTaskId
-      ? `SELECT id FROM tasks WHERE status IN ('merging', 'merging-pr') AND id != ? LIMIT 1`
-      : `SELECT id FROM tasks WHERE status IN ('merging', 'merging-pr') LIMIT 1`;
+      ? `SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND status IN ('merging', 'merging-pr') AND id != ? LIMIT 1`
+      : `SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND status IN ('merging', 'merging-pr') LIMIT 1`;
     const params = excludeTaskId ? [excludeTaskId] : [];
     const row = this.db.prepare(sql).get(...params) as { id: string } | undefined;
     return row?.id;
@@ -3920,7 +4217,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           return `${token}*`;
         })
         .join(" OR ");
-      const whereClause = includeArchived ? "" : ` AND t."column" != 'archived'`;
+      const whereClause = `${includeArchived ? "" : ` AND t."column" != 'archived'`} AND t."deletedAt" IS NULL`;
       rows = this.db.prepare(`
         SELECT ${selectClause} FROM tasks t
         JOIN tasks_fts fts ON t.rowid = fts.rowid
@@ -3943,7 +4240,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
         for (let i = 0; i < searchColumns.length; i++) params.push(pattern);
       }
-      const archivedClause = includeArchived ? "" : ` AND t."column" != 'archived'`;
+      const archivedClause = `${includeArchived ? "" : ` AND t."column" != 'archived'`} AND t."deletedAt" IS NULL`;
       rows = this.db.prepare(`
         SELECT ${selectClause} FROM tasks t
         WHERE (${whereTokens})${archivedClause}
@@ -3963,10 +4260,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let disableAgeStalenessHydration = false;
     const activeMatches = await Promise.all(rows.map(async (row) => {
       const task = this.rowToTask(row);
-      task.inReviewStall = getInReviewStallReason(task, { now });
+      task.inReviewStall = getInReviewStallReason(task, { now, autoMerge: settings.autoMerge });
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+      });
+      task.inReviewStalled = getInReviewStalledSignal(task, {
+        now,
+        thresholdMs: settings.inReviewStalledThresholdMs,
+        autoMerge: settings.autoMerge,
+      });
+      task.stalePausedTodo = getStalePausedTodoSignal(task, {
+        now,
+        thresholdMs: settings.stalePausedTodoThresholdMs,
       });
       if (!disableAgeStalenessHydration) {
         try {
@@ -4005,11 +4311,39 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return limit >= 0 ? matches.slice(0, limit) : matches;
   }
 
+  async findRecentTasksByContentFingerprint(
+    fingerprint: string,
+    options?: { windowMs?: number; includeArchived?: boolean },
+  ): Promise<Task[]> {
+    const trimmedFingerprint = fingerprint.trim();
+    if (trimmedFingerprint.length === 0) {
+      return [];
+    }
+
+    const requestedWindowMs = options?.windowMs ?? 60_000;
+    const windowMs = Math.max(1, Math.min(300_000, Math.trunc(requestedWindowMs)));
+    const cutoffIso = new Date(Date.now() - windowMs).toISOString();
+    const includeArchived = options?.includeArchived ?? false;
+    const selectClause = this.getTaskSelectClause(false, "t");
+
+    const rows = this.db.prepare(`
+      SELECT ${selectClause}
+      FROM tasks t
+      WHERE t."deletedAt" IS NULL
+        AND json_extract(t.sourceMetadata, '$.contentFingerprint') = ?
+        AND t.createdAt >= ?
+        ${includeArchived ? "" : "AND t.\"column\" != 'archived'"}
+      ORDER BY t.createdAt ASC
+    `).all(trimmedFingerprint, cutoffIso) as TaskRow[];
+
+    return rows.map((row) => this.rowToTask(row));
+  }
+
   async getTasksByAssignedAgent(
     agentId: string,
     options?: { pausedOnly?: boolean; excludeArchived?: boolean },
   ): Promise<Task[]> {
-    const whereClauses = ["assignedAgentId = ?"];
+    const whereClauses = ["assignedAgentId = ?", TaskStore.ACTIVE_TASKS_WHERE];
     const params: Array<string | number> = [agentId];
 
     if (options?.pausedOnly) {
@@ -4056,6 +4390,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         checkoutLeaseRenewedAt = ?,
         checkoutLeaseEpoch = ?
       WHERE id = ?
+        AND "deletedAt" IS NULL
         AND COALESCE(checkedOutBy, '') = COALESCE(?, '')
         AND COALESCE(checkoutNodeId, '') = COALESCE(?, '')
         AND COALESCE(checkoutLeaseEpoch, 0) = COALESCE(?, 0)
@@ -4174,262 +4509,355 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
+  private async readTaskForMove(id: string): Promise<Task> {
+    const dir = this.taskDir(id);
+    try {
+      return await this.readTaskJson(dir);
+    } catch (error) {
+      const archived = this.archiveDb.get(id);
+      if (!archived) {
+        throw error;
+      }
+      return this.archiveEntryToTask(archived, false);
+    }
+  }
+
   async moveTask(
     id: string,
     toColumn: Column,
-    options?: {
-      /**
-       * Mark this transition as an internal bounce/pause hop rather than a
-       * user-initiated reset. On in-progress/done/in-review → todo/triage,
-       * skip the destructive cleanup that would otherwise discard resume
-       * state: leave step statuses intact (no resetAllStepsToPending), do
-       * not rewrite PROMPT.md checkboxes, and keep `worktree` +
-       * `executionStartedAt` so the resumed run reattaches to the same
-       * checkout and preserves wall-clock execution time. `status`,
-       * `error`, and `blockedBy` are still cleared because those are
-       * per-run failure state that the next run will rebuild.
-       *
-       * Used by the workflow-rerun bounce, the pause→todo paths, and
-       * other executor-internal requeues. NOT used by user-initiated
-       * "move back to todo" actions, which still want a clean slate.
-       */
-      preserveResumeState?: boolean;
-      /**
-       * Preserve step progress (step statuses + currentStep) when reopening
-       * to todo/triage, while still clearing per-run execution state
-       * (worktree and wall-clock timing fields).
-       */
-      preserveProgress?: boolean;
-      /**
-       * Skip the default "release worktree on requeue" behavior. Used by
-       * internal bounce paths (e.g. workflow-rerun) that immediately
-       * promote the task back to in-progress on the same checkout, where
-       * publishing an interim `worktree=null` state to listeners would be
-       * misleading. Has no effect on transitions that don't otherwise
-       * clear the worktree.
-       */
-      preserveWorktree?: boolean;
-      /**
-       * When true, do not clear task.status/task.error/task.pausedReason on
-       * reopen-to-todo/triage transitions. Required so recovery handlers that
-       * bounce through todo can keep sticky failed state context.
-       */
-      preserveStatus?: boolean;
-      /**
-       * When transitioning to in-progress on a task that has no worktree
-       * assigned, invoke this allocator to pick a path. The store calls
-       * the allocator with a fresh `reservedNames` set (built from every
-       * other task's current `worktree`) inside a cross-task allocation
-       * lock, so two concurrent moves cannot pick the same name. The
-       * allocator should return an absolute path or `null` to skip
-       * allocation. Provided by callers (the manual-move route, the
-       * scheduler) so the store stays free of worktree-naming policy.
-       */
-      allocateWorktree?: (reservedNames: Set<string>) => string | null;
-      /** Distinguishes user-initiated moves from engine-internal transitions. */
-      moveSource?: "user" | "engine";
-      /** Bypass in-review merge blocker checks for explicit engine-owned transitions. */
-      skipMergeBlocker?: boolean;
-    },
+    options?: MoveTaskOptions,
   ): Promise<Task> {
-    return this.withTaskLock(id, async () => {
-      const dir = this.taskDir(id);
+    return this.withTaskLock(id, () => this.moveTaskInternal(id, toColumn, options, { fromHandoff: false }));
+  }
+
+  async handoffToReview(taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
+    return this.withTaskLock(taskId, async () => {
       let task: Task;
       try {
-        task = await this.readTaskJson(dir);
+        task = await this.readTaskForMove(taskId);
       } catch (error) {
-        const archived = this.archiveDb.get(id);
-        if (!archived) {
-          throw error;
+        if (error instanceof TaskDeletedError) {
+          const deletedTask = this.readTaskFromDb(taskId, { includeDeleted: true });
+          throw new HandoffInvariantViolationError(
+            taskId,
+            deletedTask?.column ?? "todo",
+            `Cannot hand off ${taskId} to in-review because the task is deleted`,
+          );
         }
-        task = this.archiveEntryToTask(archived, false);
+        throw error;
       }
 
-      if (task.column === toColumn) {
-        if (toColumn === "done" && this.clearDoneTransientFields(task)) {
-          task.updatedAt = new Date().toISOString();
-          await this.atomicWriteTaskJson(dir, task);
-          if (this.isWatching) this.taskCache.set(id, { ...task });
-          this.emit("task:updated", task);
-        }
-        return task;
-      }
-
-      const validTargets = VALID_TRANSITIONS[task.column];
-      if (!validTargets.includes(toColumn)) {
-        throw new Error(
-          `Invalid transition: '${task.column}' → '${toColumn}'. ` +
-            `Valid targets: ${validTargets.join(", ") || "none"}`,
+      if (task.column === "archived" || task.deletedAt != null) {
+        throw new HandoffInvariantViolationError(
+          taskId,
+          task.column,
+          `Cannot hand off ${taskId} to in-review from ${task.column}`,
         );
       }
 
-      const moveSource = options?.moveSource ?? "engine";
-      const fromColumn = task.column;
-      if (fromColumn === "in-review" && toColumn === "done" && !options?.skipMergeBlocker) {
-        const mergeBlocker = getTaskMergeBlocker(task);
-        if (mergeBlocker) {
-          throw new Error(`Cannot move ${id} to done: ${mergeBlocker}`);
-        }
-      }
-      task.column = toColumn;
-      task.columnMovedAt = new Date().toISOString();
-      task.updatedAt = task.columnMovedAt;
+      return this.moveTaskInternal(
+        taskId,
+        "in-review",
+        {
+          ...opts.moveOptions,
+          skipMergeBlocker: true,
+        },
+        {
+          fromHandoff: true,
+          runContext: {
+            runId: opts.evidence.runId,
+            agentId: opts.evidence.agentId,
+          },
+          ownerAgentId: opts.ownerAgentId,
+          evidence: opts.evidence,
+          now: opts.now,
+        },
+        task,
+      );
+    });
+  }
 
-      if (fromColumn === "in-progress" && toColumn !== "in-progress") {
-        const segmentStartMs = Date.parse(task.executionStartedAt ?? task.columnMovedAt);
-        const segmentEndMs = Date.parse(task.columnMovedAt);
-        const segmentDeltaMs =
-          Number.isFinite(segmentStartMs) && Number.isFinite(segmentEndMs)
-            ? Math.max(0, segmentEndMs - segmentStartMs)
-            : 0;
-        task.cumulativeActiveMs = Math.max(0, task.cumulativeActiveMs ?? 0) + segmentDeltaMs;
+  private async moveTaskInternal(
+    id: string,
+    toColumn: Column,
+    options: MoveTaskOptions | undefined,
+    internal: MoveTaskInternalOptions,
+    currentTask?: Task,
+  ): Promise<Task> {
+    const dir = this.taskDir(id);
+    const task = currentTask ?? await this.readTaskForMove(id);
+    const moveSource = options?.moveSource ?? "engine";
+
+    if (task.column === toColumn) {
+      if (internal.fromHandoff && toColumn === "in-review") {
+        this.db.transactionImmediate(() => {
+          const liveRow = this.readTaskFromDb(id, { includeDeleted: true });
+          if (liveRow?.deletedAt) {
+            throw new HandoffInvariantViolationError(
+              id,
+              task.column,
+              `Cannot hand off ${id} to in-review because the task is deleted`,
+            );
+          }
+          const existing = this.db.prepare("SELECT 1 FROM mergeQueue WHERE taskId = ?").get(id) as { 1: number } | undefined;
+          this.insertRunAuditEventRow({
+            taskId: id,
+            agentId: internal.runContext?.agentId,
+            runId: internal.runContext?.runId,
+            domain: "database",
+            mutationType: "task:move",
+            target: id,
+            metadata: {
+              from: task.column,
+              to: toColumn,
+              moveSource,
+            },
+          });
+          this.enqueueMergeQueue(id, { priority: task.priority, now: internal.now });
+          this.insertRunAuditEventRow({
+            taskId: id,
+            agentId: internal.runContext?.agentId,
+            runId: internal.runContext?.runId,
+            domain: "database",
+            mutationType: "task:handoff",
+            target: id,
+            metadata: {
+              taskId: id,
+              fromColumn: task.column,
+              ownerAgentId: internal.ownerAgentId ?? null,
+              reason: internal.evidence?.reason,
+              runId: internal.runContext?.runId,
+              agentId: internal.runContext?.agentId,
+              alreadyEnqueued: Boolean(existing),
+            },
+          });
+        });
+        return task;
       }
 
-      // Wall-clock end-to-end runtime: set on first transition into in-progress
-      // and first transition into done. Never overwritten — see retry-clear
-      // logic below for the path that resets these for a fresh run.
-      if (toColumn === "in-progress") {
-        task.cumulativeActiveMs ??= 0;
-        if (!task.firstExecutionAt) {
-          task.firstExecutionAt = task.columnMovedAt;
-        }
-        if (!task.executionStartedAt) {
-          task.executionStartedAt = task.columnMovedAt;
-        }
+      if (toColumn === "done" && this.clearDoneTransientFields(task)) {
+        task.updatedAt = new Date().toISOString();
+        await this.atomicWriteTaskJson(dir, task);
+        if (this.isWatching) this.taskCache.set(id, { ...task });
+        this.emit("task:updated", task);
+      }
+      return task;
+    }
+
+    const validTargets = VALID_TRANSITIONS[task.column];
+    if (!validTargets.includes(toColumn)) {
+      throw new Error(
+        `Invalid transition: '${task.column}' → '${toColumn}'. ` +
+          `Valid targets: ${validTargets.join(", ") || "none"}`,
+      );
+    }
+
+    const fromColumn = task.column;
+    if (fromColumn === "in-review" && toColumn === "done" && !options?.skipMergeBlocker) {
+      const mergeBlocker = getTaskMergeBlocker(task);
+      if (mergeBlocker) {
+        throw new Error(`Cannot move ${id} to done: ${mergeBlocker}`);
+      }
+    }
+
+    const movedAt = internal.now ?? new Date().toISOString();
+    task.column = toColumn;
+    task.columnMovedAt = movedAt;
+    task.updatedAt = movedAt;
+
+    if (fromColumn === "in-progress" && toColumn !== "in-progress") {
+      const segmentStartMs = Date.parse(task.executionStartedAt ?? task.columnMovedAt);
+      const segmentEndMs = Date.parse(task.columnMovedAt);
+      const segmentDeltaMs =
+        Number.isFinite(segmentStartMs) && Number.isFinite(segmentEndMs)
+          ? Math.max(0, segmentEndMs - segmentStartMs)
+          : 0;
+      task.cumulativeActiveMs = Math.max(0, task.cumulativeActiveMs ?? 0) + segmentDeltaMs;
+    }
+
+    if (toColumn === "in-progress") {
+      task.cumulativeActiveMs ??= 0;
+      if (!task.firstExecutionAt) {
+        task.firstExecutionAt = task.columnMovedAt;
+      }
+      if (!task.executionStartedAt) {
+        task.executionStartedAt = task.columnMovedAt;
+      }
+      task.userPaused = undefined;
+    }
+    if (toColumn === "done" && !task.executionCompletedAt) {
+      task.executionCompletedAt = task.columnMovedAt;
+    }
+
+    if (toColumn === "done") {
+      this.clearDoneTransientFields(task);
+    }
+
+    const isReopenToTodoOrTriage =
+      (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review")
+      && (toColumn === "todo" || toColumn === "triage");
+
+    if (isReopenToTodoOrTriage) {
+      if (!options?.preserveStatus) {
+        task.status = undefined;
+        task.error = undefined;
+        task.pausedReason = undefined;
+      }
+      task.blockedBy = undefined;
+      task.overlapBlockedBy = undefined;
+      task.paused = undefined;
+      task.pausedByAgentId = undefined;
+      if (moveSource === "user" && toColumn === "todo") {
+        task.userPaused = true;
+      } else {
         task.userPaused = undefined;
       }
-      if (toColumn === "done" && !task.executionCompletedAt) {
-        task.executionCompletedAt = task.columnMovedAt;
+
+      const hasNonPendingStepProgress = task.steps.some((step) => step.status !== "pending");
+      const preserveStepProgress =
+        options?.preserveResumeState || (options?.preserveProgress === true && hasNonPendingStepProgress);
+
+      if (!options?.preserveWorktree) {
+        task.worktree = undefined;
       }
 
-      // Clear transient fields when moving to done (matches moveToDone behavior)
-      if (toColumn === "done") {
-        this.clearDoneTransientFields(task);
+      if (!options?.preserveResumeState) {
+        task.executionStartedAt = undefined;
+        task.executionCompletedAt = undefined;
+      } else {
+        task.executionCompletedAt = undefined;
       }
 
-      // Clear transient fields when reopening/resetting a task into todo/triage.
-      // This ensures failed tasks don't show failed status after being moved for retry.
-      // Note: recovery metadata (recoveryRetryCount, nextRecoveryAt) is intentionally
-      // preserved here — the recovery-policy module manages those fields. They are
-      // only cleared on terminal transitions (in-review, done, archived).
-      const isReopenToTodoOrTriage =
-        (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review")
-        && (toColumn === "todo" || toColumn === "triage");
+      if (!preserveStepProgress) {
+        this.resetAllStepsToPending(task);
+        await this.resetPromptCheckboxes(dir);
+      }
+    }
 
-      if (isReopenToTodoOrTriage) {
-        if (!options?.preserveStatus) {
-          task.status = undefined;
-          task.error = undefined;
-          task.pausedReason = undefined;
+    if (toColumn === "in-review") {
+      task.recoveryRetryCount = undefined;
+      task.nextRecoveryAt = undefined;
+    }
+
+    if (
+      (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress" || toColumn === "triage"))
+      || (fromColumn === "done" && (toColumn === "todo" || toColumn === "triage"))
+    ) {
+      task.workflowStepResults = undefined;
+    }
+
+    if (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "triage")) {
+      task.branch = undefined;
+      task.executionStartBranch = undefined;
+      task.baseCommitSha = undefined;
+      task.summary = undefined;
+      task.recoveryRetryCount = undefined;
+      task.nextRecoveryAt = undefined;
+    }
+
+    if (toColumn === "in-progress" && !task.worktree && options?.allocateWorktree) {
+      const allocator = options.allocateWorktree;
+      const allocated = await this.withWorktreeAllocationLock(async () => {
+        const others = await this.listTasks({ slim: true, includeArchived: false });
+        const reservedNames = new Set<string>();
+        for (const other of others) {
+          if (other.id === id || !other.worktree) continue;
+          const name = other.worktree.split("/").filter(Boolean).pop();
+          if (name) reservedNames.add(name);
         }
-        task.blockedBy = undefined;
-        task.overlapBlockedBy = undefined;
-        task.paused = undefined;
-        task.pausedByAgentId = undefined;
-        if (moveSource === "user" && toColumn === "todo") {
-          task.userPaused = true;
-        } else {
-          task.userPaused = undefined;
-        }
+        return allocator(reservedNames);
+      });
+      if (allocated) {
+        task.worktree = allocated;
+      }
+    }
 
-        const hasNonPendingStepProgress = task.steps.some((step) => step.status !== "pending");
-        const preserveStepProgress =
-          options?.preserveResumeState || (options?.preserveProgress === true && hasNonPendingStepProgress);
-
-        // Default: release the on-disk worktree directory on requeue. The
-        // checkout may have been removed, may now collide with another
-        // task's allocation, or may simply be abandoned by the bounce.
-        // `task.branch` is intentionally left intact so the next run can
-        // reattach to the same line of work — the executor's worktree
-        // creation path falls back to `git worktree add <path> <branch>`
-        // when the branch already exists, so any committed progress is
-        // preserved even though a fresh directory is allocated.
-        //
-        // Opt-out: internal bounces that immediately re-promote the task
-        // to in-progress on the same checkout (e.g. workflow-rerun) pass
-        // `preserveWorktree: true` so listeners never observe an interim
-        // `worktree=null` state.
-        if (!options?.preserveWorktree) {
-          task.worktree = undefined;
-        }
-
-        if (!options?.preserveResumeState) {
-          // Reset wall-clock runtime so the next run gets a fresh timer.
-          task.executionStartedAt = undefined;
-          task.executionCompletedAt = undefined;
-        } else {
-          // executionCompletedAt is never set on an in-progress task; clear
-          // it defensively in case we are bouncing from done/in-review.
-          task.executionCompletedAt = undefined;
-        }
-
-        if (!preserveStepProgress) {
-          this.resetAllStepsToPending(task);
-          await this.resetPromptCheckboxes(dir);
-        }
+    let deletedAt: string | undefined;
+    let alreadyEnqueued = false;
+    this.db.transactionImmediate(() => {
+      deletedAt = this.getSoftDeletedWriteConflict(id, task);
+      if (deletedAt) {
+        return;
       }
 
-      // Clear recovery metadata when task reaches in-review (successful completion)
-      if (toColumn === "in-review") {
-        task.recoveryRetryCount = undefined;
-        task.nextRecoveryAt = undefined;
-      }
+      this.upsertTaskWithFtsRecovery(task);
+      this.insertRunAuditEventRow({
+        taskId: id,
+        agentId: internal.runContext?.agentId,
+        runId: internal.runContext?.runId,
+        domain: "database",
+        mutationType: "task:move",
+        target: id,
+        metadata: {
+          from: fromColumn,
+          to: toColumn,
+          moveSource,
+        },
+      });
 
-      // Clear workflow step results when reopening from review/completed states.
-      // This ensures fresh workflow step runs on retry
-      if (
-        (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "in-progress" || toColumn === "triage"))
-        || (fromColumn === "done" && (toColumn === "todo" || toColumn === "triage"))
-      ) {
-        task.workflowStepResults = undefined;
-      }
-
-      // Full reset when sending an in-review task back to todo or triage
-      // (respec): discard prior branch/summary/recovery state so the next run
-      // starts from scratch.
-      if (fromColumn === "in-review" && (toColumn === "todo" || toColumn === "triage")) {
-        task.branch = undefined;
-        task.executionStartBranch = undefined;
-        task.baseCommitSha = undefined;
-        task.summary = undefined;
-        task.recoveryRetryCount = undefined;
-        task.nextRecoveryAt = undefined;
-      }
-
-      // Atomic worktree allocation on transition to in-progress.
-      // Wrapped in withWorktreeAllocationLock so the read-tasks → pick-name
-      // sequence cannot interleave with another concurrent moveTask. The
-      // caller supplies the naming policy via the `allocateWorktree`
-      // callback; the store builds `reservedNames` here so the snapshot
-      // is fresh under the global lock.
-      if (toColumn === "in-progress" && !task.worktree && options?.allocateWorktree) {
-        const allocator = options.allocateWorktree;
-        const allocated = await this.withWorktreeAllocationLock(async () => {
-          const others = await this.listTasks({ slim: true, includeArchived: false });
-          const reservedNames = new Set<string>();
-          for (const other of others) {
-            if (other.id === id || !other.worktree) continue;
-            const name = other.worktree.split("/").filter(Boolean).pop();
-            if (name) reservedNames.add(name);
-          }
-          return allocator(reservedNames);
+      if (toColumn === "in-review" && !internal.fromHandoff && options?.allowDirectInReviewMove !== true) {
+        this.insertRunAuditEventRow({
+          taskId: id,
+          agentId: internal.runContext?.agentId,
+          runId: internal.runContext?.runId,
+          domain: "database",
+          mutationType: "task:handoff-invariant-violation",
+          target: id,
+          metadata: {
+            taskId: id,
+            fromColumn,
+            callerStack: new Error().stack?.split("\n").slice(0, 8).join("\n"),
+          },
         });
-        if (allocated) {
-          task.worktree = allocated;
-        }
       }
 
-      await this.atomicWriteTaskJson(dir, task);
-      if (toColumn === "done") {
-        this.clearLinkedAgentTaskIds(id, task.updatedAt);
+      if (internal.fromHandoff) {
+        alreadyEnqueued = Boolean(this.db.prepare("SELECT 1 FROM mergeQueue WHERE taskId = ?").get(id));
+        this.enqueueMergeQueue(id, { priority: task.priority, now: internal.now });
+        this.insertRunAuditEventRow({
+          taskId: id,
+          agentId: internal.runContext?.agentId,
+          runId: internal.runContext?.runId,
+          domain: "database",
+          mutationType: "task:handoff",
+          target: id,
+          metadata: {
+            taskId: id,
+            fromColumn,
+            ownerAgentId: internal.ownerAgentId ?? null,
+            reason: internal.evidence?.reason,
+            runId: internal.runContext?.runId,
+            agentId: internal.runContext?.agentId,
+            alreadyEnqueued,
+          },
+        });
       }
-
-      // Update cache if watcher is active
-      if (this.isWatching) this.taskCache.set(id, { ...task });
-
-      this.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource });
-      return task;
     });
+
+    if (deletedAt) {
+      if (internal.fromHandoff) {
+        throw new HandoffInvariantViolationError(
+          id,
+          fromColumn,
+          `Cannot hand off ${id} to in-review because the task is deleted`,
+        );
+      }
+      this.throwSoftDeletedWriteBlocked(id, deletedAt, "moveTaskInternal", {
+        agentId: internal.runContext?.agentId,
+        runId: internal.runContext?.runId,
+        timestamp: movedAt,
+      });
+    }
+
+    await this.writeTaskJsonFile(dir, task);
+    if (toColumn === "done") {
+      this.clearLinkedAgentTaskIds(id, task.updatedAt);
+    }
+
+    if (this.isWatching) this.taskCache.set(id, { ...task });
+
+    this.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource });
+    return task;
   }
 
   private resetAllStepsToPending(task: Task): void {
@@ -4460,7 +4888,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
     runContext?: RunMutationContext,
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
@@ -4496,6 +4924,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       let titleNormalized = false;
       if (updates.title !== undefined) {
         task.title = updates.title;
+        // FN-5077: load-time repair tolerates null normalized titles (title cleared instead of fragment persisted).
         const normalizedTitle = normalizeTitleForTaskId(task.title, id);
         if (normalizedTitle.changed) {
           titleNormalized = true;
@@ -4510,6 +4939,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         }
       }
       if (updates.description !== undefined) task.description = updates.description;
+      if (updates.sourceMetadataPatch === null) {
+        task.sourceMetadata = undefined;
+      } else if (updates.sourceMetadataPatch !== undefined) {
+        task.sourceMetadata = {
+          ...(task.sourceMetadata ?? {}),
+          ...updates.sourceMetadataPatch,
+        };
+      }
       if (updates.priority === null) {
         task.priority = normalizeTaskPriority(undefined);
       } else if (updates.priority !== undefined) {
@@ -5296,7 +5733,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       // Fast path for high-volume log entries: update only the log + updatedAt fields
       // instead of reading/writing the entire task payload on every append.
-      const row = this.db.prepare('SELECT log, "column" FROM tasks WHERE id = ?').get(id) as
+      const row = this.db.prepare(`SELECT log, "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(id) as
         | { log: string | null; column: Column }
         | undefined;
       if (!row) {
@@ -5341,7 +5778,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Scans all tasks' logs for entries whose runContext.runId matches.
    */
   async getMutationsForRun(runId: string): Promise<TaskLogEntry[]> {
-    const rows = this.db.prepare("SELECT log FROM tasks").all() as Array<{ log: string | null }>;
+    const rows = this.db.prepare(`SELECT log FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ log: string | null }>;
     const mutations: TaskLogEntry[] = [];
     for (const row of rows) {
       const logEntries = fromJson<TaskLogEntry[]>(row.log) || [];
@@ -5356,6 +5793,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   // ── Run Audit APIs ───────────────────────────────────────────────────
+
+  private rowToMergeQueueEntry(row: MergeQueueRow): MergeQueueEntry {
+    return {
+      taskId: row.taskId,
+      enqueuedAt: row.enqueuedAt,
+      priority: normalizeTaskPriority(row.priority),
+      leasedBy: row.leasedBy,
+      leasedAt: row.leasedAt,
+      leaseExpiresAt: row.leaseExpiresAt,
+      attemptCount: row.attemptCount,
+      lastError: row.lastError,
+    };
+  }
 
   /**
    * Convert a database row to a RunAuditEvent object.
@@ -5492,6 +5942,210 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return rows.map((row) => this.rowToRunAuditEvent(row));
   }
 
+  enqueueMergeQueue(taskId: string, opts: MergeQueueEnqueueOptions = {}): MergeQueueEntry {
+    return this.db.transactionImmediate(() => {
+      const existing = this.db.prepare("SELECT * FROM mergeQueue WHERE taskId = ?").get(taskId) as MergeQueueRow | undefined;
+      const taskRow = this.db.prepare("SELECT priority FROM tasks WHERE id = ?").get(taskId) as { priority: string | null } | undefined;
+      if (!taskRow) {
+        throw new MergeQueueTaskNotFoundError(taskId);
+      }
+
+      const now = opts.now ?? new Date().toISOString();
+      const priority = opts.priority ?? normalizeTaskPriority(taskRow.priority);
+
+      let entry: MergeQueueEntry;
+      let alreadyEnqueued = true;
+      if (existing) {
+        entry = this.rowToMergeQueueEntry(existing);
+      } else {
+        this.db.prepare(`
+          INSERT INTO mergeQueue (taskId, enqueuedAt, priority, attemptCount)
+          VALUES (?, ?, ?, 0)
+          ON CONFLICT(taskId) DO NOTHING
+        `).run(taskId, now, priority);
+        const inserted = this.db.prepare("SELECT * FROM mergeQueue WHERE taskId = ?").get(taskId) as MergeQueueRow | undefined;
+        if (!inserted) {
+          throw new Error(`Failed to read merge queue entry for ${taskId} after enqueue`);
+        }
+        entry = this.rowToMergeQueueEntry(inserted);
+        alreadyEnqueued = false;
+      }
+
+      this.insertRunAuditEventRow({
+        taskId,
+        domain: "database",
+        mutationType: "mergeQueue:enqueue",
+        target: taskId,
+        metadata: {
+          taskId,
+          priority: entry.priority,
+          enqueuedAt: entry.enqueuedAt,
+          alreadyEnqueued,
+        },
+      });
+
+      return entry;
+    });
+  }
+
+  acquireMergeQueueLease(workerId: string, opts: MergeQueueAcquireOptions): MergeQueueEntry | null {
+    if (opts.leaseDurationMs <= 0) {
+      throw new InvalidMergeQueueLeaseDurationError(opts.leaseDurationMs);
+    }
+
+    return this.db.transactionImmediate(() => {
+      const now = opts.now ?? new Date().toISOString();
+      const leaseExpiresAt = new Date(Date.parse(now) + opts.leaseDurationMs).toISOString();
+      const leased = this.db.prepare(`
+        UPDATE mergeQueue
+           SET leasedBy = ?, leasedAt = ?, leaseExpiresAt = ?
+         WHERE taskId = (
+           SELECT taskId FROM mergeQueue
+            WHERE leasedBy IS NULL OR leaseExpiresAt <= ?
+            ORDER BY CASE priority
+                       WHEN 'urgent' THEN 0
+                       WHEN 'high'   THEN 1
+                       WHEN 'normal' THEN 2
+                       WHEN 'low'    THEN 3
+                       ELSE 4
+                     END ASC,
+                     enqueuedAt ASC
+            LIMIT 1
+         )
+         RETURNING *
+      `).get(workerId, now, leaseExpiresAt, now) as MergeQueueRow | undefined;
+
+      if (!leased) {
+        return null;
+      }
+
+      const entry = this.rowToMergeQueueEntry(leased);
+      this.insertRunAuditEventRow({
+        taskId: entry.taskId,
+        domain: "database",
+        mutationType: "mergeQueue:lease-acquired",
+        target: entry.taskId,
+        metadata: {
+          taskId: entry.taskId,
+          workerId,
+          leaseExpiresAt: entry.leaseExpiresAt,
+          priority: entry.priority,
+        },
+      });
+      return entry;
+    });
+  }
+
+  releaseMergeQueueLease(taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): void {
+    this.db.transactionImmediate(() => {
+      const current = this.db.prepare("SELECT leasedBy FROM mergeQueue WHERE taskId = ?").get(taskId) as { leasedBy: string | null } | undefined;
+      if (!current || current.leasedBy !== workerId) {
+        throw new MergeQueueLeaseOwnershipError(taskId, workerId, current?.leasedBy ?? null);
+      }
+
+      if (outcome.kind === "success") {
+        this.db.prepare("DELETE FROM mergeQueue WHERE taskId = ? AND leasedBy = ?").run(taskId, workerId);
+        this.insertRunAuditEventRow({
+          taskId,
+          domain: "database",
+          mutationType: "mergeQueue:lease-released",
+          target: taskId,
+          metadata: {
+            taskId,
+            workerId,
+            outcome: "success",
+          },
+        });
+        return;
+      }
+
+      const released = this.db.prepare(`
+        UPDATE mergeQueue
+           SET leasedBy = NULL,
+               leasedAt = NULL,
+               leaseExpiresAt = NULL,
+               attemptCount = attemptCount + 1,
+               lastError = ?
+         WHERE taskId = ? AND leasedBy = ?
+         RETURNING *
+      `).get(outcome.error, taskId, workerId) as MergeQueueRow | undefined;
+      if (!released) {
+        throw new MergeQueueLeaseOwnershipError(taskId, workerId, null);
+      }
+
+      const entry = this.rowToMergeQueueEntry(released);
+      this.insertRunAuditEventRow({
+        taskId,
+        domain: "database",
+        mutationType: "mergeQueue:lease-released",
+        target: taskId,
+        metadata: {
+          taskId,
+          workerId,
+          outcome: "failure",
+          attemptCount: entry.attemptCount,
+          error: outcome.error,
+        },
+      });
+    });
+  }
+
+  recoverExpiredMergeQueueLeases(now: string = new Date().toISOString()): MergeQueueEntry[] {
+    return this.db.transactionImmediate(() => {
+      const expired = this.db.prepare(`
+        SELECT * FROM mergeQueue
+         WHERE leasedBy IS NOT NULL AND leaseExpiresAt <= ?
+         ORDER BY leaseExpiresAt ASC, enqueuedAt ASC
+      `).all(now) as MergeQueueRow[];
+      if (expired.length === 0) {
+        return [];
+      }
+
+      const recoveredRows = this.db.prepare(`
+        UPDATE mergeQueue
+           SET leasedBy = NULL,
+               leasedAt = NULL,
+               leaseExpiresAt = NULL
+         WHERE leasedBy IS NOT NULL AND leaseExpiresAt <= ?
+         RETURNING *
+      `).all(now) as MergeQueueRow[];
+
+      const previousByTaskId = new Map(expired.map((row) => [row.taskId, row]));
+      for (const row of recoveredRows) {
+        const previous = previousByTaskId.get(row.taskId);
+        this.insertRunAuditEventRow({
+          taskId: row.taskId,
+          domain: "database",
+          mutationType: "mergeQueue:lease-expired",
+          target: row.taskId,
+          metadata: {
+            taskId: row.taskId,
+            previousLeasedBy: previous?.leasedBy ?? null,
+            previousLeaseExpiresAt: previous?.leaseExpiresAt ?? null,
+            recoveredAt: now,
+          },
+        });
+      }
+
+      return recoveredRows.map((row) => this.rowToMergeQueueEntry(row));
+    });
+  }
+
+  peekMergeQueue(): MergeQueueEntry[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM mergeQueue
+      ORDER BY CASE priority
+                 WHEN 'urgent' THEN 0
+                 WHEN 'high'   THEN 1
+                 WHEN 'normal' THEN 2
+                 WHEN 'low'    THEN 3
+                 ELSE 4
+               END ASC,
+               enqueuedAt ASC
+    `).all() as MergeQueueRow[];
+    return rows.map((row) => this.rowToMergeQueueEntry(row));
+  }
+
   // ── End Run Audit APIs ───────────────────────────────────────────────
 
   /**
@@ -5566,17 +6220,37 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return paths.filter((path) => isValidFileScopeEntry(path));
   }
 
+  private makeSyntheticDeleteRunId(taskId: string): string {
+    return `synthetic-task-delete-${taskId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
+  /**
+   * Soft-delete a live task by setting tasks.deletedAt/updatedAt while leaving
+   * the row and on-disk task artifacts in place for potential recovery.
+   *
+   * Idempotent (FN-5127): calling deleteTask on an already-soft-deleted task is
+   * a no-op and does not re-emit task:deleted.
+   */
   async deleteTask(
     id: string,
-    options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction },
+    options?: {
+      removeDependencyReferences?: boolean;
+      removeLineageReferences?: boolean;
+      githubIssueAction?: GithubIssueAction;
+      auditContext?: { agentId: string; runId: string; sessionId?: string };
+    },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Flush buffered agent logs inside the lock so no new appends for this
-      // task can sneak in between flush and DELETE.
+      // task can sneak in between flush and soft-delete mutation.
       this.flushAgentLogBuffer();
-      const task = this.readTaskFromDb(id);
+      const task = this.readTaskFromDb(id, { includeDeleted: true });
       if (!task) {
         throw new Error(`Task ${id} not found`);
+      }
+
+      if (task.deletedAt) {
+        return task;
       }
 
       // Refuse to delete a task that is still referenced as a dependency
@@ -5585,6 +6259,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dependentIds = this.findLiveDependents(id);
       if (dependentIds.length > 0 && !options?.removeDependencyReferences) {
         throw new TaskHasDependentsError(id, dependentIds);
+      }
+
+      // FN-5127: lineage gate must execute after idempotent short-circuit.
+      const lineageChildIds = this.findLiveLineageChildren(id);
+      if (lineageChildIds.length > 0 && !options?.removeLineageReferences) {
+        throw new TaskHasLineageChildrenError(id, lineageChildIds);
       }
 
       // Clean up the task's branch before deleting from DB
@@ -5597,20 +6277,61 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         });
       }
 
-      const rewrittenDependents = this.rewriteDependentsAndDeleteTask(id, dependentIds);
+      let rewrittenDependents: Task[] = [];
+      let rewrittenLineageChildren: Task[] = [];
+      this.db.transaction(() => {
+        rewrittenDependents = this.rewriteDependentsForRemoval(id, dependentIds);
+        rewrittenLineageChildren = this.rewriteLineageChildrenForRemoval(id, lineageChildIds);
+        const deletedAt = new Date().toISOString();
+        this.db.prepare("UPDATE tasks SET \"column\" = 'archived', deletedAt = ?, updatedAt = ? WHERE id = ?").run(deletedAt, deletedAt, id);
+        this.recordRunAuditEvent({
+          domain: "database",
+          mutationType: "task:deleted",
+          target: task.id,
+          taskId: task.id,
+          agentId: options?.auditContext?.agentId ?? "system",
+          runId: options?.auditContext?.runId ?? this.makeSyntheticDeleteRunId(task.id),
+          metadata: {
+            previousColumn: task.column,
+            previousStatus: task.status ?? null,
+            githubIssueAction: options?.githubIssueAction ?? "auto",
+            removeDependencyReferences: !!options?.removeDependencyReferences,
+            removeLineageReferences: !!options?.removeLineageReferences,
+            sessionId: options?.auditContext?.sessionId,
+          },
+        });
+        this.clearLinkedAgentTaskIds(id, deletedAt);
+        // FN-5143: clear historical agent logs for the soft-deleted task so
+        // downstream readers (evaluator evidence, self-healing diagnostics,
+        // dashboard log views, register-task-workflow-routes) observe zero logs
+        // immediately after deletedAt is set. Atomic with the deletedAt write.
+        this.db.prepare("DELETE FROM agentLogEntries WHERE taskId = ?").run(id);
+        this.db.bumpLastModified();
+      });
+
+      // FN-5143 defense-in-depth: drop any in-memory buffer entries for this
+      // task. flushAgentLogBuffer() above already ran inside the lock, but a
+      // concurrent appendAgentLog from another async path could re-buffer
+      // before this lock releases; the next flush would still drop them via
+      // ACTIVE_TASKS_WHERE, but filtering here avoids the warn log and keeps
+      // memory bounded.
+      if (this.agentLogBuffer.length > 0) {
+        this.agentLogBuffer = this.agentLogBuffer.filter((entry) => entry.taskId !== id);
+      }
 
       // Remove from cache if watcher is active
       if (this.isWatching) this.taskCache.delete(id);
 
-      // Delete directory from disk
-      const dir = this.taskDir(id);
-      if (existsSync(dir)) {
-        const { rm } = await import("node:fs/promises");
-        await rm(dir, { recursive: true });
-      }
-
       for (const dependentTask of rewrittenDependents) {
         this.emit("task:updated", dependentTask);
+      }
+      for (const lineageChild of rewrittenLineageChildren) {
+        this.emit("task:updated", lineageChild);
+      }
+
+      const linkedFeature = this.missionStore?.getFeatureByTaskId(id);
+      if (linkedFeature) {
+        this.missionStore?.unlinkFeatureFromTask(linkedFeature.id);
       }
 
       this.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
@@ -5624,42 +6345,59 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.db.bumpLastModified();
   }
 
-  private rewriteDependentsAndDeleteTask(taskId: string, dependentIds: string[]): Task[] {
+  private rewriteDependentsForRemoval(taskId: string, dependentIds: string[]): Task[] {
     const rewrittenDependents: Task[] = [];
 
-    this.db.transaction(() => {
-      for (const dependentId of dependentIds) {
-        const dependentTask = this.readTaskFromDb(dependentId);
-        if (!dependentTask) continue;
+    for (const dependentId of dependentIds) {
+      const dependentTask = this.readTaskFromDb(dependentId);
+      if (!dependentTask) continue;
 
-        const nextDependencies = dependentTask.dependencies.filter((dependencyId) => dependencyId !== taskId);
-        if (nextDependencies.length === dependentTask.dependencies.length) {
-          continue;
-        }
-
-        const updatedDependent = {
-          ...dependentTask,
-          dependencies: nextDependencies,
-          updatedAt: new Date().toISOString(),
-        };
-
-        this.db.prepare("UPDATE tasks SET dependencies = ?, updatedAt = ? WHERE id = ?").run(
-          toJson(updatedDependent.dependencies),
-          updatedDependent.updatedAt,
-          updatedDependent.id,
-        );
-        if (this.isWatching) {
-          this.taskCache.set(updatedDependent.id, updatedDependent);
-        }
-        rewrittenDependents.push(updatedDependent);
+      const nextDependencies = dependentTask.dependencies.filter((dependencyId) => dependencyId !== taskId);
+      if (nextDependencies.length === dependentTask.dependencies.length) {
+        continue;
       }
 
-      this.clearLinkedAgentTaskIds(taskId);
-      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
-      this.db.bumpLastModified();
-    });
+      const updatedDependent = {
+        ...dependentTask,
+        dependencies: nextDependencies,
+        updatedAt: new Date().toISOString(),
+      };
+
+      this.db.prepare("UPDATE tasks SET dependencies = ?, updatedAt = ? WHERE id = ?").run(
+        toJson(updatedDependent.dependencies),
+        updatedDependent.updatedAt,
+        updatedDependent.id,
+      );
+      if (this.isWatching) {
+        this.taskCache.set(updatedDependent.id, updatedDependent);
+      }
+      rewrittenDependents.push(updatedDependent);
+    }
 
     return rewrittenDependents;
+  }
+
+  private rewriteLineageChildrenForRemoval(parentId: string, childIds: string[]): Task[] {
+    const rewrittenChildren: Task[] = [];
+
+    for (const childId of childIds) {
+      const childTask = this.readTaskFromDb(childId);
+      if (!childTask || childTask.sourceParentTaskId !== parentId) continue;
+
+      const updatedChild: Task = {
+        ...childTask,
+        sourceParentTaskId: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+
+      this.db.prepare("UPDATE tasks SET sourceParentTaskId = NULL, updatedAt = ? WHERE id = ?").run(updatedChild.updatedAt, updatedChild.id);
+      if (this.isWatching) {
+        this.taskCache.set(updatedChild.id, updatedChild);
+      }
+      rewrittenChildren.push(updatedChild);
+    }
+
+    return rewrittenChildren;
   }
 
   /**
@@ -5809,7 +6547,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       params.push(ownerTaskId);
     }
     const rows = this.db
-      .prepare(`SELECT id FROM tasks WHERE ${whereClause}`)
+      .prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND ${whereClause}`)
       .all(...params) as Array<{ id: string }>;
 
     if (rows.length === 0) return [];
@@ -6059,16 +6797,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Archive all tasks currently in the "done" column.
    * Returns an array of archived tasks.
    */
-  async archiveAllDone(): Promise<Task[]> {
+  async archiveAllDone(options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
     const doneTasks = await this.listTasks({ slim: true, column: "done" });
-    
+
     if (doneTasks.length === 0) {
       return [];
     }
 
     // Archive all done tasks concurrently
     const archivedTasks = await Promise.all(
-      doneTasks.map((task) => this.archiveTask(task.id))
+      doneTasks.map((task) =>
+        this.archiveTask(task.id, {
+          cleanup: true,
+          removeLineageReferences: options?.removeLineageReferences,
+        })
+      )
     );
 
     return archivedTasks;
@@ -6077,10 +6820,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * Archive a done task (move from done → archived).
    * Logs the action and emits `task:moved` event.
-   * @param cleanup - When true, also attempts branch cleanup before writing the
-   *                  cold archive entry. Active task storage is always removed.
+   * @param optionsOrCleanup - Boolean cleanup flag for backward compatibility,
+   * or an options object that also allows removeLineageReferences.
    */
-  async archiveTask(id: string, cleanup: boolean = true): Promise<Task> {
+  async archiveTask(
+    id: string,
+    optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean } = true,
+  ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
@@ -6096,6 +6842,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         );
       }
 
+      const cleanup = typeof optionsOrCleanup === "boolean" ? optionsOrCleanup : optionsOrCleanup.cleanup !== false;
+      const removeLineageReferences = typeof optionsOrCleanup === "object" && optionsOrCleanup.removeLineageReferences === true;
+      const lineageChildIds = this.findLiveLineageChildren(id);
+      if (lineageChildIds.length > 0 && !removeLineageReferences) {
+        throw new TaskHasLineageChildrenError(id, lineageChildIds);
+      }
+
       task.column = "archived";
       task.columnMovedAt = new Date().toISOString();
       task.updatedAt = task.columnMovedAt;
@@ -6104,10 +6857,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         action: "Task archived",
       });
 
+      let rewrittenLineageChildren: Task[] = [];
+
       if (!cleanup) {
+        this.db.transaction(() => {
+          rewrittenLineageChildren = this.rewriteLineageChildrenForRemoval(id, lineageChildIds);
+          this.clearLinkedAgentTaskIds(id, task.updatedAt);
+          if (rewrittenLineageChildren.length > 0) {
+            this.db.bumpLastModified();
+          }
+        });
+
         await this.atomicWriteTaskJson(dir, task);
-        this.clearLinkedAgentTaskIds(id, task.updatedAt);
         if (this.isWatching) this.taskCache.set(id, { ...task });
+        for (const lineageChild of rewrittenLineageChildren) {
+          this.emit("task:updated", lineageChild);
+        }
         this.emit("task:moved", { task, from: "done" as Column, to: "archived" as Column, source: "engine" });
         return task;
       }
@@ -6123,9 +6888,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const entry = await this.taskToArchiveEntry(task, task.columnMovedAt);
       this.archiveDb.upsert(entry);
 
-      this.clearLinkedAgentTaskIds(id, task.updatedAt);
-      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-      this.db.bumpLastModified();
+      this.db.transaction(() => {
+        rewrittenLineageChildren = this.rewriteLineageChildrenForRemoval(id, lineageChildIds);
+        this.clearLinkedAgentTaskIds(id, task.updatedAt);
+        this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+        this.db.bumpLastModified();
+      });
 
       const { rm } = await import("node:fs/promises");
       await rm(dir, { recursive: true, force: true });
@@ -6134,6 +6902,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         this.taskCache.delete(id);
       }
 
+      for (const lineageChild of rewrittenLineageChildren) {
+        this.emit("task:updated", lineageChild);
+      }
       this.emit("task:moved", { task, from: "done" as Column, to: "archived" as Column, source: "engine" });
       return this.archiveEntryToTask(entry, false);
     });
@@ -6194,15 +6965,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       // Clear transient fields that should not persist into "done" column.
       // Matches the clearing done by moveTask() for consistency — archived
-      // tasks may have been archived with stale worktree/status/error/recovery
-      // state that should not reappear after unarchiving.
-      task.status = undefined;
-      task.error = undefined;
-      task.worktree = undefined;
-      task.blockedBy = undefined;
-      task.overlapBlockedBy = undefined;
-      task.recoveryRetryCount = undefined;
-      task.nextRecoveryAt = undefined;
+      // tasks may have been archived with stale state that should not reappear
+      // after unarchiving.
+      this.clearDoneTransientFields(task);
 
       task.log.push({
         timestamp: task.columnMovedAt,
@@ -6254,7 +7019,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       || task.blockedBy !== undefined
       || task.overlapBlockedBy !== undefined
       || task.recoveryRetryCount !== undefined
-      || task.nextRecoveryAt !== undefined;
+      || task.nextRecoveryAt !== undefined
+      || task.paused !== undefined
+      || task.userPaused !== undefined
+      || task.pausedByAgentId !== undefined
+      || task.pausedReason !== undefined;
 
     task.status = undefined;
     task.error = undefined;
@@ -6263,6 +7032,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     task.overlapBlockedBy = undefined;
     task.recoveryRetryCount = undefined;
     task.nextRecoveryAt = undefined;
+    task.paused = undefined;
+    task.userPaused = undefined;
+    task.pausedByAgentId = undefined;
+    task.pausedReason = undefined;
 
     return changed;
   }
@@ -6285,6 +7058,29 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.taskCache.clear();
     for (const task of tasks) {
       this.taskCache.set(task.id, { ...task });
+    }
+
+    if (!this.donePauseBackfillDone) {
+      const repairedTaskIds: string[] = [];
+      for (const [taskId, cachedTask] of this.taskCache.entries()) {
+        if (cachedTask.column !== "done") continue;
+
+        const taskDir = this.taskDir(taskId);
+        const raw = await readFile(join(taskDir, "task.json"), "utf-8");
+        const diskTask = JSON.parse(raw) as Task;
+        if (!this.clearDoneTransientFields(diskTask)) continue;
+
+        await this.atomicWriteTaskJson(taskDir, diskTask);
+        this.taskCache.set(taskId, { ...diskTask });
+        repairedTaskIds.push(taskId);
+      }
+      this.donePauseBackfillDone = true;
+
+      storeLog.log("done-task pause metadata backfill completed", {
+        phase: "watch:done-pause-backfill",
+        repairedCount: repairedTaskIds.length,
+        repairedTaskIds: repairedTaskIds.slice(0, 20),
+      });
     }
 
     // Store current lastModified
@@ -6351,6 +7147,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // same DB can't tell the difference from this view alone — without the
       // archive check below they emit spurious task:deleted events for every
       // archived task, which the activity log records as a deletion.
+      // FN-5105: intentionally include soft-deleted rows here so a deletedAt
+      // transition can be observed and emit task:deleted exactly once.
       const idRows = this.db.prepare('SELECT id FROM tasks').all() as Array<{ id: string }>;
       const currentIds = new Set(idRows.map((r) => r.id));
       const missingIds: string[] = [];
@@ -6363,13 +7161,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           const cached = this.taskCache.get(id);
           if (!cached) continue;
           this.taskCache.delete(id);
-          if (archivedSet.has(id)) {
-            // Task moved to archive — emit task:moved (matching what
-            // archiveTask emits in-process) so the activity-log listener
-            // records it correctly.
-            this.emit("task:moved", { task: cached, from: cached.column, to: "archived" as Column, source: "engine" });
-          } else {
-            this.emit("task:deleted", cached);
+          this.suppressActivityLogForPollingEmit = true;
+          try {
+            if (archivedSet.has(id)) {
+              // Task moved to archive — emit task:moved (matching what
+              // archiveTask emits in-process) so other subscribers can react.
+              // Activity-log listeners skip this emit; the originating
+              // TaskStore instance wrote the row in-process.
+              this.emit("task:moved", { task: cached, from: cached.column, to: "archived" as Column, source: "engine" });
+            } else {
+              // Polling replicas only mirror the originating delete signal.
+              // Do not record run-audit here; the writer already owns that row.
+              this.emit("task:deleted", cached);
+            }
+          } finally {
+            this.suppressActivityLogForPollingEmit = false;
           }
         }
       }
@@ -6389,16 +7195,32 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         const row = changedRows[i];
         const task = this.rowToTask(row);
         const cached = this.taskCache.get(task.id);
-        if (!cached) {
-          this.taskCache.set(task.id, { ...task });
-          this.emit("task:created", task);
-        } else if (cached.column !== task.column) {
-          const from = cached.column;
-          this.taskCache.set(task.id, { ...task });
-          this.emit("task:moved", { task, from, to: task.column, source: "engine" });
-        } else {
-          this.taskCache.set(task.id, { ...task });
-          this.emit("task:updated", task);
+
+        this.suppressActivityLogForPollingEmit = true;
+        try {
+          if (task.deletedAt) {
+            if (cached) {
+              this.taskCache.delete(task.id);
+              // Polling replicas only re-emit task:deleted for subscribers.
+              // They must not insert duplicate run-audit rows cross-instance.
+              this.emit("task:deleted", cached);
+            }
+            continue;
+          }
+
+          if (!cached) {
+            this.taskCache.set(task.id, { ...task });
+            this.emit("task:created", task);
+          } else if (cached.column !== task.column) {
+            const from = cached.column;
+            this.taskCache.set(task.id, { ...task });
+            this.emit("task:moved", { task, from, to: task.column, source: "engine" });
+          } else {
+            this.taskCache.set(task.id, { ...task });
+            this.emit("task:updated", task);
+          }
+        } finally {
+          this.suppressActivityLogForPollingEmit = false;
         }
 
         // Yield every ~50 rows to prevent blocking the event loop during large updates
@@ -6670,7 +7492,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         // Query live task IDs inside the transaction so the check is
         // atomic with the inserts (prevents TOCTOU FK violations).
         const liveTaskIds = new Set(
-          (this.db.prepare("SELECT id FROM tasks").all() as Array<{ id: string }>).map((r) => r.id),
+          (this.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((r) => r.id),
         );
         validEntries = batch.filter((e) => liveTaskIds.has(e.taskId));
         const dropped = batch.length - validEntries.length;
@@ -7090,10 +7912,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return task;
   }
 
+  private hasActiveTask(taskId: string): boolean {
+    const row = this.db.prepare(`SELECT id FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(taskId) as
+      | { id: string }
+      | undefined;
+    return Boolean(row);
+  }
+
   /**
    * List all current task documents for a task, ordered by key.
    */
   async getTaskDocuments(taskId: string): Promise<TaskDocument[]> {
+    if (!this.hasActiveTask(taskId)) {
+      return [];
+    }
+
     const rows = this.db
       .prepare("SELECT * FROM task_documents WHERE taskId = ? ORDER BY key")
       .all(taskId) as unknown as TaskDocumentRow[];
@@ -7116,12 +7949,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       SELECT td.*, t.title as taskTitle, t.description as taskDescription, t.column as taskColumn
       FROM task_documents td
       JOIN tasks t ON td.taskId = t.id
+      WHERE t.${TaskStore.ACTIVE_TASKS_WHERE}
     `;
     const params: (string | number)[] = [];
 
     if (options?.searchQuery && options.searchQuery.trim() !== "") {
       const query = `%${options.searchQuery.trim()}%`;
-      sql += ` WHERE td.key LIKE ? OR td.content LIKE ? OR t.title LIKE ?`;
+      sql += ` AND (td.key LIKE ? OR td.content LIKE ? OR t.title LIKE ?)`;
       params.push(query, query, query);
     }
 
@@ -7144,6 +7978,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * Get the current revision of a specific task document.
    */
   async getTaskDocument(taskId: string, key: string): Promise<TaskDocument | null> {
+    if (!this.hasActiveTask(taskId)) {
+      return null;
+    }
+
     const row = this.db
       .prepare("SELECT * FROM task_documents WHERE taskId = ? AND key = ?")
       .get(taskId, key) as unknown as TaskDocumentRow | undefined;
@@ -7163,7 +8001,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       );
     }
 
-    const taskExists = this.db.prepare('SELECT id, "column" FROM tasks WHERE id = ?').get(taskId) as
+    const taskExists = this.db.prepare(`SELECT id, "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(taskId) as
       | { id: string; column: Column }
       | undefined;
     if (taskExists?.column === "archived") {
@@ -7255,6 +8093,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     key: string,
     options?: { limit?: number },
   ): Promise<TaskDocumentRevision[]> {
+    if (!this.hasActiveTask(taskId)) {
+      return [];
+    }
+
     const hasLimit = options?.limit !== undefined;
     const rows = hasLimit
       ? (this.db
@@ -7273,6 +8115,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   /**
    * Delete a task document and all archived revisions for its key.
+   * Read paths gate on the parent task's active state, but deletes remain allowed
+   * for forensic cleanup against soft-deleted parents.
    */
   async deleteTaskDocument(taskId: string, key: string): Promise<void> {
     const existing = this.db
@@ -7298,17 +8142,45 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
 
     this.db.bumpLastModified();
-    const task = await this.getTask(taskId);
-    this.emit("task:updated", task);
+    const task = this.readTaskFromDb(taskId, { includeDeleted: true });
+    if (task && task.deletedAt == null) {
+      this.emit("task:updated", task);
+    }
+  }
+
+  private getTaskPrInfos(task: Task): import("./types.js").PrInfo[] {
+    return [...(task.prInfos ?? (task.prInfo ? [task.prInfo] : []))];
+  }
+
+  private resolvePrimaryPrInfo(prInfos: import("./types.js").PrInfo[]): import("./types.js").PrInfo | undefined {
+    // Primary selection rule: prefer the most-recently-updated open PR; if none are open,
+    // fall back to the first linked PR for stable back-compat rendering.
+    const openPrs = prInfos.filter((entry) => entry.status === "open");
+    if (openPrs.length === 0) return prInfos[0];
+    const sorted = [...openPrs].sort((a, b) => {
+      const aTs = Date.parse(a.lastCheckedAt ?? a.lastCommentAt ?? "");
+      const bTs = Date.parse(b.lastCheckedAt ?? b.lastCommentAt ?? "");
+      if (Number.isFinite(aTs) && Number.isFinite(bTs)) return bTs - aTs;
+      if (Number.isFinite(aTs)) return -1;
+      if (Number.isFinite(bTs)) return 1;
+      return 0;
+    });
+    return sorted[0] ?? prInfos[0];
+  }
+
+  private upsertPrInfoByNumber(prInfos: import("./types.js").PrInfo[], prInfo: import("./types.js").PrInfo): import("./types.js").PrInfo[] {
+    const idx = prInfos.findIndex((entry) => entry.number === prInfo.number);
+    if (idx >= 0) {
+      const next = [...prInfos];
+      next[idx] = { ...next[idx], ...prInfo };
+      return next;
+    }
+    return [prInfo, ...prInfos];
   }
 
   /**
    * Update or clear PR information for a task.
    * Updates task.json atomically and emits `task:updated` event.
-   *
-   * @param id - The task ID
-   * @param prInfo - The PR info to set, or null to clear
-   * @returns The updated task
    */
   async updatePrInfo(
     id: string,
@@ -7330,41 +8202,89 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         previous?.lastCommentAt !== prInfo?.lastCommentAt;
       const linkChanged = previous?.number !== prInfo?.number || previous?.url !== prInfo?.url;
 
+      let prInfos = this.getTaskPrInfos(task);
       if (prInfo) {
-        task.prInfo = prInfo;
+        prInfos = this.upsertPrInfoByNumber(prInfos, prInfo);
         if (!previous || linkChanged) {
-          task.log.push({
-            timestamp: new Date().toISOString(),
-            action: "PR linked",
-            outcome: `PR #${prInfo.number}: ${prInfo.url}`,
-          });
+          task.log.push({ timestamp: new Date().toISOString(), action: "PR linked", outcome: `PR #${prInfo.number}: ${prInfo.url}` });
         } else if (badgeChanged) {
-          task.log.push({
-            timestamp: new Date().toISOString(),
-            action: "PR updated",
-            outcome: `PR #${prInfo.number} badge metadata refreshed`,
-          });
+          task.log.push({ timestamp: new Date().toISOString(), action: "PR updated", outcome: `PR #${prInfo.number} badge metadata refreshed` });
         }
       } else {
-        task.prInfo = undefined;
-        if (previous?.number) {
-          task.log.push({
-            timestamp: new Date().toISOString(),
-            action: "PR unlinked",
-            outcome: `PR #${previous.number} removed`,
-          });
+        if (previous?.number !== undefined) {
+          task.log.push({ timestamp: new Date().toISOString(), action: "PR unlinked", outcome: `PR #${previous.number} removed` });
         }
+        prInfos = [];
       }
 
+      task.prInfos = prInfos.length > 0 ? prInfos : undefined;
+      task.prInfo = this.resolvePrimaryPrInfo(prInfos);
       task.updatedAt = new Date().toISOString();
 
       await this.atomicWriteTaskJson(dir, task);
       if (this.isWatching) this.taskCache.set(id, { ...task });
+      if (badgeChanged || linkChanged || !prInfo) this.emit("task:updated", task);
+      return task;
+    });
+  }
 
-      if (badgeChanged) {
-        this.emit("task:updated", task);
+  async addPrInfo(id: string, prInfo: import("./types.js").PrInfo): Promise<Task | undefined> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      let prInfos = this.getTaskPrInfos(task);
+      const existingIndex = prInfos.findIndex((entry) => entry.number === prInfo.number);
+      if (existingIndex >= 0) {
+        prInfos[existingIndex] = { ...prInfos[existingIndex], ...prInfo };
+      } else {
+        prInfos = [prInfo, ...prInfos];
       }
+      task.prInfos = prInfos;
+      task.prInfo = this.resolvePrimaryPrInfo(prInfos);
+      task.updatedAt = new Date().toISOString();
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
 
+  async updatePrInfoByNumber(id: string, number: number, patch: Partial<import("./types.js").PrInfo>): Promise<Task | undefined> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      const prInfos = this.getTaskPrInfos(task);
+      const index = prInfos.findIndex((entry) => entry.number === number);
+      if (index < 0) {
+        storeLog.warn(`[store] updatePrInfoByNumber: PR #${number} not found for ${id}`);
+        return task;
+      }
+      prInfos[index] = { ...prInfos[index], ...patch };
+      task.prInfos = prInfos;
+      task.prInfo = this.resolvePrimaryPrInfo(prInfos);
+      task.updatedAt = new Date().toISOString();
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
+  async removePrInfoByNumber(id: string, number: number): Promise<Task | undefined> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      const prInfos = this.getTaskPrInfos(task).filter((entry) => entry.number !== number);
+      if ((task.prInfos ?? []).length === prInfos.length && task.prInfo?.number !== number) {
+        storeLog.warn(`[store] removePrInfoByNumber: PR #${number} not found for ${id}`);
+        return task;
+      }
+      task.prInfos = prInfos.length > 0 ? prInfos : undefined;
+      task.prInfo = this.resolvePrimaryPrInfo(prInfos);
+      task.updatedAt = new Date().toISOString();
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
       return task;
     });
   }
@@ -7826,6 +8746,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * Cleanup any legacy active archived tasks by writing compact entries to
    * archive.db and removing task directories.
+   *
+   * Note: lineage pointers to archived/deleted parents are tolerated here.
+   * This cleanup runs on already-archived rows, and lineage integrity gates
+   * are enforced earlier on deleteTask/archiveTask for live children only.
    */
   async cleanupArchivedTasks(): Promise<string[]> {
     const archivedTasks = await this.listTasks({ column: "archived" });
@@ -7918,12 +8842,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     // Generate PROMPT.md with preserved steps
     const prompt = entry.prompt ?? this.generatePromptFromArchiveEntry(entry);
-    const validation = validateFileScopeInPromptContent(prompt);
-    if (validation.invalid.length > 0) {
-      throw new InvalidFileScopeError(entry.id, validation.invalid);
+    const sanitizedPrompt = sanitizeFileScopeInPromptContent(prompt);
+    if (sanitizedPrompt.dropped.length > 0) {
+      storeLog.log(`[file-scope-sanitize] restore ${entry.id}: dropped=[${sanitizedPrompt.dropped.join(",")}]`);
     }
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "PROMPT.md"), prompt);
+    await writeFile(join(dir, "PROMPT.md"), sanitizedPrompt.sanitized);
 
     // Create empty attachments directory if attachments existed
     if (entry.attachments && entry.attachments.length > 0) {
@@ -8414,6 +9338,10 @@ ${stepsSection}`;
     return this.db;
   }
 
+  getBootstrappedAt(): number | null {
+    return this.db.getBootstrappedAt();
+  }
+
   async getSecretsStore(): Promise<SecretsStore> {
     if (this.secretsStore) {
       return this.secretsStore;
@@ -8434,11 +9362,16 @@ ${stepsSection}`;
 
   getDatabaseHealth(): {
     healthy: boolean;
+    corruptionDetected: boolean;
+    corruptionErrors: string[];
     lastCheckedAt: Date | null;
     isRunning: boolean;
   } {
+    const corruptionDetected = this.db.corruptionDetected;
     return {
-      healthy: !this.db.corruptionDetected,
+      healthy: !corruptionDetected,
+      corruptionDetected,
+      corruptionErrors: this.db.integrityCheckErrors.slice(0, 5),
       lastCheckedAt: this.db.integrityCheckLastRunAt ? new Date(this.db.integrityCheckLastRunAt) : null,
       isRunning: this.db.integrityCheckPending,
     };

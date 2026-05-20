@@ -35,6 +35,9 @@ function createStore(task: Task): TaskStore {
   return {
     getTask: vi.fn().mockResolvedValue(task),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    updatePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
+    addPrInfo: vi.fn().mockResolvedValue(undefined),
+    removePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
     moveTask: vi.fn(),
@@ -76,8 +79,9 @@ describe("PR auto-merge routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(store.updatePrInfo).toHaveBeenCalledWith(
+    expect(store.updatePrInfoByNumber).toHaveBeenCalledWith(
       "FN-001",
+      1,
       expect.objectContaining({
         autoMergeOnGreen: true,
         autoMergeStrategy: "rebase",

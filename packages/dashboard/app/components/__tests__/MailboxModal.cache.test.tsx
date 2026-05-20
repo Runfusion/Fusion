@@ -40,9 +40,12 @@ describe("MailboxModal cache hydration", () => {
     localStorage.setItem(
       `${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p1`,
       JSON.stringify({
-        messages: [{ id: "msg-cache", fromId: "agent-1", fromType: "agent", toId: "dashboard", toType: "user", content: "cached", type: "agent-to-user", read: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
-        total: 1,
-        unreadCount: 1,
+        savedAt: Date.now(),
+        data: {
+          messages: [{ id: "msg-cache", fromId: "agent-1", fromType: "agent", toId: "dashboard", toType: "user", content: "cached", type: "agent-to-user", read: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+          total: 1,
+          unreadCount: 1,
+        },
       }),
     );
     mockFetchInbox.mockImplementation(() => new Promise(() => {}));
@@ -64,8 +67,10 @@ describe("MailboxModal cache hydration", () => {
     await waitFor(() => {
       const cachedRaw = localStorage.getItem(`${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p1`);
       expect(cachedRaw).not.toBeNull();
-      const cached = JSON.parse(cachedRaw ?? "{}");
-      expect(cached.messages[0].id).toBe("msg-1");
+      const envelope = JSON.parse(cachedRaw ?? "{}");
+      expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+      const cached = envelope.data;
+      expect(cached?.messages?.[0]?.id).toBe("msg-1");
       expect(cached).not.toHaveProperty("conversationMessages");
     });
   });
@@ -88,11 +93,23 @@ describe("MailboxModal cache hydration", () => {
     const { rerender } = render(<MailboxModal isOpen onClose={() => {}} projectId="p1" agents={[]} />);
 
     await waitFor(() => {
-      const cached = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p1`) ?? "{}");
-      expect(cached.messages).toHaveLength(100);
+      const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p1`) ?? "{}");
+      expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+      const cached = envelope.data;
+      expect(cached?.messages).toHaveLength(100);
     });
 
-    localStorage.setItem(`${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p2`, JSON.stringify({ messages: [{ id: "msg-p2", fromId: "agent-2", fromType: "agent", toId: "dashboard", toType: "user", content: "p2", type: "agent-to-user", read: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }], total: 1, unreadCount: 1 }));
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX}p2`,
+      JSON.stringify({
+        savedAt: Date.now(),
+        data: {
+          messages: [{ id: "msg-p2", fromId: "agent-2", fromType: "agent", toId: "dashboard", toType: "user", content: "p2", type: "agent-to-user", read: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+          total: 1,
+          unreadCount: 1,
+        },
+      }),
+    );
     mockFetchInbox.mockImplementation(() => new Promise(() => {}));
     rerender(<MailboxModal isOpen onClose={() => {}} projectId="p2" agents={[]} />);
 

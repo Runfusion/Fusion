@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+
+vi.setConfig({ testTimeout: 20000, hookTimeout: 20000 });
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

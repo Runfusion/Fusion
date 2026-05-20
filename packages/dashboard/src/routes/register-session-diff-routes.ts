@@ -4,6 +4,7 @@ import type { RunAuditEvent, RunAuditEventFilter } from "@fusion/core";
 import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
 import { resolveDiffBase, runGitCommand } from "./resolve-diff-base.js";
 import { countPatchLines } from "./diff-counts.js";
+import { filterFilesToOwnTaskCommits } from "./attribute-done-range-files.js";
 import type { ProjectContext } from "./types.js";
 
 export interface SessionDiffRouteDeps {
@@ -244,6 +245,9 @@ type DoneTaskAggregationTask = {
     filesChanged?: number;
     insertions?: number;
     deletions?: number;
+    landedFiles?: string[];
+    landedFilesAttributionRestricted?: boolean;
+    noOpVerifiedShortCircuit?: boolean;
   } | null;
 };
 
@@ -493,6 +497,53 @@ async function collectDoneTaskFiles(task: DoneTaskAggregationTask, scopedStore: 
   };
 }
 
+async function restrictRebaseRangeFiles(
+  task: DoneTaskAggregationTask,
+  rebaseRangeFiles: AggregatedDoneTaskFile[],
+  deps: {
+    rootDir: string;
+    rebaseBaseShaForAggregation: string;
+    runGit: (args: string[]) => Promise<string>;
+  },
+): Promise<AggregatedDoneTaskFile[]> {
+  const landed = task.mergeDetails?.landedFiles;
+  const restricted =
+    task.mergeDetails?.landedFilesAttributionRestricted === true ||
+    task.mergeDetails?.noOpVerifiedShortCircuit === true;
+  const landedSet = new Set(landed ?? []);
+
+  if (restricted) {
+    // FN-5154 + FN-5103: restricted landedFiles are authoritative; empty landed
+    // (including no-op short-circuit) must never widen to rebase-range files.
+    return rebaseRangeFiles.filter((file) => landedSet.has(file.path));
+  }
+
+  if (Array.isArray(landed) && landed.length > 0) {
+    return rebaseRangeFiles.filter((file) => landedSet.has(file.path));
+  }
+
+  try {
+    const attribution = await filterFilesToOwnTaskCommits({
+      worktreePath: deps.rootDir,
+      baseRef: deps.rebaseBaseShaForAggregation,
+      taskId: task.id,
+      runGit: deps.runGit,
+    });
+    if (attribution.files.length === 0) {
+      // Read-only done-task diff display should still surface the rebase range
+      // when commit attribution cannot prove ownership from subjects/trailers.
+      return rebaseRangeFiles;
+    }
+    const ownSet = new Set(attribution.files);
+    return rebaseRangeFiles.filter((file) => ownSet.has(file.path));
+  } catch (err) {
+    console.warn(
+      `[diff] FN-5154 attribution failed for ${task.id}: ${(err as Error).message}; falling back to unrestricted range`,
+    );
+    return rebaseRangeFiles;
+  }
+}
+
 /**
  * Registers task session-file and diff routes.
  *
@@ -640,16 +691,21 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
           if (rebaseDiffSpec) {
             const rebaseRangeFiles = await collectDoneRangeFiles(rebaseDiffSpec.range, scopedStore.getRootDir()).catch(() => []);
             if (rebaseRangeFiles.length > 0) {
-              const files = rebaseRangeFiles.map((file) => ({
+              const filtered = await restrictRebaseRangeFiles(task, rebaseRangeFiles, {
+                rootDir: scopedStore.getRootDir(),
+                rebaseBaseShaForAggregation,
+                runGit: (args: string[]) => runGitCommand(args, scopedStore.getRootDir(), 10000),
+              });
+              const files = filtered.map((file) => ({
                 ...file,
                 status: file.status === "renamed" ? "modified" : file.status,
               }));
               res.json({
                 files,
                 stats: {
-                  filesChanged: files.length,
-                  additions: files.reduce((sum, file) => sum + file.additions, 0),
-                  deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+                  filesChanged: filtered.length,
+                  additions: filtered.reduce((sum, file) => sum + file.additions, 0),
+                  deletions: filtered.reduce((sum, file) => sum + file.deletions, 0),
                 },
               });
               return;
@@ -896,7 +952,12 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
           if (rebaseDiffSpec) {
             const rebaseRangeFiles = await collectDoneRangeFiles(rebaseDiffSpec.range, scopedStore.getRootDir()).catch(() => []);
             if (rebaseRangeFiles.length > 0) {
-              res.json(rebaseRangeFiles.map((file) => ({ path: file.path, status: file.status, diff: file.patch })));
+              const filtered = await restrictRebaseRangeFiles(task, rebaseRangeFiles, {
+                rootDir: scopedStore.getRootDir(),
+                rebaseBaseShaForAggregation,
+                runGit: (args: string[]) => runGitCommand(args, scopedStore.getRootDir(), 10000),
+              });
+              res.json(filtered.map((file) => ({ path: file.path, status: file.status, diff: file.patch })));
               return;
             }
           }

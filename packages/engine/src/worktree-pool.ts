@@ -6,6 +6,7 @@ import type { Column, SecretsStore, Settings, TaskStore, WorktrunkSettings } fro
 import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
 import { worktreePoolLog } from "./logger.js";
 import { isInsideConfiguredWorktreesDir, resolveWorktreesDir } from "./worktree-paths.js";
+import { canonicalFusionBranchName } from "./worktree-names.js";
 import {
   resolveWorktrunkBinary,
 } from "./worktrunk-installer.js";
@@ -17,6 +18,7 @@ import {
 import { cleanupSecretsEnvFile } from "./secrets-env-writer.js";
 import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import type { RunAuditor } from "./run-audit.js";
+import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 
 export {
   NativeWorktreeBackend,
@@ -695,6 +697,12 @@ export async function cleanupOrphanedWorktrees(
           throw new Error(`Refusing to remove path outside .worktrees: ${worktreePath}`);
         }
         rmSync(worktreePath, { recursive: true, force: true });
+        await pruneWorktreeAdminEntries({
+          rootDir,
+          reason: "pool-cleanup-orphan",
+          target: worktreePath,
+          logger: worktreePoolLog,
+        }).catch(() => undefined);
       }
       worktreePoolLog.log(`Cleaned up orphaned worktree: ${worktreePath}`);
       cleaned++;
@@ -805,6 +813,12 @@ export async function reapOrphanWorktrees(
         worktreePoolLog.warn(`secrets-env cleanup failed for orphan ${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
       rmSync(resolvedFull, { recursive: true, force: true });
+      await pruneWorktreeAdminEntries({
+        rootDir: projectRoot,
+        reason: "pool-reap-orphan",
+        target: resolvedFull,
+        logger: worktreePoolLog,
+      }).catch(() => undefined);
       worktreePoolLog.log(`reapOrphanWorktrees: removed half-initialized orphan ${name}`);
       removed++;
     } catch (err: unknown) {
@@ -825,7 +839,7 @@ const MERGER_MANAGED_COLUMNS: ReadonlySet<Column> = new Set(["in-review", "done"
  *
  * Lists all local branches matching the `fusion/*` pattern, then compares
  * against branches stored on tasks (via `task.branch` or derived as
- * `fusion/${taskId.toLowerCase()}`). Branches belonging to tasks in the
+ * canonicalFusionBranchName(taskId)). Branches belonging to tasks in the
  * `in-review` or `done` columns are excluded because the merger is
  * responsible for cleaning those up.
  *
@@ -868,7 +882,7 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
       activeBranches.add(task.branch);
     }
     // Always add the derived name too — the task may not have `branch` set yet
-    activeBranches.add(`fusion/${task.id.toLowerCase()}`);
+    activeBranches.add(canonicalFusionBranchName(task.id));
   }
 
   // Return branches not associated with any active task

@@ -1,9 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { AgentOnboardingModal } from "../AgentOnboardingModal";
 
 let streamHandlers: any;
 let respondCount = 0;
+const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
 
 vi.mock("../../api", () => ({
   startAgentOnboardingStreaming: vi.fn().mockResolvedValue({ sessionId: "onb-1" }),
@@ -34,6 +36,16 @@ vi.mock("../../api", () => ({
   createAgent: vi.fn().mockResolvedValue({ id: "agent-1" }),
 }));
 
+afterEach(() => {
+  respondCount = 0;
+  streamHandlers = undefined;
+  if (originalScrollHeightDescriptor) {
+    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeightDescriptor);
+  } else {
+    Reflect.deleteProperty(HTMLTextAreaElement.prototype, "scrollHeight");
+  }
+});
+
 describe("AgentOnboardingModal", () => {
   it("walks onboarding flow through summary and create", async () => {
     const onCreated = vi.fn();
@@ -63,6 +75,42 @@ describe("AgentOnboardingModal", () => {
 
     await waitFor(() => {
       expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  describe("autosize", () => {
+    it("grows the intent textarea up to the 640px cap", async () => {
+      Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+        configurable: true,
+        get() {
+          const value = (this as HTMLTextAreaElement).value;
+          if (!value) return 24;
+          if (value.includes("cap")) return 800;
+          return 200;
+        },
+      });
+
+      render(
+        <AgentOnboardingModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onCreated={vi.fn()}
+          addToast={vi.fn()}
+          existingAgents={[]}
+        />,
+      );
+
+      const textarea = screen.getByLabelText("What do you want this agent to do?") as HTMLTextAreaElement;
+
+      await userEvent.type(textarea, "Draft onboarding intent");
+      await waitFor(() => {
+        expect(textarea.style.height).toBe("200px");
+      });
+
+      await userEvent.type(textarea, " cap");
+      await waitFor(() => {
+        expect(textarea.style.height).toBe("640px");
+      });
     });
   });
 });

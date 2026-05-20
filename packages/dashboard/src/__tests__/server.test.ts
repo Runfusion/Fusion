@@ -93,6 +93,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     }),
     getDatabaseHealth: vi.fn().mockReturnValue({
       healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
       isRunning: false,
       lastCheckedAt: null,
     }),
@@ -356,6 +358,8 @@ describe("createServer health and headless mode", () => {
       uptime: expect.any(Number),
       database: {
         healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
         isRunning: false,
         lastCheckedAt: null,
       },
@@ -372,6 +376,8 @@ describe("createServer health and headless mode", () => {
     const store = createMockStore({
       getDatabaseHealth: vi.fn().mockReturnValue({
         healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["bad row", "bad index"],
         isRunning: false,
         lastCheckedAt: new Date("2026-05-11T10:00:00.000Z"),
       }),
@@ -387,6 +393,8 @@ describe("createServer health and headless mode", () => {
       uptime: expect.any(Number),
       database: {
         healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["bad row", "bad index"],
         isRunning: false,
         lastCheckedAt: "2026-05-11T10:00:00.000Z",
       },
@@ -425,6 +433,8 @@ describe("createServer health and headless mode", () => {
       uptime: expect.any(Number),
       database: {
         healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
         isRunning: false,
         lastCheckedAt: null,
       },
@@ -472,6 +482,8 @@ describe("createServer health and headless mode", () => {
       uptime: expect.any(Number),
       database: {
         healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
         isRunning: false,
         lastCheckedAt: null,
       },
@@ -488,6 +500,41 @@ describe("createServer health and headless mode", () => {
         ],
         recommendedAction:
           "Pause task delegation, inspect the affected task IDs, and run the allocator audit before creating new tasks.",
+      },
+    });
+  });
+
+  it("reports degraded status from /api/health/refresh when corruption is detected", async () => {
+    const store = createMockStore({
+      getDatabaseHealth: vi.fn().mockReturnValue({
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["bad row"],
+        isRunning: false,
+        lastCheckedAt: new Date("2026-05-12T12:00:00.000Z"),
+      }),
+    });
+    const app = createServer(store);
+
+    const res = await REQUEST(app, "POST", "/api/health/refresh");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      status: "degraded",
+      version: CLI_PACKAGE_VERSION,
+      uptime: expect.any(Number),
+      database: {
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["bad row"],
+        isRunning: false,
+        lastCheckedAt: "2026-05-12T12:00:00.000Z",
+      },
+      taskIdIntegrity: {
+        status: "ok",
+        checkedAt: "2026-05-12T00:00:00.000Z",
+        anomalies: [],
+        recommendedAction: null,
       },
     });
   });

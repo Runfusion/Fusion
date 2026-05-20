@@ -120,7 +120,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 85;
+const SCHEMA_VERSION = 89;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   reviewState TEXT,
   workflowStepResults TEXT DEFAULT '[]',
   prInfo TEXT,
+  prInfos TEXT,
   issueInfo TEXT,
   githubTracking TEXT,
   sourceIssueProvider TEXT,
@@ -282,7 +283,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   checkoutNodeId TEXT,
   checkoutRunId TEXT,
   checkoutLeaseRenewedAt TEXT,
-  checkoutLeaseEpoch INTEGER DEFAULT 0
+  checkoutLeaseEpoch INTEGER DEFAULT 0,
+  deletedAt TEXT
 );
 
 -- Config table (single row with project settings)
@@ -493,6 +495,19 @@ CREATE TABLE IF NOT EXISTS agentBlockedStates (
   updatedAt TEXT NOT NULL,
   FOREIGN KEY (agentId) REFERENCES agents(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS mergeQueue (
+  taskId TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  enqueuedAt TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  leasedBy TEXT,
+  leasedAt TEXT,
+  leaseExpiresAt TEXT,
+  attemptCount INTEGER NOT NULL DEFAULT 0,
+  lastError TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mergeQueue_lease_ready ON mergeQueue(leasedBy, priority, enqueuedAt);
+CREATE INDEX IF NOT EXISTS idx_mergeQueue_leaseExpiresAt ON mergeQueue(leaseExpiresAt);
 
 -- Task documents (key-value store per task with revision tracking)
 CREATE TABLE IF NOT EXISTS task_documents (
@@ -1236,6 +1251,7 @@ export class Database {
   /** Returns the database file path (or ":memory:" for in-memory databases). */
   get path(): string { return this.dbPath; }
   corruptionDetected = false;
+  integrityCheckErrors: string[] = [];
   integrityCheckPending = false;
   integrityCheckLastRunAt: string | null = null;
   /** Tracks transaction nesting depth for savepoint-based nested transactions. */
@@ -1304,12 +1320,15 @@ export class Database {
       this.db.exec(`PRAGMA busy_timeout = ${this.busyTimeoutMs}`);
       // Enable WAL mode for concurrent reader/writer access
       this.db.exec("PRAGMA journal_mode = WAL");
-      // In WAL mode NORMAL is nearly as durable as FULL with much lower fsync cost.
-      this.db.exec("PRAGMA synchronous = NORMAL");
-      // Checkpoint every 100 pages (~400 KB) to keep WAL small and reduce
-      // corruption risk. More aggressive than the default 1000, but paired
-      // with journal_size_limit to prevent WAL bloat.
-      this.db.exec("PRAGMA wal_autocheckpoint = 100");
+      // FULL fsyncs on every commit. Slightly slower than NORMAL, but the only
+      // setting that survives a process crash mid-checkpoint without torn pages
+      // — repeated node:sqlite SIGSEGVs inside pager_write have corrupted this
+      // db before.
+      this.db.exec("PRAGMA synchronous = FULL");
+      // Default (1000) checkpoint cadence. The previous value of 100 made the
+      // db spend most of its life mid-checkpoint, multiplying corruption risk
+      // when a writer crashed. journal_size_limit below still caps WAL growth.
+      this.db.exec("PRAGMA wal_autocheckpoint = 1000");
       // Bound WAL growth between checkpoints/maintenance cycles.
       this.db.exec("PRAGMA journal_size_limit = 4194304");
     } else {
@@ -1358,17 +1377,20 @@ export class Database {
         )
       `);
 
+      const hasTaskTitle = this.hasColumn("tasks", "title");
+      const hasDeletedAt = this.hasColumn("tasks", "deletedAt");
+
       this.db.exec(`
-        CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks BEGIN
+        CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks
+        ${hasDeletedAt ? "WHEN NEW.deletedAt IS NULL " : ""}BEGIN
           INSERT INTO tasks_fts(rowid, id, title, description, comments)
           VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
         END
       `);
 
-      const hasTaskTitle = this.hasColumn("tasks", "title");
       const updateColumns = hasTaskTitle
-        ? "id, title, description, comments"
-        : "id, description, comments";
+        ? hasDeletedAt ? "id, title, description, comments, deletedAt" : "id, title, description, comments"
+        : hasDeletedAt ? "id, description, comments, deletedAt" : "id, description, comments";
       const oldTitle = hasTaskTitle ? "COALESCE(old.title, '')" : "''";
       const newTitle = hasTaskTitle ? "COALESCE(new.title, '')" : "''";
 
@@ -1377,12 +1399,14 @@ export class Database {
           INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
             VALUES('delete', old.rowid, old.id, ${oldTitle}, old.description, COALESCE(old.comments, '[]'));
           INSERT INTO tasks_fts(rowid, id, title, description, comments)
-            VALUES (new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]'));
+            SELECT new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]')
+            WHERE ${hasDeletedAt ? "new.deletedAt IS NULL" : "1 = 1"};
         END
       `);
 
       this.db.exec(`
-        CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks BEGIN
+        CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks
+        ${hasDeletedAt ? "WHEN OLD.deletedAt IS NULL " : ""}BEGIN
           INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
             VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
         END
@@ -1512,6 +1536,9 @@ export class Database {
     );
     this.db.exec(
       `INSERT OR IGNORE INTO __meta (key, value) VALUES ('lastModified', '${Date.now()}')`,
+    );
+    this.db.exec(
+      `INSERT OR IGNORE INTO __meta (key, value) VALUES ('bootstrappedAt', '${Date.now()}')`,
     );
 
     // Run schema migrations
@@ -2009,17 +2036,19 @@ export class Database {
         }
 
         // AFTER INSERT trigger - index new tasks
+        const hasTaskTitle = this.hasColumn("tasks", "title");
+        const hasDeletedAt = this.hasColumn("tasks", "deletedAt");
         this.db.exec(`
-          CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks BEGIN
+          CREATE TRIGGER IF NOT EXISTS tasks_fts_ai AFTER INSERT ON tasks
+          ${hasDeletedAt ? "WHEN NEW.deletedAt IS NULL " : ""}BEGIN
             INSERT INTO tasks_fts(rowid, id, title, description, comments)
             VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
           END
         `);
 
-        const hasTaskTitle = this.hasColumn("tasks", "title");
         const updateColumns = hasTaskTitle
-          ? "id, title, description, comments"
-          : "id, description, comments";
+          ? hasDeletedAt ? "id, title, description, comments, deletedAt" : "id, title, description, comments"
+          : hasDeletedAt ? "id, description, comments, deletedAt" : "id, description, comments";
         const oldTitle = hasTaskTitle ? "COALESCE(old.title, '')" : "''";
         const newTitle = hasTaskTitle ? "COALESCE(new.title, '')" : "''";
 
@@ -2031,13 +2060,15 @@ export class Database {
             INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
               VALUES('delete', old.rowid, old.id, ${oldTitle}, old.description, COALESCE(old.comments, '[]'));
             INSERT INTO tasks_fts(rowid, id, title, description, comments)
-              VALUES (new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]'));
+              SELECT new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]')
+              WHERE ${hasDeletedAt ? "new.deletedAt IS NULL" : "1 = 1"};
           END
         `);
 
         // AFTER DELETE trigger - remove deleted tasks from index
         this.db.exec(`
-          CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks BEGIN
+          CREATE TRIGGER IF NOT EXISTS tasks_fts_ad AFTER DELETE ON tasks
+          ${hasDeletedAt ? "WHEN OLD.deletedAt IS NULL " : ""}BEGIN
             INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
               VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
           END
@@ -2465,9 +2496,10 @@ export class Database {
           return;
         }
         const hasTaskTitle = this.hasColumn("tasks", "title");
+        const hasDeletedAt = this.hasColumn("tasks", "deletedAt");
         const updateColumns = hasTaskTitle
-          ? "id, title, description, comments"
-          : "id, description, comments";
+          ? hasDeletedAt ? "id, title, description, comments, deletedAt" : "id, title, description, comments"
+          : hasDeletedAt ? "id, description, comments, deletedAt" : "id, description, comments";
         const oldTitle = hasTaskTitle ? "COALESCE(old.title, '')" : "''";
         const newTitle = hasTaskTitle ? "COALESCE(new.title, '')" : "''";
 
@@ -2477,7 +2509,8 @@ export class Database {
             INSERT INTO tasks_fts(tasks_fts, rowid, id, title, description, comments)
               VALUES('delete', old.rowid, old.id, ${oldTitle}, old.description, COALESCE(old.comments, '[]'));
             INSERT INTO tasks_fts(rowid, id, title, description, comments)
-              VALUES (new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]'));
+              SELECT new.rowid, new.id, ${newTitle}, new.description, COALESCE(new.comments, '[]')
+              WHERE ${hasDeletedAt ? "new.deletedAt IS NULL" : "1 = 1"};
           END;
         `);
 
@@ -3407,6 +3440,73 @@ export class Database {
       });
     }
 
+    if (version < 86) {
+      this.applyMigration(86, () => {
+        this.addColumnIfMissing("tasks", "prInfos", "TEXT");
+      });
+    }
+
+    if (version < 87) {
+      this.applyMigration(87, () => {
+        this.addColumnIfMissing("tasks", "deletedAt", "TEXT");
+        this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_deletedAt ON tasks(deletedAt)");
+      });
+    }
+
+    if (version < 88) {
+      this.applyMigration(88, () => {
+        try {
+          const taskColumns = this.getTableColumns("tasks");
+          const requiredColumns = ["paused", "userPaused", "pausedByAgentId", "pausedReason"];
+          if (!requiredColumns.every((column) => taskColumns.has(column))) {
+            console.log("[done-paused-backfill] db.ts migration skipped (missing paused columns on legacy schema)");
+            return;
+          }
+
+          const result = this.db
+            .prepare(`UPDATE tasks
+                SET paused = 0,
+                    userPaused = 0,
+                    pausedByAgentId = NULL,
+                    pausedReason = NULL
+              WHERE column = 'done'
+                AND (paused = 1
+                  OR userPaused = 1
+                  OR pausedByAgentId IS NOT NULL
+                  OR pausedReason IS NOT NULL)`)
+            .run();
+          console.log(`[done-paused-backfill] db.ts migration repaired ${result.changes} done task rows`);
+        } catch (error) {
+          console.warn("[done-paused-backfill] db.ts migration failed", error);
+        }
+      });
+    }
+
+    if (version < 89) {
+      this.applyMigration(89, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS mergeQueue (
+            taskId TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+            enqueuedAt TEXT NOT NULL,
+            priority TEXT NOT NULL DEFAULT 'normal',
+            leasedBy TEXT,
+            leasedAt TEXT,
+            leaseExpiresAt TEXT,
+            attemptCount INTEGER NOT NULL DEFAULT 0,
+            lastError TEXT
+          )
+        `);
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_mergeQueue_lease_ready
+            ON mergeQueue(leasedBy, priority, enqueuedAt)
+        `);
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_mergeQueue_leaseExpiresAt
+            ON mergeQueue(leaseExpiresAt)
+        `);
+      });
+    }
+
   }
 
   /**
@@ -3585,6 +3685,7 @@ export class Database {
         participant.integrityCheckPending = false;
         participant.integrityCheckLastRunAt = startedAt;
         participant.corruptionDetected = !integrity.ok;
+        participant.integrityCheckErrors = integrity.ok ? [] : [...integrity.errors];
       }
 
       if (!integrity.ok) {
@@ -3790,6 +3891,15 @@ export class Database {
     this.db.prepare("UPDATE __meta SET value = ? WHERE key = 'lastModified'").run(
       String(next),
     );
+  }
+
+  getBootstrappedAt(): number | null {
+    const value = this.getMetaValue("bootstrappedAt");
+    if (!value) {
+      return null;
+    }
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   /**

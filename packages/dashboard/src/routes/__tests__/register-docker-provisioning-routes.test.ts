@@ -43,6 +43,7 @@ vi.mock("@fusion/core", () => ({
     listManagedDockerNodes: listManagedDockerNodesMock,
     deleteManagedDockerNode: deleteManagedDockerNodeMock,
   })),
+  deterministicGuardLocks: new Map(),
 }));
 
 function createStore() {

@@ -853,6 +853,7 @@ describe("Workflow Steps Execution", () => {
     });
 
     const executor = new TaskExecutor(store, "/tmp/test", {});
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue(["packages/engine/src/foo.ts"]);
     const executeStepSpy = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(task, "/tmp/test", {});
@@ -974,6 +975,7 @@ describe("Workflow Steps Execution", () => {
     });
 
     const executor = new TaskExecutor(store, "/tmp/test", {});
+    vi.spyOn(executor as any, "captureModifiedFiles").mockResolvedValue(["packages/engine/src/foo.ts"]);
     const executeStepSpy = vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
 
     const result = await (executor as any).runWorkflowSteps(pausedTask, "/tmp/test", {});
@@ -3307,6 +3309,7 @@ describe("TaskExecutor loop recovery", () => {
       noProgressMs: 600000,
       inactivityMs: 0,
       activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
       shouldRequeue: true,
     });
 
@@ -3330,6 +3333,7 @@ describe("TaskExecutor loop recovery", () => {
       noProgressMs: 600000,
       inactivityMs: 0,
       activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
       shouldRequeue: true,
     });
 
@@ -3347,6 +3351,7 @@ describe("TaskExecutor loop recovery", () => {
       noProgressMs: 600000,
       inactivityMs: 0,
       activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
       shouldRequeue: true,
     });
     expect(result1).toBe(true);
@@ -3358,6 +3363,7 @@ describe("TaskExecutor loop recovery", () => {
       noProgressMs: 600000,
       inactivityMs: 0,
       activitySinceProgress: 200,
+      ignoredStepUpdateCount: 0,
       shouldRequeue: true,
     });
     expect(result2).toBe(false);
@@ -3373,6 +3379,7 @@ describe("TaskExecutor loop recovery", () => {
       noProgressMs: 600000,
       inactivityMs: 0,
       activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
       shouldRequeue: true,
     });
 

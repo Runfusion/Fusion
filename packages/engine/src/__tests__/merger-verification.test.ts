@@ -184,7 +184,10 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -342,6 +345,7 @@ describe("aiMergeTask — build verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
     });
 
@@ -387,6 +391,7 @@ describe("aiMergeTask — build verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
     });
 
@@ -439,6 +444,7 @@ describe("aiMergeTask — build verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
       verificationFixRetries: 0, // Disable in-merge fix for this test
     });
@@ -466,6 +472,7 @@ describe("aiMergeTask — build verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
       verificationFixRetries: 0,
     });
@@ -547,6 +554,7 @@ describe("aiMergeTask — build verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "   ", // whitespace-only, should be treated as undefined
     });
 
@@ -600,6 +608,7 @@ describe("aiMergeTask — build verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
     });
 
@@ -704,6 +713,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       buildCommand: "pnpm build",
     });
@@ -745,6 +755,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -819,6 +830,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 0,
     });
@@ -876,6 +888,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -945,6 +958,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -1014,6 +1028,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       buildCommand: "pnpm build",
     });
@@ -1083,6 +1098,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -1138,6 +1154,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     // Neither testCommand nor buildCommand configured
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1186,6 +1203,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     (store.getVerificationCacheHit as ReturnType<typeof vi.fn>).mockReturnValue(cacheHit);
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       buildCommand: "pnpm build",
     });
@@ -1248,6 +1266,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     (store.getVerificationCacheHit as ReturnType<typeof vi.fn>).mockReturnValue(null);
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -1304,6 +1323,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -1328,6 +1348,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     const store = createMockStore();
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 0,
     });
@@ -1373,7 +1394,8 @@ describe("aiMergeTask — deterministic merge verification", () => {
 
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn(), dispose: vi.fn() } } as any);
     const store = createMockStore();
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", verificationFixRetries: 0 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", verificationFixRetries: 0 });
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
     expect(result.merged).toBe(true);
@@ -1406,7 +1428,8 @@ describe("aiMergeTask — deterministic merge verification", () => {
 
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn(), dispose: vi.fn() } } as any);
     const store = createMockStore();
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", verificationFixRetries: 0 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", verificationFixRetries: 0 });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
       name: "VerificationError",
@@ -1449,7 +1472,8 @@ describe("aiMergeTask — deterministic merge verification", () => {
 
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn(), dispose: vi.fn() } } as any);
     const store = createMockStore();
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", verificationFixRetries: 0 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", verificationFixRetries: 0 });
 
     try {
       await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1485,7 +1509,8 @@ describe("aiMergeTask — deterministic merge verification", () => {
 
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn(), dispose: vi.fn() } } as any);
     const store = createMockStore();
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", verificationFixRetries: 0 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", verificationFixRetries: 0 });
 
     try {
       await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1735,6 +1760,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     // testCommand is not set (undefined in DEFAULT_SETTINGS)
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1770,6 +1796,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1816,6 +1843,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
@@ -1867,6 +1895,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     // Explicit testCommand is set
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 
@@ -1905,6 +1934,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
@@ -1965,6 +1995,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 1,
     });
@@ -2034,7 +2065,8 @@ describe("aiMergeTask — in-merge verification fix", () => {
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
       [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 1 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 1 });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).resolves.toMatchObject({
       branchDeleted: true,
@@ -2063,7 +2095,8 @@ describe("aiMergeTask — in-merge verification fix", () => {
     });
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any);
     const store = createMockStore({ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" }, [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task]);
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 2 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 2 });
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow();
   });
 
@@ -2087,7 +2120,8 @@ describe("aiMergeTask — in-merge verification fix", () => {
     });
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any);
     const store = createMockStore({ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" }, [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task]);
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 1, buildRetryCount: 0 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 1, buildRetryCount: 0 });
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).resolves.toMatchObject({
       branchDeleted: true,
     });
@@ -2114,7 +2148,8 @@ describe("aiMergeTask — in-merge verification fix", () => {
     });
     mockedCreateFnAgent.mockResolvedValue({ session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any);
     const store = createMockStore({ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" }, [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task]);
-    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 2, buildRetryCount: 0 });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, testCommand: "vitest run", buildCommand: "pnpm build", verificationFixRetries: 2, buildRetryCount: 0 });
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow();
   });
 
@@ -2174,6 +2209,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 1,
     });
@@ -2265,6 +2301,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       buildCommand: "pnpm build",
       verificationFixRetries: 1,
       buildRetryCount: 0,
@@ -2326,6 +2363,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 0,
     });
@@ -2384,6 +2422,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 1,
       defaultProvider: "anthropic",
@@ -2438,6 +2477,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 0,
       defaultProvider: "anthropic",
@@ -2504,6 +2544,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 1,
     });
@@ -2553,6 +2594,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 10, // Exceeds max
     });
@@ -2604,6 +2646,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
     // Use core defaults (verificationFixRetries defaults to 3)
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
     });
 

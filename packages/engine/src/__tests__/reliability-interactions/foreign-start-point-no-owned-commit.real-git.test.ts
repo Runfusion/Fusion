@@ -23,6 +23,7 @@ function makeStore(task: Task, settings: Partial<Settings> = {}, events: unknown
     includeTaskIdInCommit: false,
     commitAuthorEnabled: false,
     useAiMergeCommitSummary: false,
+    mergeIntegrationWorktree: "cwd-main" as const,
     ...settings,
   } as Settings;
   return Object.assign(emitter, {

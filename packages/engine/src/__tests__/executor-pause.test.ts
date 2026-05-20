@@ -1372,6 +1372,81 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
     expect(onAgentTool).toHaveBeenCalledWith("FN-978", "bash");
   });
 
+  it("feeds ignored fn_task_update rebuffs into the stuck detector", async () => {
+    const store = createMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      steps: [{ name: "Implement", status: "done" }],
+    });
+    store.updateStep.mockResolvedValue({
+      stuckKillCount: 2,
+      steps: [{ name: "Implement", status: "done" }],
+    });
+
+    const stuckDetector = {
+      recordProgress: vi.fn(),
+      recordIgnoredStepUpdate: vi.fn(),
+      getIgnoredStepUpdateCount: vi.fn().mockReturnValue(25),
+    };
+
+    const executor = new TaskExecutor(store, "/tmp/test", {
+      stuckTaskDetector: stuckDetector as any,
+    });
+    (executor as any).loopRecoveryState.set("FN-001", { attempts: 1, pending: false });
+
+    const tool = (executor as any).createTaskUpdateTool(
+      "FN-001",
+      new Map(),
+      { current: null },
+      new Map(),
+      stuckDetector,
+    );
+
+    const result = await tool.execute("call-1", { step: 1, status: "in-progress" });
+
+    expect(stuckDetector.recordIgnoredStepUpdate).toHaveBeenCalledWith("FN-001");
+    expect(result.content[0].text).toContain("already done");
+    expect(executorLog.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "FN-001: no-progress churn detected (ignoredStepUpdates=25, stuckKillStreak=2) — escalating to STUCK_NO_PROGRESS_CHURN",
+      ),
+    );
+  });
+
+  it("marks loop recovery as observed after successful compaction", async () => {
+    const store = createMockStore();
+    const stuckDetector = {
+      markLoopObserved: vi.fn(),
+    };
+    const executor = new TaskExecutor(store, "/tmp/test", {
+      stuckTaskDetector: stuckDetector as any,
+    });
+
+    const session = {
+      compact: vi.fn(async () => ({ summary: "Compacted conversation", tokensBefore: 150000 })),
+      steer: vi.fn(async () => {}),
+      sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+      state: {},
+    };
+    (executor as any).activeSessions.set("FN-001", {
+      session,
+      seenSteeringIds: new Set(),
+    });
+
+    const result = await executor.handleLoopDetected({
+      taskId: "FN-001",
+      reason: "loop",
+      noProgressMs: 600000,
+      inactivityMs: 0,
+      activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
+      shouldRequeue: true,
+    });
+
+    expect(result).toBe(true);
+    expect(stuckDetector.markLoopObserved).toHaveBeenCalledWith("FN-001");
+  });
+
   it("prevents duplicate execution when task:moved fires twice for same task", async () => {
     const store = createMockStore();
     let resolvePrompt: (() => void) | undefined;

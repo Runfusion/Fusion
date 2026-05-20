@@ -81,6 +81,7 @@ vi.mock("@fusion/core", () => ({
     deleteMessage = mockDeleteMessage;
   },
   AgentStore: class MockAgentStore { init = vi.fn().mockResolvedValue(undefined); getAgent = vi.fn().mockResolvedValue({ id: "agent-1", runtimeConfig: { model: "anthropic/claude-sonnet-4-5" } }); },
+  deterministicGuardLocks: new Map(),
 }));
 
 class MockStore extends EventEmitter {

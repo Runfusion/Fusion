@@ -100,7 +100,10 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -118,7 +121,8 @@ describe("aiMergeTask rebaseBaseSha persistence", () => {
 
   it("stores rebaseBaseSha for rebase-routed merges", async () => {
     const store = createMockStore({
-      getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS, directMergeCommitStrategy: "always-rebase" }),
+      getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, directMergeCommitStrategy: "always-rebase" }),
     });
 
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -147,6 +151,7 @@ describe("aiMergeTask rebaseBaseSha persistence", () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
         directMergeCommitStrategy: "always-rebase",
         postMergeAuditMode: "off",
       }),

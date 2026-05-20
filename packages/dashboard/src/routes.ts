@@ -1020,6 +1020,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     runGitCommand,
     trimTaskDetailActivityLog,
     triggerCommentWakeForAssignedAgent: (...args) => triggerCommentWakeForAssignedAgent(...args),
+    resolveSelfHealingManager: (...args) => resolveSelfHealingManager(...args),
   });
   registerPlanningSubtaskRoutes(routeContext, {
     store,
@@ -1079,6 +1080,41 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       for (const engine of engineManager.getAllEngines().values()) {
         if (resolve(engine.getWorkingDirectory()) === storeRoot) {
           return (engine.getHeartbeatMonitor() ?? undefined) as ServerOptions["heartbeatMonitor"];
+        }
+      }
+    } catch {
+      // path resolution failure — fall through
+    }
+    return undefined;
+  }
+
+  function resolveSelfHealingManager(scopedStore: TaskStore): ServerOptions["selfHealingManager"] {
+    const configuredManager = options?.selfHealingManager;
+    if (configuredManager) {
+      if (!configuredManager.rootDir) {
+        return configuredManager;
+      }
+      try {
+        if (resolve(configuredManager.rootDir) === resolve(scopedStore.getRootDir())) {
+          return configuredManager;
+        }
+      } catch {
+        return configuredManager;
+      }
+    }
+
+    const engineManager = options?.engineManager;
+    if (!engineManager) return undefined;
+    try {
+      const storeRoot = resolve(scopedStore.getRootDir());
+      for (const engine of engineManager.getAllEngines().values()) {
+        if (resolve(engine.getWorkingDirectory()) === storeRoot) {
+          const selfHealing = engine.getSelfHealingManager();
+          if (!selfHealing) return undefined;
+          return {
+            rootDir: engine.getWorkingDirectory(),
+            reconcileInReviewBranchRebind: selfHealing.reconcileInReviewBranchRebind.bind(selfHealing),
+          };
         }
       }
     } catch {

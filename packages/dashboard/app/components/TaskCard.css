@@ -63,7 +63,10 @@
 .card-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  row-gap: var(--space-xs);
+  min-width: 0;
   margin-bottom: var(--space-xs);
 }
 
@@ -132,10 +135,6 @@
   z-index: 1;
 }
 
-.card-meta-move {
-  margin-left: auto;
-  position: relative;
-}
 
 .card-retry-badge {
   cursor: pointer;
@@ -164,6 +163,10 @@
 .card-no-commits-expected-badge {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.625rem;
   font-weight: 600;
   line-height: 1;
@@ -562,20 +565,13 @@
   margin-top: var(--space-xs);
 }
 
-.card-bottom-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--space-sm);
-}
-
-.card-bottom-right-row {
+.card-action-row {
   display: flex;
   align-items: center;
-  min-width: 0;
-}
-
-.card-bottom-right-row:focus-within .card-send-back-btn {
-  opacity: 1;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  flex-wrap: wrap;
+  row-gap: var(--space-xs);
 }
 
 .card-provider-icons {
@@ -609,6 +605,10 @@
 .card-agent-created-badge {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   gap: var(--space-xs);
   font-size: 0.625rem;
   font-weight: 600;
@@ -628,6 +628,28 @@
   white-space: nowrap;
 }
 
+.card-broad-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  padding: calc(var(--space-xs) / 4) calc(var(--space-sm) - (var(--space-xs) / 4));
+  border-radius: var(--radius-pill);
+  line-height: 1;
+}
+
+.card-broad-scope-chip-text {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @container task-card (max-width: 240px) {
   .card-agent-badge-text {
     display: none;
@@ -639,6 +661,9 @@
     display: none;
   }
 
+  .card-broad-scope-chip-text {
+    display: none;
+  }
 }
 
 .card-agent-badge--loading {
@@ -656,9 +681,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  row-gap: var(--space-xs);
   margin-top: var(--space-sm);
   min-width: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 .card-session-files {
@@ -704,30 +730,15 @@
   color: var(--text-muted);
 }
 
-.card-footer-row > .card-source-provenance:first-of-type,
-.card-footer-row > .card-github-tracking-chip:first-of-type,
-.card-footer-row > .card-retry-badge:first-of-type,
-.card-footer-row > .card-time-indicator:first-of-type {
+.card-footer-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  justify-content: flex-end;
   margin-left: auto;
-}
-
-.card-source-provenance + .card-source-provenance,
-.card-footer-row > .card-source-provenance + .card-github-tracking-chip:first-of-type,
-.card-footer-row > .card-source-provenance + .card-retry-badge,
-.card-footer-row > .card-source-provenance + .card-time-indicator,
-.card-footer-row > .card-github-tracking-chip + .card-retry-badge,
-.card-footer-row > .card-github-tracking-chip + .card-time-indicator,
-.card-footer-row > .card-retry-badge + .card-time-indicator {
-  margin-left: 0;
-}
-
-.card-footer-row.card-footer-row--chip-far-right > .card-source-provenance:first-of-type,
-.card-footer-row.card-footer-row--chip-far-right > .card-source-provenance + .card-github-tracking-chip:first-of-type {
-  margin-left: 0;
-}
-
-.card-footer-row.card-footer-row--chip-far-right > .card-github-tracking-chip {
-  margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .card-source-provenance .provider-icon {
@@ -735,9 +746,14 @@
   align-items: center;
 }
 
+.card-footer-row > .card-time-indicator:first-of-type {
+  margin-left: auto;
+}
+
 .card-time-indicator,
 .card-github-tracking-chip,
-.card-retry-badge {
+.card-retry-badge,
+.card-create-pr-action {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -756,7 +772,8 @@
 
 .card-time-indicator > span,
 .card-github-tracking-chip > span,
-.card-retry-badge > span {
+.card-retry-badge > span,
+.card-create-pr-action > span {
   display: inline-flex;
   align-items: center;
   line-height: 1;
@@ -766,6 +783,7 @@
 .card-time-indicator svg,
 .card-github-tracking-chip svg,
 .card-retry-badge svg,
+.card-create-pr-action svg,
 .card-source-provenance svg {
   display: block;
   flex-shrink: 0;
@@ -805,6 +823,29 @@
 .card-github-tracking-chip .provider-icon svg {
   width: 12px;
   height: 12px;
+}
+
+.card-create-pr-action {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.card-create-pr-action:hover {
+  background: var(--card-hover);
+}
+
+.card-create-pr-action:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
 }
 
 .card-progress-bar {
@@ -1187,16 +1228,12 @@
   overflow: hidden;
 }
 
-.card-bottom-right-row .card-send-back-menu {
-  top: auto;
-  left: auto;
-  bottom: calc(100% + var(--space-xs));
-  right: 0;
+.card-action-row .card-send-back {
+  margin-left: auto;
 }
 
-.card-meta-move .card-send-back-menu {
-  left: auto;
-  right: 0;
+.card-meta .card-send-back {
+  margin-left: auto;
 }
 
 .card-send-back-menu-item {
@@ -1309,24 +1346,19 @@
   .card-footer-row {
     margin-top: var(--space-xs);
     gap: var(--space-xs);
-  }
-
-  .card-footer-row.card-footer-row--chip-far-right > .card-github-tracking-chip {
-    margin-left: auto;
+    row-gap: var(--space-xs);
   }
 
   .card-time-indicator,
   .card-github-tracking-chip,
-  .card-retry-badge {
+  .card-retry-badge,
+  .card-create-pr-action {
     padding: var(--space-xs) var(--space-sm);
     font-size: 0.625rem;
     height: var(--card-chip-height-mobile);
     min-height: var(--card-chip-height-mobile);
   }
 
-  .card-bottom-row {
-    margin-top: var(--space-xs);
-  }
 
   /* Card: smaller status badges for 280px width */
   .card-status-badge,

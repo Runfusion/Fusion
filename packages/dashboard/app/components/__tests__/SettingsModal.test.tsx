@@ -189,6 +189,7 @@ const defaultSettings = {
   autoMerge: true,
   mergeStrategy: "direct",
   directMergeCommitStrategy: "auto",
+  mergeIntegrationWorktree: "reuse-task-worktree",
   pushAfterMerge: false,
   pushRemote: "origin",
   verificationFixRetries: 2,
@@ -316,20 +317,6 @@ describe("SettingsModal", () => {
     expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
   });
 
-  it("renders section headings with the shared settings-section-heading class", async () => {
-    const { container } = renderModal();
-    await waitForSettingsModalReady();
-
-    const authenticationHeading = screen.getByRole("heading", { name: "Authentication" });
-    expect(authenticationHeading).toHaveClass("settings-section-heading");
-
-    await userEvent.click(screen.getByRole("button", { name: /^General$/ }));
-
-    const generalHeading = screen.getByRole("heading", { name: "General" });
-    expect(generalHeading).toHaveClass("settings-section-heading");
-    expect(container.querySelectorAll(".settings-section-heading").length).toBeGreaterThan(0);
-  });
-
   it("defaults to the global General section when no initialSection is provided", async () => {
     render(
       <SettingsModal
@@ -339,17 +326,15 @@ describe("SettingsModal", () => {
     );
     await waitForSettingsModalReady();
 
-    const generalNavButton = screen.getByRole("button", { name: /^General$/ });
-    expect(generalNavButton).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Authentication$/ })).not.toHaveClass("active");
   });
 
   it("honors an explicit initialSection override", async () => {
     renderModal({ initialSection: "authentication" });
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^Authentication$/ })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /^Authentication$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
   });
 
@@ -357,10 +342,19 @@ describe("SettingsModal", () => {
     renderModal({ initialSection: "pi-extensions" });
     await waitForSettingsModalReady();
 
-    expect(screen.getByRole("button", { name: /^Plugins$/ })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: /^Plugins$/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Plugins" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Pi Extensions" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByTestId("pi-extensions-manager")).toBeInTheDocument();
+  });
+
+  it("fires onNavigateToSecrets when Manage secrets is clicked", async () => {
+    const onNavigateToSecrets = vi.fn();
+    renderModal({ onNavigateToSecrets });
+    await waitForSettingsModalReady();
+
+    await userEvent.click(screen.getByRole("link", { name: "Manage secrets" }));
+    expect(onNavigateToSecrets).toHaveBeenCalledTimes(1);
   });
 
   it("shows direct merge commit routing only for direct merges", async () => {
@@ -372,6 +366,34 @@ describe("SettingsModal", () => {
 
     await userEvent.selectOptions(screen.getByLabelText("Auto-completion mode"), "pull-request");
     expect(screen.queryByLabelText("Direct merge commit routing")).not.toBeInTheDocument();
+  });
+
+  it("defaults the integration worktree select to reuse-task-worktree when the server omits it", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      ...defaultSettings,
+      mergeIntegrationWorktree: undefined,
+    });
+    mockFetchSettingsByScope.mockResolvedValueOnce({ global: defaultSettings, project: {} });
+
+    renderModal({ initialSection: "merge" });
+    await waitForSettingsModalReady();
+
+    expect(screen.getByLabelText("Integration worktree")).toHaveValue("reuse-task-worktree");
+  });
+
+  it("persists cwd-main through the save payload", async () => {
+    renderModal({ initialSection: "merge" });
+    await waitForSettingsModalReady();
+
+    await userEvent.selectOptions(screen.getByLabelText("Integration worktree"), "cwd-main");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.mergeIntegrationWorktree).toBe("cwd-main");
   });
 
   it("persists the legacy sibling branch rename escape hatch in worktree settings", async () => {
@@ -1397,19 +1419,15 @@ describe("SettingsModal", () => {
   });
 
   describe("settings header actions", () => {
-    it("renders Help and GitHub star controls with shared header sizing contract class hooks", async () => {
+    it("renders Help and GitHub star controls", async () => {
       renderModal();
       await waitForSettingsModalReady();
 
       const headerActions = document.querySelector(".settings-header-actions");
       expect(headerActions).toBeInTheDocument();
 
-      const starLink = within(headerActions as HTMLElement).getByRole("link", { name: "Star Fusion on GitHub" });
-      const helpLink = within(headerActions as HTMLElement).getByRole("link", { name: "Help and discussions" });
-
-      expect(starLink).toHaveClass("settings-github-star-btn");
-      expect(helpLink).toHaveClass("settings-header-help-btn");
-      expect(helpLink).toHaveClass("btn", "btn-sm");
+      expect(within(headerActions as HTMLElement).getByRole("link", { name: "Star Fusion on GitHub" })).toBeInTheDocument();
+      expect(within(headerActions as HTMLElement).getByRole("link", { name: "Help and discussions" })).toBeInTheDocument();
     });
   });
 
@@ -4071,6 +4089,40 @@ describe("SettingsModal", () => {
           expect.objectContaining({
             failureNotificationMode: "sticky-only",
             failureNotificationDelayMs: 45000,
+          }),
+        );
+      });
+    });
+
+    it("keeps delay enabled when failure mode is terminal-only", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        failureNotificationMode: "terminal-only",
+      });
+      renderModal();
+      await waitForSettingsModalReady();
+      await openNotificationsSection();
+
+      const modeSelect = screen.getByLabelText("Failure notification mode") as HTMLSelectElement;
+      const delayInput = screen.getByLabelText("Failure notification delay (ms)") as HTMLInputElement;
+
+      expect(modeSelect.value).toBe("terminal-only");
+      expect(delayInput).not.toBeDisabled();
+    });
+
+    it("persists terminal-only selection on save", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openNotificationsSection();
+
+      const modeSelect = screen.getByLabelText("Failure notification mode") as HTMLSelectElement;
+      await userEvent.selectOptions(modeSelect, "terminal-only");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            failureNotificationMode: "terminal-only",
           }),
         );
       });

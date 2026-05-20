@@ -3441,6 +3441,118 @@ describe("QuickEntryBox", () => {
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
       expect(addToast).toHaveBeenCalledWith("Duplicate check failed; creating task anyway.", "error");
     });
+
+    it("FN-5136: ignores rapid Enter presses while duplicate check is pending", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      let resolveDup!: (matches: Array<{ id: string; title: string; description: string; column: string; score: number }>) => void;
+      const dupPromise = new Promise<Array<{ id: string; title: string; description: string; column: string; score: number }>>((resolve) => {
+        resolveDup = resolve;
+      });
+      vi.mocked(checkDuplicateTasks).mockReturnValueOnce(dupPromise as any);
+      renderQuickEntryBox({ onCreate });
+
+      const input = screen.getByTestId("quick-entry-input");
+      fireEvent.change(input, { target: { value: "pending enter lock" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      resolveDup([]);
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    });
+
+    it("FN-5136: disables Save and ignores rapid Save clicks while duplicate check is pending", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      let resolveDup!: (matches: Array<{ id: string; title: string; description: string; column: string; score: number }>) => void;
+      const dupPromise = new Promise<Array<{ id: string; title: string; description: string; column: string; score: number }>>((resolve) => {
+        resolveDup = resolve;
+      });
+      vi.mocked(checkDuplicateTasks).mockReturnValueOnce(dupPromise as any);
+      renderQuickEntryBox({ onCreate });
+
+      const input = screen.getByTestId("quick-entry-input");
+      fireEvent.change(input, { target: { value: "pending save lock" } });
+      expandQuickEntry();
+      const saveButton = screen.getByTestId("quick-entry-save");
+
+      fireEvent.click(saveButton);
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-entry-save")).toBeNull();
+        expect(input).toBeDisabled();
+      });
+
+      fireEvent.click(input);
+
+      await act(async () => {
+        resolveDup([]);
+      });
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    });
+
+    it("FN-5136: blocks Enter then Save mixed submit while in flight", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      let resolveDup!: (matches: Array<{ id: string; title: string; description: string; column: string; score: number }>) => void;
+      const dupPromise = new Promise<Array<{ id: string; title: string; description: string; column: string; score: number }>>((resolve) => {
+        resolveDup = resolve;
+      });
+      vi.mocked(checkDuplicateTasks).mockReturnValueOnce(dupPromise as any);
+      renderQuickEntryBox({ onCreate });
+
+      const input = screen.getByTestId("quick-entry-input");
+      fireEvent.change(input, { target: { value: "mixed submit lock" } });
+      expandQuickEntry();
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await act(async () => {
+        resolveDup([]);
+      });
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    });
+
+    it("FN-5136: keeps Save/Enter locked while duplicate modal is open and unlocks on cancel", async () => {
+      const onCreate = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
+        { id: "FN-321", title: "Duplicate", description: "desc", column: "todo", score: 0.9 },
+      ]);
+      renderQuickEntryBox({ onCreate });
+
+      const input = screen.getByTestId("quick-entry-input");
+      fireEvent.change(input, { target: { value: "duplicate candidate" } });
+      expandQuickEntry();
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(await screen.findByText("Possible duplicates")).toBeInTheDocument();
+      expect(screen.queryByTestId("quick-entry-save")).toBeNull();
+      expect(input).toBeDisabled();
+
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(onCreate).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => {
+        const saveButton = screen.getByTestId("quick-entry-save");
+        expect(saveButton).not.toBeDisabled();
+      });
+    });
+
+    it("FN-5136: duplicate-check rejection falls through once and stays single-submit", async () => {
+      let resolveCreate!: () => void;
+      const onCreate = vi.fn().mockImplementation(() => new Promise<void>((resolve) => { resolveCreate = resolve; }));
+      const addToast = vi.fn();
+      vi.mocked(checkDuplicateTasks).mockRejectedValueOnce(new Error("boom"));
+      renderQuickEntryBox({ onCreate, addToast });
+
+      const input = screen.getByTestId("quick-entry-input");
+      fireEvent.change(input, { target: { value: "fall through only once" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(addToast).toHaveBeenCalledWith("Duplicate check failed; creating task anyway.", "error");
+
+      resolveCreate();
+      await waitFor(() => expect(input).not.toBeDisabled());
+    });
   });
 
 });

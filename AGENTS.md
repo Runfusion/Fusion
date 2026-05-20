@@ -10,6 +10,12 @@ If you find yourself opening `SettingsModal.css`, `TaskCard.css`, `ChatView.css`
 
 Exception: explicit named user request in chat that overrides this directive.
 
+## Spec Generation Hygiene
+
+- Do not cite `.fusion/tasks/<id>/<file>` paths in Context/Steps/File Scope unless the file already exists, is explicitly created as a `(new)` Artifact, or is sibling `PROMPT.md`/`task.json`/`attachments/*`.
+- Dangling task-local file references are a blocking spec REVISE.
+- Save planning scratch and interim notes via `fn_task_document_write` instead of inventing on-disk task-local files.
+
 ## Finalizing Changes
 
 When a change affects the published `@runfusion/fusion` package, add a changeset:
@@ -158,6 +164,15 @@ Prefer `it.each` over copy-pasted `it()` blocks. When trimming, keep: first case
 - Integration tests exercising real SQLite, real worker pool, or spawned processes.
 - Lean core/engine unit tests with low mock burden.
 
+### Standing Rule: Do Not Add Slow Tests (FN-5048)
+
+- Default new tests to narrow seams, in-memory fakes, shared harnesses, and targeted assertions.
+- Prefer fake timers over real polling/time waits (FN-2707 pattern: advance timers inside `act(...)`, restore with `afterEach(() => vi.useRealTimers())`).
+- Do **not** mask slowness by raising worker/concurrency knobs (`FUSION_TEST_TOTAL_WORKERS`, `FUSION_TEST_CONCURRENCY`, `VITEST_MAX_WORKERS`, workspace concurrency settings).
+- Do **not** add net-new real-network calls, real-`setTimeout` polling loops, or mock-the-world component shells when a narrower seam exists.
+- Use the canonical taxonomy in **What NOT to write** and **What TO keep unconditionally** when deciding trim vs keep.
+- See `docs/test-speed-audit-FN-5048.md` for the measured baseline offender list and optimization priorities.
+
 ## Port 4040 is Reserved
 
 Port 4040 is the production dashboard port. A user's live session is typically running there. **Agents must NEVER:**
@@ -176,12 +191,25 @@ Detailed mechanism logs live in `docs/architecture.md` and `docs/design/`. The c
 - **Restart recovery**: `RestartRecoveryCoordinator` classifies interrupted `in-progress` runs. Unusable-worktree session-start failures (`missing`, `incomplete`, `unregistered git worktree`) are recoverable; retries are capped at `MAX_WORKTREE_SESSION_RETRIES=3` before escalating.
 - **Executor pre-session liveness gate (FN-4935)**: the gate now skips for fresh acquisitions (`acquisition.source === "fresh"`), emits structured `not_usable_task_worktree:<classification>` diagnostics (including canonicalized registered-path snapshots) and a `worktree:incomplete-detected` audit event with `source: "executor-liveness-gate"`, while preserving the existing `taskDoneRetryCount` / `MAX_TASK_DONE_REQUEUE_RETRIES` requeue contract. FN-4651 `worktreeSessionRetryCount` remains scoped to the in-review/session-start recovery path.
 - **Stale self-owned active-session reconcile on conflict cleanup (FN-4973)**: when executor worktree-conflict cleanup finds only a same-task stale `activeSessionRegistry` entry and no live in-memory `activeWorktrees` binding for that task/path, it must unregister the stale entry before `removeWorktree` (plus one-shot backstop reconcile on same-task `ActiveSessionWorktreeRemovalError` races). Foreign-task entries remain protected by FN-4811 and must never be reconciled by the requesting task.
-- **Task title/ID drift (FN-4898)**: active and archived title writes normalize foreign embedded `FN-NNN` tokens via `packages/core/src/task-title-id-drift.ts`. Empty placeholder groups (`()`, `[]`, `{}`) left behind by token stripping are also removed in both `normalizeTitleForTaskId` and `sanitizeTitle` (FN-4978). Lineage is preserved in `sourceParentTaskId` / description markers, not title embeds.
-- **PR-conflict reclaim wiring (FN-4763)**: GitHub PR refresh now persists normalized `prInfo.mergeable` conflict state and, when conflicting, funnels tasks into self-healing’s existing reclaim machinery (`reclaimPrConflictForTask` / `reclaim-pr-conflicts` stage) so branch-conflict handling stays centralized with existing `inspectBranchConflict` outcomes and unrecoverable pause semantics.
+- **Task title/ID drift (FN-4898)**: active and archived title writes normalize foreign embedded `FN-NNN` tokens via `packages/core/src/task-title-id-drift.ts`. Empty placeholder groups (`()`, `[]`, `{}`) left behind by token stripping are also removed in both `normalizeTitleForTaskId` and `sanitizeTitle` (FN-4978). Lineage is preserved in `sourceParentTaskId` / description markers, not title embeds. FN-5077 extends drift normalization to reject dangling-connector fragments (`"Close as duplicate of"`) so token-stripped residuals never persist as task titles.
+- **PR-conflict reclaim wiring (FN-4763)**: GitHub PR refresh now persists normalized `prInfo.mergeable` conflict state and, when conflicting, funnels tasks into self-healing’s existing reclaim machinery (`reclaimPrConflictForTask` / `reclaim-pr-conflicts` stage) so branch-conflict handling stays centralized with existing `inspectBranchConflict` outcomes and unrecoverable pause semantics. PR refresh also captures `prInfo.conflictDiagnostics` (conflicting files + suggested local recovery commands) for dashboard surfacing.
 - **Worktrunk-managed lifecycles**: when `worktrunk.enabled`, self-healing defers prune/idle/worktree-cap sweeps to the worktrunk backend; branch-level reclaim and orphan rescue stay native.
 - **Post-finalize verification no-op (FN-4944)**: when auto-merge receives a delayed `VerificationError` after a task is already `done` with `mergeDetails.mergeConfirmed === true` (already-on-main fast-path), it must log one `[verification] ... no action` diagnostic and must not bounce the task back to `in-progress` / `merging-fix`. Defense-in-depth now re-checks the done+mergeConfirmed condition immediately before each verification-failure status write site, and emits `task:post-finalize-verification-no-op` database audit events with failure metadata for forensics.
 - **Worktree pool exclusivity (FN-4954)**: `WorktreePool.acquire(taskId)` / `release(path, taskId?)` track a `leased` map so every pooled path is either idle or leased, never both. Cross-task double-lease detection throws `PoolDoubleLeaseError` and emits `worktree:pool-double-lease-detected`; merger Step 8 now detaches HEAD and clears `task.worktree` / `task.branch` before releasing paths back to the pool.
+- **Stale registration recovery (FN-5056)**: `NativeWorktreeBackend.create` and `executor.tryCreateWorktree` detect `missing but already registered worktree` failures, run `git worktree prune` (plus `remove --force` / `add -f` fallbacks) before retrying, and emit `worktree:stale-registration-{detected,recovered,recovery-failed}` audit events.
+- **Raw worktree deletion must be paired with prune (FN-5058)**: any direct filesystem deletion of a worktree directory (`rm -rf` / `rmSync`) must be followed by best-effort `git worktree prune` via `pruneWorktreeAdminEntries` so `.git/worktrees/*` admin entries are not stranded in a missing-but-registered state (FN-5056 class).
+- **Meta-task auto-archive safety guards (FN-5064)**: `auto-archive-meta-resolved`/`auto-archive-meta-stalled` must skip archival (with `task:auto-archive-meta-*-skipped` audits) whenever guard checks detect substantive work signals such as unique branch commits, recent executor activity, pending `taskDoneRetryCount`, merge-in-progress state, or active worktree session.
 - **Scheduler fanout tiebreaker (FN-4969)**: within the same priority class, scheduler dispatch prefers runnable `todo` tasks with the highest active dependency-dependent fanout; `urgent` always outranks lower priorities regardless of fanout, and `overlapBlockedBy`/file-scope overlap blockers are excluded from unblock weight.
+- **In-review branch-binding self-heal (FN-5083)**: `reconcile-in-review-branch-rebind` runs after `reconcile-task-worktree-metadata` and before `reclaim-stale-active-branches`. It restores `task.branch` (and clears `task.worktree` for fresh acquisition) for `in-review` tasks when exactly one case-insensitive `fusion/<id>` candidate branch has unique commits versus the integration base. Ambiguous candidates emit `task:auto-rebind-skipped` (`reason: "ambiguous-candidates"`) and are never auto-resolved. Branch construction across executor/worktree-pool/worktree-acquisition/merger/self-healing canonicalizes to lowercase via `canonicalFusionBranchName`; `fn_task_done` wrong-branch checks now auto-canonicalize case-only mismatches and emit `branch:auto-canonicalize-case`.
+- **In-review is terminal-until-merged under `autoMerge: false` (FN-5147)**: when a project sets `settings.autoMerge: false`, `in-review` is the intended resting state until a human merges the PR. No lifecycle-mutating self-healing sweep (`reclaimSelfOwnedBranchConflicts`, `recoverGhostReviewTasks`, `recoverStaleIncompleteReviewTasks`, `recoverInterruptedMergingTasks`, `recoverStuckMergeDeadlocks`, `recoverMissingWorktreeReviewFailures`, `recoverPartialProgressNoTaskDoneFailures`, `recoverCompletionHandoffLimbo`, `recoverMergeableReviewTasks`, `recoverMergedReviewTasks`, `recoverAlreadyMergedReviewTasks`, `recoverOrphanOnlyScopeViolations`, `recoverForeignOnlyContaminatedInReviewTasks`, `recoverReviewTasksWithFailedPreMergeSteps`, `finalizeNoOpReviewTasks`, `surfaceInReviewStalls`, `surfaceInReviewStalled`) may move the task out of `in-review`, mark it `paused`/`failed`, or re-enqueue it for execution. RECONCILE-ONLY sweeps (branch rebind, blocker fan-out, stale-status clears, contamination metadata cleanup, attribution restore, PR refresh, misclassified-failure error clearing) continue to run.
+- **Auto-merge integration-root default (FN-5279)**: direct auto-merge now defaults `mergeIntegrationWorktree` to `reuse-task-worktree`; merger must pass the reuse handoff gates or emit `merge:reuse-handoff-refused` and leave the task in `in-review` without silently falling back to `cwd-main`.
+- **No-progress churn terminalization (FN-5168)**: `StuckTaskDetector` now tracks ignored `fn_task_update` rebuffs via `recordIgnoredStepUpdate(taskId)` and, after one loop/compact-and-resume recovery has already fired in the same `execute()` lifecycle, escalates `ignoredStepUpdateCount >= 25` to the terminal reason `no-progress-churn`. `SelfHealingManager.checkStuckBudget()` maps that reason directly to `STUCK_NO_PROGRESS_CHURN`, emits `task:stuck-no-progress-churn-terminalized` with `{ taskId, ignoredStepUpdateCount, stuckKillStreak, lastReason }`, and parks the task in `in-review` without consuming the normal stuck-kill budget. Under FN-5147 `autoMerge: false`, that failed in-review task remains terminal-until-merged just like `STUCK_LOOP_EXHAUSTED`; the new class adds an earlier bounded exit, not a re-execution path.
+- **Landed-files attribution (FN-5103)**: Rebase-strategy `mergeDetails.landedFiles` / `filesChanged` / `insertions` / `deletions` are captured from task-attributable commits only via `filterFilesToOwnTaskCommits` (subject-prefix + trailer + bracket-prefix evidence), tagged `landedFilesAttributionRestricted: true`. Zero own commits → `landedFiles: []` and `noOpVerifiedShortCircuit: true`. FN-5304 guard: when `<rebaseBaseSha>..HEAD` reports zero own commits, merger must also validate the source `fusion/<id>` tip; if that source tip still has attributable own commits relative to `rebaseBaseSha`, throw `SilentNoOpAttributionMismatchError`, refuse writing `mergeConfirmed: true`, park the task in `in-review` with `status: "failed"`, and emit `merge:no-op-attribution-mismatch`. If source ref is unavailable, skip with diagnostic + `merge:no-op-attribution-mismatch-skipped` (`reason: "source-ref-unavailable"`). Attribution-helper failures fall back to the unrestricted `rebaseBaseSha..sha` walk and set `landedFilesCaptureFallback: 'attribution-failed'`. Self-healing `recoverDoneTaskMergeMetadata` skips reconcile when `landedFilesAttributionRestricted` or `noOpVerifiedShortCircuit` is set so the narrower set is not overwritten with the full range. Squash-strategy capture is unchanged.
+- **Soft-delete scheduler invalidation (FN-5137)**: `task:deleted` events must invalidate `AutoClaimSnapshotManager` and clear scheduler bookkeeping (`pausedTaskIds`, `failedTaskIds`, `wasNodeDispatchValidationBlocked`, `wasNodeBlocked`); `executor.execute()` / `resumeOrphaned()` / `resumeTaskForAgent()` refuse any task with `deletedAt` set.
+- **Soft-delete in-flight abort (FN-5142)**: `task:deleted` must immediately abort/dispose active executor work (`activeSessions`, `activeStepExecutors`, `activeWorkflowStepSessions`, reviewer subagents), interrupt active merge state (`mergeAbortController`, `activeMergeSession`, `activeMergeTaskId`, `mergeActive`, `mergeQueue`, `pausedReviewTaskIds`), and abort triage specify/subagent sessions for that id. Handlers are per-task and idempotent.
+- **Soft-delete audit + column reconcile (FN-5175)**: `TaskStore.deleteTask` records a `runAuditEvents` row (`mutationType: "task:deleted"`, `domain: "database"`) inside the same transaction that sets `deletedAt`, and sets `"column" = 'archived'` on the row. Callers without a heartbeat run context (`fn task delete`, pi extension, dashboard delete route) pass an `auditContext` with `agentId: "system"` and a synthetic `runId`. The watcher cross-instance emit path does NOT re-record the audit event. The row stays in `tasks` (not `archivedTasks`); `archiveTask` is unchanged.
+- **Soft-delete resurrection guard (FN-5208)**: `TaskStore.readTaskJson()` must never fall back to `.fusion/tasks/<id>/task.json` when the DB row exists with `deletedAt` set — it throws `TaskDeletedError`. `atomicCreateTaskJson` / `atomicWriteTaskJson` / `atomicWriteTaskJsonWithAudit` refuse to upsert a task whose row is currently soft-deleted (unless the in-memory task carries `deletedAt` itself, for soft-delete maintenance paths), emit a `[soft-delete-resurrection-blocked]` log line, and record a `task:resurrection-blocked` run-audit event. Stale in-flight planner/triage writes for a soft-deleted ID surface `TaskDeletedError` and abort cleanly without emitting `task:created`.
+- **Soft-delete stream verification gate (FN-5153)**: `docs/soft-delete-verification-matrix.md` is the authoritative checklist for the FN-5105 → FN-5143 soft-delete stream. Every scenario × layer cell must be GREEN (or have a linked follow-up FN) before the stream is closed; `packages/engine/src/__tests__/reliability-interactions/soft-delete-end-to-end.test.ts` is the cross-layer regression backstop.
 
 ## Engine Process Rules
 
@@ -212,11 +240,21 @@ User-initiated `moveTask(in-progress → todo)` is a hard cancel: executor liste
 
 `TaskExecutor` run mutation context is now keyed per task (`currentRunContexts: Map<taskId, RunMutationContext>`), not a single shared mutable field. This prevents FN-4987-style cross-task audit attribution leaks where one task's `runId` appeared in another task's `scope-leak`/`fn_task_done` logs.
 
+### Process supervision
+
+Verification or managed child processes that must die with their parent should use `superviseSpawn(...)` from `@fusion/core`, not raw `nohup … &` or ad-hoc `spawn(..., { detached: true })` patterns.
+On POSIX, `superviseSpawn` gives the child its own process group and cascades `SIGTERM` → `SIGKILL` on parent exit, signal, uncaught exception, unhandled rejection, or `maxLifetimeMs` expiry.
+On Windows, it falls back to direct child tracking/kills; grandchildren remain subject to platform limits.
+Sanctioned user-facing daemons that intentionally outlive the caller may keep `detached: true`, but must carry a preceding `// process-supervisor-allowlist: <reason>` marker.
+`eslint.config.mjs` bans raw detached spawns without that marker under `packages/**` and `scripts/**`.
+`scripts/check-no-nohup.mjs` runs in root `pretest` / `pretest:full` and blocks committed `nohup` tokens under `packages/**` and `scripts/**`.
+
 ## Git Conventions
 
 - Commit messages: `feat(FN-XXX):`, `fix(FN-XXX):`, `test(FN-XXX):`
 - One commit per step (not per file change)
 - Always include the task ID prefix
+- Fusion-managed task worktrees install both identity-guard `pre-commit` and trailer-appending `commit-msg` hooks; task-worktree commits should carry a `Fusion-Task-Id: FN-NNNN` trailer (FN-5089, configurable via `commitMsgHookEnabled`). Attribution still falls back to branch/subject when the trailer hook is disabled.
 
 ## Merging Branches Into Main
 
@@ -245,7 +283,7 @@ Every squash commit path enforces a file-scope invariant immediately before comm
 
 Per-task opt-out: `task.scopeOverride = true` (log `task.scopeOverrideReason` when set). Empty scopes are not enforced.
 
-File Scope entries are validated when PROMPT.md is written — non-path tokens (git refs, URLs, SHAs, bare identifiers) are rejected with `InvalidFileScopeError`.
+File Scope entries are validated when PROMPT.md is written — author paths (`createTask`, `updateTask`) still reject non-path tokens (git refs, URLs, SHAs, bare identifiers) with `InvalidFileScopeError`, while copy paths (`duplicateTask`, `restoreFromArchive`) sanitize invalid entries out of the rewritten PROMPT.md and log the drop.
 
 ### Manual audit script
 
@@ -314,6 +352,14 @@ All three lanes (planning / executor / reviewer) follow the same 5-tier preceden
 4. Project `defaultProviderOverride` / `defaultModelIdOverride`
 5. Global `defaultProvider` / `defaultModelId` → automatic resolution
 
+### Mock provider (test mode)
+
+Set `defaultProvider: "mock"` at any tier in that hierarchy (or the per-task lane override) to force planning, executor, reviewer/validator, merger, and heartbeat sessions onto the deterministic zero-network mock runtime.
+Default scripts are scripted by session purpose: executor marks unfinished steps done, triage writes a minimal PROMPT.md and calls `fn_review_spec` when available, reviewer/validation emit `Verdict: APPROVE`, and merger/heartbeat no-op safely.
+Per-task and global script overrides live in `mockScriptRegistry` (`setMockScript`, `clearMockScript`, `resetMockScripts`) exported from `@fusion/engine`.
+The mock runtime never registers with pi's `ModelRegistry` and is guarded by tests that fail on any `fetch`, `http.request`, or `https.request` usage.
+Activation UX/settings affordances are handled separately in FN-5204.
+
 ### Per-task token budget precedence
 
 1. `task.tokenBudgetOverride`
@@ -374,6 +420,7 @@ Structured logging via `createLogger()` from `packages/engine/src/logger.ts`. Al
 
 `AgentSemaphore` (`packages/engine/src/concurrency.ts`) has defensive guards: `limit` getter returns minimum 1; `availableCount` returns 0 for invalid limits.
 - `[executor] FN-XXX: fn_task_done refused (<class>) — <reason>` (explicit tool path) and `[executor] FN-XXX: fn_task_done refused (<class>) — <reason> (implicit completion)` (implicit all-steps-done path) now share refusal-class diagnostics for `summary-claims-incomplete` (explicit only), `bulk-step-completion-without-review`, and `pending-code-review-revise`; both paths consume the same `MAX_TASK_DONE_REQUEUE_RETRIES` budget and escalate to `in-review` with `status: "failed"` on exhaustion.
+- Done/archived transitions must clear stale pause metadata (`paused`, `userPaused`, `pausedByAgentId`, `pausedReason`), and `formatTaskLine` suppresses `(paused)` for terminal columns even if stale storage state exists.
 
 ## Dashboard UI Styling Guide
 
@@ -422,13 +469,14 @@ Breakpoints: 768px (primary mobile), 1024px (tablet `min-width: 769px and max-wi
 
 ### Lazy-Loaded Heavy Views
 
-These 18 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms chunks once on mount via `requestIdleCallback`. **Do not make these eager.**
+These 19 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms chunks once on mount via `requestIdleCallback`. **Do not make these eager.**
 
 - `AgentsView`
 - `NodesView`
 - `ChatView`
 - `MemoryView`
 - `DevServerView`
+- `SecretsView`
 - `InsightsView`
 - `DocumentsView`
 - `SkillsView`
@@ -481,7 +529,14 @@ Reliability-layer changes are in scope. Interaction regression backstops live in
 
 - FN-4935 backstop: `packages/engine/src/__tests__/reliability-interactions/executor-liveness-gate.test.ts` guards fresh-acquisition skip behavior, structured liveness classifications, and executor-gate audit/requeue outcomes.
 - FN-4887 backstop: `packages/engine/src/__tests__/reliability-interactions/foreign-only-contamination-recovery.real-git.test.ts` covers composition between bootstrap-misbinding, contamination dispatcher retry, misbound-in-review ordering, and FN-4811 active-session safeguards.
+- FN-5039 backstop: `packages/engine/src/__tests__/reliability-interactions/worktree-contamination-attribution.real-git.test.ts` guards `captureModifiedFiles` trailer attribution filtering and `task:worktree-contamination-detected` audit fan-out across rebase contamination, clean, untrailered, and fallback paths.
 - FN-4976 backstop: `packages/engine/src/__tests__/reliability-interactions/stale-self-owned-session-registry.test.ts` guards `cleanupConflictingWorktree` clearing stale same-task `activeSessionRegistry` entries before the FN-4811 foreign-owner check, while preserving refusal behavior for foreign owners and live same-task bindings.
 - FN-4999 backstop: `packages/engine/src/__tests__/reliability-interactions/completion-handoff-limbo.test.ts` covers the `recoverCompletionHandoffLimbo` sweep stage (grace window, active-task skip, merge-blocker guard, capped retries, and audit fan-out).
+- FN-5083 backstop: `packages/engine/src/__tests__/reliability-interactions/in-review-branch-rebind.test.ts` covers in-review branch rebind composition with metadata-cleared state, idempotent re-sweeps, and ambiguous-candidate skip behavior.
+- FN-5093 backstop: `packages/engine/src/__tests__/reliability-interactions/in-review-stalled-detector.test.ts` covers composition between quiet-window in-review stalled surfacing and adjacent reason-driven/paused/ghost-recovery/auto-merge gating paths.
+- FN-5103 backstop: `packages/engine/src/__tests__/reliability-interactions/landed-files-attribution.test.ts` covers attribution-restricted rebase landed-files capture, verified-short-circuit zero-own-commit capture, and attribution-failure fallback composition.
+- FN-5147 backstop: `packages/engine/src/__tests__/reliability-interactions/in-review-automerge-off.test.ts` covers `autoMerge: false` + long-quiet in-review + maintenance/startup sweep cycles, asserting no column move / no paused / no status mutation / no requeue, plus explicit regression guards for `surfaceInReviewStalls` and `surfaceInReviewStalled`.
+- FN-5168 backstop: `packages/engine/src/__tests__/reliability-interactions/non-progress-churn.test.ts` covers loop→compact recovery followed by ignored-step-update churn escalation, terminal `beforeRequeue(false)` behavior, audit/log payloads, and FN-5147 autoMerge-off composition.
+- FN-5219 backstop: `packages/engine/src/__tests__/reliability-interactions/in-progress-limbo-recovery.test.ts` covers `recoverInProgressLimbo` composition with `recoverOrphanedExecutions` (no double-recovery), `reconcile-task-worktree-metadata` (live rebindable worktree wins), `recoverMissingWorktreeReviewFailures` (in-review vs in-progress disjoint), and executor task-id claim skip, plus an explicit FN-5149 reproduction case.
 
 The auto-recovery dispatcher at `packages/engine/src/auto-recovery.ts` (FN-4533) composes on top of existing layers (FN-4500 fast-path, FN-4508 deterministic branch-conflict, FN-4499 bootstrap-misbinding, FN-4428 contamination, `mergeAuditAutoRecovery` Stages 1–5, self-healing) to handle six residual classes: file-scope violation at squash, branch misbinding / ghost worktree, verification-fix scope leak, contamination, `branch-conflict-unrecoverable` residuals, and room-post/message-send failures. Invocation is additive — no existing layer's behavior changes.

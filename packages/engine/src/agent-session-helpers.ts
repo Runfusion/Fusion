@@ -17,12 +17,14 @@ import {
   resolveTaskPlanningModel,
   type Settings,
 } from "@fusion/core";
-import { resolveRuntime, buildRuntimeResolutionContext, type SessionPurpose } from "./runtime-resolution.js";
+import { resolveRuntime, buildRuntimeResolutionContext, isMockProviderId, type SessionPurpose } from "./runtime-resolution.js";
 import { createLogger } from "./logger.js";
 import { promptWithFallback, describeModel } from "./pi.js";
+import { MockAgentRuntime } from "./providers/mock-provider.js";
 
 /** Logger for agent session helpers */
 const sessionLog = createLogger("agent-session");
+const mockRuntimeSingleton = new MockAgentRuntime();
 
 function extractSkillNamesFromSelection(skillSelection: SkillSelectionContext | undefined): string[] {
   if (!skillSelection || !Array.isArray(skillSelection.requestedSkillNames)) {
@@ -239,11 +241,24 @@ export async function createResolvedAgentSession(
     ...(mergedSkillNames.length > 0 ? { skills: mergedSkillNames } : {}),
   };
 
-  // Build the resolution context
-  const context = buildRuntimeResolutionContext(sessionPurpose, pluginRunner, runtimeHint);
+  const useMockRuntime = isMockProviderId(runtimeOptions.defaultProvider);
+  const effectiveRuntimeOptions = useMockRuntime
+    ? {
+      ...runtimeOptions,
+      runtimeContext: {
+        ...runtimeOptions.runtimeContext,
+        sessionPurpose,
+      },
+    }
+    : runtimeOptions;
 
-  // Resolve the runtime
-  const resolved = await resolveRuntime(context);
+  const resolved = useMockRuntime
+    ? {
+      runtime: mockRuntimeSingleton,
+      runtimeId: mockRuntimeSingleton.id,
+      wasConfigured: true,
+    }
+    : await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, runtimeHint));
 
   sessionLog.log(
     `[${sessionPurpose}] Using runtime "${resolved.runtimeId}" (configured=${resolved.wasConfigured})`,
@@ -253,7 +268,7 @@ export async function createResolvedAgentSession(
   // latest sync point (just before LLM session instantiation) rather than
   // here, before the runtime's own awaited setup work runs. See
   // AgentRuntimeOptions.beforeSpawnSession for the contract.
-  const result = await resolved.runtime.createSession(runtimeOptions);
+  const result = await resolved.runtime.createSession(effectiveRuntimeOptions);
 
   // Attach the resolved runtime's promptWithFallback as a bound method on the
   // session object when it is not already present. This is the dispatch hook

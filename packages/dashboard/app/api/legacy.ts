@@ -65,6 +65,7 @@ import type {
   ResearchRunStatus,
   TaskPriority,
   TaskSourceIssue,
+  PrConflictDiagnostics,
   PrInfo,
   ManagedDockerNodeInput,
   DockerNodeConfig,
@@ -105,9 +106,15 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** Options that shape the soft-delete request payload/query, not hard-delete behavior. */
 export interface DeleteTaskOptions {
   removeDependencyReferences?: boolean;
+  removeLineageReferences?: boolean;
   githubIssueAction?: GithubIssueAction;
+}
+
+export interface ArchiveTaskOptions {
+  removeLineageReferences?: boolean;
 }
 
 function looksLikeHtml(body: string): boolean {
@@ -204,6 +211,8 @@ export interface DashboardHealthResponse {
   uptime: number;
   database: {
     healthy: boolean;
+    corruptionDetected: boolean;
+    corruptionErrors: string[];
     lastCheckedAt: string | null;
     isRunning: boolean;
   };
@@ -501,10 +510,22 @@ export function moveTask(
   });
 }
 
+/**
+ * Soft-deletes a task by setting `deletedAt` server-side while preserving the row/artifacts,
+ * and keeping the task ID reserved.
+ *
+ * `removeDependencyReferences` allows forced delete by first removing incoming dependency links.
+ * `githubIssueAction` controls linked issue behavior (`close`, `delete`, or `leave`) during deletion.
+ *
+ * Hard removal is handled only by the archive-cleanup pipeline (after archival), not this endpoint.
+ */
 export function deleteTask(id: string, projectId?: string, options?: DeleteTaskOptions): Promise<Task> {
   const search = new URLSearchParams();
   if (options?.removeDependencyReferences) {
     search.set("removeDependencyReferences", "true");
+  }
+  if (options?.removeLineageReferences) {
+    search.set("removeLineageReferences", "true");
   }
   if (options?.githubIssueAction) {
     search.set("githubIssueAction", options.githubIssueAction);
@@ -518,8 +539,16 @@ export function mergeTask(id: string, projectId?: string): Promise<MergeResult> 
   return api<MergeResult>(withProjectId(`/tasks/${id}/merge`, projectId), { method: "POST" });
 }
 
+export type RecoverBranchBindingOutcome =
+  | { taskId: string; result: "applied"; branch: string; aheadCount: number; integrationBase: string; previousBranch: string | null }
+  | { taskId: string; result: "skipped"; reason: "binding-intact" | "no-live-branch" | "ambiguous-candidates" | "no-unique-work"; candidates?: Array<{ branch: string; aheadCount: number }> };
+
 export function retryTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
+}
+
+export function recoverBranchBinding(id: string, projectId?: string): Promise<RecoverBranchBindingOutcome> {
+  return api<RecoverBranchBindingOutcome>(withProjectId(`/tasks/${id}/recover-branch-binding`, projectId), { method: "POST" });
 }
 
 export function resetTask(id: string, projectId?: string): Promise<Task> {
@@ -542,8 +571,14 @@ export function unpauseTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/unpause`, projectId), { method: "POST" });
 }
 
-export function archiveTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}/archive`, projectId), { method: "POST" });
+export function archiveTask(id: string, projectId?: string, options?: ArchiveTaskOptions): Promise<Task> {
+  const search = new URLSearchParams();
+  if (options?.removeLineageReferences) {
+    search.set("removeLineageReferences", "true");
+  }
+
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return api<Task>(withProjectId(`/tasks/${id}/archive${suffix}`, projectId), { method: "POST" });
 }
 
 export function unarchiveTask(id: string, projectId?: string): Promise<Task> {
@@ -2193,12 +2228,14 @@ export interface PrCheckStatus {
 
 export interface PrStatusResponse {
   prInfo: PrInfo;
+  prInfos?: PrInfo[];
   stale: boolean;
   automationStatus?: string | null;
 }
 
-export interface PrRefreshResponse {
+export interface PrRefreshEntry {
   prInfo: PrInfo;
+  conflictDiagnostics?: PrConflictDiagnostics;
   mergeReady: boolean;
   mergeable?: PrInfo["mergeable"];
   blockingReasons: string[];
@@ -2208,12 +2245,18 @@ export interface PrRefreshResponse {
   conflictReclaimQueued?: boolean;
 }
 
+export interface PrRefreshResponse extends PrRefreshEntry {
+  primary: PrRefreshEntry;
+  all: PrRefreshEntry[];
+}
+
 export interface PrMergeResponse {
   prInfo: PrInfo;
   alreadyMerged?: boolean;
 }
 
 export interface PrChecksResponse {
+  prInfos?: PrInfo[];
   checks: PrCheckStatus[];
   rollup: "success" | "pending" | "failure" | "unknown";
   lastCheckedAt: string;
@@ -2230,6 +2273,7 @@ export interface PrReviewThreadItem {
 }
 
 export interface PrReviewsResponse {
+  prInfos?: PrInfo[];
   snapshot: {
     decision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
     items: Array<{
@@ -2343,14 +2387,22 @@ export function refreshPrStatus(id: string, projectId?: string): Promise<PrRefre
   });
 }
 
+export function unlinkPr(taskId: string, number: number, projectId?: string): Promise<{ task: TaskDetail; prInfos: PrInfo[] }> {
+  return api<{ task: TaskDetail; prInfos: PrInfo[] }>(withProjectId(`/tasks/${taskId}/pr/${number}/unlink`, projectId), {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function reclaimPrConflict(id: string, projectId?: string): Promise<{ queued: boolean; reason?: string }> {
   return api<{ queued: boolean; reason?: string }>(withProjectId(`/tasks/${id}/pr/reclaim-conflict`, projectId), {
     method: "POST",
   });
 }
 
-export function mergePr(id: string, method?: "merge" | "squash" | "rebase", projectId?: string): Promise<PrMergeResponse> {
-  return api<PrMergeResponse>(withProjectId(`/tasks/${id}/pr/merge`, projectId), {
+export function mergePr(id: string, method?: "merge" | "squash" | "rebase", projectId?: string, prNumber?: number): Promise<PrMergeResponse> {
+  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
+  return api<PrMergeResponse>(withProjectId(`/tasks/${id}/pr/merge${search}`, projectId), {
     method: "POST",
     body: JSON.stringify(method ? { method } : {}),
   });
@@ -2361,20 +2413,24 @@ export function setAutoMergeOnGreen(
   enabled: boolean,
   strategy?: "merge" | "squash" | "rebase",
   projectId?: string,
+  prNumber?: number,
 ): Promise<{ prInfo: PrInfo }> {
-  return api<{ prInfo: PrInfo }>(withProjectId(`/tasks/${id}/pr/auto-merge`, projectId), {
+  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
+  return api<{ prInfo: PrInfo }>(withProjectId(`/tasks/${id}/pr/auto-merge${search}`, projectId), {
     method: "POST",
     body: JSON.stringify({ enabled, strategy }),
   });
 }
 
 /** Fetch all PR checks for a task */
-export function fetchPrChecks(id: string, projectId?: string): Promise<PrChecksResponse> {
-  return api<PrChecksResponse>(withProjectId(`/tasks/${id}/pr/checks`, projectId));
+export function fetchPrChecks(id: string, projectId?: string, prNumber?: number): Promise<PrChecksResponse> {
+  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
+  return api<PrChecksResponse>(withProjectId(`/tasks/${id}/pr/checks${search}`, projectId));
 }
 
-export function fetchPrReviews(id: string, projectId?: string): Promise<PrReviewsResponse> {
-  return api<PrReviewsResponse>(withProjectId(`/tasks/${id}/pr/reviews`, projectId));
+export function fetchPrReviews(id: string, projectId?: string, prNumber?: number): Promise<PrReviewsResponse> {
+  const search = prNumber ? `?pr=${encodeURIComponent(String(prNumber))}` : "";
+  return api<PrReviewsResponse>(withProjectId(`/tasks/${id}/pr/reviews${search}`, projectId));
 }
 
 // --- Issue Management API ---

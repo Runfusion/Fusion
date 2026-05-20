@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrMonitor } from "../pr-monitor.js";
-import { Scheduler, pathsOverlap, filterPathsByIgnoreList } from "../scheduler.js";
+import { Scheduler, pathsOverlap, filterPathsByIgnoreList, formatConcurrencyLimitMemoKey } from "../scheduler.js";
 import { AgentSemaphore } from "../concurrency.js";
 import type { TaskStore, Task, TaskDetail } from "@fusion/core";
 import { existsSync } from "node:fs";
@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { schedulerLog } from "../logger.js";
 
 const staleReporterReportMock = vi.fn();
+const backlogPressureReporterReportMock = vi.fn();
 
 // Mock fs modules
 vi.mock("node:fs", async (importOriginal) => {
@@ -42,6 +43,12 @@ vi.mock("../logger.js", () => ({
 vi.mock("../stale-task-reporter.js", () => ({
   StaleTaskReporter: vi.fn().mockImplementation(() => ({
     report: staleReporterReportMock,
+  })),
+}));
+
+vi.mock("../backlog-pressure-reporter.js", () => ({
+  BacklogPressureReporter: vi.fn().mockImplementation(() => ({
+    report: backlogPressureReporterReportMock,
   })),
 }));
 
@@ -162,6 +169,7 @@ describe("filterPathsByIgnoreList", () => {
 describe("Scheduler", () => {
   beforeEach(() => {
     staleReporterReportMock.mockReset().mockResolvedValue({ surfaced: 0 });
+    backlogPressureReporterReportMock.mockReset().mockResolvedValue({ alerted: false });
   });
   // Helper to create mock MissionStore (shared across mission-related test suites)
   function createMockMissionStore(overrides = {}) {
@@ -245,6 +253,57 @@ describe("Scheduler", () => {
         await scheduler.schedule();
         await scheduler.schedule();
         expect(staleReporterReportMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("backlog pressure reporter integration", () => {
+    it("invokes reporter from schedule when enabled", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-18T12:00:00.000Z"));
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+        const store = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-BACKLOG", column: "todo", dependencies: [] })]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            staleInProgressWarningMs: 0,
+            staleInReviewWarningMs: 0,
+          }),
+        });
+        const scheduler = new Scheduler(store);
+        (scheduler as unknown as { running: boolean }).running = true;
+        await scheduler.schedule();
+        expect(backlogPressureReporterReportMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not invoke reporter when disabled", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-18T12:00:00.000Z"));
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+        const store = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-BACKLOG", column: "todo", dependencies: [] })]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            backlogPressureAlertEnabled: false,
+            staleInProgressWarningMs: 0,
+            staleInReviewWarningMs: 0,
+          }),
+        });
+        const scheduler = new Scheduler(store);
+        (scheduler as unknown as { running: boolean }).running = true;
+        await scheduler.schedule();
+        expect(backlogPressureReporterReportMock).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
       }
@@ -1079,6 +1138,125 @@ describe("Scheduler", () => {
       expect(auditCalls[0]?.[0]?.metadata?.bindingGates).toEqual(["maxConcurrent"]);
     });
 
+    it("dedupes queued-concurrency logs when only non-binding semaphore counts change", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const semaphore = new AgentSemaphore(40);
+      const tasks = [
+        createMockTask({ id: "FN-A", column: "in-progress" }),
+        createMockTask({ id: "FN-B", column: "in-progress" }),
+        createMockTask({ id: "FN-C", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-D", column: "todo", dependencies: [] }),
+      ];
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 15, maxWorktrees: 3 }),
+      });
+
+      const scheduler = new Scheduler(store, { semaphore });
+      (scheduler as any).running = true;
+
+      await semaphore.acquire();
+      await semaphore.acquire();
+      await scheduler.schedule();
+      semaphore.release();
+      semaphore.release();
+      await scheduler.schedule();
+
+      const concurrencyReasonCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "FN-D" && String(call[1]).includes("queued — concurrency limit reached"),
+      );
+      expect(concurrencyReasonCalls).toHaveLength(1);
+
+      const auditCalls = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => (call[0] as { mutationType?: string } | undefined)?.mutationType === "scheduler:dispatch-queued-concurrency",
+      );
+      expect(auditCalls).toHaveLength(1);
+      expect(auditCalls[0]?.[0]?.metadata?.bindingGates).toEqual(["maxWorktrees"]);
+    });
+
+    it("dedupes queued-concurrency logs across used/limit churn on the same binding gate", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      let semaphoreLimit = 2;
+      const semaphore = new AgentSemaphore(() => semaphoreLimit);
+      const tasks = [
+        createMockTask({ id: "FN-A", column: "in-progress" }),
+        createMockTask({ id: "FN-B", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-C", column: "todo", dependencies: [] }),
+      ];
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 10 }),
+      });
+
+      const scheduler = new Scheduler(store, { semaphore });
+      (scheduler as any).running = true;
+
+      await semaphore.acquire();
+      await scheduler.schedule();
+      semaphoreLimit = 3;
+      await semaphore.acquire();
+      await scheduler.schedule();
+
+      const concurrencyReasonCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "FN-C" && String(call[1]).includes("queued — concurrency limit reached"),
+      );
+      expect(concurrencyReasonCalls).toHaveLength(1);
+      expect(String(concurrencyReasonCalls[0]?.[1])).toContain("semaphore used=1/2");
+
+      const auditCalls = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => (call[0] as { mutationType?: string } | undefined)?.mutationType === "scheduler:dispatch-queued-concurrency",
+      );
+      expect(auditCalls).toHaveLength(1);
+      expect(auditCalls[0]?.[0]?.metadata?.bindingGates).toEqual(["semaphore"]);
+      expect(auditCalls[0]?.[0]?.metadata?.semaphore).toEqual({ used: 1, limit: 2, slack: 1 });
+    });
+
+    it("re-logs and re-audits when binding holder identity changes", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const firstPass = [
+        createMockTask({ id: "FN-A", column: "in-progress" }),
+        createMockTask({ id: "FN-C", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-D", column: "todo", dependencies: [] }),
+      ];
+      const secondPass = [
+        createMockTask({ id: "FN-B", column: "in-progress" }),
+        createMockTask({ id: "FN-C", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-D", column: "todo", dependencies: [] }),
+      ];
+
+      let phase = 1;
+      const store = createMockStore({
+        listTasks: vi.fn().mockImplementation(async () => (phase === 1 ? firstPass : secondPass)),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 2 }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+      phase = 2;
+      await scheduler.schedule();
+
+      const concurrencyReasonCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "FN-D" && String(call[1]).includes("queued — concurrency limit reached"),
+      );
+      expect(concurrencyReasonCalls).toHaveLength(2);
+
+      const auditCalls = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => (call[0] as { mutationType?: string } | undefined)?.mutationType === "scheduler:dispatch-queued-concurrency",
+      );
+      expect(auditCalls).toHaveLength(2);
+      expect(auditCalls[0]?.[0]?.metadata?.bindingGates).toEqual(["maxWorktrees"]);
+      expect(auditCalls[1]?.[0]?.metadata?.bindingGates).toEqual(["maxWorktrees"]);
+      expect(auditCalls[0]?.[0]?.metadata?.holders?.maxWorktrees).toEqual(["FN-A"]);
+      expect(auditCalls[1]?.[0]?.metadata?.holders?.maxWorktrees).toEqual(["FN-B"]);
+    });
+
     it("re-logs and re-audits when binding gate changes", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
@@ -1122,6 +1300,25 @@ describe("Scheduler", () => {
       expect(auditCalls).toHaveLength(2);
       expect(auditCalls[0]?.[0]?.metadata?.bindingGates).toEqual(["maxConcurrent"]);
       expect(auditCalls[1]?.[0]?.metadata?.bindingGates).toEqual(["maxWorktrees"]);
+    });
+
+    it("formats queued-concurrency memo keys from binding gates and holder identity only", () => {
+      const key = formatConcurrencyLimitMemoKey({
+        available: 0,
+        bindingGates: ["maxConcurrent", "maxWorktrees"],
+        maxConcurrentGate: { used: 1, limit: 2, slack: 1 },
+        maxWorktreesGate: { used: 9, limit: 10, slack: 1 },
+        semaphoreGate: { used: 7, limit: 8, slack: 1 },
+        holders: {
+          maxConcurrent: ["FN-B", "FN-A"],
+          maxWorktrees: ["FN-A", "FN-B", "FN-A"],
+          semaphore: ["FN-Z"],
+        },
+      });
+
+      expect(key).toBe("queued-concurrency:maxConcurrent,maxWorktrees:holders=FN-A,FN-B");
+      expect(key).not.toMatch(/used=|limit=|available=|\d+\/\d+/);
+      expect(key).not.toContain("FN-Z");
     });
   });
 

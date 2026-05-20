@@ -693,9 +693,15 @@ The dashboard server exposes a REST API at `/api`:
 - `POST /api/tasks/:id/move` - Move task to column
 - `POST /api/tasks/:id/pause` - Pause task
 - `POST /api/tasks/:id/unpause` - Unpause task
-- `DELETE /api/tasks/:id` - Delete task. Default mode is safe: if other tasks still reference this ID in `dependencies`, the route returns `409` with `{ error, details: { code: "TASK_HAS_DEPENDENTS", taskId, dependentIds } }`.
-  - To explicitly remove those incoming dependency references and then delete, call `DELETE /api/tasks/:id?removeDependencyReferences=true`.
-  - This opt-in path rewrites each dependent task's `dependencies` array atomically before deleting the target task, so no live task is left pointing at a missing task ID.
+- `DELETE /api/tasks/:id` - Delete task. Default mode is safe:
+  - If other tasks still reference this ID in `dependencies`, the route returns `409` with `{ error, details: { code: "TASK_HAS_DEPENDENTS", taskId, dependentIds } }`.
+  - If other live tasks still reference this ID as `sourceParentTaskId`, the route returns `409` with `{ error, details: { code: "TASK_HAS_LINEAGE_CHILDREN", taskId, lineageChildIds } }`.
+  - To explicitly remove incoming dependency references and then delete, call `DELETE /api/tasks/:id?removeDependencyReferences=true`.
+  - To explicitly remove incoming lineage references and then delete, call `DELETE /api/tasks/:id?removeLineageReferences=true`.
+  - Both opt-in paths rewrite the referencing tasks atomically before deleting the target task, so no live task is left pointing at a missing task ID.
+- `POST /api/tasks/:id/archive` - Archive a done task.
+  - Default mode is safe: if live lineage children still reference this task as `sourceParentTaskId`, the route returns `409` with `{ error, details: { code: "TASK_HAS_LINEAGE_CHILDREN", taskId, lineageChildIds } }`.
+  - To unlink those lineage references first, call `POST /api/tasks/:id/archive?removeLineageReferences=true`.
 
 ### Git Operations
 - `GET /api/git/status` - Current branch and status

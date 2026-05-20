@@ -67,7 +67,7 @@ Use `fn_task_show` with the task ID:
 | Refine completed task | `fn_task_refine` | Creates follow-up task with dependency on original |
 | Archive done task | `fn_task_archive` | Moves from done → archived |
 | Restore archived task | `fn_task_unarchive` | Moves from archived → done |
-| Delete task | `fn_task_delete` | Permanent — cannot be undone |
+| Delete task | `fn_task_delete` | Soft delete — hides from active views; ID stays reserved; archive cleanup is the only hard-removal path |
 
 **Attaching files:**
 

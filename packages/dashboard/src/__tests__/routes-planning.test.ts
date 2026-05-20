@@ -1455,7 +1455,6 @@ describe("Planning Mode Routes", () => {
             dependencies: ["FN-500"],
             priority: "normal",
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.updateTask).toHaveBeenCalledWith("FN-099", { size: "S" });
       });
@@ -1519,7 +1518,6 @@ describe("Planning Mode Routes", () => {
             title: "Build resumable planning flow",
             dependencies: ["FN-100"],
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.logEntry).toHaveBeenCalledWith(
           "FN-043",
@@ -1578,7 +1576,6 @@ describe("Planning Mode Routes", () => {
             title: "Priority auth task",
             priority: "high",
           }),
-          { invokeTaskCreatedHook: false },
         );
       });
 
@@ -1673,7 +1670,6 @@ describe("Planning Mode Routes", () => {
         expect(store.createTask).toHaveBeenNthCalledWith(
           1,
           expect.objectContaining({ title: "Auth backend", description: "Implement backend", priority: "urgent" }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           2,
@@ -1682,7 +1678,6 @@ describe("Planning Mode Routes", () => {
             description: generatedSubtasks[1]!.description,
             priority: "normal",
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           3,
@@ -1691,7 +1686,6 @@ describe("Planning Mode Routes", () => {
             description: generatedSubtasks[2]!.description,
             priority: "normal",
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.updateTask).toHaveBeenCalledWith("FN-201", { size: "L" });
         expect(store.updateTask).toHaveBeenCalledWith("FN-203", { dependencies: ["FN-201", "FN-202"] });
@@ -1777,7 +1771,6 @@ describe("Planning Mode Routes", () => {
             title: generatedSubtasks[0]!.title,
             description: generatedSubtasks[0]!.description,
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           2,
@@ -1786,7 +1779,6 @@ describe("Planning Mode Routes", () => {
             description: "Prepare rollout notes",
             priority: "high",
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.updateTask).toHaveBeenCalledWith("FN-211", { size: "S" });
         expect(store.updateTask).toHaveBeenCalledWith("FN-211", { dependencies: ["FN-210"] });
@@ -1881,7 +1873,6 @@ describe("Planning Mode Routes", () => {
             title: generatedSubtasks[0]!.title,
             description: generatedSubtasks[0]!.description,
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           16,
@@ -1889,7 +1880,6 @@ describe("Planning Mode Routes", () => {
             title: generatedSubtasks[15]!.title,
             description: generatedSubtasks[15]!.description,
           }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.logEntry).toHaveBeenCalledTimes(16);
       });
@@ -1938,7 +1928,6 @@ describe("Planning Mode Routes", () => {
             branch: "feature/shared-auth",
             baseBranch: "develop",
           }),
-          { invokeTaskCreatedHook: false },
         );
       });
 
@@ -2008,12 +1997,10 @@ describe("Planning Mode Routes", () => {
         expect(store.createTask).toHaveBeenNthCalledWith(
           1,
           expect.objectContaining({ branch: "feature/auth-slice", baseBranch: "main" }),
-          { invokeTaskCreatedHook: false },
         );
         expect(store.createTask).toHaveBeenNthCalledWith(
           2,
           expect.objectContaining({ branch: "feature/auth-slice", baseBranch: "main" }),
-          { invokeTaskCreatedHook: false },
         );
       });
 

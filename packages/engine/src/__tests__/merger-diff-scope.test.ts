@@ -184,7 +184,10 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -562,7 +565,7 @@ describe("resolveTaskDiffBaseRef", () => {
       const cmdStr = String(cmd);
       // No baseBranch → outer merge-base block is skipped.
       // Display recovery: merge-base(HEAD, main).
-      if (cmdStr === 'git merge-base "HEAD" main') return "current-main-sha" as any;
+      if (cmdStr === 'git merge-base "HEAD" "main"') return "current-main-sha" as any;
       // baseCommitSha is still an ancestor of HEAD…
       if (cmdStr === 'git merge-base --is-ancestor "old-base-sha" "HEAD"') return "" as any;
       // …and recoveredBase descends baseCommitSha (rebase fast-forwarded).
@@ -575,6 +578,7 @@ describe("resolveTaskDiffBaseRef", () => {
       headRef: "HEAD",
       baseBranch: undefined,
       baseCommitSha: "old-base-sha",
+      integrationBranchFallback: "main",
     });
 
     expect(diffBase).toBe("current-main-sha");
@@ -587,7 +591,7 @@ describe("resolveTaskDiffBaseRef", () => {
   it("keeps baseCommitSha when recoveredBase does not descend it", async () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
-      if (cmdStr === 'git merge-base "HEAD" main') return "unrelated-main-sha" as any;
+      if (cmdStr === 'git merge-base "HEAD" "main"') return "unrelated-main-sha" as any;
       if (cmdStr === 'git merge-base --is-ancestor "feature-base-sha" "HEAD"') return "" as any;
       if (cmdStr === 'git merge-base --is-ancestor "feature-base-sha" "unrelated-main-sha"') {
         throw new Error("not an ancestor");
@@ -600,6 +604,7 @@ describe("resolveTaskDiffBaseRef", () => {
       headRef: "HEAD",
       baseBranch: undefined,
       baseCommitSha: "feature-base-sha",
+      integrationBranchFallback: "main",
     });
 
     expect(diffBase).toBe("feature-base-sha");

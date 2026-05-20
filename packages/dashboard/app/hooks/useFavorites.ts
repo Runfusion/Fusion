@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
+import { updateGlobalSettings, type ModelInfo } from "../api";
+import { useModelsCache } from "./useModelsCache";
 
 /**
  * Favorite model/provider state and actions consumed by the dashboard App shell.
@@ -16,25 +17,26 @@ export interface UseFavoritesResult {
  * Loads model catalog + favorites and exposes optimistic favorite toggles.
  */
 export function useFavorites(): UseFavoritesResult {
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
-  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, refresh } = useModelsCache();
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>(models);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>(cachedFavoriteProviders);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>(cachedFavoriteModels);
   const favoriteProvidersRef = useRef<string[]>(favoriteProviders);
   const favoriteModelsRef = useRef<string[]>(favoriteModels);
 
   useEffect(() => {
-    fetchModels()
-      .then((response) => {
-        setAvailableModels(response.models);
-        favoriteProvidersRef.current = response.favoriteProviders;
-        favoriteModelsRef.current = response.favoriteModels;
-        setFavoriteProviders(response.favoriteProviders);
-        setFavoriteModels(response.favoriteModels);
-      })
-      .catch(() => {
-        // Keep defaults on fetch failure.
-      });
-  }, []);
+    setAvailableModels(models);
+  }, [models]);
+
+  useEffect(() => {
+    favoriteProvidersRef.current = cachedFavoriteProviders;
+    setFavoriteProviders(cachedFavoriteProviders);
+  }, [cachedFavoriteProviders]);
+
+  useEffect(() => {
+    favoriteModelsRef.current = cachedFavoriteModels;
+    setFavoriteModels(cachedFavoriteModels);
+  }, [cachedFavoriteModels]);
 
   useEffect(() => {
     favoriteProvidersRef.current = favoriteProviders;
@@ -59,12 +61,13 @@ export function useFavorites(): UseFavoritesResult {
         favoriteProviders: nextFavorites,
         favoriteModels: favoriteModelsRef.current,
       });
+      await refresh();
     } catch (error) {
       favoriteProvidersRef.current = previousFavorites;
       setFavoriteProviders(() => previousFavorites);
       throw error;
     }
-  }, []);
+  }, [refresh]);
 
   const toggleFavoriteModel = useCallback(async (modelId: string) => {
     const previousFavorites = favoriteModelsRef.current;
@@ -81,12 +84,13 @@ export function useFavorites(): UseFavoritesResult {
         favoriteProviders: favoriteProvidersRef.current,
         favoriteModels: nextFavorites,
       });
+      await refresh();
     } catch (error) {
       favoriteModelsRef.current = previousFavorites;
       setFavoriteModels(() => previousFavorites);
       throw error;
     }
-  }, []);
+  }, [refresh]);
 
   return {
     availableModels,

@@ -288,6 +288,30 @@ describe("ListView", () => {
     matchMediaSpy.mockRestore();
   });
 
+  it("keeps done status badge in table view when stale paused metadata exists", () => {
+    const tasks = [
+      createMockTask({ id: "FN-001", column: "done", status: "paused", paused: true, pausedByAgentId: "agent-1" }),
+    ];
+
+    renderListView({ tasks });
+    expect(screen.queryByText("paused by agent")).toBeNull();
+    expect(screen.queryByText("paused")).toBeNull();
+    expect(screen.getByText("done")).toBeDefined();
+  });
+
+  it("keeps done status badge in mobile card view when stale paused metadata exists", () => {
+    const matchMediaSpy = mockMobileViewport();
+    const tasks = [
+      createMockTask({ id: "FN-001", column: "done", status: "paused", paused: true, pausedByAgentId: "agent-1" }),
+    ];
+
+    renderListView({ tasks });
+    expect(screen.queryByText("paused by agent")).toBeNull();
+    expect(screen.queryByText("paused")).toBeNull();
+    expect(screen.getByText("done")).toBeDefined();
+    matchMediaSpy.mockRestore();
+  });
+
   it("shows empty state when no tasks", () => {
     renderListView({ tasks: [] });
     expect(screen.getByText("No tasks yet")).toBeDefined();
@@ -530,6 +554,7 @@ describe("ListView", () => {
 
   it("reloads persisted sidebar width when projectId changes", () => {
     const viewportSpy = mockDesktopViewport();
+    const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     localStorage.setItem(scopedKey("kb-dashboard-list-sidebar-width", "project-a"), "300");
     localStorage.setItem(scopedKey("kb-dashboard-list-sidebar-width", "project-b"), "460");
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
@@ -557,11 +582,13 @@ describe("ListView", () => {
     );
 
     expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "460px" });
+    clientWidthSpy.mockRestore();
     viewportSpy.mockRestore();
   });
 
   it("supports keyboard resizing on the desktop split-pane handle", () => {
     const viewportSpy = mockDesktopViewport();
+    const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
     renderListView({ tasks });
@@ -576,6 +603,7 @@ describe("ListView", () => {
     fireEvent.keyDown(handle, { key: "ArrowRight" });
 
     expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThan(startWidth);
+    clientWidthSpy.mockRestore();
     viewportSpy.mockRestore();
   });
 
@@ -2847,7 +2875,7 @@ describe("ListView - Bulk Selection", () => {
         details: { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-100"] },
       });
       const onDeleteTask = vi
-        .fn<(...args: [string, { removeDependencyReferences?: boolean }?]) => Promise<Task>>()
+        .fn<(...args: [string, { removeDependencyReferences?: boolean; removeLineageReferences?: boolean }?]) => Promise<Task>>()
         .mockRejectedValueOnce(conflictError)
         .mockResolvedValueOnce(createMockTask());
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
@@ -2861,7 +2889,37 @@ describe("ListView - Bulk Selection", () => {
         expect(onDeleteTask).toHaveBeenCalledTimes(2);
       });
       expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-001");
-      expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-001", { removeDependencyReferences: true });
+      expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-001", {
+        removeDependencyReferences: true,
+        removeLineageReferences: true,
+      });
+      expect(mockAddToast).toHaveBeenCalledWith("Deleted 1 task · 0 archived skipped · 0 failed", "success");
+    });
+
+    it("force deletes when lineage conflict is confirmed", async () => {
+      const user = userEvent.setup();
+      const tasks = [createMockTask({ id: "FN-001" })];
+      const conflictError = Object.assign(new Error("lineage conflict"), {
+        details: { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-200"] },
+      });
+      const onDeleteTask = vi
+        .fn<(...args: [string, { removeDependencyReferences?: boolean; removeLineageReferences?: boolean }?]) => Promise<Task>>()
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(createMockTask());
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+      renderListView({ tasks, onDeleteTask });
+      enterBulkEditMode();
+      await user.click(screen.getByLabelText("Select FN-001"));
+      await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledTimes(2);
+      });
+      expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-001", {
+        removeDependencyReferences: true,
+        removeLineageReferences: true,
+      });
       expect(mockAddToast).toHaveBeenCalledWith("Deleted 1 task · 0 archived skipped · 0 failed", "success");
     });
 
@@ -2886,6 +2944,30 @@ describe("ListView - Bulk Selection", () => {
       });
       expect(mockAddToast).toHaveBeenCalledWith("Deleted 0 tasks · 0 archived skipped · 1 failed", "error");
     });
+  });
+
+  it("retries archive after lineage-conflict confirmation", async () => {
+    const user = userEvent.setup();
+    const tasks = [createMockTask({ id: "FN-001", column: "done" })];
+    const conflictError = Object.assign(new Error("lineage conflict"), {
+      details: { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-300"] },
+    });
+    const onArchiveTask = vi
+      .fn<(...args: [string, { removeLineageReferences?: boolean }?]) => Promise<Task>>()
+      .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce(createMockTask({ id: "FN-001", column: "archived" }));
+    mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+    renderListView({ tasks, onArchiveTask });
+    enterBulkEditMode();
+    await user.click(screen.getByLabelText("Select FN-001"));
+    await user.click(screen.getByRole("button", { name: /archive selected/i }));
+
+    await waitFor(() => {
+      expect(onArchiveTask).toHaveBeenCalledTimes(2);
+    });
+    expect(onArchiveTask).toHaveBeenNthCalledWith(2, "FN-001", { removeLineageReferences: true });
+    expect(mockAddToast).toHaveBeenCalledWith("Archived 1 · 0 skipped · 0 failed", "success");
   });
 
   it("persists selection to localStorage", () => {

@@ -55,6 +55,7 @@ Features:
 - PR/issue badges with live updates
 - GitHub provenance marker on task cards imported from GitHub (`sourceType: github_import`), shown alongside existing footer metadata like timers
 - Agent-created provenance badge in task card headers for agent-originated tasks (`sourceType: agent_heartbeat` or `sourceType: automation`, or legacy tasks with `sourceAgentId`), with labels preferring `sourceMetadata.agentName` over raw agent IDs
+- Broad-scope advisory surfacing from `task.sourceMetadata.broadScopeFlag`: TaskCard shows a warning-tinted `Broad scope` chip with score/reasons tooltip, and TaskDetailModal shows a read-only `Triage broad-scope advisory` banner with score, humanized reasons, and signal summary. This is informational only and does not alter lifecycle, scheduling, pause state, or merge behavior.
 - Column ordering semantics: `todo` mirrors scheduler pickup order (priority descending, then oldest `createdAt`, then task ID); `triage`, `in-progress`, `in-review`, and `archived` remain priority-first with task-ID tie-breaks; `done` is ordered by most recent completion first (`columnMovedAt`, then `updatedAt`, then `createdAt` fallback)
 
 ![Board view](./screenshots/dashboard-overview.png)
@@ -146,7 +147,7 @@ Chat Rooms are project-scoped group conversations for multiple agents. They are 
 Quick Chat is an optional floating panel for fast, project-scoped assistant conversations without leaving your current view.
 
 - Controlled by the project setting `showQuickChatFAB`
-- Supports agent mentions (`@agent`) and file mentions
+- Supports agent mentions (`@agent`) and shared `#` task/file mentions
 - Uses the same model/provider infrastructure as full Chat view
 - On small screens, compact tool-call summaries in the floating panel intentionally stay single-line (count + tool names + status) to preserve message density
 - The panel header uses a session-first flow: the main dropdown lists persisted sessions (preferring `session.title`, then falling back to deterministic `Session N` labels)

@@ -22,9 +22,14 @@ function makeTask(id: string, overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
-function createStore(tasks: Task[]): TaskStore & EventEmitter {
+function createStore(tasks: Task[], settingsOverrides: Partial<Settings> = {}): TaskStore & EventEmitter {
   const map = new Map(tasks.map((t) => [t.id, t]));
-  const settings: Settings = { globalPause: false, enginePaused: false, autoMerge: false } as Settings;
+  const settings: Settings = {
+    globalPause: false,
+    enginePaused: false,
+    autoMerge: false,
+    ...settingsOverrides,
+  } as Settings;
   const emitter = new EventEmitter();
   return Object.assign(emitter, {
     getSettings: vi.fn(async () => settings),
@@ -52,7 +57,7 @@ const opts = { rootDir: "/repo", getExecutingTaskIds: () => new Set<string>() };
 describe("FN-4115 stranded in-review recovery", () => {
   it("FN-4115: already-merged retry-exhausted in-review task auto-finalizes to done", async () => {
     const task = makeTask("FN-4115-A", { column: "in-review", status: "failed", mergeRetries: 3, branch: "fusion/fn-4115-a" });
-    const store = createStore([task]);
+    const store = createStore([task], { autoMerge: true });
     const mgr = new SelfHealingManager(store as any, opts);
     vi.spyOn(mgr as any, "findAlreadyMergedTaskCommit").mockResolvedValue({ sha: "abc12345", strategy: "task-id-trailer" });
     const recovered = await mgr.recoverAlreadyMergedReviewTasks();
@@ -65,7 +70,7 @@ describe("FN-4115 stranded in-review recovery", () => {
     const blocked = makeTask("FN-4115-DOWN", { column: "todo", blockedBy: "FN-4115-UP" });
     const active = makeTask("FN-4115-ACTIVE", { column: "in-progress" });
     const blockedActive = makeTask("FN-4115-DOWN2", { column: "todo", blockedBy: "FN-4115-ACTIVE" });
-    const store = createStore([done, blocked, active, blockedActive]);
+    const store = createStore([done, blocked, active, blockedActive], { autoMerge: true });
     const mgr = new SelfHealingManager(store as any, opts);
     await mgr.clearStaleBlockedBy();
     expect((await store.getTask("FN-4115-DOWN"))?.blockedBy).toBeNull();
@@ -85,7 +90,7 @@ describe("FN-4115 stranded in-review recovery", () => {
   it("FN-4115: one maintenance cycle finalizes merged review and unblocks downstream work", async () => {
     const merged = makeTask("FN-4115-MERGED", { column: "in-review", status: "failed", mergeRetries: 3, branch: "fusion/fn-4115-m" });
     const downstream = makeTask("FN-4115-DOWNSTREAM", { column: "todo", blockedBy: "FN-4115-MERGED" });
-    const store = createStore([merged, downstream]);
+    const store = createStore([merged, downstream], { autoMerge: true });
     const mgr = new SelfHealingManager(store as any, opts);
     vi.spyOn(mgr as any, "findAlreadyMergedTaskCommit").mockResolvedValue({ sha: "abc12345", strategy: "task-id-trailer" });
     await mgr.recoverAlreadyMergedReviewTasks();

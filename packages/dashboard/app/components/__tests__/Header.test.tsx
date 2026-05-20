@@ -212,6 +212,14 @@ describe("Header", () => {
       expect(screen.getByTestId("view-overflow-todos")).toBeInTheDocument();
     });
 
+    it("shows secrets in overflow and routes to secrets view", () => {
+      const onChangeView = vi.fn();
+      renderHeader({ onChangeView, view: "board" });
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      fireEvent.click(screen.getByTestId("view-overflow-secrets"));
+      expect(onChangeView).toHaveBeenCalledWith("secrets");
+    });
+
     it("renders dependency graph in overflow and uses canonical graph task view", () => {
       const onChangeView = vi.fn();
       renderHeader({

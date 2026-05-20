@@ -32,6 +32,11 @@ import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchRunDispatcher } from "./research-dispatcher.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import {
+  computeVerificationFailureSignature,
+  createAutomatedFollowup,
+  extractFailingTestFiles,
+} from "./verification-followup-dedup.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
 import type {
   ExternalTunnelInfo,
@@ -87,6 +92,21 @@ function formatErrorDetails(error: unknown): { message: string; detail: string }
 function isInvalidDoneTransitionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Invalid transition:") && message.includes("→ 'done'");
+}
+
+function buildVerificationFailureSignature(error: VerificationError): string {
+  const commandResult = error.verificationResult.testResult ?? error.verificationResult.buildResult;
+  const lane = commandResult?.command?.trim()
+    || error.verificationResult.failedCommand?.trim()
+    || "verification-failure";
+  const failingTestFiles = commandResult
+    ? extractFailingTestFiles(commandResult.stdout, commandResult.stderr)
+    : [];
+  return computeVerificationFailureSignature({
+    lane,
+    failingTestFiles,
+    failedCommand: commandResult?.command ?? error.verificationResult.failedCommand ?? null,
+  }).signature;
 }
 
 export interface AutomationSubsystemHealth {
@@ -216,6 +236,7 @@ export class ProjectEngine {
   private settingsHandlers: Array<(...args: any[]) => void> = [];
   private taskMovedHandler?: (...args: any[]) => void;
   private taskUpdatedHandler?: (...args: any[]) => void;
+  private taskDeletedHandler?: (...args: any[]) => void;
   private autostashOrphansHandler?: (...args: any[]) => void;
 
   constructor(
@@ -546,6 +567,9 @@ export class ProjectEngine {
       if (this.taskUpdatedHandler) {
         store.off("task:updated", this.taskUpdatedHandler);
       }
+      if (this.taskDeletedHandler) {
+        store.off("task:deleted", this.taskDeletedHandler);
+      }
       if (this.autostashOrphansHandler) {
         store.off("merger:autostashOrphans", this.autostashOrphansHandler as any);
       }
@@ -633,6 +657,10 @@ export class ProjectEngine {
   /** Get the HeartbeatMonitor (if initialized). */
   getHeartbeatMonitor() {
     return this.runtime.getHeartbeatMonitor();
+  }
+
+  getSelfHealingManager() {
+    return this.runtime.getSelfHealingManager();
   }
 
   /** Get the project working directory. */
@@ -1367,7 +1395,18 @@ export class ProjectEngine {
               );
               await store.updateTask(taskId, { paused: false, status: null, error: null });
               try {
-                await store.moveTask(taskId, "done");
+                const movedTask = await store.moveTask(taskId, "done");
+                const mergedTask = movedTask ?? (await store.getTask(taskId).catch(() => null)) ?? task;
+                store.emit("task:merged", {
+                  task: mergedTask,
+                  branch: mergedTask.branch ?? task.branch ?? "",
+                  merged: true,
+                  worktreeRemoved: false,
+                  branchDeleted: false,
+                  mergeConfirmed: true,
+                  mergedAt: mergedTask.mergeDetails?.mergedAt,
+                  mergeTargetBranch: mergedTask.mergeDetails?.mergeTargetBranch,
+                } as MergeResult);
               } catch (error) {
                 if (isInvalidDoneTransitionError(error)) {
                   const latest = await store.getTask(taskId).catch(() => null);
@@ -1447,6 +1486,19 @@ export class ProjectEngine {
             const result = await this.options.processPullRequestMerge(store, cwd, taskId);
             if (result === "merged") {
               runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
+              const mergedTask = await store.getTask(taskId).catch(() => null);
+              if (mergedTask) {
+                store.emit("task:merged", {
+                  task: mergedTask,
+                  branch: mergedTask.branch ?? "",
+                  merged: true,
+                  worktreeRemoved: false,
+                  branchDeleted: false,
+                  mergeConfirmed: mergedTask.mergeDetails?.mergeConfirmed,
+                  mergedAt: mergedTask.mergeDetails?.mergedAt,
+                  mergeTargetBranch: mergedTask.mergeDetails?.mergeTargetBranch,
+                } as MergeResult);
+              }
             } else if (result === "waiting") {
               runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge PR waiting: ${taskId}`);
             }
@@ -1672,23 +1724,17 @@ export class ProjectEngine {
                   `Investigate repeated ${failedKind} verification failure on ${taskId} (${taskOnErr.title || "untitled"}). ` +
                   `Auto-merge attempted to fix and re-verify ${nextBounces} times without success — likely a flaky test or unrelated regression rather than a fix this task can produce on its own. ` +
                   `Look at the most recent [verification] log entries on ${taskId} for the failing command and output, then either fix the underlying issue or quarantine the flake.`;
-                const existingFollowUp = await this.findActiveRecoveryFollowUp(store, taskId);
-                if (existingFollowUp) {
-                  await store.addTaskComment(
-                    taskId,
-                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Reusing existing follow-up ${existingFollowUp.task.id}.`,
-                    "agent",
-                  );
-                  await store.logEntry(
-                    taskId,
-                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — skipped creating duplicate follow-up (existing ${existingFollowUp.task.id})`,
-                    "VerificationError",
-                  );
-                  runtimeLog.warn(
-                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — skipped duplicate follow-up (existing ${existingFollowUp.task.id})`,
-                  );
-                } else {
-                  const followUp = await store.createTask({
+                const verificationAuditor = createRunAuditor(store, {
+                  runId: generateSyntheticRunId("auto-merge", taskId),
+                  agentId: "auto-merge",
+                  taskId,
+                  phase: "merge",
+                });
+                const followUpResult = await createAutomatedFollowup(store, {
+                  kind: "verification-failure",
+                  parentTaskId: taskId,
+                  signature: err instanceof VerificationError ? buildVerificationFailureSignature(err) : undefined,
+                  createInput: {
                     description: followUpDescription,
                     column: "triage",
                     priority: "high",
@@ -1696,19 +1742,36 @@ export class ProjectEngine {
                       sourceType: "recovery",
                       sourceParentTaskId: taskId,
                     },
-                  });
+                  },
+                  auditor: verificationAuditor,
+                });
+                if (followUpResult.outcome === "deduped") {
                   await store.addTaskComment(
                     taskId,
-                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUp.id} to investigate.`,
+                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Reusing existing follow-up ${followUpResult.existingTaskId}.`,
                     "agent",
                   );
                   await store.logEntry(
                     taskId,
-                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUp.id}`,
+                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — skipped creating duplicate follow-up (existing ${followUpResult.existingTaskId})`,
                     "VerificationError",
                   );
                   runtimeLog.warn(
-                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUp.id}`,
+                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
+                  );
+                } else {
+                  await store.addTaskComment(
+                    taskId,
+                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUpResult.task.id} to investigate.`,
+                    "agent",
+                  );
+                  await store.logEntry(
+                    taskId,
+                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUpResult.task.id}`,
+                    "VerificationError",
+                  );
+                  runtimeLog.warn(
+                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUpResult.task.id}`,
                   );
                 }
               } catch (followUpErr) {
@@ -1859,31 +1922,15 @@ export class ProjectEngine {
                       // auto-resolve is just disabled, the user is presumed to
                       // be handling merges manually and a follow-up is noise.
                       try {
-                        const existingFollowUp = await this.findActiveRecoveryFollowUp(
-                          store,
-                          taskId,
-                          taskOnErr.branch,
-                        );
-                        if (existingFollowUp) {
-                          const dedupReason =
-                            existingFollowUp.reason === "branch"
-                              ? `active recovery already owns branch \`${taskOnErr.branch ?? "?"}\``
-                              : "active recovery already exists for this parent task";
-                          await store.addTaskComment(
-                            taskId,
-                            `Auto-merge recovery follow-up already exists (${existingFollowUp.task.id}; ${dedupReason}). Skipping duplicate follow-up creation.`,
-                            "agent",
-                          );
-                          await store.logEntry(
-                            taskId,
-                            `Auto-merge conflict recovery skipped duplicate follow-up (existing ${existingFollowUp.task.id}; ${dedupReason})`,
-                            "MergeConflictGiveUp",
-                          );
-                          runtimeLog.warn(
-                            `Auto-merge: ${taskId} conflict give-up skipped duplicate follow-up (existing ${existingFollowUp.task.id}; reason=${existingFollowUp.reason})`,
-                          );
-                        } else {
-                          const followUp = await store.createTask({
+                        const followUpResult = await createAutomatedFollowup(store, {
+                          kind: "merge-conflict",
+                          parentTaskId: taskId,
+                          branch: taskOnErr.branch,
+                          signature: computeVerificationFailureSignature({
+                            lane: "merge-conflict",
+                            failingTestFiles: [],
+                          }).signature,
+                          createInput: {
                             description:
                               `Resolve auto-merge conflict on ${taskId} (${taskOnErr.title || "untitled"}). ` +
                               `Auto-merge attempted to rebase + resolve ${nextBounces - 1} times against main and exhausted retries each pass. ` +
@@ -1895,10 +1942,32 @@ export class ProjectEngine {
                               sourceType: "recovery",
                               sourceParentTaskId: taskId,
                             },
-                          });
+                          },
+                          auditor: createRunAuditor(store, {
+                            runId: generateSyntheticRunId("auto-merge", taskId),
+                            agentId: "auto-merge",
+                            taskId,
+                            phase: "merge",
+                          }),
+                        });
+                        if (followUpResult.outcome === "deduped") {
                           await store.addTaskComment(
                             taskId,
-                            `Created follow-up ${followUp.id} to track manual conflict resolution.`,
+                            `Auto-merge recovery follow-up already exists (${followUpResult.existingTaskId}). Skipping duplicate follow-up creation.`,
+                            "agent",
+                          );
+                          await store.logEntry(
+                            taskId,
+                            `Auto-merge conflict recovery skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
+                            "MergeConflictGiveUp",
+                          );
+                          runtimeLog.warn(
+                            `Auto-merge: ${taskId} conflict give-up skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
+                          );
+                        } else {
+                          await store.addTaskComment(
+                            taskId,
+                            `Created follow-up ${followUpResult.task.id} to track manual conflict resolution.`,
                             "agent",
                           );
                         }
@@ -2082,20 +2151,36 @@ export class ProjectEngine {
         const parentTaskId = record.sourceTaskId;
         if (!parentTaskId) continue;
         try {
-          const existingFollowUp = await this.findActiveRecoveryFollowUp(store, parentTaskId);
-          if (existingFollowUp) continue;
           const sourcePhase = record.sourcePhase ?? "unknown";
-          await store.createTask({
-            description:
-              `Investigate preserved merger autostash leftover from ${parentTaskId} (${record.sha.slice(0, 7)}). ` +
-              `Detected by ${record.detectedByTaskId ?? "merge sweep"} during ${sourcePhase}; ` +
-              `stash label: ${record.label}. Recover from stash-recovery before dropping.`,
-            sourceType: "recovery",
-            sourceParentTaskId: parentTaskId,
-          } as any);
+          const followUpResult = await createAutomatedFollowup(store, {
+            kind: "autostash-orphan",
+            parentTaskId,
+            signature: computeVerificationFailureSignature({
+              lane: "autostash-orphan",
+              failingTestFiles: [],
+            }).signature,
+            createInput: {
+              description:
+                `Investigate preserved merger autostash leftover from ${parentTaskId} (${record.sha.slice(0, 7)}). ` +
+                `Detected by ${record.detectedByTaskId ?? "merge sweep"} during ${sourcePhase}; ` +
+                `stash label: ${record.label}. Recover from stash-recovery before dropping.`,
+              source: {
+                sourceType: "recovery",
+                sourceParentTaskId: parentTaskId,
+              },
+            },
+            auditor: createRunAuditor(store, {
+              runId: generateSyntheticRunId("auto-merge", parentTaskId),
+              agentId: "auto-merge",
+              taskId: parentTaskId,
+              phase: "merge",
+            }),
+          });
           await store.logEntry(
             parentTaskId,
-            `Auto-created recovery follow-up for live autostash orphan ${record.sha.slice(0, 7)}`,
+            followUpResult.outcome === "deduped"
+              ? `Auto-detected live autostash orphan ${record.sha.slice(0, 7)} — reused follow-up ${followUpResult.existingTaskId}`
+              : `Auto-created recovery follow-up ${followUpResult.task.id} for live autostash orphan ${record.sha.slice(0, 7)}`,
             `detectedBy=${record.detectedByTaskId ?? "unknown"}; phase=${sourcePhase}; stash=${record.label}`,
           ).catch(() => undefined);
         } catch (err: unknown) {
@@ -2166,7 +2251,39 @@ export class ProjectEngine {
       }
     };
 
+    this.taskDeletedHandler = (task: Task) => {
+      this.pausedReviewTaskIds.delete(task.id);
+
+      const queueLengthBefore = this.mergeQueue.length;
+      this.mergeQueue = this.mergeQueue.filter((queuedTaskId) => queuedTaskId !== task.id);
+      const removedFromQueue = this.mergeQueue.length !== queueLengthBefore;
+
+      if (removedFromQueue) {
+        if (this.activeMergeTaskId !== task.id) {
+          this.mergeActive.delete(task.id);
+        }
+        runtimeLog.log(`Soft-deleted task removed from merge queue: ${task.id}`);
+      }
+
+      if (this.activeMergeTaskId !== task.id) {
+        return;
+      }
+
+      runtimeLog.log(`Soft-deleted task interrupting active merge: ${task.id}`);
+      this.mergeAbortController?.abort();
+      this.mergeAbortController = null;
+
+      if (this.activeMergeSession) {
+        this.activeMergeSession.dispose();
+        this.activeMergeSession = null;
+      }
+
+      this.mergeActive.delete(task.id);
+      this.activeMergeTaskId = null;
+    };
+
     store.on("task:updated", this.taskUpdatedHandler);
+    store.on("task:deleted", this.taskDeletedHandler);
   }
 
   private async startupMergeSweep(store: TaskStore): Promise<void> {

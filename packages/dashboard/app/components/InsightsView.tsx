@@ -23,10 +23,12 @@ import {
   ArchiveRestore,
   Clock,
   Settings,
+  Activity,
 } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
+import { BACKLOG_HEALTH_TITLE_PREFIXES, isBacklogHealthInsight } from "./backlog-health-filter";
 import type { InsightCategory } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 
@@ -84,6 +86,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
   const [statusType, setStatusType] = useState<"success" | "error" | "info">("info");
 
   const [showModelConfig, setShowModelConfig] = useState(false);
+  const [backlogHealthOnly, setBacklogHealthOnly] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>(
     () => localStorage.getItem("fusion-insight-model") ?? ""
   );
@@ -165,23 +168,41 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
     [sections],
   );
 
+  const backlogHealthCount = useMemo(
+    () => populatedSections.reduce((total, section) => total + section.items.filter(isBacklogHealthInsight).length, 0),
+    [populatedSections],
+  );
+
+  const filteredSections = useMemo(() => {
+    if (!backlogHealthOnly) {
+      return populatedSections;
+    }
+
+    return populatedSections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter(isBacklogHealthInsight),
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [populatedSections, backlogHealthOnly]);
+
   const [selectedCategory, setSelectedCategory] = useState<InsightCategory | null>(null);
 
   // Keep selection valid as data changes; default to first populated section.
   useEffect(() => {
-    if (populatedSections.length === 0) {
+    if (filteredSections.length === 0) {
       if (selectedCategory !== null) setSelectedCategory(null);
       return;
     }
-    const stillExists = selectedCategory && populatedSections.some((s) => s.category === selectedCategory);
+    const stillExists = selectedCategory && filteredSections.some((s) => s.category === selectedCategory && s.items.length > 0);
     if (!stillExists) {
-      setSelectedCategory(populatedSections[0].category);
+      setSelectedCategory(filteredSections[0].category);
     }
-  }, [populatedSections, selectedCategory]);
+  }, [filteredSections, selectedCategory]);
 
   const activeSection: InsightSection | undefined = useMemo(
-    () => populatedSections.find((s) => s.category === selectedCategory) ?? populatedSections[0],
-    [populatedSections, selectedCategory],
+    () => filteredSections.find((s) => s.category === selectedCategory) ?? filteredSections[0],
+    [filteredSections, selectedCategory],
   );
 
   useEffect(() => {
@@ -467,6 +488,19 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
         </div>
 
         <div className="insights-view-actions">
+          {backlogHealthCount > 0 && (
+            <button
+              className={`btn btn-sm insights-backlog-health-toggle${backlogHealthOnly ? " btn-icon--active" : ""}`}
+              onClick={() => setBacklogHealthOnly((prev) => !prev)}
+              aria-pressed={backlogHealthOnly}
+              aria-label={backlogHealthOnly ? "Show all insights" : "Show only backlog health insights"}
+              data-testid="toggle-backlog-health"
+              title={BACKLOG_HEALTH_TITLE_PREFIXES.join(", ")}
+            >
+              <Activity size={14} />
+              {backlogHealthOnly ? "All Insights" : "Backlog Health"} <span>({backlogHealthCount})</span>
+            </button>
+          )}
           {onClose && (
             <button
               className="btn btn-sm insights-view-close"
@@ -618,7 +652,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
         <div className="insights-body">
           <aside className="insights-sidebar" aria-label="Insight categories">
             <ul className="insights-category-list">
-              {populatedSections.map(renderCategoryItem)}
+              {filteredSections.map(renderCategoryItem)}
             </ul>
           </aside>
           <div className="insights-detail">

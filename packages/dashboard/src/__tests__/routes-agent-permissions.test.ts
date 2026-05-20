@@ -110,6 +110,7 @@ vi.mock("@fusion/core", () => {
     },
     computeAccessState: mockComputeAccessState,
     isValidPermission: mockIsValidPermission,
+    deterministicGuardLocks: new Map(),
   };
 });
 

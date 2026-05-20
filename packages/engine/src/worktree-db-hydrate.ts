@@ -142,13 +142,26 @@ export async function hydrateWorktreeDb({
     const taskValuePlaceholders = taskColumns.map(() => "?").join(", ");
     const docValuePlaceholders = docColumns.map(() => "?").join(", ");
 
+    // FN-5105: hydrateWorktreeDb is a live-reader path, so soft-deleted tasks must be excluded.
+    // Only ID allocators/integrity scans are allowed to read deleted rows.
+    const hasDeletedAtColumn = srcTaskCols.includes("deletedAt");
     const taskRows = srcDb
-      .prepare(`SELECT ${taskColumnList} FROM tasks WHERE id IN (${placeholders})`)
+      .prepare(
+        `SELECT ${taskColumnList} FROM tasks WHERE id IN (${placeholders})${hasDeletedAtColumn ? " AND deletedAt IS NULL" : ""}`,
+      )
       .all(...ids) as Array<Record<string, unknown>>;
 
-    const documentRows = srcDb
-      .prepare(`SELECT ${docColumnList} FROM task_documents WHERE taskId IN (${placeholders})`)
-      .all(...ids) as Array<Record<string, unknown>>;
+    const hydratedTaskIds = taskRows
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    // FN-5105: documents are live-reader data too; scope to non-soft-deleted hydrated task IDs.
+    const documentRows =
+      hydratedTaskIds.length > 0
+        ? (srcDb
+            .prepare(`SELECT ${docColumnList} FROM task_documents WHERE taskId IN (${hydratedTaskIds.map(() => "?").join(", ")})`)
+            .all(...hydratedTaskIds) as Array<Record<string, unknown>>)
+        : [];
 
     const insertTask = dstDb.prepare(
       `INSERT OR REPLACE INTO tasks (${taskColumnList}) VALUES (${taskValuePlaceholders})`,

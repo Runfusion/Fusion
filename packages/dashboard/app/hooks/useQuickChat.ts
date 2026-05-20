@@ -207,6 +207,7 @@ export function useQuickChat(
 
   // Stream connection ref for cleanup
   const streamRef = useRef<{ close: () => void } | null>(null);
+  const lastAttachedGenerationRef = useRef<{ sessionId: string; replayFromEventId: number | null } | null>(null);
   const cancelledByUserRef = useRef(false);
   const cancelStreamingFlushesRef = useRef<(() => void) | null>(null);
   const pendingMessageRef = useRef("");
@@ -239,6 +240,10 @@ export function useQuickChat(
   useEffect(() => {
     pendingMessageRef.current = pendingMessage;
   }, [pendingMessage]);
+
+  useEffect(() => {
+    lastAttachedGenerationRef.current = null;
+  }, [projectId]);
 
   const refreshSessions = useCallback(async () => {
     setSessionsLoading(true);
@@ -324,6 +329,7 @@ export function useQuickChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
+        lastAttachedGenerationRef.current = null;
         void fetchChatMessages(sessionId, { limit: 50 }, projectId).then((data) => {
           setMessages(data.messages.map(mapChatMessageToInfo));
         }).catch(() => {});
@@ -336,6 +342,7 @@ export function useQuickChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
+        lastAttachedGenerationRef.current = null;
         const errorMessage = typeof data === "string" && data.trim() ? data : "Failed to get response";
         if (!options?.silent) {
           addToast?.(errorMessage, "error");
@@ -352,6 +359,12 @@ export function useQuickChat(
         ? { lastEventId: inFlightGeneration.replayFromEventId }
         : {}),
     });
+    lastAttachedGenerationRef.current = {
+      sessionId,
+      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
+        ? inFlightGeneration.replayFromEventId
+        : null,
+    };
     return true;
   }, [addToast, projectId, flushPendingMessage]);
 
@@ -520,6 +533,7 @@ export function useQuickChat(
           streamRef.current.close();
           streamRef.current = null;
         }
+        lastAttachedGenerationRef.current = null;
 
         // Reset transient state
         resetTransientComposerState();
@@ -554,13 +568,34 @@ export function useQuickChat(
       streamRef.current.close();
       streamRef.current = null;
     }
+    lastAttachedGenerationRef.current = null;
 
     resetTransientComposerState();
     setActiveSession(session);
+
+    void Promise.resolve(fetchChatSession(session.id, projectId))
+      .then(({ session: refreshedSession }) => {
+        if (!refreshedSession.isGenerating || !refreshedSession.inFlightGeneration) {
+          return;
+        }
+        setActiveSession((prev) => {
+          if (!prev || prev.id !== session.id) {
+            return prev;
+          }
+          return {
+            ...prev,
+            ...refreshedSession,
+          };
+        });
+      })
+      .catch(() => {
+        // Ignore stale-cache recovery fetch failures.
+      });
+
     if (session.isGenerating) {
       attachIfGenerating(session.id, session.inFlightGeneration);
     }
-  }, [attachIfGenerating, resetTransientComposerState]);
+  }, [attachIfGenerating, projectId, resetTransientComposerState]);
 
   const startModelChat = useCallback(
     async (modelProvider: string, modelId: string) => {
@@ -590,6 +625,7 @@ export function useQuickChat(
       streamRef.current.close();
       streamRef.current = null;
     }
+    lastAttachedGenerationRef.current = null;
 
     resetTransientComposerState();
     setMessages([]);
@@ -620,6 +656,7 @@ export function useQuickChat(
     cancelStreamingFlushesRef.current = null;
     streamRef.current?.close();
     streamRef.current = null;
+    lastAttachedGenerationRef.current = null;
 
     void cancelChatResponse(activeSession.id, projectId).catch(() => {
       // Best-effort cancellation; ignore backend errors.
@@ -705,6 +742,7 @@ export function useQuickChat(
           streamRef.current.close();
           streamRef.current = null;
         }
+        lastAttachedGenerationRef.current = null;
 
         // Optimistically add user message
         const tempId = `temp-${Date.now()}`;
@@ -766,6 +804,7 @@ export function useQuickChat(
             setIsStreaming(false);
             isStreamingRef.current = false;
             streamRef.current = null;
+            lastAttachedGenerationRef.current = null;
             sendCompletionRef.current?.resolve();
             sendCompletionRef.current = null;
 
@@ -778,6 +817,7 @@ export function useQuickChat(
             setIsStreaming(false);
             isStreamingRef.current = false;
             streamRef.current = null;
+            lastAttachedGenerationRef.current = null;
             console.error("[useQuickChat] Stream error:", data);
 
             const errorMessage = typeof data === "string" && data.trim() ? data : "Failed to get response";
@@ -822,6 +862,22 @@ export function useQuickChat(
   );
 
   sendMessageRef.current = sendMessage;
+
+  useEffect(() => {
+    if (!activeSession?.id || activeSession.isGenerating !== true || streamRef.current) {
+      return;
+    }
+
+    const replayFromEventId = typeof activeSession.inFlightGeneration?.replayFromEventId === "number"
+      ? activeSession.inFlightGeneration.replayFromEventId
+      : null;
+    const lastAttached = lastAttachedGenerationRef.current;
+    if (lastAttached?.sessionId === activeSession.id && lastAttached.replayFromEventId === replayFromEventId) {
+      return;
+    }
+
+    attachIfGenerating(activeSession.id, activeSession.inFlightGeneration, { silent: true });
+  }, [activeSession?.id, activeSession?.isGenerating, activeSession?.inFlightGeneration, attachIfGenerating]);
 
   useEffect(() => {
     const unsubscribe = visibilitySuspension.onBecameVisible(() => {
@@ -874,6 +930,7 @@ export function useQuickChat(
         streamRef.current.close();
         streamRef.current = null;
       }
+      lastAttachedGenerationRef.current = null;
     };
   }, []);
 

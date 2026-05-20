@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "@fusion/core";
+import { Database, TaskStore } from "@fusion/core";
 import { AiSessionStore } from "../ai-session-store.js";
 import {
   __resetPlanningState,
@@ -82,8 +82,9 @@ describe("session error recovery", () => {
   let tmpDir: string;
   let db: Database;
   let aiSessionStore: AiSessionStore;
+  let taskStore: TaskStore;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     __resetPlanningState();
     __resetSubtaskBreakdownState();
@@ -93,6 +94,8 @@ describe("session error recovery", () => {
     db = new Database(join(tmpDir, ".fusion"));
     db.init();
     aiSessionStore = new AiSessionStore(db);
+    taskStore = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+    await taskStore.init();
 
     setPlanningAiSessionStore(aiSessionStore);
     setSubtaskAiSessionStore(aiSessionStore);
@@ -105,6 +108,11 @@ describe("session error recovery", () => {
     __resetSubtaskBreakdownState();
     __resetMissionInterviewState();
 
+    try {
+      taskStore.close();
+    } catch {
+      // no-op
+    }
     try {
       db.close();
     } catch {
@@ -133,7 +141,7 @@ describe("session error recovery", () => {
         ]),
     );
 
-    const { sessionId } = await createSession("127.0.0.101", "Planning error flow", undefined, "/tmp/project");
+    const { sessionId } = await createSession("127.0.0.101", "Planning error flow", taskStore, "/tmp/project");
 
     const unsubscribeError = planningStreamManager.subscribe(sessionId, (event) => {
       if (event.type === "error") {
@@ -237,7 +245,7 @@ describe("session error recovery", () => {
       ]),
     );
 
-    const sessionId = await createMissionInterviewSession("127.0.0.111", "Mission error flow", "/tmp/project");
+    const sessionId = await createMissionInterviewSession("127.0.0.111", "Mission error flow", "/tmp/project", taskStore);
     await waitFor(() => Boolean(getMissionInterviewSession(sessionId)?.currentQuestion));
 
     const unsubscribe = missionInterviewStreamManager.subscribe(sessionId, (event) => {

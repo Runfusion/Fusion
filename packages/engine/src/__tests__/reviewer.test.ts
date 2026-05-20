@@ -258,6 +258,7 @@ describe("reviewStep — spec review type", () => {
     expect(capturedPrompt).toContain("Evaluate this PROMPT.md specification");
     expect(capturedPrompt).toContain("spec quality criteria");
     expect(capturedPrompt).toContain("# Task: KB-050");
+    expect(capturedPrompt).toContain("dangling task-document references");
     // Spec reviews should NOT contain git diff instructions
     expect(capturedPrompt).not.toContain("git diff");
   });

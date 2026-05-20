@@ -7,13 +7,19 @@ import type {
   Settings,
 } from "@fusion/core";
 import {
+  DUPLICATE_OF_METADATA_KEY,
+  TaskDeletedError,
   buildTriageMemoryInstructions,
+  getTaskDuplicateLineage,
   resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
   compareTaskPriority,
   sortTasksByPriorityThenAgeAndId,
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
+  extractIntentSignature,
+  findNearDuplicates,
+  type NearDuplicateCandidate,
 } from "@fusion/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -28,6 +34,7 @@ import {
   resolvePlanningSessionModel,
 } from "./agent-session-helpers.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
+import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spec-validation/task-document-references.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { PRIORITY_SPECIFY, type AgentSemaphore } from "./concurrency.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -67,6 +74,11 @@ import {
   isResearchToolSurfaceEnabled,
 } from "./tool-availability.js";
 import { runGhostBugPreflight } from "./triage-preflight.js";
+import {
+  BROAD_SCOPE_FLAG_VERSION,
+  decideBroadScopeFlag,
+  extractBroadScopeSignals,
+} from "./triage-broad-scope-heuristics.js";
 import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 
@@ -173,9 +185,16 @@ Follow this structure exactly:
 
 Commits at step boundaries. All commits include the task ID:
 
-- **Step completion:** \`feat({ID}): complete Step N — description\`
-- **Bug fixes:** \`fix({ID}): description\`
-- **Tests:** \`test({ID}): description\`
+- **Step completion:** \`feat({ID}): complete Step N — <short summary>\` (the \`<short summary>\` is required — use a concrete 5–10 word description)
+- **Bug fixes:** \`fix({ID}): description\` (short, concrete summary required)
+- **Tests:** \`test({ID}): description\` (short, concrete summary required)
+
+Good examples:
+- \`feat(FN-1234): complete Step 2 — add retry guard for workflow step timeouts\`
+- \`test(FN-1234): add regression tests for paused-session cleanup\`
+
+Bad example:
+- \`feat(FN-1234): complete Step 2\`
 
 ## Do NOT
 
@@ -307,6 +326,8 @@ You MUST call \`fn_review_spec()\` after writing the PROMPT.md. Do not finish wi
 - Good: concrete mission, realistic file scope, dependency-aware step order, explicit quality gates, and clear non-goals.
 - Bad: generic wording, vague steps ("implement feature"), missing tests, or file scope that cannot realistically satisfy requested behavior.
 - Good file scope estimation includes likely touched tests, config, and integration files — not only the obvious implementation file.
+
+Never reference a \`.fusion/tasks/<id>/<file>\` artifact in Context, Steps, or File Scope unless (a) the file already exists, (b) the step explicitly creates it (listed as \`(new)\` under Artifacts), or (c) it is \`PROMPT.md\` / \`task.json\` / \`attachments/*\` for a sibling task. Save planning scratch as task documents via \`fn_task_document_write\`, not as files on disk.
 
 ## Output
 Write the PROMPT.md directly using the write tool, then call \`fn_review_spec()\` for review.
@@ -441,9 +462,16 @@ Follow this structure exactly:
 
 Commits at step boundaries. All commits include the task ID:
 
-- **Step completion:** \`feat({ID}): complete Step N — description\`
-- **Bug fixes:** \`fix({ID}): description\`
-- **Tests:** \`test({ID}): description\`
+- **Step completion:** \`feat({ID}): complete Step N — <short summary>\` (the \`<short summary>\` is required — use a concrete 5–10 word description)
+- **Bug fixes:** \`fix({ID}): description\` (short, concrete summary required)
+- **Tests:** \`test({ID}): description\` (short, concrete summary required)
+
+Good examples:
+- \`feat(FN-1234): complete Step 2 — add retry guard for workflow step timeouts\`
+- \`test(FN-1234): add regression tests for paused-session cleanup\`
+
+Bad example:
+- \`feat(FN-1234): complete Step 2\`
 
 ## Do NOT
 
@@ -515,6 +543,8 @@ After writing the PROMPT.md, call \`fn_review_spec()\` to confirm the spec.
 
 Fast-mode specs are auto-approved — the review tool will return APPROVE immediately without spawning an independent reviewer. You do NOT need to wait for or iterate on review feedback.
 
+Never reference a \`.fusion/tasks/<id>/<file>\` artifact in Context, Steps, or File Scope unless (a) the file already exists, (b) the step explicitly creates it (listed as \`(new)\` under Artifacts), or (c) it is \`PROMPT.md\` / \`task.json\` / \`attachments/*\` for a sibling task. Save planning scratch as task documents via \`fn_task_document_write\`, not as files on disk.
+
 ## Output
 Write the PROMPT.md directly using the write tool, then call \`fn_review_spec()\` to confirm.`;
 
@@ -569,6 +599,7 @@ export class TriageProcessor {
   private pauseAborted = new Set<string>();
   /** Tasks killed by the stuck task detector (to avoid reporting as errors). */
   private stuckAborted = new Set<string>();
+  private taskDeletedHandler?: (task: Task) => void;
 
   /**
    * @param store — Task store instance (also used to listen for `settings:updated` events)
@@ -618,11 +649,37 @@ export class TriageProcessor {
         this.poll();
       }
     });
+
+    this.taskDeletedHandler = (task: Task) => {
+      if (this.activeSubagentSessions.has(task.id)) {
+        this.disposeSubagentsForTask(task.id, "task soft-deleted");
+      }
+      if (this.activeSessions.has(task.id)) {
+        const session = this.activeSessions.get(task.id)!;
+        planLog.log(`task soft-deleted — terminating triage session for ${task.id}`);
+        this.pauseAborted.add(task.id);
+        this.options.stuckTaskDetector?.untrackTask(task.id);
+        const sessionWithAbort = session as {
+          abort?: () => Promise<void>;
+          dispose: () => void;
+        };
+        if (typeof sessionWithAbort.abort === "function") {
+          void sessionWithAbort.abort().catch((err) => {
+            planLog.warn(`Failed to abort triage session for ${task.id}: ${err}`);
+          });
+        }
+        session.dispose();
+        this.activeSessions.delete(task.id);
+      }
+    };
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    if (this.taskDeletedHandler && typeof this.store.on === "function") {
+      this.store.on("task:deleted", this.taskDeletedHandler);
+    }
 
     // Clear stale "planning" statuses left by a prior crash/restart.
     // No triage agent is actually running at startup, so any task still
@@ -660,6 +717,9 @@ export class TriageProcessor {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
       this.activePollMs = null;
+    }
+    if (this.taskDeletedHandler && typeof this.store.off === "function") {
+      this.store.off("task:deleted", this.taskDeletedHandler);
     }
     // Tear down any in-flight specify sessions and reviewer subagents so they
     // don't keep streaming LLM tokens / tool calls past engine shutdown.
@@ -1284,7 +1344,14 @@ export class TriageProcessor {
               `Converted into subtasks: ${childTaskIds}`,
             );
             try {
-              await this.store.deleteTask(task.id);
+              // FN-5129 / FN-5131: split-close must unlink lineage children when deleting the parent.
+              await this.store.deleteTask(task.id, {
+                removeLineageReferences: true,
+                auditContext: {
+                  agentId: task.assignedAgentId ?? "triage",
+                  runId: generateSyntheticRunId("triage-delete", task.id),
+                },
+              });
               planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
             } catch (err: unknown) {
               // deleteTask refuses when live tasks still depend on this id.
@@ -1428,7 +1495,14 @@ export class TriageProcessor {
                 task.id,
                 `Converted into subtasks: ${childTaskIds}`,
               );
-              await this.store.deleteTask(task.id);
+              // FN-5129 / FN-5131: split-close must unlink lineage children when deleting the parent.
+              await this.store.deleteTask(task.id, {
+                removeLineageReferences: true,
+                auditContext: {
+                  agentId: task.assignedAgentId ?? "triage",
+                  runId: generateSyntheticRunId("triage-delete", task.id),
+                },
+              });
               planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
               return;
             }
@@ -1546,6 +1620,10 @@ export class TriageProcessor {
       // and specifyTask(). The file is gone, so just log and skip — no point retrying.
       if ((err as Record<string, unknown>).code === "ENOENT") {
         planLog.log(`${task.id} no longer exists — skipping`);
+      } else if (err instanceof TaskDeletedError) {
+        planLog.log(`[triage] ${task.id}: skipping spec write — task soft-deleted`);
+        this.disposeSubagentsForTask(task.id, "task soft-deleted");
+        return;
       } else if (this.pauseAborted.has(task.id)) {
         // Pause (global or engine) — clear planning status without reporting an error
         this.pauseAborted.delete(task.id);
@@ -1874,7 +1952,7 @@ export class TriageProcessor {
             parentTask = undefined;
           }
 
-          const newTask = await createAgentTask(store, {
+          const { task: newTask, wasDuplicate } = await createAgentTask(store, {
             title: params.title,
             description: params.description,
             dependencies: validDeps,
@@ -1898,7 +1976,7 @@ export class TriageProcessor {
             content: [
               {
                 type: "text" as const,
-                text: `Created child task ${newTask.id}: ${params.title || params.description.slice(0, 60)}`,
+                text: `${wasDuplicate ? "Linked existing child task" : "Created child task"} ${newTask.id}: ${params.title || params.description.slice(0, 60)}`,
               },
             ],
             details: { taskId: newTask.id },
@@ -1993,6 +2071,21 @@ export class TriageProcessor {
                   text: "UNAVAILABLE — PROMPT.md file not found or empty. Write the specification first, then call fn_review_spec.",
                 },
               ],
+              details: {},
+            };
+          }
+
+          const danglingRefs = await detectDanglingTaskDocReferences(promptContent, {
+            rootDir,
+            taskId,
+          });
+          if (danglingRefs.length > 0) {
+            const diagnostic = formatDanglingDiagnostic(danglingRefs);
+            specReviewVerdictRef.current = "REVISE";
+            planLog.warn(`${taskId}: ${diagnostic}`);
+            await store.logEntry(taskId, "Spec review: REVISE (dangling task-document references)");
+            return {
+              content: [{ type: "text" as const, text: diagnostic }],
               details: {},
             };
           }
@@ -2169,7 +2262,14 @@ export class TriageProcessor {
         task.id,
         `Duplicate of ${dupId} — closed`,
       );
-      await this.store.deleteTask(task.id);
+      // Pass removeLineageReferences so a duplicate-close cannot be blocked by lineage children (FN-5129 / FN-5131).
+      await this.store.deleteTask(task.id, {
+        removeLineageReferences: true,
+        auditContext: {
+          agentId: task.assignedAgentId ?? "triage",
+          runId: generateSyntheticRunId("triage-delete", task.id),
+        },
+      });
       return;
     }
 
@@ -2187,6 +2287,32 @@ export class TriageProcessor {
       taskUpdates.steps = parsedSteps;
     }
 
+    const duplicateLineage = getTaskDuplicateLineage({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      sourceType: task.sourceType,
+      sourceParentTaskId: task.sourceParentTaskId,
+      sourceMetadata: task.sourceMetadata,
+      promptText: written,
+    }).filter((candidateId) => {
+      return !(task.sourceType === "task_duplicate" && task.sourceParentTaskId?.toUpperCase() === candidateId);
+    });
+
+    if (duplicateLineage.length > 0) {
+      const existingMetadataIds = Array.isArray(task.sourceMetadata?.[DUPLICATE_OF_METADATA_KEY])
+        ? task.sourceMetadata[DUPLICATE_OF_METADATA_KEY].filter((value): value is string => typeof value === "string")
+        : [];
+      const existingNormalized = existingMetadataIds.map((value) => value.toUpperCase());
+      const matchesExisting =
+        existingNormalized.length === duplicateLineage.length
+        && existingNormalized.every((value, index) => value === duplicateLineage[index]);
+      if (!matchesExisting) {
+        taskUpdates.sourceMetadataPatch = { [DUPLICATE_OF_METADATA_KEY]: duplicateLineage };
+      }
+      planLog.log(`${task.id} duplicate-of lineage: ${duplicateLineage.join(", ")}`);
+    }
+
     const sizeMatch = written.match(/^\*\*Size:\*\*\s+(S|M|L)\b/m);
     if (sizeMatch) {
       taskUpdates.size = sizeMatch[1] as "S" | "M" | "L";
@@ -2202,6 +2328,87 @@ export class TriageProcessor {
       taskUpdates.noCommitsExpected = true;
     }
 
+    let parsedFileScope = parseFileScopeFromPrompt(written);
+    try {
+      const persistedFileScope = await this.store.parseFileScopeFromPrompt(task.id);
+      if (persistedFileScope.length > parsedFileScope.length) {
+        parsedFileScope = persistedFileScope;
+      }
+    } catch {
+      // Fail open on persisted PROMPT.md parsing and keep using the in-memory parse.
+    }
+    type BroadScopeFlagRecord = {
+      score: number;
+      reasons: string[];
+      signals: {
+        size: "S" | "M" | "L" | null;
+        stepCount: number;
+        fileScopeCount: number;
+        failingFileMentions: number;
+      };
+      thresholds: {
+        stepsHigh: number;
+        fileScopeHigh: number;
+        failingFileMentionsHigh: number;
+        sizeLStepsThreshold: number;
+      };
+      version: number;
+      flaggedAt: string;
+    };
+    let broadScopeFlagRecord: BroadScopeFlagRecord | null = null;
+    try {
+      const broadScopeSignals = extractBroadScopeSignals({
+        size: taskUpdates.size ?? task.size ?? null,
+        stepCount: parsedSteps.length,
+        fileScopeCount: parsedFileScope.length,
+        descriptionText: task.description ?? "",
+      });
+      const broadScopeDecision = decideBroadScopeFlag(broadScopeSignals);
+      if (broadScopeDecision.flagged) {
+        broadScopeFlagRecord = {
+          score: broadScopeDecision.score,
+          reasons: broadScopeDecision.reasons,
+          signals: broadScopeDecision.signals,
+          thresholds: broadScopeDecision.thresholds,
+          version: BROAD_SCOPE_FLAG_VERSION,
+          flaggedAt: new Date().toISOString(),
+        };
+        taskUpdates.sourceMetadataPatch = {
+          ...(taskUpdates.sourceMetadataPatch ?? {}),
+          broadScopeFlag: broadScopeFlagRecord,
+        };
+        planLog.warn(
+          `${task.id}: broad-scope flag at triage — score=${broadScopeDecision.score}, reasons=${broadScopeDecision.reasons.join(",")}`,
+        );
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: broad-scope heuristic failed open: ${message}`);
+    }
+    let taskIntentSignature: ReturnType<typeof extractIntentSignature> = {
+      routePaths: [],
+      filePaths: [],
+      identifiers: [],
+      titleTokens: [],
+    };
+    try {
+      taskIntentSignature = extractIntentSignature({
+        title: task.title ?? "",
+        description: task.description ?? "",
+        fileScope: parsedFileScope,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: near-duplicate signature extraction failed open: ${message}`);
+    }
+    if (parsedFileScope.length > 0 || taskIntentSignature.routePaths.length + taskIntentSignature.filePaths.length + taskIntentSignature.identifiers.length > 0) {
+      taskUpdates.sourceMetadataPatch = {
+        ...(taskUpdates.sourceMetadataPatch ?? {}),
+        intentSignature: taskIntentSignature,
+        ...(parsedFileScope.length > 0 ? { fileScope: parsedFileScope } : {}),
+      };
+    }
+
     // Apply non-title metadata first. The title is held back and applied AFTER
     // the column transition (see below) because store.updateTask regenerates
     // PROMPT.md when title/description change, and the triage-stub regen path
@@ -2213,6 +2420,37 @@ export class TriageProcessor {
     const shouldApplyPromptDeclaredTitle = shouldReplaceTaskTitleFromPrompt(task, promptDeclaredTitle);
 
     await this.store.updateTask(task.id, taskUpdates);
+
+    if (broadScopeFlagRecord) {
+      try {
+        await this.store.logEntry(
+          task.id,
+          "Broad-scope triage flag",
+          `Heuristics suggest this task may benefit from decomposition (score=${broadScopeFlagRecord.score}; signals: ${broadScopeFlagRecord.reasons.join(", ")}). Consider creating child tasks via fn_task_create or marking breakIntoSubtasks=true before execution.`,
+        );
+        const auditor = createRunAuditor(this.store, {
+          taskId: task.id,
+          agentId: task.assignedAgentId ?? "triage",
+          runId: generateSyntheticRunId("triage", task.id),
+          phase: "triage",
+          source: "triage",
+        });
+        await auditor.database({
+          type: "task:broad-scope-flagged-at-triage",
+          target: task.id,
+          metadata: {
+            score: broadScopeFlagRecord.score,
+            reasons: broadScopeFlagRecord.reasons,
+            signals: broadScopeFlagRecord.signals,
+            thresholds: broadScopeFlagRecord.thresholds,
+            version: broadScopeFlagRecord.version,
+          },
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        planLog.warn(`${task.id}: broad-scope heuristic failed open: ${message}`);
+      }
+    }
 
     try {
       const preflightDecision = await Promise.race([
@@ -2252,6 +2490,108 @@ export class TriageProcessor {
       planLog.warn(`${task.id}: ghost-bug preflight failed open: ${message}`);
     }
 
+    // FN-5152: post-PROMPT near-duplicate backstop (fail-open, bounded) before triage→todo transition.
+    try {
+      const nearDuplicateResult = await Promise.race([
+        (async () => {
+          const signalCount = taskIntentSignature.routePaths.length + taskIntentSignature.filePaths.length + taskIntentSignature.identifiers.length;
+          if (signalCount === 0 && parsedFileScope.length === 0) {
+            return;
+          }
+
+          const nowMs = Date.now();
+          const candidates = (await this.store.listTasks({ slim: false, includeArchived: false }))
+            .filter((candidate) => candidate.id !== task.id)
+            .filter((candidate) => candidate.column !== "done")
+            .filter((candidate) => Date.parse(candidate.createdAt) >= nowMs - 7 * 24 * 60 * 60 * 1000)
+            .map((candidate) => ({
+              id: candidate.id,
+              title: candidate.title ?? "",
+              description: candidate.description ?? "",
+              column: candidate.column,
+              createdAt: Date.parse(candidate.createdAt),
+              fileScope: Array.isArray(candidate.sourceMetadata?.fileScope)
+                ? candidate.sourceMetadata.fileScope.filter((entry): entry is string => typeof entry === "string")
+                : undefined,
+            } satisfies NearDuplicateCandidate));
+
+          const matches = findNearDuplicates(
+            { title: task.title ?? "", description: task.description ?? "", fileScope: parsedFileScope },
+            candidates,
+            { windowMs: 7 * 24 * 60 * 60 * 1000, nowMs },
+          );
+          if (matches.length === 0) {
+            return;
+          }
+
+          const taskCreatedAt = Date.parse(task.createdAt);
+          const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+          const isStrictlyOlderOrTieCanonical = (candidate: NearDuplicateCandidate): boolean => {
+            const candidateCreatedAt =
+              typeof candidate.createdAt === "number" ? candidate.createdAt : Number.NaN;
+            if (Number.isNaN(candidateCreatedAt)) {
+              return false;
+            }
+            if (candidateCreatedAt < taskCreatedAt) return true;
+            if (candidateCreatedAt > taskCreatedAt) return false;
+            return candidate.id.localeCompare(task.id, undefined, { numeric: true }) < 0;
+          };
+          const olderMatches = matches.filter((match) => {
+            const candidate = candidatesById.get(match.id);
+            return candidate ? isStrictlyOlderOrTieCanonical(candidate) : false;
+          });
+          const canonical = olderMatches[0] ?? matches[0];
+          const canonicalTask = candidatesById.get(canonical.id);
+          if (!canonicalTask) {
+            return;
+          }
+
+          // FN-5152: only archive the task being finalized when it is the newer sibling,
+          // or the tie-loser when both rows share the same millisecond timestamp.
+          if (isStrictlyOlderOrTieCanonical(canonicalTask)) {
+            await this.store.updateTask(task.id, {
+              sourceMetadataPatch: {
+                nearDuplicateOf: canonical.id,
+                intentSignature: taskIntentSignature,
+                ...(parsedFileScope.length > 0 ? { fileScope: parsedFileScope } : {}),
+              },
+            });
+            await this.store.logEntry(
+              task.id,
+              `Auto-archived as near-duplicate of ${canonical.id}`,
+              `Shared tokens: ${canonical.sharedTokens.join(", ")}`,
+            );
+            await this.store.moveTask(task.id, "archived");
+            await this.store.recordActivity({
+              type: "task:auto-archived-near-duplicate",
+              taskId: task.id,
+              taskTitle: task.title ?? "",
+              details: `Near-duplicate of ${canonical.id}`,
+              metadata: {
+                canonicalTaskId: canonical.id,
+                sharedTokens: canonical.sharedTokens,
+                score: canonical.score,
+              },
+            });
+            planLog.log(`${task.id} auto-archived as near-duplicate of ${canonical.id}`);
+            return "archived" as const;
+          }
+
+          planLog.warn(`${task.id}: near-duplicate candidate ${canonical.id} is newer; skipping auto-archive`);
+        })(),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 5_000)),
+      ]);
+      if (nearDuplicateResult === "archived") {
+        return;
+      }
+      if (nearDuplicateResult === "timeout") {
+        planLog.warn(`${task.id}: near-duplicate backstop timed out; proceeding`);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: near-duplicate backstop failed open: ${message}`);
+    }
+
     if (settings.requirePlanApproval) {
       const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };
       if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
@@ -2285,6 +2625,23 @@ export class TriageProcessor {
       planLog.log(`✓ ${task.id} specified and moved to todo`);
     }
   }
+}
+
+function parseFileScopeFromPrompt(text: string): string[] {
+  const match = text.match(/^##\s+File Scope\s*\n([\s\S]*?)(?=^##\s+|$)/m);
+  if (!match) return [];
+  const entries: string[] = [];
+  for (const rawLine of match[1].split("\n")) {
+    const trimmed = rawLine.trim();
+    if (!trimmed.startsWith("-")) continue;
+    const line = trimmed.replace(/^-+\s*/, "").replace(/`/g, "").trim();
+    if (!line || /^out of scope/i.test(line)) break;
+    const pathOnly = line.split(" ")[0]?.trim();
+    if (!pathOnly) continue;
+    entries.push(pathOnly);
+    if (entries.length >= 50) break;
+  }
+  return entries;
 }
 
 function extractPromptDeclaredTitle(prompt: string, taskId: string): string | null {

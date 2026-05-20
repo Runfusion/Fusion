@@ -422,7 +422,7 @@ Your job:
 3. Use fn_task_create to spawn follow-up work.
 4. Use fn_list_agents and fn_delegate_task to coordinate with other agents.
 5. Use fn_get_agent_config and fn_update_agent_config to read/tune direct-report agents for better routing outcomes.
-5. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
+6. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
 Examples of ONE useful action:
 - DO: create a clearly scoped task for a newly discovered reliability issue.
@@ -436,6 +436,10 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_task_create
 - fn_list_agents and fn_delegate_task
 - fn_get_agent_config and fn_update_agent_config (for direct reports only)
+- fn_agent_create and fn_agent_delete (for direct reports only)
+- fn_read_evaluations and fn_update_identity (available in no-task runs)
+- fn_reflect_on_performance when reflection is enabled for this run
+- fn_web_fetch
 - fn_memory_search, fn_memory_get, and fn_memory_append
 - fn_heartbeat_done
 - fn_send_message, fn_read_messages, and fn_post_room_message when messaging/room tools are enabled for this run (they may not always be available)
@@ -2142,7 +2146,9 @@ export class HeartbeatMonitor {
         // For no-task runs, exclude fn_task_log and document tools (they require a taskId)
         let heartbeatTools: ToolDefinition[];
         if (isNoTaskRun) {
-          // No-task runs: fn_task_create, fn_list_agents, fn_delegate_task, fn_get_agent_config, fn_update_agent_config, messaging, memory, fn_heartbeat_done
+          // No-task runs: task creation/delegation, direct-report config + provisioning,
+          // optional messaging/room + reflection, evaluation/identity, web fetch,
+          // memory tools, and fn_heartbeat_done. Task-scoped tools are intentionally excluded.
           heartbeatTools = [];
 
           // fn_task_create tool

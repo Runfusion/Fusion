@@ -7,6 +7,9 @@ import type { Task, TaskLogEntry } from "./types.js";
  *
  * Returning a signal is diagnostic-only and does not trigger any mutation by
  * itself. Callers MUST NOT use this helper as an auto-completion signal.
+ *
+ * When `context.autoMerge === false`, the signal is unconditionally suppressed
+ * because in-review tasks are expected to remain on the PR-based manual flow.
  */
 export type InReviewStallCode =
   | "merge-blocker"
@@ -22,6 +25,7 @@ export interface InReviewStallSignal {
 
 export interface InReviewStallContext {
   now?: number;
+  autoMerge?: boolean;
   activeMergeTaskId?: string | null;
   executingTaskIds?: ReadonlySet<string>;
   staleMergingMinAgeMs?: number;
@@ -70,6 +74,10 @@ export function getInReviewStallReason(
   context: InReviewStallContext = {},
 ): InReviewStallSignal | undefined {
   if (task.column !== "in-review" || task.paused === true) {
+    return undefined;
+  }
+
+  if (context.autoMerge === false) {
     return undefined;
   }
 

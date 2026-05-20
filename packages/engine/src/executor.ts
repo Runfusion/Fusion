@@ -27,7 +27,7 @@ import {
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
 } from "./verification-utils.js";
-import { generateWorktreeName } from "./worktree-names.js";
+import { canonicalFusionBranchName, generateWorktreeName } from "./worktree-names.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
@@ -44,6 +44,7 @@ import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
 import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type WorktreePool } from "./worktree-pool.js";
+import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
 import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
 import {
@@ -52,6 +53,7 @@ import {
   parseIndexLockPath,
   tryRemoveStaleLock,
 } from "./worktree-stale-lock.js";
+import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree-stale-registration.js";
 import {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -65,6 +67,7 @@ import {
   reanchorBranchToBase,
   inspectBranchConflict,
 } from "./branch-conflicts.js";
+import { BranchAttributionError, filterFilesToOwnTaskCommits } from "./branch-attribution.js";
 import { AgentLogger } from "./agent-logger.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
@@ -767,14 +770,18 @@ If the task's PROMPT.md includes a "Documentation Requirements" section listing 
 ## Git discipline
 - Commit after completing each step (not after every file change)
 - Use conventional commit messages prefixed with the task ID
+- Always include a short, specific summary after the em dash (5–10 words)
+- Do NOT commit just \`complete Step N\` — the summary is what makes the commit useful in \`git log\`, merger subject derivation, and step reconciliation
 - When the task has a GitHub issue reference, include \`Ref: owner/repo#N\` in the commit body
 - Do NOT commit broken or half-implemented code
 
 Good commit message examples:
 - \`feat(FN-1234): complete Step 2 — add retry guard for workflow step timeouts\`
+- \`feat(FN-1234): complete Step 4 — tighten prompt examples for commit summaries\`
 - \`test(FN-1234): add regression tests for paused-session cleanup\`
 
 Bad commit message examples:
+- \`feat(FN-1234): complete Step 2\`
 - \`misc updates\`
 - \`fix stuff\`
 - \`wip\`
@@ -1205,6 +1212,27 @@ export class TaskExecutor {
     return this.currentRunContexts.get(taskId);
   }
 
+  /**
+   * Stable handoff reasons used on task:handoff audit events.
+   * Keep values greppable for executor/self-healing forensics: review-handoff-requested,
+   * completed-task-recovered, worktree-liveness-failed, step-session-completed,
+   * step-session-failed, transient-retries-exhausted, paused-after-completion,
+   * fn_task_done, fn_task_done-retry-completed, max-task-done-retries-exhausted,
+   * execution-failed, implicit-fn_task_done-refused, invariant-check-failed,
+   * fn_task_done-refused.
+   */
+  private async handoffTaskToReview(task: Task, reason: string, runId = this.getRunContextFor(task.id)?.runId): Promise<Task> {
+    const agentId = this.getRunContextFor(task.id)?.agentId;
+    return this.store.handoffToReview(task.id, {
+      ownerAgentId: agentId ?? null,
+      evidence: {
+        reason,
+        runId,
+        agentId,
+      },
+    });
+  }
+
   private get modelRegistry(): ModelRegistry {
     if (!this._modelRegistry) {
       const authStorage = createFusionAuthStorage();
@@ -1413,6 +1441,74 @@ export class TaskExecutor {
     this.activeSubagentSessions.delete(taskId);
   }
 
+  private abortInFlightTaskWork(taskId: string, reason: string, options: { userCanceled?: boolean } = {}): void {
+    let hadActiveSurface = false;
+
+    if (options.userCanceled) {
+      this.userCanceledTaskIds.add(taskId);
+    }
+    this.pausedAborted.add(taskId);
+    this.options.stuckTaskDetector?.untrackTask(taskId);
+    this.clearWorkflowRerunWatchdog(taskId);
+    this.clearCompletedTaskWatchdog(taskId);
+
+    if (this.activeSessions.has(taskId)) {
+      hadActiveSurface = true;
+      const { session } = this.activeSessions.get(taskId)!;
+      const sessionWithAbort = session as AgentSession & { abort?: () => Promise<void> };
+      if (typeof sessionWithAbort.abort === "function") {
+        void sessionWithAbort.abort().catch((err) => {
+          executorLog.warn(`Failed to abort agent session for ${taskId}: ${err}`);
+        });
+      }
+      session.dispose();
+      this.deleteActiveSession(taskId);
+    }
+
+    if (this.activeStepExecutors.has(taskId)) {
+      hadActiveSurface = true;
+      const stepExecutor = this.activeStepExecutors.get(taskId)!;
+      const stepExecutorWithAbort = stepExecutor as StepSessionExecutor & { abortAllSessionBash?: () => void };
+      if (typeof stepExecutorWithAbort.abortAllSessionBash === "function") {
+        try {
+          stepExecutorWithAbort.abortAllSessionBash();
+        } catch (err) {
+          executorLog.warn(`Failed to abort step-session bash for ${taskId}: ${err}`);
+        }
+      }
+      stepExecutor.terminateAllSessions().catch((err) =>
+        executorLog.error(`Failed to terminate step sessions for ${taskId}:`, err),
+      );
+      this.deleteActiveStepExecutor(taskId);
+    }
+
+    if (this.activeWorkflowStepSessions.has(taskId)) {
+      hadActiveSurface = true;
+      const workflowSession = this.activeWorkflowStepSessions.get(taskId)!;
+      const sessionWithAbort = workflowSession as AgentSession & { abort?: () => Promise<void> };
+      if (typeof sessionWithAbort.abort === "function") {
+        void sessionWithAbort.abort().catch((err) => {
+          executorLog.warn(`Failed to abort workflow step session for ${taskId}: ${err}`);
+        });
+      }
+      workflowSession.dispose();
+      this.deleteActiveWorkflowStepSession(taskId);
+    }
+
+    if (this.activeSubagentSessions.has(taskId)) {
+      hadActiveSurface = true;
+      this.disposeSubagentsForTask(taskId, reason);
+    }
+
+    this.loopRecoveryState.delete(taskId);
+    this.spawnedAgents.delete(taskId);
+    this.stuckAborted.delete(taskId);
+
+    if (hadActiveSurface) {
+      executorLog.log(`${taskId}: aborting in-flight work — ${reason}`);
+    }
+  }
+
   abortAllSessionBash(): void {
     for (const [taskId, { session }] of this.activeSessions) {
       try {
@@ -1473,71 +1569,14 @@ export class TaskExecutor {
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
       } else if (from === "in-progress") {
-        if (source === "user" && to === "todo") {
-          this.userCanceledTaskIds.add(task.id);
-        }
-        this.clearCompletedTaskWatchdog(task.id);
-        // Task moved away from in-progress — terminate any active sessions
-        if (this.activeSessions.has(task.id)) {
-          executorLog.log(`${task.id} moved from in-progress to ${to} — terminating agent session`);
-          this.pausedAborted.add(task.id);
-          this.options.stuckTaskDetector?.untrackTask(task.id);
-          const { session } = this.activeSessions.get(task.id)!;
-          const sessionWithAbort = session as AgentSession & { abort?: () => Promise<void> };
-          if (typeof sessionWithAbort.abort === "function") {
-            void sessionWithAbort.abort().catch((err) => {
-              executorLog.warn(`Failed to abort agent session for ${task.id}: ${err}`);
-            });
-          }
-          session.dispose();
-          this.deleteActiveSession(task.id);
-        }
-        if (this.activeStepExecutors.has(task.id)) {
-          executorLog.log(`${task.id} moved from in-progress to ${to} — terminating step sessions`);
-          this.pausedAborted.add(task.id);
-          this.options.stuckTaskDetector?.untrackTask(task.id);
-          const stepExecutor = this.activeStepExecutors.get(task.id)!;
-          const stepExecutorWithAbort = stepExecutor as StepSessionExecutor & { abortAllSessionBash?: () => void };
-          if (typeof stepExecutorWithAbort.abortAllSessionBash === "function") {
-            try {
-              stepExecutorWithAbort.abortAllSessionBash();
-            } catch (err) {
-              executorLog.warn(`Failed to abort step-session bash for ${task.id}: ${err}`);
-            }
-          }
-          stepExecutor.terminateAllSessions().catch((err) =>
-            executorLog.error(`Failed to terminate step sessions for ${task.id}:`, err),
-          );
-          this.deleteActiveStepExecutor(task.id);
-        }
-        if (this.activeWorkflowStepSessions.has(task.id)) {
-          executorLog.log(`${task.id} moved from in-progress to ${to} — terminating workflow step session`);
-          this.pausedAborted.add(task.id);
-          this.options.stuckTaskDetector?.untrackTask(task.id);
-          const workflowSession = this.activeWorkflowStepSessions.get(task.id)!;
-          const sessionWithAbort = workflowSession as AgentSession & { abort?: () => Promise<void> };
-          if (typeof sessionWithAbort.abort === "function") {
-            void sessionWithAbort.abort().catch((err) => {
-              executorLog.warn(`Failed to abort workflow step session for ${task.id}: ${err}`);
-            });
-          }
-          workflowSession.dispose();
-          this.deleteActiveWorkflowStepSession(task.id);
-        }
-        // Reviewer subagents run in their own sessions outside `activeSessions`
-        // and `activeStepExecutors`, so the loops above don't reach them.
-        // Without this, a reviewer keeps running (and emitting verdicts that
-        // trigger step transitions) even after the parent task was moved out
-        // of in-progress.
-        this.disposeSubagentsForTask(task.id, `parent moved from in-progress to ${to}`);
-        // Clean up all in-memory state for this task so nothing leaks across runs.
-        // This prevents zombie state from persisting when a task moves away from
-        // in-progress while execute() is still unwinding, or when the scheduler
-        // moves a task out before the executor's task:moved fires.
-        this.loopRecoveryState.delete(task.id);
-        this.spawnedAgents.delete(task.id);
-        this.stuckAborted.delete(task.id);
+        this.abortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
+          userCanceled: source === "user" && to === "todo",
+        });
       }
+    });
+
+    store.on("task:deleted", (task) => {
+      this.abortInFlightTaskWork(task.id, "task soft-deleted", { userCanceled: true });
     });
 
     // When a task is paused while executing, terminate the agent session.
@@ -2363,7 +2402,7 @@ export class TaskExecutor {
       // Move the task to in-review column (this will also emit task:moved event)
       // The task:moved handler will clean up activeSessions
       await this.persistTokenUsage(task.id);
-      await this.store.moveTask(task.id, "in-review");
+      await this.handoffTaskToReview(task, "review-handoff-requested");
 
       // Dispose the agent session (this may already be done by task:moved handler)
       // but we do it here to be explicit
@@ -2413,7 +2452,7 @@ export class TaskExecutor {
 
       // Capture modified files if the worktree still exists
       if (task.worktree && existsSync(task.worktree)) {
-        const modifiedFiles = await this.captureModifiedFiles(task.worktree, task.baseCommitSha);
+        const modifiedFiles = await this.captureModifiedFiles(task.worktree, task.baseCommitSha, task.id, undefined, "recovery");
         if (modifiedFiles.length > 0) {
           await this.store.updateTask(task.id, { modifiedFiles });
           executorLog.log(`${task.id}: recovered ${modifiedFiles.length} modified files`);
@@ -2452,7 +2491,7 @@ export class TaskExecutor {
         this.recoveringCompleted.add(task.id);
         await this.store.moveTask(task.id, "in-progress");
       }
-      await this.store.moveTask(task.id, "in-review");
+      await this.handoffTaskToReview(task, "completed-task-recovered");
       if (promotedFromTodo) {
         this.recoveringCompleted.delete(task.id);
       }
@@ -2570,6 +2609,7 @@ export class TaskExecutor {
     for (const task of tasks) {
       if (
         task.assignedAgentId === agentId
+        && !task.deletedAt
         && !task.paused
         && !this.executing.has(task.id)
         && !this.activeSessions.has(task.id)
@@ -2604,7 +2644,7 @@ export class TaskExecutor {
 
     const tasks = await this.store.listTasks({ slim: true, column: "in-progress" });
     const inProgress = tasks.filter(
-      (t) => t.column === "in-progress" && !this.executing.has(t.id) && !t.paused,
+      (t) => t.column === "in-progress" && !t.deletedAt && !this.executing.has(t.id) && !t.paused,
     );
 
     if (inProgress.length === 0) return;
@@ -2721,6 +2761,13 @@ export class TaskExecutor {
     // stuck-detector, resumeTaskForAgent, etc.). Per-instance state stays
     // consistent with the process-wide lock.
     this.executing.add(task.id);
+
+    if (task.deletedAt) {
+      executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
+      this.executing.delete(task.id);
+      executingTaskLock.release(task.id);
+      return;
+    }
 
     const assignedAgentId = task.assignedAgentId;
     if (assignedAgentId && await this.shouldDeferForHeartbeat(assignedAgentId)) {
@@ -3039,7 +3086,7 @@ export class TaskExecutor {
           });
           await this.store.logEntry(task.id, `${failureMessage} — moved to in-review for inspection`, undefined, this.getRunContextFor(task.id));
           await this.persistTokenUsage(task.id);
-          await this.store.moveTask(task.id, "in-review");
+          await this.handoffTaskToReview(task, "worktree-liveness-failed");
           executorLog.log(`✗ ${task.id} worktree liveness failed — moved to in-review`);
         }
         this.options.onError?.(task, new Error(failureMessage));
@@ -3212,7 +3259,7 @@ export class TaskExecutor {
           const allSuccess = results.every(r => r.success);
           if (allSuccess) {
             const updatedTask = await this.store.getTask(task.id);
-            const modifiedFiles = await this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha);
+            const modifiedFiles = await this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha, task.id, audit, "post-session");
             if (modifiedFiles.length > 0) {
               await this.store.updateTask(task.id, { modifiedFiles });
               executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
@@ -3356,17 +3403,15 @@ export class TaskExecutor {
               return;
             }
 
-            await this.store.moveTask(task.id, "in-review");
+            await this.handoffTaskToReview(task, "step-session-completed");
             this.clearCompletedTaskWatchdog(task.id);
-            // Audit trail: record task move (FN-1404)
-            await audit.database({ type: "task:move", target: task.id, metadata: { to: "in-review" } });
             executorLog.log(`✓ ${task.id} completed (step-session) → in-review`);
             this.options.onComplete?.(task);
           } else {
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
             await this.store.updateTask(task.id, { status: "failed", error: errorSummary });
-            await this.store.moveTask(task.id, "in-review");
+            await this.handoffTaskToReview(task, "step-session-failed");
             executorLog.log(`✗ ${task.id} step-session failed → in-review: ${errorSummary}`);
             this.options.onError?.(task, new Error(errorSummary));
           }
@@ -3463,7 +3508,7 @@ export class TaskExecutor {
             if (accumulatedStepTokenUsage) {
               await this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage });
             }
-            await this.store.moveTask(task.id, "in-review");
+            await this.handoffTaskToReview(task, "transient-retries-exhausted");
             executorLog.log(`✗ ${task.id} transient retries exhausted → in-review`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           } else {
@@ -3473,7 +3518,7 @@ export class TaskExecutor {
             if (accumulatedStepTokenUsage) {
               await this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage });
             }
-            await this.store.moveTask(task.id, "in-review");
+            await this.handoffTaskToReview(task, "step-session-failed");
             executorLog.log(`✗ ${task.id} step-session execution failed → in-review`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           }
@@ -3577,7 +3622,7 @@ export class TaskExecutor {
         this.createTaskLogTool(task.id),
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
-        this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }),
+        this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }, audit),
         createRunVerificationTool({
           worktreePath,
           rootDir: this.rootDir,
@@ -3945,7 +3990,7 @@ export class TaskExecutor {
               executorLog.log(`${task.id} paused after completion (graceful session exit) — finalizing to in-review`);
               await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review");
               await this.persistTokenUsage(task.id);
-              await this.store.moveTask(task.id, "in-review");
+              await this.handoffTaskToReview(task, "paused-after-completion");
               this.clearCompletedTaskWatchdog(task.id);
               this.options.onComplete?.(task);
             } else {
@@ -3997,7 +4042,7 @@ export class TaskExecutor {
           if (taskDone) {
             // Capture modified files before running workflow steps
             const updatedTask = await this.store.getTask(task.id);
-            const modifiedFiles = await this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha);
+            const modifiedFiles = await this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha, task.id, audit, "workflow-fanout");
             if (modifiedFiles.length > 0) {
               await this.store.updateTask(task.id, { modifiedFiles });
               executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
@@ -4053,7 +4098,7 @@ export class TaskExecutor {
             }
 
             await this.persistTokenUsage(task.id);
-            await this.store.moveTask(task.id, "in-review");
+            await this.handoffTaskToReview(task, "fn_task_done");
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} completed → in-review`);
             this.options.onComplete?.(task);
@@ -4235,7 +4280,7 @@ export class TaskExecutor {
 
             if (taskDone) {
               const updatedTask = await this.store.getTask(task.id);
-              const modifiedFiles = await this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha);
+              const modifiedFiles = await this.captureModifiedFiles(worktreePath, updatedTask.baseCommitSha, task.id, audit, "no-task-done-retry");
               if (modifiedFiles.length > 0) {
                 await this.store.updateTask(task.id, { modifiedFiles });
                 executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
@@ -4283,7 +4328,7 @@ export class TaskExecutor {
               }
 
               await this.persistTokenUsage(task.id);
-              await this.store.moveTask(task.id, "in-review");
+              await this.handoffTaskToReview(task, "fn_task_done-retry-completed");
               this.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} completed on retry → in-review`);
               this.options.onComplete?.(task);
@@ -4336,7 +4381,7 @@ export class TaskExecutor {
                 await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
                 await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`, undefined, this.getRunContextFor(task.id));
                 await this.persistTokenUsage(task.id);
-                await this.store.moveTask(task.id, "in-review");
+                await this.handoffTaskToReview(task, "max-task-done-retries-exhausted");
                 executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no fn_task_done → in-review`);
               }
               this.options.onError?.(task, new Error(errorMessage));
@@ -4431,7 +4476,7 @@ export class TaskExecutor {
           executorLog.log(`${task.id} paused after completion — finalizing to in-review`);
           await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, this.getRunContextFor(task.id));
           await this.persistTokenUsage(task.id);
-          await this.store.moveTask(task.id, "in-review");
+          await this.handoffTaskToReview(task, "paused-after-completion");
           this.options.onComplete?.(task);
         } else {
           executorLog.log(`${task.id} paused — moving to todo`);
@@ -4878,7 +4923,7 @@ export class TaskExecutor {
             nextRecoveryAt: null,
           });
           await this.persistTokenUsage(task.id);
-          await this.store.moveTask(task.id, "in-review");
+          await this.handoffTaskToReview(task, "transient-retries-exhausted");
           executorLog.log(`✗ ${task.id} transient retries exhausted → in-review`);
           this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
@@ -4890,7 +4935,7 @@ export class TaskExecutor {
         await this.store.logEntry(task.id, `Execution failed: ${terminalError}`, errorStack ?? errorDetail, this.getRunContextFor(task.id));
         await this.store.updateTask(task.id, { status: "failed", error: terminalError });
         await this.persistTokenUsage(task.id);
-        await this.store.moveTask(task.id, "in-review");
+        await this.handoffTaskToReview(task, "execution-failed");
         executorLog.log(`✗ ${task.id} execution failed → in-review`);
         this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
@@ -5117,9 +5162,22 @@ export class TaskExecutor {
 
         // If the persisted status doesn't match the requested status, the
         // store rejected the transition (currently: in-progress regression
-        // on a done/skipped step). Tell the agent honestly so it doesn't
-        // assume the step reopened.
+        // on a done/skipped step). FN-5168 treats repeated rebuffs after loop
+        // recovery as a deterministic churn signal, but the agent-facing text
+        // stays unchanged so the tool contract is preserved.
         if (persistedStatus !== status) {
+          stuckDetector?.recordIgnoredStepUpdate(taskId);
+
+          const ignoredStepUpdates = stuckDetector?.getIgnoredStepUpdateCount(taskId) ?? 0;
+          const loopAttempts = this.loopRecoveryState.get(taskId)?.attempts ?? 0;
+          if (loopAttempts >= 1 && ignoredStepUpdates === 25) {
+            executorLog.warn(
+              `${taskId}: no-progress churn detected ` +
+              `(ignoredStepUpdates=${ignoredStepUpdates}, stuckKillStreak=${task.stuckKillCount ?? 0}) — ` +
+              `escalating to STUCK_NO_PROGRESS_CHURN`,
+            );
+          }
+
           return {
             content: [{
               type: "text" as const,
@@ -5289,7 +5347,7 @@ export class TaskExecutor {
     worktreePathOverride?: string,
   ): Promise<{ ok: true } | { ok: false; reason: "wrong_toplevel" | "wrong_branch" | "no_commits"; observed: string; expected: string }> {
     const settings = await this.store.getSettings();
-    const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+    const branchName = task.branch || canonicalFusionBranchName(task.id);
     const worktreePath = worktreePathOverride ?? task.worktree ?? this.activeWorktrees.get(task.id) ?? null;
 
     if (!worktreePath) {
@@ -5360,6 +5418,31 @@ export class TaskExecutor {
       });
       const observedBranch = stdout.trim();
       if (observedBranch && observedBranch !== branchName) {
+        if (observedBranch.toLowerCase() === branchName.toLowerCase()) {
+          executorLog.log(`${task.id}: branch case-mismatch detected; canonicalizing observed=${observedBranch} expected=${branchName}`);
+          const autocorrectResult = await attemptBranchAutocorrect({
+            worktreePath,
+            observedBranch,
+            expectedBranch: branchName,
+            rootDir: this.rootDir,
+          });
+          if (autocorrectResult.status !== "failed") {
+            const auditor = createRunAuditor(this.store, this.getRunContextFor(task.id));
+            await auditor.git({
+              type: "branch:auto-canonicalize-case",
+              target: worktreePath,
+              metadata: {
+                taskId: task.id,
+                observed: observedBranch,
+                expected: branchName,
+                worktreePath,
+                mode: autocorrectResult.status,
+              },
+            });
+            return { ok: true };
+          }
+          executorLog.warn(`${task.id}: failed to canonicalize branch case mismatch: ${autocorrectResult.reason ?? "unknown"}`);
+        }
         return {
           ok: false,
           reason: "wrong_branch",
@@ -5424,6 +5507,7 @@ export class TaskExecutor {
     worktreePath: string,
     promptContent: string,
     settings: Settings,
+    audit?: RunAuditor,
   ): Promise<{ blocked: false } | { blocked: true; message: string }> {
     if (task.scopeOverride === true) {
       executorLog.log(`${task.id}: scope-leak guard bypassed (scopeOverride=true)`);
@@ -5448,7 +5532,7 @@ export class TaskExecutor {
 
     const [uncommittedTouchedFiles, branchCommittedFiles] = await Promise.all([
       this.captureUncommittedModifiedFiles(worktreePath),
-      this.captureModifiedFiles(worktreePath, task.baseCommitSha),
+      this.captureModifiedFiles(worktreePath, task.baseCommitSha, task.id, audit, "scope-leak-guard"),
     ]);
 
     const touchedFiles = [...new Set([...uncommittedTouchedFiles, ...branchCommittedFiles])];
@@ -5532,7 +5616,7 @@ export class TaskExecutor {
       });
       await this.store.logEntry(task.id, `${refusal.message} — moved to in-review for inspection`, undefined, this.getRunContextFor(task.id));
       await this.persistTokenUsage(task.id);
-      await this.store.moveTask(task.id, "in-review");
+      await this.handoffTaskToReview(task, "implicit-fn_task_done-refused");
     }
 
     this.deleteActiveSession(task.id);
@@ -5545,6 +5629,7 @@ export class TaskExecutor {
     promptContent: string,
     codeReviewVerdicts: Map<number, ReviewVerdict>,
     onDone: () => void,
+    audit?: RunAuditor,
   ): ToolDefinition {
     const store = this.store;
     return {
@@ -5612,7 +5697,14 @@ export class TaskExecutor {
             });
             await store.logEntry(taskId, `${refusalMessage} — moved to in-review for inspection`, undefined, this.getRunContextFor(task.id));
             await this.persistTokenUsage(taskId);
-            await store.moveTask(taskId, "in-review");
+            await store.handoffToReview(taskId, {
+              ownerAgentId: this.getRunContextFor(task.id)?.agentId ?? null,
+              evidence: {
+                reason: "invariant-check-failed",
+                runId: this.getRunContextFor(task.id)?.runId,
+                agentId: this.getRunContextFor(task.id)?.agentId,
+              },
+            });
             executorLog.log(`✗ ${taskId} failed invariant check — moved to in-review`);
           }
 
@@ -5663,7 +5755,14 @@ export class TaskExecutor {
             });
             await store.logEntry(taskId, `${refusalMessage} — moved to in-review for inspection`, undefined, this.getRunContextFor(task.id));
             await this.persistTokenUsage(taskId);
-            await store.moveTask(taskId, "in-review");
+            await store.handoffToReview(taskId, {
+              ownerAgentId: this.getRunContextFor(task.id)?.agentId ?? null,
+              evidence: {
+                reason: "fn_task_done-refused",
+                runId: this.getRunContextFor(task.id)?.runId,
+                agentId: this.getRunContextFor(task.id)?.agentId,
+              },
+            });
             executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass}) — moved to in-review for inspection`);
           }
 
@@ -5677,7 +5776,7 @@ export class TaskExecutor {
         }
 
         const settings = await store.getSettings();
-        const scopeLeakCheck = await this.evaluateTaskDoneScopeLeak(task, worktreePath, promptContent, settings)
+        const scopeLeakCheck = await this.evaluateTaskDoneScopeLeak(task, worktreePath, promptContent, settings, audit)
           .catch((error: unknown) => {
             const errorMessage = error instanceof Error ? error.message : String(error);
             executorLog.warn(`${taskId}: scope-leak guard failed open: ${errorMessage}`);
@@ -6065,7 +6164,7 @@ export class TaskExecutor {
 
     // Delete the branch — use stored branch name if available, fall back to convention
     const task = await this.store.getTask(taskId);
-    const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
+    const branch = task.branch || canonicalFusionBranchName(taskId);
     let branchDeleted = false;
     try {
       await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
@@ -6873,25 +6972,55 @@ ${failureFeedback}
     }
   }
 
-  private async captureModifiedFiles(worktreePath: string, baseCommitSha?: string): Promise<string[]> {
+  private async captureModifiedFiles(
+    worktreePath: string,
+    baseCommitSha: string | undefined,
+    taskId: string,
+    audit?: RunAuditor,
+    source = "unspecified",
+  ): Promise<string[]> {
     try {
       const baseRef = await this.resolveDiffBaseRef(worktreePath, baseCommitSha);
       if (!baseRef) {
         return [];
       }
 
-      // Get list of modified files using git diff --name-only
-      const { stdout } = await execAsync(`git diff --name-only ${baseRef}..HEAD`, {
-        cwd: worktreePath,
-        encoding: "utf-8",
-      });
-      const output = stdout.trim();
-
-      if (!output) {
-        return [];
+      try {
+        const attributed = await filterFilesToOwnTaskCommits({
+          worktreePath,
+          baseRef,
+          taskId,
+        });
+        const divergence = attributed.rawDiffFileCount - attributed.files.length;
+        if (divergence > 0) {
+          await audit?.database({
+            type: "task:worktree-contamination-detected",
+            target: taskId,
+            metadata: {
+              rawDiffFileCount: attributed.rawDiffFileCount,
+              attributedFileCount: attributed.files.length,
+              foreignCommitCount: attributed.foreignCommits.length,
+              foreignCommitShas: attributed.foreignCommits.slice(0, 5).map((commit) => commit.sha),
+              source,
+            },
+          });
+          executorLog.warn(
+            `${taskId}: contamination detected — raw diff ${attributed.rawDiffFileCount} files, attributed ${attributed.files.length} (foreign commits: ${attributed.foreignCommits.length})`,
+          );
+        }
+        return attributed.files;
+      } catch (error) {
+        if (error instanceof BranchAttributionError) {
+          executorLog.warn(`${taskId}: branch-attribution failed (${error.message}); falling back to raw diff`);
+          const { stdout } = await execAsync(`git diff --name-only ${baseRef}..HEAD`, {
+            cwd: worktreePath,
+            encoding: "utf-8",
+          });
+          const output = stdout.trim();
+          return output ? output.split("\n").filter(Boolean) : [];
+        }
+        throw error;
       }
-
-      return output.split("\n").filter(Boolean);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       executorLog.log(`Failed to capture modified files: ${errorMessage}`);
@@ -7000,7 +7129,7 @@ ${failureFeedback}
 
       if (this.isFrontendUxStep(ws)) {
         try {
-          const diffScopedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha);
+          const diffScopedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha, task.id, undefined, "workflow-step-frontend-ux");
           const declaredScopedFiles = await this.store.parseFileScopeFromPrompt(task.id).catch(() => [] as string[]);
           const diffHasSignal = diffScopedFiles.length > 0;
           const declaredHasSignal = declaredScopedFiles.length > 0;
@@ -7054,7 +7183,7 @@ ${failureFeedback}
         && stepMode === "prompt"
         && workflowStepScopeEnforcement !== "off";
       const preStepModifiedFiles = shouldCheckWorkflowStepScope
-        ? await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha)
+        ? await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha, task.id, undefined, "workflow-step-pre")
         : [];
 
       // Push pending entry BEFORE execution so dashboard can show live status
@@ -7081,7 +7210,7 @@ ${failureFeedback}
             const declaredScope = await this.store.parseFileScopeFromPrompt(task.id).catch(() => [] as string[]);
             const refreshedTask = await this.store.getTask(task.id);
             if (declaredScope.length > 0 && refreshedTask?.scopeOverride !== true) {
-              const postStepModifiedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha);
+              const postStepModifiedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha, task.id, undefined, "workflow-step-post");
               const preStepSet = new Set(preStepModifiedFiles);
               const stepCommittedFiles = postStepModifiedFiles.filter((filePath) => !preStepSet.has(filePath));
               const stepUncommittedFiles = await this.captureUncommittedModifiedFiles(worktreePath);
@@ -7379,7 +7508,7 @@ ${failureFeedback}
     // open-ended review prompts (e.g. "verify visual polish") have been
     // observed to spend the entire timeout budget reading pre-existing files
     // that match the task description's keywords. See FN-3327 post-mortem.
-    const scopedFiles = await this.captureModifiedFiles(worktreePath, task.baseCommitSha);
+    const scopedFiles = await this.captureModifiedFiles(worktreePath, task.baseCommitSha, task.id, undefined, "workflow-step-handler");
     let diffShortstat: string | undefined;
     try {
       const baseRef = await this.resolveDiffBaseRef(worktreePath, task.baseCommitSha);
@@ -8431,7 +8560,10 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       | "worktree:stale-lock-detected"
       | "worktree:stale-lock-recovered"
       | "worktree:stale-lock-recovery-failed"
-      | "worktree:stale-lock-refused",
+      | "worktree:stale-lock-refused"
+      | "worktree:stale-registration-detected"
+      | "worktree:stale-registration-recovered"
+      | "worktree:stale-registration-recovery-failed",
     targetPath: string,
     metadata: Record<string, unknown>,
   ): Promise<void> {
@@ -8504,6 +8636,34 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
    * Single attempt to create a worktree with conflict detection and recovery.
    * Returns the actual worktree path used (may differ from input if recovery generated new name).
    */
+  private async recoverStaleRegistration(taskId: string, path: string, conflictInfo: { path?: string; message?: string }): Promise<boolean> {
+    const staleRegistrationPath = conflictInfo.path ?? path;
+    await this.emitStaleLockAudit(taskId, "worktree:stale-registration-detected", path, {
+      staleRegistrationPath,
+      worktreePath: path,
+    });
+
+    const recovery = await recoverStaleRegistration({
+      rootDir: this.rootDir,
+      worktreePath: path,
+      logger: executorLog,
+    });
+
+    if (recovery.recovered) {
+      await this.emitStaleLockAudit(taskId, "worktree:stale-registration-recovered", path, {
+        actions: recovery.actions,
+      });
+      await this.store.logEntry(taskId, "Recovered stale worktree registration and retrying", staleRegistrationPath, this.getRunContextFor(taskId));
+      return true;
+    }
+
+    await this.emitStaleLockAudit(taskId, "worktree:stale-registration-recovery-failed", path, {
+      actions: recovery.actions,
+      reason: recovery.reason ?? "unknown",
+    });
+    return false;
+  }
+
   private async tryCreateWorktree(
     branch: string,
     path: string,
@@ -8523,7 +8683,13 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
 
     const installGuardOrCleanup = async () => {
       try {
-        await installTaskWorktreeIdentityGuard({ worktreePath: path, taskId });
+        await installTaskWorktreeIdentityGuard({
+          worktreePath: path,
+          taskId,
+          commitMsgHookEnabled: settings.commitMsgHookEnabled,
+          taskPrefix: settings.taskPrefix,
+          taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],
+        });
       } catch (error) {
         try {
           await execAsync(`rm -rf "${path}"`, { cwd: this.rootDir });
@@ -8591,6 +8757,7 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
     };
 
     let staleLockRecoveryAttempted = false;
+    let staleRegistrationRecoveryAttempted = false;
     try {
       await createWithBranch(branch);
       executorLog.log(`Worktree created: ${path}${startPoint ? ` (from ${startPoint})` : ""}`);
@@ -8608,6 +8775,17 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
         if (recovered) {
           await createWithBranch(branch);
           executorLog.log(`Worktree created after stale lock recovery: ${path}`);
+          await installGuardOrCleanup();
+          return { path, branch };
+        }
+      }
+
+      if (conflictInfo.type === "stale-registration" && !staleRegistrationRecoveryAttempted) {
+        staleRegistrationRecoveryAttempted = true;
+        const recovered = await this.recoverStaleRegistration(taskId, path, conflictInfo);
+        if (recovered) {
+          await createWithBranch(branch);
+          executorLog.log(`Worktree created after stale registration recovery: ${path}`);
           await installGuardOrCleanup();
           return { path, branch };
         }
@@ -8680,6 +8858,17 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
           if (recovered) {
             await createFromExistingBranch();
             executorLog.log(`Worktree created from existing branch after stale lock recovery: ${path}`);
+            await installGuardOrCleanup();
+            return { path, branch };
+          }
+        }
+
+        if (fallbackConflictInfo.type === "stale-registration" && !staleRegistrationRecoveryAttempted) {
+          staleRegistrationRecoveryAttempted = true;
+          const recovered = await this.recoverStaleRegistration(taskId, path, fallbackConflictInfo);
+          if (recovered) {
+            await createFromExistingBranch();
+            executorLog.log(`Worktree created from existing branch after stale registration recovery: ${path}`);
             await installGuardOrCleanup();
             return { path, branch };
           }
@@ -9162,7 +9351,7 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
    * - "working tree already exists"
    */
   private extractWorktreeConflictInfo(error: unknown): {
-    type: "already-used" | "invalid-reference" | "leading-directories" | "already-exists" | "not-git-repo" | "index-lock-contention" | "unknown";
+    type: "already-used" | "invalid-reference" | "leading-directories" | "already-exists" | "not-git-repo" | "index-lock-contention" | "stale-registration" | "unknown";
     path?: string;
     lockPath?: string;
     message?: string;
@@ -9191,6 +9380,11 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
     const lockPath = parseIndexLockPath(output);
     if (lockPath) {
       return { type: "index-lock-contention", lockPath, message: output };
+    }
+
+    const staleRegistrationPath = parseStaleRegistrationPath(output);
+    if (staleRegistrationPath) {
+      return { type: "stale-registration", path: staleRegistrationPath, message: output };
     }
 
     // Pattern: invalid reference: 'branch-name'
@@ -9413,7 +9607,7 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
     );
     if (completedSteps.length === 0) return;
 
-    const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+    const branchName = task.branch || canonicalFusionBranchName(task.id);
 
     try {
       // Check if the branch has any unique commits vs main
@@ -9595,6 +9789,10 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
 
     executorLog.log(`${taskId} compaction succeeded (freed ${compactResult.tokensBefore} tokens) — setting recovery-pending`);
     await this.store.logEntry(taskId, `Context compacted successfully — will resume with fresh context`);
+
+    // FN-5168: once loop recovery has fired in this execute() lifecycle,
+    // ignored fn_task_update rebuffs can be promoted to no-progress churn.
+    this.options.stuckTaskDetector?.markLoopObserved(taskId);
 
     // Mark recovery-pending so the execution flow can consume it
     this.loopRecoveryState.set(taskId, { attempts: attempt, pending: true });
@@ -10071,7 +10269,8 @@ ${hasProgress
 Use \`fn_task_update\` to report progress on every step transition.
 Use \`fn_task_log\` for important actions and decisions.
 Use \`fn_task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
-Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"${sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : ""}${authorArg}\`
+Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — <short summary>"${sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : ""}${authorArg}\`
+The \`<short summary>\` is required — replace it with a concrete 5–10 word description of what the step changed.
 When all steps are complete: call \`fn_task_done()\`
 
 If a build command is configured, run that exact command in this worktree before calling \`fn_task_done()\`.

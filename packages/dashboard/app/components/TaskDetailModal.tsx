@@ -1,6 +1,6 @@
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2 } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -19,7 +19,8 @@ import {
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
 } from "@fusion/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, recoverBranchBinding } from "../api";
+import type { RecoverBranchBindingOutcome } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
@@ -42,7 +43,7 @@ import { ProviderIcon } from "./ProviderIcon";
 import { subscribeSse } from "../sse-bus";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
-import { extractDependencyDeleteConflict } from "../utils/taskDelete";
+import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
 import { MAX_AUTO_MERGE_RETRIES, computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 import { resolveEffectiveGithubRepoDefault } from "./githubTracking";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
@@ -283,8 +284,12 @@ export interface TaskDetailModalProps {
   onClose: () => void;
   onOpenDetail: (task: Task | TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
-  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
-  onArchiveTask?: (id: string) => Promise<Task>;
+  onDeleteTask: (id: string, options?: {
+    removeDependencyReferences?: boolean;
+    removeLineageReferences?: boolean;
+    githubIssueAction?: GithubIssueAction;
+  }) => Promise<Task>;
+  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onResetTask?: (id: string) => Promise<Task>;
@@ -368,6 +373,57 @@ function parseGithubIssueLabel(url: string): { label: string; href: string } | n
     label: `${owner}/${repo}#${number}`,
     href: url,
   };
+}
+
+const BROAD_SCOPE_REASON_LABELS: Record<string, string> = {
+  "size-l": "Size L",
+  "steps-high": "many steps",
+  "file-scope-high": "large file scope",
+  "failing-file-mentions-high": "many failing files mentioned",
+  "size-l-with-many-steps": "Size L + many steps",
+};
+
+function getBroadScopeFlag(sourceMetadata: Task["sourceMetadata"]): {
+  score: number;
+  reasons: string[];
+  signals?: {
+    size?: string | null;
+    stepCount?: number;
+    fileScopeCount?: number;
+    failingFileMentions?: number;
+  };
+} | null {
+  const candidate = sourceMetadata?.broadScopeFlag;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return null;
+  }
+
+  const score = (candidate as { score?: unknown }).score;
+  const reasons = (candidate as { reasons?: unknown }).reasons;
+  const signals = (candidate as { signals?: unknown }).signals;
+
+  if (typeof score !== "number" || !Number.isFinite(score) || !Array.isArray(reasons) || !reasons.every((reason) => typeof reason === "string")) {
+    return null;
+  }
+
+  if (signals != null && (typeof signals !== "object" || Array.isArray(signals))) {
+    return null;
+  }
+
+  return {
+    score,
+    reasons,
+    signals: signals as {
+      size?: string | null;
+      stepCount?: number;
+      fileScopeCount?: number;
+      failingFileMentions?: number;
+    } | undefined,
+  };
+}
+
+function formatBroadScopeReasons(reasons: string[]): string {
+  return reasons.map((reason) => BROAD_SCOPE_REASON_LABELS[reason] ?? reason).join(", ");
 }
 
 function getResearchContextInfo(metadata: Task["sourceMetadata"]): string | undefined {
@@ -541,6 +597,7 @@ export function TaskDetailContent({
   const provenanceDisplay = getProvenanceLabel(workingTask, {
     sourceAgentName: sourceAgent?.name,
   });
+  const broadScopeFlag = getBroadScopeFlag(workingTask.sourceMetadata);
 
   // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
   useEffect(() => {
@@ -624,6 +681,7 @@ export function TaskDetailContent({
   const [inlineNoCommitsExpected, setInlineNoCommitsExpected] = useState<boolean>(task.noCommitsExpected === true);
   const [isSavingInlineNoCommitsExpected, setIsSavingInlineNoCommitsExpected] = useState(false);
   const mountedRef = useRef(false);
+  const activeTaskIdRef = useRef(task.id);
 
   // Split-menu dropdown state for footer actions
   const [showMoveMenu, setShowMoveMenu] = useState(false);
@@ -635,6 +693,8 @@ export function TaskDetailContent({
   const [githubTrackingEnabledDraft, setGithubTrackingEnabledDraft] = useState<boolean | null>(null);
   const [githubRepoOverrideError, setGithubRepoOverrideError] = useState<string | null>(null);
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
+  const [isRecoveringBranchBinding, setIsRecoveringBranchBinding] = useState(false);
+  const [recoverBranchBindingOutcome, setRecoverBranchBindingOutcome] = useState<RecoverBranchBindingOutcome | null>(null);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const activityListRef = useRef<HTMLDivElement>(null);
   const moveButtonRef = useRef<HTMLButtonElement>(null);
@@ -659,6 +719,10 @@ export function TaskDetailContent({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    activeTaskIdRef.current = task.id;
+  }, [task.id]);
 
   // Merged project settings for effective model resolution in Agent Log header
   const [settings, setSettings] = useState<Settings | undefined>(undefined);
@@ -687,6 +751,8 @@ export function TaskDetailContent({
     setGithubTrackingEnabledDraft(null);
     setGithubRepoOverrideError(null);
     setIsEditing(false);
+    setRecoverBranchBindingOutcome(null);
+    setIsRecoveringBranchBinding(false);
   }, [task.id, task.title, task.description, task.branch, task.baseBranch, task.sourceIssue, task.executionMode, workingTask.githubTracking]);
 
   useEffect(() => {
@@ -925,6 +991,7 @@ export function TaskDetailContent({
 
   const handleToggleGithubTracking = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;
+    const requestTaskId = task.id;
     const nextEnabled = !githubTrackingEnabled;
     setGithubTrackingEnabledDraft(nextEnabled);
     setIsSavingGithubTracking(true);
@@ -934,20 +1001,27 @@ export function TaskDetailContent({
           enabled: nextEnabled,
         },
       }, projectId);
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
       setFullDetail((prev) => prev
         ? ({ ...prev, ...updatedTask, githubTracking: updatedTask.githubTracking } as TaskDetail)
         : (updatedTask as TaskDetail));
       onTaskUpdated?.(updatedTask);
     } catch (err) {
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
       setGithubTrackingEnabledDraft(workingTask.githubTracking?.enabled === true);
       addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
     } finally {
-      if (mountedRef.current) setIsSavingGithubTracking(false);
+      if (mountedRef.current && activeTaskIdRef.current === requestTaskId) setIsSavingGithubTracking(false);
     }
   }, [addToast, canEditGithubTracking, githubTrackingEnabled, isSavingGithubTracking, onTaskUpdated, projectId, workingTask.githubTracking?.enabled, task.id]);
 
   const handleSaveGithubRepoOverride = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;
+    const requestTaskId = task.id;
     if (githubRepoOverrideTrimmed.length > 0 && !REPO_OVERRIDE_RE.test(githubRepoOverrideTrimmed)) {
       setGithubRepoOverrideError("Repository override must be in owner/repo format");
       return;
@@ -960,14 +1034,20 @@ export function TaskDetailContent({
           repoOverride: githubRepoOverrideTrimmed.length > 0 ? githubRepoOverrideTrimmed : null,
         },
       }, projectId);
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
       setFullDetail((prev) => prev
         ? ({ ...prev, ...updatedTask, githubTracking: updatedTask.githubTracking } as TaskDetail)
         : (updatedTask as TaskDetail));
       onTaskUpdated?.(updatedTask);
     } catch (err) {
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
       addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
     } finally {
-      if (mountedRef.current) setIsSavingGithubTracking(false);
+      if (mountedRef.current && activeTaskIdRef.current === requestTaskId) setIsSavingGithubTracking(false);
     }
   }, [addToast, canEditGithubTracking, githubRepoOverrideTrimmed, isSavingGithubTracking, onTaskUpdated, projectId, task.id]);
 
@@ -977,6 +1057,7 @@ export function TaskDetailContent({
       addToast("Add a title before creating a tracking issue", "info");
       return;
     }
+    const requestTaskId = task.id;
     setIsSavingGithubTracking(true);
     try {
       const updatedTask = await updateTask(task.id, {
@@ -984,15 +1065,21 @@ export function TaskDetailContent({
           enabled: true,
         },
       }, projectId);
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
       setFullDetail((prev) => prev
         ? ({ ...prev, ...updatedTask, githubTracking: updatedTask.githubTracking } as TaskDetail)
         : (updatedTask as TaskDetail));
       onTaskUpdated?.(updatedTask);
       addToast("Requested GitHub tracking issue creation", "info");
     } catch (err) {
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
       addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
     } finally {
-      if (mountedRef.current) setIsSavingGithubTracking(false);
+      if (mountedRef.current && activeTaskIdRef.current === requestTaskId) setIsSavingGithubTracking(false);
     }
   }, [addToast, githubTrackedIssue, githubTrackingEnabled, isSavingGithubTracking, onTaskUpdated, projectId, task]);
 
@@ -1418,7 +1505,30 @@ export function TaskDetailContent({
           addToast(`Archived ${task.id}`, "success");
           requestClose();
         } catch (err) {
-          addToast(getErrorMessage(err), "error");
+          const lineageConflict = extractLineageDeleteConflict(err);
+          if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+            addToast(getErrorMessage(err), "error");
+            return;
+          }
+
+          const confirmedArchive = await confirm({
+            title: "Force Delete Task",
+            message:
+              `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+              "Archive anyway by unlinking these references first?",
+            danger: true,
+          });
+          if (!confirmedArchive) {
+            return;
+          }
+
+          try {
+            await onArchiveTask(task.id, { removeLineageReferences: true });
+            addToast(`Archived ${task.id} after unlinking lineage references`, "success");
+            requestClose();
+          } catch (retryErr) {
+            addToast(getErrorMessage(retryErr), "error");
+          }
         }
         return;
       }
@@ -1471,18 +1581,72 @@ export function TaskDetailContent({
         : "";
       addToast(`Deleted ${task.id}${issueSuffix}`, "info");
     } catch (err) {
-      const conflict = extractDependencyDeleteConflict(err);
-      if (!conflict || conflict.dependentIds.length === 0) {
+      const dependencyConflict = extractDependencyDeleteConflict(err);
+      if (dependencyConflict && dependencyConflict.dependentIds.length > 0) {
+        const dependentList = dependencyConflict.dependentIds.join(", ");
+        const confirmed = await confirm({
+          title: "Force Delete Task",
+          message:
+            `${task.id} is a dependency of ${dependentList}.\n\n` +
+            "Delete anyway by removing these dependency references first?",
+          danger: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await onDeleteTask(task.id, {
+            removeDependencyReferences: true,
+            removeLineageReferences: true,
+            githubIssueAction,
+          });
+          requestClose();
+          addToast(`Deleted ${task.id} after removing dependency references`, "info");
+        } catch (retryErr) {
+          const lineageConflict = extractLineageDeleteConflict(retryErr);
+          if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
+            addToast(getErrorMessage(retryErr), "error");
+            return;
+          }
+
+          const confirmedLineage = await confirm({
+            title: "Force Delete Task",
+            message:
+              `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+              "Delete anyway by unlinking these references first?",
+            danger: true,
+          });
+          if (!confirmedLineage) {
+            return;
+          }
+
+          try {
+            await onDeleteTask(task.id, {
+              removeDependencyReferences: true,
+              removeLineageReferences: true,
+              githubIssueAction,
+            });
+            requestClose();
+            addToast(`Deleted ${task.id} after unlinking lineage references`, "info");
+          } catch (lineageRetryErr) {
+            addToast(getErrorMessage(lineageRetryErr), "error");
+          }
+        }
+        return;
+      }
+
+      const lineageConflict = extractLineageDeleteConflict(err);
+      if (!lineageConflict || lineageConflict.lineageChildIds.length === 0) {
         addToast(getErrorMessage(err), "error");
         return;
       }
 
-      const dependentList = conflict.dependentIds.join(", ");
       const confirmed = await confirm({
         title: "Force Delete Task",
         message:
-          `${task.id} is a dependency of ${dependentList}.\n\n` +
-          "Delete anyway by removing these dependency references first?",
+          `${task.id} has lineage children (${lineageConflict.lineageChildIds.join(", ")}) that reference it as a source parent.\n\n` +
+          "Delete anyway by unlinking these references first?",
         danger: true,
       });
       if (!confirmed) {
@@ -1490,9 +1654,13 @@ export function TaskDetailContent({
       }
 
       try {
-        await onDeleteTask(task.id, { removeDependencyReferences: true, githubIssueAction });
+        await onDeleteTask(task.id, {
+          removeDependencyReferences: true,
+          removeLineageReferences: true,
+          githubIssueAction,
+        });
         requestClose();
-        addToast(`Deleted ${task.id} after removing dependency references`, "info");
+        addToast(`Deleted ${task.id} after unlinking lineage references`, "info");
       } catch (retryErr) {
         addToast(getErrorMessage(retryErr), "error");
       }
@@ -1561,6 +1729,25 @@ export function TaskDetailContent({
   }, [task.id, onDuplicateTask, requestClose, addToast, confirm]);
 
   const isTaskPaused = task.paused || task.userPaused;
+  const showRecoverBranchBindingBanner = task.column === "in-review" && !task.branch;
+
+  const handleRecoverBranchBinding = useCallback(async () => {
+    setIsRecoveringBranchBinding(true);
+    try {
+      const outcome = await recoverBranchBinding(task.id, projectId);
+      setRecoverBranchBindingOutcome(outcome);
+      if (outcome.result === "applied") {
+        addToast(`Reattached branch for ${task.id} (${outcome.branch})`, "success");
+        onTaskUpdated?.({ ...task, branch: outcome.branch, worktree: undefined });
+      } else {
+        addToast(`Branch reattachment skipped for ${task.id}: ${outcome.reason}`, "info");
+      }
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    } finally {
+      setIsRecoveringBranchBinding(false);
+    }
+  }, [addToast, onTaskUpdated, projectId, task]);
 
   const handleTogglePause = useCallback(async () => {
     try {
@@ -2304,6 +2491,26 @@ export function TaskDetailContent({
                     </span>
                   </div>
                 )}
+                {broadScopeFlag && (
+                  <div className="detail-broad-scope-banner" aria-label="Triage broad-scope advisory">
+                    <AlertTriangle aria-hidden="true" />
+                    <div className="detail-broad-scope-banner-content">
+                      <div className="detail-broad-scope-banner-heading">Triage broad-scope advisory</div>
+                      <div>{`Score ${broadScopeFlag.score} · ${formatBroadScopeReasons(broadScopeFlag.reasons)}`}</div>
+                      <div>
+                        {[
+                          broadScopeFlag.signals?.size ? `Size: ${broadScopeFlag.signals.size}` : null,
+                          typeof broadScopeFlag.signals?.stepCount === "number" ? `Steps: ${broadScopeFlag.signals.stepCount}` : null,
+                          typeof broadScopeFlag.signals?.fileScopeCount === "number" ? `File scope: ${broadScopeFlag.signals.fileScopeCount}` : null,
+                          typeof broadScopeFlag.signals?.failingFileMentions === "number"
+                            ? `Failing-file mentions: ${broadScopeFlag.signals.failingFileMentions}`
+                            : null,
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                      <div className="detail-broad-scope-banner-note">Advisory only — task lifecycle is unaffected.</div>
+                    </div>
+                  </div>
+                )}
                 {(task.prInfo?.number || task.mergeDetails?.prNumber) && (
                   <div className="detail-provenance detail-pr-link-row">
                     <GitBranch aria-hidden="true" />
@@ -2540,6 +2747,7 @@ export function TaskDetailContent({
               projectId={projectId}
               onTaskUpdated={onTaskUpdated}
               prAuthAvailable={prAuthAvailable}
+              autoMergeEnabled={autoMergeEnabled}
               onRequestCreatePr={() => setPrCreateOpen(true)}
             />
           ) : activeTab === "comments" ? (
@@ -3323,6 +3531,7 @@ export function TaskDetailContent({
                 taskId={task.id}
                 projectId={projectId}
                 prInfo={task.prInfo}
+                prInfos={task.prInfos}
                 automationStatus={task.status ?? null}
                 taskColumn={task.column}
                 autoMerge={settings?.autoMerge ?? false}
@@ -3331,20 +3540,21 @@ export function TaskDetailContent({
                 prAuthAvailable={prAuthAvailable ?? false}
                 onRequestCreatePr={() => setPrCreateOpen(true)}
                 onPrUpdated={(prInfo) => {
-                  (task as TaskDetail).prInfo = prInfo;
+                  const existing = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
+                  const nextPrInfos = existing.some((entry) => entry.number === prInfo.number)
+                    ? existing.map((entry) => (entry.number === prInfo.number ? prInfo : entry))
+                    : [...existing, prInfo];
+                  (task as TaskDetail).prInfos = nextPrInfos;
+                  (task as TaskDetail).prInfo = nextPrInfos[0] ?? prInfo;
                 }}
-                addToast={addToast}
-              />
-              <PrCreateModal
-                open={prCreateOpen}
-                taskId={task.id}
-                projectId={projectId}
-                defaultBaseBranch={undefined}
-                onClose={() => setPrCreateOpen(false)}
-                onCreated={(prInfo) => {
-                  (task as TaskDetail).prInfo = prInfo;
-                  onTaskUpdated?.({ ...workingTask, prInfo } as Task);
-                  setPrCreateOpen(false);
+                onPrsRefreshed={(prInfos) => {
+                  (task as TaskDetail).prInfos = prInfos;
+                  (task as TaskDetail).prInfo = prInfos[0];
+                }}
+                onPrUnlinked={(prNumber) => {
+                  const nextPrInfos = (task.prInfos ?? (task.prInfo ? [task.prInfo] : [])).filter((entry) => entry.number !== prNumber);
+                  (task as TaskDetail).prInfos = nextPrInfos;
+                  (task as TaskDetail).prInfo = nextPrInfos[0];
                 }}
                 addToast={addToast}
               />
@@ -3356,6 +3566,61 @@ export function TaskDetailContent({
           </>
           )}
         </div>
+        {task.column === "in-review" && (
+          <PrCreateModal
+            open={prCreateOpen}
+            taskId={task.id}
+            projectId={projectId}
+            defaultBaseBranch={undefined}
+            onClose={() => setPrCreateOpen(false)}
+            onCreated={(prInfo) => {
+              const nextPrInfos = [...(task.prInfos ?? (task.prInfo ? [task.prInfo] : [])), prInfo];
+              (task as TaskDetail).prInfo = nextPrInfos[0] ?? prInfo;
+              (task as TaskDetail).prInfos = nextPrInfos;
+              onTaskUpdated?.({ ...workingTask, prInfo: nextPrInfos[0] ?? prInfo, prInfos: nextPrInfos } as Task);
+              setPrCreateOpen(false);
+            }}
+            addToast={addToast}
+          />
+        )}
+        {showRecoverBranchBindingBanner && (
+          <div className="detail-section rebind-banner" role="status">
+            <div className="rebind-banner-header">
+              <GitBranch aria-hidden="true" />
+              <span className="rebind-banner-headline">Branch needs reattachment</span>
+            </div>
+            <p className="rebind-banner-copy">
+              This in-review task isn't currently attached to a fusion branch. If a live fusion branch still exists for it, you can reattach it here.
+            </p>
+            {recoverBranchBindingOutcome && (
+              <div className="rebind-banner-result">
+                {recoverBranchBindingOutcome.result === "applied"
+                  ? `Reattached ${recoverBranchBindingOutcome.branch} (${recoverBranchBindingOutcome.aheadCount} commits ahead of ${recoverBranchBindingOutcome.integrationBase}).`
+                  : `Reattachment skipped: ${recoverBranchBindingOutcome.reason}`}
+                {recoverBranchBindingOutcome.result === "skipped" && recoverBranchBindingOutcome.candidates?.length ? (
+                  <span>
+                    {` Candidates: ${recoverBranchBindingOutcome.candidates.map((entry) => `${entry.branch} (${entry.aheadCount})`).join(", ")}`}
+                  </span>
+                ) : null}
+              </div>
+            )}
+            <div className="rebind-banner-actions">
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => void handleRecoverBranchBinding()}
+                disabled={isRecoveringBranchBinding}
+              >
+                {isRecoveringBranchBinding ? (
+                  <>
+                    <Loader2 size={16} className="spin" aria-hidden="true" />
+                    Reattaching…
+                  </>
+                ) : "Reattach branch"}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="modal-actions">
           {isEditing ? (
             <>

@@ -1,10 +1,10 @@
-import { execSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import * as childProcess from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import zlib from "node:zlib";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AgentCompaniesParseError,
@@ -35,6 +35,12 @@ function createTempDir(): string {
 function writeTextFile(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content, "utf-8");
+}
+
+function createTarFixture(archivePath: string, cwd: string, rootEntry: string): void {
+  childProcess.execSync(
+    `tar czf ${JSON.stringify(archivePath)} -C ${JSON.stringify(cwd)} ${JSON.stringify(rootEntry)}`,
+  );
 }
 
 // Keep ZIP fixtures fully deterministic and self-contained without relying on
@@ -431,11 +437,57 @@ name: Archive CEO
 ---`);
 
       const archivePath = join(root, "company.tgz");
-      execSync(`tar czf ${JSON.stringify(archivePath)} -C ${JSON.stringify(root)} company-package`);
+      createTarFixture(archivePath, root, "company-package");
 
       const pkg = await parseCompanyArchive(archivePath);
       expect(pkg.company?.name).toBe("Archive Company");
       expect(pkg.agents[0]?.name).toBe("Archive CEO");
+    });
+
+    it("extracts .tgz archives without invoking the host tar binary", async () => {
+      const root = createTempDir();
+      const packageDir = join(root, "company-package");
+      writeTextFile(join(packageDir, "COMPANY.md"), `---\nname: Archive Company\n---`);
+
+      const archivePath = join(root, "company.tgz");
+      createTarFixture(archivePath, root, "company-package");
+
+      const execFileMock = vi.fn();
+      const execMock = vi.fn();
+      const spawnMock = vi.fn();
+      const execSyncMock = vi.fn();
+
+      vi.resetModules();
+      vi.doMock("node:child_process", async (importOriginal) => {
+        const actual = await importOriginal<typeof import("node:child_process")>();
+        return {
+          ...actual,
+          execFile: execFileMock,
+          exec: execMock,
+          spawn: spawnMock,
+          execSync: execSyncMock,
+        };
+      });
+
+      const parserModule = await import("../agent-companies-parser.js");
+      const pkg = await parserModule.parseCompanyArchive(archivePath);
+
+      expect(pkg.company?.name).toBe("Archive Company");
+      expect(execFileMock).not.toHaveBeenCalled();
+      expect(execMock).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(execSyncMock).not.toHaveBeenCalled();
+
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    });
+
+    it("does not reference child-process tar extraction in production source", () => {
+      const parserSource = readFileSync(new URL("../agent-companies-parser.ts", import.meta.url), "utf-8");
+      expect(parserSource).not.toContain("node:child_process");
+      expect(parserSource).not.toContain("execSync(");
+      expect(parserSource).not.toContain("execFile(");
+      expect(parserSource).not.toContain("spawn(");
     });
 
     it("throws descriptive error when tar extraction fails", async () => {
@@ -463,11 +515,28 @@ name: Nested Archive CEO
 ---`);
 
       const archivePath = join(root, "nested-company.tgz");
-      execSync(`tar czf ${JSON.stringify(archivePath)} -C ${JSON.stringify(root)} outer-layer`);
+      createTarFixture(archivePath, root, "outer-layer");
 
       const pkg = await parseCompanyArchive(archivePath);
       expect(pkg.company?.name).toBe("Nested Archive Company");
       expect(pkg.agents[0]?.name).toBe("Nested Archive CEO");
+    });
+
+    it("surfaces a deterministic AgentCompaniesParseError when the archive is truncated mid-stream", async () => {
+      const root = createTempDir();
+      const packageDir = join(root, "company-package");
+      writeTextFile(join(packageDir, "COMPANY.md"), `---\nname: Archive Company\n---`);
+
+      const validArchivePath = join(root, "valid-company.tgz");
+      createTarFixture(validArchivePath, root, "company-package");
+
+      const truncatedArchivePath = join(root, "truncated-company.tgz");
+      writeFileSync(truncatedArchivePath, readFileSync(validArchivePath).subarray(0, 64));
+
+      await expect(parseCompanyArchive(truncatedArchivePath)).rejects.toMatchObject({
+        name: "AgentCompaniesParseError",
+        message: expect.stringMatching(/^Failed to parse Agent Companies archive/),
+      });
     });
 
     it("throws AgentCompaniesParseError for a non-existent .tar.gz file", async () => {
@@ -516,6 +585,25 @@ name: Nested Archive CEO
       expect(pkg.company?.name).toBe("GStack");
       expect(pkg.company?.name).not.toBe("Aeon");
       expect(pkg.agents[0]?.name).toBe("GStack CEO");
+    });
+
+    it("preserves subPath validation for .tgz archives", async () => {
+      const root = createTempDir();
+      const monorepoDir = join(root, "companies-main");
+      writeTextFile(join(monorepoDir, "aeon", "COMPANY.md"), `---\nname: Aeon\n---`);
+      writeTextFile(join(monorepoDir, "gstack", "COMPANY.md"), `---\nname: GStack\n---`);
+      writeTextFile(join(monorepoDir, "gstack", "agents", "ceo", "AGENTS.md"), `---\nname: GStack CEO\n---`);
+
+      const archivePath = join(root, "mono.tgz");
+      createTarFixture(archivePath, root, "companies-main");
+
+      const pkg = await parseCompanyArchive(archivePath, { subPath: "gstack" });
+      expect(pkg.company?.name).toBe("GStack");
+      expect(pkg.agents[0]?.name).toBe("GStack CEO");
+
+      await expect(parseCompanyArchive(archivePath, { subPath: "../etc" })).rejects.toThrow(
+        AgentCompaniesParseError,
+      );
     });
 
     it("throws when subPath does not contain COMPANY.md", async () => {

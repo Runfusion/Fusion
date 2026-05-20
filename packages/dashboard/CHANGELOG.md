@@ -1,5 +1,22 @@
 # @fusion/dashboard
 
+## 0.32.0
+
+### Patch Changes
+
+- 67aff5d: Fix dashboard occasionally serving a blank/broken page until the server is restarted. The server cached `index.html` and the Vite view-chunk manifest forever with no invalidation, so any on-disk change (release upgrade, rebuild) left the server handing out stale HTML referencing chunk hashes that no longer existed. Both caches now invalidate automatically when the underlying file's mtime changes. The `serveIndexHtml` catch path also now logs the failure and clears the templated cache so a subsequent request can recover, instead of silently returning 404 forever.
+- Updated dependencies [1f0bb7e]
+  - @fusion/core@0.32.0
+  - @fusion/engine@0.32.0
+  - @fusion-plugin-examples/cli-printing-press@0.1.9
+  - @fusion-plugin-examples/dependency-graph@0.1.23
+  - @fusion-plugin-examples/roadmap@0.1.11
+  - @fusion-plugin-examples/cursor-runtime@0.1.11
+  - @fusion-plugin-examples/droid-runtime@0.1.18
+  - @fusion-plugin-examples/hermes-runtime@0.2.42
+  - @fusion-plugin-examples/openclaw-runtime@0.2.42
+  - @fusion-plugin-examples/paperclip-runtime@0.2.42
+
 ## 0.31.0
 
 ### Patch Changes

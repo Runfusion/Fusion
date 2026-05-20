@@ -1992,6 +1992,9 @@ input[type="range"]:focus-visible {
 .card-github-badge {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   gap: var(--space-xs);
   font-size: 0.6875rem;
   font-weight: 600;
@@ -3462,7 +3465,11 @@ input[type="range"]:focus-visible {
 /* Cross-cutting tablet rules only. Component-specific tablet overrides
    live in co-located @media blocks in app/components/. */
 @media (min-width: 769px) and (max-width: 1024px) {
-  /* (no cross-cutting tablet rules at present) */
+  .board {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    overflow-x: hidden;
+    overflow-y: hidden;
+  }
 }
 
 /* === Badge Base === */

@@ -536,14 +536,12 @@ describe("bin command routing and fallbacks", () => {
     );
   });
 
-  it("routes mission list alias", async () => {
-    await runBin(["mission", "ls"]);
-    expect(commandMocks.runMissionList).toHaveBeenCalledWith(undefined, { includeDrafts: true });
-  });
-
-  it("routes mission list with --no-drafts", async () => {
-    await runBin(["mission", "list", "--no-drafts"]);
-    expect(commandMocks.runMissionList).toHaveBeenCalledWith(undefined, { includeDrafts: false });
+  it.each([
+    { args: ["mission", "ls"], includeDrafts: true },
+    { args: ["mission", "list", "--no-drafts"], includeDrafts: false },
+  ])("routes mission list variants %#", async ({ args, includeDrafts }) => {
+    await runBin(args);
+    expect(commandMocks.runMissionList).toHaveBeenCalledWith(undefined, { includeDrafts });
   });
 
   it("routes mission show alias", async () => {
@@ -649,20 +647,20 @@ describe("bin command routing and fallbacks", () => {
     expect(logSpy).toHaveBeenCalledWith("Try: fn research create | list | show | export | cancel | retry");
   });
 
-  it("routes top-level pr create with draft/no-ai/reviewer flags", async () => {
-    await runBin(["pr", "create", "FN-001", "--draft", "--no-ai", "--reviewer", "alice", "--reviewer", "bob"]);
+  it.each([
+    {
+      args: ["pr", "create", "FN-001", "--draft", "--no-ai", "--reviewer", "alice", "--reviewer", "bob"],
+      expected: { draft: true, ai: false, reviewers: ["alice", "bob"] },
+    },
+    {
+      args: ["task", "pr-create", "FN-001", "--draft"],
+      expected: { draft: true, ai: true },
+    },
+  ])("routes PR creation variants %#", async ({ args, expected }) => {
+    await runBin(args);
     expect(commandMocks.runTaskPrCreate).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ draft: true, ai: false, reviewers: ["alice", "bob"] }),
-      undefined,
-    );
-  });
-
-  it("routes task pr-create alias with same flags", async () => {
-    await runBin(["task", "pr-create", "FN-001", "--draft"]);
-    expect(commandMocks.runTaskPrCreate).toHaveBeenCalledWith(
-      "FN-001",
-      expect.objectContaining({ draft: true, ai: true }),
+      expect.objectContaining(expected),
       undefined,
     );
   });

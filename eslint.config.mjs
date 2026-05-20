@@ -1,6 +1,74 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
+const detachedSpawnGuard = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "require process-supervisor allowlisting for raw detached spawn calls",
+    },
+    schema: [],
+  },
+  create(context) {
+    const sourceCode = context.sourceCode;
+    const allowlistMarker = "process-supervisor-allowlist:";
+
+    function hasAllowlistComment(node) {
+      if (!node.loc) {
+        return false;
+      }
+      const startLine = node.loc.start.line;
+      const windowStart = Math.max(0, startLine - 3);
+      return sourceCode.lines.slice(windowStart, startLine).some((line) => line.includes(allowlistMarker));
+    }
+
+    function isSpawnCall(node) {
+      return (
+        (node.callee.type === "Identifier" && node.callee.name === "spawn")
+        || (node.callee.type === "MemberExpression"
+          && !node.callee.computed
+          && node.callee.property.type === "Identifier"
+          && node.callee.property.name === "spawn")
+      );
+    }
+
+    function hasDetachedTrue(argument) {
+      return (
+        argument?.type === "ObjectExpression"
+        && argument.properties.some((property) => (
+          property.type === "Property"
+          && !property.computed
+          && property.key.type === "Identifier"
+          && property.key.name === "detached"
+          && property.value.type === "Literal"
+          && property.value.value === true
+        ))
+      );
+    }
+
+    return {
+      CallExpression(node) {
+        if (!isSpawnCall(node)) {
+          return;
+        }
+        const optionsArg = node.arguments[2]?.type === "ObjectExpression"
+          ? node.arguments[2]
+          : node.arguments[1]?.type === "ObjectExpression"
+            ? node.arguments[1]
+            : null;
+        if (!hasDetachedTrue(optionsArg) || hasAllowlistComment(node)) {
+          return;
+        }
+        context.report({
+          node,
+          message:
+            "Raw spawn(..., { detached: true }) is banned here. Use superviseSpawn(...) or add a preceding // process-supervisor-allowlist: reason marker for sanctioned user-facing daemons.",
+        });
+      },
+    };
+  },
+};
+
 /**
  * ESLint Flat Config for Fusion Workspace
  * 
@@ -435,6 +503,42 @@ export default tseslint.config(
             "and direct reads silently miss them.",
         },
       ],
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────
+  // PROCESS SUPERVISION GUARDS — ban nohup strings and raw detached spawns
+  // in repository packages/scripts unless explicitly allowlisted.
+  // ─────────────────────────────────────────────────────────────
+  {
+    files: [
+      "packages/**/*.ts",
+      "packages/**/*.tsx",
+      "packages/**/*.js",
+      "packages/**/*.mjs",
+      "scripts/**/*.js",
+      "scripts/**/*.mjs",
+    ],
+    plugins: {
+      fusion: {
+        rules: {
+          "no-unsafe-detached-spawn": detachedSpawnGuard,
+        },
+      },
+    },
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[value=/\\bnohup\\b/]",
+          message: "String literals containing nohup are banned here. Use superviseSpawn(...) instead.",
+        },
+        {
+          selector: "TemplateElement[value.raw=/\\bnohup\\b/]",
+          message: "Template literals containing nohup are banned here. Use superviseSpawn(...) instead.",
+        },
+      ],
+      "fusion/no-unsafe-detached-spawn": "error",
     },
   },
 

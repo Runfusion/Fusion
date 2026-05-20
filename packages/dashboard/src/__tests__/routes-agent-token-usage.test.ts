@@ -27,6 +27,7 @@ vi.mock("@fusion/core", () => ({
   ChatStore: class MockChatStore {
     init = mockChatStoreInit;
   },
+  deterministicGuardLocks: new Map(),
 }));
 
 class MockStore extends EventEmitter {

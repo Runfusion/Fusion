@@ -16,6 +16,8 @@ describe("TaskStore.getDatabaseHealth", () => {
     const health = store.getDatabaseHealth();
 
     expect(health.healthy).toBe(true);
+    expect(health.corruptionDetected).toBe(false);
+    expect(health.corruptionErrors).toEqual([]);
     expect(health.isRunning).toBe(false);
     expect(health.lastCheckedAt).toBeNull();
   });
@@ -27,19 +29,34 @@ describe("TaskStore.getDatabaseHealth", () => {
     const health = store.getDatabaseHealth();
 
     expect(health.healthy).toBe(true);
+    expect(health.corruptionDetected).toBe(false);
+    expect(health.corruptionErrors).toEqual([]);
     expect(health.isRunning).toBe(true);
   });
 
   it("reports unhealthy when corruption has been detected", () => {
     const db = store.getDatabase();
     db.corruptionDetected = true;
+    db.integrityCheckErrors = ["bad row", "bad index"];
     db.integrityCheckPending = false;
     db.integrityCheckLastRunAt = "2026-05-11T12:34:56.000Z";
 
     const health = store.getDatabaseHealth();
 
     expect(health.healthy).toBe(false);
+    expect(health.corruptionDetected).toBe(true);
+    expect(health.corruptionErrors).toEqual(["bad row", "bad index"]);
     expect(health.isRunning).toBe(false);
     expect(health.lastCheckedAt?.toISOString()).toBe("2026-05-11T12:34:56.000Z");
+  });
+
+  it("caps corruption errors to the first five entries", () => {
+    const db = store.getDatabase();
+    db.corruptionDetected = true;
+    db.integrityCheckErrors = ["one", "two", "three", "four", "five", "six"];
+
+    const health = store.getDatabaseHealth();
+
+    expect(health.corruptionErrors).toEqual(["one", "two", "three", "four", "five"]);
   });
 });

@@ -22,6 +22,7 @@ vi.mock("@fusion/core", () => {
       init = mockChatStoreInit;
     },
     exportAgentsToDirectory: (...args: unknown[]) => mockExportAgentsToDirectory(...args),
+    deterministicGuardLocks: new Map(),
   };
 });
 

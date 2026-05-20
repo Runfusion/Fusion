@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { Column } from "./types.js";
 
 export interface DuplicateMatch {
@@ -20,10 +22,15 @@ export interface DuplicateCandidate {
   column: Column;
 }
 
+export interface ContentFingerprintInput {
+  title?: string | null;
+  description: string;
+}
+
 const DEFAULT_THRESHOLD = 0.45;
 const DEFAULT_LIMIT = 5;
 const DEFAULT_EXCLUDE_COLUMNS: Column[] = ["done", "archived"];
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   "a",
   "an",
   "the",
@@ -39,7 +46,35 @@ const STOPWORDS = new Set([
   "fn",
 ]);
 
-function tokenize(value: string): string[] {
+function normalizeFingerprintPart(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[,.;:!?"'`(){}]+/g, "")
+    .replaceAll("[", "")
+    .replaceAll("]", "")
+    .replace(/…$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Deterministic dedup fingerprint for task content.
+ */
+export function computeContentFingerprint(
+  input: ContentFingerprintInput,
+): string | null {
+  const normalizedDescription = normalizeFingerprintPart(input.description);
+  if (normalizedDescription.length === 0) {
+    return null;
+  }
+
+  const normalizedTitle = normalizeFingerprintPart(input.title ?? "");
+  return createHash("sha256")
+    .update(`${normalizedTitle}\n${normalizedDescription}`)
+    .digest("hex");
+}
+
+export function tokenize(value: string): string[] {
   return value
     .toLowerCase()
     .split(/\W+/)

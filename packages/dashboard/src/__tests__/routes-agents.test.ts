@@ -311,20 +311,21 @@ afterEach(() => {
 
 describe("GET /workflow-steps", () => {
   let store: TaskStore;
+  let app: express.Express;
 
-  beforeEach(() => {
+  beforeAll(() => {
     store = createMockStore();
-  });
-
-  function buildApp() {
-    const app = express();
+    app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store));
-    return app;
-  }
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("returns empty array when no workflow steps exist", async () => {
-    const res = await GET(buildApp(), "/api/workflow-steps");
+    const res = await GET(app, "/api/workflow-steps");
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
@@ -335,7 +336,7 @@ describe("GET /workflow-steps", () => {
     ];
     (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce(steps);
 
-    const res = await GET(buildApp(), "/api/workflow-steps");
+    const res = await GET(app, "/api/workflow-steps");
     expect(res.status).toBe(200);
     expect(res.body).toEqual(steps);
   });
@@ -343,23 +344,24 @@ describe("GET /workflow-steps", () => {
 
 describe("POST /workflow-steps", () => {
   let store: TaskStore;
+  let app: express.Express;
 
-  beforeEach(() => {
+  beforeAll(() => {
     store = createMockStore();
-  });
-
-  function buildApp() {
-    const app = express();
+    app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store));
-    return app;
-  }
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("creates a workflow step", async () => {
     const created = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Docs",
       description: "Check docs",
     }), { "Content-Type": "application/json" });
@@ -379,7 +381,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 when name is missing", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       description: "Check docs",
     }), { "Content-Type": "application/json" });
 
@@ -388,7 +390,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 when description is missing", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Docs",
     }), { "Content-Type": "application/json" });
 
@@ -401,7 +403,7 @@ describe("POST /workflow-steps", () => {
       { id: "WS-001", name: "Docs", description: "Check docs", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" },
     ]);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Docs",
       description: "Another docs step",
     }), { "Content-Type": "application/json" });
@@ -414,7 +416,7 @@ describe("POST /workflow-steps", () => {
     const created = { id: "WS-002", name: "Security", description: "Security audit", prompt: "", enabled: true, modelProvider: "anthropic", modelId: "claude-sonnet-4-5", createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Security",
       description: "Security audit",
       modelProvider: "anthropic",
@@ -437,7 +439,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 when model provider is set without modelId", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Security",
       description: "Security audit",
       modelProvider: "anthropic",
@@ -448,7 +450,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 when modelId is set without model provider", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Security",
       description: "Security audit",
       modelId: "claude-sonnet-4-5",
@@ -462,7 +464,7 @@ describe("POST /workflow-steps", () => {
     const created = { id: "WS-001", name: "Docs", description: "Check docs", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Docs",
       description: "Check docs",
       modelProvider: "",
@@ -491,7 +493,7 @@ describe("POST /workflow-steps", () => {
     const created = { id: "WS-001", name: "Run Tests", description: "Execute tests", mode: "script", scriptName: "test", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Run Tests",
       description: "Execute tests",
       mode: "script",
@@ -512,7 +514,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 for script mode without scriptName", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Run Tests",
       description: "Execute tests",
       mode: "script",
@@ -527,7 +529,7 @@ describe("POST /workflow-steps", () => {
       scripts: { lint: "pnpm lint" },
     });
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Run Tests",
       description: "Execute tests",
       mode: "script",
@@ -539,7 +541,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 for invalid mode value", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Test",
       description: "Test",
       mode: "invalid",
@@ -553,7 +555,7 @@ describe("POST /workflow-steps", () => {
     const created = { id: "WS-001", name: "Post Merge", description: "After merge", mode: "prompt", phase: "post-merge", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Post Merge",
       description: "After merge",
       phase: "post-merge",
@@ -573,7 +575,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 for invalid phase value", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Test",
       description: "Test",
       phase: "during-merge",
@@ -587,7 +589,7 @@ describe("POST /workflow-steps", () => {
     const created = { id: "WS-010", name: "Auto Step", description: "Auto-enabled", mode: "prompt", prompt: "", enabled: true, defaultOn: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Auto Step",
       description: "Auto-enabled",
       defaultOn: true,
@@ -610,7 +612,7 @@ describe("POST /workflow-steps", () => {
     const created = { id: "WS-011", name: "Manual Step", description: "Manual only", mode: "prompt", prompt: "", enabled: true, createdAt: "2026-01-01", updatedAt: "2026-01-01" };
     (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce(created);
 
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Manual Step",
       description: "Manual only",
     }), { "Content-Type": "application/json" });
@@ -622,7 +624,7 @@ describe("POST /workflow-steps", () => {
   });
 
   it("returns 400 when defaultOn is not a boolean", async () => {
-    const res = await REQUEST(buildApp(), "POST", "/api/workflow-steps", JSON.stringify({
+    const res = await REQUEST(app, "POST", "/api/workflow-steps", JSON.stringify({
       name: "Bad Step",
       description: "Bad defaultOn",
       defaultOn: "yes",
@@ -2921,8 +2923,9 @@ describe("Agent Reflection routes", () => {
   let tempDir: string;
   let fusionDir: string;
   let agentId: string;
+  let app: express.Express;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     tempDir = mkdtempSync(join(tmpdir(), "kb-routes-reflection-"));
     fusionDir = join(tempDir, ".fusion");
     mkdirSync(fusionDir, { recursive: true });
@@ -2936,22 +2939,19 @@ describe("Agent Reflection routes", () => {
       role: "executor",
     });
     agentId = agent.id;
-  });
 
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  function buildApp() {
     const store = createMockStore({
       getRootDir: vi.fn().mockReturnValue(tempDir),
       getFusionDir: vi.fn().mockReturnValue(fusionDir),
     } as any);
-    const app = express();
+    app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store));
-    return app;
-  }
+  });
+
+  afterAll(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
 
   afterEach(async () => {
     const engine = await import("@fusion/engine");
@@ -2964,7 +2964,7 @@ describe("Agent Reflection routes", () => {
 
   describe("GET /api/agents/:id/reflections", () => {
     it("returns 200 for valid agent (uses real stores)", async () => {
-      const res = await GET(buildApp(), `/api/agents/${agentId}/reflections`);
+      const res = await GET(app, `/api/agents/${agentId}/reflections`);
 
       // The route uses real stores, so it should return an empty array (no reflections created yet)
       expect(res.status).toBe(200);
@@ -2972,14 +2972,14 @@ describe("Agent Reflection routes", () => {
     });
 
     it("returns 404 for non-existent agent", async () => {
-      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/reflections");
+      const res = await GET(app, "/api/agents/nonexistent-agent/reflections");
 
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
     });
 
     it("accepts limit query param", async () => {
-      const res = await GET(buildApp(), `/api/agents/${agentId}/reflections?limit=10`);
+      const res = await GET(app, `/api/agents/${agentId}/reflections?limit=10`);
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
@@ -2988,14 +2988,14 @@ describe("Agent Reflection routes", () => {
 
   describe("GET /api/agents/:id/reflections/latest", () => {
     it("returns 404 when no reflections exist", async () => {
-      const res = await GET(buildApp(), `/api/agents/${agentId}/reflections/latest`);
+      const res = await GET(app, `/api/agents/${agentId}/reflections/latest`);
 
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("No reflections found");
     });
 
     it("returns 404 for non-existent agent", async () => {
-      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/reflections/latest");
+      const res = await GET(app, "/api/agents/nonexistent-agent/reflections/latest");
 
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
@@ -3004,7 +3004,7 @@ describe("Agent Reflection routes", () => {
 
   describe("POST /api/agents/:id/reflections", () => {
     it("returns 500 when reflection generation fails for an existing agent", async () => {
-      const res = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/reflections`);
+      const res = await REQUEST(app, "POST", `/api/agents/${agentId}/reflections`);
 
       expect(res.status).toBe(500);
       expect(res.body.error).toMatch(/Unable to generate reflection|Reflection service unavailable/i);
@@ -3017,7 +3017,7 @@ describe("Agent Reflection routes", () => {
         .spyOn(engine.AgentReflectionService.prototype, "generateReflection")
         .mockResolvedValueOnce(null);
 
-      const res = await REQUEST(buildApp(), "POST", `/api/agents/${agentId}/reflections`);
+      const res = await REQUEST(app, "POST", `/api/agents/${agentId}/reflections`);
 
       expect(res.status).toBe(500);
       expect(res.body.error).toContain("Unable to generate reflection");
@@ -3026,7 +3026,7 @@ describe("Agent Reflection routes", () => {
     });
 
     it("returns 404 for a non-existent agent", async () => {
-      const res = await REQUEST(buildApp(), "POST", "/api/agents/nonexistent-agent/reflections");
+      const res = await REQUEST(app, "POST", "/api/agents/nonexistent-agent/reflections");
 
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
@@ -3035,7 +3035,7 @@ describe("Agent Reflection routes", () => {
 
   describe("GET /api/agents/:id/performance", () => {
     it("returns 200 with performance summary for valid agent", async () => {
-      const res = await GET(buildApp(), `/api/agents/${agentId}/performance`);
+      const res = await GET(app, `/api/agents/${agentId}/performance`);
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("agentId");
@@ -3044,14 +3044,14 @@ describe("Agent Reflection routes", () => {
     });
 
     it("accepts windowMs query param", async () => {
-      const res = await GET(buildApp(), `/api/agents/${agentId}/performance?windowMs=604800000`);
+      const res = await GET(app, `/api/agents/${agentId}/performance?windowMs=604800000`);
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("agentId");
     });
 
     it("returns 404 for non-existent agent", async () => {
-      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/performance");
+      const res = await GET(app, "/api/agents/nonexistent-agent/performance");
 
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
@@ -3061,19 +3061,19 @@ describe("Agent Reflection routes", () => {
   describe("GET /api/agents/:id/reflection-context", () => {
     it("returns 503 when reflection service binding is unavailable", async () => {
       __setAgentReflectionServiceForTests(undefined);
-      const res = await GET(buildApp(), `/api/agents/${agentId}/reflection-context`);
+      const res = await GET(app, `/api/agents/${agentId}/reflection-context`);
 
       expect(res.status).toBe(503);
       expect(res.body.error).toContain("Reflection service not available");
     });
     it("returns 200 when reflection context is available, otherwise 500/503", async () => {
-      const res = await GET(buildApp(), `/api/agents/${agentId}/reflection-context`);
+      const res = await GET(app, `/api/agents/${agentId}/reflection-context`);
 
       expect([200, 500, 503]).toContain(res.status);
     });
 
     it("returns 404 or 500 for non-existent agent", async () => {
-      const res = await GET(buildApp(), "/api/agents/nonexistent-agent/reflection-context");
+      const res = await GET(app, "/api/agents/nonexistent-agent/reflection-context");
 
       // The route either returns 404 (agent not found) or 500 (reflection service error)
       expect([404, 500]).toContain(res.status);
@@ -3081,7 +3081,7 @@ describe("Agent Reflection routes", () => {
   });
 
   it("does not create fusion.db or agents directory in project root for reflection endpoints", async () => {
-    const app = buildApp();
+    const reflectionApp = app;
 
     const rootDbPath = join(tempDir, "fusion.db");
     const rootDbWalPath = join(tempDir, "fusion.db-wal");
@@ -3093,10 +3093,10 @@ describe("Agent Reflection routes", () => {
     expect(existsSync(rootDbShmPath)).toBe(false);
     expect(existsSync(rootAgentsDir)).toBe(false);
 
-    const postRes = await REQUEST(app, "POST", `/api/agents/${agentId}/reflections`);
+    const postRes = await REQUEST(reflectionApp, "POST", `/api/agents/${agentId}/reflections`);
     expect(postRes.status).toBe(500);
 
-    const contextRes = await GET(app, `/api/agents/${agentId}/reflection-context`);
+    const contextRes = await GET(reflectionApp, `/api/agents/${agentId}/reflection-context`);
     expect([200, 500, 503]).toContain(contextRes.status);
 
     expect(existsSync(rootDbPath)).toBe(false);
@@ -3297,38 +3297,52 @@ describe("Messaging Routes", () => {
     expect(res.body.id).toBe("msg-runtime-1");
   });
 
-  it("triggers executeHeartbeat when wakeImmediately is true for agent recipients", async () => {
-    const executeHeartbeat = vi.fn().mockResolvedValue({ id: "run-1" });
+  function buildWakeApp(executeHeartbeat: ReturnType<typeof vi.fn>) {
     const wakeApp = express();
     wakeApp.use(express.json());
     wakeApp.use("/api", createApiRoutes(store, {
       heartbeatMonitor: { executeHeartbeat, rootDir } as any,
     }));
+    return wakeApp;
+  }
+
+  it.each([
+    {
+      name: "wakeImmediately is true",
+      toId: "agent-wake-1",
+      content: "wake now",
+      payloadExtras: { wakeImmediately: true },
+    },
+    {
+      name: "metadata.wakeRecipient is true",
+      toId: "agent-wake-meta",
+      content: "wake via metadata",
+      payloadExtras: { metadata: { wakeRecipient: true } },
+    },
+  ])("triggers executeHeartbeat when $name for agent recipients", async ({ toId, content, payloadExtras }) => {
+    const executeHeartbeat = vi.fn().mockResolvedValue({ id: "run-1" });
 
     const res = await REQUEST(
-      wakeApp,
+      buildWakeApp(executeHeartbeat),
       "POST",
       "/api/messages",
       JSON.stringify({
-        toId: "agent-wake-1",
+        toId,
         toType: "agent",
-        content: "wake now",
+        content,
         type: "user-to-agent",
-        wakeImmediately: true,
+        ...payloadExtras,
       }),
       { "Content-Type": "application/json" },
     );
 
     expect(res.status).toBe(201);
-    await vi.waitFor(() => {
-      expect(executeHeartbeat).toHaveBeenCalledWith({
-        agentId: "agent-wake-1",
-        source: "on_demand",
-        triggerDetail: "wake-on-message",
-      });
+    expect(executeHeartbeat).toHaveBeenCalledWith({
+      agentId: toId,
+      source: "on_demand",
+      triggerDetail: "wake-on-message",
     });
   });
-
   it("FN-3751: returns 201 immediately without waiting for executeHeartbeat to resolve", async () => {
     let heartbeatResolved = false;
     const executeHeartbeat = vi.fn().mockImplementation(
@@ -3366,12 +3380,10 @@ describe("Messaging Routes", () => {
     expect(elapsedMs).toBeLessThan(100);
     expect(heartbeatResolved).toBe(false);
 
-    await vi.waitFor(() => {
-      expect(executeHeartbeat).toHaveBeenCalledWith({
-        agentId: "agent-wake-fast",
-        source: "on_demand",
-        triggerDetail: "wake-on-message",
-      });
+    expect(executeHeartbeat).toHaveBeenCalledWith({
+      agentId: "agent-wake-fast",
+      source: "on_demand",
+      triggerDetail: "wake-on-message",
     });
   });
 
@@ -3485,42 +3497,10 @@ describe("Messaging Routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.toId).toBe("agent-wake-failure");
-    await vi.waitFor(() => {
-      expect(executeHeartbeat).toHaveBeenCalledTimes(1);
-    });
+    expect(executeHeartbeat).toHaveBeenCalledTimes(1);
   });
 
-  it("supports metadata.wakeRecipient as an immediate-wake request", async () => {
-    const executeHeartbeat = vi.fn().mockResolvedValue({ id: "run-1" });
-    const wakeApp = express();
-    wakeApp.use(express.json());
-    wakeApp.use("/api", createApiRoutes(store, {
-      heartbeatMonitor: { executeHeartbeat, rootDir } as any,
-    }));
 
-    const res = await REQUEST(
-      wakeApp,
-      "POST",
-      "/api/messages",
-      JSON.stringify({
-        toId: "agent-wake-meta",
-        toType: "agent",
-        content: "wake via metadata",
-        type: "user-to-agent",
-        metadata: { wakeRecipient: true },
-      }),
-      { "Content-Type": "application/json" },
-    );
-
-    expect(res.status).toBe(201);
-    await vi.waitFor(() => {
-      expect(executeHeartbeat).toHaveBeenCalledWith({
-        agentId: "agent-wake-meta",
-        source: "on_demand",
-        triggerDetail: "wake-on-message",
-      });
-    });
-  });
 
   it("gracefully no-ops wakeImmediately when no heartbeat monitor is configured", async () => {
     const res = await REQUEST(

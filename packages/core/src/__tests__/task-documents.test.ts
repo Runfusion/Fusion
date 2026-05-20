@@ -51,7 +51,7 @@ describe("TaskStore task documents", () => {
 
     expect(tableNames.has("task_documents")).toBe(true);
     expect(tableNames.has("task_document_revisions")).toBe(true);
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     const index = db
       .prepare(
@@ -280,18 +280,115 @@ describe("TaskStore task documents", () => {
     );
   });
 
-  it("deletes task documents via foreign key cascade when a task is deleted", async () => {
-    const task = await store.createTask({ description: "Cascade task" });
-    await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
+  describe("FN-5140: soft-deleted task document visibility", () => {
+    it("excludes documents for soft-deleted parents from getAllDocuments with and without search", async () => {
+      const liveTask = await store.createTask({
+        title: "Live task for FN-5140",
+        description: "Live task for getAllDocuments coverage",
+      });
+      const deletedTask = await store.createTask({
+        title: "Deleted task for FN-5140",
+        description: "Deleted task for getAllDocuments coverage",
+      });
 
-    await store.deleteTask(task.id);
+      await store.upsertTaskDocument(liveTask.id, { key: "plan", content: "shared visibility token" });
+      await store.upsertTaskDocument(deletedTask.id, { key: "notes", content: "shared visibility token" });
+      await store.deleteTask(deletedTask.id);
 
-    const documents = await store.getTaskDocuments(task.id);
-    expect(documents).toEqual([]);
+      for (const options of [undefined, { searchQuery: "shared visibility token" }]) {
+        const documents = await store.getAllDocuments(options);
+        expect(documents).toHaveLength(1);
+        expect(documents[0]?.taskId).toBe(liveTask.id);
+        expect(documents[0]?.key).toBe("plan");
+      }
+    });
 
-    const document = await store.getTaskDocument(task.id, "plan");
-    expect(document).toBeNull();
-  }, 15_000);
+    it("keeps task_documents rows stored after the parent task is soft-deleted", async () => {
+      const task = await store.createTask({ description: "Stored but hidden doc task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
+
+      await store.deleteTask(task.id);
+
+      const row = db
+        .prepare("SELECT COUNT(*) as count FROM task_documents WHERE taskId = ?")
+        .get(task.id) as { count: number };
+      expect(row.count).toBe(1);
+    });
+
+    it("returns [] from getTaskDocuments for a soft-deleted parent", async () => {
+      const task = await store.createTask({ description: "Soft-deleted list doc task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
+
+      await store.deleteTask(task.id);
+
+      await expect(store.getTaskDocuments(task.id)).resolves.toEqual([]);
+    });
+
+    it("returns null from getTaskDocument for a soft-deleted parent", async () => {
+      const task = await store.createTask({ description: "Soft-deleted get doc task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
+
+      await store.deleteTask(task.id);
+
+      await expect(store.getTaskDocument(task.id, "plan")).resolves.toBeNull();
+    });
+
+    it("returns [] from getTaskDocumentRevisions for a soft-deleted parent", async () => {
+      const task = await store.createTask({ description: "Soft-deleted revision doc task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v2" });
+
+      await store.deleteTask(task.id);
+
+      await expect(store.getTaskDocumentRevisions(task.id, "plan")).resolves.toEqual([]);
+    });
+
+    it("still refuses upsertTaskDocument for a soft-deleted parent", async () => {
+      const task = await store.createTask({ description: "Soft-deleted upsert doc task" });
+      await store.deleteTask(task.id);
+
+      await expect(
+        store.upsertTaskDocument(task.id, { key: "plan", content: "v1" }),
+      ).rejects.toThrow(`Task ${task.id} not found`);
+    });
+
+    it("still allows deleteTaskDocument for a soft-deleted parent forensic cleanup", async () => {
+      const task = await store.createTask({ description: "Soft-deleted delete doc task" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v1" });
+      await store.upsertTaskDocument(task.id, { key: "plan", content: "v2" });
+
+      await store.deleteTask(task.id);
+      await expect(store.deleteTaskDocument(task.id, "plan")).resolves.toBeUndefined();
+
+      const row = db
+        .prepare("SELECT COUNT(*) as count FROM task_documents WHERE taskId = ?")
+        .get(task.id) as { count: number };
+      expect(row.count).toBe(0);
+    });
+
+    it("leaves live task document reads unaffected when another task is soft-deleted", async () => {
+      const liveTask = await store.createTask({ description: "Live control doc task" });
+      const deletedTask = await store.createTask({ description: "Deleted sibling doc task" });
+
+      await store.upsertTaskDocument(liveTask.id, { key: "plan", content: "v1" });
+      await store.upsertTaskDocument(liveTask.id, { key: "plan", content: "v2" });
+      await store.upsertTaskDocument(deletedTask.id, { key: "notes", content: "hidden" });
+      await store.deleteTask(deletedTask.id);
+
+      const allDocuments = await store.getAllDocuments();
+      expect(allDocuments.map((document) => document.taskId)).toEqual([liveTask.id]);
+
+      const taskDocuments = await store.getTaskDocuments(liveTask.id);
+      expect(taskDocuments).toHaveLength(1);
+      expect(taskDocuments[0]?.key).toBe("plan");
+
+      const taskDocument = await store.getTaskDocument(liveTask.id, "plan");
+      expect(taskDocument?.content).toBe("v2");
+
+      const revisions = await store.getTaskDocumentRevisions(liveTask.id, "plan");
+      expect(revisions.map((revision) => revision.revision)).toEqual([1]);
+    });
+  });
 
   it("accepts valid key edge cases and rejects invalid ones", async () => {
     const task = await store.createTask({ description: "Key edge case task" });

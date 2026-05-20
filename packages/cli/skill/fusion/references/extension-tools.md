@@ -118,7 +118,7 @@ Unarchive an archived task (move from archived → done). Restores the task to t
 
 ### fn_task_delete
 
-Permanently delete a task from the Fusion board. Tasks are deleted immediately and cannot be recovered.
+Soft-delete a task from active Fusion board views. The task row and artifacts are preserved, and the task ID remains reserved for potential operator recovery.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

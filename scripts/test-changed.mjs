@@ -323,6 +323,23 @@ export function expandWithReverseDependents(packageNames, reverseDependencyMap) 
   return [...expanded];
 }
 
+// FN-5154 / FN-5157: root docs, changeset summaries, and .fusion artifacts should not expand changed-only test runs into a full workspace suite.
+function isTestIrrelevantRootPath(file) {
+  if (file.startsWith(".fusion/")) {
+    return true;
+  }
+
+  if (/^\.changeset\/[^/]+\.md$/.test(file)) {
+    return true;
+  }
+
+  if (!file.includes("/") && file.toLowerCase().endsWith(".md")) {
+    return true;
+  }
+
+  return ["README", "CHANGELOG.md", "LICENSE", "LICENSE.md"].includes(file);
+}
+
 export function shouldForceFullSuite(changedFiles) {
   const fullSuitePaths = [
     "package.json",
@@ -343,6 +360,10 @@ export function shouldForceFullSuite(changedFiles) {
 
     if (file.startsWith(".github/workflows/") || file.startsWith("scripts/test-") || file.startsWith("scripts/check-test-")) {
       return true;
+    }
+
+    if (isTestIrrelevantRootPath(file)) {
+      return false;
     }
 
     if ((file.startsWith("packages/") || file.startsWith("plugins/")) && /vitest|test/.test(path.basename(file))) {
@@ -766,10 +787,16 @@ export function createIsolatedHomeEnv(env = process.env) {
   knownIsolatedHomeBasenames.add(path.basename(rawIsolatedHome));
   knownIsolatedHomeBasenames.add(path.basename(isolatedHome));
 
+  const inheritedHome = env.HOME || env.USERPROFILE;
+  const corepackHome = env.COREPACK_HOME || (inheritedHome
+    ? path.join(inheritedHome, ".cache", "node", "corepack")
+    : undefined);
+
   const nextEnv = {
     ...env,
     HOME: isolatedHome,
     USERPROFILE: isolatedHome,
+    ...(corepackHome ? { COREPACK_HOME: corepackHome } : {}),
   };
 
   if (process.platform === "win32") {

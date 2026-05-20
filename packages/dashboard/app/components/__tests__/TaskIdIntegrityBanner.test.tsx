@@ -62,7 +62,13 @@ describe("TaskIdIntegrityBanner", () => {
       status: "ok",
       version: "1.0.0",
       uptime: 1,
-      database: { healthy: true, lastCheckedAt: null, isRunning: false },
+      database: {
+        healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
+        lastCheckedAt: null,
+        isRunning: false,
+      },
       taskIdIntegrity: {
         status: "ok",
         checkedAt: "2026-05-12T10:05:00.000Z",

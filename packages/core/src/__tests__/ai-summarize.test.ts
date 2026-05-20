@@ -312,6 +312,14 @@ describe("ai-summarize", () => {
       expect(sanitizeTitle("( )")).toBeNull();
     });
 
+    it("FN-5077: rejects 'Close as duplicate of' as a dangling fragment", () => {
+      expect(sanitizeTitle("Close as duplicate of")).toBeNull();
+    });
+
+    it("FN-5077: rejects dangling connector tails", () => {
+      expect(sanitizeTitle("Refinement notes for")).toBeNull();
+    });
+
     it("hard-caps at MAX_TITLE_LENGTH", () => {
       const long = "x".repeat(100);
       const out = sanitizeTitle(long)!;

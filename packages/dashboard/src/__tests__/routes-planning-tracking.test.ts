@@ -1,9 +1,10 @@
 // @vitest-environment node
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
-import type { TaskStore } from "@fusion/core";
+import { setTaskCreatedHook, type Task, type TaskStore } from "@fusion/core";
 import { registerPlanningSubtaskRoutes } from "../routes/register-planning-subtask-routes.js";
+import { registerGithubTrackingHook } from "../github-tracking-hook.js";
 import { request as performRequest } from "../test-request.js";
 import { GitHubClient } from "../github.js";
 
@@ -51,6 +52,7 @@ describe("planning routes github tracking background dispatch", () => {
 
     let idCounter = 1;
     const createdTasks = new Map<string, Record<string, unknown>>();
+    let storeRef: TaskStore | undefined;
     const store = {
       createTask: vi.fn(async (input: { title?: string; description: string }) => {
         const task = {
@@ -60,6 +62,14 @@ describe("planning routes github tracking background dispatch", () => {
           column: "triage",
         };
         createdTasks.set(task.id, task);
+        // Mirror real TaskStore behavior: fire the task-created hook so the
+        // github-tracking hook can dispatch tracking-issue creation in
+        // background. Production TaskStore does this internally; the mock
+        // must do it explicitly for the routes to exercise the same path.
+        const hook = (await import("@fusion/core")).getTaskCreatedHook?.();
+        if (hook && storeRef) {
+          void hook(task as Task, storeRef);
+        }
         return task;
       }),
       updateTask: vi.fn(async (id: string, patch: Record<string, unknown>) => {
@@ -86,6 +96,9 @@ describe("planning routes github tracking background dispatch", () => {
       linkGithubIssue: vi.fn(async () => undefined),
       recordActivity: vi.fn(async () => undefined),
     } as unknown as TaskStore;
+    storeRef = store;
+
+    registerGithubTrackingHook({ logger: { warn: planningWarn, info: vi.fn() } });
 
     app = express();
     app.use(express.json());
@@ -112,6 +125,10 @@ describe("planning routes github tracking background dispatch", () => {
     });
 
     createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue");
+  });
+
+  afterEach(() => {
+    setTaskCreatedHook(undefined);
   });
 
   it("POST /planning/create-task returns before createIssue resolves", async () => {

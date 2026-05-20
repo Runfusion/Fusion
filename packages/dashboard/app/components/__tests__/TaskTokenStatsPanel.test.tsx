@@ -168,24 +168,25 @@ describe("TaskTokenStatsPanel", () => {
         loading={false}
         tokenUsage={undefined}
         task={makeTask({
-          executionStartedAt: "2026-04-24T09:00:00.000Z",
-          executionCompletedAt: "2026-04-24T09:05:00.000Z",
+          column: "done",
+          executionStartedAt: "2026-05-15T13:10:00.000Z",
+          executionCompletedAt: "2026-05-15T13:15:00.000Z",
           timedExecutionMs: 120_000,
           workflowStepResults: [
             {
-              workflowStepId: "WS-900",
-              workflowStepName: "Review",
+              workflowStepId: "WS-150",
+              workflowStepName: "Workflow QA",
               status: "passed",
-              startedAt: "2026-04-24T09:03:00.000Z",
-              completedAt: "2026-04-24T09:04:00.000Z",
+              startedAt: "2026-05-15T13:12:00.000Z",
+              completedAt: "2026-05-15T13:13:00.000Z",
             },
           ],
         })}
       />,
     );
 
-    expect(screen.getByText("Total execution time")).toBeInTheDocument();
-    expect(screen.getByText("5m 0s")).toBeInTheDocument();
+    const metric = screen.getByText("Total execution time").closest(".task-token-stats-panel__metric");
+    expect(metric).toHaveTextContent("5m 0s");
   });
 
   it("shows cumulative active runtime for in-progress tasks", () => {

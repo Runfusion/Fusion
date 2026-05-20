@@ -18,6 +18,7 @@ import * as worktreePool from "../worktree-pool.js";
 
 function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;
+  (emitter as any).getBootstrappedAt = vi.fn(() => null);
   (emitter as any).listTasks = vi.fn();
   (emitter as any).createTask = vi.fn();
   (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);

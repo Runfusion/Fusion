@@ -178,6 +178,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     searchTasks: vi.fn().mockResolvedValue([]),
+    findRecentTasksByContentFingerprint: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
     createTaskWithReservedId: undefined,
     moveTask: vi.fn(),

@@ -11,7 +11,7 @@ const state = {
 const requestWorktrunkInstallApproval = vi.fn(async () => ({ approvalRequestId: state.pendingApprovalId, status: "pending" as const }));
 const resolveWorktrunkBinary = vi.fn(async () => {
   if (!state.installed) throw new Error("missing");
-  return { binaryPath: "~/.fusion/bin/worktrunk", source: "cached" as const };
+  return { binaryPath: "~/.fusion/bin/wt", source: "cached" as const };
 });
 const probeWorktrunk = vi.fn(async () => ({ ok: true, version: "0.4.2" }));
 
@@ -26,8 +26,13 @@ class MockApprovalRequestStore {
 }
 
 vi.mock("@fusion/engine", () => ({
-  WORKTRUNK_INSTALL_PATH: "~/.fusion/bin/worktrunk",
-  WORKTRUNK_PINNED_RELEASE: { version: "0.4.2", assets: { unknown: { url: "u", sha256: "s" } } },
+  WORKTRUNK_INSTALL_PATH: "~/.fusion/bin/wt",
+  WORKTRUNK_PINNED_RELEASE: {
+    source: "upstream-pending-verification",
+    version: null,
+    verifiedAt: null,
+    assets: {},
+  },
   requestWorktrunkInstallApproval,
   resolveWorktrunkBinary,
   probeWorktrunk,
@@ -67,6 +72,8 @@ describe("worktrunk routes", async () => {
     state.installed = false;
     state.requests = new Map();
     requestWorktrunkInstallApproval.mockClear();
+    resolveWorktrunkBinary.mockClear();
+    probeWorktrunk.mockClear();
   });
 
   it("returns installed from status when binary exists", async () => {
@@ -74,7 +81,11 @@ describe("worktrunk routes", async () => {
     const app = createApp();
     const res = await get(app, "/api/worktrunk/status");
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe("installed");
+    expect(res.body).toEqual({
+      status: "installed",
+      version: "0.4.2",
+      installPath: "~/.fusion/bin/wt",
+    });
   });
 
   it("returns pending-approval from status when pending request exists", async () => {
@@ -82,7 +93,11 @@ describe("worktrunk routes", async () => {
     const app = createApp();
     const res = await get(app, "/api/worktrunk/status");
     expect(res.status).toBe(200);
-    expect(res.body.status).toBe("pending-approval");
+    expect(res.body).toEqual({
+      status: "pending-approval",
+      pendingApprovalId: "apr-worktrunk",
+      installPath: "~/.fusion/bin/wt",
+    });
   });
 
   it("creates install request when missing", async () => {
@@ -100,5 +115,18 @@ describe("worktrunk routes", async () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("pending-approval");
     expect(requestWorktrunkInstallApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns pending version label for installed POST route fallback", async () => {
+    state.installed = true;
+    probeWorktrunk.mockResolvedValueOnce({ ok: true, version: undefined });
+    const app = createApp();
+    const res = await request(app, "POST", "/api/worktrunk/install-request", JSON.stringify({}), { "content-type": "application/json" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      status: "installed",
+      installPath: "~/.fusion/bin/wt",
+      version: "pending",
+    });
   });
 });

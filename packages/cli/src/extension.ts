@@ -19,10 +19,12 @@ import {
   resolveResearchSettings,
   canAgentTakeImplementationTaskForExplicitRouting,
   formatRoleMismatchReason,
+  getTaskDuplicateLineage,
   resolveAgentProvisioningPolicy,
   TASK_PRIORITIES,
   resolveSecretAccessPolicy,
   getProjectRootFromWorktree,
+  resolveTaskGithubTracking,
   type SecretScope,
 } from "@fusion/core";
 import {
@@ -269,13 +271,30 @@ function getTaskSourceLabel(task: Pick<Task, "sourceType" | "sourceMetadata" | "
   }
 }
 
-function formatTaskLine(t: Task): string {
+async function formatDuplicateLineageLine(task: Task, store: TaskStore): Promise<string | null> {
+  const lineage = getTaskDuplicateLineage(task);
+  if (lineage.length === 0) return null;
+
+  const labels = await Promise.all(lineage.map(async (id) => {
+    try {
+      const linked = await store.getTask(id);
+      return linked.column === "archived" ? `${id} (archived)` : id;
+    } catch {
+      return id;
+    }
+  }));
+
+  return `Duplicate of: ${labels.join(", ")}`;
+}
+
+export function formatTaskLine(t: Task): string {
   const label =
     t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
   const source = getTaskSourceLabel(t);
   const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
-  const paused = t.paused ? " (paused)" : "";
+  const isTerminalColumn = t.column === "done" || t.column === "archived";
+  const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
 }
 
@@ -491,12 +510,28 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       try {
+        const projectSettings = await store.getSettings();
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        const resolvedTracking = resolveTaskGithubTracking(
+          { githubTracking: undefined },
+          projectSettings,
+          globalSettings,
+        );
+
         const task = await store.createTask({
           description: params.description.trim(),
           dependencies: params.depends,
           assignedAgentId: normalizedAgentId === null ? undefined : normalizedAgentId,
           priority: params.priority as TaskPriority | undefined,
           source: { sourceType: "api" },
+          githubTracking: resolvedTracking.enabled
+            ? {
+                enabled: true,
+                ...(resolvedTracking.repo
+                  ? { repoOverride: `${resolvedTracking.repo.owner}/${resolvedTracking.repo.repo}` }
+                  : {}),
+              }
+            : undefined,
         });
 
         const label =
@@ -754,6 +789,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       const sourceLabel = getTaskSourceLabel(task);
       if (sourceLabel) {
         lines.push(`Created via: ${sourceLabel}`);
+      }
+      const duplicateLineage = await formatDuplicateLineageLine(task, store);
+      if (duplicateLineage) {
+        lines.push(duplicateLineage);
       }
       if (task.paused) lines.push("Status: PAUSED");
       lines.push("");
@@ -1124,13 +1163,15 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_task_delete",
     label: "fn: Delete Task",
     description:
-      "Permanently delete a task from the Fusion board. " +
-      "Tasks are deleted immediately and cannot be recovered.",
-    promptSnippet: "Delete a Fusion task",
+      "Soft-delete a task from active Fusion board views. " +
+      "The task row and artifacts are preserved, and the task ID remains reserved for potential operator recovery.",
+    promptSnippet: "Soft-delete a Fusion task",
     promptGuidelines: [
-      "Use for cleaning up test tasks or tasks created in error",
-      "Tasks are permanently deleted and cannot be recovered",
-      "Consider archiving instead of deleting for completed work you may need to reference later",
+      "Use for cleaning up test tasks or tasks created in error when you want the task hidden from active board views",
+      "This tool performs a soft delete: task data is preserved and the ID stays reserved",
+      "Tasks cannot be undeleted through the current pi/CLI tool surface",
+      "Use fn_task_archive for completed work you want to keep referenceable in the board",
+      "True hard removal is handled by archive cleanup paths (archiveTaskAndCleanup / cleanupArchivedTasks), not fn_task_delete",
     ],
     parameters: Type.Object({
       id: Type.String({ description: "Task ID to delete (e.g. FN-001)" }),
@@ -1138,7 +1179,12 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
-      const task = await store.deleteTask(params.id);
+      const task = await store.deleteTask(params.id, {
+        auditContext: {
+          agentId: "pi-extension",
+          runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,
+        },
+      });
 
       return {
         content: [{ type: "text", text: `Deleted ${task.id}` }],

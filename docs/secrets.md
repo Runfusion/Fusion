@@ -20,7 +20,7 @@ Fusion's secrets subsystem provides encrypted-at-rest secret storage with projec
 | `secrets-sync.ts` wrap/unwrap core (scrypt → AES-256-GCM, version 1, typed errors) | Shipped | — | `packages/core/src/secrets-sync.ts` |
 | Dashboard `SecretsView` CRUD UI | Shipped | — | `packages/dashboard/app/components/SecretsView.tsx` |
 | `secretsEnv.*` settings + worktree `.env` materialization + fingerprint cleanup | Shipped | — | `packages/core/src/types.ts`, `packages/engine/src/secrets-env-writer.ts` |
-| `secretsSyncPassphrase` project setting integration | Shipped | — | `packages/core/src/types.ts`, `packages/dashboard/src/routes/register-secrets-sync-routes.ts` |
+| `secretsSyncPassphraseConfigured` global read-only probe + reserved secret storage (`__sync_passphrase__`) | Shipped | — | `packages/core/src/types.ts`, `packages/core/src/secrets-sync-passphrase.ts` |
 | Cross-node sync REST endpoints (`/api/nodes/:id/secrets/{push,pull}`, `/api/secrets/sync-receive`, `/api/secrets/sync-export`) | Shipped | — | `packages/dashboard/src/routes/register-secrets-sync-routes.ts`, `packages/dashboard/src/routes/register-secrets-sync-inbound-routes.ts` |
 | Audit-event registration on `FilesystemMutationType` for `secret:env-*` and `secret:sync-*` | Shipped | — | `packages/engine/src/run-audit.ts` |
 | Master-key rotation UX | Pending | — | n/a |
@@ -133,14 +133,15 @@ Fusion can materialize env-exportable secrets into each acquired task worktree w
 - Fingerprint sidecar: successful writes persist `.fusion-secrets-env.fingerprint` containing `<sha256>\n<filename>\n` (mode `0o600`) so teardown can verify file integrity before deletion.
 - Teardown cleanup: when a worktree is removed, Fusion deletes the managed env file only when the on-disk fingerprint still matches; edited files are preserved and only the sidecar is removed.
 
-Settings shape is project-scoped in `ProjectSettings` (`packages/core/src/types.ts:2599-2609`): `secretsEnv` (env materialization config) and `secretsSyncPassphrase` (ciphertext already wrapped under local master key by caller; see `types.ts:2602-2604`).
+Settings shape is split by scope: project-level secrets settings are limited to `ProjectSettings.secretsEnv`, while cross-node sync passphrase state is stored only as the reserved `__sync_passphrase__` row in `secrets_global` and exposed read-only through `GlobalSettings.secretsSyncPassphraseConfigured` (`packages/core/src/types.ts`). Settings never carry the plaintext passphrase.
 
 ### Test locations
 
 The settings contract (`SecretsEnvSettings` shape, defaults, project round-trip) is covered in `@fusion/core`:
 
 - `packages/core/src/__tests__/secrets-env.test.ts` — type contract + defaults
-- `packages/core/src/__tests__/store-settings.test.ts` — `secretsEnv` + `secretsSyncPassphrase` project round-trip
+- `packages/core/src/__tests__/store-settings.test.ts` — `secretsEnv` project round-trip
+- `packages/core/src/__tests__/store-settings-sync-passphrase-probe.test.ts` — read-only `secretsSyncPassphraseConfigured` derivation + write-strip behavior
 
 The materialization implementation lives in `@fusion/engine` and is covered there:
 

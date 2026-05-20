@@ -28,10 +28,8 @@ import { useChat, type ChatMessageInfo, type FailureInfo, type ToolCallInfo } fr
 import { useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useViewportMode } from "./Header";
-import { fetchAgents, fetchDiscoveredSkills, fetchModels, updateGlobalSettings } from "../api";
+import { updateGlobalSettings, type DiscoveredSkill } from "../api";
 import type { Agent } from "@fusion/core";
-import type { DiscoveredSkill } from "@fusion/dashboard";
-import type { ModelInfo } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentMentionPopup } from "./AgentMentionPopup";
@@ -39,6 +37,9 @@ import { AgentAvatar } from "./AgentAvatar";
 import { FileMentionPopup } from "./FileMentionPopup";
 import { CreateRoomModal } from "./CreateRoomModal";
 import { useFileMention } from "../hooks/useFileMention";
+import { useModelsCache } from "../hooks/useModelsCache";
+import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
+import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { matchesAgentMentionFilter } from "./mentionMatching";
@@ -51,10 +52,15 @@ export interface ChatViewProps {
   experimentalFeatures?: Record<string, boolean>;
 }
 
-const CHAT_INPUT_MAX_HEIGHT_PX = 320;
+// Keep a generous cap so pasted multi-paragraph text stays visible while
+// still preventing the composer from overtaking the message pane on short viewports.
+const CHAT_INPUT_MAX_HEIGHT_PX = 640;
 
 export function clampChatInputHeight(scrollHeight: number): number {
-  return Math.min(scrollHeight, CHAT_INPUT_MAX_HEIGHT_PX);
+  // Floor matches QuickChat (clampQuickChatInputHeight) and the CSS min-height,
+  // so a 0-scrollHeight measurement (e.g. before layout) still yields a
+  // sensible inline height instead of collapsing the composer to 0.
+  return Math.max(40, Math.min(scrollHeight, CHAT_INPUT_MAX_HEIGHT_PX));
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -444,6 +450,64 @@ function getMentionTriggerMatch(
   };
 }
 
+type DefaultModelSelection = {
+  provider: string | null;
+  modelId: string | null;
+};
+
+type SessionModelSelection = {
+  modelProvider?: string | null;
+  modelId?: string | null;
+};
+
+function getRuntimeConfigModelSelection(agent?: Agent): { provider: string; modelId: string } | null {
+  const runtimeConfig = agent?.runtimeConfig;
+  if (!runtimeConfig || typeof runtimeConfig !== "object") {
+    return null;
+  }
+
+  const modelProvider = Reflect.get(runtimeConfig, "modelProvider");
+  const modelId = Reflect.get(runtimeConfig, "modelId");
+  if (typeof modelProvider !== "string" || modelProvider.trim().length === 0) {
+    return null;
+  }
+  if (typeof modelId !== "string" || modelId.trim().length === 0) {
+    return null;
+  }
+
+  return {
+    provider: modelProvider,
+    modelId,
+  };
+}
+
+export function resolveSessionProvider(
+  session: SessionModelSelection | null | undefined,
+  agent: Agent | null | undefined,
+  defaults: DefaultModelSelection,
+): { provider: string; modelId: string } | null {
+  if (session?.modelProvider && session?.modelId) {
+    return {
+      provider: session.modelProvider,
+      modelId: session.modelId,
+    };
+  }
+
+  const runtimeSelection = getRuntimeConfigModelSelection(agent ?? undefined);
+  if (runtimeSelection) {
+    return runtimeSelection;
+  }
+
+  if (defaults.provider && defaults.modelId) {
+    return {
+      provider: defaults.provider,
+      modelId: defaults.modelId,
+    };
+  }
+
+  return null;
+}
+
 interface NewChatDialogProps {
   projectId?: string;
   onClose: () => void;
@@ -452,60 +516,20 @@ interface NewChatDialogProps {
 
 function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
   const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentsLoading, setAgentsLoading] = useState(true);
+  const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
+  const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, loading: modelsLoading, refresh } = useModelsCache();
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
-  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>(cachedFavoriteProviders);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>(cachedFavoriteModels);
 
-  // Load agents on mount (project-scoped)
   useEffect(() => {
-    let cancelled = false;
-    setAgentsLoading(true);
-    fetchAgents(undefined, projectId)
-      .then((response) => {
-        if (!cancelled) {
-          setAgents(response);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          // Silently fail - show empty list
-          setAgents([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setAgentsLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+    setFavoriteProviders(cachedFavoriteProviders);
+  }, [cachedFavoriteProviders]);
 
-  // Load models on mount
   useEffect(() => {
-    setModelsLoading(true);
-    fetchModels()
-      .then((response) => {
-        setModels(response.models);
-        setFavoriteProviders(response.favoriteProviders);
-        setFavoriteModels(response.favoriteModels);
-      })
-      .catch(() => {
-        // Silently fail - show empty list
-        setModels([]);
-        setFavoriteProviders([]);
-        setFavoriteModels([]);
-      })
-      .finally(() => {
-        setModelsLoading(false);
-      });
-  }, []);
+    setFavoriteModels(cachedFavoriteModels);
+  }, [cachedFavoriteModels]);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
     const currentFavorites = favoriteProviders;
@@ -518,10 +542,11 @@ function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
 
     try {
       await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
+      await refresh();
     } catch {
       setFavoriteProviders(currentFavorites);
     }
-  }, [favoriteProviders, favoriteModels]);
+  }, [favoriteProviders, favoriteModels, refresh]);
 
   const handleToggleModelFavorite = useCallback(async (modelId: string) => {
     const currentFavorites = favoriteModels;
@@ -534,10 +559,11 @@ function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
 
     try {
       await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
+      await refresh();
     } catch {
       setFavoriteModels(currentFavorites);
     }
-  }, [favoriteModels, favoriteProviders]);
+  }, [favoriteModels, favoriteProviders, refresh]);
 
   const handleSubmit = (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -882,6 +908,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     searchQuery,
     setSearchQuery,
     filteredSessions,
+    agentsMap: chatAgentsMap,
   } = useChat(projectId, addToast);
 
   const [showNewDialog, setShowNewDialog] = useState(false);
@@ -915,9 +942,11 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(CHAT_SIDEBAR_DEFAULT_WIDTH);
   const [createRoomOpen, setCreateRoomOpen] = useState(false);
-  const [agentsMap, setAgentsMap] = useState<Map<string, Agent>>(new Map());
-  const [discoveredSkills, setDiscoveredSkills] = useState<DiscoveredSkill[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(true);
+  const { agentsMap: cachedAgentsMap } = useAgentsMapCache(projectId);
+  const agentsMap = useMemo(() => (chatAgentsMap.size > 0 ? chatAgentsMap : cachedAgentsMap), [cachedAgentsMap, chatAgentsMap]);
+  const { defaultProvider, defaultModelId } = useModelsCache();
+  const defaultModel = useMemo<DefaultModelSelection>(() => ({ provider: defaultProvider, modelId: defaultModelId }), [defaultModelId, defaultProvider]);
+  const { skills: discoveredSkills, loading: skillsLoading } = useDiscoveredSkillsCache(projectId);
   const [showSkillMenu, setShowSkillMenu] = useState(false);
   const [skillFilter, setSkillFilter] = useState("");
   const [highlightedSkillIndex, setHighlightedSkillIndex] = useState(0);
@@ -1088,17 +1117,17 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     enabled: isMobile && (!!activeSession || roomThreadActive),
   });
 
-  // Only opt into visual-viewport sizing when we have concrete keyboard
-  // displacement (overlap or offset). The shared hook can report `keyboardOpen`
-  // during iOS settle/shrink phases with zero overlap; forcing vv-height in that
-  // transient state shrinks the thread and pushes the composer upward.
-  const hasKeyboardViewportDisplacement = keyboardOverlap > 0 || viewportOffsetTop > 0;
+  // FN-5155: only publish keyboard-active viewport vars once the hook has a
+  // self-consistent open sample. A transient offsetTop without vvHeight causes
+  // mobile ChatView to shrink/translate the thread before the keyboard settles.
+  const hasKeyboardViewportMetrics = viewportHeight !== null;
+  const hasKeyboardViewportDisplacement = hasKeyboardViewportMetrics && (keyboardOverlap > 0 || viewportOffsetTop > 0);
   const threadKeyboardStyle: CSSProperties =
     keyboardOpen && hasKeyboardViewportDisplacement
       ? ({
           "--keyboard-overlap": `${keyboardOverlap}px`,
           "--vv-offset-top": `${viewportOffsetTop}px`,
-          ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+          "--vv-height": `${viewportHeight}px`,
         } as CSSProperties)
       : {};
   const threadClassName = `chat-thread${keyboardOpen && hasKeyboardViewportDisplacement ? " chat-thread--keyboard-active" : ""}`;
@@ -1469,54 +1498,6 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
 
   // Fetch agents on mount for name resolution (project-scoped with stale-request protection)
   useEffect(() => {
-    let cancelled = false;
-    const currentProjectId = projectId;
-    fetchAgents(undefined, projectId)
-      .then((agents) => {
-        // Ignore response if project changed during fetch
-        if (cancelled || currentProjectId !== projectId) return;
-        const map = new Map<string, Agent>();
-        for (const agent of agents) {
-          map.set(agent.id, agent);
-        }
-        setAgentsMap(map);
-      })
-      .catch(() => {
-        // Silently fail - keep empty map
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  // Fetch discovered skills for slash command autocomplete
-  useEffect(() => {
-    let cancelled = false;
-    setSkillsLoading(true);
-
-    fetchDiscoveredSkills(projectId)
-      .then((skills) => {
-        if (!cancelled) {
-          setDiscoveredSkills(skills);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDiscoveredSkills([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSkillsLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  useEffect(() => {
     pendingAttachmentsRef.current = pendingAttachments;
   }, [pendingAttachments]);
 
@@ -1767,6 +1748,28 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     [mentionStartPos, messageInput, resizeComposer],
   );
 
+  const insertHashMention = useCallback(
+    (nextInput: string, insertedToken: string) => {
+      const textarea = inputRef.current;
+      const cursorPos = textarea?.selectionStart ?? mentionCursorPosRef.current;
+      const mentionStart = messageInput.lastIndexOf("#", cursorPos);
+      const nextCursorPos = mentionStart >= 0
+        ? mentionStart + insertedToken.length
+        : nextInput.length;
+
+      setMessageInput(nextInput);
+      fileMention.dismissMention();
+      setFileMentionPopupVisible(false);
+
+      window.requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        resizeComposer(inputRef.current);
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
+      });
+    },
+    [fileMention, messageInput, resizeComposer],
+  );
 
   // Handle input key down
   const handleInputKeyDown = useCallback(
@@ -1774,16 +1777,14 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       mentionCursorPosRef.current = e.currentTarget.selectionStart ?? mentionCursorPosRef.current;
 
       // Handle file mention popup keyboard navigation first
-      if (fileMention.mentionActive && fileMention.files.length > 0) {
+      if (fileMention.mentionActive && fileMention.combinedItems.length > 0) {
         fileMention.handleKeyDown(e, messageInput);
         if (e.key === "Enter" || e.key === "Tab") {
-          // Select the highlighted file
-          const file = fileMention.files[fileMention.selectedIndex];
-          if (file) {
-            const newText = fileMention.selectFile(file, messageInput);
-            setMessageInput(newText);
-            fileMention.dismissMention();
-            setFileMentionPopupVisible(false);
+          const item = fileMention.combinedItems[fileMention.selectedIndex];
+          if (item?.kind === "task") {
+            insertHashMention(fileMention.selectTask(item.task, messageInput), `#${item.task.id}`);
+          } else if (item?.kind === "file") {
+            insertHashMention(fileMention.selectFile(item.file, messageInput), `#${item.file.path}`);
           }
         }
         return;
@@ -1873,6 +1874,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       handleSkillSelect,
       handleSendDispatch,
       fileMention,
+      insertHashMention,
       messageInput,
     ],
   );
@@ -1897,6 +1899,13 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     const nextValue = textarea.value;
     const cursorPos = textarea.selectionStart ?? nextValue.length;
 
+    // Resize BEFORE the state update so the textarea grows in the same frame
+    // the user typed in (matches QuickChat). Doing it after setMessageInput
+    // works in tests but can lose the height in production because React 18
+    // batches the state update and the controlled-component value reset can
+    // happen before our direct DOM height assignment lands.
+    resizeComposer(textarea);
+
     mentionCursorPosRef.current = cursorPos;
     setMessageInput(nextValue);
 
@@ -1917,8 +1926,6 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     if (fileMention.mentionActive) {
       updateFileMentionPosition(textarea);
     }
-
-    resizeComposer(textarea);
   }, [updateMentionState, resizeComposer]);
 
   const handleInputSelectionChange = useCallback(
@@ -2123,8 +2130,13 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     );
   };
 
-  const activeModelTag = formatModelTag(activeSession?.modelProvider, activeSession?.modelId);
-  const activeModelProvider = activeSession?.modelProvider ?? null;
+  const activeResolvedModel = resolveSessionProvider(
+    activeSession,
+    activeSession?.agentId ? (agentsMap.get(activeSession.agentId) ?? null) : null,
+    defaultModel,
+  );
+  const activeModelTag = formatModelTag(activeResolvedModel?.provider, activeResolvedModel?.modelId);
+  const activeModelProvider = activeResolvedModel?.provider ?? null;
   const hasThreadInView = Boolean(activeSession || isStreaming || messages.length > 0);
   const hasMobileDetailSelection = chatScope === "rooms" ? roomThreadActive : Boolean(activeSession);
   const previousHasMobileDetailSelectionRef = useRef(hasMobileDetailSelection);
@@ -2359,57 +2371,60 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                 filteredSessions.map((session) => {
                   const isActive = activeSession?.id === session.id;
                   const showUnreadDot = !isActive && isUnread("direct", session.id, session.lastMessageAt ?? session.updatedAt);
+                  const sessionResolvedModel = resolveSessionProvider(
+                    session,
+                    agentsMap.get(session.agentId) ?? null,
+                    defaultModel,
+                  );
+                  const sessionModelTag = formatModelTag(sessionResolvedModel?.provider, sessionResolvedModel?.modelId) ?? "Fusion";
+
                   return (
-                  <div
-                    key={session.id}
-                    className={`chat-session-item${isActive ? " chat-session-item--active" : ""}`}
-                    onClick={() => handleSessionClick(session.id)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY });
-                    }}
-                    data-testid={`chat-session-${session.id}`}
-                  >
-                    <button
-                      className="chat-session-delete-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setConfirmDelete(session.id);
+                    <div
+                      key={session.id}
+                      className={`chat-session-item${isActive ? " chat-session-item--active" : ""}`}
+                      onClick={() => handleSessionClick(session.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY });
                       }}
-                      data-testid="chat-session-delete-btn"
-                      aria-label="Delete conversation"
+                      data-testid={`chat-session-${session.id}`}
                     >
-                      <Trash2 size={14} />
-                    </button>
-                    <div className="chat-session-title">
-                      {session.title || "Untitled"}
-                      {showUnreadDot ? (
-                        <span
-                          className="chat-unread-dot"
-                          data-testid={`chat-unread-dot-${session.id}`}
-                          aria-label="Unread messages"
-                        />
-                      ) : null}
-                    </div>
-                    <div className="chat-session-preview">
-                      {session.lastMessagePreview || "No messages"}
-                    </div>
-                    <div className="chat-session-meta">
-                      <span className="chat-session-meta-model">
-                        {session.modelProvider && (
-                          <ProviderIcon provider={session.modelProvider} size="sm" />
-                        )}
-                        <span>
-                          {agentsMap.get(session.agentId)?.name ||
-                            (session.agentId === FN_AGENT_ID
-                              ? (formatModelTag(session.modelProvider, session.modelId) ?? "Fusion")
-                              : session.agentId.slice(0, 30))}
+                      <button
+                        className="chat-session-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(session.id);
+                        }}
+                        data-testid="chat-session-delete-btn"
+                        aria-label="Delete conversation"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <div className="chat-session-title">
+                        {session.title || "Untitled"}
+                        {showUnreadDot ? (
+                          <span
+                            className="chat-unread-dot"
+                            data-testid={`chat-unread-dot-${session.id}`}
+                            aria-label="Unread messages"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="chat-session-preview">
+                        {session.lastMessagePreview || "No messages"}
+                      </div>
+                      <div className="chat-session-meta">
+                        <span className="chat-session-meta-model">
+                          {sessionResolvedModel?.provider ? <ProviderIcon provider={sessionResolvedModel.provider} size="sm" /> : null}
+                          <span>
+                            {agentsMap.get(session.agentId)?.name ||
+                              (session.agentId === FN_AGENT_ID ? sessionModelTag : session.agentId.slice(0, 30))}
+                          </span>
                         </span>
-                      </span>
-                      <span>{session.updatedAt ? formatRelativeTime(session.updatedAt) : ""}</span>
+                        <span>{session.updatedAt ? formatRelativeTime(session.updatedAt) : ""}</span>
+                      </div>
                     </div>
-                  </div>
-                );
+                  );
                 })
               )}
             </div>
@@ -3099,14 +3114,14 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                 <FileMentionPopup
                   visible={fileMention.mentionActive && !mentionPopupVisible}
                   position={fileMentionPosition}
+                  tasks={fileMention.tasks}
                   files={fileMention.files}
                   selectedIndex={fileMention.selectedIndex}
-                  onSelect={(file) => {
-                    const newText = fileMention.selectFile(file, messageInput);
-                    setMessageInput(newText);
-                    fileMention.dismissMention();
-                    setFileMentionPopupVisible(false);
-                    inputRef.current?.focus();
+                  onSelectTask={(task) => {
+                    insertHashMention(fileMention.selectTask(task, messageInput), `#${task.id}`);
+                  }}
+                  onSelectFile={(file) => {
+                    insertHashMention(fileMention.selectFile(file, messageInput), `#${file.path}`);
                   }}
                   loading={fileMention.loading}
                 />

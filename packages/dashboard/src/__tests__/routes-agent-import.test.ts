@@ -72,6 +72,7 @@ vi.mock("@fusion/core", () => {
     parseSingleAgentManifest: (...args: unknown[]) => mockParseSingleAgentManifest(...args),
     prepareAgentCompaniesImport: (...args: unknown[]) => mockPrepareAgentCompaniesImport(...args),
     AgentCompaniesParseError: MockAgentCompaniesParseError,
+    deterministicGuardLocks: new Map(),
   };
 });
 

@@ -98,7 +98,7 @@ function buildHealthPayload(store: TaskStore, cliPackageVersion: string) {
   const database = store.getDatabaseHealth();
   const taskIdIntegrity = buildTaskIdIntegrityHealth(store.getTaskIdIntegrityReport());
   return {
-    status: !database.healthy || taskIdIntegrity.status === "anomaly" ? "degraded" : "ok",
+    status: !database.healthy || database.corruptionDetected || taskIdIntegrity.status === "anomaly" ? "degraded" : "ok",
     version: cliPackageVersion,
     uptime: Math.floor(process.uptime()),
     database,
@@ -254,6 +254,10 @@ export interface ServerOptions {
       contextSnapshot?: Record<string, unknown>;
     }): Promise<import("@fusion/core").AgentHeartbeatRun>;
     stopRun(agentId: string): Promise<void>;
+  };
+  selfHealingManager?: {
+    rootDir: string;
+    reconcileInReviewBranchRebind: (opts?: { includeTaskIds?: Set<string> }) => Promise<import("@fusion/engine").RebindResult>;
   };
   /** Optional PluginStore for plugin management routes */
   pluginStore?: import("@fusion/core").PluginStore;
@@ -570,6 +574,18 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
             startRun: hb.startRun.bind(hb),
             executeHeartbeat: hb.executeHeartbeat.bind(hb),
             stopRun: hb.stopRun.bind(hb),
+          },
+        };
+      }
+    }
+    if (!options!.selfHealingManager) {
+      const selfHealing = engine.getSelfHealingManager();
+      if (selfHealing) {
+        options = {
+          ...options,
+          selfHealingManager: {
+            rootDir: engine.getWorkingDirectory(),
+            reconcileInReviewBranchRebind: selfHealing.reconcileInReviewBranchRebind.bind(selfHealing),
           },
         };
       }
@@ -1309,7 +1325,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     const report = store.refreshTaskIdIntegrityReport();
     const database = store.getDatabaseHealth();
     res.json({
-      status: !database.healthy || report.status === "anomaly" ? "degraded" : "ok",
+      status: !database.healthy || database.corruptionDetected || report.status === "anomaly" ? "degraded" : "ok",
       version: cliPackageVersion,
       uptime: Math.floor(process.uptime()),
       database,

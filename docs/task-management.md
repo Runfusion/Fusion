@@ -26,6 +26,75 @@ Dashboard `POST /tasks` now performs a pre-create duplicate gate using token-ove
   - `task.source.sourceMetadata.duplicateWarningOverridden = true`
   - `task.source.sourceMetadata.acknowledgedDuplicateIds = [...]`
 - Override creates emit activity type `task:duplicate-warning-overridden` with acknowledged IDs and scored candidate metadata.
+- Duplicate lineage is persisted on the task row via canonical source fields (`sourceType: "task_duplicate"`, `sourceParentTaskId`) plus `sourceMetadata.duplicateOfTaskIds` when available, so `fn task show <id>` and Task Detail views can render duplicate-of linkage directly from task provenance.
+
+#### Deterministic duplicate guard (FN-4918, extended by FN-5060)
+
+Fusion applies a deterministic guard for exact normalized content matches (title + description fingerprint) within a 60s window. The shared implementation lives in `packages/core/src/duplicate-guard.ts` (`runDeterministicDuplicateGuard` + `reconcileDeterministicDuplicate`) and is wired into all primary task-creation surfaces:
+
+- Dashboard `POST /tasks`
+- CLI `fn task create` (`runTaskCreate`)
+- Engine `createAgentTask` (powers `fn_task_create`, including triage subtask splits)
+- Mission feature triage (`MissionStore.triageFeature`)
+
+Behavior is consistent across these surfaces:
+
+- If an existing same-fingerprint task is found in-window, create returns/behaves as a link-to-existing result (`duplicate_candidates` for API, `Linked existing ...` for CLI/tool responses).
+- If two creates race across processes and both reach persistence, post-create reconciliation keeps the older canonical task and auto-archives the newer sibling.
+- New rows stamp `task.source.sourceMetadata.contentFingerprint` for deterministic matching.
+- Reconciled losers stamp `task.source.sourceMetadata.deterministicDuplicateOf = <canonicalTaskId>` and are archived (not deleted).
+- Reconciliation archives record activity event `task:auto-archived-deterministic-duplicate`.
+
+Bypass controls:
+
+- Dashboard API: `bypassDuplicateCheck: true` skips deterministic + similarity duplicate gates.
+- CLI: `fn task create --no-dedup` skips deterministic duplicate guard.
+
+This deterministic layer complements (does not replace) the FN-4829 similarity warning gate. FN-4892 remains a separate engine-side same-agent intake heuristic at triage finalize.
+
+##### Fail-open boundary (FN-5084)
+
+The deterministic **pre-check** now fails open: transient store query failures, in-process mutex bookkeeping failures, and leader-lock promise rejections do not block task creation. The route logs one `runtimeLogger.warn` line tagged `FN-5084` (including `projectId` and `contentFingerprint`) and continues through the FN-4829 similarity gate to normal create handling.
+
+Only legitimate deterministic duplicate detections continue to propagate as `409` via `ApiError` from `conflict("duplicate_candidates", ...)`. The post-create FN-4918 reconciliation pass remains the second line of defense.
+
+#### Near-duplicate intent guard (FN-5152)
+
+Fusion adds a separate near-duplicate layer for tasks whose raw descriptions differ but whose implementation intent converges.
+
+Order on dashboard `POST /api/tasks` is:
+
+1. Deterministic fingerprint guard (FN-4918 / FN-5060)
+2. Similarity warning gate (FN-4829)
+3. Near-duplicate intent guard (FN-5152)
+
+Both FN-5152 layers **fail open**: extraction errors, store-query failures, parse failures, and timeout paths log a warning and continue through normal create/finalize flow.
+
+Layer 1 runs synchronously on dashboard intake before task creation. It extracts an intent signature from the incoming title/description and compares it with active recent tasks. The signature stores four capped arrays:
+
+- `routePaths` — route-like paths such as `/pr/options` or `/api/tasks/:id/pr/preflight`
+- `filePaths` — concrete source/docs paths such as `packages/dashboard/src/routes/register-task-workflow-routes.ts`
+- `identifiers` — high-signal identifier-shaped tokens such as `PrCreateModal`
+- `titleTokens` — non-stopword title tokens used for the title Jaccard check
+
+When at least two distinct high-signal tokens overlap and title-token Jaccard is at least `0.30`, dashboard intake returns `409 duplicate_candidates` with matches carrying `reason: "near-duplicate-intent"` plus `sharedTokens` so callers can explain the overlap. Clients may bypass that specific match with `acknowledgedDuplicates: ["FN-..."]`; `bypassDuplicateCheck: true` still skips the create-time duplicate gates entirely.
+
+To avoid false positives from broad hot files, the matcher treats an overlap consisting only of generic large files (`register-git-github.ts`, `register-task-workflow-routes.ts`, `store.ts`, `types.ts`, `styles.css`) more strictly and requires title-token Jaccard of at least `0.50`.
+
+Layer 1 persists `source.sourceMetadata.intentSignature` on created tasks so later checks can reuse pre-extracted vectors.
+
+##### CLI direct-store coverage (FN-5171)
+
+CLI `fn task create` now runs the same near-duplicate intent guard after the FN-4918 deterministic fingerprint guard, using shared `extractIntentSignature` / `findNearDuplicates` helpers from `@fusion/core`. Thresholds and the 7-day comparison window match the dashboard layer exactly. `--no-dedup` remains the single bypass across both duplicate layers: it skips the comparison but still stamps `source.sourceMetadata.intentSignature` when high-signal tokens were extracted. When a near-duplicate is detected, interactive TTY runs prompt `Create anyway? [y/N]`; non-interactive runs refuse creation with exit code 1 and instruct the caller to re-run with `--no-dedup`. The guard is still fail-open: extraction/list/query errors log a warning and continue. `fn task import` (GitHub import) and `fn task plan` intentionally continue to skip both duplicate guards per the FN-5060 same-content-sibling contract.
+
+Layer 2 runs in triage `finalizeApprovedTask` after `PROMPT.md` is written and parses `## File Scope` as an additional backstop. If the new spec overlaps an older active task on concrete File Scope / intent tokens and still clears the title threshold, the newer task is auto-archived instead of moved to `todo`.
+
+Near-duplicate archival is reversible and leaves lineage markers behind:
+
+- `source.sourceMetadata.nearDuplicateOf = <canonicalTaskId>`
+- activity event `task:auto-archived-near-duplicate`
+
+This layer complements, rather than replaces, FN-4829 similarity detection, FN-4918 deterministic deduplication, and FN-4892 same-agent intake heuristics.
 
 ### Intake auto-archive (ghost-bug preflight + same-agent duplicate)
 
@@ -518,7 +587,7 @@ Behavior:
 ### Archive behavior
 
 - `fn task archive <id>` moves done task to `archived`
-- Dashboard delete confirmations for `done` tasks now include an **Archive Instead** action so users can preserve history without permanently deleting the task. This option is shown only for `done` tasks because the store-level archive contract only allows archiving from the `done` column.
+- Dashboard delete confirmations for `done` tasks now include an **Archive Instead** action so users can preserve history without soft-deleting the task. This option is shown only for `done` tasks because the store-level archive contract only allows archiving from the `done` column.
 - Cleanup mode can persist compact metadata and remove the task directory
 - Archived tasks are read-only for task log/document writes:
   - `logEntry()` throws `Task <id> is archived — logging is read-only`
@@ -536,7 +605,7 @@ Archive entries preserve key metadata needed for restoration, including:
 
 - `id`, `title`, `description`, `priority`, `column`
 - `dependencies`, `steps`, `currentStep`
-- `size`, `reviewLevel`, `prInfo`, `issueInfo`
+- `size`, `reviewLevel`, `prInfo` (primary mirror), `prInfos` (canonical linked PR list), `issueInfo`
 - `attachments` metadata
 - task `log`
 - timestamps (`createdAt`, `updatedAt`, `columnMovedAt`, `archivedAt`)
@@ -604,7 +673,9 @@ Manual/non-auto-merge behavior:
 
 GitHub tracking issues are optional issues Fusion can create from Fusion tasks. They are **not** the same as imported source issues (`issueInfo` / `sourceIssue`): imported issues represent an existing GitHub issue that created the task, while tracking issues are new GitHub issues opened to track a Fusion task.
 
-When task creation runs with tracking enabled, Fusion attempts issue creation via a **universal post-create hook** that fires for every task-creation path: dashboard HTTP routes, pi extension tools (`fn_task_create`, `fn_task_import_github*`, `fn_delegate_task`), CLI commands (`fn task add`, `fn task duplicate`, `fn task refine`), mission/feature triage, automation `create-task` workflow steps, agent-driven delegation, routine/cron-created tasks, and subtask creation paths. Dashboard REST API coverage explicitly includes `POST /api/tasks`, `POST /api/tasks/:id/duplicate`, `POST /api/tasks/:id/refine`, and `POST /api/subtasks/create-tasks`. The hook is registered at process startup by the dashboard package and is best-effort and non-blocking: task creation still succeeds even if repo resolution fails or GitHub calls fail. For existing tasks, PATCH first persists any `githubTracking` mutation (enable/disable, repo override, or unlink), then evaluates whether the updated task is **enabled and still unlinked** and should trigger best-effort issue creation (including non-`githubTracking` edits). This keeps retry/create behavior consistent from Task Detail instead of relying on stale pre-patch state.
+### Agent- and tool-created task coverage
+
+When task creation runs with tracking enabled, Fusion attempts issue creation via a **universal post-create hook** (`setTaskCreatedHook`) that fires for every task-creation path: dashboard HTTP routes, pi extension tools (`fn_task_create`, `fn_task_import_github*`, `fn_delegate_task`), CLI commands (`fn task add`, `fn task duplicate`, `fn task refine`), mission/feature triage, automation `create-task` workflow steps, agent-driven delegation, routine/cron-created tasks, and subtask creation paths. Dashboard REST API coverage explicitly includes `POST /api/tasks`, `POST /api/tasks/:id/duplicate`, `POST /api/tasks/:id/refine`, and `POST /api/subtasks/create-tasks`. The hook is registered once per process entrypoint by calling `registerGithubTrackingHook()` at startup before any reachable `store.createTask` path. See the FN-5057 audit matrix (task document `audit`) for the current surface-by-surface registration map and resolved `sourceType` values. The hook is best-effort and non-blocking: task creation still succeeds even if repo resolution fails or GitHub calls fail. For existing tasks, PATCH first persists any `githubTracking` mutation (enable/disable, repo override, or unlink), then evaluates whether the updated task is **enabled and still unlinked** and should trigger best-effort issue creation (including non-`githubTracking` edits). This keeps retry/create behavior consistent from Task Detail instead of relying on stale pre-patch state.
 
 Tracking behavior is controlled per task:
 

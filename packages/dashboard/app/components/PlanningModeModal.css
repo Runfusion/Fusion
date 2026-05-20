@@ -595,7 +595,7 @@
   color: var(--text);
   font-family: inherit;
   font-size: 14px;
-  max-height: calc(var(--space-2xl) * 12);
+  max-height: calc(var(--space-2xl) * 20);
   overflow-y: auto;
   outline: none;
   transition: border-color var(--transition-normal), box-shadow var(--transition-normal);

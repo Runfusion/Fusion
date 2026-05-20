@@ -1500,6 +1500,44 @@ describe("useQuickChat", () => {
       );
     });
 
+    it("FN-5104 reattaches once when selectSession refresh reveals generation from stale cache", async () => {
+      const staleSession = {
+        ...makeSession({ id: "session-001", agentId: "agent-001" }),
+        isGenerating: false,
+        inFlightGeneration: null,
+      };
+      const generatingSession = {
+        ...staleSession,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "partial text",
+          streamingThinking: "thinking",
+          toolCalls: [{ toolName: "read", status: "running" as const, isError: false }],
+          replayFromEventId: 17,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.selectSession(staleSession);
+      });
+
+      await waitFor(() => {
+        expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          "session-001",
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 17 },
+        );
+        expect(result.current.streamingText).toBe("partial text");
+      });
+    });
+
     it("sets isStreaming=true when initializing a session with isGenerating=true", async () => {
       const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
       mockFetchResumeChatSession.mockResolvedValue({ session });

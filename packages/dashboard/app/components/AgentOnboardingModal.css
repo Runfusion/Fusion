@@ -17,7 +17,7 @@
 #agent-onboarding-intent,
 #agent-onboarding-answer {
   min-height: 120px;
-  max-height: calc(var(--space-2xl) * 10);
+  max-height: calc(var(--space-2xl) * 20);
   overflow-y: auto;
 }
 

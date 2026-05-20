@@ -56,6 +56,11 @@ function makeStore(
       task.column = column;
       return task;
     }),
+    handoffToReview: vi.fn(async (id: string) => {
+      if (!task || id !== task.id) return null;
+      task.column = "in-review";
+      return task;
+    }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),

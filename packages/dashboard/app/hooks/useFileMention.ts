@@ -1,10 +1,21 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { searchFiles } from "../api";
+import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from "react";
+import { fetchTasks, searchFiles } from "../api";
+import type { Column } from "@fusion/core";
 
 export interface FileSearchItem {
   path: string;
   name: string;
 }
+
+export interface TaskSearchItem {
+  id: string;
+  title: string;
+  column: string;
+}
+
+export type HashMentionItem =
+  | { kind: "task"; task: TaskSearchItem }
+  | { kind: "file"; file: FileSearchItem };
 
 export interface UseFileMentionOptions {
   projectId?: string;
@@ -13,24 +24,64 @@ export interface UseFileMentionOptions {
 
 export interface UseFileMentionReturn {
   mentionActive: boolean;
+  tasks: TaskSearchItem[];
   files: FileSearchItem[];
+  combinedItems: HashMentionItem[];
   loading: boolean;
   mentionQuery: string;
   selectedIndex: number;
   setSelectedIndex: (index: number) => void;
   detectMention: (text: string, cursorPosition: number) => void;
+  selectTask: (task: TaskSearchItem, currentText: string) => string;
   selectFile: (file: FileSearchItem, currentText: string) => string;
   dismissMention: () => void;
-  handleKeyDown: (event: React.KeyboardEvent<HTMLElement>, currentText: string) => void;
+  handleKeyDown: (event: KeyboardEvent<HTMLElement>, currentText: string) => boolean;
 }
 
 const DEBOUNCE_MS = 200;
+const MAX_TASK_RESULTS = 8;
+const MAX_FILE_RESULTS = 8;
+
+function createAbortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(createAbortError());
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(createAbortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function replaceCurrentMention(currentText: string, mentionStartIndex: number, replacement: string): string {
+  const beforeMention = currentText.slice(0, mentionStartIndex);
+  const afterMention = currentText.slice(mentionStartIndex + 1);
+  const mentionEndMatch = afterMention.match(/[\s]|$/);
+  const mentionEndIndex = mentionEndMatch ? mentionEndMatch.index ?? afterMention.length : afterMention.length;
+  const afterCurrentMention = afterMention.slice(mentionEndIndex);
+  return `${beforeMention}${replacement}${afterCurrentMention}`;
+}
 
 /**
- * Hook to manage file mention state and interactions.
+ * Hook to manage `#` hash-mention state and interactions.
  *
- * Detects # triggers in text input and provides file search with
- * keyboard navigation and selection support.
+ * Detects `#` triggers in text input and provides combined task + file search,
+ * keyboard navigation, and selection support for the shared popup.
  */
 export function useFileMention(options: UseFileMentionOptions = {}): UseFileMentionReturn {
   const { projectId, workspace = "project" } = options;
@@ -38,6 +89,7 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
   const [mentionActive, setMentionActive] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionStartIndex, setMentionStartIndex] = useState(-1);
+  const [tasks, setTasks] = useState<TaskSearchItem[]>([]);
   const [files, setFiles] = useState<FileSearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -45,7 +97,11 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortController = useRef<AbortController | null>(null);
 
-  // Cleanup on unmount
+  const combinedItems: HashMentionItem[] = [
+    ...tasks.map((task) => ({ kind: "task" as const, task })),
+    ...files.map((file) => ({ kind: "file" as const, file })),
+  ];
+
   useEffect(() => {
     return () => {
       if (debounceTimer.current) {
@@ -55,114 +111,109 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
     };
   }, []);
 
-  /**
-   * Detect if the cursor is inside a # file mention.
-   * Triggered by # followed by alphanumeric/path characters after whitespace, punctuation, or at text start.
-   *
-   * Algorithm:
-   * 1. Find the # that starts the current mention (scanning back from cursor)
-   * 2. Validate it's at a valid trigger position (start of text or after whitespace/punctuation)
-   * 3. The text between # and cursor should all be path characters
-   */
   const detectMention = useCallback((text: string, cursorPosition: number) => {
     if (cursorPosition < 0 || cursorPosition > text.length) {
       setMentionActive(false);
       return;
     }
 
-    // Path characters: alphanumeric, /, _, -, .
     const isPathChar = (char: string): boolean => /[a-zA-Z0-9/_.-]/.test(char);
 
-    // Find # by scanning backwards from cursor
-    // Skip over path chars (they're part of the mention text)
-    // Stop on non-path chars or when we find a valid # trigger
     for (let i = cursorPosition - 1; i >= 0; i--) {
       if (text[i] === "#") {
-        // Found # - check if it's at a valid trigger position
         if (i === 0) {
-          // # at start of text - valid trigger
           const query = text.slice(i + 1, cursorPosition);
           setMentionStartIndex(i);
           setMentionQuery(query);
           setSelectedIndex(0);
           setMentionActive(true);
           return;
-        } else {
-          const charBefore = text[i - 1];
-          // Must be preceded by whitespace or punctuation
-          if (/[\s,.;:!?'"()[\]{}]/.test(charBefore)) {
-            const query = text.slice(i + 1, cursorPosition);
-            setMentionStartIndex(i);
-            setMentionQuery(query);
-            setSelectedIndex(0);
-            setMentionActive(true);
-            return;
-          }
-          // # preceded by word char - not a valid trigger
-          setMentionActive(false);
+        }
+
+        const charBefore = text[i - 1];
+        if (/[\s,.;:!?'"()[\]{}]/.test(charBefore)) {
+          const query = text.slice(i + 1, cursorPosition);
+          setMentionStartIndex(i);
+          setMentionQuery(query);
+          setSelectedIndex(0);
+          setMentionActive(true);
           return;
         }
-      }
 
-      // Not a # - check if this is a path char we should skip
-      if (!isPathChar(text[i])) {
-        // Non-path character (including whitespace, punctuation)
-        // If there's a # before this, it would have been caught above
-        // So we're past the mention - stop searching
         setMentionActive(false);
         return;
       }
-      // It's a path char - keep scanning backwards to find the #
+
+      if (!isPathChar(text[i])) {
+        setMentionActive(false);
+        return;
+      }
     }
 
-    // Reached start of text without finding #
     setMentionActive(false);
   }, []);
 
-  /**
-   * Dismiss the mention popup.
-   */
   const dismissMention = useCallback(() => {
+    abortController.current?.abort();
     setMentionActive(false);
     setMentionQuery("");
     setMentionStartIndex(-1);
+    setTasks([]);
     setFiles([]);
     setSelectedIndex(0);
     setLoading(false);
   }, []);
 
-  /**
-   * Search for files matching the current query.
-   */
   const performSearch = useCallback(
     async (query: string) => {
       if (!query.trim()) {
+        setTasks([]);
         setFiles([]);
         setLoading(false);
         return;
       }
 
-      // Cancel previous request
       abortController.current?.abort();
-      abortController.current = new AbortController();
+      const controller = new AbortController();
+      abortController.current = controller;
 
       try {
         setLoading(true);
-        const result = await searchFiles(query, workspace, projectId);
-        setFiles(result.files);
+        const [taskResult, fileResult] = await Promise.allSettled([
+          withAbort(fetchTasks(20, 0, projectId, query), controller.signal),
+          withAbort(searchFiles(query, workspace, projectId), controller.signal),
+        ]);
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const nextTasks = taskResult.status === "fulfilled"
+          ? taskResult.value.slice(0, MAX_TASK_RESULTS).map((task) => ({
+              id: task.id,
+              title: task.title ?? "",
+              column: task.column as Column,
+            }))
+          : [];
+        const nextFiles = fileResult.status === "fulfilled" ? fileResult.value.files.slice(0, MAX_FILE_RESULTS) : [];
+
+        setTasks(nextTasks);
+        setFiles(nextFiles);
         setSelectedIndex(0);
       } catch (err) {
         if ((err as DOMException).name !== "AbortError") {
+          setTasks([]);
           setFiles([]);
         }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     },
     [workspace, projectId],
   );
 
-  // Debounced search when query changes
   useEffect(() => {
     if (!mentionActive) return;
 
@@ -171,7 +222,7 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
     }
 
     debounceTimer.current = setTimeout(() => {
-      performSearch(mentionQuery);
+      void performSearch(mentionQuery);
     }, DEBOUNCE_MS);
 
     return () => {
@@ -181,44 +232,38 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
     };
   }, [mentionQuery, mentionActive, performSearch]);
 
-  /**
-   * Select a file and replace the partial mention with the full path.
-   */
+  const selectTask = useCallback(
+    (task: TaskSearchItem, currentText: string): string => {
+      if (!mentionActive || mentionStartIndex < 0) {
+        return currentText;
+      }
+
+      return replaceCurrentMention(currentText, mentionStartIndex, `#${task.id}`);
+    },
+    [mentionActive, mentionStartIndex],
+  );
+
   const selectFile = useCallback(
     (file: FileSearchItem, currentText: string): string => {
       if (!mentionActive || mentionStartIndex < 0) {
         return currentText;
       }
 
-      const beforeMention = currentText.slice(0, mentionStartIndex);
-      const afterMention = currentText.slice(mentionStartIndex + 1);
-
-      // Find where the mention ends (whitespace or end of text)
-      const mentionEndMatch = afterMention.match(/[\s]|$/);
-      const mentionEndIndex = mentionEndMatch ? mentionEndMatch.index! : afterMention.length;
-
-      const afterCurrentMention = afterMention.slice(mentionEndIndex);
-
-      // Replace with #file.path
-      return `${beforeMention}#${file.path}${afterCurrentMention}`;
+      return replaceCurrentMention(currentText, mentionStartIndex, `#${file.path}`);
     },
     [mentionActive, mentionStartIndex],
   );
 
-  /**
-   * Handle keyboard navigation in the mention popup.
-   * Supports ArrowUp/ArrowDown to navigate, Enter/Tab to select, Escape to dismiss.
-   */
   const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLElement>, _currentText: string): boolean => {
-      if (!mentionActive || files.length === 0) {
+    (event: KeyboardEvent<HTMLElement>, _currentText: string): boolean => {
+      if (!mentionActive || combinedItems.length === 0) {
         return false;
       }
 
       switch (event.key) {
         case "ArrowDown":
           event.preventDefault();
-          setSelectedIndex((prev) => Math.min(prev + 1, files.length - 1));
+          setSelectedIndex((prev) => Math.min(prev + 1, combinedItems.length - 1));
           return true;
 
         case "ArrowUp":
@@ -228,9 +273,9 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
 
         case "Enter":
         case "Tab":
-          if (files[selectedIndex]) {
+          if (combinedItems[selectedIndex]) {
             event.preventDefault();
-            return true; // Signal to caller to handle selection
+            return true;
           }
           return false;
 
@@ -243,17 +288,20 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
           return false;
       }
     },
-    [mentionActive, files, selectedIndex, dismissMention],
+    [mentionActive, combinedItems, selectedIndex, dismissMention],
   );
 
   return {
     mentionActive,
+    tasks,
     files,
+    combinedItems,
     loading,
     mentionQuery,
     selectedIndex,
     setSelectedIndex,
     detectMention,
+    selectTask,
     selectFile,
     dismissMention,
     handleKeyDown,

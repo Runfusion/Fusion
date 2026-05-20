@@ -45,6 +45,8 @@ export function useRemoteNodeEvents(nodeId: string | null): UseRemoteNodeEventsR
         "task:updated": (e: MessageEvent) => {
           setLastEvent({ type: "task:updated", data: e.data });
         },
+        // FN-5135: dashboard treats deletedAt-bearing task events as delete-equivalent,
+        // so task:deleted remains a load-bearing remote signal for cross-node refreshes.
         "task:deleted": (e: MessageEvent) => {
           setLastEvent({ type: "task:deleted", data: e.data });
         },

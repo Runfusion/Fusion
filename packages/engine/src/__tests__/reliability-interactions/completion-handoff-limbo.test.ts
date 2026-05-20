@@ -28,6 +28,7 @@ function createStore(task: Task) {
       return current;
     }),
     moveTask: vi.fn(async () => undefined),
+    enqueueMergeQueue: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
     _get: () => current,
@@ -52,6 +53,7 @@ describe("FN-4999 reliability interactions: completion-handoff-limbo", () => {
 
     expect(requeueForAutoMerge).toHaveBeenCalledTimes(1);
     expect(requeueForAutoMerge).toHaveBeenCalledWith("FN-4999-T");
+    expect(store.enqueueMergeQueue).toHaveBeenCalledWith("FN-4999-T");
     expect(store.logEntry).toHaveBeenCalledWith("FN-4999-T", expect.stringMatching(/Auto-recovered \(FN-4999\)/));
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({

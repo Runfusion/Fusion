@@ -62,7 +62,7 @@ export class NotificationService {
   private readonly failedNotificationGraceMs: number;
   private failureNotificationSuppressedCount = 0;
   private failureNotificationDelayMs = 60_000;
-  private failureNotificationMode: "sticky-only" | "all" = "sticky-only";
+  private failureNotificationMode: "sticky-only" | "all" | "terminal-only" = "sticky-only";
 
   constructor(
     private readonly store: NotificationServiceStore,
@@ -168,7 +168,7 @@ export class NotificationService {
     }
 
     if (task.status === "failed") {
-      if (this.failureNotificationMode === "all" || this.failureNotificationDelayMs === 0) {
+      if (this.failureNotificationMode === "all") {
         this.maybeNotify(task.id, "failed", this.createTaskPayload(task, "failed"));
       } else {
         this.scheduleFailureNotification(task);
@@ -561,6 +561,13 @@ export class NotificationService {
     if (task.status !== "failed") {
       this.failureNotificationSuppressedCount += 1;
       schedulerLog.log(`[notify] ${taskId} no longer failed at dispatch time — suppressed notification`);
+      return;
+    }
+
+    const isTerminal = task.paused === true || task.column === "in-review";
+    if (this.failureNotificationMode === "terminal-only" && !isTerminal) {
+      this.failureNotificationSuppressedCount += 1;
+      schedulerLog.log(`[notify] ${taskId} non-terminal failure — suppressed (mode=terminal-only)`);
       return;
     }
 

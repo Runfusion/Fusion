@@ -23,9 +23,12 @@ function initRepo(dir: string): void {
 
 const created = new Set<string>();
 afterEach(() => {
-  vi.restoreAllMocks();
-  for (const dir of created) rmSync(dir, { recursive: true, force: true });
-  created.clear();
+  try {
+    for (const dir of created) rmSync(dir, { recursive: true, force: true });
+    created.clear();
+  } finally {
+    vi.restoreAllMocks();
+  }
 });
 
 function mkRepo(): string {
@@ -96,7 +99,8 @@ describe("commitOrAmendMergeWithFixes gitignored guard", () => {
       preAttemptHeadSha,
       "",
       undefined,
-      { ...DEFAULT_SETTINGS, commitAuthorEnabled: false },
+      { ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const, commitAuthorEnabled: false },
       undefined,
       null,
       null,

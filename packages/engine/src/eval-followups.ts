@@ -7,6 +7,7 @@ import {
   type FollowUpDraft,
   type TaskStore,
 } from "@fusion/core";
+import { createAutomatedFollowup } from "./verification-followup-dedup.js";
 
 const OPEN_COLUMNS = new Set(["triage", "todo", "in-progress", "in-review"]);
 const GENERIC_TITLE_PATTERNS = [/^follow\s*-?up$/i, /^todo$/i, /^fix\s+issue$/i, /^improve\s+task$/i, /^investigate$/i];
@@ -187,39 +188,47 @@ export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsIn
       continue;
     }
 
-    const createdTask = await store.createTask({
-      title: followUp.title,
-      description: [
-        `Follow-up generated from evaluation run ${runId} for ${parentTaskId}.`,
-        "",
-        `Problem summary: ${followUp.description}`,
-        "Expected outcome: Investigate and resolve the issue identified by evaluation findings.",
-        `Eval severity/score: ${followUp.severity} (${overallScore})`,
-        `Rationale: ${followUp.rationale}`,
-        `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
-      ].join("\n"),
-      column: "triage",
-      priority: followUp.priority,
-      source: {
-        sourceType: "automation",
-        sourceParentTaskId: parentTaskId,
-        sourceMetadata: {
-          type: "eval_follow_up",
-          runId,
-          suggestionId: followUp.suggestionId,
-          policyMode,
-          dedupeKey: followUp.dedupeKey,
+    const result = await createAutomatedFollowup(store, {
+      kind: "eval",
+      parentTaskId,
+      extraMatchKeys: { suggestionId: followUp.suggestionId },
+      createInput: {
+        title: followUp.title,
+        description: [
+          `Follow-up generated from evaluation run ${runId} for ${parentTaskId}.`,
+          "",
+          `Problem summary: ${followUp.description}`,
+          "Expected outcome: Investigate and resolve the issue identified by evaluation findings.",
+          `Eval severity/score: ${followUp.severity} (${overallScore})`,
+          `Rationale: ${followUp.rationale}`,
+          `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
+        ].join("\n"),
+        column: "triage",
+        priority: followUp.priority,
+        source: {
+          sourceType: "automation",
+          sourceParentTaskId: parentTaskId,
+          sourceMetadata: {
+            type: "eval_follow_up",
+            runId,
+            suggestionId: followUp.suggestionId,
+            policyMode,
+            dedupeKey: followUp.dedupeKey,
+          },
         },
       },
     });
 
+    const createdTaskId = result.outcome === "created" ? result.task.id : result.existingTaskId;
     created.push({
       ...followUp,
       state: "created",
-      createdTaskId: createdTask.id,
+      createdTaskId,
       recommendation: {
         ...followUp.recommendation,
-        reason: `Created as ${createdTask.id} by follow-up policy`,
+        reason: result.outcome === "created"
+          ? `Created as ${createdTaskId} by follow-up policy`
+          : `Reused existing follow-up ${createdTaskId} by follow-up policy`,
       },
     });
   }

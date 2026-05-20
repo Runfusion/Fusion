@@ -184,7 +184,10 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -351,6 +354,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
       mergeStrategy: "direct",
@@ -388,6 +392,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       mergeStrategy: "pull-request",
       pushAfterMerge: true,
       pushRemote: "origin",
@@ -416,6 +421,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
       mergeStrategy: "direct",
@@ -444,6 +450,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "upstream main",
     });
@@ -498,6 +505,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
     });
@@ -557,6 +565,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
     });
@@ -596,6 +605,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
     });
@@ -644,6 +654,7 @@ describe("push-after-merge", () => {
     const store = createMockStore();
     const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
       pushAfterMerge: true,
       pushRemote: "origin",
     });

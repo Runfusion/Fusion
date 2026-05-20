@@ -8,7 +8,7 @@ import {
   RemovalReason,
 } from "../worktree-backend.js";
 
-const { execMock, accessMock, existsSyncMock, parseIndexLockPathMock, classifyStaleLockMock, tryRemoveStaleLockMock, installGuardMock } = vi.hoisted(() => {
+const { execMock, accessMock, existsSyncMock, parseIndexLockPathMock, classifyStaleLockMock, tryRemoveStaleLockMock, parseStaleRegistrationPathMock, recoverStaleRegistrationMock, installGuardMock } = vi.hoisted(() => {
   const mock = vi.fn();
   (mock as any)[Symbol.for("nodejs.util.promisify.custom")] = mock;
   return {
@@ -18,6 +18,8 @@ const { execMock, accessMock, existsSyncMock, parseIndexLockPathMock, classifySt
     parseIndexLockPathMock: vi.fn(),
     classifyStaleLockMock: vi.fn(),
     tryRemoveStaleLockMock: vi.fn(),
+    parseStaleRegistrationPathMock: vi.fn(),
+    recoverStaleRegistrationMock: vi.fn(),
     installGuardMock: vi.fn(),
   };
 });
@@ -48,6 +50,10 @@ vi.mock("../worktree-stale-lock.js", () => ({
   classifyStaleLock: classifyStaleLockMock,
   tryRemoveStaleLock: tryRemoveStaleLockMock,
 }));
+vi.mock("../worktree-stale-registration.js", () => ({
+  parseStaleRegistrationPath: parseStaleRegistrationPathMock,
+  recoverStaleRegistration: recoverStaleRegistrationMock,
+}));
 
 beforeEach(() => {
   execMock.mockReset();
@@ -61,6 +67,10 @@ beforeEach(() => {
   installGuardMock.mockReset();
   installGuardMock.mockResolvedValue(undefined);
   parseIndexLockPathMock.mockReturnValue(null);
+  parseStaleRegistrationPathMock.mockReset();
+  parseStaleRegistrationPathMock.mockReturnValue(null);
+  recoverStaleRegistrationMock.mockReset();
+  recoverStaleRegistrationMock.mockResolvedValue({ recovered: true, actions: ["prune"] });
   classifyStaleLockMock.mockResolvedValue({ kind: "fresh", reason: "fresh" });
   tryRemoveStaleLockMock.mockResolvedValue({ removed: true });
 });
@@ -226,6 +236,136 @@ describe("NativeWorktreeBackend", () => {
       2,
       expect.objectContaining({ type: "worktree:stale-lock-refused" }),
     );
+  });
+
+  it("recovers stale registration and retries add", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    const stalePath = "/repo/.worktrees/fn-1";
+    parseStaleRegistrationPathMock
+      .mockReturnValueOnce(stalePath)
+      .mockReturnValueOnce(null);
+    recoverStaleRegistrationMock.mockResolvedValue({ recovered: true, actions: ["prune", "remove-force"] });
+    execMock
+      .mockRejectedValueOnce({ message: "fatal", stderr: `fatal: '${stalePath}' is a missing but already registered worktree` })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    const result = await new NativeWorktreeBackend({ audit }).create({
+      rootDir: "/repo",
+      worktreePath: stalePath,
+      branch: "fusion/fn-1",
+      taskId: "FN-1",
+    });
+
+    expect(result).toEqual({ path: stalePath, branch: "fusion/fn-1" });
+    expect(recoverStaleRegistrationMock).toHaveBeenCalledWith({
+      rootDir: "/repo",
+      worktreePath: stalePath,
+      logger: undefined,
+    });
+    expect(audit.git).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ type: "worktree:stale-registration-detected" }),
+    );
+    expect(audit.git).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ type: "worktree:stale-registration-recovered", metadata: { actions: ["prune", "remove-force"] } }),
+    );
+    expect(installGuardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses add -f retry when stale registration persists", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    const stalePath = "/repo/.worktrees/fn-1";
+    parseStaleRegistrationPathMock.mockReturnValue(stalePath);
+    recoverStaleRegistrationMock.mockResolvedValue({ recovered: true, actions: ["prune"] });
+    execMock
+      .mockRejectedValueOnce({ message: "fatal", stderr: `fatal: '${stalePath}' is a missing but already registered worktree` })
+      .mockRejectedValueOnce({ message: "fatal", stderr: `fatal: '${stalePath}' is a missing but already registered worktree` })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    const result = await new NativeWorktreeBackend({ audit }).create({
+      rootDir: "/repo",
+      worktreePath: stalePath,
+      branch: "fusion/fn-1",
+      taskId: "FN-1",
+    });
+
+    expect(result).toEqual({ path: stalePath, branch: "fusion/fn-1" });
+    expect(execMock).toHaveBeenNthCalledWith(
+      3,
+      'git worktree add -f "/repo/.worktrees/fn-1" "fusion/fn-1"',
+      expect.any(Object),
+    );
+    expect(audit.git).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "worktree:stale-registration-recovered",
+        metadata: { actions: ["prune", "add-force-retry"] },
+      }),
+    );
+  });
+
+  it("emits recovery failed and throws when add -f also fails", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    const stalePath = "/repo/.worktrees/fn-1";
+    parseStaleRegistrationPathMock.mockReturnValue(stalePath);
+    recoverStaleRegistrationMock.mockResolvedValue({ recovered: true, actions: ["prune"] });
+    const staleError = { message: "fatal", stderr: `fatal: '${stalePath}' is a missing but already registered worktree` };
+    execMock.mockRejectedValueOnce(staleError).mockRejectedValueOnce(staleError).mockRejectedValueOnce(staleError);
+
+    await expect(
+      new NativeWorktreeBackend({ audit }).create({
+        rootDir: "/repo",
+        worktreePath: stalePath,
+        branch: "fusion/fn-1",
+        taskId: "FN-1",
+      }),
+    ).rejects.toMatchObject({ stderr: expect.stringContaining("missing but already registered worktree") });
+
+    expect(audit.git).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "worktree:stale-registration-recovery-failed" }),
+    );
+  });
+
+  it("does not emit stale-registration events on healthy create", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    execMock.mockResolvedValue({ stdout: "", stderr: "" });
+
+    await new NativeWorktreeBackend({ audit }).create({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      branch: "fusion/fn-1",
+      taskId: "FN-1",
+    });
+
+    expect(recoverStaleRegistrationMock).not.toHaveBeenCalled();
+    expect(audit.git).not.toHaveBeenCalledWith(expect.objectContaining({ type: expect.stringMatching(/^worktree:stale-registration-/) }));
+  });
+
+  it("prefers stale-lock recovery when both stale-lock and stale-registration signatures appear", async () => {
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    parseIndexLockPathMock.mockReturnValue("/repo/.git/worktrees/fn-1/index.lock");
+    classifyStaleLockMock.mockResolvedValue({ kind: "stale", reason: "old-lock", ageMs: 60000 });
+    tryRemoveStaleLockMock.mockResolvedValue({ removed: true });
+    parseStaleRegistrationPathMock.mockReturnValue("/repo/.worktrees/fn-1");
+    execMock
+      .mockRejectedValueOnce({
+        message: "fatal",
+        stderr:
+          "fatal: unable to create '/repo/.git/worktrees/fn-1/index.lock': File exists\nfatal: '/repo/.worktrees/fn-1' is a missing but already registered worktree",
+      })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    await new NativeWorktreeBackend({ audit }).create({
+      rootDir: "/repo",
+      worktreePath: "/repo/.worktrees/fn-1",
+      branch: "fusion/fn-1",
+      taskId: "FN-1",
+    });
+
+    expect(tryRemoveStaleLockMock).toHaveBeenCalledTimes(1);
+    expect(recoverStaleRegistrationMock).not.toHaveBeenCalled();
+    expect(audit.git).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: "worktree:stale-lock-detected" }));
   });
 
   it("resolves native worktree path via configured worktreesDir", async () => {

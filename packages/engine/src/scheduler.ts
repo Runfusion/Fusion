@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentSemaphore } from "./concurrency.js";
-import { planTaskWorktreePath } from "./worktree-names.js";
+import { canonicalFusionBranchName, planTaskWorktreePath } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
@@ -29,6 +29,7 @@ import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { selectPermanentAgentForTask } from "./agent-assignment.js";
 import type { AutoClaimSnapshotManager } from "./auto-claim-snapshot.js";
 import { StaleTaskReporter } from "./stale-task-reporter.js";
+import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 
 /**
@@ -188,6 +189,15 @@ function formatConcurrencyLimitReason(diagnostic: ConcurrencyGateDiagnostic): st
   return `queued — concurrency limit reached: gate=${gateLabel}; ${details.join("; ")}`;
 }
 
+export function formatConcurrencyLimitMemoKey(diagnostic: ConcurrencyGateDiagnostic): string {
+  const gates = diagnostic.bindingGates.join(",");
+  const bindingHolders = [...new Set(
+    diagnostic.bindingGates.flatMap((gate) => diagnostic.holders[gate] ?? []),
+  )].sort();
+  const holderKey = bindingHolders.length > 0 ? bindingHolders.join(",") : "none";
+  return `queued-concurrency:${gates}:holders=${holderKey}`;
+}
+
 export interface SchedulerOptions {
   /** Max concurrent in-progress tasks. Default: 2 */
   maxConcurrent?: number;
@@ -281,7 +291,9 @@ export class Scheduler {
   /** Tracks dispatch-queued reason signatures to avoid per-tick log spam. */
   private wasDispatchQueuedReasonLogged = new Set<string>();
   private readonly staleTaskReporter: StaleTaskReporter;
+  private readonly backlogPressureReporter: BacklogPressureReporter;
   private lastStaleTaskReportAt = 0;
+  private lastBacklogPressureReportAt = 0;
   private readonly lastHighOverlapFanoutWarningKey = new Map<string, string>();
 
   /**
@@ -296,6 +308,11 @@ export class Scheduler {
     private options: SchedulerOptions = {},
   ) {
     this.staleTaskReporter = new StaleTaskReporter({ store: this.store });
+    this.backlogPressureReporter = new BacklogPressureReporter({
+      store: this.store,
+      projectId: this.store.getRootDir(),
+      logger: schedulerLog,
+    });
     /**
      * Event-driven scheduling: when a task is created, trigger a scheduling
      * pass immediately instead of waiting for the next poll interval.
@@ -494,6 +511,16 @@ export class Scheduler {
         this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
       }
     });
+
+    this.store.on("task:deleted", (task) => {
+      this.options.snapshotManager?.invalidate("task:deleted");
+      this.pausedTaskIds.delete(task.id);
+      this.failedTaskIds.delete(task.id);
+      this.wasNodeDispatchValidationBlocked.delete(task.id);
+      this.wasNodeBlocked.delete(task.id);
+      this.wasPermanentAgentUnavailable.delete(task.id);
+      this.clearDispatchQueuedReasonMemo(task.id);
+    });
   }
 
   /**
@@ -586,8 +613,8 @@ export class Scheduler {
     }
   }
 
-  private async logDispatchQueuedReason(taskId: string, reason: string): Promise<boolean> {
-    const key = `${taskId}:${reason}`;
+  private async logDispatchQueuedReason(taskId: string, reason: string, memoKey?: string): Promise<boolean> {
+    const key = `${taskId}:${memoKey ?? reason}`;
     if (this.wasDispatchQueuedReasonLogged.has(key)) {
       return false;
     }
@@ -762,7 +789,7 @@ export class Scheduler {
     for (const depId of task.dependencies) {
       const dep = allTasks.find((t) => t.id === depId);
       if (dep && dep.column === "in-review" && dep.worktree) {
-        return dep.branch || `fusion/${dep.id.toLowerCase()}`;
+        return dep.branch || canonicalFusionBranchName(dep.id);
       }
     }
 
@@ -770,7 +797,7 @@ export class Scheduler {
     if (task.blockedBy) {
       const blocker = allTasks.find((t) => t.id === task.blockedBy);
       if (blocker && blocker.column === "in-review" && blocker.worktree) {
-        return blocker.branch || `fusion/${blocker.id.toLowerCase()}`;
+        return blocker.branch || canonicalFusionBranchName(blocker.id);
       }
     }
 
@@ -1121,7 +1148,11 @@ export class Scheduler {
         // Dependencies met — check concurrency
         if (started >= available) {
           const reason = formatConcurrencyLimitReason(concurrencyGateDiagnostic);
-          const didLog = await this.logDispatchQueuedReason(task.id, reason);
+          const didLog = await this.logDispatchQueuedReason(
+            task.id,
+            reason,
+            formatConcurrencyLimitMemoKey(concurrencyGateDiagnostic),
+          );
           if (didLog) {
             await this.emitDispatchQueuedConcurrencyAudit(task, concurrencyGateDiagnostic);
           }
@@ -1397,6 +1428,16 @@ export class Scheduler {
           this.lastStaleTaskReportAt = Date.now();
         } catch (error) {
           schedulerLog.warn("Stale task reporter failed", error);
+        }
+      }
+
+      if (settings.backlogPressureAlertEnabled !== false && Date.now() - this.lastBacklogPressureReportAt >= 60_000) {
+        try {
+          await this.backlogPressureReporter.report();
+        } catch (error) {
+          schedulerLog.warn("Backlog pressure reporter failed", error);
+        } finally {
+          this.lastBacklogPressureReportAt = Date.now();
         }
       }
     } catch (err) {

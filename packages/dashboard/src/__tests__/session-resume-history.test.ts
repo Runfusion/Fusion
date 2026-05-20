@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "@fusion/core";
+import { Database, TaskStore } from "@fusion/core";
 import { AiSessionStore, type AiSessionRow } from "../ai-session-store.js";
 import {
   __resetPlanningState,
@@ -75,8 +75,9 @@ describe("session resume + history restore", () => {
   let tmpDir: string;
   let db: Database;
   let aiSessionStore: AiSessionStore;
+  let taskStore: TaskStore;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     __resetPlanningState();
     __resetSubtaskBreakdownState();
@@ -86,6 +87,8 @@ describe("session resume + history restore", () => {
     db = new Database(join(tmpDir, ".fusion"));
     db.init();
     aiSessionStore = new AiSessionStore(db);
+    taskStore = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+    await taskStore.init();
 
     setPlanningAiSessionStore(aiSessionStore);
     setSubtaskAiSessionStore(aiSessionStore);
@@ -98,6 +101,11 @@ describe("session resume + history restore", () => {
     __resetSubtaskBreakdownState();
     __resetMissionInterviewState();
 
+    try {
+      taskStore.close();
+    } catch {
+      // no-op
+    }
     try {
       db.close();
     } catch {
@@ -151,7 +159,7 @@ describe("session resume + history restore", () => {
     expect(restored?.thinkingOutput).toBe("latest-thinking");
     expect(restored?.lastGeneratedThinking).toBe("latest-thinking");
 
-    const response = await submitResponse(row.id, { "q-2": "No constraints" }, "/tmp/project");
+    const response = await submitResponse(row.id, { "q-2": "No constraints" }, "/tmp/project", undefined, taskStore);
     expect(response.type).toBe("question");
     if (response.type === "question") {
       expect(response.data.id).toBe("q-3");
@@ -212,6 +220,7 @@ describe("session resume + history restore", () => {
       row.id,
       { "q-m-2": "None" },
       "/tmp/project",
+      taskStore,
     );
 
     expect(response.type).toBe("question");
@@ -288,8 +297,8 @@ describe("session resume + history restore", () => {
       ]),
     );
 
-    const planning = await createSession("127.0.0.88", "Fresh planning", undefined, "/tmp/project");
-    const missionSessionId = await createMissionInterviewSession("127.0.0.89", "Fresh mission", "/tmp/project");
+    const planning = await createSession("127.0.0.88", "Fresh planning", taskStore, "/tmp/project");
+    const missionSessionId = await createMissionInterviewSession("127.0.0.89", "Fresh mission", "/tmp/project", taskStore);
 
     await waitFor(() => Boolean(getMissionInterviewSession(missionSessionId)?.currentQuestion));
 

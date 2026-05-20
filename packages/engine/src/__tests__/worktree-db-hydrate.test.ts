@@ -18,11 +18,12 @@ function makeProject(prefix: string): string {
   return dir;
 }
 
-function insertTask(projectDir: string, id: string): void {
+function insertTask(projectDir: string, id: string, deletedAt: string | null = null): void {
   const db = new DatabaseSync(join(projectDir, ".fusion", "fusion.db"));
   const now = new Date().toISOString();
-  db.prepare("INSERT OR REPLACE INTO tasks (id, description, \"column\", createdAt, updatedAt, dependencies) VALUES (?, ?, 'todo', ?, ?, '[]')")
-    .run(id, id, now, now);
+  db.prepare(
+    "INSERT OR REPLACE INTO tasks (id, description, \"column\", createdAt, updatedAt, dependencies, deletedAt) VALUES (?, ?, 'todo', ?, ?, '[]', ?)",
+  ).run(id, id, now, now, deletedAt);
   db.close();
 }
 
@@ -98,6 +99,69 @@ describe("hydrateWorktreeDb", () => {
     expect(cyc.degraded).toBe(false);
     expect(capped.tasksCopied).toBeLessThanOrEqual(50);
   }, 20_000);
+
+  it("excludes soft-deleted dependencies and their documents", async () => {
+    const root = makeProject("h-soft-delete-");
+    const worktree = makeProject("h-soft-delete-dst-");
+    cleanup.push(root, worktree);
+
+    insertTask(root, "FN-A", null);
+    insertTask(root, "FN-B", new Date().toISOString());
+    insertDoc(root, "FN-A");
+    insertDoc(root, "FN-B");
+
+    const depMap: Record<string, string[]> = { "FN-A": ["FN-B"], "FN-B": [] };
+    const store = { getTask: vi.fn(async (id: string) => ({ id, dependencies: depMap[id] ?? [] })) };
+
+    const result = await hydrateWorktreeDb({ rootDir: root, worktreePath: worktree, taskId: "FN-A", store: store as any, logger: { warn: vi.fn() } });
+    expect(result.degraded).toBe(false);
+    expect(result.tasksCopied).toBe(1);
+    expect(result.documentsCopied).toBe(1);
+
+    const db = new DatabaseSync(join(worktree, ".fusion", "fusion.db"));
+    const softDeletedTask = db.prepare("SELECT id FROM tasks WHERE id='FN-B'").get();
+    const softDeletedDoc = db.prepare("SELECT taskId FROM task_documents WHERE taskId='FN-B'").get();
+    db.close();
+
+    expect(softDeletedTask).toBeUndefined();
+    expect(softDeletedDoc).toBeUndefined();
+  });
+
+  it("hydrates tasks with deletedAt IS NULL", async () => {
+    const root = makeProject("h-null-deletedAt-");
+    const worktree = makeProject("h-null-deletedAt-dst-");
+    cleanup.push(root, worktree);
+
+    insertTask(root, "FN-1", null);
+    insertDoc(root, "FN-1");
+    const store = { getTask: vi.fn(async () => ({ id: "FN-1", dependencies: [] })) };
+
+    const result = await hydrateWorktreeDb({ rootDir: root, worktreePath: worktree, taskId: "FN-1", store: store as any, logger: { warn: vi.fn() } });
+    expect(result.degraded).toBe(false);
+    expect(result.tasksCopied).toBe(1);
+    expect(result.documentsCopied).toBe(1);
+  });
+
+  it("hydrates when source tasks schema has no deletedAt column", async () => {
+    const root = makeProject("h-src-no-deletedAt-");
+    const worktree = makeProject("h-src-no-deletedAt-dst-");
+    cleanup.push(root, worktree);
+
+    insertTask(root, "FN-1", null);
+    const srcDb = new DatabaseSync(join(root, ".fusion", "fusion.db"));
+    srcDb.exec("DROP TRIGGER IF EXISTS tasks_fts_ai");
+    srcDb.exec("DROP TRIGGER IF EXISTS tasks_fts_au");
+    srcDb.exec("DROP TRIGGER IF EXISTS tasks_fts_ad");
+    srcDb.exec("DROP INDEX IF EXISTS idx_tasks_deletedAt");
+    srcDb.exec("ALTER TABLE tasks DROP COLUMN deletedAt");
+    srcDb.close();
+
+    const store = { getTask: vi.fn(async () => ({ id: "FN-1", dependencies: [] })) };
+    const result = await hydrateWorktreeDb({ rootDir: root, worktreePath: worktree, taskId: "FN-1", store: store as any, logger: { warn: vi.fn() } });
+
+    expect(result.degraded).toBe(false);
+    expect(result.tasksCopied).toBe(1);
+  });
 
   it("handles schema drift by dropping missing destination columns", async () => {
     const root = makeProject("h-drift-");

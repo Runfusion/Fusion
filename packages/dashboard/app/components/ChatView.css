@@ -1395,7 +1395,11 @@
 }
 
 .chat-input-textarea {
-  flex: 1;
+  /* FN-5322: this textarea sits directly inside `.chat-input-wrapper`, which
+     is a column flex container (via AgentMentionPopup.css). Keep it out of
+     vertical flex sizing so the inline autosize height from ChatView.tsx is
+     honored instead of collapsing back toward the one-line minimum. */
+  flex: 0 0 auto;
   resize: none;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1405,9 +1409,9 @@
   font-size: 14px;
   font-family: inherit;
   line-height: 1.4;
-  max-height: 320px;
+  max-height: 640px;
   min-height: 40px;
-  /* Mobile keeps the desktop cap because the surrounding chat-input-area
+  /* Mobile keeps the desktop 640px cap because the surrounding chat-input-area
      and thread flex bounds already prevent the composer from overtaking
      the message pane before textarea scrolling engages. */
   /* touch-action: manipulation allows tap-to-focus (so iOS doesn't

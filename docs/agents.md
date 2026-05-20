@@ -346,7 +346,7 @@ The agents surface provides:
 - Org Chart is a full-view mode that takes over the full Agents content area; selecting a node opens detail in that same full-width region with back navigation to the chart
 - Org chart nodes intentionally stay compact (role/state/health hierarchy signal only) and do not enumerate per-agent skill badges; detailed skills remain in list/board/detail surfaces
 - A cross-pane **Overview** strip above the split layout with summary metrics and a disclosure to expand active/running live cards
-- A compact **Controls** popup for secondary actions (state filter, Show system agents toggle, Import, and global Heartbeat Speed)
+- A compact **Controls** popup for secondary actions (state filter, Show system agents toggle, project-scoped bulk pause/resume, Import, and global Heartbeat Speed)
 - Agent import can also be launched from the selected **Agent Detail** header; this entry opens the import modal directly in the companies.sh browse flow so operators can discover and import packages without leaving the detail context
 - Detail/config panels
 - Agent Detail includes a **Mail** tab for inspecting that agent’s inbox/outbox; selecting a message opens full details, and selecting an unread inbox message marks it read

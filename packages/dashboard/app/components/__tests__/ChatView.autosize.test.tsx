@@ -25,6 +25,7 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     fetchAgents: vi.fn().mockResolvedValue([]),
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
+    fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
   };
 });
@@ -217,6 +218,20 @@ describe("ChatView composer autosize", () => {
     expect(threeLineHeight).toBeGreaterThan(oneLineHeight);
   });
 
+  it("keeps direct-chat text visible for growth between old and new caps", async () => {
+    renderChatView();
+
+    const textarea = screen.getByPlaceholderText("Type a message...") as HTMLTextAreaElement;
+    Object.defineProperty(textarea, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+
+    await userEvent.type(textarea, "large draft");
+
+    expect(textarea.style.height).toBe("500px");
+  });
+
   it("grows composer height in rooms scope", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
     renderChatView();
@@ -231,6 +246,21 @@ describe("ChatView composer autosize", () => {
 
     expect(textarea.style.height).toBe(`${clampChatInputHeight(textarea.scrollHeight)}px`);
     expect(Number.parseInt(textarea.style.height, 10)).toBeGreaterThan(clampChatInputHeight(40));
+  });
+
+  it("keeps rooms text visible for growth between old and new caps", async () => {
+    localStorage.setItem("fusion:chat-scope", "rooms");
+    renderChatView();
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    Object.defineProperty(textarea, "scrollHeight", {
+      configurable: true,
+      get: () => 500,
+    });
+
+    await userEvent.type(textarea, "room draft");
+
+    expect(textarea.style.height).toBe("500px");
   });
 
   it("recomputes rooms composer height on room switch", async () => {

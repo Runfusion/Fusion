@@ -66,6 +66,7 @@ vi.mock("../../api", () => ({
   testNtfyNotification: vi.fn(),
   loginProvider: vi.fn(),
   logoutProvider: vi.fn(),
+  fetchProjects: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock("../../hooks/useNodes", () => ({

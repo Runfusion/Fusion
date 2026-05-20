@@ -25,6 +25,7 @@ import { CliBinaryInstallBanner } from "./components/CliBinaryInstallBanner";
 import { SetupWarningBanner } from "./components/SetupWarningBanner";
 import { CapacityRiskBanner } from "./components/CapacityRiskBanner";
 import { TaskIdIntegrityBanner } from "./components/TaskIdIntegrityBanner";
+import { DbCorruptionBanner } from "./components/DbCorruptionBanner";
 import { UpdateAvailableBanner } from "./components/UpdateAvailableBanner";
 import { ApprovalNotificationBanner } from "./components/ApprovalNotificationBanner";
 import { OnboardingResumeCard } from "./components/OnboardingResumeCard";
@@ -78,7 +79,7 @@ import { NativeShellConnectionManager } from "./components/NativeShellConnection
 import { ShellConnectionStatus } from "./components/ShellConnectionStatus";
 import { getShellConnectionNativeResult, type ShellConnectionNativeResult } from "./shell-native";
 import type { AiSessionSummary, DashboardHealthResponse } from "./api";
-import { api, fetchDashboardHealth, fetchUnreadCount, fetchTaskDetail, fetchWorkflowSteps } from "./api";
+import { api, fetchDashboardHealth, fetchUnreadCount, fetchTaskDetail, fetchWorkflowSteps, refreshDashboardHealth } from "./api";
 import { getScopedItem, removeScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "./auth";
@@ -102,6 +103,7 @@ const ChatView = lazy(() => import("./components/ChatView").then((m) => ({ defau
 
 const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
 const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
+const SecretsView = lazy(() => import("./components/SecretsView").then((m) => ({ default: m.SecretsView })));
 const ReliabilityView = lazy(() => import("./components/ReliabilityView").then((m) => ({ default: m.ReliabilityView })));
 const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
 const _TodoView = lazy(() => import("./components/TodoView").then((m) => ({ default: m.TodoView })));
@@ -130,6 +132,7 @@ function prefetchLazyViews() {
 
     void import("./components/SkillsView");
     void import("./components/MemoryView");
+    void import("./components/SecretsView");
     void import("./components/ReliabilityView");
     void import("./components/DevServerView");
     void import("./components/TodoView");
@@ -688,6 +691,8 @@ function AppInner() {
   const [quickChatOpen, setQuickChatOpen] = useState(false);
   const [authTokenRecoveryOpen, setAuthTokenRecoveryOpen] = useState(false);
   const [dashboardHealth, setDashboardHealth] = useState<DashboardHealthResponse | null>(null);
+  const [dbCorruptionRefreshing, setDbCorruptionRefreshing] = useState(false);
+  const [dbCorruptionRefreshError, setDbCorruptionRefreshError] = useState<string | null>(null);
   const [setupWarningDismissed, setSetupWarningDismissed] = useState(
     () => getScopedItem(SETUP_WARNING_DISMISSED_KEY, currentProject?.id) === "true",
   );
@@ -706,6 +711,19 @@ function AppInner() {
       getScopedItem(CAPACITY_RISK_DISMISSED_KEY, currentProject?.id) === "true",
     );
   }, [currentProject?.id]);
+
+  const refreshDbCorruptionHealth = useCallback(async () => {
+    setDbCorruptionRefreshing(true);
+    setDbCorruptionRefreshError(null);
+    try {
+      const health = await refreshDashboardHealth();
+      setDashboardHealth(health);
+    } catch (error) {
+      setDbCorruptionRefreshError(error instanceof Error ? error.message : "Failed to refresh database health.");
+    } finally {
+      setDbCorruptionRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1337,6 +1355,7 @@ function AppInner() {
                   workflowStepNameLookup={workflowStepNameLookup}
                   disableDrag={true}
                   prAuthAvailable={prAuthAvailable}
+                  autoMergeEnabled={autoMerge}
                 />
               ),
               addToast,
@@ -1522,6 +1541,16 @@ function AppInner() {
         <PageErrorBoundary>
           <Suspense fallback={null}>
             <MemoryView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
+        </PageErrorBoundary>
+      );
+    }
+
+    if (taskView === "secrets") {
+      return (
+        <PageErrorBoundary>
+          <Suspense fallback={null}>
+            <SecretsView addToast={addToast} />
           </Suspense>
         </PageErrorBoundary>
       );
@@ -1787,7 +1816,12 @@ function AppInner() {
               }
               return {
                 ...current,
-                status: report.status === "anomaly" || !current.database.healthy ? "degraded" : "ok",
+                status:
+                  report.status === "anomaly"
+                  || !current.database.healthy
+                  || current.database.corruptionDetected
+                    ? "degraded"
+                    : "ok",
                 taskIdIntegrity: {
                   ...report,
                   recommendedAction,
@@ -1795,6 +1829,15 @@ function AppInner() {
               };
             });
           }}
+        />
+      )}
+      {viewMode === "project" && currentProject && dashboardHealth?.database?.corruptionDetected === true && (
+        <DbCorruptionBanner
+          errors={dashboardHealth.database.corruptionErrors}
+          lastCheckedAt={dashboardHealth.database.lastCheckedAt}
+          onRefresh={refreshDbCorruptionHealth}
+          refreshing={dbCorruptionRefreshing}
+          refreshError={dbCorruptionRefreshError}
         />
       )}
       {viewMode === "project" && currentProject && !setupReadinessLoading && hasWarnings && !setupWarningDismissed && (
@@ -1929,6 +1972,10 @@ function AppInner() {
         onSettingsClose={handleSettingsClose}
         onReopenOnboarding={reopenOnboardingWithNav}
         onOpenApprovals={(_approvalId) => handleTaskViewChange("mailbox")}
+        onNavigateToSecrets={() => {
+          modalManager.closeSettings();
+          handleChangeTaskView("secrets");
+        }}
       />
       <AuthTokenRecoveryDialog open={authTokenRecoveryOpen} />
             {shellApi && (

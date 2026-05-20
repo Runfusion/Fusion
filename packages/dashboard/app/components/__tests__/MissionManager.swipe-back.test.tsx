@@ -13,6 +13,7 @@ const mockFetchMilestoneValidation = vi.fn();
 const mockFetchMilestoneValidationTelemetry = vi.fn();
 const mockFetchAiSessions = vi.fn();
 const mockFetchAiSession = vi.fn();
+const mockFetchMissionInterviewDrafts = vi.fn();
 const mockSubscribeSse = vi.fn(() => vi.fn());
 
 vi.mock("../../hooks/useViewportMode", () => ({
@@ -43,6 +44,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchMilestoneValidationTelemetry: (...args: unknown[]) => mockFetchMilestoneValidationTelemetry(...args),
     fetchAiSessions: (...args: unknown[]) => mockFetchAiSessions(...args),
     fetchAiSession: (...args: unknown[]) => mockFetchAiSession(...args),
+    fetchMissionInterviewDrafts: (...args: unknown[]) => mockFetchMissionInterviewDrafts(...args),
     fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
   };
 });
@@ -121,6 +123,7 @@ describe("MissionManager mobile swipe-back", () => {
     mockFetchMilestoneValidationTelemetry.mockResolvedValue(null);
     mockFetchAiSessions.mockResolvedValue([]);
     mockFetchAiSession.mockResolvedValue(null);
+    mockFetchMissionInterviewDrafts.mockResolvedValue([]);
     window.history.pushState = vi.fn();
   });
 
@@ -131,26 +134,24 @@ describe("MissionManager mobile swipe-back", () => {
   it("pushes a mobile nav entry when opening mission detail and popstate returns to the list", async () => {
     render(
       <HistoryHarness>
-        <MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />
+        <MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} isInline={true} />
       </HistoryHarness>,
     );
 
     await userSelectMission();
-
     await waitFor(() => {
-      expect(window.history.pushState).toHaveBeenCalledWith(expect.objectContaining({ navIndex: 1 }), "");
+      expect(screen.getByText("Database Schema")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("mission-back-btn")).toBeInTheDocument();
-    expect(screen.getByText("Database Schema")).toBeInTheDocument();
+    expect(window.history.pushState).toHaveBeenCalledWith({ navIndex: 1 }, "");
 
     act(() => {
       window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 0 } }));
     });
 
     await waitFor(() => {
-      expect(screen.queryByTestId("mission-back-btn")).not.toBeInTheDocument();
+      expect(screen.queryByText("Database Schema")).not.toBeInTheDocument();
     });
-    expect(screen.queryByText("Database Schema")).not.toBeInTheDocument();
+    expect(screen.getByText("Build Auth System")).toBeInTheDocument();
   });
 
   it("does not push a nav entry on desktop mission selection", async () => {

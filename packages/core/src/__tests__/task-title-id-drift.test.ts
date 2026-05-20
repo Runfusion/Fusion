@@ -19,6 +19,39 @@ describe("task-title-id-drift", () => {
     expect(normalizeTitleForTaskId("FN-123", "FN-999")).toEqual({ title: null, changed: true });
   });
 
+  it("FN-5077: returns null for dangling 'Close as duplicate of' fragment after FN-token strip", () => {
+    expect(normalizeTitleForTaskId("Close as duplicate of FN-5060", "FN-5073")).toEqual({
+      title: null,
+      changed: true,
+    });
+  });
+
+  it.each([
+    "FN-100 of",
+    "FN-100 for",
+    "FN-100 to",
+    "FN-100 from",
+    "FN-100 as",
+    "FN-100 in",
+    "FN-100 on",
+    "FN-100 with",
+    "FN-100 by",
+    "FN-100 and",
+    "FN-100 or",
+    "FN-100 the",
+    "FN-100 a",
+    "FN-100 an",
+    "FN-100 at",
+    "FN-100 into",
+    "FN-100 onto",
+    "FN-100 about",
+    "FN-100 via",
+    "FN-100 per",
+    "FN-100 vs",
+  ])("FN-5077: drops dangling stop-word fragment: %s", (input) => {
+    expect(normalizeTitleForTaskId(input, "FN-999")).toEqual({ title: null, changed: true });
+  });
+
   it("handles refinement prefix", () => {
     expect(normalizeTitleForTaskId("Refinement: FN-4847: foo", "FN-9999")).toEqual({ title: "Refinement: foo", changed: true });
   });
@@ -32,6 +65,17 @@ describe("task-title-id-drift", () => {
     expect(normalizeTitleForTaskId(undefined, "FN-1")).toEqual({ title: null, changed: false });
     expect(normalizeTitleForTaskId("", "FN-1")).toEqual({ title: "", changed: false });
     expect(normalizeTitleForTaskId("hello", "FN-1")).toEqual({ title: "hello", changed: false });
+  });
+
+  it("FN-5077: preserves legitimate short titles with no drift", () => {
+    expect(normalizeTitleForTaskId("Fix CI", "FN-1")).toEqual({ title: "Fix CI", changed: false });
+  });
+
+  it("FN-5077: keeps matching row-id title unchanged", () => {
+    expect(normalizeTitleForTaskId("Fix FN-1 of regression", "FN-1")).toEqual({
+      title: "Fix FN-1 of regression",
+      changed: false,
+    });
   });
 
   it("caps title length", () => {

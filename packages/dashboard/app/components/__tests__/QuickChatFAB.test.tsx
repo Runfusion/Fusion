@@ -22,6 +22,7 @@ vi.mock("../../api", () => ({
   cancelChatResponse: vi.fn(),
   fetchModels: vi.fn(),
   fetchDiscoveredSkills: vi.fn(),
+  fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
   attachmentBaseUrlForRoom: vi.fn((roomId: string) => `/api/chat/rooms/${roomId}/attachments/`),
 }));
@@ -1234,7 +1235,7 @@ describe("QuickChatFAB session-first UX", () => {
   });
 
   it("renders non-member mention chips when roomContext is provided", async () => {
-    mockFetchChatMessages.mockResolvedValueOnce({
+    mockFetchChatMessages.mockResolvedValue({
       messages: [
         {
           id: "msg-room-mention",
@@ -1409,7 +1410,7 @@ describe("QuickChatFAB session-first UX", () => {
 
   it("linkifies file paths in markdown assistant messages", async () => {
     const openFile = vi.fn();
-    mockFetchChatMessages.mockResolvedValueOnce({
+    mockFetchChatMessages.mockResolvedValue({
       messages: [{ id: "msg-path", sessionId: "session-model", role: "assistant", content: "See packages/dashboard/app/App.tsx:9", createdAt: new Date().toISOString() }],
     });
 
@@ -1428,7 +1429,7 @@ describe("QuickChatFAB session-first UX", () => {
 
   it("linkifies file paths in plain-text render mode", async () => {
     const openFile = vi.fn();
-    mockFetchChatMessages.mockResolvedValueOnce({
+    mockFetchChatMessages.mockResolvedValue({
       messages: [{ id: "msg-plain", sessionId: "session-model", role: "assistant", content: "Check packages/dashboard/app/components/QuickChatFAB.tsx", createdAt: new Date().toISOString() }],
     });
 
@@ -1561,7 +1562,7 @@ describe("QuickChatFAB session-first UX", () => {
         messagesLoading: false,
         selectRoom, createRoom: vi.fn(), deleteRoom: vi.fn(), sendRoomMessage: vi.fn(), clearRoom: vi.fn(), refreshRooms: vi.fn(),
       });
-      mockFetchChatMessages.mockResolvedValueOnce({
+      mockFetchChatMessages.mockResolvedValue({
         messages: [{ id: "session-msg", sessionId: "session-model", role: "assistant", content: "hello from session", createdAt: "2026-05-16T00:00:00.000Z" }],
       });
 

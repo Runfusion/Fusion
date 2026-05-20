@@ -400,8 +400,10 @@ describe("agent modal mobile CSS structure", () => {
       expect(modalRuleMatch).toBeTruthy();
       const modalRule = modalRuleMatch![0];
 
-      expect(modalRule).toContain("height: 100%");
-      expect(modalRule).toContain("max-height: 100%");
+      // height/max-height now subtract mobile-nav-height + safe-area-inset
+      // to avoid clipping under the bottom toolbar.
+      expect(modalRule).toMatch(/height:\s*calc\(100%/);
+      expect(modalRule).toMatch(/max-height:\s*calc\(100%/);
       expect(modalRule).toContain("min-height: 0");
       expect(modalRule).toContain("width: 100%");
       expect(modalRule).toContain("max-width: 100%");

@@ -67,6 +67,8 @@ class MockStore extends EventEmitter {
   getDatabaseHealth() {
     return {
       healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
       isRunning: false,
       lastCheckedAt: null,
     };

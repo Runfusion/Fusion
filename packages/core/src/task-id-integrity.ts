@@ -56,6 +56,7 @@ function readTaskRows(db: Database, table: "tasks" | "archivedTasks"): TaskRow[]
   }
 
   try {
+    // FN-5105: intentionally do not filter deletedAt for `tasks`; soft-deleted IDs must remain visible to integrity checks.
     return db
       .prepare(`SELECT id FROM ${table}`)
       .all()

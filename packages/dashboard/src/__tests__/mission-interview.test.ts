@@ -389,6 +389,7 @@ describe("mission-interview module", () => {
         row.id,
         { "q-2": "Need launch in 4 weeks" },
         "/tmp/project",
+        MOCK_TASK_STORE,
       );
 
       expect(result.type).toBe("question");

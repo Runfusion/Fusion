@@ -19,6 +19,7 @@ vi.mock("lucide-react", () => ({
   Trash2: () => <svg />,
   RotateCw: () => <svg />,
   Zap: () => <svg />,
+  AlertTriangle: () => <svg />,
 }));
 
 vi.mock("../../hooks/useTaskDiffStats", () => ({
@@ -142,27 +143,60 @@ describe("FN-4598 TaskCard footer chip alignment", () => {
     );
 
     const footerRow = container.querySelector(".card-footer-row") as HTMLElement;
-    const githubChip = footerRow.querySelector(":scope > .card-github-tracking-chip") as HTMLElement;
-    const retryChip = footerRow.querySelector(":scope > .card-retry-badge") as HTMLElement;
-    const timerChip = footerRow.querySelector(":scope > .card-time-indicator") as HTMLElement;
+    const rightCluster = footerRow.querySelector(":scope > .card-footer-row-right") as HTMLElement;
+    const githubChip = rightCluster.querySelector(":scope > .card-github-tracking-chip") as HTMLElement;
+    const retryChip = rightCluster.querySelector(":scope > .card-retry-badge") as HTMLElement;
+    const timerChip = rightCluster.querySelector(":scope > .card-time-indicator") as HTMLElement;
 
     expect(footerRow).toBeTruthy();
+    expect(rightCluster).toBeTruthy();
     expect(githubChip).toBeTruthy();
     expect(retryChip).toBeTruthy();
     expect(timerChip).toBeTruthy();
 
-    const children = Array.from(footerRow.children);
-    expect(children).toContain(githubChip);
-    expect(children).toContain(retryChip);
-    expect(children).toContain(timerChip);
-    expect(children.indexOf(githubChip)).toBeLessThan(children.indexOf(retryChip));
-    expect(children.indexOf(retryChip)).toBeLessThan(children.indexOf(timerChip));
-
-    expect(getComputedStyle(githubChip).marginLeft).toBe("auto");
-    expect(getComputedStyle(retryChip).marginLeft).toBe("0px");
-    expect(getComputedStyle(timerChip).marginLeft).toBe("0px");
+    expect(getComputedStyle(rightCluster).marginLeft).toBe("auto");
 
     const footerStyle = getComputedStyle(footerRow);
     expect(footerStyle.gap).toBe("var(--space-sm)");
+  });
+
+  it("FN-5099 keeps retry in the right cluster when source provenance is present in chipFarRight layouts", () => {
+    const { container } = render(
+      <TaskCard
+        task={{
+          ...makeTask(),
+          column: "in-review",
+          sourceType: "github_import",
+          retrySummary: { total: 3 },
+          executionStartedAt: "2026-05-12T00:00:00.000Z",
+          updatedAt: "2026-05-12T00:05:00.000Z",
+        }}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={noop}
+      />,
+    );
+
+    const footerRow = container.querySelector(".card-footer-row") as HTMLElement;
+    const sourceChip = footerRow.querySelector(":scope > .card-source-provenance") as HTMLElement;
+    const rightCluster = footerRow.querySelector(":scope > .card-footer-row-right") as HTMLElement;
+    const retryChip = rightCluster.querySelector(":scope > .card-retry-badge") as HTMLElement;
+    const githubChip = rightCluster.querySelector(":scope > .card-github-tracking-chip") as HTMLElement;
+    const timerChip = rightCluster.querySelector(":scope > .card-time-indicator") as HTMLElement;
+
+    expect(footerRow).toBeTruthy();
+    expect(sourceChip).toBeTruthy();
+    expect(rightCluster).toBeTruthy();
+    expect(retryChip).toBeTruthy();
+    expect(githubChip).toBeTruthy();
+    expect(timerChip).toBeTruthy();
+
+    expect(getComputedStyle(sourceChip).marginLeft).not.toBe("auto");
+    expect(getComputedStyle(rightCluster).marginLeft).toBe("auto");
+    expect(Array.from(rightCluster.children).map((node) => (node as HTMLElement).className)).toEqual([
+      "card-github-tracking-chip card-github-tracking-link",
+      expect.stringContaining("card-retry-badge"),
+      "card-time-indicator",
+    ]);
   });
 });

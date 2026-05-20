@@ -76,12 +76,12 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       task,
       rootDir: "/repo",
       store: makeStore() as any,
-      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk" } } as any,
+      settings: { worktrunk: { enabled: true, binaryPath: "wt" } } as any,
       createWorktree,
     });
 
     expect(createWorktree).toHaveBeenCalledTimes(1);
-    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"worktrunk" "switch"'))).toBe(false);
+    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"wt" "switch"'))).toBe(false);
   });
 
   it("emits worktrunk + native create audits when worktrunk succeeds", async () => {
@@ -103,11 +103,11 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       task,
       rootDir: "/repo",
       store: makeStore() as any,
-      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } } as any,
+      settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fail" } } as any,
       audit: audit as any,
     });
 
-    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"worktrunk" "switch" "--create" "fusion/fn-1" "--no-hooks" "--no-cd"'))).toBe(true);
+    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"wt" "switch" "--create" "fusion/fn-1" "--no-hooks" "--no-cd"'))).toBe(true);
     expect(events.filter((event) => event.type === "worktree:worktrunk-create")).toHaveLength(1);
     expect(events.filter((event) => event.type === "worktree:create")).toHaveLength(1);
   });
@@ -132,7 +132,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       task,
       rootDir: "/repo",
       store: store as any,
-      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } } as any,
+      settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fail" } } as any,
     });
 
     expect(result.worktreePath).toBe("/repo/.worktrees/custom/fusion-fn-1");
@@ -153,12 +153,12 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
         task,
         rootDir: "/repo",
         store: makeStore() as any,
-        settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fail" } } as any,
+        settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fail" } } as any,
         audit: audit as any,
       }),
     ).rejects.toMatchObject({ code: "worktrunk_operation_failed", operation: "create" });
 
-    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"worktrunk" "switch" "--create" "fusion/fn-1"'))).toBe(true);
+    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"wt" "switch" "--create" "fusion/fn-1"'))).toBe(true);
     expect(events.some((event) => event.type === "worktree:worktrunk-fallback-native")).toBe(false);
   });
 
@@ -179,12 +179,12 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       task,
       rootDir: "/repo",
       store: makeStore() as any,
-      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk", onFailure: "fallback-native" } } as any,
+      settings: { worktrunk: { enabled: true, binaryPath: "wt", onFailure: "fallback-native" } } as any,
       audit: audit as any,
       logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
 
-    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"worktrunk" "switch" "--create" "fusion/fn-1"'))).toBe(true);
+    expect(execMock.mock.calls.some((call) => String(call[0]).includes('"wt" "switch" "--create" "fusion/fn-1"'))).toBe(true);
     expect(execMock.mock.calls.some((call) => String(call[0]).includes("git worktree add -b"))).toBe(true);
     expect(events.filter((event) => event.type === "worktree:worktrunk-fallback-native")).toHaveLength(1);
   });
@@ -210,7 +210,7 @@ describe("acquireTaskWorktree worktrunk wiring", () => {
       task,
       rootDir: "/repo",
       store: makeStore() as any,
-      settings: { worktrunk: { enabled: true, binaryPath: "worktrunk" } } as any,
+      settings: { worktrunk: { enabled: true, binaryPath: "wt" } } as any,
       backend: {
         kind: "native",
         create,

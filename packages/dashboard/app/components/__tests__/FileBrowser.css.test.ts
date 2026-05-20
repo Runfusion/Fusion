@@ -25,7 +25,9 @@ describe("FileBrowser mobile dropdown regression", () => {
   it("FN-4480: collapsed editor toolbar region is hidden via display: none", async () => {
     const css = await loadAllAppCssBaseOnly();
 
-    expect(css).toMatch(/\.file-editor-toolbar-collapsible\[hidden\]\s*\{[^}]*display:\s*none;[^}]*\}/);
+    // The "collapsible" sub-element was renamed to "actions" when the toolbar
+    // was reorganized; the hidden-collapse rule still lives on the new class.
+    expect(css).toMatch(/\.file-editor-toolbar-actions\[hidden\]\s*\{[^}]*display:\s*none;[^}]*\}/);
   });
 
   it("keeps mobile file-browser header overflow unclipped", () => {

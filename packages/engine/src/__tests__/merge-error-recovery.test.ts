@@ -462,7 +462,7 @@ describe("ProjectEngine merge error recovery", () => {
     expect(store.createTask).not.toHaveBeenCalled();
     expect(store.addTaskComment).toHaveBeenCalledWith(
       TASK_ID,
-      expect.stringContaining("already owns branch `fusion/fn-2084`"),
+      expect.stringContaining("follow-up already exists (FN-8888)"),
       "agent",
     );
   });
@@ -494,10 +494,10 @@ describe("ProjectEngine merge error recovery", () => {
 
     expect(store.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        source: {
+        source: expect.objectContaining({
           sourceType: "recovery",
           sourceParentTaskId: TASK_ID,
-        },
+        }),
       }),
     );
   });
@@ -558,7 +558,7 @@ describe("ProjectEngine merge error recovery", () => {
     expect(store.createTask).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       TASK_ID,
-      expect.stringContaining("active recovery already owns branch"),
+      expect.stringContaining("skipped duplicate follow-up (existing FN-8888)"),
       "MergeConflictGiveUp",
     );
   });

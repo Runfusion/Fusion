@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import type { AgentStore, AgentState, AgentCapability, AgentUpdateInput, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore } from "@fusion/core";
-import { DASHBOARD_USER_ID, canAgentTakeImplementationTaskForExplicitRouting, dailyMemoryPath, ensureOpenClawMemoryFiles, extractAgentProvisioningRequest, formatRoleMismatchReason, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTitleSummarizerSettingsModel, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh, summarizeTitle } from "@fusion/core";
+import { DASHBOARD_USER_ID, canAgentTakeImplementationTaskForExplicitRouting, dailyMemoryPath, ensureOpenClawMemoryFiles, extractAgentProvisioningRequest, formatRoleMismatchReason, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, resolveTitleSummarizerSettingsModel, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh, summarizeTitle } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
@@ -595,27 +595,89 @@ async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryCon
 
 type AgentTaskCreationOptions = {
   rootDir?: string;
+  bypassDuplicateCheck?: boolean;
+  acknowledgedDuplicates?: string[];
 };
 
 export async function createAgentTask(
   store: TaskStore,
   input: TaskCreateInput,
   options?: AgentTaskCreationOptions,
-): Promise<Awaited<ReturnType<TaskStore["createTask"]>>> {
+): Promise<{ task: Awaited<ReturnType<TaskStore["createTask"]>>; wasDuplicate: boolean }> {
   const settings = typeof (store as { getSettings?: unknown }).getSettings === "function"
     ? await store.getSettings()
     : {} as Settings;
   const rootDir = options?.rootDir;
-
-  return store.createTask(input, {
-    settings: { autoSummarizeTitles: settings.autoSummarizeTitles === true },
-    onSummarize: rootDir
-      ? async (description: string) => {
-        const resolved = resolveTitleSummarizerSettingsModel(settings);
-        return summarizeTitle(description, rootDir, resolved.provider, resolved.modelId);
-      }
-      : undefined,
+  const guard = await runDeterministicDuplicateGuard(store, {
+    title: input.title,
+    description: input.description,
+  }, {
+    lockScope: rootDir ?? store.getRootDir?.() ?? "agent-tools",
+    bypass: options?.bypassDuplicateCheck === true,
+    acknowledgedDuplicates: options?.acknowledgedDuplicates,
+    logger: log,
   });
+
+  try {
+    if (guard.action === "duplicate" && guard.existing) {
+      return { task: guard.existing, wasDuplicate: true };
+    }
+
+    const sourceMetadata = {
+      ...(input.source?.sourceMetadata ?? {}),
+      ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
+    };
+    const nextSource = input.source
+      ? {
+          ...input.source,
+          sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
+        }
+      : undefined;
+
+    const globalSettings =
+      (await store.getGlobalSettingsStore?.()?.getSettings?.()) ?? {};
+    const resolvedTracking = resolveTaskGithubTracking(
+      { githubTracking: input.githubTracking },
+      settings,
+      globalSettings,
+    );
+
+    const shouldPrefillGithubTrackingEnabled =
+      input.githubTracking?.enabled !== false && resolvedTracking.enabled;
+    const createInput: TaskCreateInput = {
+      ...input,
+      source: nextSource,
+      githubTracking: shouldPrefillGithubTrackingEnabled
+        ? {
+            ...(input.githubTracking ?? {}),
+            enabled: true,
+            ...(input.githubTracking?.repoOverride || !resolvedTracking.repo
+              ? {}
+              : { repoOverride: `${resolvedTracking.repo.owner}/${resolvedTracking.repo.repo}` }),
+          }
+        : input.githubTracking,
+    };
+
+    const createdTask = await store.createTask(createInput, {
+      settings: { autoSummarizeTitles: settings.autoSummarizeTitles === true },
+      onSummarize: rootDir
+        ? async (description: string) => {
+          const resolved = resolveTitleSummarizerSettingsModel(settings);
+          return summarizeTitle(description, rootDir, resolved.provider, resolved.modelId);
+        }
+        : undefined,
+    });
+
+    const reconcile = await reconcileDeterministicDuplicate(store, {
+      createdTask,
+      fingerprint: guard.fingerprint,
+      logger: log,
+    });
+
+    return { task: reconcile.canonical, wasDuplicate: reconcile.outcome === "archived" };
+  } finally {
+    guard.releaseLock();
+  }
 }
 
 /**
@@ -640,7 +702,7 @@ export function createTaskCreateTool(
     parameters: taskCreateParams,
     execute: async (_id: string, params: Static<typeof taskCreateParams>) => {
       try {
-        const task = await createAgentTask(store, {
+        const { task, wasDuplicate } = await createAgentTask(store, {
           description: params.description,
           dependencies: params.dependencies,
           column: "triage",
@@ -655,7 +717,7 @@ export function createTaskCreateTool(
         return {
           content: [{
             type: "text" as const,
-            text: `Created ${task.id}: ${params.description}${deps}`,
+            text: `${wasDuplicate ? "Linked existing" : "Created"} ${task.id}: ${params.description}${deps}`,
           }],
           details: { taskId: task.id },
         };
@@ -1798,7 +1860,7 @@ export function createDelegateTaskTool(
 
       try {
         // Create task assigned to the target agent
-        const task = await createAgentTask(taskStore, {
+        const { task, wasDuplicate } = await createAgentTask(taskStore, {
           description: params.description,
           dependencies: params.dependencies,
           column: "todo",
@@ -1813,7 +1875,7 @@ export function createDelegateTaskTool(
         return {
           content: [{
             type: "text" as const,
-            text: `Delegated to ${agent.name} (${agent.id}): Created ${task.id}${deps}. ` +
+            text: `Delegated to ${agent.name} (${agent.id}): ${wasDuplicate ? "Linked existing" : "Created"} ${task.id}${deps}. ` +
               `The task will be picked up by ${agent.name} on their next heartbeat cycle.`,
           }],
           details: { taskId: task.id, agentId: agent.id, agentName: agent.name },

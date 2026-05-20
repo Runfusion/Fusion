@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 
 import extractZip from "extract-zip";
+import { x as tarExtract } from "tar";
 import { parse as parseYaml } from "yaml";
 
 import type {
@@ -482,12 +483,10 @@ function resolveExtractionRoot(tempDir: string): string {
 }
 
 async function extractTarArchive(archivePath: string, outputDir: string): Promise<void> {
-  const [{ execFile }, { promisify }] = await Promise.all([
-    import("node:child_process"),
-    import("node:util"),
-  ]);
-  const execFileAsync = promisify(execFile);
-  await execFileAsync("tar", ["xzf", archivePath, "-C", outputDir]);
+  await tarExtract({
+    file: archivePath,
+    cwd: outputDir,
+  });
 }
 
 function sanitizeCompanySubPath(subPath: string): string {

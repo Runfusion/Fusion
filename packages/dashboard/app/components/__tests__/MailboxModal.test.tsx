@@ -129,6 +129,9 @@ const defaultProps = {
 describe("MailboxModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Clear SWR cache between tests so prior runs don't pre-hydrate inbox/outbox
+    // state and mask the loading/empty/error UI assertions.
+    localStorage.clear();
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOverlap: 0,
       viewportHeight: null,

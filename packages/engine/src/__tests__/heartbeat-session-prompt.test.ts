@@ -13,6 +13,9 @@ import {
   HEARTBEAT_NO_TASK_SYSTEM_PROMPT,
   HEARTBEAT_PROCEDURE,
   HEARTBEAT_NO_TASK_PROCEDURE,
+  HEARTBEAT_NO_TASK_PROCEDURE_STRICT,
+  HEARTBEAT_NO_TASK_PROCEDURE_LITE,
+  HEARTBEAT_NO_TASK_PROCEDURE_OFF,
 } from "../agent-heartbeat.js";
 import { AgentLogger } from "../agent-logger.js";
 import * as agentTools from "../agent-tools.js";
@@ -97,9 +100,68 @@ describe("createHeartbeatTools", () => {
 
   it("heartbeat no-task system prompt documents coding-capable workspace access without task-scoped tools", () => {
     expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("coding-capable workspace tools");
-    expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("fn_task_document_write");
-    expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("fn_task_document_read");
-    expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("fn_task_log");
+  });
+
+  describe("FN-5053 no-task heartbeat prompt/tool alignment", () => {
+    const FORBIDDEN_NO_TASK_TOOLS = [
+      "fn_task_log",
+      "fn_task_document_write",
+      "fn_task_document_read",
+      "fn_task_update",
+      "fn_task_done",
+    ] as const;
+
+    const REQUIRED_NO_TASK_TOOLS = [
+      "fn_task_create",
+      "fn_list_agents",
+      "fn_delegate_task",
+      "fn_get_agent_config",
+      "fn_update_agent_config",
+      "fn_agent_create",
+      "fn_agent_delete",
+      "fn_send_message",
+      "fn_read_messages",
+      "fn_post_room_message",
+      "fn_memory_search",
+      "fn_memory_get",
+      "fn_memory_append",
+      "fn_web_fetch",
+      "fn_read_evaluations",
+      "fn_update_identity",
+      "fn_reflect_on_performance",
+      "fn_heartbeat_done",
+    ] as const;
+
+    const NO_TASK_PROMPT_VARIANTS = [
+      HEARTBEAT_NO_TASK_SYSTEM_PROMPT,
+      HEARTBEAT_NO_TASK_PROCEDURE_STRICT,
+      HEARTBEAT_NO_TASK_PROCEDURE_LITE,
+      HEARTBEAT_NO_TASK_PROCEDURE_OFF,
+    ] as const;
+
+    it.each(FORBIDDEN_NO_TASK_TOOLS)("FN-5053 excludes forbidden no-task tool reference %s", (toolName) => {
+      for (const promptText of NO_TASK_PROMPT_VARIANTS) {
+        expect(promptText).not.toContain(toolName);
+      }
+    });
+
+    it.each(REQUIRED_NO_TASK_TOOLS)("FN-5053 keeps required no-task tool in inventory: %s", (toolName) => {
+      expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain(toolName);
+    });
+
+    it("FN-5053 keeps no-task procedure persist-progress guidance on ambient tools", () => {
+      const expectedPersistLine = "fn_task_create, fn_delegate_task, fn_send_message, fn_memory_append.";
+      expect(HEARTBEAT_NO_TASK_PROCEDURE_STRICT).toContain(expectedPersistLine);
+      expect(HEARTBEAT_NO_TASK_PROCEDURE_LITE).toContain(expectedPersistLine);
+      expect(HEARTBEAT_NO_TASK_PROCEDURE_STRICT).toContain("fn_heartbeat_done");
+      expect(HEARTBEAT_NO_TASK_PROCEDURE_LITE).toContain("fn_heartbeat_done");
+      expect(HEARTBEAT_NO_TASK_PROCEDURE_OFF).toContain("fn_heartbeat_done");
+    });
+
+    it("FN-5053 keeps task-bound task-scoped guidance intact", () => {
+      expect(HEARTBEAT_SYSTEM_PROMPT).toContain("fn_task_log");
+      expect(HEARTBEAT_SYSTEM_PROMPT).toContain("fn_task_document_write");
+    });
   });
 
   it("returns task, delegation, and agent-config tools", () => {
@@ -132,17 +194,17 @@ describe("createHeartbeatTools", () => {
 
     const result = await createTool.execute("call-1", { description: "Follow-up task" }, undefined as any, undefined as any, undefined as any);
 
-    expect(mockTaskStore.createTask).toHaveBeenCalledWith({
+    expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: "Follow-up task",
       dependencies: undefined,
       column: "triage",
       priority: undefined,
-      source: {
+      source: expect.objectContaining({
         sourceType: "agent_heartbeat",
         sourceAgentId: "agent-001",
         sourceRunId: undefined,
-      },
-    }, expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+      }),
+    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
 
     const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
     expect(responseText).toContain("Created FN-100");

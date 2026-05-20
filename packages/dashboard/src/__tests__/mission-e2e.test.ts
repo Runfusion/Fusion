@@ -2273,7 +2273,7 @@ describe("Mission API", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ success: true, sessionId: "session-1" });
       // Default store returns {} for promptOverrides when projectId is omitted
-      expect(retrySpy).toHaveBeenCalledWith("session-1", "/fake/root", {});
+      expect(retrySpy).toHaveBeenCalledWith("session-1", "/fake/root", expect.anything(), {});
     });
 
     it("returns 404 when interview retry session is missing", async () => {
@@ -2992,6 +2992,7 @@ describe("Mission API", () => {
         expect.any(String),
         "Scoped Mission",
         scopedRootDir,
+        scopedStore,
         { "mission-interview-system": "Scoped mission interview prompt" },
         undefined,
         undefined,
@@ -3028,6 +3029,7 @@ describe("Mission API", () => {
         "scoped-session",
         { "q-1": "Answer" },
         scopedRootDir,
+        scopedStore,
         { "mission-interview-system": "Scoped mission interview prompt" },
       );
     });
@@ -3050,6 +3052,7 @@ describe("Mission API", () => {
       expect(retrySpy).toHaveBeenCalledWith(
         "scoped-retry",
         scopedRootDir,
+        scopedStore,
         { "mission-interview-system": "Scoped mission interview prompt" },
       );
     });
@@ -3080,6 +3083,7 @@ describe("Mission API", () => {
         expect.any(String),
         "Default Mission",
         "/fake/root",
+        expect.anything(),
         {},
         undefined,
         undefined,
@@ -3156,6 +3160,7 @@ describe("Mission API", () => {
         expect.any(String),
         "Default Model Mission",
         scopedRootDir,
+        expect.anything(),
         {},
         "zai",
         "glm-5.1",
@@ -3197,6 +3202,7 @@ describe("Mission API", () => {
         expect.any(String),
         "Planning Model Mission",
         scopedRootDir,
+        expect.anything(),
         {},
         "anthropic",
         "claude-sonnet-4-5",
@@ -3241,6 +3247,7 @@ describe("Mission API", () => {
         expect.any(String),
         "Override Mission",
         scopedRootDir,
+        expect.anything(),
         {},
         "openai",
         "gpt-4o",
@@ -3278,6 +3285,7 @@ describe("Mission API", () => {
         expect.any(String),
         "No Defaults Mission",
         scopedRootDir,
+        expect.anything(),
         {},
         undefined,
         undefined,
@@ -4498,7 +4506,7 @@ describe("Mission API", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.type).toBe("question");
-      expect(submitSpy).toHaveBeenCalledWith("session-123", { "q-1": "answer" }, expect.any(String));
+      expect(submitSpy).toHaveBeenCalledWith("session-123", { "q-1": "answer" }, expect.any(String), expect.anything());
     });
 
     it("POST /milestones/:milestoneId/interview/respond returns 400 for missing sessionId", async () => {

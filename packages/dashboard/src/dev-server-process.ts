@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
+import { superviseSpawn } from "@fusion/core";
 import type { DevServerState, DevServerStore } from "./dev-server-store.js";
 import {
   detectPortFromLogLine,
@@ -40,8 +41,8 @@ function killManagedProcess(child: ChildProcess, signal: NodeJS.Signals): void {
 
   if (process.platform !== "win32") {
     try {
-      // Detached POSIX children become their own process group leaders, so
-      // signaling the negative PID tears down the shell wrapper and its child.
+      // Supervised POSIX children remain process-group leaders, so a negative
+      // PID still tears down the shell wrapper and its descendants.
       process.kill(-child.pid, signal);
       return;
     } catch {
@@ -132,12 +133,13 @@ export class DevServerProcessManager extends EventEmitter {
       detectedPort: undefined,
     });
 
-    const child = spawn(safeCommand, [], {
+    const supervised = superviseSpawn(safeCommand, [], {
       cwd: safeCwd,
-      detached: process.platform !== "win32",
       shell: true,
       stdio: ["pipe", "pipe", "pipe"],
+      maxLifetimeMs: 24 * 60 * 60 * 1_000,
     });
+    const child = supervised.child;
 
     this.childProcess = child;
     this.closePromise = new Promise<DevServerState>((resolve) => {

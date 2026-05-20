@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, type Settings, type Column, type StepStatus, type AgentLogType, type AgentLogEntry } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch } from "@fusion/core";
 import { aiMergeTask, listBranchRecoveryCandidates, type BranchRecoveryCandidate } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -57,6 +57,22 @@ function getResearchSourceContext(sourceMetadata: unknown): string | undefined {
 
   const runId = (sourceMetadata as { runId?: unknown }).runId;
   return typeof runId === "string" && runId.length > 0 ? runId : undefined;
+}
+
+async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["getTask"]>>, store: TaskStore): Promise<string | null> {
+  const lineage = getTaskDuplicateLineage(task);
+  if (lineage.length === 0) return null;
+
+  const labels = await Promise.all(lineage.map(async (id) => {
+    try {
+      const linked = await store.getTask(id);
+      return linked.column === "archived" ? `${id} (archived)` : id;
+    } catch {
+      return id;
+    }
+  }));
+
+  return labels.join(", ");
 }
 
 function formatTaskSource(task: {
@@ -272,7 +288,110 @@ async function resolveNodeByNameOrId(nodeNameOrId: string): Promise<{ id: string
   }
 }
 
-export async function runTaskCreate(descriptionArg?: string, attachFiles?: string[], depends?: string[], projectName?: string, nodeName?: string) {
+function truncateNearDuplicateLabel(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "(untitled)";
+  return normalized.length > 60 ? `${normalized.slice(0, 60)}…` : normalized;
+}
+
+function formatNearDuplicateMatch(match: NearDuplicateMatch, candidates: Map<string, NearDuplicateCandidate>): string[] {
+  const candidate = candidates.get(match.id);
+  const labelSource = candidate?.title?.trim() || candidate?.description?.trim() || "(untitled)";
+  const shared = match.sharedTokens.slice(0, 6).join(", ");
+  return [
+    `  ${match.id}  (${candidate?.column ?? "unknown"})  ${truncateNearDuplicateLabel(labelSource)}`,
+    `           score: ${match.score.toFixed(2)}  shared: ${shared}`,
+  ];
+}
+
+interface CliNearDuplicateOutcome {
+  signature?: IntentSignature;
+}
+
+function hasIntentSignal(signature?: IntentSignature): signature is IntentSignature {
+  return !!signature && (signature.routePaths.length + signature.filePaths.length + signature.identifiers.length) > 0;
+}
+
+async function runCliNearDuplicateCheck(args: {
+  store: TaskStore;
+  description: string;
+  bypass: boolean;
+}): Promise<CliNearDuplicateOutcome> {
+  let signature: IntentSignature | undefined;
+  let matches: NearDuplicateMatch[] = [];
+  const candidates = new Map<string, NearDuplicateCandidate>();
+
+  try {
+    signature = extractIntentSignature({ description: args.description });
+    const signalCount = signature.routePaths.length + signature.filePaths.length + signature.identifiers.length;
+    if (signalCount === 0) {
+      return { signature };
+    }
+    if (!args.bypass) {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const taskCandidates = (await args.store.listTasks({ slim: false, includeArchived: false }))
+        .filter((task) => task.column !== "done")
+        .filter((task) => {
+          const createdAtMs = Date.parse(task.createdAt);
+          return Number.isFinite(createdAtMs) && createdAtMs >= cutoff;
+        })
+        .slice(0, 200)
+        .map((task) => ({
+          id: task.id,
+          title: task.title ?? "",
+          description: task.description,
+          column: task.column,
+          fileScope: Array.isArray(task.sourceMetadata?.fileScope)
+            ? task.sourceMetadata.fileScope.filter((entry: unknown): entry is string => typeof entry === "string")
+            : undefined,
+          createdAt: Date.parse(task.createdAt),
+        } satisfies NearDuplicateCandidate));
+      for (const candidate of taskCandidates) {
+        candidates.set(candidate.id, candidate);
+      }
+      matches = findNearDuplicates(
+        { description: args.description },
+        taskCandidates,
+        { windowMs: 7 * 24 * 60 * 60 * 1000 },
+      );
+    }
+  } catch (error) {
+    console.error(`Warning: near-duplicate check failed (${error instanceof Error ? error.message : String(error)}); proceeding.`);
+    return { signature: undefined };
+  }
+
+  if (matches.length === 0) {
+    return { signature };
+  }
+
+  console.error("Possible near-duplicate of existing task(s):");
+  for (const match of matches) {
+    for (const line of formatNearDuplicateMatch(match, candidates)) {
+      console.error(line);
+    }
+  }
+  console.error("Pass --no-dedup to create anyway.");
+
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+    console.error("Refusing to create near-duplicate task in non-interactive mode. Re-run with --no-dedup to override.");
+    process.exit(1);
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question("Create anyway? [y/N]: ")).trim().toLowerCase();
+    if (answer === "y" || answer === "yes") {
+      return { signature };
+    }
+  } finally {
+    rl.close();
+  }
+
+  console.error("Task creation cancelled. Use --no-dedup to bypass.");
+  process.exit(0);
+}
+
+export async function runTaskCreate(descriptionArg?: string, attachFiles?: string[], depends?: string[], projectName?: string, nodeName?: string, noDedup = false) {
   let description = descriptionArg;
   const projectContext = await getProjectContext(projectName);
 
@@ -288,11 +407,58 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
   }
 
   const store = projectContext?.store ?? await getStore(projectName);
-  const task = await store.createTask({
-    description: description.trim(),
-    dependencies: depends,
-    source: { sourceType: "cli" },
-  });
+  const guard = await runDeterministicDuplicateGuard(
+    store,
+    { description: description.trim() },
+    {
+      lockScope: projectContext?.projectId ?? store.getRootDir?.() ?? process.cwd(),
+      bypass: noDedup,
+    },
+  );
+
+  let task = guard.existing;
+  let linkedExisting = false;
+
+  try {
+    if (guard.action === "duplicate" && guard.existing) {
+      task = guard.existing;
+      linkedExisting = true;
+    } else {
+      // FN-5171: create ordering remains deterministic duplicate (FN-4918) -> near-duplicate intent.
+      // Mirrors the dashboard FN-5152 guard while keeping CLI create fail-open.
+      const nearDuplicate = await runCliNearDuplicateCheck({
+        store,
+        description: description.trim(),
+        bypass: noDedup,
+      });
+      const sourceMetadata = {
+        ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
+        ...(hasIntentSignal(nearDuplicate.signature) ? { intentSignature: nearDuplicate.signature } : {}),
+      };
+      const created = await store.createTask({
+        description: description.trim(),
+        dependencies: depends,
+        source: {
+          sourceType: "cli",
+          sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
+        },
+      });
+
+      const reconcileResult = await reconcileDeterministicDuplicate(store, {
+        createdTask: created,
+        fingerprint: guard.fingerprint,
+      });
+      task = reconcileResult.canonical;
+      linkedExisting = reconcileResult.outcome === "archived";
+    }
+  } finally {
+    guard.releaseLock();
+  }
+
+  if (!task) {
+    console.error("Failed to create or link task");
+    process.exit(1);
+  }
 
   let resolvedNode: { id: string; name?: string } | undefined;
   if (nodeName) {
@@ -313,8 +479,12 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
   if (projectContext) {
     console.log(`  Project: ${projectContext.projectName}`);
   }
-  console.log(`  ✓ Created ${task.id}: ${label}`);
-  console.log(`    Column: triage`);
+  if (linkedExisting) {
+    console.log(`  ✓ Linked existing ${task.id}: ${label}`);
+  } else {
+    console.log(`  ✓ Created ${task.id}: ${label}`);
+  }
+  console.log(`    Column: ${task.column}`);
   if (task.dependencies.length > 0) {
     console.log(`    Dependencies: ${task.dependencies.join(", ")}`);
   }
@@ -677,6 +847,10 @@ export async function runTaskShow(id: string, projectName?: string) {
   if (sourceSummary) {
     console.log(`  Source: ${sourceSummary}`);
   }
+  const duplicateLineage = await formatTaskDuplicateLineage(task, store);
+  if (duplicateLineage) {
+    console.log(`  Duplicate of: ${duplicateLineage}`);
+  }
   console.log();
 
   // Steps
@@ -1033,7 +1207,12 @@ export async function runTaskDelete(id: string, force?: boolean, projectName?: s
   }
 
   try {
-    await store.deleteTask(id);
+    await store.deleteTask(id, {
+      auditContext: {
+        agentId: "cli",
+        runId: `synthetic-cli-delete-${id}-${Date.now()}`,
+      },
+    });
     console.log();
     console.log(`  ✓ Deleted ${id}`);
     console.log();
@@ -1160,6 +1339,7 @@ export async function runTaskImportGitHubInteractive(
     const description = `${body}\n\nSource: ${issue.html_url}`;
 
     // Create the task
+    // FN-5060: intentional same-content sibling; deterministic guard skipped here.
     const source = buildGitHubIssueSource(owner, repo, issue);
     const task = await store.createTask({
       title: title || undefined,
@@ -1315,6 +1495,7 @@ export async function runTaskImportFromGitHub(
     const description = `${body}\n\nSource: ${issue.html_url}`;
 
     // Create the task
+    // FN-5060: intentional same-content sibling; deterministic guard skipped here.
     const source = buildGitHubIssueSource(owner, repo, issue);
     const task = await store.createTask({
       title: title || undefined,
@@ -1527,8 +1708,6 @@ export async function runTaskPrCreate(id: string, options: PrCreateOptions = {},
   if (shouldUseAi) {
     try {
       const repoRoot = await getProjectPath(projectName);
-      const settings = "getSettings" in store ? await store.getSettings() : {};
-      const generated = await dashboard.generatePrMetadata({ task, repoRoot, settings: settings as Settings });
       if (!options.title) {
         resolvedTitle = generated.title;
       }
@@ -1921,6 +2100,7 @@ export async function runTaskPlan(initialPlanArg?: string, yesFlag = false, proj
 
         if (confirmed) {
           // Create the task
+          // FN-5060: intentional same-content sibling; deterministic guard skipped here.
           const task = await store.createTask({
             title: result.data.title,
             description: result.data.description,

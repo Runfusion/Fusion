@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "@fusion/core";
+import { Database, TaskStore } from "@fusion/core";
 import { AiSessionStore, type AiSessionRow } from "../ai-session-store.js";
 import {
   __resetPlanningState,
@@ -75,8 +75,9 @@ describe("session persistence round-trip", () => {
   let tmpDir: string;
   let db: Database;
   let aiSessionStore: AiSessionStore;
+  let taskStore: TaskStore;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     __resetPlanningState();
     __resetSubtaskBreakdownState();
@@ -86,6 +87,8 @@ describe("session persistence round-trip", () => {
     db = new Database(join(tmpDir, ".fusion"));
     db.init();
     aiSessionStore = new AiSessionStore(db);
+    taskStore = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+    await taskStore.init();
 
     setPlanningAiSessionStore(aiSessionStore);
     setSubtaskAiSessionStore(aiSessionStore);
@@ -98,6 +101,11 @@ describe("session persistence round-trip", () => {
     __resetSubtaskBreakdownState();
     __resetMissionInterviewState();
 
+    try {
+      taskStore.close();
+    } catch {
+      // no-op
+    }
     try {
       db.close();
     } catch {
@@ -132,7 +140,7 @@ describe("session persistence round-trip", () => {
         ]),
     );
 
-    const { sessionId } = await createSession("127.0.0.31", "Plan persistence", undefined, "/tmp/project");
+    const { sessionId } = await createSession("127.0.0.31", "Plan persistence", taskStore, "/tmp/project");
 
     const afterCreate = aiSessionStore.get(sessionId);
     expect(afterCreate?.status).toBe("awaiting_input");
@@ -292,6 +300,7 @@ describe("session persistence round-trip", () => {
       "127.0.0.44",
       "Mission persistence",
       "/tmp/project",
+      taskStore,
       undefined,
       undefined,
       undefined,
@@ -324,7 +333,7 @@ describe("session persistence round-trip", () => {
         ]),
     );
 
-    const { sessionId } = await createSession("127.0.0.55", "Cancel persistence", undefined, "/tmp/project");
+    const { sessionId } = await createSession("127.0.0.55", "Cancel persistence", taskStore, "/tmp/project");
     expect(aiSessionStore.get(sessionId)).not.toBeNull();
 
     await cancelSession(sessionId);

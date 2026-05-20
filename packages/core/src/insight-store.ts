@@ -658,6 +658,33 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
     return existingRow ? this.getRun(existingRow.id) : undefined;
   }
 
+  listStalePendingRuns(
+    olderThanIso: string,
+    options: {
+      projectId?: string;
+      limit?: number;
+    } = {},
+  ): InsightRun[] {
+    const limit = Math.max(1, Math.floor(options.limit ?? 100));
+    const whereParts = ["status IN ('pending', 'running')", "COALESCE(startedAt, createdAt) <= ?"];
+    const params: (string | number)[] = [olderThanIso];
+
+    if (options.projectId) {
+      whereParts.push("projectId = ?");
+      params.push(options.projectId);
+    }
+
+    params.push(limit);
+    const rows = this.db.prepare(`
+      SELECT * FROM project_insight_runs
+      WHERE ${whereParts.join(" AND ")}
+      ORDER BY createdAt ASC, id ASC
+      LIMIT ?
+    `).all(...params) as Record<string, unknown>[];
+
+    return rows.map((row) => this.rowToRun(row));
+  }
+
   createRunOrThrowConflict(projectId: string, input: InsightRunCreateInput): InsightRun {
     const existing = this.findActiveRun(projectId, input.trigger);
     if (existing) {

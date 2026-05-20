@@ -53,7 +53,7 @@ describe("TaskStore", () => {
   });
 
   describe("secrets integration settings", () => {
-    it("round-trips secretsEnv and secretsSyncPassphrase via project settings", async () => {
+    it("round-trips secretsEnv via project settings", async () => {
       await harness.store().updateSettings({
         secretsEnv: {
           enabled: true,
@@ -62,7 +62,6 @@ describe("TaskStore", () => {
           keyPrefix: "FUSION_",
           requireGitignored: true,
         },
-        secretsSyncPassphrase: "encrypted:abc123",
       });
 
       const settings = await harness.store().getSettings();
@@ -73,11 +72,9 @@ describe("TaskStore", () => {
         keyPrefix: "FUSION_",
         requireGitignored: true,
       });
-      expect(settings.secretsSyncPassphrase).toBe("encrypted:abc123");
 
       const { project } = await harness.store().getSettingsByScope();
       expect(project.secretsEnv?.enabled).toBe(true);
-      expect(project.secretsSyncPassphrase).toBe("encrypted:abc123");
     });
   });
 

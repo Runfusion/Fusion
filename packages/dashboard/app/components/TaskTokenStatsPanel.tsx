@@ -144,9 +144,10 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
   // This avoids double counting when workflow timings appear in both `[timing]`
   // logs and `workflowStepResults`.
   const totalExecutionMs = activeRuntimeMs
-    ?? (typeof task?.timedExecutionMs === "number"
-      ? task.timedExecutionMs
-      : endToEndDurationMs ?? (totalTimingDurationMs + workflowTiming.totalDurationMs));
+    ?? (endToEndDurationMs
+      ?? (typeof task?.timedExecutionMs === "number"
+        ? task.timedExecutionMs
+        : totalTimingDurationMs + workflowTiming.totalDurationMs));
   const showWallClockSinceFirstExecution =
     wallClockSinceFirstExecutionMs != null
     && wallClockSinceFirstExecutionMs !== totalExecutionMs;

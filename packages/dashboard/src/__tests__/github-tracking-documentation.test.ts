@@ -16,7 +16,7 @@ describe("github tracking documentation contract", () => {
 
     expect(taskManagement).toContain("## GitHub Tracking Issues");
     expect(taskManagement).toContain("They are **not** the same as imported source issues (`issueInfo` / `sourceIssue`)");
-    expect(taskManagement).toContain("task creation flows (including quick create, planning output, automation `create-task` workflow steps, and subtask creation paths that create tasks)");
+    expect(taskManagement).toContain("for every task-creation path");
     expect(taskManagement).toContain("For existing tasks, PATCH first persists any `githubTracking` mutation");
     expect(taskManagement).toContain("task.githubTracking.enabled");
     expect(taskManagement).toContain("task.githubTracking.repoOverride");
@@ -24,7 +24,7 @@ describe("github tracking documentation contract", () => {
     expect(taskManagement).toContain("1. Task override: `task.githubTracking.repoOverride`");
     expect(taskManagement).toContain("2. Project default: `githubTrackingDefaultRepo`");
     expect(taskManagement).toContain("3. Global default: `githubTrackingDefaultRepo`");
-    expect(taskManagement).toContain("Creation is best-effort and non-blocking");
+    expect(taskManagement).toContain("best-effort and non-blocking");
     expect(taskManagement).toContain("Explicit manual unlink (`githubTracking.issue: null`) does not recreate a tracking issue in that same update request");
     expect(taskManagement).toContain("Title: `[FN-XXXX] Task title`");
     expect(taskManagement).toContain("Body prefix: `Fusion task: FN-XXXX`");

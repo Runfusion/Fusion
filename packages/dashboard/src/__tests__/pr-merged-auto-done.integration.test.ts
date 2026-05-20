@@ -38,6 +38,7 @@ describe("pr merged refresh auto-done", () => {
     rootDir = mkdtempSync(join(tmpdir(), "fn-4762-pr-merged-root-"));
     globalDir = mkdtempSync(join(tmpdir(), "fn-4762-pr-merged-global-"));
     store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+    await store.init();
   });
 
   afterEach(() => {
@@ -60,7 +61,7 @@ describe("pr merged refresh auto-done", () => {
       commentCount: 0,
     });
 
-    await refreshPrInBackground(store, task.id, (await store.getTask(task.id)).prInfo!);
+    await refreshPrInBackground(store, task.id, [(await store.getTask(task.id)).prInfo!]);
 
     const updated = await store.getTask(task.id);
     expect(updated.column).toBe("done");

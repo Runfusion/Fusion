@@ -689,6 +689,37 @@ describe("schema migration", () => {
     db.close();
   });
 
+  it("adds deletedAt column + index when migrating from schema version 86", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '86')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec("INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES ('FN-legacy', 'legacy', 'todo', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')");
+
+    db.init();
+
+    const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("deletedAt");
+
+    const indexes = db.prepare("PRAGMA index_list(tasks)").all() as Array<{ name: string }>;
+    expect(indexes.some((index) => index.name === "idx_tasks_deletedAt")).toBe(true);
+
+    const row = db.prepare("SELECT deletedAt FROM tasks WHERE id = 'FN-legacy'").get() as { deletedAt: string | null };
+    expect(row.deletedAt).toBeNull();
+    expect(db.getSchemaVersion()).toBe(89);
+
+    db.close();
+  });
+
   it("adds workflow_steps.gateMode and backfills legacy rows by mode", () => {
     const db = new Database(fusionDir);
     db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
@@ -717,7 +748,7 @@ describe("schema migration", () => {
       { id: "WS-001", mode: "prompt", gateMode: "advisory" },
       { id: "WS-002", mode: "script", gateMode: "advisory" },
     ]);
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     db.close();
   });
@@ -767,7 +798,7 @@ describe("schema migration", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
     });
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     db.close();
   });
@@ -796,7 +827,7 @@ describe("schema migration", () => {
 
     const columns = db.prepare("PRAGMA table_info(milestones)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain("acceptanceCriteria");
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     db.close();
   });
@@ -831,7 +862,7 @@ describe("schema migration", () => {
       { id: "WS-002", mode: "script", enabled: 1, gateMode: "advisory" },
       { id: "WS-003", mode: "prompt", enabled: 0, gateMode: "advisory" },
     ]);
-    expect(db.getSchemaVersion()).toBe(85);
+    expect(db.getSchemaVersion()).toBe(89);
 
     db.close();
   });

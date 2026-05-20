@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS } from "../settings-schema.js";
 import {
+  normalizeMergeIntegrationWorktreeMode,
+} from "../types.js";
+import {
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
   validateWorktrunkSettings,
@@ -69,6 +72,30 @@ describe("settings defaults invariants", () => {
     it("keeps recycleWorktrees project-scoped only", () => {
       // recycleWorktrees intentionally has no DEFAULT_GLOBAL_SETTINGS counterpart.
       expect("recycleWorktrees" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+    });
+  });
+
+  describe("mergeIntegrationWorktree default", () => {
+    it("defaults project settings to reuse-task-worktree", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.mergeIntegrationWorktree).toBe("reuse-task-worktree");
+    });
+
+    it("preserves both supported values through normalization", () => {
+      expect(normalizeMergeIntegrationWorktreeMode("reuse-task-worktree")).toBe("reuse-task-worktree");
+      expect(normalizeMergeIntegrationWorktreeMode("cwd-main")).toBe("cwd-main");
+    });
+
+    it("resolves legacy missing values to the new default", () => {
+      const legacyResolved = {
+        ...DEFAULT_PROJECT_SETTINGS,
+        mergeIntegrationWorktree: normalizeMergeIntegrationWorktreeMode(undefined),
+      };
+      expect(legacyResolved.mergeIntegrationWorktree).toBe("reuse-task-worktree");
+    });
+
+    it("normalizes unknown values to reuse-task-worktree", () => {
+      expect(normalizeMergeIntegrationWorktreeMode("legacy-project-root-mode")).toBe("reuse-task-worktree");
+      expect(normalizeMergeIntegrationWorktreeMode(null)).toBe("reuse-task-worktree");
     });
   });
 });

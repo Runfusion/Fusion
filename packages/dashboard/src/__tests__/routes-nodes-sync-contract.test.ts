@@ -56,6 +56,7 @@ vi.mock("@fusion/core", () => {
       init = mockAgentStoreInit;
       getAgent = mockAgentStoreGetAgent;
     },
+    deterministicGuardLocks: new Map(),
   };
 });
 

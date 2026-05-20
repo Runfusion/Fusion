@@ -41,6 +41,8 @@ const defaultSettings = {
 } as Settings;
 
 vi.mock("../../api", () => ({
+  fetchProjects: vi.fn(() => Promise.resolve([])),
+  fetchGitRemotes: vi.fn(() => Promise.resolve({ remotes: [] })),
   fetchSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
   fetchSettingsByScope: vi.fn(() => Promise.resolve({ global: { ...defaultSettings }, project: {} })),
   updateSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),

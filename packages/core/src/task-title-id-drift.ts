@@ -5,6 +5,28 @@ export const TASK_ID_TOKEN_RE = /\bFN-(\d+)\b/gi;
 const CONNECTOR_RE = /[:\-—–]/;
 const EMPTY_PLACEHOLDER_CONTENT_RE = /^[\s,:;\-—–.!?]*$/;
 
+export const DANGLING_TAIL_STOPWORDS = new Set([
+  "of", "for", "to", "from", "as", "in", "on", "with", "by", "and", "or", "the", "a", "an", "at", "into", "onto",
+  "about", "via", "per", "vs",
+]);
+
+export function stripDanglingTail(text: string): string {
+  let normalized = text.trim();
+  for (let i = 0; i < 4; i += 1) {
+    const words = normalized.split(/\s+/).filter(Boolean);
+    const tail = words.at(-1)?.toLowerCase();
+    if (!tail || !DANGLING_TAIL_STOPWORDS.has(tail)) {
+      break;
+    }
+    words.pop();
+    normalized = stripEmptyPlaceholders(words.join(" "));
+    if (!normalized) {
+      break;
+    }
+  }
+  return normalized;
+}
+
 export function stripEmptyPlaceholders(text: string): string {
   let normalized = text;
 
@@ -62,11 +84,25 @@ export function normalizeTitleForTaskId(
 
   let normalized = initial.replace(/\bFN-\d+\b\s*([:\-—–])?\s*/gi, " ");
   normalized = stripEmptyPlaceholders(normalized);
+  const beforeDanglingTail = normalized;
+  const beforeTail = beforeDanglingTail.split(/\s+/).filter(Boolean).at(-1)?.toLowerCase();
+  const hadDanglingStopwordTail = Boolean(beforeTail && DANGLING_TAIL_STOPWORDS.has(beforeTail));
+  normalized = stripDanglingTail(normalized);
 
   if (normalized.length > MAX_TITLE_LENGTH) {
     normalized = normalized.slice(0, MAX_TITLE_LENGTH).trim();
   }
 
-  const nextTitle = normalized.length > 0 ? normalized : null;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const nextTitle =
+    normalized.length === 0
+      ? null
+      : hadDanglingStopwordTail && normalized !== beforeDanglingTail
+        ? null
+        : /^close\s+as\s+duplicate(?:\s+of)?$/i.test(normalized)
+          ? null
+          : words.length === 1 && DANGLING_TAIL_STOPWORDS.has(words[0]!.toLowerCase())
+            ? null
+            : normalized;
   return { title: nextTitle, changed: nextTitle !== initial };
 }

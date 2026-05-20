@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PrPanel } from "../PrPanel";
 
@@ -9,10 +9,12 @@ vi.mock("../../api", () => ({
   mergePr: vi.fn(),
   reclaimPrConflict: vi.fn(),
   setAutoMergeOnGreen: vi.fn(),
+  unlinkPr: vi.fn(),
 }));
 
-import { refreshPrStatus, fetchPrChecks, fetchPrReviews, mergePr, reclaimPrConflict, setAutoMergeOnGreen } from "../../api";
+import { refreshPrStatus, fetchPrChecks, fetchPrReviews, mergePr, reclaimPrConflict, setAutoMergeOnGreen, unlinkPr } from "../../api";
 
+const originalClipboard = navigator.clipboard;
 const mockAddToast = vi.fn();
 const mockOnPrUpdated = vi.fn();
 const mockOnRequestCreatePr = vi.fn();
@@ -46,6 +48,17 @@ describe("PrPanel", () => {
     (fetchPrReviews as ReturnType<typeof vi.fn>).mockResolvedValue({ snapshot: { decision: null, items: [] }, comments: [] });
     (mergePr as ReturnType<typeof vi.fn>).mockResolvedValue({ prInfo: { ...mockPrInfo, status: "merged" } });
     (setAutoMergeOnGreen as ReturnType<typeof vi.fn>).mockResolvedValue({ prInfo: { ...mockPrInfo, autoMergeOnGreen: true } });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: originalClipboard,
+    });
   });
 
   it("renders create button and calls onRequestCreatePr", () => {
@@ -103,6 +116,21 @@ describe("PrPanel", () => {
       checks: [],
       reviewDecision: null,
       blockingReasons: [],
+      primary: {
+        prInfo: { ...mockPrInfo, status: "merged" },
+        checks: [],
+        reviewDecision: null,
+        blockingReasons: [],
+        mergeReady: false,
+      },
+      all: [{
+        prInfo: { ...mockPrInfo, status: "merged" },
+        checks: [],
+        reviewDecision: null,
+        blockingReasons: [],
+        mergeReady: false,
+      }],
+      mergeReady: false,
     });
 
     render(<PrPanel taskId="FN-001" projectId="project-1" prInfo={mockPrInfo} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
@@ -256,6 +284,125 @@ describe("PrPanel", () => {
 
     expect(await screen.findByText(/Auto-moved to Todo/i)).toBeInTheDocument();
     expect(screen.getByText(/Please split this function/i)).toBeInTheDocument();
+  });
+
+  it("renders conflict diagnostics subsection with files and commands", () => {
+    render(
+      <PrPanel
+        taskId="FN-001"
+        prInfo={{
+          ...mockPrInfo,
+          mergeable: "conflicting",
+          conflictDiagnostics: {
+            conflictingFiles: ["packages/dashboard/src/github.ts", "packages/core/src/types.ts"],
+            suggestedCommands: ["git fetch origin", "git checkout fusion/fn-001", "git rebase origin/main", "# Resolve conflicts then: git add <files> && git rebase --continue"],
+            capturedAt: "2026-05-18T00:00:00.000Z",
+          },
+        }}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        addToast={mockAddToast}
+      />,
+    );
+
+    expect(screen.getByText("packages/dashboard/src/github.ts")).toBeInTheDocument();
+    expect(screen.getByText("packages/core/src/types.ts")).toBeInTheDocument();
+    expect(screen.getByText(/git checkout fusion\/fn-001/)).toBeInTheDocument();
+  });
+
+  it("hides conflict diagnostics subsection when not conflicting and no diagnostics", () => {
+    render(<PrPanel taskId="FN-001" prInfo={{ ...mockPrInfo, mergeable: "clean" }} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
+    expect(screen.queryByText("Conflicts")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Re-check conflicts" })).toBeNull();
+  });
+
+  it("copies suggested commands from diagnostics", async () => {
+    render(
+      <PrPanel
+        taskId="FN-001"
+        prInfo={{
+          ...mockPrInfo,
+          mergeable: "conflicting",
+          conflictDiagnostics: {
+            conflictingFiles: ["packages/dashboard/src/github.ts"],
+            suggestedCommands: ["git fetch origin", "git checkout fusion/fn-001"],
+            capturedAt: "2026-05-18T00:00:00.000Z",
+          },
+        }}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        addToast={mockAddToast}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("git fetch origin\ngit checkout fusion/fn-001");
+    });
+  });
+
+  it("renders multi-pr summary and unlinks targeted PR", async () => {
+    const onPrUnlinked = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <PrPanel
+        taskId="FN-001"
+        projectId="project-1"
+        prInfos={[mockPrInfo, { ...mockPrInfo, number: 99, url: "https://github.com/owner/repo/pull/99", title: "Another" }]}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        onPrUnlinked={onPrUnlinked}
+        addToast={mockAddToast}
+      />,
+    );
+
+    expect(screen.getByText("2 pull requests")).toBeInTheDocument();
+    expect(document.querySelector(".pr-panel-summary-badge")?.textContent).toBe("open");
+    fireEvent.click(screen.getAllByRole("button", { name: "Unlink" })[1]!);
+    await waitFor(() => expect(unlinkPr).toHaveBeenCalledWith("FN-001", 99, "project-1"));
+    expect(onPrUnlinked).toHaveBeenCalledWith(99);
+    confirmSpy.mockRestore();
+  });
+
+  it("uses worst rollup state badge for multi-pr summary", () => {
+    render(
+      <PrPanel
+        taskId="FN-001"
+        prInfos={[{ ...mockPrInfo, mergeable: "conflicting" as const }, { ...mockPrInfo, number: 100, url: "https://github.com/owner/repo/pull/100" }]}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        addToast={mockAddToast}
+      />,
+    );
+
+    expect(screen.getByText("conflicting")).toBeInTheDocument();
+  });
+
+  it("re-check conflicts triggers refreshPrStatus", async () => {
+    (refreshPrStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ prInfo: mockPrInfo, checks: [], reviewDecision: null, blockingReasons: [] });
+    render(
+      <PrPanel
+        taskId="FN-001"
+        projectId="project-1"
+        prInfo={{
+          ...mockPrInfo,
+          mergeable: "conflicting",
+          conflictDiagnostics: {
+            conflictingFiles: ["packages/dashboard/src/github.ts"],
+            suggestedCommands: ["git fetch origin"],
+            capturedAt: "2026-05-18T00:00:00.000Z",
+          },
+        }}
+        prAuthAvailable={true}
+        onPrUpdated={mockOnPrUpdated}
+        addToast={mockAddToast}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-check conflicts" }));
+    await waitFor(() => {
+      expect(refreshPrStatus).toHaveBeenCalledWith("FN-001", "project-1");
+    });
   });
 
   it("shows conflict hint from blocking reasons after refresh", async () => {

@@ -14,6 +14,7 @@ function createStore(): TaskStore & EventEmitter {
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).getBootstrappedAt = vi.fn(() => null);
   (emitter as any).createTask = vi.fn();
   (emitter as any).clearStaleExecutionStartBranchReferences = vi.fn().mockReturnValue([]);
   return emitter;

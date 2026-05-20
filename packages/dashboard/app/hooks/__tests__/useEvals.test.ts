@@ -28,8 +28,14 @@ describe("useEvals", () => {
   });
 
   it("hydrates cached runs/results on first render", () => {
-    localStorage.setItem(`${SWR_CACHE_KEYS.EVALS_RUNS_PREFIX}p1`, JSON.stringify([{ id: "RUN-C", createdAt: "", status: "completed", evaluatedTaskCount: 1 }]));
-    localStorage.setItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`, JSON.stringify([{ id: "ER-C", runId: "RUN-C", taskId: "FN-C", taskTitle: "Cached", createdAt: "", overallScore: null, maxScore: null, categoryScores: [] }]));
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.EVALS_RUNS_PREFIX}p1`,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "RUN-C", createdAt: "", status: "completed", evaluatedTaskCount: 1 }] }),
+    );
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "ER-C", runId: "RUN-C", taskId: "FN-C", taskTitle: "Cached", createdAt: "", overallScore: null, maxScore: null, categoryScores: [] }] }),
+    );
 
     const { result } = renderHook(() => useEvals({ projectId: "p1" }));
 
@@ -52,8 +58,10 @@ describe("useEvals", () => {
       expect(result.current.results[0]).toMatchObject({ id: "ER-1", runId: "RUN-1", taskId: "FN-1", taskTitle: "Task One" });
     });
 
-    const cached = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`) ?? "[]");
-    expect(cached[0]?.id).toBe("ER-1");
+    const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`) ?? "{}");
+    expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+    const cached = envelope.data;
+    expect(cached?.[0]?.id).toBe("ER-1");
 
     act(() => result.current.setFilters((prev) => ({ ...prev, q: "fn-1", runId: "RUN-1", scoreMin: "0.5", scoreMax: "1" })));
 
@@ -85,14 +93,22 @@ describe("useEvals", () => {
     renderHook(() => useEvals({ projectId: "p1" }));
 
     await waitFor(() => {
-      const cached = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`) ?? "[]");
+      const envelope = JSON.parse(localStorage.getItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`) ?? "{}");
+      expect(envelope).toMatchObject({ savedAt: expect.any(Number) });
+      const cached = envelope.data;
       expect(cached).toHaveLength(500);
     });
   });
 
   it("isolates cache by project", () => {
-    localStorage.setItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`, JSON.stringify([{ id: "ER-P1", runId: "RUN", taskId: "FN-1", taskTitle: "P1", createdAt: "", overallScore: null, maxScore: null, categoryScores: [] }]));
-    localStorage.setItem(`${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p2`, JSON.stringify([{ id: "ER-P2", runId: "RUN", taskId: "FN-2", taskTitle: "P2", createdAt: "", overallScore: null, maxScore: null, categoryScores: [] }]));
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p1`,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "ER-P1", runId: "RUN", taskId: "FN-1", taskTitle: "P1", createdAt: "", overallScore: null, maxScore: null, categoryScores: [] }] }),
+    );
+    localStorage.setItem(
+      `${SWR_CACHE_KEYS.EVALS_RESULTS_PREFIX}p2`,
+      JSON.stringify({ savedAt: Date.now(), data: [{ id: "ER-P2", runId: "RUN", taskId: "FN-2", taskTitle: "P2", createdAt: "", overallScore: null, maxScore: null, categoryScores: [] }] }),
+    );
     mockListEvals.mockImplementation(() => new Promise(() => {}));
     mockListEvalRuns.mockImplementation(() => new Promise(() => {}));
 

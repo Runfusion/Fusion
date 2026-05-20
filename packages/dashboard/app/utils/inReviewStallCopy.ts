@@ -115,6 +115,10 @@ export function shouldShowInReviewStallBadge(task: Pick<Task, "column" | "paused
     return false;
   }
 
+  if (task.inReviewStall.code === "no-worktree-no-merge-confirmed") {
+    return false;
+  }
+
   return !(
     task.inReviewStall.code === "merge-blocker" &&
     task.status != null &&

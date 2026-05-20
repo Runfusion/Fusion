@@ -474,7 +474,6 @@ describe("useTheme", () => {
     // theme overrides via cascade order quirks; the assertion only cares about
     // the base→theme cascade, not the full app stylesheet.
     const style = document.createElement("style");
-    // eslint-disable-next-line no-restricted-syntax -- intentional read of base styles for cascade test
     const baseCss = readFileSync(resolve(PACKAGE_ROOT, "app/styles.css"), "utf8");
     const themeDataCss = readFileSync(resolve(PACKAGE_ROOT, "app/public/theme-data.css"), "utf8");
     style.textContent = baseCss + "\n" + themeDataCss;

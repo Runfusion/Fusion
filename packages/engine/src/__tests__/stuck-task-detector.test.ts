@@ -240,9 +240,43 @@ describe("StuckTaskDetector", () => {
       expect(detector.getActivitySinceProgress("FN-001")).toBe(0);
     });
 
+    it("resets ignored step-update churn state", () => {
+      const session = createMockSession();
+      detector.trackTask("FN-001", session);
+
+      detector.markLoopObserved("FN-001");
+      detector.recordIgnoredStepUpdate("FN-001");
+      detector.recordIgnoredStepUpdate("FN-001");
+      expect(detector.getIgnoredStepUpdateCount("FN-001")).toBe(2);
+
+      detector.recordProgress("FN-001");
+      expect(detector.getIgnoredStepUpdateCount("FN-001")).toBe(0);
+      expect(detector.classifyStuckReason("FN-001", 60_000)).toBeNull();
+    });
+
     it("does nothing for untracked task", () => {
       // Should not throw
       detector.recordProgress("FN-001");
+    });
+  });
+
+  describe("recordIgnoredStepUpdate", () => {
+    it("increments ignored rebuff count and activity counter", () => {
+      detector.trackTask("FN-001", createMockSession());
+
+      detector.recordIgnoredStepUpdate("FN-001");
+      detector.recordIgnoredStepUpdate("FN-001");
+
+      expect(detector.getIgnoredStepUpdateCount("FN-001")).toBe(2);
+      expect(detector.getActivitySinceProgress("FN-001")).toBe(2);
+    });
+
+    it("finds step-session entries by canonical task id", () => {
+      detector.trackTask("FN-200-step-0", createMockSession(), "FN-200");
+
+      detector.recordIgnoredStepUpdate("FN-200");
+
+      expect(detector.getIgnoredStepUpdateCount("FN-200")).toBe(1);
     });
   });
 
@@ -335,6 +369,25 @@ describe("StuckTaskDetector", () => {
 
     it("returns null for untracked task", () => {
       expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+    });
+
+    it("returns 'no-progress-churn' only after loop recovery was already observed", () => {
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      detector.trackTask("FN-001", session);
+      vi.advanceTimersByTime(61000);
+
+      for (let i = 0; i < 25; i++) {
+        detector.recordIgnoredStepUpdate("FN-001");
+      }
+
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBeNull();
+
+      detector.markLoopObserved("FN-001");
+      expect(detector.classifyStuckReason("FN-001", 60000)).toBe("no-progress-churn");
+
+      vi.useRealTimers();
     });
 
     it("progress resets loop detection: no loop after recordProgress", () => {
@@ -546,7 +599,11 @@ describe("StuckTaskDetector", () => {
 
       await customDetector.killAndRetry("FN-001", 60000);
 
-      expect(beforeRequeue).toHaveBeenCalledWith("FN-001", "inactivity");
+      expect(beforeRequeue).toHaveBeenCalledWith(
+        "FN-001",
+        "inactivity",
+        expect.objectContaining({ taskId: "FN-001", reason: "inactivity", shouldRequeue: false }),
+      );
       expect(customDetector.trackedCount).toBe(0);
       expect(session.dispose).toHaveBeenCalled();
       // onStuck should still be called with shouldRequeue=false
@@ -572,7 +629,11 @@ describe("StuckTaskDetector", () => {
 
       await customDetector.killAndRetry("FN-001", 60000);
 
-      expect(beforeRequeue).toHaveBeenCalledWith("FN-001", "inactivity");
+      expect(beforeRequeue).toHaveBeenCalledWith(
+        "FN-001",
+        "inactivity",
+        expect.objectContaining({ taskId: "FN-001", reason: "inactivity", shouldRequeue: true }),
+      );
       expect(onStuck).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: "FN-001", shouldRequeue: true }),
       );
@@ -1066,7 +1127,29 @@ describe("StuckTaskDetector", () => {
       expect(onLoopDetected).toHaveBeenCalledTimes(1);
       expect(onStuck).not.toHaveBeenCalled();
       expect(session.dispose).not.toHaveBeenCalled();
-      expect(customDetector.trackedCount).toBe(0); // untracked
+      expect(customDetector.trackedCount).toBe(1);
+
+      vi.useRealTimers();
+    });
+
+    it("keeps tracking alive after accepted recovery so churn can accumulate", async () => {
+      const onLoopDetected = vi.fn().mockResolvedValue(true);
+      const customDetector = new StuckTaskDetector(store, { onLoopDetected });
+      const session = createMockSession();
+
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      customDetector.trackTask("FN-200-step-0", session, "FN-200");
+      vi.advanceTimersByTime(61000);
+      for (let i = 0; i < 80; i++) {
+        customDetector.recordActivity("FN-200-step-0");
+      }
+
+      await customDetector.killAndRetry("FN-200-step-0", 60000);
+      customDetector.markLoopObserved("FN-200");
+      customDetector.recordIgnoredStepUpdate("FN-200");
+
+      expect(customDetector.trackedCount).toBe(1);
+      expect(customDetector.getIgnoredStepUpdateCount("FN-200")).toBe(1);
 
       vi.useRealTimers();
     });
@@ -1318,13 +1401,13 @@ describe("StuckTaskDetector heartbeat tracking (FN-978)", () => {
     expect(detector.trackedCount).toBe(1);
   });
 
-  it("does not re-track STUCK_LOOP_EXHAUSTED failed tasks", async () => {
+  it("does not re-track terminal stuck tasks", async () => {
     const beforeRequeue = vi.fn().mockResolvedValue(false);
     const exhaustedStore = createMockStore({
       getTask: vi.fn().mockResolvedValue({
         id: "FN-001",
         status: "failed",
-        error: "STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (7/6) after last reason=loop.",
+        error: "STUCK_NO_PROGRESS_CHURN: detected 25 ignored step-update rebuffs after compact-and-resume failed to recover progress.",
       }),
     });
     const customDetector = new StuckTaskDetector(exhaustedStore, { beforeRequeue });

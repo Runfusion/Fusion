@@ -260,6 +260,32 @@ describe("TaskStore", () => {
       expect(logs[0].type).toBe("settings:updated");
     });
 
+    it("a second TaskStore polling the same DB does not double-log activity", async () => {
+      // Reproduces the duplicate-emitter bug: dashboard + engine each construct
+      // their own TaskStore against the same SQLite file. Without suppression,
+      // every move was recorded once per polling instance.
+      const observer = new TaskStore(rootDir, globalDir);
+      await observer.init();
+      await observer.watch();
+      try {
+        const task = await store.createTask({ description: "Test polling dedup" });
+        await store.moveTask(task.id, "todo");
+        // Drive the observer's poll cycle directly so we don't wait 1s.
+        await (observer as any).checkForChanges();
+        await new Promise((r) => setTimeout(r, 10));
+
+        const movedLogs = await store.getActivityLog({ type: "task:moved" });
+        const moves = movedLogs.filter((l) => l.taskId === task.id);
+        expect(moves).toHaveLength(1);
+
+        const createdLogs = await store.getActivityLog({ type: "task:created" });
+        const creates = createdLogs.filter((l) => l.taskId === task.id);
+        expect(creates).toHaveLength(1);
+      } finally {
+        await observer.close();
+      }
+    });
+
     it("records activity on task:deleted", async () => {
       const task = await store.createTask({ description: "Test deleted event" });
       await store.deleteTask(task.id);
@@ -477,6 +503,83 @@ describe("TaskStore", () => {
       const paused = await store.pauseTask(task.id, true);
       expect(paused.paused).toBe(true);
       expect(paused.userPaused).toBeUndefined();
+    });
+  });
+
+  describe("paused state on completion", () => {
+    const expectPauseFieldsCleared = (task: Awaited<ReturnType<typeof store.getTask>>) => {
+      expect(task.paused).toBeUndefined();
+      expect(task.userPaused).toBeUndefined();
+      expect(task.pausedByAgentId).toBeUndefined();
+      expect(task.pausedReason).toBeUndefined();
+    };
+
+    async function moveTaskToDone(id: string): Promise<void> {
+      await store.moveTask(id, "todo");
+      await store.moveTask(id, "in-progress");
+      await store.moveTask(id, "in-review");
+      await store.moveTask(id, "done");
+    }
+
+    it("clears pause fields on moveTask(in-review → done)", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, {
+        pausedByAgentId: "agent-x",
+        pausedReason: "manual-hold",
+      });
+
+      await store.moveTask(task.id, "done");
+      const doneTask = await store.getTask(task.id);
+      expectPauseFieldsCleared(doneTask);
+    });
+
+    it("clears pause fields on moveTask(in-progress → done) when userPaused was set", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.updateTask(task.id, { userPaused: true });
+
+      await store.moveTask(task.id, "done");
+      const doneTask = await store.getTask(task.id);
+      expectPauseFieldsCleared(doneTask);
+    });
+
+    it("clears pause fields when mergeTask handles an already-done task", async () => {
+      const task = await createTestTask();
+      await moveTaskToDone(task.id);
+      await store.updateTask(task.id, { paused: true, pausedByAgentId: "agent-x" });
+
+      await store.mergeTask(task.id);
+      const doneTask = await store.getTask(task.id);
+      expectPauseFieldsCleared(doneTask);
+    });
+
+    it("clears pause fields on unarchiveTask transition to done", async () => {
+      const task = await createTestTask();
+      await moveTaskToDone(task.id);
+      await store.updateTask(task.id, { paused: true, pausedByAgentId: "agent-x", pausedReason: "manual-hold" });
+      await store.archiveTask(task.id);
+
+      await store.unarchiveTask(task.id);
+      const restored = await store.getTask(task.id);
+      expect(restored.column).toBe("done");
+      expectPauseFieldsCleared(restored);
+    });
+
+    it("remains idempotent across repeated done transitions", async () => {
+      const task = await createTestTask();
+      await moveTaskToDone(task.id);
+      await store.moveTask(task.id, "archived");
+      await store.updateTask(task.id, { paused: true, pausedByAgentId: "agent-x" });
+
+      await store.unarchiveTask(task.id);
+      await store.moveTask(task.id, "archived");
+      await store.unarchiveTask(task.id);
+      const doneTask = await store.getTask(task.id);
+      expectPauseFieldsCleared(doneTask);
     });
   });
 

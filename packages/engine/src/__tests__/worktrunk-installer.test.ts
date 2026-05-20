@@ -27,6 +27,8 @@ const {
   clearWorktrunkResolveCache,
   requestWorktrunkInstallApproval,
   executeApprovedWorktrunkInstall,
+  validateWorktrunkManifest,
+  WORKTRUNK_INSTALL_PATH,
   WORKTRUNK_PINNED_RELEASE,
   WorktrunkInstallDeniedError,
   WorktrunkInstallFailedError,
@@ -72,6 +74,25 @@ function makeAuditor(): {
   };
 }
 
+function resetPinnedRelease(): void {
+  WORKTRUNK_PINNED_RELEASE.source = "upstream-pending-verification";
+  WORKTRUNK_PINNED_RELEASE.version = null;
+  WORKTRUNK_PINNED_RELEASE.verifiedAt = null;
+  WORKTRUNK_PINNED_RELEASE.assets = {};
+}
+
+function setVerifiedPinnedRelease(): void {
+  WORKTRUNK_PINNED_RELEASE.source = "upstream-verified";
+  WORKTRUNK_PINNED_RELEASE.version = "0.4.2";
+  WORKTRUNK_PINNED_RELEASE.verifiedAt = "2026-05-20T00:00:00.000Z";
+  WORKTRUNK_PINNED_RELEASE.assets = {
+    linux: {
+      url: "https://github.com/max-sixty/worktrunk/releases/download/v0.4.2/wt-linux-x64.tar.gz",
+      sha256: "a".repeat(64),
+    },
+  };
+}
+
 describe("worktrunk-installer", () => {
   const actor = { actorId: "dashboard-user", actorType: "user" as const, actorName: "Dashboard User" };
 
@@ -79,11 +100,12 @@ describe("worktrunk-installer", () => {
     vi.clearAllMocks();
     loggerMock.warn.mockReset();
     clearWorktrunkResolveCache();
+    resetPinnedRelease();
   });
 
   it("probeWorktrunk returns ok=true with parsed version", async () => {
-    mockExecSequence([{ stdout: "worktrunk 0.4.2\n" }]);
-    await expect(probeWorktrunk("/usr/local/bin/worktrunk")).resolves.toEqual({ ok: true, version: "0.4.2" });
+    mockExecSequence([{ stdout: "wt 0.4.2\n" }]);
+    await expect(probeWorktrunk("/usr/local/bin/wt")).resolves.toEqual({ ok: true, version: "0.4.2" });
   });
 
   it("requestWorktrunkInstallApproval creates pending request and dedupes", async () => {
@@ -102,6 +124,7 @@ describe("worktrunk-installer", () => {
     });
     expect(approvalStore.create).toHaveBeenCalledTimes(1);
     expect(approvalStore.create.mock.calls[0][0].targetAction.action).toBe("worktrunk_install");
+    expect(approvalStore.create.mock.calls[0][0].targetAction.context.approvalDedupeKey).toBe("worktrunk_install:pending");
 
     approvalStore.findLatestByDedupeKey.mockReturnValue({ id: "apr-1", status: "pending" });
     await expect(requestWorktrunkInstallApproval({ approvalStore, actor })).resolves.toEqual({
@@ -131,9 +154,10 @@ describe("worktrunk-installer", () => {
   });
 
   it("installWorktrunk with pre-approved override emits requested/success and returns path", async () => {
+    setVerifiedPinnedRelease();
     const { auditor, filesystemEvents } = makeAuditor();
     await expect(installWorktrunk({ settings: makeSettings(), auditor, gateOverride: "pre-approved" })).resolves.toEqual({
-      binaryPath: expect.stringContaining("worktrunk"),
+      binaryPath: WORKTRUNK_INSTALL_PATH,
       source: "installed-release",
     });
     expect(filesystemEvents.some((event) => event.type === "binary:install-requested" && event.metadata.reason === "pre-approved")).toBe(true);
@@ -141,6 +165,7 @@ describe("worktrunk-installer", () => {
   });
 
   it("executeApprovedWorktrunkInstall marks request completed", async () => {
+    setVerifiedPinnedRelease();
     const approvalStore = {
       markCompleted: vi.fn(),
     } as any;
@@ -151,9 +176,9 @@ describe("worktrunk-installer", () => {
       targetAction: {
         category: "network_api",
         action: "worktrunk_install",
-        summary: `Install worktrunk v${WORKTRUNK_PINNED_RELEASE.version}`,
+        summary: "Install worktrunk (pending verification)",
         resourceType: "binary",
-        resourceId: "/tmp/worktrunk",
+        resourceId: "/tmp/wt",
       },
       requestedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -161,7 +186,7 @@ describe("worktrunk-installer", () => {
     } as any;
 
     await expect(executeApprovedWorktrunkInstall({ approvalStore, settings: makeSettings(), request })).resolves.toEqual({
-      binaryPath: expect.stringContaining("worktrunk"),
+      binaryPath: WORKTRUNK_INSTALL_PATH,
       source: "installed-release",
     });
     expect(approvalStore.markCompleted).toHaveBeenCalledTimes(1);
@@ -178,17 +203,17 @@ describe("worktrunk-installer", () => {
   });
 
   it("resolveWorktrunkBinary resolves explicit binaryPath when probe succeeds", async () => {
-    mockExecSequence([{ stdout: "worktrunk 0.4.2\n" }]);
-    await expect(resolveWorktrunkBinary({ settings: makeSettings({ binaryPath: "/opt/worktrunk" }) })).resolves.toEqual({
-      binaryPath: "/opt/worktrunk",
+    mockExecSequence([{ stdout: "wt 0.4.2\n" }]);
+    await expect(resolveWorktrunkBinary({ settings: makeSettings({ binaryPath: "/opt/wt" }) })).resolves.toEqual({
+      binaryPath: "/opt/wt",
       source: "override",
     });
   });
 
   it("accepts actionGateContext and preserves current disabled-install behavior", async () => {
-    mockExecSequence([{ stdout: "worktrunk 0.4.2\n" }]);
+    mockExecSequence([{ stdout: "wt 0.4.2\n" }]);
     const result = await resolveWorktrunkBinary({
-      settings: makeSettings({ binaryPath: "/opt/worktrunk" }),
+      settings: makeSettings({ binaryPath: "/opt/wt" }),
       actionGateContext: {} as AgentActionGateContext,
     });
 
@@ -200,11 +225,11 @@ describe("worktrunk-installer", () => {
 
   it("resolveWorktrunkBinary resolves PATH hit when override is absent", async () => {
     mockExecSequence([
-      { stdout: "/usr/bin/worktrunk\n" },
-      { stdout: "worktrunk 0.4.2\n" },
+      { stdout: "/usr/bin/wt\n" },
+      { stdout: "wt 0.4.2\n" },
     ]);
     await expect(resolveWorktrunkBinary({ settings: makeSettings() })).resolves.toEqual({
-      binaryPath: "/usr/bin/worktrunk",
+      binaryPath: "/usr/bin/wt",
       source: "path",
     });
   });
@@ -220,8 +245,58 @@ describe("worktrunk-installer", () => {
     );
   });
 
+  it("PATH probe looks for wt", async () => {
+    mockExecSequence([
+      { error: new Error("not found") },
+      { error: new Error("not found") },
+    ]);
+
+    await expect(resolveWorktrunkBinary({ settings: makeSettings() })).rejects.toThrow(WorktrunkInstallFailedError);
+
+    const commands = execMock.mock.calls.map(([command]) => String(command));
+    expect(commands.some((command) => command.includes(" wt"))).toBe(true);
+    expect(commands.some((command) => command.includes(" worktrunk"))).toBe(false);
+  });
+
+  it("installer metadata points at canonical upstream", () => {
+    const serialized = JSON.stringify(WORKTRUNK_PINNED_RELEASE);
+    const fabricatedUpstream = ["worktrunk", "worktrunk"].join("/");
+    expect(serialized).not.toContain(fabricatedUpstream);
+    for (const asset of Object.values(WORKTRUNK_PINNED_RELEASE.assets)) {
+      expect(asset.url.startsWith("https://github.com/max-sixty/worktrunk/releases/")).toBe(true);
+    }
+  });
+
+  it("auto-install fails closed without checksum", async () => {
+    const { auditor, filesystemEvents } = makeAuditor();
+
+    await expect(
+      installWorktrunk({ settings: makeSettings(), auditor, gateOverride: "pre-approved" }),
+    ).rejects.toMatchObject({
+      name: "WorktrunkInstallFailedError",
+      stage: "manifest-unverified",
+    });
+    expect(filesystemEvents.some((event) => event.type === "binary:install-success")).toBe(false);
+
+    mockExecSequence([
+      { error: new Error("not found") },
+      { error: new Error("not found") },
+    ]);
+    await expect(resolveWorktrunkBinary({ settings: makeSettings() })).rejects.toMatchObject({
+      name: "WorktrunkInstallFailedError",
+    });
+  });
+
+  it("external-tool integrations require a source-of-truth manifest", () => {
+    const validation = validateWorktrunkManifest({} as any);
+    expect(validation).toMatchObject({ ok: false });
+    if (validation.ok) throw new Error("expected validation failure");
+    expect(validation.missingFields).toEqual(expect.arrayContaining(["source", "assets", "verifiedAt"]));
+  });
+
   describe("install audit emission", () => {
     it("is a safe no-op when auditor is undefined", async () => {
+      setVerifiedPinnedRelease();
       await expect(
         installWorktrunk({
           settings: makeSettings(),
@@ -229,12 +304,13 @@ describe("worktrunk-installer", () => {
           runContext: { runId: "run-no-audit", agentId: "agent-1", taskId: "FN-4711" },
         }),
       ).resolves.toEqual({
-        binaryPath: expect.stringContaining("worktrunk"),
+        binaryPath: WORKTRUNK_INSTALL_PATH,
         source: "installed-release",
       });
     });
 
     it("swallows install audit emitter failures and logs a warning", async () => {
+      setVerifiedPinnedRelease();
       const { auditor } = makeAuditor();
       vi.mocked(auditor.git).mockRejectedValueOnce(new Error("audit write failed"));
 
@@ -246,7 +322,7 @@ describe("worktrunk-installer", () => {
           runContext: { runId: "run-audit-fail", agentId: "agent-1", taskId: "FN-4711" },
         }),
       ).resolves.toEqual({
-        binaryPath: expect.stringContaining("worktrunk"),
+        binaryPath: WORKTRUNK_INSTALL_PATH,
         source: "installed-release",
       });
 
@@ -256,6 +332,7 @@ describe("worktrunk-installer", () => {
     it.each([
       { expectedSource: "release-binary" as const },
     ])("emits worktree install audit event metadata for $expectedSource", async ({ expectedSource }) => {
+      setVerifiedPinnedRelease();
       const { auditor, gitEvents } = makeAuditor();
       const runContext = { runId: "run-install-success", agentId: "agent-1", taskId: "FN-4711" };
 
@@ -263,11 +340,11 @@ describe("worktrunk-installer", () => {
 
       const installEvent = gitEvents.find((event) => event.type === "worktree:worktrunk-install");
       expect(installEvent).toBeDefined();
-      expect(installEvent?.target).toContain("worktrunk");
+      expect(installEvent?.target).toContain("/wt");
       expect(installEvent?.metadata).toEqual(
         expect.objectContaining({
           op: "install",
-          binaryPath: expect.stringContaining("worktrunk"),
+          binaryPath: expect.stringContaining("/wt"),
           installSource: expectedSource,
           durationMs: expect.any(Number),
           taskId: "FN-4711",
@@ -280,8 +357,8 @@ describe("worktrunk-installer", () => {
     it("does not emit worktree install audit for PATH cache-hit resolution", async () => {
       const { auditor, gitEvents } = makeAuditor();
       mockExecSequence([
-        { stdout: "/usr/bin/worktrunk\n" },
-        { stdout: "worktrunk 0.4.2\n" },
+        { stdout: "/usr/bin/wt\n" },
+        { stdout: "wt 0.4.2\n" },
       ]);
 
       await resolveWorktrunkBinary({ settings: makeSettings(), auditor });

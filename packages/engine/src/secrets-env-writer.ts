@@ -111,7 +111,7 @@ export async function writeSecretsEnvFile(opts: WriteSecretsEnvFileOptions): Pro
       await opts.audit?.filesystem({ type: "secret:env-write-skipped", target: opts.taskId, metadata: { filename, reason: "invalid-filename", overwritePolicy, symlink: true } });
       return { outcome: "skipped", filename, reason: "invalid-filename" };
     }
-  } catch {}
+  } catch { /* file may not exist */ }
 
   if (cfg?.requireGitignored !== false) {
     const check = await checkIgnored(opts.execFileImpl ?? execFile, opts.worktreePath, filename);
@@ -148,13 +148,13 @@ export async function writeSecretsEnvFile(opts: WriteSecretsEnvFileOptions): Pro
       await fs.access(envPath);
       await opts.audit?.filesystem({ type: "secret:env-write-skipped", target: opts.taskId, metadata: { filename, reason: "skip-existing", overwritePolicy } });
       return { outcome: "skipped", filename, reason: "skip-existing" };
-    } catch {}
+    } catch { /* file does not exist — proceed to write */ }
   } else if (overwritePolicy === "merge") {
     try {
       const existing = await fs.readFile(envPath, "utf8");
       const preserved = removeManagedBlock(existing);
       nextBody = `${preserved.replace(/\n*$/u, "")}${preserved.length > 0 ? "\n" : ""}${nextBody}`;
-    } catch {}
+    } catch { /* file does not exist — write fresh */ }
   }
 
   const tmpPath = `${envPath}.fusion-tmp`;

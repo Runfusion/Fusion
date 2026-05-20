@@ -65,7 +65,29 @@ describeIfGit("classifyOwnedLandedEvidence", () => {
     }
   });
 
-  it("does not return no-changes-finalized when aheadCount has foreign deltas", async () => {
+  it.each([
+    {
+      name: "foreign trailer token",
+      message: "feat: foreign trailer",
+      trailer: "Fusion-Task-Id: FN-OTHER",
+      taskId: "FN-TARGET",
+      expectForeign: true,
+    },
+    {
+      name: "foreign subject token",
+      message: "feat(FN-OTHER): foreign subject",
+      trailer: "notes",
+      taskId: "FN-TARGET",
+      expectForeign: true,
+    },
+    {
+      name: "own subject and trailer tokens",
+      message: "feat(FN-TARGET): own",
+      trailer: "Fusion-Task-Id: FN-TARGET",
+      taskId: "FN-TARGET",
+      expectForeign: false,
+    },
+  ])("does not return no-changes-finalized when aheadCount includes $name", async ({ message, trailer, taskId, expectForeign }) => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-owned-landed-classify-"));
     try {
       git(repo, "git init -b main");
@@ -75,18 +97,18 @@ describeIfGit("classifyOwnedLandedEvidence", () => {
 
       git(repo, "git checkout -b fusion/fn-target");
       writeFileSync(join(repo, "foreign.txt"), "foreign\n", "utf-8");
-      git(repo, "git add foreign.txt && git commit -m 'feat(FN-OTHER): foreign' -m 'Fusion-Task-Id: FN-OTHER'");
+      git(repo, `git add foreign.txt && git commit -m ${JSON.stringify(message)} -m ${JSON.stringify(trailer)}`);
       git(repo, "git checkout main");
 
       const classification = await classifyOwnedLandedEvidence(
         repo,
-        { id: "FN-TARGET", branch: "fusion/fn-target" } as Task,
+        { id: taskId, branch: "fusion/fn-target" } as Task,
         { mergeTargetBranch: "main" },
       );
 
       expect(classification.kind).toBe("unproven");
       if (classification.kind === "unproven") {
-        expect(classification.reason).toBe("no-owned-commit-foreign-deltas");
+        expect(classification.reason).toBe(expectForeign ? "no-owned-commit-foreign-deltas" : "missing-evidence");
       }
     } finally {
       rmSync(repo, { recursive: true, force: true });

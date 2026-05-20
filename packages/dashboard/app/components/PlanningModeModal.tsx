@@ -174,10 +174,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [generationStartTime, setGenerationStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Align long-form planning composers with FN-5146's 640px chat convention so
+  // multi-paragraph drafts stay visible; SummaryView keeps a larger expanded
+  // cap so the two-tier collapsed/expanded editing UX remains intact.
   const { ref: initialPlanAutosizeRef } = useAutosizeTextarea({
     value: initialPlan,
     minHeight: 120,
-    maxHeight: 320,
+    maxHeight: 640,
   });
   const setInitialPlanTextareaRef = useCallback((node: HTMLTextAreaElement | null) => {
     textareaRef.current = node;
@@ -2145,13 +2148,13 @@ function QuestionForm({ question, progress, historyEntries, onSubmit, onBack }: 
   const { ref: textAnswerAutosizeRef } = useAutosizeTextarea({
     value: textValue,
     minHeight: 120,
-    maxHeight: 320,
+    maxHeight: 640,
     deps: [question.id],
   });
   const { ref: commentAutosizeRef } = useAutosizeTextarea({
     value: commentValue,
     minHeight: 80,
-    maxHeight: 320,
+    maxHeight: 640,
     deps: [question.id],
   });
 
@@ -2380,7 +2383,7 @@ function SummaryView({
   const { ref: descriptionAutosizeRef } = useAutosizeTextarea({
     value: summary.description,
     minHeight: isExpanded ? 200 : 120,
-    maxHeight: isExpanded ? 480 : 320,
+    maxHeight: isExpanded ? 800 : 640,
     deps: [isExpanded],
   });
   const selectedPriority = normalizeTaskPriority(summary.priority);

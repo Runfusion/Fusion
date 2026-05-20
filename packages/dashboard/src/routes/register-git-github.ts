@@ -1,10 +1,12 @@
 import { type NextFunction, type Request, type Response } from "express";
 import { isAbsolute } from "node:path";
-import { spawn } from "node:child_process";
+import { exec as execCb, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import type {
   BatchStatusEntry,
   BatchStatusResponse,
   BatchStatusResult,
+  DirectMergeCommitStrategy,
   IssueInfo,
   PrInfo,
   RunAuditEventInput,
@@ -29,6 +31,7 @@ import { GitHubTrackingStateService } from "../github-tracking-state.js";
 import { GitHubTrackingReconciler } from "../github-tracking-reconciler.js";
 import { githubRateLimiter } from "../github-poll.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
+import { generatePrMetadata } from "../pr-metadata-generator.js";
 import {
   classifyWebhookEvent,
   getGitHubAppConfig,
@@ -38,6 +41,12 @@ import {
 } from "../github-webhooks.js";
 import type { ApiRoutesContext } from "./types.js";
 import { runGitCommand } from "./resolve-diff-base.js";
+
+const execAsync = promisify(execCb);
+const PR_ROUTE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const PR_PREFLIGHT_TIMEOUT_MS = 15_000;
+const PR_OPTIONS_TIMEOUT_MS = 10_000;
+const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
 function getCommandErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -160,6 +169,174 @@ const recentIssuesCache = new Map<string, { fetchedAt: number; items: Array<{
   repository: string;
   updatedAt?: string;
 }> }>();
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function ensureSafeGitRef(value: string, fieldName = "branch"): string {
+  const trimmed = value.trim();
+  if (!trimmed || !SAFE_GIT_REF_PATTERN.test(trimmed)) {
+    throw badRequest(`Invalid ${fieldName}`);
+  }
+  return trimmed;
+}
+
+function getExecErrorCode(error: unknown): number | undefined {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === "number" ? code : undefined;
+}
+
+async function runPrShellCommand(command: string, cwd: string, timeoutMs: number): Promise<string> {
+  const { stdout } = await execAsync(command, {
+    cwd,
+    timeout: timeoutMs,
+    maxBuffer: PR_ROUTE_MAX_BUFFER_BYTES,
+  });
+  return stdout.trim();
+}
+
+async function tryRunPrShellCommand(command: string, cwd: string, timeoutMs: number): Promise<
+  | { ok: true; stdout: string }
+  | { ok: false; error: unknown; code?: number; stdout: string; stderr: string }
+> {
+  try {
+    const stdout = await runPrShellCommand(command, cwd, timeoutMs);
+    return { ok: true, stdout };
+  } catch (error) {
+    return {
+      ok: false,
+      error,
+      code: getExecErrorCode(error),
+      stdout: ((error as { stdout?: string } | undefined)?.stdout ?? "").trim(),
+      stderr: ((error as { stderr?: string } | undefined)?.stderr ?? "").trim(),
+    };
+  }
+}
+
+export const prRouteCommandRunner = {
+  run: runPrShellCommand,
+  tryRun: tryRunPrShellCommand,
+};
+
+async function resolvePrBaseRef(repoRoot: string, baseBranch: string): Promise<string> {
+  const safeBase = ensureSafeGitRef(baseBranch, "base branch");
+  const localCheck = await prRouteCommandRunner.tryRun(
+    `git rev-parse --verify ${shellQuote(safeBase)}`,
+    repoRoot,
+    PR_PREFLIGHT_TIMEOUT_MS,
+  );
+  if (localCheck.ok) {
+    return safeBase;
+  }
+
+  await prRouteCommandRunner.tryRun(
+    `git fetch origin ${shellQuote(safeBase)} --no-tags`,
+    repoRoot,
+    PR_PREFLIGHT_TIMEOUT_MS,
+  );
+
+  const remoteRef = `origin/${safeBase}`;
+  const remoteCheck = await prRouteCommandRunner.tryRun(
+    `git rev-parse --verify ${shellQuote(remoteRef)}`,
+    repoRoot,
+    PR_PREFLIGHT_TIMEOUT_MS,
+  );
+  return remoteCheck.ok ? remoteRef : safeBase;
+}
+
+async function resolveDefaultPrBaseBranch(task: Task, repoRoot: string): Promise<string> {
+  const taskBaseBranch = task.prInfo?.baseBranch?.trim();
+  if (taskBaseBranch) {
+    return taskBaseBranch;
+  }
+
+  try {
+    const stdout = await prRouteCommandRunner.run(
+      "gh repo view --json defaultBranchRef -q .defaultBranchRef.name",
+      repoRoot,
+      PR_OPTIONS_TIMEOUT_MS,
+    );
+    if (stdout) {
+      return stdout;
+    }
+  } catch {
+    // fall through to main
+  }
+
+  return "main";
+}
+
+function parsePreflightCommits(output: string): Array<{ sha: string; subject: string; author: string }> {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [sha = "", subject = "", author = ""] = line.split("\t");
+      return { sha, subject, author };
+    })
+    .filter((entry) => entry.sha && entry.subject)
+    .slice(0, 50);
+}
+
+function parsePreflightChangedFiles(numstatOutput: string, nameStatusOutput: string): Array<{
+  path: string;
+  additions: number;
+  deletions: number;
+  status: "added" | "modified" | "deleted" | "renamed";
+}> {
+  const numstatLines = numstatOutput.split(/\r?\n/).filter(Boolean);
+  const nameStatusLines = nameStatusOutput.split(/\r?\n/).filter(Boolean);
+  const results: Array<{ path: string; additions: number; deletions: number; status: "added" | "modified" | "deleted" | "renamed" }> = [];
+
+  for (let index = 0; index < nameStatusLines.length && results.length < 200; index += 1) {
+    const nameParts = nameStatusLines[index]?.split("\t").filter(Boolean) ?? [];
+    if (nameParts.length === 0) {
+      continue;
+    }
+
+    const statusToken = nameParts[0] ?? "M";
+    const numstatParts = numstatLines[index]?.split("\t") ?? [];
+    const additions = Number.parseInt(numstatParts[0] ?? "0", 10);
+    const deletions = Number.parseInt(numstatParts[1] ?? "0", 10);
+    const fallbackPath = numstatParts[2] ?? "";
+    const path = statusToken.startsWith("R") ? (nameParts[2] ?? fallbackPath) : (nameParts[1] ?? fallbackPath);
+
+    if (!path) {
+      continue;
+    }
+
+    results.push({
+      path,
+      additions: Number.isFinite(additions) ? additions : 0,
+      deletions: Number.isFinite(deletions) ? deletions : 0,
+      status: statusToken === "A"
+        ? "added"
+        : statusToken === "D"
+          ? "deleted"
+          : statusToken.startsWith("R")
+            ? "renamed"
+            : "modified",
+    });
+  }
+
+  return results;
+}
+
+function parseGhJsonLines<T>(output: string): T[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as T];
+      } catch {
+        return [];
+      }
+    });
+}
 
 export async function isGitRepo(cwd?: string): Promise<boolean> {
   try {
@@ -1200,18 +1377,28 @@ async function mergeTaskPr(
   }
 }
 
+function getTaskPrList(task: Pick<Task, "prInfo" | "prInfos">): PrInfo[] {
+  return task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
+}
+
 export async function refreshPrInBackground(
   store: TaskStore,
   taskId: string,
-  currentPrInfo: PrInfo,
+  currentPrInfos: PrInfo[],
   token?: string,
-  options?: { onConflictDetected?: (taskId: string) => Promise<void> },
+  options?: {
+    onConflictDetected?: (taskId: string) => Promise<void>;
+    repoRoot?: string;
+    directMergeCommitStrategy?: DirectMergeCommitStrategy;
+  },
 ): Promise<void> {
   try {
+    const initialPrInfo = currentPrInfos[0];
+    if (!initialPrInfo) return;
     let owner: string;
     let repo: string;
 
-    const badgeParsed = parseBadgeUrl(currentPrInfo.url);
+    const badgeParsed = parseBadgeUrl(initialPrInfo.url);
     if (badgeParsed) {
       owner = badgeParsed.owner;
       repo = badgeParsed.repo;
@@ -1236,43 +1423,63 @@ export async function refreshPrInBackground(
 
     const client = new GitHubClient(token);
     const task = await store.getTask(taskId);
+    const taskPrs = task ? getTaskPrList(task) : currentPrInfos;
 
-    const reviewSnapshot = await client.getPrReviewSnapshot(owner, repo, currentPrInfo.number);
-    const mergeStatus = await client.getPrMergeStatus(owner, repo, currentPrInfo.number);
-    const prior = task.prInfo;
-    const prInfo = {
-      ...prior,
-      ...mergeStatus.prInfo,
-      mergeable: mergeStatus.prInfo.mergeable,
-      autoMergeOnGreen: prior?.autoMergeOnGreen,
-      autoMergeStrategy: prior?.autoMergeStrategy,
-      lastMergeError: prior?.lastMergeError,
-      lastMergeErrorAt: prior?.lastMergeErrorAt,
-      draft: mergeStatus.prInfo.draft ?? mergeStatus.prInfo.isDraft,
-      lastCheckedAt: new Date().toISOString(),
-      lastReviewDecision: reviewSnapshot.decision,
-    } satisfies PrInfo;
+    for (const currentPrInfo of taskPrs) {
+      const reviewSnapshot = await client.getPrReviewSnapshot(owner, repo, currentPrInfo.number);
+      const mergeStatus = await client.getPrMergeStatus(owner, repo, currentPrInfo.number);
+      const prior = getTaskPrList(task).find((entry) => entry.number === currentPrInfo.number) ?? currentPrInfo;
+      let conflictDiagnostics = mergeStatus.prInfo.conflictDiagnostics;
+      if (mergeStatus.prInfo.mergeable === "conflicting" && mergeStatus.prInfo.headBranch && mergeStatus.prInfo.baseBranch) {
+        try {
+          conflictDiagnostics = await client.getPrConflictDiagnostics(owner, repo, currentPrInfo.number, {
+            baseBranch: mergeStatus.prInfo.baseBranch,
+            headBranch: mergeStatus.prInfo.headBranch,
+            repoRoot: options?.repoRoot,
+            directMergeCommitStrategy: options?.directMergeCommitStrategy,
+          });
+        } catch (err) {
+          console.error("[pr-conflict-diagnostics]", err);
+        }
+      } else {
+        conflictDiagnostics = undefined;
+      }
 
-    await store.updatePrInfo(taskId, prInfo);
-    await syncPrReviewsToTask(store, task, reviewSnapshot);
-    await applyChangesRequestedTransition(store, task, reviewSnapshot, prInfo);
+      const prInfo = {
+        ...prior,
+        ...mergeStatus.prInfo,
+        mergeable: mergeStatus.prInfo.mergeable,
+        conflictDiagnostics,
+        autoMergeOnGreen: prior?.autoMergeOnGreen,
+        autoMergeStrategy: prior?.autoMergeStrategy,
+        lastMergeError: prior?.lastMergeError,
+        lastMergeErrorAt: prior?.lastMergeErrorAt,
+        draft: mergeStatus.prInfo.draft ?? mergeStatus.prInfo.isDraft,
+        lastCheckedAt: new Date().toISOString(),
+        lastReviewDecision: reviewSnapshot.decision,
+      } satisfies PrInfo;
 
-    if (prInfo.mergeable === "conflicting" && task?.branch && task?.worktree && options?.onConflictDetected) {
-      await options.onConflictDetected(taskId);
-    }
+      await store.updatePrInfoByNumber(taskId, currentPrInfo.number, prInfo);
+      await syncPrReviewsToTask(store, task, reviewSnapshot);
+      await applyChangesRequestedTransition(store, task, reviewSnapshot, prInfo);
 
-    if (prInfo.status === "merged") {
-      await store.applyPrMergedTransition(taskId, {
-        agentId: "dashboard",
-        runId: `pr-refresh-${taskId}-${Date.now()}`,
-      });
-      return;
-    }
+      if (prInfo.mergeable === "conflicting" && task?.branch && task?.worktree && options?.onConflictDetected) {
+        await options.onConflictDetected(taskId);
+      }
 
-    const lastMergeErrorAt = prior?.lastMergeErrorAt ? Date.parse(prior.lastMergeErrorAt) : Number.NaN;
-    const recentlyFailed = Number.isFinite(lastMergeErrorAt) && Date.now() - lastMergeErrorAt < 5 * 60 * 1000;
-    if (prior?.autoMergeOnGreen && mergeStatus.mergeReady && !recentlyFailed) {
-      await mergeTaskPr(store, task, token, undefined, "pr-refresh");
+      if (prInfo.status === "merged") {
+        await store.applyPrMergedTransition(taskId, {
+          agentId: "dashboard",
+          runId: `pr-refresh-${taskId}-${Date.now()}`,
+        });
+        continue;
+      }
+
+      const lastMergeErrorAt = prior?.lastMergeErrorAt ? Date.parse(prior.lastMergeErrorAt) : Number.NaN;
+      const recentlyFailed = Number.isFinite(lastMergeErrorAt) && Date.now() - lastMergeErrorAt < 5 * 60 * 1000;
+      if (prior?.autoMergeOnGreen && mergeStatus.mergeReady && !recentlyFailed) {
+        await mergeTaskPr(store, task, token, undefined, "pr-refresh");
+      }
     }
   } catch {
     // best-effort
@@ -3254,9 +3461,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         throw badRequest("Task must be in 'in-review' column to create a PR");
       }
 
-      if (task.prInfo) {
-        throw conflict(`Task already has PR #${task.prInfo.number}: ${task.prInfo.url}`);
-      }
+      const existingPrs = getTaskPrList(task);
 
       // Determine branch name from task
       const branchName = `fusion/${task.id.toLowerCase()}`;
@@ -3311,7 +3516,11 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
 
       // Store PR info
-      await scopedStore.updatePrInfo(task.id, prInfo);
+      if (existingPrs.length > 0) {
+        await scopedStore.addPrInfo(task.id, prInfo);
+      } else {
+        await scopedStore.updatePrInfo(task.id, prInfo);
+      }
       await scopedStore.logEntry(task.id, existingPr ? "Linked existing PR" : "Created PR", `PR #${prInfo.number}: ${prInfo.url}`);
 
       res.status(201).json(prInfo);
@@ -3332,6 +3541,219 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   });
 
   /**
+   * POST /api/tasks/:id/pr/generate-metadata
+   * Generate AI PR title/body metadata for the Create PR dialog.
+   * Returns: { title, body, templateUsed }
+   */
+  router.post("/tasks/:id/pr/generate-metadata", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      const settings = await scopedStore.getSettings();
+      const metadata = await generatePrMetadata({
+        task,
+        repoRoot: scopedStore.getRootDir(),
+        settings,
+      });
+      res.json(metadata);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err, "Failed to generate PR metadata");
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/pr/preflight
+   * Collect branch, commit, diff, conflict, and auth diagnostics for Create PR.
+   */
+  router.get("/tasks/:id/pr/preflight", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      const repoRoot = scopedStore.getRootDir();
+      const requestedBase = typeof req.query.base === "string" ? req.query.base.trim() : "";
+      const defaultBaseBranch = requestedBase
+        ? ensureSafeGitRef(requestedBase, "base branch")
+        : await resolveDefaultPrBaseBranch(task, repoRoot);
+      const head = `fusion/${task.id.toLowerCase()}`;
+      const safeHead = ensureSafeGitRef(head, "head branch");
+      const response: {
+        branchOnRemote: boolean;
+        commitsPresent: boolean;
+        conflictsWithBase: boolean;
+        ghAuthOk: boolean;
+        defaultBaseBranch: string;
+        head: string;
+        commits: Array<{ sha: string; subject: string; author: string }>;
+        changedFiles: Array<{ path: string; additions: number; deletions: number; status: "added" | "modified" | "deleted" | "renamed" }>;
+      } = {
+        branchOnRemote: false,
+        commitsPresent: false,
+        conflictsWithBase: false,
+        ghAuthOk: isGhAuthenticated(),
+        defaultBaseBranch,
+        head,
+        commits: [],
+        changedFiles: [],
+      };
+
+      const baseRef = await resolvePrBaseRef(repoRoot, defaultBaseBranch).catch(() => defaultBaseBranch);
+
+      const remoteBranchCheck = await prRouteCommandRunner.tryRun(
+        `git ls-remote --exit-code --heads origin ${shellQuote(safeHead)}`,
+        repoRoot,
+        PR_PREFLIGHT_TIMEOUT_MS,
+      );
+      if (remoteBranchCheck.ok) {
+        response.branchOnRemote = true;
+      } else if (remoteBranchCheck.code !== 2) {
+        response.branchOnRemote = false;
+      }
+
+      const commitCountOutput = await prRouteCommandRunner.run(
+        `git rev-list --count ${shellQuote(baseRef)}..${shellQuote(safeHead)}`,
+        repoRoot,
+        PR_PREFLIGHT_TIMEOUT_MS,
+      ).catch(() => "0");
+      response.commitsPresent = Number.parseInt(commitCountOutput, 10) > 0;
+
+      const mergeTreeOutput = await prRouteCommandRunner.run(
+        `git merge-tree --write-tree --name-only ${shellQuote(baseRef)} ${shellQuote(safeHead)}`,
+        repoRoot,
+        PR_PREFLIGHT_TIMEOUT_MS,
+      ).catch(() => "");
+      response.conflictsWithBase = mergeTreeOutput.trim().length > 0;
+
+      const [commitLogOutput, numstatOutput, nameStatusOutput] = await Promise.all([
+        prRouteCommandRunner.run(
+          `git log --no-merges ${shellQuote(baseRef)}..${shellQuote(safeHead)} --format=%H%x09%s%x09%an`,
+          repoRoot,
+          PR_PREFLIGHT_TIMEOUT_MS,
+        ).catch(() => ""),
+        prRouteCommandRunner.run(
+          `git diff --numstat ${shellQuote(baseRef)}..${shellQuote(safeHead)}`,
+          repoRoot,
+          PR_PREFLIGHT_TIMEOUT_MS,
+        ).catch(() => ""),
+        prRouteCommandRunner.run(
+          `git diff --name-status ${shellQuote(baseRef)}..${shellQuote(safeHead)}`,
+          repoRoot,
+          PR_PREFLIGHT_TIMEOUT_MS,
+        ).catch(() => ""),
+      ]);
+
+      response.commits = parsePreflightCommits(commitLogOutput);
+      response.changedFiles = parsePreflightChangedFiles(numstatOutput, nameStatusOutput);
+
+      res.json(response);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err, "Failed to load PR preflight");
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/pr/options
+   * Load base branches, reviewers, assignees, and labels for Create PR.
+   */
+  router.get("/tasks/:id/pr/options", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      const repoRoot = scopedStore.getRootDir();
+      const envRepo = process.env.GITHUB_REPOSITORY;
+      const gitRepo = getCurrentRepo(repoRoot);
+      const [owner, repo] = envRepo?.split("/") ?? [gitRepo?.owner, gitRepo?.repo];
+      if (!owner || !repo) {
+        throw badRequest("Could not determine GitHub repository. Set GITHUB_REPOSITORY env var or configure git remote.");
+      }
+
+      const repoKey = `${owner}/${repo}`;
+      const ghRequestsAllowed = githubRateLimiter.canMakeRequest(repoKey);
+      const defaultBaseBranch = await resolveDefaultPrBaseBranch(task, repoRoot);
+
+      const [ghBranchesResult, gitBranchesResult, collaboratorsResult, labelsResult] = await Promise.allSettled([
+        ghRequestsAllowed
+          ? prRouteCommandRunner.run(
+            `gh api repos/${owner}/${repo}/branches --paginate -q '.[].name'`,
+            repoRoot,
+            PR_OPTIONS_TIMEOUT_MS,
+          )
+          : Promise.reject(new Error("GitHub API rate limited")),
+        prRouteCommandRunner.run(
+          "git for-each-ref refs/remotes/origin --format=%(refname:short)",
+          repoRoot,
+          PR_OPTIONS_TIMEOUT_MS,
+        ),
+        ghRequestsAllowed
+          ? prRouteCommandRunner.run(
+            `gh api repos/${owner}/${repo}/collaborators --paginate -q '.[] | {login, name: (.name // .login)}'`,
+            repoRoot,
+            PR_OPTIONS_TIMEOUT_MS,
+          )
+          : Promise.reject(new Error("GitHub API rate limited")),
+        ghRequestsAllowed
+          ? prRouteCommandRunner.run(
+            `gh api repos/${owner}/${repo}/labels --paginate -q '.[] | {name, color}'`,
+            repoRoot,
+            PR_OPTIONS_TIMEOUT_MS,
+          )
+          : Promise.reject(new Error("GitHub API rate limited")),
+      ]);
+
+      const baseBranchSet = new Set<string>([defaultBaseBranch]);
+      if (ghBranchesResult.status === "fulfilled") {
+        for (const branch of ghBranchesResult.value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean).slice(0, 100)) {
+          baseBranchSet.add(branch);
+        }
+      }
+      if (gitBranchesResult.status === "fulfilled") {
+        for (const branch of gitBranchesResult.value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+          if (branch === "origin/HEAD") {
+            continue;
+          }
+          baseBranchSet.add(branch.replace(/^origin\//, ""));
+          if (baseBranchSet.size >= 100) {
+            break;
+          }
+        }
+      }
+
+      const reviewers = collaboratorsResult.status === "fulfilled"
+        ? parseGhJsonLines<{ login: string; name?: string }>(collaboratorsResult.value).slice(0, 50)
+        : [];
+      const labels = labelsResult.status === "fulfilled"
+        ? parseGhJsonLines<{ name: string; color: string }>(labelsResult.value).slice(0, 50)
+        : [];
+
+      res.json({
+        baseBranches: Array.from(baseBranchSet),
+        reviewers,
+        assignees: reviewers,
+        labels,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err, "Failed to load PR options");
+    }
+  });
+
+  /**
    * GET /api/tasks/:id/pr/status
    * Get cached PR status for a task. Triggers background refresh if stale (>5 min).
    * Uses only persisted badge timestamps (no in-memory poller state).
@@ -3341,26 +3763,34 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      if (!task.prInfo) {
+      const prList = getTaskPrList(task);
+      if (prList.length === 0) {
         throw notFound("Task has no associated PR");
       }
 
+      const primaryPr = prList[0];
+
       // Check if data is stale (>5 minutes since last check)
       const fiveMinutesMs = 5 * 60 * 1000;
-      const lastChecked = task.prInfo.lastCheckedAt || task.updatedAt;
+      const lastChecked = primaryPr.lastCheckedAt || task.updatedAt;
       const lastCheckedTime = new Date(lastChecked).getTime();
       const isStale = Date.now() - lastCheckedTime > fiveMinutesMs;
 
       // Return cached data immediately
       res.json({
-        prInfo: task.prInfo,
+        prInfo: primaryPr,
+        prInfos: prList,
         stale: isStale,
         automationStatus: task.status ?? null,
       });
 
       // Trigger background refresh if stale (don't await, let it run)
       if (isStale) {
-        refreshPrInBackground(scopedStore, task.id, task.prInfo, githubToken);
+        const settings = await scopedStore.getSettings();
+        refreshPrInBackground(scopedStore, task.id, prList, githubToken, {
+          repoRoot: scopedStore.getRootDir(),
+          directMergeCommitStrategy: settings.directMergeCommitStrategy,
+        });
       }
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -3383,16 +3813,15 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore, engine } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
+      const prList = getTaskPrList(task);
 
-      if (!task.prInfo) {
+      if (prList.length === 0) {
         throw notFound("Task has no associated PR");
       }
 
-      // Get owner/repo from badge URL first, then fall back to env/git
       let owner: string;
       let repo: string;
-
-      const badgeParsed = parseBadgeUrl(task.prInfo.url);
+      const badgeParsed = parseBadgeUrl(prList[0].url);
       if (badgeParsed) {
         owner = badgeParsed.owner;
         repo = badgeParsed.repo;
@@ -3404,51 +3833,93 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           repo = r;
         } else {
           const gitRepo = getCurrentRepo(scopedStore.getRootDir());
-          if (!gitRepo) {
-            throw badRequest("Could not determine GitHub repository");
-          }
+          if (!gitRepo) throw badRequest("Could not determine GitHub repository");
           owner = gitRepo.owner;
           repo = gitRepo.repo;
         }
       }
 
-      // Check rate limit
       const repoKey = `${owner}/${repo}`;
       if (!githubRateLimiter.canMakeRequest(repoKey)) {
         const resetTime = githubRateLimiter.getResetTime(repoKey);
-        const retryAfter = resetTime
-          ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
-          : undefined;
+        const retryAfter = resetTime ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000)) : undefined;
         throw new ApiError(429, "GitHub API rate limit exceeded for this repository", {
           retryAfter,
           resetAt: resetTime?.toISOString(),
         });
       }
 
-      // Fetch fresh PR status + merge readiness + reviews
+      const settings = await scopedStore.getSettings();
       const client = new GitHubClient();
-      const reviewSnapshot = await client.getPrReviewSnapshot(owner, repo, task.prInfo.number);
-      const mergeStatus = await client.getPrMergeStatus(owner, repo, task.prInfo.number);
+      const refreshedEntries: Array<{
+        prInfo: PrInfo;
+        conflictDiagnostics?: PrInfo["conflictDiagnostics"];
+        mergeReady: boolean;
+        mergeable?: PrInfo["mergeable"];
+        blockingReasons: string[];
+        reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+        checks: Array<{ name: string; required: boolean; state: string; detailsUrl?: string; startedAt?: string; completedAt?: string }>;
+        automationStatus?: string | null;
+        conflictReclaimQueued?: boolean;
+      }> = [];
+      const batchSize = 4;
+      for (let i = 0; i < prList.length; i += batchSize) {
+        const batch = prList.slice(i, i + batchSize);
+        const results = await Promise.all(batch.map(async (priorPr) => {
+          const reviewSnapshot = await client.getPrReviewSnapshot(owner, repo, priorPr.number);
+          const mergeStatus = await client.getPrMergeStatus(owner, repo, priorPr.number);
+          let conflictDiagnostics = mergeStatus.prInfo.conflictDiagnostics;
+          if (mergeStatus.prInfo.mergeable === "conflicting" && mergeStatus.prInfo.headBranch && mergeStatus.prInfo.baseBranch) {
+            try {
+              conflictDiagnostics = await client.getPrConflictDiagnostics(owner, repo, priorPr.number, {
+                baseBranch: mergeStatus.prInfo.baseBranch,
+                headBranch: mergeStatus.prInfo.headBranch,
+                repoRoot: scopedStore.getRootDir(),
+                directMergeCommitStrategy: settings.directMergeCommitStrategy,
+              });
+            } catch (err) {
+              console.error("[pr-conflict-diagnostics]", err);
+            }
+          } else {
+            conflictDiagnostics = undefined;
+          }
 
-      const prInfo: PrInfo = {
-        ...task.prInfo,
-        ...mergeStatus.prInfo,
-        mergeable: mergeStatus.prInfo.mergeable,
-        autoMergeOnGreen: task.prInfo.autoMergeOnGreen,
-        autoMergeStrategy: task.prInfo.autoMergeStrategy,
-        lastMergeError: task.prInfo.lastMergeError,
-        lastMergeErrorAt: task.prInfo.lastMergeErrorAt,
-        draft: mergeStatus.prInfo.draft ?? mergeStatus.prInfo.isDraft,
-        lastCheckedAt: new Date().toISOString(),
-        lastReviewDecision: reviewSnapshot.decision,
-      };
+          const prInfo: PrInfo = {
+            ...priorPr,
+            ...mergeStatus.prInfo,
+            mergeable: mergeStatus.prInfo.mergeable,
+            conflictDiagnostics,
+            autoMergeOnGreen: priorPr.autoMergeOnGreen,
+            autoMergeStrategy: priorPr.autoMergeStrategy,
+            lastMergeError: priorPr.lastMergeError,
+            lastMergeErrorAt: priorPr.lastMergeErrorAt,
+            draft: mergeStatus.prInfo.draft ?? mergeStatus.prInfo.isDraft,
+            lastCheckedAt: new Date().toISOString(),
+            lastReviewDecision: reviewSnapshot.decision,
+          };
 
-      await scopedStore.updatePrInfo(task.id, prInfo);
-      await syncPrReviewsToTask(scopedStore, task, reviewSnapshot);
-      await applyChangesRequestedTransition(scopedStore, task, reviewSnapshot, prInfo);
+          await scopedStore.updatePrInfoByNumber(task.id, priorPr.number, prInfo);
+          await syncPrReviewsToTask(scopedStore, task, reviewSnapshot);
+          await applyChangesRequestedTransition(scopedStore, task, reviewSnapshot, prInfo);
 
+          return {
+            prInfo,
+            conflictDiagnostics: prInfo.conflictDiagnostics,
+            mergeReady: mergeStatus.mergeReady,
+            mergeable: prInfo.mergeable,
+            blockingReasons: mergeStatus.blockingReasons,
+            reviewDecision: reviewSnapshot.decision,
+            checks: mergeStatus.checks,
+            automationStatus: task.status ?? null,
+            conflictReclaimQueued: false,
+          };
+        }));
+        refreshedEntries.push(...results);
+      }
+
+      const anyConflict = refreshedEntries.some((entry) => entry.prInfo.mergeable === "conflicting");
       let conflictReclaimQueued = false;
-      if (prInfo.mergeable === "conflicting" && task.branch && task.worktree) {
+      if (anyConflict && task.branch && task.worktree) {
         const selfHealingManager =
           (engine as { getSelfHealingManager?: () => { reclaimPrConflictForTask: (taskId: string) => Promise<unknown> } } | undefined)?.getSelfHealingManager?.() ??
           (engine as { getRuntime?: () => { getSelfHealingManager?: () => { reclaimPrConflictForTask: (taskId: string) => Promise<unknown> } } } | undefined)
@@ -3460,39 +3931,58 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         }
       }
 
-      if (prInfo.status === "merged") {
-        await scopedStore.applyPrMergedTransition(task.id, {
-          agentId: "dashboard",
-          runId: `pr-refresh-${task.id}-${Date.now()}`,
-        });
-      } else {
-        const lastMergeErrorAt = prInfo.lastMergeErrorAt ? Date.parse(prInfo.lastMergeErrorAt) : Number.NaN;
-        const recentlyFailed = Number.isFinite(lastMergeErrorAt) && Date.now() - lastMergeErrorAt < 5 * 60 * 1000;
-        if (prInfo.autoMergeOnGreen && mergeStatus.mergeReady && !recentlyFailed) {
-          await mergeTaskPr(scopedStore, task, githubToken, undefined, "pr-refresh");
-        }
+      const refreshedTask = await scopedStore.getTask(task.id);
+      const latestPrs = getTaskPrList(refreshedTask);
+      const primaryPr = refreshedTask.prInfo ?? latestPrs[0] ?? refreshedEntries[0]?.prInfo;
+      const primaryEntry = refreshedEntries.find((entry) => entry.prInfo.number === primaryPr?.number) ?? refreshedEntries[0];
+      if (!primaryEntry) {
+        throw internalError("No refreshed PR entries were produced");
       }
 
-      const refreshedTask = await scopedStore.getTask(task.id);
       res.json({
-        prInfo: refreshedTask.prInfo ?? prInfo,
-        mergeReady: mergeStatus.mergeReady,
-        mergeable: prInfo.mergeable,
-        blockingReasons: mergeStatus.blockingReasons,
-        reviewDecision: reviewSnapshot.decision,
-        checks: mergeStatus.checks,
+        ...primaryEntry,
+        prInfo: primaryEntry.prInfo,
+        prInfos: latestPrs,
+        primary: primaryEntry,
+        all: refreshedEntries,
         automationStatus: refreshedTask.status ?? task.status ?? null,
         conflictReclaimQueued,
       });
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
+      if (err instanceof ApiError) throw err;
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw notFound(`Task ${req.params.id} not found`);
-      } else {
-        throw toPrApiError(err, "Failed to refresh PR status");
       }
+      throw toPrApiError(err, "Failed to refresh PR status");
+    }
+  });
+
+  router.post("/tasks/:id/pr/:number/unlink", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const prNumber = Number.parseInt(req.params.number ?? "", 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        throw badRequest("PR number must be a positive integer");
+      }
+
+      const task = await scopedStore.getTask(req.params.id);
+      const prList = getTaskPrList(task);
+      if (!prList.some((pr) => pr.number === prNumber)) {
+        throw notFound(`Task ${req.params.id} has no linked PR #${prNumber}`);
+      }
+
+      const updatedTask = await scopedStore.removePrInfoByNumber(task.id, prNumber);
+      if (!updatedTask) {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+
+      res.json({ task: updatedTask, prInfos: getTaskPrList(updatedTask) });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err, "Failed to unlink pull request");
     }
   });
 
@@ -3532,17 +4022,23 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (!task.prInfo?.number) {
+      const prList = getTaskPrList(task);
+      const requestedPr = Number.parseInt(String(req.query.pr ?? ""), 10);
+      const targetPr = Number.isInteger(requestedPr) && requestedPr > 0
+        ? prList.find((pr) => pr.number === requestedPr)
+        : (task.prInfo ?? prList[0]);
+      if (!targetPr?.number) {
         throw notFound("Task has no associated PR");
       }
-      if (task.prInfo.status === "merged") {
+      if (targetPr.status === "merged") {
         await scopedStore.applyPrMergedTransition(task.id, {
           agentId: "dashboard",
           runId: `pr-merge-${task.id}-${Date.now()}`,
         });
-        return res.json({ prInfo: task.prInfo, alreadyMerged: true });
+        return res.json({ prInfo: targetPr, alreadyMerged: true });
       }
-      const prInfo = await mergeTaskPr(scopedStore, task, githubToken, method);
+      const taskForPr = task.prInfo?.number === targetPr.number ? task : { ...task, prInfo: targetPr };
+      const prInfo = await mergeTaskPr(scopedStore, taskForPr, githubToken, method);
       res.json({ prInfo });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -3563,17 +4059,22 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (!task.prInfo) {
+      const prList = getTaskPrList(task);
+      const requestedPr = Number.parseInt(String(req.query.pr ?? ""), 10);
+      const targetPr = Number.isInteger(requestedPr) && requestedPr > 0
+        ? prList.find((pr) => pr.number === requestedPr)
+        : (task.prInfo ?? prList[0]);
+      if (!targetPr) {
         throw notFound("Task has no associated PR");
       }
       const prInfo: PrInfo = {
-        ...task.prInfo,
+        ...targetPr,
         autoMergeOnGreen: enabled,
-        autoMergeStrategy: strategy ?? task.prInfo.autoMergeStrategy,
+        autoMergeStrategy: strategy ?? targetPr.autoMergeStrategy,
         lastMergeError: undefined,
         lastMergeErrorAt: undefined,
       };
-      await scopedStore.updatePrInfo(task.id, prInfo);
+      await scopedStore.updatePrInfoByNumber(task.id, prInfo.number, prInfo);
       res.json({ prInfo });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -3589,14 +4090,19 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
+      const prList = getTaskPrList(task);
 
-      if (!task.prInfo) {
+      if (prList.length === 0) {
         throw notFound("Task has no associated PR");
       }
 
+      const requestedPr = Number.parseInt(String(req.query.pr ?? ""), 10);
+      const primaryPr = Number.isInteger(requestedPr) && requestedPr > 0
+        ? prList.find((pr) => pr.number === requestedPr) ?? prList[0]
+        : prList[0];
       let owner: string;
       let repo: string;
-      const badgeParsed = parseBadgeUrl(task.prInfo.url);
+      const badgeParsed = parseBadgeUrl(primaryPr.url);
       if (badgeParsed) {
         owner = badgeParsed.owner;
         repo = badgeParsed.repo;
@@ -3629,7 +4135,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
 
       const client = new GitHubClient();
-      const snapshot = await client.getPrReviewSnapshot(owner, repo, task.prInfo.number);
+      const snapshot = await client.getPrReviewSnapshot(owner, repo, primaryPr.number);
       const fusionThread = (task.comments ?? []).filter((comment) =>
         comment.source === "github-review" || comment.source === "github-review-comment"
       );
@@ -3637,6 +4143,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       res.json({
         snapshot,
         comments: fusionThread,
+        prInfos: prList,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -3657,14 +4164,19 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
+      const prList = getTaskPrList(task);
 
-      if (!task.prInfo) {
+      if (prList.length === 0) {
         throw notFound("Task has no associated PR");
       }
 
+      const requestedPr = Number.parseInt(String(req.query.pr ?? ""), 10);
+      const primaryPr = Number.isInteger(requestedPr) && requestedPr > 0
+        ? prList.find((pr) => pr.number === requestedPr) ?? prList[0]
+        : prList[0];
       let owner: string;
       let repo: string;
-      const badgeParsed = parseBadgeUrl(task.prInfo.url);
+      const badgeParsed = parseBadgeUrl(primaryPr.url);
       if (badgeParsed) {
         owner = badgeParsed.owner;
         repo = badgeParsed.repo;
@@ -3697,12 +4209,13 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
 
       const client = new GitHubClient();
-      const checksResult = await client.getAllPrChecks(owner, repo, task.prInfo.number);
+      const checksResult = await client.getAllPrChecks(owner, repo, primaryPr.number);
 
       res.json({
         checks: checksResult.checks,
         rollup: checksResult.rollupRequired,
         lastCheckedAt: new Date().toISOString(),
+        prInfos: prList,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

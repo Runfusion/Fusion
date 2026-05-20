@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { PrPanel } from "../PrPanel";
+import { fetchPrReviews } from "../../api";
 
 vi.mock("../../api", async () => {
   const actual = await vi.importActual<object>("../../api");
@@ -39,5 +40,25 @@ describe("PrPanel reviews", () => {
 
     expect(await screen.findByText("@alice")).toBeInTheDocument();
     expect(screen.getByText("Auto-moved to Todo — reviewer feedback ready")).toBeInTheDocument();
+  });
+
+  it("requests reviews per PR number for multi-pr cards", async () => {
+    render(
+      <PrPanel
+        taskId="FN-1"
+        prInfos={[
+          { url: "https://github.com/o/r/pull/1", number: 1, status: "open", title: "One", headBranch: "x", baseBranch: "main", commentCount: 0 },
+          { url: "https://github.com/o/r/pull/2", number: 2, status: "open", title: "Two", headBranch: "y", baseBranch: "main", commentCount: 0 },
+        ]}
+        taskColumn="todo"
+        prAuthAvailable
+        onPrUpdated={() => {}}
+        addToast={() => {}}
+      />,
+    );
+
+    expect(await screen.findAllByText("@alice")).toHaveLength(2);
+    expect(fetchPrReviews).toHaveBeenCalledWith("FN-1", undefined, 1);
+    expect(fetchPrReviews).toHaveBeenCalledWith("FN-1", undefined, 2);
   });
 });

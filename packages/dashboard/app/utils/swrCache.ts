@@ -2,6 +2,7 @@
  * Lightweight stale-while-revalidate cache helpers for dashboard reload hydration.
  *
  * Board task hydration uses a dedicated soft bound (`SWR_TASKS_MAX_AGE_MS`) so reloads do not present obviously stale task snapshots.
+ * Chat messages and chat agents maps reuse that short TTL for fast-moving thread state, while models and discovered skills use the default 10-minute window for effectively session-static hydration.
  * Failed task revalidation clears the per-project tasks envelope to avoid re-hydrating stale data on the next reload.
  *
  * Invalidation contract:
@@ -18,6 +19,10 @@ export const SWR_CACHE_KEYS = {
   TODO_LISTS_PREFIX: "kb-dashboard-todo-lists-cache:",
   CHAT_ROOMS: "kb-dashboard-chat-rooms-cache",
   CHAT_SESSIONS_PREFIX: "kb-dashboard-chat-sessions-cache:",
+  CHAT_MESSAGES_PREFIX: "kb-dashboard-chat-messages-cache:",
+  CHAT_AGENTS_MAP_PREFIX: "kb-dashboard-chat-agents-map-cache:",
+  MODELS: "kb-dashboard-models-cache",
+  DISCOVERED_SKILLS_PREFIX: "kb-dashboard-discovered-skills-cache:",
   ACTIVE_CHAT_ROOM_ID: "kb-dashboard-active-chat-room-cache",
   INSIGHTS_PREFIX: "kb-dashboard-insights-cache:",
   INSIGHT_LATEST_RUN_PREFIX: "kb-dashboard-insight-latest-run-cache:",

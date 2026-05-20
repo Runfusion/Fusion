@@ -4,6 +4,8 @@ _Created: 2026-05-05_
 
 ## Summary
 
+> Latest speed-hardening measurements and contributor guardrails: `docs/test-speed-audit-FN-5048.md` and `AGENTS.md` → "Standing Rule: Do Not Add Slow Tests (FN-5048)".
+
 Fusion has a large, useful, but uneven test suite. The suite is strongest where it exercises real SQLite state, git operations, published CLI bundle contracts, route auth/lease semantics, runtime orchestration, and user-visible mobile/native flows. It is weakest where it accumulates high-volume mechanical assertions: field-presence checks, CSS source-string checks, parser/regex matrices, type-shape runtime tests, class-name layout checks, and large mock-heavy component shells.
 
 This PRD defines the work needed to make the suite smaller, more trustworthy, and easier to run correctly. The goal is not to chase a smaller test count for its own sake. The goal is to preserve high-signal regression coverage while cutting tests that lock implementation details or duplicate coverage already provided by better tests.

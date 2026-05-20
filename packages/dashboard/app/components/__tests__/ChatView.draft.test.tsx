@@ -25,6 +25,7 @@ vi.mock("../../api", async (importOriginal) => {
     ...actual,
     fetchAgents: vi.fn().mockResolvedValue([]),
     fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
+    fetchTasks: vi.fn().mockResolvedValue([]),
     searchFiles: vi.fn().mockResolvedValue({ files: [] }),
   };
 });

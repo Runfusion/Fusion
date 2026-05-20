@@ -84,7 +84,7 @@ describe("register-settings-memory-routes worktrunk gate", () => {
 
   it("accepts worktrunk.enabled=true when binary resolves and probes", async () => {
     const { app, scopedStore } = createApp();
-    resolveWorktrunkBinaryMock.mockResolvedValueOnce({ binaryPath: "/tmp/worktrunk" });
+    resolveWorktrunkBinaryMock.mockResolvedValueOnce({ binaryPath: "/tmp/wt" });
     probeWorktrunkMock.mockResolvedValueOnce({ ok: true, version: "1.0.0" });
 
     const res = await patchSettings(app, { worktrunk: { enabled: true } });

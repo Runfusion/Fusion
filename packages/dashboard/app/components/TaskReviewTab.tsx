@@ -16,6 +16,7 @@ interface Props {
   onTaskUpdated?: (task: Task) => void;
   onRequestCreatePr?: () => void;
   prAuthAvailable?: boolean;
+  autoMergeEnabled?: boolean;
   addToast: (message: string, type?: ToastType) => void;
 }
 
@@ -138,6 +139,7 @@ export function TaskReviewTab({
   onTaskUpdated,
   onRequestCreatePr,
   prAuthAvailable,
+  autoMergeEnabled = false,
   addToast,
 }: Props) {
   const [selected, setSelected] = useState<string[]>([]);
@@ -285,7 +287,7 @@ export function TaskReviewTab({
           {decisionLabel ? <span className={`task-review-tab__decision task-review-tab__decision--${decisionLabel}`}>{decisionLabel}</span> : null}
         </div>
         <div className="task-review-tab__actions">
-          {task.column === "in-review" && !task.prInfo && prAuthAvailable === true && typeof onRequestCreatePr === "function" ? (
+          {task.column === "in-review" && !task.prInfo && prAuthAvailable === true && autoMergeEnabled !== true && typeof onRequestCreatePr === "function" ? (
             <button className="btn btn-sm" onClick={() => onRequestCreatePr?.()} data-testid="task-review-create-pr">
               <GitPullRequest />
               Create PR

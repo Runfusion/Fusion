@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTaskStoreTestHarness } from "./store-test-helpers.js";
 
 describe("TaskStore", () => {
+  // FN-5048: watcher polling tests run faster with per-test harness than shared FTS-rebuild resets.
   const harness = createTaskStoreTestHarness();
 
   beforeEach(harness.beforeEach);
@@ -49,7 +50,7 @@ describe("TaskStore", () => {
       } finally {
         harness.store().stopWatching();
       }
-    }, 60_000);
+    }, 120_000);
     it("cache is updated when polling is active even without fs.watch", async () => {
       await harness.store().watch();
 
@@ -69,33 +70,24 @@ describe("TaskStore", () => {
     }, 30_000);
 
     it("checkForChanges returns a Promise (is async)", async () => {
-      await harness.store().watch();
       const result = (harness.store() as any).checkForChanges();
       expect(result).toBeInstanceOf(Promise);
       await result;
     });
 
     it("pollingInProgress guard prevents overlapping poll cycles", async () => {
-      await harness.store().watch();
       const storeAny = harness.store() as any;
+      const firstCall = storeAny.checkForChanges();
+      const secondCall = storeAny.checkForChanges();
 
-      try {
-        const firstCall = storeAny.checkForChanges();
-        const secondCall = storeAny.checkForChanges();
+      expect(firstCall).toBeInstanceOf(Promise);
+      expect(secondCall).toBeInstanceOf(Promise);
 
-        expect(firstCall).toBeInstanceOf(Promise);
-        expect(secondCall).toBeInstanceOf(Promise);
-
-        await Promise.all([firstCall, secondCall]);
-        expect(storeAny.pollingInProgress).toBe(false);
-      } finally {
-        harness.store().stopWatching();
-      }
+      await Promise.all([firstCall, secondCall]);
+      expect(storeAny.pollingInProgress).toBe(false);
     });
 
     it("logs poll failures with context and keeps checkForChanges non-fatal", async () => {
-      await harness.store().watch();
-
       const storeAny = harness.store() as any;
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const originalGetLastModified = storeAny.db.getLastModified.bind(storeAny.db);

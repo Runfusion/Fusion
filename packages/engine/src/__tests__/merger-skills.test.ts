@@ -184,7 +184,10 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
-    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    getSettings: vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+    }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -301,6 +304,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -348,6 +352,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -388,6 +393,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -421,6 +427,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     // No agentStore provided
@@ -451,6 +458,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -497,6 +505,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -540,6 +549,7 @@ describe("aiMergeTask — skill selection resolver contract (FN-1510/FN-1511)", 
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -602,6 +612,7 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {
@@ -644,6 +655,7 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
     );
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
     });
 
     const mockAgentStore = {

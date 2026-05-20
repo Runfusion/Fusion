@@ -120,12 +120,27 @@ export type GitMutationType =
   | "worktree:worktrunk-fallback"
   | "worktree:worktrunk-failure"
   | "worktree:worktrunk-fallback-native"
+  /**
+   * Metadata shape:
+   * ```ts
+   * {
+   *   success: boolean;
+   *   reason: string;
+   *   target?: string;
+   *   error?: string;
+   * }
+   * ```
+   */
+  | "worktree:admin-entry-pruned"
   | "worktree:removal-refused-active-session"
   | "worktree:removal-forced-over-active-session"
   | "worktree:stale-lock-detected"
   | "worktree:stale-lock-recovered"
   | "worktree:stale-lock-recovery-failed"
   | "worktree:stale-lock-refused"
+  | "worktree:stale-registration-detected"
+  | "worktree:stale-registration-recovered"
+  | "worktree:stale-registration-recovery-failed"
   | "branch:create"
   | "branch:delete"
   | "branch:checkout"
@@ -140,12 +155,20 @@ export type GitMutationType =
   | "merge:auto-prerebase:failed"
   | "merge:layer3:foreign-file-skipped"
   | "merge:layer3:scope-override-bypass"
+  | "merge:reuse-handoff-acquired"
+  | "merge:reuse-handoff-refused"
+  | "merge:reuse-handoff-released"
+  | "merge:reuse-handoff-deferred-to-worktrunk"
   | "merge:audit-failure"
   | "branch:auto-reclaim"
+  | "branch:auto-canonicalize-case"
   | "branch:stale-active-reclaim"
   | "branch:stale-active-reclaim-deferred"
+  // reserved; refusal currently thrown pre-audit
+  | "project:bootstrap-refused-linked-worktree"
   | "branch:orphan-prune"
   | "branch:orphan-rescued"
+  | "self-healing:orphan-rescue-skipped-fresh-db"
   | "branch:reanchor"
   | "stash:push"
   | "stash:pop";
@@ -170,6 +193,10 @@ export type DatabaseMutationType =
   | "task:auto-merge-skipped-already-done"
   /** Metadata: { taskId, commitSha, failedCommand, exitCode, errorTail } */
   | "task:post-finalize-verification-no-op"
+  /** Metadata: { kind, parentTaskId, existingTaskId, signature, rateLimited } */
+  | "verification:followup-deduped"
+  /** Metadata: { kind, parentTaskId, newTaskId, signature, supersedesTaskId } */
+  | "verification:followup-created"
   | "task:auto-recover-branch-misbound"
   | "task:auto-recover-misrouted-foreign-commit"
   | "task:auto-recover-foreign-only-contamination"
@@ -179,8 +206,10 @@ export type DatabaseMutationType =
   | "task:auto-recover-worktree-metadata-cleared"
   // task:auto-archived-ghost-bug metadata: { findings: Array<{ construct: { kind: string; raw: string; filePath?: string; line?: number }; matched: boolean; probeError?: string; output?: string }>; reason: string }
   // task:auto-archived-duplicate metadata: { siblingTaskIds: string[]; scores: Record<string, number> }
+  // task:broad-scope-flagged-at-triage metadata: { score: number; reasons: string[]; signals: { size: "S"|"M"|"L"|null; stepCount: number; fileScopeCount: number; failingFileMentions: number }; thresholds: { stepsHigh: number; fileScopeHigh: number; failingFileMentionsHigh: number; sizeLStepsThreshold: number }; version: number }
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
+  | "task:broad-scope-flagged-at-triage"
   | "task:auto-reconciled-self-defeating-dep"
   /**
    * Metadata shape for node:handoff:* and node:lease:* events:
@@ -212,21 +241,34 @@ export type DatabaseMutationType =
   | "task:auto-recover-completion-handoff-limbo"
   | "task:auto-recover-completion-handoff-limbo-exhausted"
   | "task:auto-recover-worktree-session-exhausted"
+  | "task:auto-recover-in-progress-limbo"
+  /** Metadata: { taskId: string; ignoredStepUpdateCount: number; stuckKillStreak: number; lastReason: "no-progress-churn" } */
+  | "task:stuck-no-progress-churn-terminalized"
   | "task:auto-recover-starved-refinement"
+  /** Metadata: { rawDiffFileCount: number; attributedFileCount: number; foreignCommitCount: number; foreignCommitShas: string[]; source: string } */
+  | "task:worktree-contamination-detected"
   /** Metadata: { taskId, pausedAgeMs, blockedFollowerIds: string[], previousPausedReason: string | null } */
   | "task:auto-rebound-paused-scope-decay"
   /** Metadata: { taskId, targetTaskId, targetColumn, chainDepth: number } */
   | "task:auto-archived-meta-resolved"
+  /** Metadata: { taskId, targetTaskId, targetColumn, chainDepth: number, blockedBy: string[] } */
+  | "task:auto-archive-meta-resolved-skipped"
   /** Metadata: { taskId, targetTaskId, chainDepth: number, stalledMs: number } */
   | "task:auto-archived-meta-stalled"
+  /** Metadata: { taskId, targetTaskId, chainDepth: number, stalledMs: number, blockedBy: string[] } */
+  | "task:auto-archive-meta-stalled-skipped"
   /** Metadata: { holderIds: string[], followerCount: number, windowMs: number, blockedGrowth: number } */
   | "task:auto-board-stall-broken"
   /** Metadata: { holderIds: string[], followerCount: number, windowMs: number, ntfyDispatched: boolean } */
   | "task:auto-board-stall-unrecovered"
+  /** Metadata: { errors: string[], lastCheckedAt: string | null, notificationDispatched: boolean } */
+  | "task:auto-db-corruption-detected"
   | "task:in-review-stall-deadlock-disposed"
   | "task:finalize-unproven-blocked"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
+  /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a done/archived task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */
+  | "task:auto-recover-stale-merger-status"
   | "auto-recovery:classify-decision"
   | "auto-recovery:retry-issued"
   | "auto-recovery:ai-session-spawned"

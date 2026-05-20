@@ -3,8 +3,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { DEFAULT_TASK_PRIORITY, type Task, type TaskCreateInput, type TaskPriority } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { uploadAttachment, fetchAgents } from "../api";
-import type { Agent } from "../api";
+import { uploadAttachment } from "../api";
 import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
@@ -15,6 +14,7 @@ import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -62,9 +62,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   // Agent assignment state
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const { agents, loading: agentsLoading } = useAgentsMapCache(projectId);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
-  const [agentsLoading, setAgentsLoading] = useState(false);
   const agentPickerRef = useRef<HTMLDivElement>(null);
 
   // Quick-fields dependency picker state
@@ -88,25 +87,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   }, []);
 
   // Load agents for agent picker
-  const loadAgents = useCallback(async () => {
-    if (agents.length > 0) {
-      setShowAgentPicker(true);
-      return;
-    }
-
-    setAgentsLoading(true);
-    try {
-      const result = await fetchAgents(undefined, projectId);
-      setAgents(result);
-      setShowAgentPicker(true);
-    } catch (err) {
-      const msg = getErrorMessage(err);
-      addToast(msg ? `Failed to load agents: ${msg}` : "Failed to load agents", "error");
-      setShowAgentPicker(false);
-    } finally {
-      setAgentsLoading(false);
-    }
-  }, [agents.length, projectId, addToast]);
+  const loadAgents = useCallback(() => {
+    setShowAgentPicker(true);
+  }, []);
 
   // Close agent picker when clicking outside
   useEffect(() => {

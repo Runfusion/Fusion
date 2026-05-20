@@ -472,6 +472,35 @@ function getAutopilotActivitySummary(state: AutopilotState, lastActivityAt?: str
   return `Last activation ${getRelativeTime(lastActivityAt)}`;
 }
 
+function normalizeMissionHierarchy(mission: MissionWithHierarchy): MissionWithHierarchy {
+  if (!Array.isArray(mission.milestones)) {
+    throw new Error("Malformed mission detail response: missing milestones");
+  }
+
+  return {
+    ...mission,
+    milestones: mission.milestones.map((milestone) => {
+      if (!Array.isArray(milestone.slices)) {
+        throw new Error(`Malformed mission detail response: milestone ${milestone.id} is missing slices`);
+      }
+
+      return {
+        ...milestone,
+        slices: milestone.slices.map((slice) => {
+          if (!Array.isArray(slice.features)) {
+            throw new Error(`Malformed mission detail response: slice ${slice.id} is missing features`);
+          }
+
+          return {
+            ...slice,
+            features: slice.features,
+          };
+        }),
+      };
+    }),
+  };
+}
+
 export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError }: MissionManagerProps) {
   const isActive = isInline || isOpen;
   const cacheSuffix = projectId ?? "";
@@ -811,7 +840,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       if (!hasHydratedRef.current) {
         setLoading(true);
       }
-      const data = await fetchMissions(projectId);
+      const fetched = await fetchMissions(projectId);
+      // Defensive: API helpers can return an envelope or non-array under
+      // failure paths; downstream code (render, filter) assumes an array.
+      const data = Array.isArray(fetched)
+        ? fetched
+        : fetched && Array.isArray((fetched as { data?: unknown }).data)
+          ? ((fetched as { data: MissionWithSummary[] }).data)
+          : [];
       setMissions(data);
       writeCache(
         missionsCacheKey,
@@ -830,13 +866,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const loadMissionDetail = useCallback(async (missionId: string) => {
     try {
       setDetailLoading(true);
-      const data = await fetchMission(missionId, projectId);
-      // Guard against malformed responses (e.g. test fetch fallbacks): without
-      // a milestones array the detail view crashes on `.milestones.length`.
-      if (!data || !Array.isArray((data as MissionWithHierarchy).milestones)) {
-        setDetailLoading(false);
-        return;
+      const payload = await fetchMission(missionId, projectId);
+      if (!payload || typeof payload !== "object") {
+        throw new Error("Malformed mission detail response");
       }
+
+      const data = normalizeMissionHierarchy(payload as MissionWithHierarchy);
       setSelectedMission(data);
       if (data.milestones.length > 0) {
         const firstMilestoneId = data.milestones[0].id;
@@ -894,6 +929,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         setValidationTelemetry(null);
       }
     } catch (err) {
+      console.error("[MissionManager] loadMissionDetail:", err);
       addToast(getErrorMessage(err) || "Failed to load mission details", "error");
     } finally {
       setDetailLoading(false);
@@ -2127,6 +2163,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [loadMissionDetail]);
 
   const handleBackToList = useCallback(() => {
+    writeCache(selectedMissionIdCacheKey, null, { maxBytes: 500_000 });
     setSelectedMission(null);
     setSelectedMilestoneId(null);
     setValidationTelemetry(null);
@@ -2136,7 +2173,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     setEventsFilter("all");
     setExpandedEventMetadata(new Set());
     loadMissions();
-  }, [loadMissions]);
+  }, [loadMissions, selectedMissionIdCacheKey]);
 
   const hasMoreEvents = missionEvents.length < eventsTotal;
   const autopilotState = (selectedMission?.autopilotState ?? "inactive") as AutopilotState;

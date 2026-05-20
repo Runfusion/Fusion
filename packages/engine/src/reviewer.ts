@@ -143,6 +143,7 @@ Concrete examples:
 - **Dependency correctness:** [Dependencies exist and are appropriate?]
 - **Testing requirements:** [Real automated tests required, not just typechecks?]
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
+- **Dangling task-document references:** [No \`.fusion/tasks/<id>/<file>\` path is cited in Context, Steps, or File Scope unless the file exists or is explicitly created as a \`(new)\` artifact in this spec. References to nonexistent task-local artifacts are a blocking REVISE.]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
 - **Subtask breakdown:** [Only flag genuinely oversized specs (12+ implementation steps, OR 5+ truly independent deliverables that could ship separately). Do NOT flag a coherent vertical change just because it touches multiple packages. When borderline, prefer leaving the task whole.]
 - **User comment coverage:** [Were all user comments addressed? Every user comment must be reflected in the spec — missing coverage is a blocking REVISE]
@@ -837,7 +838,7 @@ function buildReviewRequest(
       "Evaluate this PROMPT.md specification for completeness and quality.",
       "Assess against the spec quality criteria: mission clarity, step specificity/verifiability,",
       "file scope accuracy, dependency correctness, testing requirements, documentation completeness,",
-      "and appropriate sizing/review level.",
+      "dangling task-document references, and appropriate sizing/review level.",
       "",
       "Read relevant source files to verify the spec references real files, functions, and patterns.",
       "Check that steps have concrete, verifiable outcomes — not vague instructions.",

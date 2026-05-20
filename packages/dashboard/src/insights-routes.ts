@@ -34,6 +34,13 @@ import {
   badRequest,
   notFound,
 } from "./api-error.js";
+import {
+  DEFAULT_SWEEP_INTERVAL_MS,
+  ORPHAN_GRACE_MS,
+  recoverOrphanedInsightRun,
+  startInsightRunSweeper,
+  sweepStaleInsightRuns,
+} from "./insight-run-sweeper.js";
 import { createFnAgent, promptWithFallback } from "@fusion/engine";
 
 /**
@@ -88,79 +95,21 @@ const INSIGHT_CATEGORY_BY_MEMORY_CATEGORY: Record<MemoryInsightCategory, Insight
 };
 
 const activeRunControllers = new Map<string, AbortController>();
-const ORPHAN_GRACE_MS = 30_000;
-
-function getRunAgeMs(run: { startedAt: string | null; createdAt: string }, nowMs: number): number {
-  const anchor = run.startedAt ?? run.createdAt;
-  const anchorMs = Date.parse(anchor);
-  if (!Number.isFinite(anchorMs)) return 0;
-  return Math.max(0, nowMs - anchorMs);
-}
 
 function maybeRecoverOrphanedActiveRun(params: {
   insightStore: InsightStore;
   run: ReturnType<InsightStore["getRun"]>;
-  trigger: InsightRunTrigger;
   now: Date;
 }): boolean {
-  const { insightStore, run, trigger, now } = params;
-  if (!run || !["pending", "running"].includes(run.status)) {
-    return false;
-  }
-
-  if (activeRunControllers.has(run.id)) {
-    return false;
-  }
-
-  const ageMs = getRunAgeMs(run, now.getTime());
-  if (ageMs <= ORPHAN_GRACE_MS) {
-    return false;
-  }
-
-  const nowIso = now.toISOString();
-  insightStore.appendRunEvent(run.id, {
-    type: "warning",
-    status: run.status,
-    classification: "non_retryable",
-    message: `Recovered orphaned active run after ${ageMs}ms without controller ownership`,
-    metadata: {
-      recovery: "orphaned_active_run",
-      trigger,
-      ageMs,
-      graceMs: ORPHAN_GRACE_MS,
-      hadController: false,
-      anchorTimestamp: run.startedAt ?? run.createdAt,
-    },
-  });
-
-  const failed = insightStore.updateRun(run.id, {
-    status: "failed",
-    summary: "Recovered orphaned run",
-    error: "Run was marked active but had no live controller after grace period",
-    completedAt: nowIso,
-    lifecycle: {
-      ...run.lifecycle,
-      terminalReason: "failed",
-      terminalCause: "orphaned_active_run_recovered",
-      failureClass: "non_retryable",
-      retryable: false,
-    },
-  });
-
-  if (failed) {
-    insightStore.appendRunEvent(run.id, {
-      type: "status_changed",
-      status: "failed",
-      classification: "non_retryable",
-      message: "Run marked failed after orphaned active-run recovery",
-      metadata: {
-        recovery: "orphaned_active_run",
-      },
-    });
-    return true;
-  }
-
-  return false;
+  const { insightStore, run, now } = params;
+  return recoverOrphanedInsightRun({
+    insightStore,
+    run,
+    now,
+    activeRunControllers,
+    source: "manual",
+    graceMs: ORPHAN_GRACE_MS,
+  }).recovered;
 }
 
 async function withAbort<T>(signal: AbortSignal, task: Promise<T>): Promise<T> {
@@ -299,6 +248,32 @@ export function createInsightsRouter(store: TaskStore): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
+  const rootInsightStore = typeof (store as { getInsightStore?: () => InsightStore }).getInsightStore === "function"
+    ? (store as { getInsightStore: () => InsightStore }).getInsightStore()
+    : undefined;
+
+  if (rootInsightStore) {
+    try {
+      sweepStaleInsightRuns({
+        insightStore: rootInsightStore,
+        activeRunControllers,
+        graceMs: ORPHAN_GRACE_MS,
+        source: "startup",
+      });
+    } catch (error) {
+      console.warn("[insight-sweeper] startup sweep failed", error);
+    }
+
+    const { dispose: disposeSweeper } = startInsightRunSweeper({
+      insightStore: rootInsightStore,
+      activeRunControllers,
+      intervalMs: DEFAULT_SWEEP_INTERVAL_MS,
+      graceMs: ORPHAN_GRACE_MS,
+      logger: console,
+    });
+    (router as Router & { __disposeSweeper?: () => void }).__disposeSweeper = disposeSweeper;
+  }
+
   /**
    * Middleware to capture the appropriate store for this request.
    * Uses projectId from query/body to get the scoped store if provided,
@@ -426,7 +401,6 @@ export function createInsightsRouter(store: TaskStore): Router {
         maybeRecoverOrphanedActiveRun({
           insightStore,
           run: existingActiveRun,
-          trigger,
           now: new Date(),
         });
       }
@@ -514,6 +488,17 @@ export function createInsightsRouter(store: TaskStore): Router {
         options.offset = offset;
       }
 
+      try {
+        sweepStaleInsightRuns({
+          insightStore: store,
+          activeRunControllers,
+          graceMs: ORPHAN_GRACE_MS,
+          source: "drive_by",
+        });
+      } catch (error) {
+        console.warn("[insight-sweeper] drive-by sweep failed", error);
+      }
+
       const runs = store.listRuns(options);
       res.json({ runs });
     } catch (error) {
@@ -527,6 +512,18 @@ export function createInsightsRouter(store: TaskStore): Router {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
+
+      try {
+        sweepStaleInsightRuns({
+          insightStore: store,
+          activeRunControllers,
+          graceMs: ORPHAN_GRACE_MS,
+          source: "drive_by",
+        });
+      } catch (error) {
+        console.warn("[insight-sweeper] drive-by sweep failed", error);
+      }
+
       const run = store.getRun(id);
       if (!run) {
         throw notFound(`Run not found: ${id}`);
