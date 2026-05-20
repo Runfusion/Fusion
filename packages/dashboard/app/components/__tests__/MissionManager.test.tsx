@@ -740,6 +740,9 @@ describe("MissionManager", () => {
 
   beforeEach(() => {
     mockViewport("desktop");
+    // Reset SWR cache so prior tests' mission lists don't pre-hydrate into the
+    // current render and surface duplicates of fixture titles.
+    localStorage.clear();
     originalFetch = globalThis.fetch;
     originalEventSource = globalThis.EventSource;
     mockFetchAiSession.mockReset();

@@ -4205,10 +4205,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           )}
           <Target size={18} className="mission-manager__header-icon" />
           <h2 className="mission-manager__title" data-testid="mission-header-title">
-            <span className="mission-manager__title-text mission-manager__title-text--desktop">Missions</span>
-            <span className="mission-manager__title-text mission-manager__title-text--mobile">
-              {selectedMission ? selectedMission.title : "Missions"}
-            </span>
+            {isMobile ? (
+              <span className="mission-manager__title-text mission-manager__title-text--mobile">
+                {selectedMission ? selectedMission.title : "Missions"}
+              </span>
+            ) : (
+              <span className="mission-manager__title-text mission-manager__title-text--desktop">Missions</span>
+            )}
           </h2>
         </div>
         {!isInline && (
