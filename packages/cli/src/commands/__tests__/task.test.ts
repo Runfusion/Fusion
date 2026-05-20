@@ -1154,7 +1154,12 @@ describe("project-aware task command behavior", () => {
     await runTaskDelete("FN-123", true, "demo-project");
 
     expect(getTask).toHaveBeenCalledWith("FN-123");
-    expect(deleteTask).toHaveBeenCalledWith("FN-123");
+    expect(deleteTask).toHaveBeenCalledWith("FN-123", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "cli",
+        runId: expect.stringMatching(/^synthetic-cli-delete-FN-123-/),
+      }),
+    }));
   });
 
   it("runTaskComment, runTaskComments, and runTaskSteer use resolved project store", async () => {
@@ -2224,7 +2229,12 @@ describe("runTaskDelete", () => {
     expect(mockGetTask).toHaveBeenCalledWith("FN-001");
     expect(mockRlQuestion).not.toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
-    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "cli",
+        runId: expect.stringMatching(/^synthetic-cli-delete-FN-001-/),
+      }),
+    }));
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),
@@ -2242,7 +2252,12 @@ describe("runTaskDelete", () => {
     expect(mockRlQuestion).toHaveBeenCalledWith("Are you sure you want to delete FN-001? [y/N] ");
     expect(mockRlClose).toHaveBeenCalled();
     expect(mockDeleteTask).toHaveBeenCalledOnce();
-    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "cli",
+        runId: expect.stringMatching(/^synthetic-cli-delete-FN-001-/),
+      }),
+    }));
 
     const successLine = logSpy.mock.calls.find(
       (call) => typeof call[0] === "string" && call[0].includes("✓ Deleted"),

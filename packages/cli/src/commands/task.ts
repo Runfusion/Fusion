@@ -1207,7 +1207,12 @@ export async function runTaskDelete(id: string, force?: boolean, projectName?: s
   }
 
   try {
-    await store.deleteTask(id);
+    await store.deleteTask(id, {
+      auditContext: {
+        agentId: "cli",
+        runId: `synthetic-cli-delete-${id}-${Date.now()}`,
+      },
+    });
     console.log();
     console.log(`  ✓ Deleted ${id}`);
     console.log();

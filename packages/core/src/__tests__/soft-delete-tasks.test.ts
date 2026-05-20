@@ -84,7 +84,7 @@ describe("TaskStore soft delete", () => {
     expect(deletedEvents.length).toBe(afterFirstPoll);
   });
 
-  it("keeps soft-deleted ids reserved and non-archived", async () => {
+  it("keeps soft-deleted ids reserved while leaving them out of archivedTasks", async () => {
     const store = harness.store();
     const task = await store.createTask({ description: "reserved id task" });
 
@@ -93,6 +93,9 @@ describe("TaskStore soft delete", () => {
     expect(() => (store as any).assertTaskIdAvailable(task.id)).toThrow();
     expect((store as any).taskIdExistsAnywhere(task.id)).toBe(true);
     expect((store as any).isTaskArchived(task.id)).toBe(false);
+
+    const row = (store as any).db.prepare('SELECT "column" FROM tasks WHERE id = ?').get(task.id) as { column: string };
+    expect(row.column).toBe("archived");
 
     const prefix = task.id.split("-")[0];
     reconcileTaskIdState((store as any).db);
@@ -124,22 +127,24 @@ describe("TaskStore soft delete", () => {
 
     const firstResult = await store.deleteTask(task.id);
     const firstRow = (store as any).db
-      .prepare("SELECT deletedAt, updatedAt FROM tasks WHERE id = ?")
-      .get(task.id) as { deletedAt: string | null; updatedAt: string | null };
+      .prepare("SELECT deletedAt, updatedAt, \"column\" FROM tasks WHERE id = ?")
+      .get(task.id) as { deletedAt: string | null; updatedAt: string | null; column: string | null };
 
     const secondResult = await store.deleteTask(task.id);
     const secondRow = (store as any).db
-      .prepare("SELECT deletedAt, updatedAt FROM tasks WHERE id = ?")
-      .get(task.id) as { deletedAt: string | null; updatedAt: string | null };
+      .prepare("SELECT deletedAt, updatedAt, \"column\" FROM tasks WHERE id = ?")
+      .get(task.id) as { deletedAt: string | null; updatedAt: string | null; column: string | null };
 
     const thirdResult = await store.deleteTask(task.id);
 
     expect(firstRow.deletedAt).toBeTruthy();
+    expect(firstRow.column).toBe("archived");
     expect(secondResult.deletedAt).toBe(firstRow.deletedAt);
     expect(thirdResult.deletedAt).toBe(firstRow.deletedAt);
     expect(deletedEvents).toEqual([task.id]);
     expect(secondRow.deletedAt).toBe(firstRow.deletedAt);
     expect(secondRow.updatedAt).toBe(firstRow.updatedAt);
+    expect(secondRow.column).toBe("archived");
 
     await expect(store.deleteTask("FN-DOES-NOT-EXIST")).rejects.toThrow("Task FN-DOES-NOT-EXIST not found");
   });

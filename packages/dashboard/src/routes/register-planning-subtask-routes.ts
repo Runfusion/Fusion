@@ -309,7 +309,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       let parentTaskCloseError: string | undefined;
       if (normalizedParentId) {
         try {
-          await scopedStore.deleteTask(normalizedParentId);
+          await scopedStore.deleteTask(normalizedParentId, {
+            auditContext: {
+              agentId: "system",
+              runId: `synthetic-planning-delete-${normalizedParentId}-${Date.now()}`,
+              sessionId,
+            },
+          });
           parentTaskClosed = true;
         } catch (err: unknown) {
           // deleteTask refuses when live tasks still reference the parent id.

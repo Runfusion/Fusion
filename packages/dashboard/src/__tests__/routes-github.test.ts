@@ -1378,7 +1378,13 @@ describe("projectId store scoping regressions", () => {
     expect(defaultStore.getTask).not.toHaveBeenCalled();
     expect(scopedStore.createTask).toHaveBeenCalledTimes(2);
     expect(defaultStore.createTask).not.toHaveBeenCalled();
-    expect(scopedStore.deleteTask).toHaveBeenCalledWith("FN-PARENT");
+    expect(scopedStore.deleteTask).toHaveBeenCalledWith("FN-PARENT", expect.objectContaining({
+      auditContext: expect.objectContaining({
+        agentId: "system",
+        runId: expect.stringMatching(/^synthetic-planning-delete-FN-PARENT-/),
+        sessionId: "subtask-session-1",
+      }),
+    }));
     expect(defaultStore.deleteTask).not.toHaveBeenCalled();
   });
 });

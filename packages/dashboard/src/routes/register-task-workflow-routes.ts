@@ -2778,6 +2778,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         removeDependencyReferences,
         removeLineageReferences,
         githubIssueAction,
+        auditContext: {
+          agentId: "system",
+          runId: `synthetic-dashboard-delete-${req.params.id}-${Date.now()}`,
+        },
       });
       res.json(task);
     } catch (err: unknown) {

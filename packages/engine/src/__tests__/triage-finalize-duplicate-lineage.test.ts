@@ -106,7 +106,13 @@ describe("triage finalize duplicate lineage", () => {
     const store = createMockStore();
     await runRecovery(createTask(), "DUPLICATE: FN-4894\n", store);
 
-    expect(store.deleteTask).toHaveBeenCalledWith("FN-001", { removeLineageReferences: true });
+    expect(store.deleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      removeLineageReferences: true,
+      auditContext: expect.objectContaining({
+        agentId: "triage",
+        runId: expect.stringMatching(/^triage-delete-FN-001-/),
+      }),
+    }));
     expect(store.updateTask).not.toHaveBeenCalled();
   });
 });

@@ -6202,6 +6202,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return paths.filter((path) => isValidFileScopeEntry(path));
   }
 
+  private makeSyntheticDeleteRunId(taskId: string): string {
+    return `synthetic-task-delete-${taskId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  }
+
   /**
    * Soft-delete a live task by setting tasks.deletedAt/updatedAt while leaving
    * the row and on-disk task artifacts in place for potential recovery.
@@ -6215,6 +6219,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       removeDependencyReferences?: boolean;
       removeLineageReferences?: boolean;
       githubIssueAction?: GithubIssueAction;
+      auditContext?: { agentId: string; runId: string; sessionId?: string };
     },
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
@@ -6260,7 +6265,23 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         rewrittenDependents = this.rewriteDependentsForRemoval(id, dependentIds);
         rewrittenLineageChildren = this.rewriteLineageChildrenForRemoval(id, lineageChildIds);
         const deletedAt = new Date().toISOString();
-        this.db.prepare("UPDATE tasks SET deletedAt = ?, updatedAt = ? WHERE id = ?").run(deletedAt, deletedAt, id);
+        this.db.prepare("UPDATE tasks SET \"column\" = 'archived', deletedAt = ?, updatedAt = ? WHERE id = ?").run(deletedAt, deletedAt, id);
+        this.recordRunAuditEvent({
+          domain: "database",
+          mutationType: "task:deleted",
+          target: task.id,
+          taskId: task.id,
+          agentId: options?.auditContext?.agentId ?? "system",
+          runId: options?.auditContext?.runId ?? this.makeSyntheticDeleteRunId(task.id),
+          metadata: {
+            previousColumn: task.column,
+            previousStatus: task.status ?? null,
+            githubIssueAction: options?.githubIssueAction ?? "auto",
+            removeDependencyReferences: !!options?.removeDependencyReferences,
+            removeLineageReferences: !!options?.removeLineageReferences,
+            sessionId: options?.auditContext?.sessionId,
+          },
+        });
         this.clearLinkedAgentTaskIds(id, deletedAt);
         this.db.bumpLastModified();
       });
@@ -7116,6 +7137,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
               // TaskStore instance wrote the row in-process.
               this.emit("task:moved", { task: cached, from: cached.column, to: "archived" as Column, source: "engine" });
             } else {
+              // Polling replicas only mirror the originating delete signal.
+              // Do not record run-audit here; the writer already owns that row.
               this.emit("task:deleted", cached);
             }
           } finally {
@@ -7145,6 +7168,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           if (task.deletedAt) {
             if (cached) {
               this.taskCache.delete(task.id);
+              // Polling replicas only re-emit task:deleted for subscribers.
+              // They must not insert duplicate run-audit rows cross-instance.
               this.emit("task:deleted", cached);
             }
             continue;

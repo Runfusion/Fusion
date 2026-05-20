@@ -1326,7 +1326,13 @@ export class TriageProcessor {
             );
             try {
               // FN-5129 / FN-5131: split-close must unlink lineage children when deleting the parent.
-              await this.store.deleteTask(task.id, { removeLineageReferences: true });
+              await this.store.deleteTask(task.id, {
+                removeLineageReferences: true,
+                auditContext: {
+                  agentId: task.assignedAgentId ?? "triage",
+                  runId: generateSyntheticRunId("triage-delete", task.id),
+                },
+              });
               planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
             } catch (err: unknown) {
               // deleteTask refuses when live tasks still depend on this id.
@@ -1471,7 +1477,13 @@ export class TriageProcessor {
                 `Converted into subtasks: ${childTaskIds}`,
               );
               // FN-5129 / FN-5131: split-close must unlink lineage children when deleting the parent.
-              await this.store.deleteTask(task.id, { removeLineageReferences: true });
+              await this.store.deleteTask(task.id, {
+                removeLineageReferences: true,
+                auditContext: {
+                  agentId: task.assignedAgentId ?? "triage",
+                  runId: generateSyntheticRunId("triage-delete", task.id),
+                },
+              });
               planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
               return;
             }
@@ -2232,7 +2244,13 @@ export class TriageProcessor {
         `Duplicate of ${dupId} — closed`,
       );
       // Pass removeLineageReferences so a duplicate-close cannot be blocked by lineage children (FN-5129 / FN-5131).
-      await this.store.deleteTask(task.id, { removeLineageReferences: true });
+      await this.store.deleteTask(task.id, {
+        removeLineageReferences: true,
+        auditContext: {
+          agentId: task.assignedAgentId ?? "triage",
+          runId: generateSyntheticRunId("triage-delete", task.id),
+        },
+      });
       return;
     }
 

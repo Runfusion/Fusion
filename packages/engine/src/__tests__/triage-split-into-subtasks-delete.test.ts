@@ -104,7 +104,13 @@ describe("triage split/delete lineage forwarding", () => {
     const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
     await processor.specifyTask(createTask());
 
-    expect(store.deleteTask).toHaveBeenCalledWith("FN-500", { removeLineageReferences: true });
+    expect(store.deleteTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({
+      removeLineageReferences: true,
+      auditContext: expect.objectContaining({
+        agentId: "triage",
+        runId: expect.stringMatching(/^triage-delete-FN-500-/),
+      }),
+    }));
   });
 
   it("passes removeLineageReferences when split-close happens on the fallback planning path", async () => {
@@ -124,7 +130,13 @@ describe("triage split/delete lineage forwarding", () => {
     const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
     await processor.specifyTask(createTask({ id: "FN-600" }));
 
-    expect(store.deleteTask).toHaveBeenCalledWith("FN-600", { removeLineageReferences: true });
+    expect(store.deleteTask).toHaveBeenCalledWith("FN-600", expect.objectContaining({
+      removeLineageReferences: true,
+      auditContext: expect.objectContaining({
+        agentId: "triage",
+        runId: expect.stringMatching(/^triage-delete-FN-600-/),
+      }),
+    }));
   });
 
   it("passes removeLineageReferences on DUPLICATE close", async () => {
@@ -143,7 +155,13 @@ describe("triage split/delete lineage forwarding", () => {
         createTask({ id: "FN-001", log: [{ timestamp: new Date().toISOString(), action: "Spec review: APPROVE" }] as any }),
       );
 
-      expect(store.deleteTask).toHaveBeenCalledWith("FN-001", { removeLineageReferences: true });
+      expect(store.deleteTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        removeLineageReferences: true,
+        auditContext: expect.objectContaining({
+          agentId: "triage",
+          runId: expect.stringMatching(/^triage-delete-FN-001-/),
+        }),
+      }));
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

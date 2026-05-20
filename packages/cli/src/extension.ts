@@ -1179,7 +1179,12 @@ export default function kbExtension(pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
-      const task = await store.deleteTask(params.id);
+      const task = await store.deleteTask(params.id, {
+        auditContext: {
+          agentId: "pi-extension",
+          runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,
+        },
+      });
 
       return {
         content: [{ type: "text", text: `Deleted ${task.id}` }],
