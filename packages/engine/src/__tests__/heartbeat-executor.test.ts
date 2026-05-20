@@ -261,6 +261,65 @@ describe("executeHeartbeat", () => {
       expect(section).toContain("**stale**");
     });
 
+    it("buildReportsHealthSection reproduces sparse-cache false positive without persisted interval (FN-5362)", async () => {
+      const now = Date.now();
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getCachedAgent).mockReturnValue(null);
+      vi.mocked(store.getAgent).mockResolvedValue({
+        id: "agent-frontend",
+      } as unknown as Agent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        {
+          id: "agent-frontend",
+          name: "Frontend Engineer",
+          state: "idle",
+          taskId: null,
+          lastHeartbeatAt: new Date(now - 20 * 60_000).toISOString(),
+          updatedAt: new Date(now - 20 * 60_000).toISOString(),
+        } as unknown as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({
+        store,
+        taskStore: mockTaskStore,
+        rootDir: "/tmp",
+        pollIntervalMs: 5 * 60_000,
+      });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toContain("Frontend Engineer");
+      expect(section).toContain("**stale**");
+    });
+
+    it("buildReportsHealthSection uses persisted agent interval when cache is sparse (FN-5362)", async () => {
+      const now = Date.now();
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getCachedAgent).mockReturnValue(null);
+      vi.mocked(store.getAgent).mockResolvedValue({
+        id: "agent-frontend",
+        runtimeConfig: { heartbeatIntervalMs: 60 * 60_000 },
+      } as unknown as Agent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        {
+          id: "agent-frontend",
+          name: "Frontend Engineer",
+          state: "idle",
+          taskId: null,
+          lastHeartbeatAt: new Date(now - 20 * 60_000).toISOString(),
+          updatedAt: new Date(now - 20 * 60_000).toISOString(),
+        } as unknown as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({
+        store,
+        taskStore: mockTaskStore,
+        rootDir: "/tmp",
+        pollIntervalMs: 5 * 60_000,
+      });
+
+      const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
+      expect(section).toContain("Frontend Engineer");
+      expect(section).not.toContain("**stale**");
+    });
+
     it("buildReportsHealthSection keeps 60m-interval reports healthy within the grace window", async () => {
       const now = Date.now();
       const store = createStoreWithAgentForExec();
@@ -416,6 +475,35 @@ describe("executeHeartbeat", () => {
       const section = await (monitor as any).buildReportsHealthSection("agent-001", store);
       expect(section).toContain("Fast Poller");
       expect(section).not.toContain("**stale**");
+    });
+
+    it("buildReportsHealthSection logs stale decisions with interval source (FN-5362)", async () => {
+      const now = Date.now();
+      const store = createStoreWithAgentForExec();
+      vi.mocked(store.getCachedAgent).mockReturnValue(null);
+      vi.mocked(store.getAgent).mockResolvedValue({
+        id: "agent-overdue",
+        runtimeConfig: { heartbeatIntervalMs: 60 * 60_000 },
+      } as unknown as Agent);
+      vi.mocked(store.getAgentsByReportsTo).mockResolvedValue([
+        {
+          id: "agent-overdue",
+          name: "Overdue",
+          state: "active",
+          taskId: null,
+          lastHeartbeatAt: new Date(now - 100 * 60_000).toISOString(),
+          updatedAt: new Date(now - 100 * 60_000).toISOString(),
+        } as unknown as Agent,
+      ]);
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp", pollIntervalMs: 5 * 60_000 });
+
+      await (monitor as any).buildReportsHealthSection("agent-001", store);
+
+      expect(heartbeatLog.log).toHaveBeenCalledWith(
+        expect.stringContaining("[reports-health] stale report agent-overdue intervalSource=persisted-agent"),
+      );
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("staleThresholdMs="));
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("heartbeatAgeMs="));
     });
 
     it("buildReportsHealthSection preserves AgentStore method binding for direct-report lookups", async () => {

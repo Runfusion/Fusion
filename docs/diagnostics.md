@@ -53,6 +53,19 @@ The process supervisor logs when it registers a supervised child, starts teardow
 - Audit event: `task:stuck-no-progress-churn-terminalized` with `{ taskId, ignoredStepUpdateCount, stuckKillStreak, lastReason: "no-progress-churn" }`.
 - Outcome: task is marked `status: "failed"`, moved to `in-review`, and not requeued; operators should decompose/rescope the task instead of waiting for more automatic stuck-kill retries.
 
+## Reports health stale-classifier diagnostics (`[reports-health]`)
+
+Direct-report stale decisions in `HeartbeatMonitor.buildReportsHealthSection()` now emit a structured log when an agent is marked `**stale**`.
+
+- Log shape: `[reports-health] stale report <agentId> intervalSource=<source> staleThresholdMs=<n> heartbeatAgeMs=<n>`
+- `intervalSource` values:
+  - `runtimeConfig` — interval came from cached per-agent runtime config
+  - `persisted-agent` — cache was missing/sparse; interval came from persisted `getAgent()` row
+  - `monitor-default` — no per-agent interval available; monitor default interval used
+- `staleThresholdMs` is the computed stale threshold (`max(1.5 × interval, 5m floor)`)
+- `heartbeatAgeMs` is the report's current heartbeat age at classification time
+- Healthy reports do not emit this diagnostic; only stale decisions do
+
 ## Broad-scope triage intake (`[triage]`)
 
 - Trigger shape: `TriageProcessor.finalizeApprovedTask()` scores the prompt/description against `packages/engine/src/triage-broad-scope-heuristics.ts` and flags advisory decomposition risk when the score reaches `>= 3`.

@@ -6430,7 +6430,7 @@ export async function aiMergeTask(
       audit,
       runContext: engineRunContext,
       runInitCommand: false,
-      createWorktree: async (branch, path, taskId, startPoint, allowSiblingBranchRename) => {
+      createWorktree: async (branch, path, _taskId, _startPoint, _allowSiblingBranchRename) => {
         await execAsync(`git worktree add -f ${quoteArg(path)} ${quoteArg(branch)}`, {
           cwd: projectRootDir,
           encoding: "utf-8",

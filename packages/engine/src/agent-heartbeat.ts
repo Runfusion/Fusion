@@ -2995,7 +2995,10 @@ export class HeartbeatMonitor {
   }
 
   private async buildReportsHealthSection(agentId: string, agentStore: AgentStore): Promise<string | null> {
-    const storeWithReports = agentStore as AgentStore & { getAgentsByReportsTo?: (id: string) => Promise<Agent[]> };
+    const storeWithReports = agentStore as AgentStore & {
+      getAgentsByReportsTo?: (id: string) => Promise<Agent[]>;
+      getAgent?: (id: string) => Promise<Agent | null>;
+    };
     if (typeof storeWithReports.getAgentsByReportsTo !== "function") {
       return null;
     }
@@ -3012,8 +3015,28 @@ export class HeartbeatMonitor {
     }
 
     const now = Date.now();
-    const rows = reports.map((report) => {
-      const { pollIntervalMs, heartbeatTimeoutMs } = this.resolveAgentConfig(report.id);
+    const rows = await Promise.all(reports.map(async (report) => {
+      const resolvedConfig = this.resolveAgentConfig(report.id);
+      let pollIntervalMs = resolvedConfig.pollIntervalMs;
+      let intervalSource: "runtimeConfig" | "persisted-agent" | "monitor-default" = "monitor-default";
+
+      try {
+        const cachedAgent = this.configStore.getCachedAgent?.(report.id);
+        if (cachedAgent?.runtimeConfig && typeof cachedAgent.runtimeConfig.heartbeatIntervalMs === "number" && Number.isFinite(cachedAgent.runtimeConfig.heartbeatIntervalMs)) {
+          pollIntervalMs = Math.max(1000, cachedAgent.runtimeConfig.heartbeatIntervalMs);
+          intervalSource = "runtimeConfig";
+        } else if (typeof storeWithReports.getAgent === "function") {
+          const persisted = await storeWithReports.getAgent(report.id);
+          if (persisted?.runtimeConfig && typeof persisted.runtimeConfig.heartbeatIntervalMs === "number" && Number.isFinite(persisted.runtimeConfig.heartbeatIntervalMs)) {
+            pollIntervalMs = Math.max(1000, persisted.runtimeConfig.heartbeatIntervalMs);
+            intervalSource = "persisted-agent";
+          }
+        }
+      } catch (reportsHealthConfigErr) {
+        heartbeatLog.warn(`[reports-health] failed to resolve interval for ${report.id}: ${reportsHealthConfigErr instanceof Error ? reportsHealthConfigErr.message : String(reportsHealthConfigErr)} — using monitor-default`);
+      }
+
+      const { heartbeatTimeoutMs } = resolvedConfig;
       const staleThresholdMs = Math.max(
         pollIntervalMs * REPORTS_STALE_INTERVAL_MULTIPLIER,
         MIN_HEARTBEAT_STALENESS_MS,
@@ -3030,13 +3053,14 @@ export class HeartbeatMonitor {
         health = heartbeatAgeMs <= heartbeatTimeoutMs * 2 ? "healthy" : "**stuck**";
       } else if ((report.state === "active" || report.state === "idle") && heartbeatAgeMs > staleThresholdMs) {
         health = "**stale**";
+        heartbeatLog.log(`[reports-health] stale report ${report.id} intervalSource=${intervalSource} staleThresholdMs=${staleThresholdMs} heartbeatAgeMs=${heartbeatAgeMs}`);
       }
 
       const task = report.taskId ?? "—";
       const state = report.state;
       const heartbeat = formatRelativeTime(report.lastHeartbeatAt);
       return `| ${report.name} | ${state} | ${task} | ${heartbeat} | ${health} |`;
-    });
+    }));
 
     const hasStuck = rows.some((row) => row.includes("**stuck**"));
     const hasStale = rows.some((row) => row.includes("**stale**"));
