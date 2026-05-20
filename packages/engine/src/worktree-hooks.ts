@@ -16,7 +16,15 @@ function toShellCasePattern(pattern: string): string {
     .replace(/\[a-z0-9-\]\+/g, "[a-z0-9-]*");
 }
 
-export function buildIdentityGuardHook(taskId: string, allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS): string {
+/**
+ * Build the shared pre-commit identity-guard hook.
+ *
+ * The emitted script must stay metadata-driven because linked git worktrees share
+ * the common hooks directory. The install-time taskId is intentionally unused in
+ * the hook body; each commit resolves its owning task from `fusion-task-id` and
+ * lowercases it to stay aligned with canonicalFusionBranchName(taskId).
+ */
+export function buildIdentityGuardHook(_taskId: string, allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS): string {
   const allowChecks = allowedBranchPatterns.map((pattern) => `  ${toShellCasePattern(pattern)}) exit 0 ;;`).join("\n");
 
   return `#!/bin/sh
@@ -30,14 +38,10 @@ fi
 
 WORKTREE_TASK_ID=$(cat "$TASK_FILE")
 # Keep this canonicalized in lockstep with canonicalFusionBranchName(taskId)
-EXPECTED_BRANCH="fusion/${taskId.toLowerCase()}"
+EXPECTED_BRANCH="fusion/$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"
 
 if ! HEAD_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
   HEAD_BRANCH="detached"
-fi
-
-if [ "$WORKTREE_TASK_ID" != "${taskId}" ] && [ "$WORKTREE_TASK_ID" != "${taskId.toLowerCase()}" ]; then
-  EXPECTED_BRANCH="fusion/$WORKTREE_TASK_ID"
 fi
 
 if [ "$HEAD_BRANCH" = "$EXPECTED_BRANCH" ]; then

@@ -11,9 +11,23 @@ describe("worktree-hooks", () => {
     const hook = buildIdentityGuardHook("FN-1");
     expect(hook).toContain("#!/bin/sh");
     expect(hook).toContain("TASK_FILE=$(git rev-parse --git-path fusion-task-id)");
-    expect(hook).toContain('EXPECTED_BRANCH="fusion/fn-1"');
+    expect(hook).toContain("tr '[:upper:]' '[:lower:]'");
+    expect(hook).toContain(`EXPECTED_BRANCH="fusion/$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"`);
     expect(hook).toContain("fusion: refusing commit — worktree owns");
     expect(hook).toContain("fusion/step-[0-9]*-[a-z0-9-]*");
+    expect(hook).not.toContain("fusion/fn-1");
+    expect(hook).not.toContain("FN-1");
+    expect(hook).not.toContain("fn-1");
+    expect(hook).not.toMatch(/if \[ "\$WORKTREE_TASK_ID" !=/);
+  });
+
+  it("does not vary by install-time task id", () => {
+    const firstHook = buildIdentityGuardHook("FN-1");
+    const secondHook = buildIdentityGuardHook("FN-9999");
+
+    expect(firstHook).toBe(secondHook);
+    expect(firstHook).not.toContain("FN-1");
+    expect(firstHook).not.toContain("FN-9999");
   });
 
   it("builds commit-msg trailer hook with expected lines", () => {
