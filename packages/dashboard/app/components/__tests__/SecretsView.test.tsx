@@ -60,6 +60,22 @@ describe("SecretsView", () => {
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
   });
 
+  it("FN-5222: does not render a docs link in the cross-node sync card", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { secrets: [] } }))
+        .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } })),
+    );
+
+    render(<SecretsView addToast={vi.fn()} />);
+
+    await screen.findByText("Not configured");
+    expect(screen.queryByRole("link", { name: "Learn more" })).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="/docs/secrets.md"]')).toBeNull();
+  });
+
   it("submitting matching passphrases issues PUT and re-fetches status", async () => {
     const fetchMock = vi
       .fn()

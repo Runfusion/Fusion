@@ -275,8 +275,7 @@ export const SecretsView = ({ addToast }: SecretsViewProps) => {
           </div>
         </div>
         <p className="secrets-sync-copy">
-          Shared passphrase used to wrap cross-node secret bundles. Both nodes in a sync pair must share the same value. Stored locally only; never transmitted. {" "}
-          <a href="/docs/secrets.md#cross-node-sync" target="_blank" rel="noreferrer">Learn more</a>
+          Shared passphrase used to wrap cross-node secret bundles. Both nodes in a sync pair must share the same value. Stored locally only; never transmitted.
         </p>
       </article>
 
