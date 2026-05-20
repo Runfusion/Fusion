@@ -177,6 +177,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     createTask: vi.fn(),
     moveTask: vi.fn(),
     updateTask: vi.fn(),
+    updateStep: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     archiveTask: vi.fn(),
@@ -206,6 +207,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
     linkGithubIssue: vi.fn().mockResolvedValue(undefined),
     recordActivity: vi.fn().mockResolvedValue(undefined),
+    recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     createWorkflowStep: vi.fn(),
@@ -962,6 +964,173 @@ describe("POST /tasks/:id/refine", () => {
   });
 });
 
+describe("POST /tasks/:id/reset", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      updateStep: vi.fn(),
+      updateTask: vi.fn(),
+      moveTask: vi.fn(),
+      logEntry: vi.fn(),
+      getTask: vi.fn(),
+    });
+  });
+
+  function buildApp(engine?: { getTaskStore: () => TaskStore; getAgentStore: () => { listAgents: ReturnType<typeof vi.fn>; syncExecutionTaskLink: ReturnType<typeof vi.fn>; deleteAgent: ReturnType<typeof vi.fn> } }) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, engine ? { engine: engine as any } as any : undefined));
+    return app;
+  }
+
+  it("resets cleanly when moveTask already returns todo with cleared bindings", async () => {
+    const agentStore = {
+      listAgents: vi.fn().mockResolvedValue([
+        { id: "agent-durable", taskId: "FN-5200" },
+        { id: "agent-ephemeral", taskId: "FN-5200", name: "executor-FN-5200", role: "executor", reportsTo: null },
+      ]),
+      syncExecutionTaskLink: vi.fn().mockResolvedValue(undefined),
+      deleteAgent: vi.fn().mockResolvedValue(undefined),
+    };
+    const engine = {
+      getTaskStore: () => store,
+      getAgentStore: () => agentStore,
+    };
+    const staleTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-5200",
+      column: "in-progress" as const,
+      branch: "fusion/fn-5200",
+      worktree: "/tmp/missing-worktree",
+      steps: [{ title: "one", status: "done" }],
+    };
+    const cleanResetTask = {
+      ...staleTask,
+      column: "todo" as const,
+      branch: null,
+      worktree: null,
+      checkedOutBy: null,
+      executionStartedAt: null,
+      sessionFile: null,
+      steps: [{ title: "one", status: "pending" }],
+    };
+
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(staleTask)
+      .mockResolvedValueOnce(cleanResetTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(cleanResetTask);
+
+    const res = await REQUEST(buildApp(engine), "POST", "/api/tasks/FN-5200/reset", JSON.stringify({ confirm: true }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-durable", undefined);
+    expect(agentStore.deleteAgent).toHaveBeenCalledWith("agent-ephemeral");
+    expect(res.body.column).toBe("todo");
+    expect(res.body.branch ?? null).toBeNull();
+    expect(res.body.worktree ?? null).toBeNull();
+  });
+
+  it("FN-5149: reset with stale missing worktree should not return in-progress limbo state", async () => {
+    const agentStore = {
+      listAgents: vi.fn().mockResolvedValue([
+        { id: "agent-durable", taskId: "FN-5149" },
+        { id: "agent-ephemeral", taskId: "FN-5149", name: "executor-FN-5149", role: "executor", reportsTo: null },
+      ]),
+      syncExecutionTaskLink: vi.fn().mockResolvedValue(undefined),
+      deleteAgent: vi.fn().mockResolvedValue(undefined),
+    };
+    const engine = {
+      getTaskStore: () => store,
+      getAgentStore: () => agentStore,
+    };
+    const staleTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-5149",
+      column: "in-progress" as const,
+      branch: "fusion/fn-5149",
+      worktree: "/tmp/missing-worktree",
+      checkedOutBy: "agent-reset",
+      checkedOutAt: "2026-05-19T00:00:00.000Z",
+      checkoutNodeId: "node-1",
+      checkoutRunId: "run-1",
+      checkoutLeaseRenewedAt: "2026-05-19T00:01:00.000Z",
+      checkoutLeaseEpoch: 2,
+      executionStartedAt: "2026-05-19T00:00:00.000Z",
+      sessionFile: "/tmp/session.json",
+      taskDoneRetryCount: 2,
+      worktreeSessionRetryCount: 1,
+      steps: [
+        { title: "one", status: "done" },
+        { title: "two", status: "in-progress" },
+      ],
+    };
+    const driftedAfterReset = {
+      ...staleTask,
+      branch: null,
+      worktree: "/tmp/missing-worktree",
+      column: "in-progress" as const,
+      steps: staleTask.steps.map((step) => ({ ...step, status: "pending" })),
+    };
+    const correctedAfterReset = {
+      ...driftedAfterReset,
+      column: "todo" as const,
+      worktree: null,
+      checkedOutBy: null,
+      checkedOutAt: null,
+      checkoutNodeId: null,
+      checkoutRunId: null,
+      checkoutLeaseRenewedAt: null,
+      checkoutLeaseEpoch: null,
+      executionStartedAt: null,
+      taskDoneRetryCount: null,
+      worktreeSessionRetryCount: null,
+      sessionFile: null,
+    };
+
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(staleTask)
+      .mockResolvedValueOnce(driftedAfterReset)
+      .mockResolvedValueOnce(correctedAfterReset);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(driftedAfterReset);
+    (store.updateTask as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(staleTask)
+      .mockResolvedValueOnce(correctedAfterReset);
+
+    const res = await REQUEST(buildApp(engine), "POST", "/api/tasks/FN-5149/reset", JSON.stringify({ confirm: true }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateStep).toHaveBeenNthCalledWith(1, "FN-5149", 0, "pending");
+    expect(store.updateStep).toHaveBeenNthCalledWith(2, "FN-5149", 1, "pending");
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      domain: "database",
+      mutationType: "task:auto-recover-reset-drift",
+      target: "FN-5149",
+    }));
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-durable", undefined);
+    expect(agentStore.deleteAgent).toHaveBeenCalledWith("agent-ephemeral");
+    expect(store.logEntry).toHaveBeenNthCalledWith(
+      2,
+      "FN-5149",
+      "Auto-corrected reset drift after moveTask — normalized task back to todo with cleared worktree/branch bindings",
+      expect.any(String),
+    );
+    expect(res.body.column).toBe("todo");
+    expect(res.body.branch ?? null).toBeNull();
+    expect(res.body.worktree ?? null).toBeNull();
+    expect(res.body.steps.map((step: { status: string }) => step.status)).toEqual(["pending", "pending"]);
+    expect(res.body.checkedOutBy).toBeFalsy();
+    expect(res.body.executionStartedAt).toBeFalsy();
+  });
+});
+
 describe("DELETE /tasks/:id", () => {
   let store: TaskStore;
 
@@ -971,18 +1140,30 @@ describe("DELETE /tasks/:id", () => {
     });
   });
 
-  function buildApp() {
+  function buildApp(engine?: { getTaskStore: () => TaskStore; getAgentStore: () => { listAgents: ReturnType<typeof vi.fn>; syncExecutionTaskLink: ReturnType<typeof vi.fn>; deleteAgent: ReturnType<typeof vi.fn> } }) {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store));
+    app.use("/api", createApiRoutes(store, engine ? { engine: engine as any } as any : undefined));
     return app;
   }
 
   it("deletes a task with the default safe mode", async () => {
+    const agentStore = {
+      listAgents: vi.fn().mockResolvedValue([
+        { id: "agent-durable", taskId: "KB-001" },
+        { id: "agent-ephemeral", taskId: "KB-001", name: "executor-KB-001", role: "executor", reportsTo: null },
+      ]),
+      syncExecutionTaskLink: vi.fn().mockResolvedValue(undefined),
+      deleteAgent: vi.fn().mockResolvedValue(undefined),
+    };
+    const engine = {
+      getTaskStore: () => store,
+      getAgentStore: () => agentStore,
+    };
     const deletedTask = { ...FAKE_TASK_DETAIL, id: "KB-001" };
     (store.deleteTask as ReturnType<typeof vi.fn>).mockResolvedValue(deletedTask);
 
-    const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001");
+    const res = await REQUEST(buildApp(engine), "DELETE", "/api/tasks/KB-001");
 
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("KB-001");
@@ -995,6 +1176,8 @@ describe("DELETE /tasks/:id", () => {
         runId: expect.stringMatching(/^synthetic-dashboard-delete-KB-001-/),
       }),
     }));
+    expect(agentStore.syncExecutionTaskLink).toHaveBeenCalledWith("agent-durable", undefined);
+    expect(agentStore.deleteAgent).toHaveBeenCalledWith("agent-ephemeral");
   });
 
   it("returns structured 409 conflict when delete is blocked by dependents", async () => {

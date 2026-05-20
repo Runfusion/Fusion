@@ -678,6 +678,7 @@ export class SelfHealingManager {
       { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts().then(() => undefined) },
       // FN-4962 ordering invariant: metadata reconcile must run before stale-active reclaim.
       { name: "reconcile-task-worktree-metadata", fn: () => this.reconcileTaskWorktreeMetadata().then(() => undefined) },
+      { name: "recover-in-progress-limbo", fn: () => this.recoverInProgressLimbo().then(() => undefined) },
       { name: "reconcile-in-review-branch-rebind", fn: () => this.reconcileInReviewBranchRebind().then(() => undefined) },
       { name: "reclaim-stale-active-branches", fn: () => this.reclaimStaleActiveBranches().then(() => undefined) },
       { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls().then(() => undefined) },
@@ -1314,6 +1315,7 @@ export class SelfHealingManager {
           { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts() },
           // FN-4962 ordering invariant: metadata reconcile must run before stale-active reclaim.
           { name: "reconcile-task-worktree-metadata", fn: () => this.reconcileTaskWorktreeMetadata() },
+          { name: "recover-in-progress-limbo", fn: () => this.recoverInProgressLimbo() },
           { name: "reconcile-in-review-branch-rebind", fn: () => this.reconcileInReviewBranchRebind().then(() => undefined) },
           { name: "reclaim-stale-active-branches", fn: () => this.reclaimStaleActiveBranches() },
           { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls() },
@@ -5683,6 +5685,112 @@ export class SelfHealingManager {
    * established, typically when the scheduler reserved a worktree path but the
    * executor never materialized it or crashed before tracking the run.
    */
+  async recoverInProgressLimbo(): Promise<number> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) {
+      return 0;
+    }
+
+    try {
+      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const now = Date.now();
+
+      const stranded = tasks.filter((task) => {
+        if (task.column !== "in-progress" || task.paused || executingIds.has(task.id)) {
+          return false;
+        }
+        const hasMissingWorktreePath = typeof task.worktree === "string" && task.worktree.length > 0 && !existsSync(task.worktree);
+        const hasNoWorktreePath = !task.worktree;
+        if (!hasMissingWorktreePath && !hasNoWorktreePath) {
+          return false;
+        }
+        if (typeof task.branch === "string" && task.branch.trim().length > 0) {
+          return false;
+        }
+        if (task.steps.some((step) => step.status !== "pending")) {
+          return false;
+        }
+        const staleness = now - new Date(task.updatedAt).getTime();
+        return staleness >= ORPHANED_EXECUTION_RECOVERY_GRACE_MS;
+      });
+
+      const describeWorktreeState = (task: Task): string => task.worktree ? "missing worktree path" : "cleared worktree metadata";
+
+      if (stranded.length === 0) return 0;
+
+      log.warn(`Found ${stranded.length} in-progress limbo task(s) with missing/cleared worktree + null branch`);
+
+      let recovered = 0;
+      for (const task of stranded) {
+        try {
+          if (this.options.leaseManager && task.checkedOutBy) {
+            await this.options.leaseManager.recoverAbandonedLease(
+              task.id,
+              `in-progress limbo: ${describeWorktreeState(task)} + null branch`,
+              { preserveProgress: true },
+            );
+            await this.options.leaseManager.reconcileLeaseRow(task.id);
+          }
+
+          const stepStatuses = task.steps.map((step) => step.status);
+          const ageMs = Math.max(0, now - new Date(task.updatedAt).getTime());
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+            worktree: null,
+            branch: null,
+            checkedOutBy: null,
+            executionStartedAt: null,
+            worktreeSessionRetryCount: null,
+            taskDoneRetryCount: null,
+            sessionFile: null,
+          });
+          await this.store.logEntry(
+            task.id,
+            `Auto-recovered in-progress limbo — ${describeWorktreeState(task)}/null branch with no step progress, moved back to todo`,
+            JSON.stringify({
+              priorWorktree: task.worktree ?? null,
+              priorBranch: task.branch ?? null,
+              ageMs,
+              stepStatuses,
+            }),
+          );
+          await createRunAuditor(this.store, {
+            runId: generateSyntheticRunId("self-healing-in-progress-limbo", task.id),
+            agentId: "self-healing",
+            taskId: task.id,
+            taskLineageId: task.lineageId,
+            phase: "recover-in-progress-limbo",
+          }).database({
+            type: "task:auto-recover-in-progress-limbo",
+            target: task.id,
+            metadata: {
+              priorWorktree: task.worktree ?? null,
+              priorBranch: task.branch ?? null,
+              ageMs,
+              stepStatuses,
+            },
+          });
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.error(`Failed to recover in-progress limbo task ${task.id}: ${errorMessage}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} in-progress limbo task(s) → todo`);
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`In-progress limbo recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
   async recoverOrphanedExecutions(): Promise<number> {
     try {
       const tasks = await this.store.listTasks({ column: "in-progress", slim: true });

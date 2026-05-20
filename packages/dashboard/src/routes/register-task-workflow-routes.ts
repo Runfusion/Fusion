@@ -30,12 +30,14 @@ import {
   reconcileDeterministicDuplicate,
   extractIntentSignature,
   findNearDuplicates,
+  isEphemeralAgent,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
 import { planTaskWorktreePath } from "@fusion/engine";
+import type { RunAuditEventInput } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchSelection } from "./branch-selection.js";
@@ -46,6 +48,82 @@ const REVIEW_STEP_RE = /^(plan|code) review Step (\d+): (APPROVE|REVISE|RETHINK|
 const DUPLICATE_STOPWORDS = new Set(["a", "an", "the", "and", "or", "of", "to", "for", "in", "is", "on", "with", "fn"]);
 
 export const __fingerprintCreateLocksForTests = deterministicGuardLocks;
+
+const RESET_TASK_FIELDS = {
+  worktree: null,
+  branch: null,
+  currentStep: 0,
+  status: null,
+  error: null,
+  stuckKillCount: 0,
+  taskDoneRetryCount: null,
+  worktreeSessionRetryCount: null,
+  workflowStepRetries: undefined,
+  recoveryRetryCount: null,
+  nextRecoveryAt: null,
+  postReviewFixCount: 0,
+  verificationFailureCount: 0,
+  mergeConflictBounceCount: 0,
+  checkedOutBy: null,
+  executionStartedAt: null,
+  sessionFile: null,
+} as const;
+
+const RESET_DRIFT_CORRECTION_FIELDS = {
+  column: "todo" as const,
+  worktree: null,
+  branch: null,
+  status: null,
+  error: null,
+  checkedOutBy: null,
+  executionStartedAt: null,
+  taskDoneRetryCount: null,
+  worktreeSessionRetryCount: null,
+  sessionFile: null,
+} as const;
+
+async function emitResetDriftAudit(
+  scopedStore: TaskStore,
+  taskId: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const recordRunAuditEvent = (scopedStore as TaskStore & {
+    recordRunAuditEvent?: (input: RunAuditEventInput) => Promise<void>;
+  }).recordRunAuditEvent;
+  if (typeof recordRunAuditEvent !== "function") {
+    return;
+  }
+  await recordRunAuditEvent({
+    taskId,
+    agentId: "system",
+    runId: `synthetic-dashboard-reset-${taskId}-${Date.now()}`,
+    domain: "database",
+    mutationType: "task:auto-recover-reset-drift",
+    target: taskId,
+    metadata,
+  });
+}
+
+async function releaseExecutionAgentBindings(
+  engine: { getAgentStore?: () => { listAgents: (input: { includeEphemeral?: boolean }) => Promise<Array<{ id: string; taskId?: string }>>; syncExecutionTaskLink: (agentId: string, taskId: string | undefined) => Promise<unknown>; deleteAgent: (agentId: string) => Promise<unknown>; getAgent?: (agentId: string) => Promise<unknown>; } | undefined } | undefined,
+  taskId: string,
+): Promise<void> {
+  const agentStore = engine?.getAgentStore?.();
+  if (!agentStore) {
+    return;
+  }
+
+  const linkedAgents = (await agentStore.listAgents({ includeEphemeral: true }))
+    .filter((agent) => agent.taskId === taskId);
+
+  for (const agent of linkedAgents) {
+    if (isEphemeralAgent(agent as never)) {
+      await agentStore.deleteAgent(agent.id);
+      continue;
+    }
+    await agentStore.syncExecutionTaskLink(agent.id, undefined);
+  }
+}
 
 function buildDuplicateQuery(title: string | undefined, description: string): string {
   const tokens = `${title ?? ""} ${description}`
@@ -858,7 +936,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Nuclear reset — erase all progress and allocate a fresh worktree+branch on next run
   router.post("/tasks/:id/reset", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
 
       const { confirm: confirmed } = (req.body ?? {}) as { confirm?: boolean };
       if (!confirmed) {
@@ -876,28 +954,56 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
-      await scopedStore.updateTask(req.params.id, {
-        worktree: null,
-        branch: null,
-        currentStep: 0,
-        status: null,
-        error: null,
-        stuckKillCount: 0,
-        taskDoneRetryCount: null,
-        workflowStepRetries: undefined,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-        postReviewFixCount: 0,
-        verificationFailureCount: 0,
-        mergeConflictBounceCount: 0,
-      });
+      await scopedStore.updateTask(req.params.id, RESET_TASK_FIELDS);
 
       await scopedStore.logEntry(
         req.params.id,
         "Task reset by user — all progress cleared, fresh worktree and branch will be allocated",
       );
 
-      const updated = await scopedStore.moveTask(req.params.id, "todo");
+      await scopedStore.moveTask(req.params.id, "todo");
+      await releaseExecutionAgentBindings(engine, req.params.id);
+      let updated = await scopedStore.getTask(req.params.id);
+      if (!updated) {
+        throw notFound(`Task ${req.params.id} not found after reset`);
+      }
+
+      const needsDriftCorrection = updated.column !== "todo"
+        || (updated.worktree ?? null) !== null
+        || (updated.branch ?? null) !== null
+        || (updated.checkedOutBy ?? null) !== null
+        || (updated.executionStartedAt ?? null) !== null;
+
+      if (needsDriftCorrection) {
+        const offendingSnapshot = {
+          column: updated.column,
+          worktree: updated.worktree ?? null,
+          branch: updated.branch ?? null,
+          checkedOutBy: updated.checkedOutBy ?? null,
+          executionStartedAt: updated.executionStartedAt ?? null,
+          taskDoneRetryCount: updated.taskDoneRetryCount ?? null,
+          worktreeSessionRetryCount: updated.worktreeSessionRetryCount ?? null,
+          sessionFile: updated.sessionFile ?? null,
+        };
+        await scopedStore.updateTask(req.params.id, RESET_DRIFT_CORRECTION_FIELDS);
+        await scopedStore.logEntry(
+          req.params.id,
+          "Auto-corrected reset drift after moveTask — normalized task back to todo with cleared worktree/branch bindings",
+          JSON.stringify(offendingSnapshot),
+        );
+        await emitResetDriftAudit(scopedStore, req.params.id, offendingSnapshot);
+        updated = await scopedStore.getTask(req.params.id);
+        if (!updated) {
+          throw notFound(`Task ${req.params.id} not found after reset drift correction`);
+        }
+      }
+
+      if (updated.column !== "todo" || (updated.worktree ?? null) !== null || (updated.branch ?? null) !== null) {
+        throw conflict(
+          `Reset refused to return task ${req.params.id} in limbo state (${updated.column}, branch=${updated.branch ?? "null"}, worktree=${updated.worktree ?? "null"})`,
+        );
+      }
+
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -2760,7 +2866,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Delete task
   router.delete("/tasks/:id", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
       const removeDependencyReferences = req.query.removeDependencyReferences === "1"
         || req.query.removeDependencyReferences === "true";
       const removeLineageReferences = req.query.removeLineageReferences === "1"
@@ -2783,6 +2889,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           runId: `synthetic-dashboard-delete-${req.params.id}-${Date.now()}`,
         },
       });
+      await releaseExecutionAgentBindings(engine, req.params.id);
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
