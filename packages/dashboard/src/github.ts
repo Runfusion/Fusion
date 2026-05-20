@@ -126,6 +126,9 @@ export interface PrComment {
   html_url: string;
 }
 
+const PR_REVIEW_PAGE_SIZE = 100;
+const MAX_PR_REVIEW_PAGES = 10;
+
 export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
 export type PrCheckState =
   | "success"
@@ -269,6 +272,57 @@ interface PrReviewDetails {
   reviewDecision: ReviewDecision;
   comments: GhPrViewJson["comments"];
   reviews: GhReviewJson[];
+}
+
+interface GraphQlPageInfo {
+  hasNextPage?: boolean | null;
+  endCursor?: string | null;
+}
+
+interface GraphQlPrCommentNode {
+  id: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+  author?: { login?: string | null } | null;
+}
+
+interface GraphQlPrReviewNode {
+  id: string;
+  state: string;
+  body?: string | null;
+  submittedAt?: string | null;
+  url?: string | null;
+  author?: { login?: string | null } | null;
+}
+
+interface RestPullRequestComment {
+  id: number;
+  body?: string | null;
+  user?: { login?: string | null } | null;
+  created_at?: string;
+  updated_at?: string;
+  html_url?: string;
+}
+
+interface GraphQlPrReviewDetailsPayload {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewDecision?: ReviewDecision;
+        comments?: {
+          nodes?: Array<GraphQlPrCommentNode | null>;
+          pageInfo?: GraphQlPageInfo | null;
+        } | null;
+        reviews?: {
+          nodes?: Array<GraphQlPrReviewNode | null>;
+          pageInfo?: GraphQlPageInfo | null;
+        } | null;
+      } | null;
+    } | null;
+  };
+  errors?: Array<{ message: string }>;
 }
 
 interface GhPrListJson {
@@ -990,105 +1044,228 @@ export class GitHubClient {
   }
 
   private async getPrReviewDetailsWithGh(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
-    const pr = await runGhJsonAsync<GhPrViewJson>([
+    const pr = await runGhJsonAsync<Pick<GhPrViewJson, "reviewDecision">>([
       "pr",
       "view",
       String(number),
       "--repo",
       `${owner}/${repo}`,
       "--json",
-      "reviewDecision,reviews,comments",
+      "reviewDecision",
     ]);
+
+    const issueComments = await this.fetchGhApiPages<GhPrViewJson["comments"][number]>(
+      `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}/comments`,
+      owner,
+      repo,
+      number,
+      "issue-comments",
+    );
+    const pullComments = await this.fetchGhApiPages<RestPullRequestComment>(
+      `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/comments`,
+      owner,
+      repo,
+      number,
+      "pull-comments",
+    );
+    const reviews = await this.fetchGhApiPages<GhReviewJson>(
+      `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/reviews`,
+      owner,
+      repo,
+      number,
+      "reviews",
+    );
+
+    const comments = [
+      ...(issueComments ?? []).map((comment) => ({
+        id: comment.id,
+        body: comment.body,
+        author: { login: comment.author?.login ?? "reviewer" },
+        createdAt: comment.createdAt,
+        updatedAt: comment.updatedAt,
+        url: comment.url,
+      })),
+      ...(pullComments ?? []).map((comment) => ({
+        id: String(comment.id),
+        body: comment.body ?? "",
+        author: { login: comment.user?.login ?? "reviewer" },
+        createdAt: comment.created_at ?? new Date().toISOString(),
+        updatedAt: comment.updated_at ?? comment.created_at ?? new Date().toISOString(),
+        url: comment.html_url ?? "",
+      })),
+    ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
     return {
       reviewDecision: pr.reviewDecision ?? null,
-      comments: pr.comments ?? [],
-      reviews: pr.reviews ?? [],
+      comments,
+      reviews: (reviews ?? []).map((review) => ({
+        id: review.id,
+        state: review.state,
+        body: review.body,
+        submittedAt: review.submittedAt,
+        url: review.url,
+        author: { login: review.author?.login ?? "reviewer" },
+      })),
     };
   }
 
+  private async fetchGhApiPages<T>(
+    path: string,
+    owner: string,
+    repo: string,
+    number: number,
+    label: string,
+  ): Promise<T[]> {
+    const items: T[] = [];
+
+    for (let page = 1; page <= MAX_PR_REVIEW_PAGES; page += 1) {
+      const separator = path.includes("?") ? "&" : "?";
+      const pagePath = `${path}${separator}per_page=${PR_REVIEW_PAGE_SIZE}&page=${page}`;
+      const pageItems = await runGhJsonAsync<T[]>(["api", pagePath]);
+      items.push(...pageItems);
+      if (pageItems.length < PR_REVIEW_PAGE_SIZE) {
+        return items;
+      }
+    }
+
+    process.stderr.write(
+      `[github] PR review pagination cap hit for ${owner}/${repo}#${number} (${label}) after ${MAX_PR_REVIEW_PAGES} pages\n`,
+    );
+    return items;
+  }
+
   private async getPrReviewDetailsWithApi(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
-    const response = await fetch(`${this.baseUrl}/graphql`, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify({
-        query: `query PullRequestReviewDetails($owner: String!, $repo: String!, $number: Int!) {
-          repository(owner: $owner, name: $repo) {
-            pullRequest(number: $number) {
-              reviewDecision
-              comments(first: 100) {
-                nodes {
-                  id
-                  body
-                  createdAt
-                  updatedAt
-                  url
-                  author { login }
+    const comments: PrReviewDetails["comments"] = [];
+    const reviews: PrReviewDetails["reviews"] = [];
+    let reviewDecision: ReviewDecision = null;
+    let commentsAfter: string | null = null;
+    let reviewsAfter: string | null = null;
+    let fetchComments = true;
+    let fetchReviews = true;
+
+    for (let page = 1; page <= MAX_PR_REVIEW_PAGES; page += 1) {
+      const response = await fetch(`${this.baseUrl}/graphql`, {
+        method: "POST",
+        headers: this.buildHeaders(),
+        body: JSON.stringify({
+          query: `query PullRequestReviewDetails(
+            $owner: String!
+            $repo: String!
+            $number: Int!
+            $commentsAfter: String
+            $reviewsAfter: String
+            $fetchComments: Boolean!
+            $fetchReviews: Boolean!
+          ) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $number) {
+                reviewDecision
+                comments(first: ${PR_REVIEW_PAGE_SIZE}, after: $commentsAfter) @include(if: $fetchComments) {
+                  nodes {
+                    id
+                    body
+                    createdAt
+                    updatedAt
+                    url
+                    author { login }
+                  }
+                  pageInfo {
+                    hasNextPage
+                    endCursor
+                  }
                 }
-              }
-              reviews(first: 100) {
-                nodes {
-                  id
-                  state
-                  body
-                  submittedAt
-                  url
-                  author { login }
+                reviews(first: ${PR_REVIEW_PAGE_SIZE}, after: $reviewsAfter) @include(if: $fetchReviews) {
+                  nodes {
+                    id
+                    state
+                    body
+                    submittedAt
+                    url
+                    author { login }
+                  }
+                  pageInfo {
+                    hasNextPage
+                    endCursor
+                  }
                 }
               }
             }
-          }
-        }`,
-        variables: { owner, repo, number },
-      }),
-    });
+          }`,
+          variables: {
+            owner,
+            repo,
+            number,
+            commentsAfter,
+            reviewsAfter,
+            fetchComments,
+            fetchReviews,
+          },
+        }),
+      });
 
-    const payload = await response.json() as {
-      data?: {
-        repository?: {
-          pullRequest?: {
-            reviewDecision?: ReviewDecision;
-            comments?: { nodes?: Array<{ id: string; body: string; createdAt: string; updatedAt: string; url: string; author?: { login?: string | null } | null } | null> };
-            reviews?: { nodes?: Array<{ id: string; state: string; body?: string | null; submittedAt?: string | null; url?: string | null; author?: { login?: string | null } | null } | null> };
-          };
+      const payload = await response.json() as GraphQlPrReviewDetailsPayload;
+
+      if (!response.ok || payload.errors?.length) {
+        const message = payload.errors?.[0]?.message || response.statusText;
+        throw new Error(`GitHub API error: ${response.status} ${message}`);
+      }
+
+      const pr = payload.data?.repository?.pullRequest;
+      if (!pr) {
+        throw new Error(`PR #${number} not found in ${owner}/${repo}`);
+      }
+
+      reviewDecision = pr.reviewDecision ?? null;
+
+      if (fetchComments) {
+        comments.push(...(pr.comments?.nodes ?? []).flatMap((comment) => {
+          if (!comment) return [];
+          return [{
+            id: comment.id,
+            body: comment.body,
+            createdAt: comment.createdAt,
+            updatedAt: comment.updatedAt,
+            url: comment.url,
+            author: { login: comment.author?.login ?? "reviewer" },
+          }];
+        }));
+        fetchComments = Boolean(pr.comments?.pageInfo?.hasNextPage);
+        commentsAfter = pr.comments?.pageInfo?.endCursor ?? null;
+      }
+
+      if (fetchReviews) {
+        reviews.push(...(pr.reviews?.nodes ?? []).flatMap((review) => {
+          if (!review) return [];
+          return [{
+            id: review.id,
+            state: review.state,
+            body: review.body,
+            submittedAt: review.submittedAt,
+            url: review.url,
+            author: { login: review.author?.login ?? "reviewer" },
+          }];
+        }));
+        fetchReviews = Boolean(pr.reviews?.pageInfo?.hasNextPage);
+        reviewsAfter = pr.reviews?.pageInfo?.endCursor ?? null;
+      }
+
+      if (!fetchComments && !fetchReviews) {
+        return {
+          reviewDecision,
+          comments,
+          reviews,
         };
-      };
-      errors?: Array<{ message: string }>;
-    };
-
-    if (!response.ok || payload.errors?.length) {
-      const message = payload.errors?.[0]?.message || response.statusText;
-      throw new Error(`GitHub API error: ${response.status} ${message}`);
+      }
     }
 
-    const pr = payload.data?.repository?.pullRequest;
-    if (!pr) {
-      throw new Error(`PR #${number} not found in ${owner}/${repo}`);
-    }
+    process.stderr.write(
+      `[github] PR review pagination cap hit for ${owner}/${repo}#${number} (graphql) after ${MAX_PR_REVIEW_PAGES} pages\n`,
+    );
 
     return {
-      reviewDecision: pr.reviewDecision ?? null,
-      comments: (pr.comments?.nodes ?? []).flatMap((comment) => {
-        if (!comment) return [];
-        return [{
-          id: comment.id,
-          body: comment.body,
-          createdAt: comment.createdAt,
-          updatedAt: comment.updatedAt,
-          url: comment.url,
-          author: { login: comment.author?.login ?? "reviewer" },
-        }];
-      }),
-      reviews: (pr.reviews?.nodes ?? []).flatMap((review) => {
-        if (!review) return [];
-        return [{
-          id: review.id,
-          state: review.state,
-          body: review.body,
-          submittedAt: review.submittedAt,
-          url: review.url,
-          author: { login: review.author?.login ?? "reviewer" },
-        }];
-      }),
+      reviewDecision,
+      comments,
+      reviews,
     };
   }
 

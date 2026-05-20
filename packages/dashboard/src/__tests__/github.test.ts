@@ -1581,14 +1581,138 @@ describe("GitHubClient", () => {
     });
   });
 
+  describe("FN-5181 PR review pagination", () => {
+    it("FN-5181 paginates GraphQL review details across comment and review pages", async () => {
+      mockIsGhAvailable.mockReturnValue(false);
+      const clientWithToken = new GitHubClient("ghp_token");
+      const fetchSpy = vi.spyOn(global, "fetch" as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewDecision: "CHANGES_REQUESTED",
+                  comments: {
+                    nodes: [
+                      { id: "C_1", body: "first comment", createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:01Z", url: "https://example.com/c1", author: { login: "alice" } },
+                    ],
+                    pageInfo: { hasNextPage: true, endCursor: "comment-cursor-1" },
+                  },
+                  reviews: {
+                    nodes: [
+                      { id: "R_1", state: "COMMENTED", body: "first review", submittedAt: "2024-01-01T00:00:02Z", url: "https://example.com/r1", author: { login: "reviewer-1" } },
+                    ],
+                    pageInfo: { hasNextPage: true, endCursor: "review-cursor-1" },
+                  },
+                },
+              },
+            },
+          }),
+        } as any)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewDecision: "CHANGES_REQUESTED",
+                  comments: {
+                    nodes: [
+                      { id: "C_2", body: "second comment", createdAt: "2024-01-01T00:00:03Z", updatedAt: "2024-01-01T00:00:04Z", url: "https://example.com/c2", author: { login: "bob" } },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: "comment-cursor-2" },
+                  },
+                  reviews: {
+                    nodes: [
+                      { id: "R_2", state: "APPROVED", body: "second review", submittedAt: "2024-01-01T00:00:05Z", url: "https://example.com/r2", author: { login: "reviewer-2" } },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: "review-cursor-2" },
+                  },
+                },
+              },
+            },
+          }),
+        } as any);
+
+      const details = await (clientWithToken as any).getPrReviewDetailsWithApi("owner", "repo", 1);
+
+      expect(details.reviewDecision).toBe("CHANGES_REQUESTED");
+      expect(details.comments.map((comment: any) => comment.id)).toEqual(["C_1", "C_2"]);
+      expect(details.reviews.map((review: any) => review.id)).toEqual(["R_1", "R_2"]);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const firstBody = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+      const secondBody = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body));
+      expect(firstBody.variables).toEqual(expect.objectContaining({ commentsAfter: null, reviewsAfter: null, fetchComments: true, fetchReviews: true }));
+      expect(secondBody.variables).toEqual(expect.objectContaining({ commentsAfter: "comment-cursor-1", reviewsAfter: "review-cursor-1", fetchComments: true, fetchReviews: true }));
+      fetchSpy.mockRestore();
+    });
+
+    it("FN-5181 paginates gh review details across issue comments, inline comments, and review pages", async () => {
+      const issueCommentPageOne = Array.from({ length: 100 }, (_, index) => ({
+        id: `issue-${index + 1}`,
+        body: `issue comment ${index + 1}`,
+        author: { login: `issue-author-${index + 1}` },
+        createdAt: new Date(Date.UTC(2024, 0, 1, 0, 0, index)).toISOString(),
+        updatedAt: new Date(Date.UTC(2024, 0, 1, 0, 1, index)).toISOString(),
+        url: `https://example.com/issue-${index + 1}`,
+      }));
+      const reviewPageOne = Array.from({ length: 100 }, (_, index) => ({
+        id: `review-${index + 1}`,
+        state: "COMMENTED",
+        body: `review ${index + 1}`,
+        submittedAt: new Date(Date.UTC(2024, 0, 1, 0, 2, index)).toISOString(),
+        url: `https://example.com/review-${index + 1}`,
+        author: { login: `reviewer-${index + 1}` },
+      }));
+
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({ reviewDecision: "APPROVED" })
+        .mockResolvedValueOnce(issueCommentPageOne)
+        .mockResolvedValueOnce([
+          { id: "issue-101", body: "issue comment 101", author: { login: "bob" }, createdAt: "2024-01-01T00:10:01Z", updatedAt: "2024-01-01T00:10:02Z", url: "https://example.com/issue-101" },
+        ])
+        .mockResolvedValueOnce([
+          { id: 301, body: "inline comment", user: { login: "carol" }, created_at: "2024-01-01T00:10:03Z", updated_at: "2024-01-01T00:10:04Z", html_url: "https://example.com/inline-301" },
+        ])
+        .mockResolvedValueOnce(reviewPageOne)
+        .mockResolvedValueOnce([
+          { id: "review-101", state: "APPROVED", body: "review 101", submittedAt: "2024-01-01T00:10:05Z", url: "https://example.com/review-101", author: { login: "erin" } },
+        ]);
+
+      const details = await (client as any).getPrReviewDetailsWithGh("owner", "repo", 1);
+
+      expect(details.reviewDecision).toBe("APPROVED");
+      expect(details.comments).toHaveLength(102);
+      expect(details.comments[0]?.id).toBe("issue-1");
+      expect(details.comments.at(-1)?.id).toBe("301");
+      expect(details.comments.at(-1)?.author.login).toBe("carol");
+      expect(details.reviews).toHaveLength(101);
+      expect(details.reviews[0]?.id).toBe("review-1");
+      expect(details.reviews.at(-1)?.id).toBe("review-101");
+      expect(mockRunGhJsonAsync).toHaveBeenNthCalledWith(2, ["api", "repos/owner/repo/issues/1/comments?per_page=100&page=1"]);
+      expect(mockRunGhJsonAsync).toHaveBeenNthCalledWith(3, ["api", "repos/owner/repo/issues/1/comments?per_page=100&page=2"]);
+      expect(mockRunGhJsonAsync).toHaveBeenNthCalledWith(4, ["api", "repos/owner/repo/pulls/1/comments?per_page=100&page=1"]);
+      expect(mockRunGhJsonAsync).toHaveBeenNthCalledWith(5, ["api", "repos/owner/repo/pulls/1/reviews?per_page=100&page=1"]);
+      expect(mockRunGhJsonAsync).toHaveBeenNthCalledWith(6, ["api", "repos/owner/repo/pulls/1/reviews?per_page=100&page=2"]);
+    });
+  });
+
   describe("getPrReviewSnapshot", () => {
     it("normalizes reviews/comments into review-state items and summary", async () => {
       mockRunGhJsonAsync
-        .mockResolvedValueOnce({
-          reviewDecision: "CHANGES_REQUESTED",
-          reviews: [{ id: "r1", state: "CHANGES_REQUESTED", body: "please fix", submittedAt: "2024-01-01T00:00:00Z", author: { login: "octocat" }, url: "https://github.com/owner/repo/pull/1#review-r1" }],
-          comments: [{ id: "c1", body: "nit", createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:01Z", author: { login: "reviewer" }, url: "https://github.com/owner/repo/pull/1#issuecomment-c1" }],
-        })
+        .mockResolvedValueOnce({ reviewDecision: "CHANGES_REQUESTED" })
+        .mockResolvedValueOnce([
+          { id: "c1", body: "nit", createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:01Z", author: { login: "reviewer" }, url: "https://github.com/owner/repo/pull/1#issuecomment-c1" },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { id: "r1", state: "CHANGES_REQUESTED", body: "please fix", submittedAt: "2024-01-01T00:00:00Z", author: { login: "octocat" }, url: "https://github.com/owner/repo/pull/1#review-r1" },
+        ])
         .mockResolvedValueOnce({
           number: 1,
           url: "https://github.com/owner/repo/pull/1",

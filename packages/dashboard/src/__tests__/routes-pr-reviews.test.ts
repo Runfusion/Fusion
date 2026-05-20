@@ -69,7 +69,7 @@ function createStore(task: Task): TaskStore {
   } as unknown as TaskStore;
 }
 
-describe("PR reviews routes", () => {
+describe("FN-5181 PR reviews routes", () => {
   beforeEach(() => {
     vi.spyOn(githubRateLimiter, "canMakeRequest").mockReturnValue(true);
   });
@@ -96,6 +96,35 @@ describe("PR reviews routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.comments).toHaveLength(1);
+  });
+
+  it("FN-5181 returns every review item from the snapshot when pagination exceeds 100 comments", async () => {
+    const task = createTask();
+    const store = createStore(task);
+    const items = Array.from({ length: 205 }, (_, index) => ({
+      id: `gh-comment-${index + 1}`,
+      githubCommentId: index + 1,
+      body: `comment ${index + 1}`,
+      author: { login: `reviewer-${index + 1}` },
+      state: "COMMENTED",
+      createdAt: new Date(Date.UTC(2024, 0, 1, 0, 0, index)).toISOString(),
+    }));
+    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
+      decision: "COMMENTED",
+      checks: [],
+      items,
+      prInfo: task.prInfo!,
+      commentCount: items.length,
+      summary: { reviewDecision: "COMMENTED", reviewers: [], blockingReasons: [], checks: [] },
+    } as never);
+
+    const app = createServer(store);
+    const response = await performGet(app, "/api/tasks/FN-001/pr/reviews");
+
+    expect(response.status).toBe(200);
+    expect(response.body.snapshot.items).toHaveLength(205);
+    expect(response.body.snapshot.items[0]?.id).toBe("gh-comment-1");
+    expect(response.body.snapshot.items.at(-1)?.id).toBe("gh-comment-205");
   });
 
   it("moves in-review task to todo once on changes-requested refresh", async () => {
