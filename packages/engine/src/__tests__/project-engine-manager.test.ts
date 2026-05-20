@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// Stub out the per-machine singleton lock so tests with fake working dirs
+// (e.g. /mapped/...) don't try to mkdir or bind real sockets.
+vi.mock("../engine-singleton-lock.js", () => ({
+  acquireEngineSingleton: vi.fn().mockResolvedValue({
+    release: vi.fn().mockResolvedValue(undefined),
+    socketPath: "/tmp/test.sock",
+    lockFilePath: "/tmp/test.lock",
+  }),
+  EngineAlreadyRunningError: class EngineAlreadyRunningError extends Error {},
+}));
+
 // Mock ProjectEngine before importing the manager
 vi.mock("../project-engine.js", () => {
   return {

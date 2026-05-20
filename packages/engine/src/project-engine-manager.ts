@@ -22,6 +22,11 @@ import { ProjectEngine } from "./project-engine.js";
 import type { ProjectEngineOptions } from "./project-engine.js";
 import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { AgentSemaphore } from "./concurrency.js";
+import {
+  acquireEngineSingleton,
+  EngineAlreadyRunningError,
+  type EngineSingletonLock,
+} from "./engine-singleton-lock.js";
 import { runtimeLog } from "./logger.js";
 
 /**
@@ -41,6 +46,7 @@ export const DEFAULT_RECONCILIATION_INTERVAL_MS = 30_000;
 export class ProjectEngineManager {
   private engines = new Map<string, ProjectEngine>();
   private starting = new Map<string, Promise<ProjectEngine>>();
+  private singletonLocks = new Map<string, EngineSingletonLock>();
   private stopped = false;
 
   /**
@@ -135,6 +141,8 @@ export class ProjectEngineManager {
 
     // Remove from starting set to prevent a stalled start from completing
     this.starting.delete(projectId);
+
+    await this.releaseSingleton(projectId);
   }
 
   /**
@@ -250,6 +258,30 @@ export class ProjectEngineManager {
     await Promise.all(stops);
     this.engines.clear();
     this.starting.clear();
+
+    // Release all singleton locks so another fusion process can take over.
+    const releases = Array.from(this.singletonLocks.values()).map((lock) =>
+      lock.release().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        runtimeLog.warn(`Singleton lock release error: ${message}`);
+      }),
+    );
+    await Promise.all(releases);
+    this.singletonLocks.clear();
+  }
+
+  private async releaseSingleton(projectId: string): Promise<void> {
+    const lock = this.singletonLocks.get(projectId);
+    if (!lock) return;
+    this.singletonLocks.delete(projectId);
+    try {
+      await lock.release();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      runtimeLog.warn(
+        `Singleton lock release error for ${projectId}: ${message}`,
+      );
+    }
   }
 
   /**
@@ -378,13 +410,41 @@ export class ProjectEngineManager {
     const runtimeConfig = await this.buildRuntimeConfig(project);
     const engineOptions = this.buildEngineOptions(project, overrides);
 
+    // Acquire the per-machine singleton guard before spinning up any engine
+    // subsystems. This prevents two fusion processes from running engines for
+    // the same project on one machine.
+    const singleton = await acquireEngineSingleton(
+      projectId,
+      runtimeConfig.workingDirectory,
+      (err) => {
+        runtimeLog.warn(
+          `Engine singleton lock for ${projectId} was compromised: ${err.message}`,
+        );
+      },
+    ).catch((err) => {
+      if (err instanceof EngineAlreadyRunningError) {
+        runtimeLog.warn(
+          `Refusing to start engine for ${projectId}: ${err.message}`,
+        );
+      }
+      throw err;
+    });
+    this.singletonLocks.set(projectId, singleton);
+
     const engine = new ProjectEngine(
       runtimeConfig,
       this.centralCore,
       engineOptions,
     );
 
-    await engine.start();
+    try {
+      await engine.start();
+    } catch (err) {
+      // If engine start fails we must release the singleton so a retry can
+      // re-acquire it.
+      await this.releaseSingleton(projectId);
+      throw err;
+    }
 
     this.engines.set(projectId, engine);
     this.starting.delete(projectId);

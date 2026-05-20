@@ -263,6 +263,13 @@ export {
 export { ProjectManager } from "./project-manager.js";
 export { ProjectEngine, type ProjectEngineOptions } from "./project-engine.js";
 export { ProjectEngineManager, type EngineManagerOptions } from "./project-engine-manager.js";
+export {
+  acquireEngineSingleton,
+  computeEngineLockFilePath,
+  computeEngineSocketPath,
+  EngineAlreadyRunningError,
+  type EngineSingletonLock,
+} from "./engine-singleton-lock.js";
 export { NodeHealthMonitor } from "./node-health-monitor.js";
 export {
   HybridExecutor,
