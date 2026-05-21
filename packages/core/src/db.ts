@@ -5,6 +5,20 @@
  * synchronous transaction handling. The database runs in WAL mode
  * for concurrent reader/writer access.
  *
+ * ## Automatic Connection Recovery (FN-117)
+ *
+ * The `Database` class automatically recovers from corruption-family errors
+ * (e.g., "database disk image is malformed") by reopening the underlying
+ * SQLite connection and retrying the failed operation once. This handles the
+ * scenario where an external process (e.g., `sqlite3 .recover`) replaces the
+ * database file while the runtime holds a stale connection with outdated WAL
+ * frames. The recovery is transparent to callers — no runtime restart needed.
+ *
+ * Only `prepare()` and `exec()` are wrapped with automatic recovery.
+ * `transaction()` is NOT wrapped because transactions cannot survive a
+ * connection reopen (SAVEPOINT state is lost). Callers must retry failed
+ * transactions at the application level.
+ *
  * Schema version tracking is managed via a `__meta` table.
  */
 
