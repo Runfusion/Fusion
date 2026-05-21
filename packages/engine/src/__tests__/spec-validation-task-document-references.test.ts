@@ -82,7 +82,7 @@ describe("detectDanglingTaskDocReferences", () => {
     expect(formatted).toContain("Step 0, Step 4, Step 5");
   });
 
-  it("can read the FN-5110 fixture prompt", async () => {
+  it.skip("can read the FN-5110 fixture prompt (machine-specific path)", async () => {
     const fixture = await readFile("/Users/eclipxe/Projects/kb/.fusion/tasks/FN-5110/PROMPT.md", "utf8");
     expect(fixture).toContain("# Task: FN-5110");
   });
