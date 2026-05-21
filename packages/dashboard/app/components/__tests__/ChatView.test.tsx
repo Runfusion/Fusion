@@ -3112,6 +3112,128 @@ describe("Direct/Rooms scope toggle", () => {
   });
 });
 
+describe("FN-5380 scroll preservation", () => {
+  const makeMessages = (count: number, sessionId = "session-001") =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `msg-${index + 1}`,
+      sessionId,
+      role: index % 2 === 0 ? "assistant" : "user",
+      content: `Message ${index + 1}`,
+      createdAt: `2026-04-08T00:00:${String(index).padStart(2, "0")}.000Z`,
+    } satisfies ChatMessageInfo));
+
+  const attachScrollGeometry = (container: HTMLDivElement, initialTop: number, height = 2000) => {
+    let scrollTopValue = initialTop;
+    Object.defineProperty(container, "scrollHeight", { configurable: true, get: () => height });
+    Object.defineProperty(container, "clientHeight", { configurable: true, get: () => 300 });
+    Object.defineProperty(container, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+    return () => scrollTopValue;
+  };
+
+  it("preserves scroll across silent reconnect-style refetch for direct chats", async () => {
+    const baseMessages = makeMessages(30);
+    setupMockChat({ activeSession: activeSessionFixture, messages: baseMessages });
+
+    const view = render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    const readScrollTop = attachScrollGeometry(container, 760);
+
+    fireEvent.scroll(container);
+
+    setupMockChat({ activeSession: activeSessionFixture, messages: [...baseMessages] });
+    view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(readScrollTop()).toBe(760);
+    });
+  });
+
+  it("auto-scrolls on new message only when previously pinned", async () => {
+    const baseMessages = makeMessages(4);
+    setupMockChat({ activeSession: activeSessionFixture, messages: baseMessages });
+
+    const view = render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    const readScrollTop = attachScrollGeometry(container, 1700);
+
+    fireEvent.scroll(container);
+    setupMockChat({ activeSession: activeSessionFixture, messages: [...baseMessages, ...makeMessages(1).map((message) => ({ ...message, id: "msg-5" }))] });
+    view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(readScrollTop()).toBe(2000);
+    });
+
+    container.scrollTop = 500;
+    fireEvent.scroll(container);
+
+    setupMockChat({ activeSession: activeSessionFixture, messages: makeMessages(6) });
+    view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(readScrollTop()).toBe(500);
+    });
+  });
+
+  it("preserves scroll through visibility reconnect path", async () => {
+    const baseMessages = makeMessages(20);
+    setupMockChat({ activeSession: activeSessionFixture, messages: baseMessages });
+
+    const view = render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    const readScrollTop = attachScrollGeometry(container, 640);
+
+    fireEvent.scroll(container);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    fireEvent(document, new Event("visibilitychange"));
+
+    setupMockChat({ activeSession: activeSessionFixture, messages: [...baseMessages, ...makeMessages(1).map((message) => ({ ...message, id: "msg-21" }))] });
+    view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(readScrollTop()).toBe(640);
+    });
+  });
+
+  it("preserves room transcript scroll on message refresh", async () => {
+    const room = createRoomFixture("ops");
+    const roomMessages = makeMessages(12, room.id).map((message) => ({
+      id: message.id,
+      roomId: room.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      senderAgentId: null,
+      thinkingOutput: null,
+      metadata: null,
+      mentions: [],
+    }));
+
+    setupMockChat({ sessions: [], filteredSessions: [] });
+    setupMockRooms({ rooms: [room], activeRoom: room, messages: roomMessages, messagesLoading: false });
+
+    const view = render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    const container = document.querySelector(".chat-messages") as HTMLDivElement;
+    const readScrollTop = attachScrollGeometry(container, 420);
+    fireEvent.scroll(container);
+
+    setupMockRooms({ rooms: [room], activeRoom: room, messages: [...roomMessages], messagesLoading: false });
+    view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    await waitFor(() => {
+      expect(readScrollTop()).toBe(420);
+    });
+  });
+});
+
 describe("resizable sidebar", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -4484,7 +4606,7 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
-  it("FN-4327: desktop visibility restore re-anchors direct chat and resets jump-to-latest state", async () => {
+  it("FN-5380: desktop visibility restore preserves manual direct-thread scroll", async () => {
     const restoreMatchMedia = mockDesktopViewport();
     try {
       setupMockChat({
@@ -4514,11 +4636,9 @@ describe("ChatView mobile behavior", () => {
       fireEvent(document, new Event("visibilitychange"));
 
       await waitFor(() => {
-        expect(scrollTopValue).toBe(1200);
+        expect(scrollTopValue).toBe(600);
       });
-      await waitFor(() => {
-        expect(screen.queryByTestId("chat-jump-to-latest")).not.toBeInTheDocument();
-      });
+      expect(screen.getByTestId("chat-jump-to-latest")).toBeInTheDocument();
 
       setupMockChat({
         activeSession: activeSessionFixture,
@@ -4540,7 +4660,7 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
-  it("FN-4327: desktop pageshow re-anchors direct chat thread", async () => {
+  it("FN-5380: desktop pageshow preserves direct chat scroll position", async () => {
     const restoreMatchMedia = mockDesktopViewport();
     try {
       setupMockChat({
@@ -4564,7 +4684,7 @@ describe("ChatView mobile behavior", () => {
       fireEvent(window, new Event("pageshow"));
 
       await waitFor(() => {
-        expect(scrollTopValue).toBe(1280);
+        expect(scrollTopValue).toBe(420);
       });
     } finally {
       restoreMatchMedia.mockRestore();
