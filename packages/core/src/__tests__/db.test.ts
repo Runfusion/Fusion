@@ -353,9 +353,9 @@ describe("Database", () => {
       expect(row.nextId).toBe(42);
     });
 
-    it("sets wal_autocheckpoint to 100", () => {
+    it("sets wal_autocheckpoint to 1000", () => {
       const row = db.prepare("PRAGMA wal_autocheckpoint").get() as { wal_autocheckpoint: number };
-      expect(row.wal_autocheckpoint).toBe(100);
+      expect(row.wal_autocheckpoint).toBe(1000);
     });
 
     it("sets journal_size_limit to 4 MB", () => {
@@ -363,9 +363,9 @@ describe("Database", () => {
       expect(row.journal_size_limit).toBe(4194304);
     });
 
-    it("sets synchronous to NORMAL (1)", () => {
+    it("sets synchronous to FULL (2)", () => {
       const row = db.prepare("PRAGMA synchronous").get() as { synchronous: number };
-      expect(row.synchronous).toBe(1); // NORMAL = 1
+      expect(row.synchronous).toBe(2); // FULL = 2
     });
 
     it("sets busy_timeout to 5000ms", () => {
@@ -2791,6 +2791,300 @@ describe("migration v67 drops orphan project auth tables", () => {
       } catch {
         // already closed
       }
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+});
+
+// ── FN-117: Connection Recovery Tests ─────────────────────────────────
+
+describe("Database.isCorruptionError", () => {
+  it("detects all known corruption patterns", () => {
+    const corruptionMessages = [
+      "database disk image is malformed",
+      "SQLITE_CORRUPT: database disk image is malformed",
+      "the database is malformed and cannot be read",
+      "malformed database schema (tasks) - near \"FROM\": syntax error",
+      "corruption found reading blob data",
+      "SQLITE_CORRUPT: some corrupt thing",
+      "SQLITE_NOTADB: file is not a database",
+      "FTS5 index corrupt at segment 4",
+      "fts5: corruption detected",
+    ];
+
+    for (const msg of corruptionMessages) {
+      expect(Database.isCorruptionError(new Error(msg)), `Expected "${msg}" to be a corruption error`).toBe(true);
+    }
+  });
+
+  it("returns false for non-corruption errors", () => {
+    const nonCorruptionMessages = [
+      "SQLITE_BUSY: database is locked",
+      "SQLITE_CONSTRAINT: UNIQUE constraint failed",
+      "some random error",
+      "disk I/O error",
+      "no such table: tasks",
+    ];
+
+    for (const msg of nonCorruptionMessages) {
+      expect(Database.isCorruptionError(new Error(msg)), `Expected "${msg}" NOT to be a corruption error`).toBe(false);
+    }
+  });
+
+  it("handles non-Error throws", () => {
+    expect(Database.isCorruptionError("database disk image is malformed")).toBe(true);
+    expect(Database.isCorruptionError("something else")).toBe(false);
+    expect(Database.isCorruptionError(null)).toBe(false);
+    expect(Database.isCorruptionError(undefined)).toBe(false);
+  });
+});
+
+describe("Database.reopen", () => {
+  it("re-establishes connection for disk-backed databases", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      // Run a successful query
+      const version = diskDb.getSchemaVersion();
+      expect(version).toBe(89);
+
+      // Set corruption flag to test it gets reset
+      diskDb.corruptionDetected = true;
+
+      // Reopen
+      diskDb.reopen();
+
+      // Verify corruption flag is reset
+      expect(diskDb.corruptionDetected).toBe(false);
+
+      // Verify queries still work after reopen
+      const versionAfter = diskDb.getSchemaVersion();
+      expect(versionAfter).toBe(89);
+    } finally {
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+
+  it("throws on in-memory databases", () => {
+    const memDb = new Database("", { inMemory: true });
+    memDb.init();
+
+    try {
+      expect(() => memDb.reopen()).toThrow("Cannot reopen an in-memory database");
+    } finally {
+      try { memDb.close(); } catch {}
+    }
+  });
+
+  it("throws inside a transaction", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      diskDb.transaction(() => {
+        expect(() => diskDb.reopen()).toThrow("Cannot reopen database inside a transaction");
+      });
+    } finally {
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+
+  it("throws when database is deliberately closed", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+    diskDb.close();
+
+    try {
+      expect(() => diskDb.reopen()).toThrow("Cannot reopen a deliberately closed database");
+    } finally {
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+});
+
+describe("Database withCorruptionRecovery", () => {
+  it("retries on corruption error and succeeds", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      // Mock exec to throw corruption error on first call, succeed on second
+      const realExec = (diskDb as any).db.exec.bind((diskDb as any).db);
+      let callCount = 0;
+      const execSpy = vi.spyOn((diskDb as any).db, "exec").mockImplementation((sql: string) => {
+        callCount++;
+        if (callCount === 1 && sql.includes("SELECT")) {
+          throw new Error("database disk image is malformed");
+        }
+        return realExec(sql);
+      });
+
+      // This should succeed after one retry
+      // Note: getMetaValue uses this.db.prepare directly, so we test through exec
+      // The public exec() method is wrapped
+      expect(() => diskDb.exec("SELECT 1")).not.toThrow();
+
+      execSpy.mockRestore();
+    } finally {
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+
+  it("does NOT retry non-corruption errors", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      const execSpy = vi.spyOn((diskDb as any).db, "exec").mockImplementation(() => {
+        throw new Error("SQLITE_CONSTRAINT: UNIQUE constraint failed");
+      });
+
+      expect(() => diskDb.exec("SELECT 1")).toThrow("SQLITE_CONSTRAINT");
+      // Verify it only called once (no retry)
+      expect(execSpy).toHaveBeenCalledTimes(1);
+
+      execSpy.mockRestore();
+    } finally {
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+
+  it("propagates error after failed retry", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      // First: spy on the original db's exec to throw corruption
+      vi.spyOn((diskDb as any).db, "exec").mockImplementationOnce(() => {
+        throw new Error("database disk image is malformed");
+      });
+
+      // Second: spy on reopen to also make the new connection's exec fail
+      const originalReopen = diskDb.reopen.bind(diskDb);
+      vi.spyOn(diskDb, "reopen" as any).mockImplementation(function(this: any) {
+        originalReopen();
+        // After reopen, this.db is a fresh connection. Make it throw too.
+        vi.spyOn((this as any).db, "exec").mockImplementationOnce(() => {
+          throw new Error("database disk image is malformed");
+        });
+      });
+
+      // The first exec throws corruption -> reopen is called -> retry also throws
+      expect(() => diskDb.exec("SELECT 1")).toThrow("database disk image is malformed");
+    } finally {
+      vi.restoreAllMocks();
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+
+  it("wraps prepare() with corruption recovery", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      // Spy on the original db's prepare to throw once (corruption error)
+      const prepareSpy = vi.spyOn((diskDb as any).db, "prepare").mockImplementationOnce(() => {
+        throw new Error("database disk image is malformed");
+      });
+
+      // prepare() should trigger corruption recovery -> reopen -> retry on fresh connection
+      const stmt = diskDb.prepare("SELECT value FROM __meta WHERE key = 'schemaVersion'");
+      expect(stmt).toBeDefined();
+      // The statement should work on the new connection
+      const row = stmt.get() as { value: string } | undefined;
+      expect(row?.value).toBe("89");
+
+      prepareSpy.mockRestore();
+    } finally {
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+});
+
+describe("Database end-to-end stale connection recovery", () => {
+  it("recovers when underlying connection becomes stale", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      // Verify the database works normally first
+      const version = diskDb.getSchemaVersion();
+      expect(version).toBe(89);
+
+      // Simulate the stale connection scenario: the first query after "external
+      // recovery" throws a corruption error (simulating stale WAL frames), but
+      // after reopen the fresh connection succeeds.
+      const realPrepare = (diskDb as any).db.prepare.bind((diskDb as any).db);
+      let prepareCallCount = 0;
+      const prepareSpy = vi.spyOn((diskDb as any).db, "prepare").mockImplementation((sql: string) => {
+        prepareCallCount++;
+        // First call throws corruption (simulating stale WAL state)
+        if (prepareCallCount === 1) {
+          throw new Error("database disk image is malformed");
+        }
+        return realPrepare(sql);
+      });
+
+      // This should trigger: prepare -> corruption error -> reopen -> retry prepare
+      const stmt = diskDb.prepare("SELECT value FROM __meta WHERE key = 'schemaVersion'");
+      const row = stmt.get() as { value: string } | undefined;
+      expect(row?.value).toBe("89");
+
+      prepareSpy.mockRestore();
+    } finally {
+      try { diskDb.close(); } catch {}
+      removeTrackedTmpDirSync(temp);
+    }
+  });
+
+  it("recovers on exec() with corruption error", () => {
+    const temp = makeTmpDir();
+    const fusion = join(temp, ".fusion");
+    const diskDb = new Database(fusion);
+    diskDb.init();
+
+    try {
+      // Simulate stale connection causing corruption error on exec
+      const realExec = (diskDb as any).db.exec.bind((diskDb as any).db);
+      let execCallCount = 0;
+      const execSpy = vi.spyOn((diskDb as any).db, "exec").mockImplementation((sql: string) => {
+        execCallCount++;
+        // First non-PRAGMA call throws corruption
+        if (execCallCount === 1 && !sql.startsWith("PRAGMA")) {
+          throw new Error("database disk image is malformed");
+        }
+        return realExec(sql);
+      });
+
+      // exec() should succeed after recovery
+      expect(() => diskDb.exec("SELECT 1")).not.toThrow();
+
+      execSpy.mockRestore();
+    } finally {
+      try { diskDb.close(); } catch {}
       removeTrackedTmpDirSync(temp);
     }
   });
