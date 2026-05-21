@@ -136,10 +136,14 @@ export function recordResumeEvent(
 declare global {
   interface Window {
     __fusionDebug?: {
+      dashboardTraces?: {
+        get: () => unknown[];
+        clear: () => void;
+      };
       resumeInstrumentation?: {
-        get: typeof getResumeEvents;
-        clear: typeof clearResumeEvents;
-        setEnabled: typeof setResumeInstrumentationEnabled;
+        get: () => unknown[];
+        clear: () => void;
+        setEnabled: (nextEnabled: boolean) => void;
       };
     };
   }

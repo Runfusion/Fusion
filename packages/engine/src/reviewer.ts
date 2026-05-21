@@ -662,6 +662,13 @@ export async function reviewStep(
   const hasConfiguredFallback = Boolean(validatorFallbackProvider && validatorFallbackModelId);
   const retrySettings = liveSettings ?? options.settings;
 
+  const resetReviewerFallbackRetryCount = async (): Promise<void> => {
+    if (!options.store || !options.taskId || typeof options.store.updateTask !== "function") {
+      return;
+    }
+    await options.store.updateTask(options.taskId, { reviewerFallbackRetryCount: 0 }).catch(() => undefined);
+  };
+
   let firstAttempt: { verdict: ReviewVerdict; summary: string; review: string };
   try {
     firstAttempt = await runAttempt(request);
@@ -680,10 +687,14 @@ export async function reviewStep(
         });
       }
       try {
-        return await runAttempt(request, {
+        const fallbackResult = await runAttempt(request, {
           forceProvider: validatorFallbackProvider,
           forceModelId: validatorFallbackModelId,
         });
+        if (fallbackResult.verdict !== "UNAVAILABLE") {
+          await resetReviewerFallbackRetryCount();
+        }
+        return fallbackResult;
       } catch {
         throw err;
       }
@@ -702,13 +713,18 @@ export async function reviewStep(
       });
     }
     try {
-      return await runAttempt(fallbackReviewRequest);
+      const fallbackResult = await runAttempt(fallbackReviewRequest);
+      if (fallbackResult.verdict !== "UNAVAILABLE") {
+        await resetReviewerFallbackRetryCount();
+      }
+      return fallbackResult;
     } catch {
       throw err;
     }
   }
 
   if (firstAttempt.verdict !== "UNAVAILABLE") {
+    await resetReviewerFallbackRetryCount();
     return firstAttempt;
   }
 
@@ -725,10 +741,14 @@ export async function reviewStep(
         agentId: options.agentId,
       });
     }
-    return runAttempt(request, {
+    const fallbackResult = await runAttempt(request, {
       forceProvider: validatorFallbackProvider,
       forceModelId: validatorFallbackModelId,
     });
+    if (fallbackResult.verdict !== "UNAVAILABLE") {
+      await resetReviewerFallbackRetryCount();
+    }
+    return fallbackResult;
   }
 
   await logFallbackRetry("UNAVAILABLE verdict", "same-model strict prompt");
@@ -743,7 +763,11 @@ export async function reviewStep(
       agentId: options.agentId,
     });
   }
-  return runAttempt(fallbackReviewRequest);
+  const fallbackResult = await runAttempt(fallbackReviewRequest);
+  if (fallbackResult.verdict !== "UNAVAILABLE") {
+    await resetReviewerFallbackRetryCount();
+  }
+  return fallbackResult;
 }
 
 function isReviewerSessionReuseError(error: unknown): boolean {

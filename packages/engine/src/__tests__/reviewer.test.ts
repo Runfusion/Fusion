@@ -431,7 +431,68 @@ describe("reviewStep — fallback retry for terminal unavailable", () => {
       "FN-4092",
       expect.stringContaining("review retry with fallback model after UNAVAILABLE verdict"),
     );
-    expect(task.reviewerFallbackRetryCount).toBe(1);
+    expect(task.reviewerFallbackRetryCount).toBe(0);
+  });
+
+  it("resets reviewerFallbackRetryCount to 0 after a successful review following prior fallbacks", async () => {
+    mockedCreateFnAgent
+      .mockResolvedValueOnce(createMockSession("No parseable verdict here."))
+      .mockResolvedValueOnce(createMockSession("### Verdict: APPROVE\n### Summary\nrecovered"));
+
+    const task = { id: "FN-4093", column: "in-progress", description: "d", dependencies: [], steps: [], currentStep: 0, log: [], prompt: "# prompt", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", reviewerFallbackRetryCount: 3 };
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({ maxReviewerFallbackRetries: 8, maxTotalRetriesBeforeFail: 25 }),
+      getTask: vi.fn().mockImplementation(async () => task),
+      updateTask: vi.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await reviewStep(
+      "/tmp/worktree", "FN-4093", 2, "Retry", "plan", "# prompt", undefined,
+      {
+        store: store as any,
+        taskId: "FN-4093",
+        projectValidatorFallbackProvider: "openai",
+        projectValidatorFallbackModelId: "gpt-5-mini",
+      },
+    );
+
+    expect(result.verdict).toBe("APPROVE");
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4093", { reviewerFallbackRetryCount: 0 });
+    expect(task.reviewerFallbackRetryCount).toBe(0);
+  });
+
+  it("does not reset reviewerFallbackRetryCount when fallback remains UNAVAILABLE", async () => {
+    mockedCreateFnAgent
+      .mockResolvedValueOnce(createMockSession("No parseable verdict #1"))
+      .mockResolvedValueOnce(createMockSession("No parseable verdict #2"));
+
+    const task = { id: "FN-4094", column: "in-progress", description: "d", dependencies: [], steps: [], currentStep: 0, log: [], prompt: "# prompt", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", reviewerFallbackRetryCount: 2 };
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({ maxReviewerFallbackRetries: 8, maxTotalRetriesBeforeFail: 25 }),
+      getTask: vi.fn().mockImplementation(async () => task),
+      updateTask: vi.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await reviewStep(
+      "/tmp/worktree", "FN-4094", 2, "Retry", "plan", "# prompt", undefined,
+      {
+        store: store as any,
+        taskId: "FN-4094",
+        projectValidatorFallbackProvider: "openai",
+        projectValidatorFallbackModelId: "gpt-5-mini",
+      },
+    );
+
+    expect(result.verdict).toBe("UNAVAILABLE");
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ reviewerFallbackRetryCount: 0 }),
+    );
   });
 
   it("retries once after non-context reviewer error", async () => {

@@ -33,8 +33,13 @@ declare global {
   interface Window {
     __fusionDebug?: {
       dashboardTraces?: {
-        get: typeof getTraces;
-        clear: typeof clearTraces;
+        get: () => unknown[];
+        clear: () => void;
+      };
+      resumeInstrumentation?: {
+        get: () => unknown[];
+        clear: () => void;
+        setEnabled: (nextEnabled: boolean) => void;
       };
     };
   }
