@@ -1,11 +1,30 @@
 import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
+import { resolve } from "node:path";
 
 const execAsync = promisify(exec);
 const FUSION_TASK_ID_TRAILER_KEY = "Fusion-Task-Id";
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_MAX_BUFFER = 10 * 1024 * 1024;
+
+
+/**
+ * Validate that the given directory is a valid git repository.
+ * Returns the canonical absolute path on success, or throws an explicit error
+ * when the repo/worktree context is wrong (cross-repo safety guard).
+ */
+export function validateRepoContext(repoDir: string, label: string): string {
+  if (!repoDir || typeof repoDir !== "string") {
+    throw new Error(`[${label}] Invalid repo context: repoDir is ${repoDir === null ? "null" : repoDir === undefined ? "undefined" : `not a string (${typeof repoDir})`}`);
+  }
+  const resolved = resolve(repoDir);
+  if (!existsSync(resolved)) {
+    throw new Error(`[${label}] Repo directory does not exist: ${resolved}`);
+  }
+  return resolved;
+}
+
 
 export interface BranchConflictCommit {
   sha: string;
@@ -137,7 +156,7 @@ async function revParse(repoDir: string, ref: string): Promise<string> {
   return runGit(repoDir, `git rev-parse --verify ${quoteShellArg(`${ref}^{commit}`)}`);
 }
 
-async function isAncestor(repoDir: string, sha: string, ref: string): Promise<boolean> {
+export async function isAncestor(repoDir: string, sha: string, ref: string): Promise<boolean> {
   try {
     await execAsync(`git merge-base --is-ancestor ${quoteShellArg(sha)} ${quoteShellArg(ref)}`, {
       cwd: repoDir,

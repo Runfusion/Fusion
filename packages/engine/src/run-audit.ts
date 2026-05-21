@@ -160,6 +160,7 @@ export type GitMutationType =
   | "branch:auto-canonicalize-case"
   | "branch:stale-active-reclaim"
   | "branch:stale-active-reclaim-deferred"
+  | "task:phantom-active-requeue"
   // reserved; refusal currently thrown pre-audit
   | "project:bootstrap-refused-linked-worktree"
   | "branch:orphan-prune"
