@@ -1256,7 +1256,7 @@ export class Database {
   integrityCheckLastRunAt: string | null = null;
   /** Tracks transaction nesting depth for savepoint-based nested transactions. */
   private transactionDepth = 0;
-  private readonly _fts5Available: boolean;
+  private _fts5Available: boolean;
   private integrityCheckScheduled = false;
   private closed = false;
   private readonly busyTimeoutMs: number;
@@ -3564,6 +3564,27 @@ export class Database {
   }
 
   /**
+   * Check whether an error represents a SQLite database corruption error.
+   * Covers the full family of corruption error codes and messages, including
+   * FTS5-specific patterns (delegates to isFts5CorruptionError for those).
+   *
+   * This is a static method so callers can use it without a Database instance.
+   */
+  static isCorruptionError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const lower = message.toLowerCase();
+    return (
+      lower.includes("database disk image is malformed") ||
+      lower.includes("database is malformed") ||
+      lower.includes("malformed database schema") ||
+      lower.includes("corruption found reading blob") ||
+      lower.includes("sqlite_corrupt") ||
+      lower.includes("sqlite_notadb") ||
+      (lower.includes("fts5") && lower.includes("corrupt"))
+    );
+  }
+
+  /**
    * Read the declared columns for a table.
    */
   private getTableColumns(table: string, useCache = false, cache?: TableColumnsCache): Set<string> {
@@ -3718,6 +3739,56 @@ export class Database {
     }, 3000);
 
     Database.sharedIntegrityChecks.set(this.dbPath, shared);
+  }
+
+  /**
+   * Close and reopen the database connection, picking up the current on-disk state.
+   *
+   * This is used to recover from corruption errors where the in-process connection
+   * holds stale WAL frames that reference old (corrupted) data. After reopen, the
+   * connection will read from the current on-disk database file.
+   *
+   * @throws {Error} If called on an in-memory database (cannot be reopened)
+   * @throws {Error} If called inside a transaction (SAVEPOINT state is lost on reconnect)
+   * @throws {Error} If the database has been deliberately closed
+   */
+  reopen(): void {
+    if (this.closed) {
+      throw new Error("[fusion:db] Cannot reopen a deliberately closed database");
+    }
+    if (this.inMemory) {
+      throw new Error("[fusion:db] Cannot reopen an in-memory database");
+    }
+    if (this.transactionDepth > 0) {
+      throw new Error("[fusion:db] Cannot reopen database inside a transaction (SAVEPOINT state would be lost)");
+    }
+
+    // Close the old connection — wrap in try/catch since it may be in a bad state
+    try {
+      this.db.close();
+    } catch (e) {
+      console.warn(`[fusion:db] Error closing connection during reopen: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Open a fresh connection at the same path
+    this.db = new DatabaseSync(this.dbPath);
+
+    // Re-apply PRAGMA settings
+    this.db.exec(`PRAGMA busy_timeout = ${this.busyTimeoutMs}`);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA synchronous = FULL");
+    this.db.exec("PRAGMA wal_autocheckpoint = 1000");
+    this.db.exec("PRAGMA journal_size_limit = 4194304");
+    this.db.exec("PRAGMA foreign_keys = ON");
+
+    // Reset corruption/integrity state
+    this.corruptionDetected = false;
+    this.integrityCheckPending = false;
+
+    // Re-probe FTS5 availability
+    this._fts5Available = probeFts5(this.db);
+
+    console.warn("[fusion:db] Reopened database connection after corruption error");
   }
 
   /**
