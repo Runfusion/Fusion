@@ -29,17 +29,6 @@ export function clearTraces(): void {
   traces.length = 0;
 }
 
-declare global {
-  interface Window {
-    __fusionDebug?: {
-      dashboardTraces?: {
-        get: typeof getTraces;
-        clear: typeof clearTraces;
-      };
-    };
-  }
-}
-
 if (typeof window !== "undefined") {
   window.__fusionDebug ??= {};
   window.__fusionDebug.dashboardTraces = {
