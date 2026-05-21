@@ -122,6 +122,35 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(classification).toEqual({ kind: "proven-no-op", baseRef: "main", ownDiffEmpty: true });
   });
 
+  // FN-5345/FN-5377 direct classifier coverage: empty-own-diff (aheadCount > 0
+  // but zero net diff vs merge-base) is logically equivalent to proven-no-op.
+  // This pairs with the merger's early fast-path and exercises the new branch
+  // in classifyOwnedLandedEvidence that self-healing and post-handoff finalize
+  // paths also rely on.
+  it("classifies proven-no-op for empty-own-diff branches (FN-5345/FN-5377)", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-empty-own-diff-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+
+    git(repo, "git checkout -b fusion/fn-empty-own-diff");
+    // 1 own commit with zero net tree change vs merge-base.
+    git(repo, "git commit --allow-empty -m 'test(FN-EMPTY-OWN-DIFF): handoff'");
+    const branchTipSha = git(repo, "git rev-parse HEAD");
+    expect(branchTipSha).not.toBe(baseSha); // aheadCount >= 1
+    git(repo, "git checkout main");
+
+    const classification = await classifyOwnedLandedEvidence(
+      repo,
+      { id: "FN-EMPTY-OWN-DIFF", branch: "fusion/fn-empty-own-diff", baseCommitSha: baseSha } as Task,
+      { mergeTargetBranch: "main" },
+    );
+    expect(classification).toEqual({ kind: "proven-no-op", baseRef: "main", ownDiffEmpty: true });
+  });
+
   it("auto-finalizes proven no-op and clears stale modifiedFiles", async () => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-merger-noop-finalize-"));
     repos.push(repo);

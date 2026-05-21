@@ -117,10 +117,36 @@ esac
 # 'git commit --amend -m "..."' reports source=message (not commit), so the
 # source arg alone cannot distinguish amend-with-new-message from
 # --allow-empty -m. Inspect the parent process command line as a tiebreaker.
+#
+# Sourcing:
+#   - 'ps -o args= -p $PPID' is POSIX (macOS, BSD, glibc Linux).
+#   - Alpine/busybox 'ps' may not support '-o args='; fall back to
+#     /proc/$PPID/cmdline (Linux including busybox).
+#
+# Matching: tokenize PARENT_CMD by whitespace and require an EXACT '--amend'
+# token APPEARING BEFORE the first message-supplying flag ('-m', '-F',
+# '--message', '--file', '--message=...', '--file=...'). 'ps -o args=' joins
+# argv with spaces, so a commit message containing the substring '--amend'
+# (e.g. -m 'fix --amend handling') re-tokenizes into a standalone '--amend'
+# token — we must not be fooled by message content. Since '--amend' is a
+# positional flag that always appears before the message args, stopping at
+# the first message flag is reliable on both macOS ps and Linux
+# /proc/$PPID/cmdline (which preserves argv boundaries with NUL separators).
 PARENT_CMD=$(ps -o args= -p "$PPID" 2>/dev/null || echo "")
-case "$PARENT_CMD" in
-  *' --amend'*|*' --amend '*) exit 0 ;;
-esac
+if [ -z "$PARENT_CMD" ] && [ -r "/proc/$PPID/cmdline" ]; then
+  PARENT_CMD=$(tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null || echo "")
+fi
+for tok in $PARENT_CMD; do
+  case "$tok" in
+    -m|-F|--message|--file|--message=*|--file=*)
+      # Message args start here; everything after this is user-controlled.
+      break
+      ;;
+    --amend)
+      exit 0
+      ;;
+  esac
+done
 
 GIT_DIR=$(git rev-parse --git-dir)
 if [ -f "$GIT_DIR/MERGE_HEAD" ] \\

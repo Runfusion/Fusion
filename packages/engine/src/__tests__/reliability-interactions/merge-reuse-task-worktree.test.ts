@@ -586,4 +586,71 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
     },
     30_000,
   );
+
+  // FN-5345/FN-5377 backstop variant: reproduce the actual production wedge
+  // geometry where `fusion/<id>` is registered to TWO worktrees simultaneously
+  // (e.g. faint-creek + hazy-quail in the FN-5345 incident). The early
+  // fast-path runs against projectRootDir and is immune to the worktree drift,
+  // so it must still finalize without acquiring any reuse handoff.
+  it.skipIf(!hasGit)(
+    "FN-5345: empty-own-diff fast-path fires even when branch is registered to two worktrees",
+    async () => {
+      const fixture = await makeReliabilityFixture({
+        taskId: "FN-5279-RI-DOUBLE-REG",
+        settings: {
+          baseBranch: "master",
+          mergeIntegrationWorktree: "reuse-task-worktree",
+        } as any,
+      });
+
+      try {
+        const { rootDir, store, task } = fixture;
+        const actualTask = await store.getTask(task.id);
+        const branch = `fusion/${actualTask!.id.toLowerCase()}`;
+        const worktreeRoot = `${rootDir}-worktrees`;
+        const pathA = join(worktreeRoot, `${actualTask!.id.toLowerCase()}-a`);
+        const pathB = join(worktreeRoot, `${actualTask!.id.toLowerCase()}-b`);
+
+        git(rootDir, "git branch -m main master");
+        const completedSteps = (actualTask?.steps ?? []).map((step) => ({ ...step, status: "done" as const }));
+        await store.updateTask(task.id, {
+          baseBranch: "master",
+          branch,
+          steps: completedSteps,
+          currentStep: completedSteps.length,
+        } as any);
+        await fixture.createBranch(branch);
+        git(rootDir, `git commit --allow-empty -m 'test(${actualTask!.id}): verification-only handoff'`);
+        await fixture.checkout("master");
+
+        // Register branch at pathA, then force-register at pathB — reproduces
+        // FN-5345's two-worktree-one-branch state.
+        await mkdir(worktreeRoot, { recursive: true });
+        git(rootDir, `git worktree add ${JSON.stringify(pathA)} ${JSON.stringify(branch)}`);
+        git(rootDir, `git worktree add -f ${JSON.stringify(pathB)} ${JSON.stringify(branch)}`);
+
+        // task.worktree points at one of them — doesn't matter which; the
+        // fast-path operates against projectRootDir.
+        await store.updateTask(task.id, { worktree: pathA, branch } as any);
+        store.enqueueMergeQueue(task.id);
+
+        const result = await aiMergeTask(store, rootDir, task.id);
+
+        expect(result.merged).toBe(true);
+        expect(result.noOp).toBe(true);
+        expect(result.mergeConfirmed).toBe(true);
+        expect((await store.getTask(task.id))?.column).toBe("done");
+
+        const auditTypes = store.getRunAuditEvents({ taskId: task.id }).map((event) => event.mutationType);
+        // No reuse-handoff lifecycle event should have fired — the fast-path
+        // ran first against projectRootDir.
+        expect(auditTypes).not.toContain("merge:reuse-handoff-acquired");
+        expect(auditTypes).not.toContain("merge:reuse-handoff-refused");
+        expect(auditTypes).toContain("task:auto-recover-finalize-already-on-main");
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+    30_000,
+  );
 });

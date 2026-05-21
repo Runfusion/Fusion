@@ -160,6 +160,8 @@ export type GitMutationType =
   | "merge:reuse-handoff-released"
   | "merge:reuse-handoff-deferred-to-worktrunk"
   | "merge:reuse-fallback-new-worktree"
+  | "merge:reuse-fallback-pruned-stale-registration"
+  | "merge:reuse-fallback-reused-existing-registration"
   | "merge:reuse-worktree-fresh-acquire"
   | "merge:reuse-worktree-fresh-acquired"
   | "merge:audit-failure"

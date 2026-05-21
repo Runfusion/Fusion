@@ -45,6 +45,17 @@ describe("prepare-commit-msg empty-commit guard (real git, FN-5345/FN-5377)", ()
       expect(empty.stderr).toContain("refusing empty commit");
       expect(empty.stderr).toContain("FN-5345/FN-5377");
 
+      // Review-finding regression: a commit message containing the substring
+      // '--amend' must NOT trick the parent-cmd tokenized check into allowing
+      // the empty commit. The original glob pattern (*' --amend'*) would have
+      // matched this; the tokenized check rejects it.
+      const sneaky = git(
+        worktreeDir,
+        "git commit --allow-empty -m 'feat(FN-5345): fix --amend handling'",
+      );
+      expect(sneaky.status).not.toBe(0);
+      expect(sneaky.stderr).toContain("refusing empty commit");
+
       // --amend --no-edit (no staged changes, amend HEAD) is ALLOWED.
       const amendNoEdit = git(worktreeDir, "git commit --amend --no-edit");
       expect(amendNoEdit.status).toBe(0);
