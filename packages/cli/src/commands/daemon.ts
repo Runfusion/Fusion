@@ -69,7 +69,7 @@ import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWi
 import { getClaudeCodeCredentialPaths, getCodexCliAuthPath, getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
-import { syncStartupModels } from "./startup-model-sync.js";
+import { refreshOpencodeGoModels, syncStartupModels } from "./startup-model-sync.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -711,6 +711,19 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     onProjectRegistered: ({ path }) => {
       maybeInstallClaudeSkillForNewProject(path);
+    },
+    onApiKeySaved: async (providerId: string) => {
+      if (providerId !== "opencode" && providerId !== "opencode-go") {
+        return undefined;
+      }
+      const settings = await store.getSettings();
+      if (settings.opencodeGoModelSync === false) {
+        return { registeredCount: 0, reason: "disabled-by-settings" };
+      }
+      return await refreshOpencodeGoModels({
+        modelRegistry,
+        log: (scope, message) => console.log(`[${scope}] ${message}`),
+      });
     },
     getClaudeCliExtensionStatus: () => {
       const r = getCachedClaudeCliResolution();

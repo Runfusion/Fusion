@@ -1027,7 +1027,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * Validates the provider exists, is API-key-backed, and the key is non-empty.
    * Never returns the key in any response.
    */
-  router.post("/auth/api-key", (req, res) => {
+  router.post("/auth/api-key", async (req, res) => {
     try {
       const { provider, apiKey } = req.body;
       if (!provider || typeof provider !== "string") {
@@ -1052,8 +1052,29 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       storage.setApiKey(provider, apiKey.trim());
+
+      let modelsRefreshed: number | undefined;
+      let refreshReason: "no-models-from-cli" | "cli-failed" | "disabled-by-settings" | undefined;
+      let refreshError: string | undefined;
+      try {
+        const refreshResult = await options?.onApiKeySaved?.(provider);
+        if (refreshResult) {
+          modelsRefreshed = refreshResult.registeredCount;
+          refreshReason = refreshResult.reason;
+          refreshError = refreshResult.error;
+        }
+      } catch (error) {
+        refreshError = error instanceof Error ? error.message : String(error);
+      }
+
+      options?.modelRegistry?.refresh?.();
       clearUsageCache();
-      res.json({ success: true });
+      res.json({
+        success: true,
+        ...(modelsRefreshed !== undefined ? { modelsRefreshed } : {}),
+        ...(refreshReason ? { refreshReason } : {}),
+        ...(refreshError ? { refreshError } : {}),
+      });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -1081,6 +1102,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       storage.clearApiKey(provider);
+      // No model refresh needed on delete: removing the key leaves nothing to sync.
       clearUsageCache();
       res.json({ success: true });
     } catch (err: unknown) {

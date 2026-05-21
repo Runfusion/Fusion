@@ -2098,6 +2098,60 @@ describe("SettingsModal", () => {
         expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
       });
     });
+
+    it("shows opencode-go refresh success message after API key save", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [{ id: "opencode-go", name: "Opencode (Go)", authenticated: false, type: "api_key" }],
+      });
+      mockSaveApiKey.mockResolvedValueOnce({ success: true, modelsRefreshed: 4 });
+
+      const { container } = renderModal();
+      await waitForSettingsModalReady();
+      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      Object.defineProperty(settingsContent, "scrollTo", { value: vi.fn(), writable: true });
+
+      const card = screen.getByTestId("auth-provider-icon-opencode-go").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.type(within(card).getByPlaceholderText("Enter API key"), "opencode-key");
+      await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+
+      expect(await within(card).findByText("Refreshed 4 opencode-go models.")).toBeInTheDocument();
+    });
+
+    it("shows opencode-go no-models guidance message", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [{ id: "opencode-go", name: "Opencode (Go)", authenticated: false, type: "api_key" }],
+      });
+      mockSaveApiKey.mockResolvedValueOnce({ success: true, modelsRefreshed: 0, refreshReason: "no-models-from-cli" });
+
+      const { container } = renderModal();
+      await waitForSettingsModalReady();
+      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      Object.defineProperty(settingsContent, "scrollTo", { value: vi.fn(), writable: true });
+
+      const card = screen.getByTestId("auth-provider-icon-opencode-go").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.type(within(card).getByPlaceholderText("Enter API key"), "opencode-key");
+      await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+
+      expect(await within(card).findByText(/returned no models/i)).toBeInTheDocument();
+    });
+
+    it("shows opencode-go refresh error message", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [{ id: "opencode-go", name: "Opencode (Go)", authenticated: false, type: "api_key" }],
+      });
+      mockSaveApiKey.mockResolvedValueOnce({ success: true, refreshError: "spawn opencode ENOENT" });
+
+      const { container } = renderModal();
+      await waitForSettingsModalReady();
+      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      Object.defineProperty(settingsContent, "scrollTo", { value: vi.fn(), writable: true });
+
+      const card = screen.getByTestId("auth-provider-icon-opencode-go").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.type(within(card).getByPlaceholderText("Enter API key"), "opencode-key");
+      await userEvent.click(within(card).getByRole("button", { name: "Save" }));
+
+      expect(await within(card).findByText(/model refresh failed: spawn opencode ENOENT/i)).toBeInTheDocument();
+    });
   });
 
   describe("Droid plugin Settings integration", () => {

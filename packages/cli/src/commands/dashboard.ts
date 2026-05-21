@@ -75,7 +75,7 @@ import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js"
 import { resolveSelfExtension } from "./self-extension.js";
 import { ensureBundledDependencyGraphPluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
-import { syncStartupModels } from "./startup-model-sync.js";
+import { refreshOpencodeGoModels, syncStartupModels } from "./startup-model-sync.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 import { DASHBOARD_STARTUP_STATUS, runTuiStartupPrelude } from "./dashboard-startup-chain.js";
 
@@ -1626,6 +1626,19 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       onProjectRegistered: ({ path }) => {
         maybeInstallClaudeSkillForNewProject(path);
       },
+      onApiKeySaved: async (providerId: string) => {
+        if (providerId !== "opencode" && providerId !== "opencode-go") {
+          return undefined;
+        }
+        const settings = await store.getSettings();
+        if (settings.opencodeGoModelSync === false) {
+          return { registeredCount: 0, reason: "disabled-by-settings" };
+        }
+        return await refreshOpencodeGoModels({
+          modelRegistry,
+          log: (scope, message) => logSink.log(message, scope),
+        });
+      },
       getClaudeCliExtensionStatus: () => {
         const r = getCachedClaudeCliResolution();
         if (!r) return null;
@@ -1929,6 +1942,19 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback,
       onProjectRegistered: ({ path }) => {
         maybeInstallClaudeSkillForNewProject(path);
+      },
+      onApiKeySaved: async (providerId: string) => {
+        if (providerId !== "opencode" && providerId !== "opencode-go") {
+          return undefined;
+        }
+        const settings = await store.getSettings();
+        if (settings.opencodeGoModelSync === false) {
+          return { registeredCount: 0, reason: "disabled-by-settings" };
+        }
+        return await refreshOpencodeGoModels({
+          modelRegistry,
+          log: (scope, message) => logSink.log(message, scope),
+        });
       },
       getClaudeCliExtensionStatus: () => {
         const r = getCachedClaudeCliResolution();

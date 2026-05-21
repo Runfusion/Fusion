@@ -360,6 +360,12 @@ export interface ServerOptions {
   onUseDroidCliToggled?: (prev: boolean, next: boolean) => void;
   /** Called when the user toggles the `useLlamaCpp` global setting. */
   onUseLlamaCppToggled?: (prev: boolean, next: boolean) => void;
+  /** Optional hook fired after a successful API-key save. */
+  onApiKeySaved?: (providerId: string) => Promise<{
+    registeredCount: number;
+    reason?: "no-models-from-cli" | "cli-failed" | "disabled-by-settings";
+    error?: string;
+  } | void>;
   /**
    * Returns the host's last-observed resolution of the bundled `droid-cli`
    * extension wiring. Populated by serve/daemon/dashboard startup checks.

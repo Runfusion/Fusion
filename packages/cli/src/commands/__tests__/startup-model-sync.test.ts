@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
 }));
 
-import { parseOpencodeModelsOutput, syncStartupModels } from "../startup-model-sync.js";
+import { parseOpencodeModelsOutput, refreshOpencodeGoModels, syncStartupModels } from "../startup-model-sync.js";
 
 type MockProcess = EventEmitter & {
   stdout: EventEmitter;
@@ -240,6 +240,52 @@ describe("startup-model-sync", () => {
         },
       }),
     );
+  });
+
+  it("returns refresh result for opencode-go happy path", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = createSpawnProcess();
+      queueMicrotask(() => {
+        proc.stdout.emit("data", Buffer.from("Models cache refreshed\nopencode/gpt-5\n"));
+        proc.emit("exit", 0);
+      });
+      return proc;
+    });
+
+    const registerProvider = vi.fn();
+    const result = await refreshOpencodeGoModels({ modelRegistry: { registerProvider }, log: vi.fn() });
+
+    expect(result).toEqual({ registeredCount: 1 });
+    expect(registerProvider).toHaveBeenCalledWith("opencode-go", expect.objectContaining({
+      models: [expect.objectContaining({ id: "opencode-go/gpt-5" })],
+    }));
+  });
+
+  it("returns no-models reason when cli output has no models", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = createSpawnProcess();
+      queueMicrotask(() => {
+        proc.stdout.emit("data", Buffer.from("Models cache refreshed\n"));
+        proc.emit("exit", 0);
+      });
+      return proc;
+    });
+
+    const result = await refreshOpencodeGoModels({ modelRegistry: { registerProvider: vi.fn() }, log: vi.fn() });
+    expect(result).toEqual({ registeredCount: 0, reason: "no-models-from-cli" });
+  });
+
+  it("returns cli-failed reason when spawn errors", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = createSpawnProcess();
+      queueMicrotask(() => proc.emit("error", new Error("spawn opencode ENOENT")));
+      return proc;
+    });
+
+    const result = await refreshOpencodeGoModels({ modelRegistry: { registerProvider: vi.fn() }, log: vi.fn() });
+    expect(result.registeredCount).toBe(0);
+    expect(result.reason).toBe("cli-failed");
+    expect(result.error).toContain("ENOENT");
   });
 
   it("logs failures and continues", async () => {

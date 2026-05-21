@@ -69,7 +69,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
-import { syncStartupModels } from "./startup-model-sync.js";
+import { refreshOpencodeGoModels, syncStartupModels } from "./startup-model-sync.js";
 import { ensureBundledDependencyGraphPluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 
@@ -818,6 +818,19 @@ export async function runServe(
       // Fire-and-forget: install the fusion Claude-skill when pi-claude-cli
       // is configured. The runner logs its own outcome and swallows errors.
       maybeInstallClaudeSkillForNewProject(path);
+    },
+    onApiKeySaved: async (providerId: string) => {
+      if (providerId !== "opencode" && providerId !== "opencode-go") {
+        return undefined;
+      }
+      const settings = await store.getSettings();
+      if (settings.opencodeGoModelSync === false) {
+        return { registeredCount: 0, reason: "disabled-by-settings" };
+      }
+      return await refreshOpencodeGoModels({
+        modelRegistry,
+        log: (scope, message) => console.log(`[${scope}] ${message}`),
+      });
     },
     getClaudeCliExtensionStatus: () => {
       const r = getCachedClaudeCliResolution();

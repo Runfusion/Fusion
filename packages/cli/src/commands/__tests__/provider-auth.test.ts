@@ -112,6 +112,27 @@ describe("wrapAuthStorageWithApiKeyProviders", () => {
     expect(providerIds).toContain("tavily");
   });
 
+  it("always includes opencode-go when registry has no opencode models", () => {
+    const fusionAuth = makeAuthStorage();
+    const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+    const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+    const providerIds = wrapped.getApiKeyProviders().map((provider) => provider.id);
+
+    expect(providerIds).toContain("opencode-go");
+  });
+
+  it("filters opencode-go from API key providers when OAuth provider id collides", () => {
+    const fusionAuth = makeAuthStorage();
+    fusionAuth.getOAuthProviders = vi.fn(() => [{ id: "opencode-go", name: "Opencode Go OAuth" }]);
+    const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+    const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+    const providerIds = wrapped.getApiKeyProviders().map((provider) => provider.id);
+
+    expect(providerIds).not.toContain("opencode-go");
+  });
+
   it("reads legacy auth JSON without creating missing files", async () => {
     const tempDir = tempWorkspace("fusion-provider-auth-");
     const legacyAgentDir = join(tempDir, ".pi", "agent");

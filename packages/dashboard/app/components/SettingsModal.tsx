@@ -577,6 +577,10 @@ export function SettingsModal({
   const [manualCodeSubmitInProgress, setManualCodeSubmitInProgress] = useState<string | null>(null);
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
+  const [opencodeApiKeyRefreshStatus, setOpencodeApiKeyRefreshStatus] = useState<Record<string, {
+    tone: "success" | "error";
+    message: string;
+  }>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastAutoCopiedDeviceCodesRef = useRef<Record<string, string>>({});
 
@@ -1358,17 +1362,60 @@ export function SettingsModal({
       return next;
     });
     try {
-      await saveApiKey(providerId, key);
+      const saveResult = await saveApiKey(providerId, key);
       setApiKeyInputs((prev) => {
         const next = { ...prev };
         delete next[providerId];
         return next;
       });
       await loadAuthStatus();
+      if (providerId === "opencode" || providerId === "opencode-go") {
+        const modelsRefreshed = saveResult.modelsRefreshed;
+        const refreshReason = saveResult.refreshReason;
+        const refreshError = saveResult.refreshError;
+        if (refreshError) {
+          setOpencodeApiKeyRefreshStatus((prev) => ({
+            ...prev,
+            [providerId]: {
+              tone: "error",
+              message: `Saved, but model refresh failed: ${refreshError}. Make sure the \`opencode\` CLI is installed on PATH.`,
+            },
+          }));
+        } else if (refreshReason === "no-models-from-cli") {
+          setOpencodeApiKeyRefreshStatus((prev) => ({
+            ...prev,
+            [providerId]: {
+              tone: "error",
+              message: "Saved. The local `opencode` CLI returned no models — run `opencode auth login` and `opencode models opencode --refresh`, then click Save again.",
+            },
+          }));
+        } else if (typeof modelsRefreshed === "number" && modelsRefreshed > 0) {
+          setOpencodeApiKeyRefreshStatus((prev) => ({
+            ...prev,
+            [providerId]: {
+              tone: "success",
+              message: `Refreshed ${modelsRefreshed} opencode-go models.`,
+            },
+          }));
+        } else {
+          setOpencodeApiKeyRefreshStatus((prev) => {
+            const next = { ...prev };
+            delete next[providerId];
+            return next;
+          });
+        }
+      }
       addToast("API key saved", "success");
       scrollSettingsToTop();
     } catch (err) {
       setApiKeyErrors((prev) => ({ ...prev, [providerId]: getErrorMessage(err) || "Failed to save API key" }));
+      if (providerId === "opencode" || providerId === "opencode-go") {
+        setOpencodeApiKeyRefreshStatus((prev) => {
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
+      }
     } finally {
       setAuthActionInProgress(null);
     }
@@ -6907,6 +6954,11 @@ export function SettingsModal({
                             {apiKeyErrors[provider.id] && (
                               <small className="auth-apikey-error">{apiKeyErrors[provider.id]}</small>
                             )}
+                            {(provider.id === "opencode" || provider.id === "opencode-go") && opencodeApiKeyRefreshStatus[provider.id] && (
+                              <small className={opencodeApiKeyRefreshStatus[provider.id].tone === "error" ? "form-error" : "text-muted"}>
+                                {opencodeApiKeyRefreshStatus[provider.id].message}
+                              </small>
+                            )}
                           </div>
                         ) : (
                           <div>
@@ -6988,6 +7040,11 @@ export function SettingsModal({
                             )}
                             {apiKeyErrors[provider.id] && (
                               <small className="auth-apikey-error">{apiKeyErrors[provider.id]}</small>
+                            )}
+                            {(provider.id === "opencode" || provider.id === "opencode-go") && opencodeApiKeyRefreshStatus[provider.id] && (
+                              <small className={opencodeApiKeyRefreshStatus[provider.id].tone === "error" ? "form-error" : "text-muted"}>
+                                {opencodeApiKeyRefreshStatus[provider.id].message}
+                              </small>
                             )}
                           </div>
                         ) : (

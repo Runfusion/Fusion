@@ -1853,10 +1853,13 @@ describe("POST /auth/api-key", () => {
     authStorage = createMockAuthStorage();
   });
 
-  function buildApp() {
+  function buildApp(options?: {
+    onApiKeySaved?: (providerId: string) => Promise<{ registeredCount: number; reason?: string; error?: string } | void>;
+    modelRegistry?: ModelRegistryLike;
+  }) {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store, { authStorage }));
+    app.use("/api", createApiRoutes(store, { authStorage, ...(options ?? {}) }));
     return app;
   }
 
@@ -1965,6 +1968,57 @@ describe("POST /auth/api-key", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("not supported");
+  });
+
+  it("runs post-save refresh hook and model registry refresh for opencode-go", async () => {
+    const onApiKeySaved = vi.fn().mockResolvedValue({ registeredCount: 3, reason: "no-models-from-cli" });
+    const modelRegistry = { refresh: vi.fn(), getAvailable: vi.fn().mockReturnValue([]) } as unknown as ModelRegistryLike;
+    (authStorage.getApiKeyProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "opencode-go", name: "Opencode (Go)" },
+    ]);
+
+    const res = await REQUEST(buildApp({ onApiKeySaved, modelRegistry }), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "opencode-go",
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(onApiKeySaved).toHaveBeenCalledWith("opencode-go");
+    expect(modelRegistry.refresh).toHaveBeenCalled();
+    expect(res.body.modelsRefreshed).toBe(3);
+    expect(res.body.refreshReason).toBe("no-models-from-cli");
+  });
+
+  it("returns success when post-save refresh hook throws", async () => {
+    const onApiKeySaved = vi.fn().mockRejectedValue(new Error("opencode missing"));
+    (authStorage.getApiKeyProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "openrouter", name: "OpenRouter" },
+      { id: "opencode-go", name: "Opencode (Go)" },
+    ]);
+
+    const res = await REQUEST(buildApp({ onApiKeySaved }), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "opencode-go",
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.refreshError).toContain("opencode missing");
+  });
+
+  it("does not include refresh metadata when callback returns undefined", async () => {
+    const onApiKeySaved = vi.fn().mockResolvedValue(undefined);
+
+    const res = await REQUEST(buildApp({ onApiKeySaved }), "POST", "/api/auth/api-key", JSON.stringify({
+      provider: "openrouter",
+      apiKey: "sk-test",
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(onApiKeySaved).toHaveBeenCalledWith("openrouter");
+    expect(res.body.modelsRefreshed).toBeUndefined();
+    expect(res.body.refreshReason).toBeUndefined();
   });
 
   it("returns 500 on storage error", async () => {

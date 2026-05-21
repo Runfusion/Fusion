@@ -46,6 +46,7 @@ const BUILT_IN_API_KEY_PROVIDERS: Array<{ id: string; name: string }> = [
   { id: "kimi-coding", name: "Kimi" },
   { id: "minimax", name: "Minimax" },
   { id: "openrouter", name: "OpenRouter" },
+  { id: "opencode-go", name: "Opencode (Go)" },
   { id: "tavily", name: "Tavily" },
   { id: "zai", name: "Zai" },
 ];

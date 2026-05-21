@@ -65,6 +65,12 @@ interface StartupSyncOptions {
   log: (scope: string, message: string) => void;
 }
 
+export type OpencodeGoRefreshResult = {
+  registeredCount: number;
+  reason?: "no-models-from-cli" | "cli-failed" | "disabled-by-settings";
+  error?: string;
+};
+
 function parseCost(value?: string): number {
   const n = parseFloat(value || "0");
   return Number.isNaN(n) ? 0 : n * 1_000_000;
@@ -197,7 +203,7 @@ async function syncOpenRouterModels(options: StartupSyncOptions, settings: Setti
   log("openrouter", `Synced ${models.length} models from OpenRouter API`);
 }
 
-function normalizeOpencodeGoModel(modelId: string): ModelConfig {
+export function normalizeOpencodeGoModel(modelId: string): ModelConfig {
   const trimmed = modelId.trim();
   const normalizedId = trimmed.startsWith("opencode/")
     ? `opencode-go/${trimmed.slice("opencode/".length)}`
@@ -227,7 +233,7 @@ export function parseOpencodeModelsOutput(stdout: string): string[] {
   return [...ids];
 }
 
-async function discoverOpencodeGoModels(): Promise<string[]> {
+export async function discoverOpencodeGoModels(): Promise<string[]> {
   return await new Promise<string[]>((resolve, reject) => {
     const proc = spawn("opencode", ["models", "opencode", "--refresh"], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -263,22 +269,32 @@ async function discoverOpencodeGoModels(): Promise<string[]> {
   });
 }
 
-async function syncOpencodeGoModels(options: StartupSyncOptions): Promise<void> {
-  const { modelRegistry, log } = options;
-  const modelIds = await discoverOpencodeGoModels();
-  if (modelIds.length === 0) {
-    log("opencode-go", "No models discovered from opencode CLI refresh");
-    return;
-  }
+export async function refreshOpencodeGoModels(options: {
+  modelRegistry: ModelRegistryLike;
+  log: (scope: string, message: string) => void;
+}): Promise<OpencodeGoRefreshResult> {
+  try {
+    const { modelRegistry, log } = options;
+    const modelIds = await discoverOpencodeGoModels();
+    if (modelIds.length === 0) {
+      log("opencode-go", "No models discovered from opencode CLI refresh");
+      return { registeredCount: 0, reason: "no-models-from-cli" };
+    }
 
-  const models = modelIds.map(normalizeOpencodeGoModel);
-  modelRegistry.registerProvider("opencode-go", {
-    baseUrl: "https://api.opencode.ai/v1",
-    apiKey: "OPENCODE_API_KEY",
-    api: "openai-completions",
-    models,
-  });
-  log("opencode-go", `Synced ${models.length} models from opencode CLI`);
+    const models = modelIds.map(normalizeOpencodeGoModel);
+    modelRegistry.registerProvider("opencode-go", {
+      baseUrl: "https://api.opencode.ai/v1",
+      apiKey: "OPENCODE_API_KEY",
+      api: "openai-completions",
+      models,
+    });
+    log("opencode-go", `Synced ${models.length} models from opencode CLI`);
+    return { registeredCount: models.length };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    options.log("opencode-go", `Failed to sync models: ${message}`);
+    return { registeredCount: 0, reason: "cli-failed", error: message };
+  }
 }
 
 export async function syncStartupModels(options: StartupSyncOptions): Promise<void> {
@@ -294,11 +310,6 @@ export async function syncStartupModels(options: StartupSyncOptions): Promise<vo
   }
 
   if (settings.opencodeGoModelSync !== false) {
-    try {
-      await syncOpencodeGoModels(options);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      options.log("opencode-go", `Failed to sync models: ${message}`);
-    }
+    await refreshOpencodeGoModels({ modelRegistry: options.modelRegistry, log: options.log });
   }
 }

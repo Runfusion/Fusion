@@ -2054,8 +2054,18 @@ export function cancelProviderLogin(provider: string): Promise<{ success: boolea
 }
 
 /** Save an API key for an API-key-backed provider. */
-export function saveApiKey(provider: string, apiKey: string): Promise<{ success: boolean }> {
-  return api<{ success: boolean }>("/auth/api-key", {
+export function saveApiKey(provider: string, apiKey: string): Promise<{
+  success: boolean;
+  modelsRefreshed?: number;
+  refreshReason?: string;
+  refreshError?: string;
+}> {
+  return api<{
+    success: boolean;
+    modelsRefreshed?: number;
+    refreshReason?: string;
+    refreshError?: string;
+  }>("/auth/api-key", {
     method: "POST",
     body: JSON.stringify({ provider, apiKey }),
   });
