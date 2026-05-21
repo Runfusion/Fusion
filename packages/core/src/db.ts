@@ -3973,23 +3973,33 @@ export class Database {
   /**
    * Prepare a SQL statement. Returns a Statement object.
    * Automatically reopens the connection and retries on corruption errors.
+   * Retries on SQLITE_BUSY/LOCKED with bounded backoff.
    */
   prepare(sql: string): Statement {
-    return this.withCorruptionRecovery(
-      () => this.db.prepare(sql),
-      `prepare(${sql.slice(0, 50)})`,
-    );
+    const label = `prepare(${sql.slice(0, 50)})`;
+    let result: Statement;
+    this.runWithLockRecovery(label, () => {
+      result = this.withCorruptionRecovery(
+        () => this.db.prepare(sql),
+        label,
+      );
+    });
+    return result!;
   }
 
   /**
    * Execute a raw SQL string (no parameters).
    * Automatically reopens the connection and retries on corruption errors.
+   * Retries on SQLITE_BUSY/LOCKED with bounded backoff.
    */
   exec(sql: string): void {
-    this.withCorruptionRecovery(
-      () => this.db.exec(sql),
-      `exec(${sql.slice(0, 50)})`,
-    );
+    const label = `exec(${sql.slice(0, 50)})`;
+    this.runWithLockRecovery(label, () => {
+      this.withCorruptionRecovery(
+        () => this.db.exec(sql),
+        label,
+      );
+    });
   }
 
   private getMetaValue(key: string): string | undefined {
