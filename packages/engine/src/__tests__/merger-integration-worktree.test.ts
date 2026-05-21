@@ -304,6 +304,8 @@ describe("acquireReuseHandoff", () => {
       kind: "executor",
       ownerKey: "FN-5279",
     });
+    // FN-5256: backdate so the new min-idle window doesn't refuse the reconcile.
+    (activeSessionRegistry.lookupByPath("/tmp/task-worktree") as any).registeredAt = 0;
 
     await acquireReuseHandoff({
       task: await store.getTask("FN-5279"),

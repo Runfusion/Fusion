@@ -8,7 +8,11 @@ import type {
   Task,
   TaskStore,
 } from "@fusion/core";
-import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
+import {
+  activeSessionRegistry,
+  executingTaskLock,
+  reconcileSelfOwnedActiveSessionForRemoval,
+} from "./active-session-registry.js";
 import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { MeshLeaseManager } from "./mesh-lease-manager.js";
 import {
@@ -294,14 +298,24 @@ export async function acquireReuseHandoff(input: ReuseHandoffInput): Promise<Han
 
   const activeRecord = activeSessionRegistry.lookupByPath(worktreePath);
   if (activeRecord) {
-    if (activeRecord.taskId === input.task.id && !executingTaskLock.has(input.task.id)) {
-      const reconciled = activeSessionRegistry.reconcileStaleSelfOwned(worktreePath, input.task.id);
-      if (!reconciled.reconciled) {
+    if (activeRecord.taskId === input.task.id) {
+      // FN-5256: route through the hardened helper so the minIdleMs window and
+      // processActiveProbe (executingTaskLock) gates apply — bare
+      // `reconcileStaleSelfOwned` would race a warming-down session.
+      const outcome = reconcileSelfOwnedActiveSessionForRemoval(
+        activeSessionRegistry,
+        worktreePath,
+        input.task.id,
+        () => false,
+        { processActiveProbe: (probeTaskId) => executingTaskLock.has(probeTaskId) },
+      );
+      if (outcome.action !== "reconciled") {
         throw new MergeHandoffRefusedError("active-session-binding", "active-session-present", {
           taskId: input.task.id,
           worktreePath,
           activeRecord,
           executingTaskLockHeld: executingTaskLock.has(input.task.id),
+          reconcileOutcome: outcome.action,
         });
       }
     } else {
