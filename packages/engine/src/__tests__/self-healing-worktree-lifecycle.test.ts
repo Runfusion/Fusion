@@ -417,7 +417,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
         { name: "fusion/fn-201", tipSha: "abc123def4567890", uniqueCount: 0 },
       ]);
 
-      vi.spyOn(manager as any, "getRegisteredWorktreePathForBranch").mockResolvedValue(null);
+      vi.spyOn(manager as any, "findWorktreePathForBranch").mockResolvedValue(undefined);
 
       // Worktree dir exists but is unusable
       existsSyncMock.mockImplementation((p: string) =>
@@ -452,7 +452,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       ]);
       // Tip IS an ancestor of main → already merged
       isAncestorMock.mockResolvedValue(true);
-      vi.spyOn(manager as any, "getRegisteredWorktreePathForBranch").mockResolvedValue(null);
+      vi.spyOn(manager as any, "findWorktreePathForBranch").mockResolvedValue(undefined);
       existsSyncMock.mockImplementation((p: string) => p === "/repo");
 
       const count = await manager.reclaimStaleActiveBranches();
@@ -504,7 +504,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
         { name: "fusion/fn-302", tipSha: "feedface12345678", uniqueCount: 0 },
       ]);
       isAncestorMock.mockResolvedValue(true);
-      vi.spyOn(manager as any, "getRegisteredWorktreePathForBranch")
+      vi.spyOn(manager as any, "findWorktreePathForBranch")
         .mockResolvedValue("/repo/.worktrees/ghost-wt");
 
       existsSyncMock.mockImplementation((p: string) =>

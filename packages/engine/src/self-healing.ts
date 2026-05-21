@@ -2467,7 +2467,7 @@ export class SelfHealingManager {
           );
 
           // Remove the worktree if it exists
-          const registeredWtPath = await this.getRegisteredWorktreePathForBranch(branch);
+          const registeredWtPath = await this.findWorktreePathForBranch(branch);
           if (registeredWtPath && existsSync(registeredWtPath)) {
             try {
               await removeWorktree({
