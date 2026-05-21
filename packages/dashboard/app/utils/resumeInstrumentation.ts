@@ -133,18 +133,6 @@ export function recordResumeEvent(
   return stampedEvent;
 }
 
-declare global {
-  interface Window {
-    __fusionDebug?: {
-      resumeInstrumentation?: {
-        get: typeof getResumeEvents;
-        clear: typeof clearResumeEvents;
-        setEnabled: typeof setResumeInstrumentationEnabled;
-      };
-    };
-  }
-}
-
 if (typeof window !== "undefined") {
   window.__fusionDebug ??= {};
   window.__fusionDebug.resumeInstrumentation = {
