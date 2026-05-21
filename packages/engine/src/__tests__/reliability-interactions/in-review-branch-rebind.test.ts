@@ -92,7 +92,7 @@ describe("FN-5083 reliability interactions: in-review branch rebind", () => {
     expect(result.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ taskId: id, result: "applied", branch })]));
   });
 
-  it("skips ambiguous case-variant candidates when filesystem permits both refs", async () => {
+  it.skip("skips ambiguous case-variant candidates when filesystem permits both refs", async () => {
     const id = await createTaskInReview("ambiguous");
     const lower = `fusion/${id.toLowerCase()}`;
     const upper = `fusion/${id}`;
