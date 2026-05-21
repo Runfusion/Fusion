@@ -16,8 +16,8 @@ import type { Settings, Task, TaskStore } from "@fusion/core";
 
 const { execMock, execSyncMock, existsSyncMock } = vi.hoisted(() => ({
   execMock: vi.fn(),
-  execSyncMock: vi.fn(() => ""),
-  existsSyncMock: vi.fn(() => false),
+  execSyncMock: vi.fn<(cmd: string) => string>(() => ""),
+  existsSyncMock: vi.fn<(p: string) => boolean>(() => false),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -173,7 +173,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    existsSyncMock.mockImplementation((p: string) =>
+    ((existsSyncMock.mockImplementation as any) as any)((p: string) =>
       typeof p === "string" && p === "/repo",
     );
     execMock.mockImplementation((_cmd: string, _opts: unknown, cb: (err: null, stdout: string, stderr: string) => void) => {
@@ -199,16 +199,16 @@ describe("FN-190 worktree lifecycle fixes", () => {
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
       // Worktree directory does NOT exist
-      existsSyncMock.mockImplementation((p: string) => p === "/repo");
+      ((existsSyncMock.mockImplementation as any) as any)(((p: string) => p === "/repo") as any);
 
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(1);
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-100",
         expect.objectContaining({
-          worktree: null,
-          branch: null,
-          baseCommitSha: null,
+          worktree: null as any,
+          branch: null as any,
+          baseCommitSha: null as any,
         }),
       );
       expect(store.moveTask).toHaveBeenCalledWith(
@@ -236,7 +236,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
       // Directory exists but is unusable
-      existsSyncMock.mockImplementation((p: string) =>
+      ((existsSyncMock.mockImplementation as any) as any)((p: string) =>
         p === "/repo" || p === "/repo/.worktrees/unusable-wt",
       );
       isUsableMock.mockResolvedValue(false);
@@ -259,7 +259,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       store = createStore([task]);
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-      existsSyncMock.mockImplementation((p: string) =>
+      ((existsSyncMock.mockImplementation as any) as any)((p: string) =>
         p === "/repo" || p === "/repo/.worktrees/ok-wt",
       );
       isUsableMock.mockResolvedValue(true);
@@ -293,7 +293,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       store = createStore([task]);
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-      existsSyncMock.mockImplementation((p: string) => p === "/repo");
+      ((existsSyncMock.mockImplementation as any) as any)(((p: string) => p === "/repo") as any);
 
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(0);
@@ -308,7 +308,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       store = createStore([task]);
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(0);
@@ -323,7 +323,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       store = createStore([task]);
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(0);
@@ -338,7 +338,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       const releaseFn = vi.fn();
       manager = new SelfHealingManager(store, { rootDir: "/repo", releaseExecutorWorktreeOwnership: releaseFn });
 
-      existsSyncMock.mockImplementation((p: string) => p === "/repo");
+      ((existsSyncMock.mockImplementation as any) as any)(((p: string) => p === "/repo") as any);
 
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(1);
@@ -358,8 +358,8 @@ describe("FN-190 worktree lifecycle fixes", () => {
         ]),
       };
 
-      manager = new SelfHealingManager(store, { rootDir: "/repo", agentStore });
-      existsSyncMock.mockImplementation(() => false);
+      manager = new SelfHealingManager(store, { rootDir: "/repo", agentStore: agentStore as any });
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(0);
@@ -385,7 +385,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
     it("allows deletion of zero-commit branch when task has no worktree", async () => {
       const task = makeTask("FN-200", {
         column: "in-progress",
-        worktree: null,
+        worktree: undefined,
         branch: "fusion/fn-200",
       });
       store = createStore([task]);
@@ -394,13 +394,13 @@ describe("FN-190 worktree lifecycle fixes", () => {
       setupExecSyncForBranches([
         { name: "fusion/fn-200", tipSha: "abc123def4567890", uniqueCount: 0 },
       ]);
-      existsSyncMock.mockImplementation((p: string) => p === "/repo");
+      ((existsSyncMock.mockImplementation as any) as any)(((p: string) => p === "/repo") as any);
 
       const count = await manager.reclaimStaleActiveBranches();
       expect(count).toBe(1);
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-200",
-        expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }),
+        expect.objectContaining({ worktree: null as any, branch: null as any, baseCommitSha: null as any }),
       );
     });
 
@@ -420,7 +420,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       vi.spyOn(manager as any, "findWorktreePathForBranch").mockResolvedValue(undefined);
 
       // Worktree dir exists but is unusable
-      existsSyncMock.mockImplementation((p: string) =>
+      ((existsSyncMock.mockImplementation as any) as any)((p: string) =>
         p === "/repo" || p === "/repo/.worktrees/broken-wt",
       );
       isUsableMock.mockResolvedValue(false);
@@ -441,7 +441,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
     it("treats tip-already-merged branch as stale merged (not blocking conflict)", async () => {
       const task = makeTask("FN-300", {
         column: "in-progress",
-        worktree: null,
+        worktree: undefined,
         branch: "fusion/fn-300",
       });
       store = createStore([task]);
@@ -453,7 +453,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       // Tip IS an ancestor of main → already merged
       isAncestorMock.mockResolvedValue(true);
       vi.spyOn(manager as any, "findWorktreePathForBranch").mockResolvedValue(undefined);
-      existsSyncMock.mockImplementation((p: string) => p === "/repo");
+      ((existsSyncMock.mockImplementation as any) as any)(((p: string) => p === "/repo") as any);
 
       const count = await manager.reclaimStaleActiveBranches();
       expect(count).toBe(1);
@@ -463,14 +463,14 @@ describe("FN-190 worktree lifecycle fixes", () => {
       );
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-300",
-        expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }),
+        expect.objectContaining({ worktree: null as any, branch: null as any, baseCommitSha: null as any }),
       );
     });
 
     it("does NOT treat tip-already-merged as ghost when branch has unique commits", async () => {
       const task = makeTask("FN-301", {
         column: "in-progress",
-        worktree: null,
+        worktree: undefined,
         branch: "fusion/fn-301",
       });
       store = createStore([task]);
@@ -480,7 +480,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
         { name: "fusion/fn-301", tipSha: "cafe1234567890ab", uniqueCount: 3 },
       ]);
 
-      existsSyncMock.mockImplementation((p: string) => p === "/repo");
+      ((existsSyncMock.mockImplementation as any) as any)(((p: string) => p === "/repo") as any);
 
       const count = await manager.reclaimStaleActiveBranches();
       // Should not reclaim — the branch has real work
@@ -494,7 +494,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
     it("removes worktree for tip-already-merged branch when present", async () => {
       const task = makeTask("FN-302", {
         column: "in-progress",
-        worktree: null,
+        worktree: undefined,
         branch: "fusion/fn-302",
       });
       store = createStore([task]);
@@ -507,7 +507,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       vi.spyOn(manager as any, "findWorktreePathForBranch")
         .mockResolvedValue("/repo/.worktrees/ghost-wt");
 
-      existsSyncMock.mockImplementation((p: string) =>
+      ((existsSyncMock.mockImplementation as any) as any)((p: string) =>
         p === "/repo" || p === "/repo/.worktrees/ghost-wt",
       );
 
@@ -530,7 +530,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       const doneTask = makeTask("FN-400", {
         column: "done",
         branch: "fusion/fn-400",
-        worktree: null,
+        worktree: undefined,
       });
       const dependent = makeTask("FN-401", {
         column: "todo",
@@ -544,7 +544,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
         leaseManager: leaseManager as any,
       });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       const result = await manager.reconcileCompletedTask("FN-400");
       expect(leaseManager.reconcileLeaseRow).toHaveBeenCalledWith("FN-400");
@@ -555,7 +555,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       const doneTask = makeTask("FN-410", {
         column: "done",
         branch: "fusion/fn-410",
-        worktree: null,
+        worktree: undefined,
       });
       const dependent = makeTask("FN-411", {
         column: "todo",
@@ -569,7 +569,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
         leaseManager: leaseManager as any,
       });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       const result = await manager.reconcileCompletedTask("FN-410");
       // Should still clear blockedBy even if lease reconciliation fails
@@ -581,7 +581,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       const doneTask = makeTask("FN-420", {
         column: "done",
         branch: "fusion/fn-420",
-        worktree: null,
+        worktree: undefined,
       });
       const dependent = makeTask("FN-421", {
         column: "todo",
@@ -591,7 +591,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       store = createStore([doneTask, dependent]);
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       const result = await manager.reconcileCompletedTask("FN-420");
       expect(result.blockedByCleared).toBe(1);
@@ -605,7 +605,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
       const doneTask = makeTask("FN-430", {
         column: "done",
         branch: "fusion/fn-430",
-        worktree: null,
+        worktree: undefined,
       });
       store = createStore([doneTask]);
 
@@ -615,7 +615,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
         releaseExecutorWorktreeOwnership: releaseFn,
       });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       await manager.reconcileCompletedTask("FN-430");
       expect(releaseFn).toHaveBeenCalledWith("FN-430");
@@ -625,12 +625,12 @@ describe("FN-190 worktree lifecycle fixes", () => {
       const doneTask = makeTask("FN-440", {
         column: "done",
         branch: "fusion/fn-440",
-        worktree: null,
+        worktree: undefined,
       });
       store = createStore([doneTask]);
       manager = new SelfHealingManager(store, { rootDir: "/repo" });
 
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
 
       // Should not throw
       const result = await manager.reconcileCompletedTask("FN-440");
@@ -652,7 +652,7 @@ describe("FN-190 worktree lifecycle fixes", () => {
     it("reconcileActiveTaskPhantomState warns and proceeds for non-existent rootDir", async () => {
       store = createStore([]);
       manager = new SelfHealingManager(store, { rootDir: "/nonexistent/path" });
-      existsSyncMock.mockImplementation(() => false);
+      ((existsSyncMock.mockImplementation as any) as any)(() => false);
       const count = await manager.reconcileActiveTaskPhantomState();
       expect(count).toBe(0);
       expect(logger.warn).toHaveBeenCalledWith(
