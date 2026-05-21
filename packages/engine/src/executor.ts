@@ -2776,19 +2776,21 @@ export class TaskExecutor {
     // Cross-repo routing guard: fail-fast if task specifies a target repo
     // directory that differs from this executor's root. Move back to triage
     // with an actionable error message so the task doesn't silently loop.
-    const executorRootDir = this.store.getRootDir();
-    if (task.targetRepoDir && task.targetRepoDir !== executorRootDir) {
-      const mismatchMsg = `Cross-repo routing unsupported: task specifies targetRepoDir="${task.targetRepoDir}" but executor root is "${executorRootDir}". Recreate this task from the correct project root.`;
-      executorLog.warn(`${task.id}: ${mismatchMsg}`);
-      await this.store.updateTask(task.id, {
-        status: "cross-repo-routing-unsupported",
-        error: mismatchMsg,
-      }, this.currentRunContexts.get(task.id));
-      await this.store.moveTask(task.id, "triage");
-      await this.store.logEntry(task.id, `Executor cross-repo guard: ${mismatchMsg}`);
-      this.executing.delete(task.id);
-      executingTaskLock.release(task.id);
-      return;
+    if (task.targetRepoDir) {
+      const executorRootDir = this.store.getRootDir();
+      if (task.targetRepoDir !== executorRootDir) {
+        const mismatchMsg = `Cross-repo routing unsupported: task specifies targetRepoDir="${task.targetRepoDir}" but executor root is "${executorRootDir}". Recreate this task from the correct project root.`;
+        executorLog.warn(`${task.id}: ${mismatchMsg}`);
+        await this.store.updateTask(task.id, {
+          status: "cross-repo-routing-unsupported",
+          error: mismatchMsg,
+        }, this.currentRunContexts.get(task.id));
+        await this.store.moveTask(task.id, "triage");
+        await this.store.logEntry(task.id, `Executor cross-repo guard: ${mismatchMsg}`);
+        this.executing.delete(task.id);
+        executingTaskLock.release(task.id);
+        return;
+      }
     }
 
     const assignedAgentId = task.assignedAgentId;

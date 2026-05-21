@@ -3100,3 +3100,108 @@ describe("Database end-to-end stale connection recovery", () => {
     }
   });
 });
+
+describe("Database prepare/exec lock recovery", () => {
+  let tmpDir: string;
+  let fusionDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    fusionDir = join(tmpDir, ".fusion");
+  });
+
+  afterEach(() => {
+    removeTrackedTmpDirSync(tmpDir);
+  });
+
+  it("prepare() retries on SQLITE_BUSY and succeeds", async () => {
+    const retryDb = new Database(fusionDir, {
+      busyTimeoutMs: 0,
+      lockRecoveryWindowMs: 500,
+      lockRecoveryDelayMs: 25,
+    });
+    retryDb.init();
+
+    try {
+      const realPrepare = (retryDb as any).db.prepare.bind((retryDb as any).db);
+      let callCount = 0;
+      const spy = vi.spyOn((retryDb as any).db, "prepare").mockImplementation((sql: string) => {
+        callCount++;
+        if (callCount === 1 && !sql.startsWith("PRAGMA")) {
+          throw new Error("SQLITE_BUSY: database is locked");
+        }
+        return realPrepare(sql);
+      });
+
+      // First call hits SQLITE_BUSY, retry succeeds
+      const stmt = retryDb.prepare("SELECT value FROM __meta WHERE key = 'schemaVersion'");
+      const row = stmt.get() as { value: string } | undefined;
+      expect(row?.value).toBe("89");
+      expect(callCount).toBeGreaterThanOrEqual(2);
+
+      spy.mockRestore();
+    } finally {
+      retryDb.close();
+    }
+  });
+
+  it("exec() retries on SQLITE_BUSY and succeeds after lock releases", async () => {
+    const retryDb = new Database(fusionDir, {
+      busyTimeoutMs: 0,
+      lockRecoveryWindowMs: 500,
+      lockRecoveryDelayMs: 25,
+    });
+    retryDb.init();
+    const lock = await holdWriteLock(retryDb.getPath(), { releaseMode: "timer", holdMs: 150 });
+
+    try {
+      // Use a write operation to trigger SQLITE_BUSY on exec()
+      expect(() => retryDb.exec("CREATE TABLE IF NOT EXISTS lock_retry_test (id TEXT PRIMARY KEY)")).not.toThrow();
+    } finally {
+      try { await lock.release(); } catch {}
+      retryDb.close();
+    }
+  });
+
+  it("prepare() throws when lock outlives the recovery window", async () => {
+    const retryDb = new Database(fusionDir, {
+      busyTimeoutMs: 0,
+      lockRecoveryWindowMs: 100,
+      lockRecoveryDelayMs: 25,
+    });
+    retryDb.init();
+
+    try {
+      const spy = vi.spyOn((retryDb as any).db, "prepare").mockImplementation((sql: string) => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      });
+
+      expect(() => {
+        retryDb.prepare("SELECT value FROM __meta WHERE key = 'schemaVersion'");
+      }).toThrow(/failed/);
+
+      spy.mockRestore();
+    } finally {
+      retryDb.close();
+    }
+  });
+
+  it("exec() throws when lock outlives the recovery window", async () => {
+    const retryDb = new Database(fusionDir, {
+      busyTimeoutMs: 0,
+      lockRecoveryWindowMs: 100,
+      lockRecoveryDelayMs: 25,
+    });
+    retryDb.init();
+    const lock = await holdWriteLock(retryDb.getPath(), { releaseMode: "manual" });
+
+    try {
+      expect(() => {
+        retryDb.exec("CREATE TABLE IF NOT EXISTS lock_test (id TEXT PRIMARY KEY)");
+      }).toThrow(/failed/);
+    } finally {
+      await lock.release();
+      retryDb.close();
+    }
+  });
+});
