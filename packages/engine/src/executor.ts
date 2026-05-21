@@ -8534,12 +8534,18 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       auditor: audit,
     });
 
+    const recoveryAction = recovery.outcome === "escalate-exhausted"
+      ? "escalate-exhausted"
+      : recovery.outcome === "skip-complete"
+        ? "skip-complete"
+        : "requeue-todo";
+
     await audit.git({
       type: "worktree:auto-recovered",
       target: staleWorktreePath,
       metadata: {
         classification: recovery.classification,
-        action: recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo",
+        action: recoveryAction,
         retries: recovery.retries,
         maxRetries: MAX_WORKTREE_SESSION_RETRIES,
         staleWorktree: staleWorktreePath,
@@ -8547,7 +8553,17 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       },
     });
 
-    if (recovery.outcome === "escalate-exhausted") {
+    if (recovery.outcome === "skip-complete") {
+      // FN-147: Task has all steps completed — do not requeue. Let the executor
+      // proceed with done/review transition instead.
+      await this.store.logEntry(
+        task.id,
+        `Worktree was ${classification} at session start, but all steps are complete — skipping requeue`,
+        undefined,
+        this.getRunContextFor(task.id),
+      );
+      return false;
+    } else if (recovery.outcome === "escalate-exhausted") {
       await this.store.logEntry(
         task.id,
         `Worktree session-start auto-recovery exhausted (${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES}); task left for human inspection`,

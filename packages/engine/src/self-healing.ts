@@ -328,7 +328,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
     source: "executor-session-start" | "in-review-sweep" | "resume-guard";
     auditor: RunAuditor | null;
   },
-): Promise<{ outcome: "requeue-todo" | "escalate-exhausted"; retries: number; classification: "missing" | "incomplete" | "unregistered" | "unknown" }> {
+): Promise<{ outcome: "requeue-todo" | "escalate-exhausted" | "skip-complete"; retries: number; classification: "missing" | "incomplete" | "unregistered" | "unknown" }> {
   const classification = classifyMissingWorktreeSessionStartFailure(opts.failure);
   const nextCount = (task.worktreeSessionRetryCount ?? 0) + 1;
   if (nextCount > MAX_WORKTREE_SESSION_RETRIES) {
@@ -346,6 +346,26 @@ export async function autoRecoverWorktreeSessionStartFailure(
       },
     });
     return { outcome: "escalate-exhausted", retries: task.worktreeSessionRetryCount ?? 0, classification };
+  }
+
+  // FN-147: If all steps are already completed/skipped, the task work is done.
+  // Requeueing to todo would undo valid completion — skip requeue and let
+  // the caller proceed with done/review transition instead.
+  if (isTaskWorkComplete(task)) {
+    await store.logEntry(
+      task.id,
+      `Skipping worktree-session requeue: all steps completed (source=${opts.source}) — task work is done despite unusable worktree`,
+    );
+    await opts.auditor?.database({
+      type: "task:auto-recover-worktree-session-skip-complete",
+      target: task.id,
+      metadata: {
+        retries: task.worktreeSessionRetryCount ?? 0,
+        source: opts.source,
+        classification,
+      },
+    });
+    return { outcome: "skip-complete", retries: task.worktreeSessionRetryCount ?? 0, classification };
   }
 
   const staleWorktree = task.worktree;

@@ -245,6 +245,7 @@ export type DatabaseMutationType =
   | "task:auto-recover-completion-handoff-limbo"
   | "task:auto-recover-completion-handoff-limbo-exhausted"
   | "task:auto-recover-worktree-session-exhausted"
+  | "task:auto-recover-worktree-session-skip-complete"
   | "task:auto-recover-in-progress-limbo"
   | "task:orphan-detected-no-action"
   /** Metadata: { taskId: string; ignoredStepUpdateCount: number; stuckKillStreak: number; lastReason: "no-progress-churn" } */

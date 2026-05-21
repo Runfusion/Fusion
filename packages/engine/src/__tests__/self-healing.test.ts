@@ -1905,6 +1905,40 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    // FN-147: completed tasks should NOT be requeued when worktree is missing
+    it("skips requeue when all steps are completed despite missing worktree", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-COMPLETE",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          worktree: "/tmp/project/.worktrees/fn-complete-stale",
+          branch: "fusion/fn-complete",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-complete.json",
+          error: "Refusing to start coding agent in missing worktree: /tmp/project/.worktrees/fn-complete-stale",
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      // Should NOT be requeued — all steps are complete
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-COMPLETE",
+        expect.stringContaining("all steps completed"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
     it("requeues incomplete-worktree failures and clears stale worktree metadata", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
