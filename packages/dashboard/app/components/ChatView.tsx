@@ -23,6 +23,7 @@ import {
   Copy,
   Check,
   TriangleAlert,
+  ArrowUpToLine,
 } from "lucide-react";
 import { useChat, type ChatMessageInfo, type FailureInfo, type ToolCallInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
@@ -713,6 +714,7 @@ interface ChatMessageItemProps {
   mentionAgentsByName: Map<string, Agent>;
   roomContext: RoomContext | null;
   copyAction?: ReactNode;
+  onScrollToTop?: (messageId: string) => void;
 }
 
 // Renders a single chat message bubble. Memoized so the streaming bubble's
@@ -730,6 +732,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   mentionAgentsByName,
   roomContext,
   copyAction,
+  onScrollToTop,
 }: ChatMessageItemProps) {
   const isAssistantMessage = message.role === "assistant";
   const failureInfo = isAssistantMessage ? message.failureInfo : undefined;
@@ -876,7 +879,22 @@ const ChatMessageItem = memo(function ChatMessageItem({
       {isAssistantMessage
         ? assistantBody
         : <div className="chat-message-content">{renderedUserContent}</div>}
-      {!failureInfo && copyAction}
+      {isAssistantMessage && !failureInfo && (copyAction || onScrollToTop) && (
+        <div className="chat-message-actions">
+          {copyAction}
+          {onScrollToTop && (
+            <button
+              type="button"
+              className="btn-icon chat-message-scroll-to-top-action"
+              aria-label="Scroll message to top"
+              data-testid={`chat-message-scroll-to-top-${message.id}`}
+              onClick={() => onScrollToTop(message.id)}
+            >
+              <ArrowUpToLine size={14} />
+            </button>
+          )}
+        </div>
+      )}
       {renderToolCalls(message.toolCalls)}
       {message.thinkingOutput && (
         <details className="chat-message-thinking">
@@ -2500,6 +2518,18 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     </button>
   ), [copyFeedbackByMessageId, handleCopyResponse]);
 
+  const handleScrollMessageToTop = useCallback((messageId: string) => {
+    const containerEl = messagesContainerRef.current;
+    if (!containerEl) return;
+    const selector = `[data-testid="chat-message-${messageId}"]`;
+    const targetEl = containerEl.querySelector<HTMLElement>(selector);
+    if (!targetEl) return;
+
+    const top = targetEl.getBoundingClientRect().top - containerEl.getBoundingClientRect().top + containerEl.scrollTop;
+    const prefersReducedMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    containerEl.scrollTo({ top, behavior: prefersReducedMotion ? "auto" : "smooth" });
+  }, []);
+
   return (
     <div className="chat-view">
       {/* Sidebar */}
@@ -2917,6 +2947,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                         activeSessionId={rooms.activeRoom?.id ?? null}
                         mentionAgentsByName={mentionAgentsByName}
                         roomContext={roomContext}
+                        onScrollToTop={handleScrollMessageToTop}
                       />
                     );
                   })
@@ -3101,6 +3132,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                   mentionAgentsByName={mentionAgentsByName}
                   roomContext={null}
                   copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
+                  onScrollToTop={handleScrollMessageToTop}
                 />
               ))}
               <div className="chat-message chat-message--assistant chat-message--streaming">
@@ -3155,6 +3187,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                   mentionAgentsByName={mentionAgentsByName}
                   roomContext={null}
                   copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
+                  onScrollToTop={handleScrollMessageToTop}
                 />
               ))}
             </>

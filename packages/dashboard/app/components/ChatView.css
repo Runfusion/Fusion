@@ -925,7 +925,16 @@
   overflow-wrap: anywhere;
 }
 
-.chat-message-copy-action {
+.chat-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.chat-message-copy-action,
+.chat-message-scroll-to-top-action {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -945,13 +954,21 @@
   transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
-.chat-message-copy-action:hover {
+.chat-message-actions .chat-message-copy-action,
+.chat-message-actions .chat-message-scroll-to-top-action {
+  margin-top: 0;
+  margin-left: 0;
+}
+
+.chat-message-copy-action:hover,
+.chat-message-scroll-to-top-action:hover {
   opacity: 1;
   color: var(--text);
   background: color-mix(in srgb, var(--surface) 55%, transparent);
 }
 
-.chat-message-copy-action:focus-visible {
+.chat-message-copy-action:focus-visible,
+.chat-message-scroll-to-top-action:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
   opacity: 1;
@@ -1774,6 +1791,10 @@
 
   /* FN-4352: secondary hover-revealed row action keeps base compact sizing (inflated by FN-3628). */
   .chat-message-copy-action {
+    opacity: 1;
+  }
+
+  .chat-message-scroll-to-top-action {
     opacity: 1;
   }
 
