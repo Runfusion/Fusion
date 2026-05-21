@@ -2174,6 +2174,8 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       log.warn(`Failed to inspect branch ${branch} during stale-active reclaim: ${err instanceof Error ? err.message : String(err)}`);
       return null;
+    }
+  }
 
   /**
    * AC1: Detect and reconcile active/running tasks with stale or missing worktrees
@@ -2465,7 +2467,7 @@ export class SelfHealingManager {
           );
 
           // Remove the worktree if it exists
-          const registeredWtPath = await this.getRegisteredWorktreePathForBranch(branch);
+          const registeredWtPath = await this.findWorktreePathForBranch(branch);
           if (registeredWtPath && existsSync(registeredWtPath)) {
             try {
               await removeWorktree({
