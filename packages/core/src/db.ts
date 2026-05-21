@@ -3932,17 +3932,50 @@ export class Database {
   }
 
   /**
+   * Execute a function with automatic corruption recovery.
+   * If the function throws a corruption-family error, the connection is
+   * reopened (picking up the current on-disk state) and the function is
+   * retried once. Non-corruption errors propagate immediately.
+   *
+   * @param fn The function to execute (typically a query against this.db)
+   * @param label A human-readable label for logging (e.g., "prepare(SELECT ...)")
+   * @returns The return value of fn()
+   */
+  private withCorruptionRecovery<T>(fn: () => T, label?: string): T {
+    try {
+      return fn();
+    } catch (error) {
+      if (!Database.isCorruptionError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[fusion:db] Corruption error during ${label ?? "query"}: ${message}. Reopening connection.`);
+      this.reopen();
+      // Retry once after reopen
+      return fn();
+    }
+  }
+
+  /**
    * Prepare a SQL statement. Returns a Statement object.
+   * Automatically reopens the connection and retries on corruption errors.
    */
   prepare(sql: string): Statement {
-    return this.db.prepare(sql);
+    return this.withCorruptionRecovery(
+      () => this.db.prepare(sql),
+      `prepare(${sql.slice(0, 50)})`,
+    );
   }
 
   /**
    * Execute a raw SQL string (no parameters).
+   * Automatically reopens the connection and retries on corruption errors.
    */
   exec(sql: string): void {
-    this.db.exec(sql);
+    this.withCorruptionRecovery(
+      () => this.db.exec(sql),
+      `exec(${sql.slice(0, 50)})`,
+    );
   }
 
   private getMetaValue(key: string): string | undefined {
