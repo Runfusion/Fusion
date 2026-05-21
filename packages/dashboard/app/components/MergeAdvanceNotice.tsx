@@ -113,7 +113,12 @@ export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: Merg
     return null;
   }
 
-  const localChangesPreserved = notice.userCheckout.dirty || notice.userCheckout.untrackedCount > 0;
+  if (!notice.userCheckout) {
+    return null;
+  }
+
+  const checkout = notice.userCheckout;
+  const localChangesPreserved = checkout.dirty || checkout.untrackedCount > 0;
 
   const dismiss = () => {
     const next = [...dismissedShas.filter((sha) => sha !== notice.toSha), notice.toSha].slice(-50);
@@ -148,7 +153,7 @@ export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: Merg
     <div className="merge-advance-notice" role="status" aria-live="polite">
       <div className="merge-advance-notice__content">
         <strong>{notice.integrationBranch} advanced to {shortSha(notice.toSha)}.</strong>{" "}
-        Your checked-out copy at {notice.userCheckout.worktreePath} is behind.
+        Your checked-out copy at {checkout.worktreePath} is behind.
         {localChangesPreserved ? " (local changes preserved)" : ""}
         {pullError ? <span className="merge-advance-notice__error"> {pullError}</span> : null}
         {pulling ? <span className="merge-advance-notice__hint"> Pulling…</span> : null}
