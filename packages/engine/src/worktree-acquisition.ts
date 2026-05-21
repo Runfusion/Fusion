@@ -157,6 +157,17 @@ async function maybeWarnForeignTaskStartPoint(
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
+
+  // Cross-repo routing guard: fail-fast if the task specifies a target repo
+  // directory that differs from the scheduler's root directory. This prevents
+  // worktrees from being allocated under the wrong project root.
+  if (task.targetRepoDir && task.targetRepoDir !== rootDir) {
+    throw new Error(
+      `Cross-repo routing unsupported: task ${task.id} specifies targetRepoDir="${task.targetRepoDir}" but worktree root is "${rootDir}". ` +
+      `Recreate this task from the correct project root.`,
+    );
+  }
+
   const notifyFallback = async (op: WorktrunkOpName, stderr?: string) => {
     await store.logEntry(task.id, `Worktrunk ${op} failed; continuing with native worktree backend (${stderr ?? "no stderr"})`, undefined, runContext);
   };

@@ -1509,6 +1509,23 @@ export class Scheduler {
           this.wasPermanentAgentUnavailable.delete(task.id);
         }
 
+        // Cross-repo routing guard: if the task specifies a targetRepoDir that
+        // differs from this scheduler's root directory, fail-fast by moving the
+        // task back to triage with an actionable error. Cross-repo dispatch is
+        // not supported — tasks must be created from the correct project root.
+        const rootDir = this.store.getRootDir();
+        if (freshTask.targetRepoDir && freshTask.targetRepoDir !== rootDir) {
+          const mismatchMsg = `Cross-repo routing unsupported: task specifies targetRepoDir="${freshTask.targetRepoDir}" but scheduler root is "${rootDir}". Recreate this task from the correct project root.`;
+          schedulerLog.warn(`Task ${task.id} blocked: ${mismatchMsg}`);
+          await this.store.updateTask(task.id, {
+            status: "cross-repo-routing-unsupported",
+            error: mismatchMsg,
+          });
+          await this.store.moveTask(task.id, "triage");
+          await this.store.logEntry(task.id, `Scheduler cross-repo guard: ${mismatchMsg}`);
+          continue;
+        }
+
         // Clear status, reserve worktree path, and then move to in-progress.
         // Reset mergeRetries so a fresh execution gets a fresh merge budget —
         // otherwise a task whose previous run exhausted its 3 retries (e.g.

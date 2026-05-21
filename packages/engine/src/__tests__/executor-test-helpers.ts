@@ -364,6 +364,7 @@ export function createMockStore() {
     setPluginWorkflowStepTemplates: vi.fn(),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
+    getRootDir: vi.fn().mockReturnValue("/tmp/test"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
   };
   return store as any;
