@@ -17,6 +17,7 @@ const piModuleMocks = vi.hoisted(() => ({
 
 const coreModuleMocks = vi.hoisted(() => ({
   runMemoryBackupCommand: vi.fn(),
+  runBackupCommand: vi.fn(),
 }));
 
 vi.mock("../logger.js", () => ({
@@ -37,6 +38,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   return {
     ...actual,
     runMemoryBackupCommand: coreModuleMocks.runMemoryBackupCommand,
+    runBackupCommand: coreModuleMocks.runBackupCommand,
   };
 });
 
@@ -119,6 +121,10 @@ describe("CronRunner", () => {
     coreModuleMocks.runMemoryBackupCommand.mockResolvedValue({
       success: true,
       output: "memory backup ok",
+    });
+    coreModuleMocks.runBackupCommand.mockResolvedValue({
+      success: true,
+      output: "Backup created: fusion-2026-01-01-000000.db + fusion-central-2026-01-01-000000.db (1 MB).",
     });
   });
 
@@ -1886,6 +1892,22 @@ describe("CronRunner", () => {
         expect(isInProcessMemoryBackupCommand(cmd)).toBe(false);
       });
     }
+  });
+
+  describe("backup in-process dispatch", () => {
+    it("routes fn backup --create through runBackupCommand", async () => {
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      const schedule = createMockSchedule({ id: "db-bk", command: "fn backup --create" });
+      runner = new CronRunner(store, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+
+      expect(coreModuleMocks.runBackupCommand).toHaveBeenCalledWith("/tmp/.fusion", expect.any(Object));
+      expect(runResult.success).toBe(true);
+      expect(runResult.output).toContain("fusion-central-");
+    });
   });
 
   describe("memory backup in-process dispatch", () => {

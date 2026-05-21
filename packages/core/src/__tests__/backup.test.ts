@@ -30,9 +30,12 @@ describe("BackupManager", () => {
     tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     fusionDir = join(tempDir, ".fusion");
     await mkdir(fusionDir, { recursive: true });
-    // Create a dummy database file
+    // Create dummy project + central database files
     writeFileSync(join(fusionDir, "fusion.db"), "dummy database content");
-    backupManager = new BackupManager(fusionDir);
+    writeFileSync(join(fusionDir, "fusion-central.db"), "dummy central database content");
+    backupManager = new BackupManager(fusionDir, {
+      centralDbPath: join(fusionDir, "fusion-central.db"),
+    });
   });
 
   afterEach(async () => {
@@ -68,7 +71,10 @@ describe("BackupManager", () => {
 
     it("should create backup directory if it does not exist", async () => {
       const customBackupDir = "custom-backups";
-      const manager = new BackupManager(fusionDir, { backupDir: customBackupDir });
+      const manager = new BackupManager(fusionDir, {
+        backupDir: customBackupDir,
+        centralDbPath: join(fusionDir, "fusion-central.db"),
+      });
 
       const customBackupPath = join(tempDir, customBackupDir);
       expect(existsSync(customBackupPath)).toBe(false);
@@ -76,6 +82,68 @@ describe("BackupManager", () => {
       await manager.createBackup();
 
       expect(existsSync(customBackupPath)).toBe(true);
+    });
+
+    it("creates paired project and central backups with shared timestamp", async () => {
+      const backup = await backupManager.createBackup();
+      expect(backup.centralBackup && "filename" in backup.centralBackup).toBe(true);
+      if (backup.centralBackup && "filename" in backup.centralBackup) {
+        expect(backup.centralBackup.filename).toBe(backup.filename.replace(/^fusion-/, "fusion-central-"));
+      }
+    });
+
+    it("skips central backup when central DB is missing", async () => {
+      const manager = new BackupManager(fusionDir, {
+        centralDbPath: join(fusionDir, "does-not-exist.db"),
+      });
+      const backup = await manager.createBackup();
+      expect(backup.centralBackup).toEqual({ skipped: "missing" });
+    });
+
+    it("skips central backup when includeCentralDb is false", async () => {
+      const manager = new BackupManager(fusionDir, {
+        centralDbPath: join(fusionDir, "fusion-central.db"),
+        includeCentralDb: false,
+      });
+      const backup = await manager.createBackup();
+      expect(backup.centralBackup).toEqual({ skipped: "disabled" });
+    });
+
+    it("applies collision counter symmetrically for project and central backups", async () => {
+      const backupDir = join(tempDir, ".fusion/backups");
+      await mkdir(backupDir, { recursive: true });
+      await writeFile(join(backupDir, "fusion-2026-01-01-000000.db"), "exists");
+      const backup = await backupManager.createBackup();
+      expect(backup.filename).toBe("fusion-2026-01-01-000000-1.db");
+      expect(existsSync(join(backupDir, "fusion-central-2026-01-01-000000-1.db"))).toBe(true);
+    });
+
+    it("avoids central orphan collision by bumping shared counter", async () => {
+      const backupDir = join(tempDir, ".fusion/backups");
+      await mkdir(backupDir, { recursive: true });
+      await writeFile(join(backupDir, "fusion-central-2026-01-01-000000.db"), "orphan");
+      const backup = await backupManager.createBackup();
+      expect(backup.filename).toBe("fusion-2026-01-01-000000-1.db");
+      expect(readFileSync(join(backupDir, "fusion-central-2026-01-01-000000.db"), "utf-8")).toBe("orphan");
+      expect(existsSync(join(backupDir, "fusion-central-2026-01-01-000000-1.db"))).toBe(true);
+    });
+
+    it("continues central copy when checkpoint open fails", async () => {
+      const notSqlitePath = join(fusionDir, "not-sqlite.db");
+      writeFileSync(notSqlitePath, "definitely not sqlite");
+      const manager = new BackupManager(fusionDir, { centralDbPath: notSqlitePath });
+      const backup = await manager.createBackup();
+      expect(backup.centralBackup && "filename" in backup.centralBackup).toBe(true);
+      if (backup.centralBackup && "filename" in backup.centralBackup) {
+        expect(readFileSync(backup.centralBackup.path, "utf-8")).toBe("definitely not sqlite");
+      }
+    });
+
+    it("keeps project backup when central copy fails", async () => {
+      const manager = new BackupManager(fusionDir, { centralDbPath: fusionDir });
+      const backup = await manager.createBackup();
+      expect(existsSync(backup.path)).toBe(true);
+      expect(backup.centralBackup && "failed" in backup.centralBackup).toBe(true);
     });
   });
 
@@ -180,6 +248,20 @@ describe("BackupManager", () => {
     });
   });
 
+  describe("listBackupPairs", () => {
+    it("shows paired and singleton backups", async () => {
+      const backupDir = join(tempDir, ".fusion/backups");
+      await mkdir(backupDir, { recursive: true });
+      await writeFile(join(backupDir, "fusion-2026-01-01-000000.db"), "project");
+      await writeFile(join(backupDir, "fusion-central-2026-01-01-000000.db"), "central");
+      await writeFile(join(backupDir, "fusion-2025-12-31-000000.db"), "legacy-only");
+
+      const pairs = await backupManager.listBackupPairs();
+      expect(pairs[0]).toMatchObject({ project: expect.anything(), central: expect.anything() });
+      expect(pairs.some((pair) => pair.project && !pair.central)).toBe(true);
+    });
+  });
+
   describe("cleanupOldBackups", () => {
     it("should not delete when backup count is within retention", async () => {
       // Create 3 backups with retention of 7 by advancing time
@@ -196,7 +278,7 @@ describe("BackupManager", () => {
     });
 
     it("should delete oldest backups exceeding retention", async () => {
-      const manager = new BackupManager(fusionDir, { retention: 2 });
+      const manager = new BackupManager(fusionDir, { retention: 2, centralDbPath: join(fusionDir, "fusion-central.db") });
 
       // Create 4 backups by advancing time deterministically
       for (let i = 0; i < 4; i++) {
@@ -212,7 +294,7 @@ describe("BackupManager", () => {
     });
 
     it("should keep the newest backups after cleanup", async () => {
-      const manager = new BackupManager(fusionDir, { retention: 2 });
+      const manager = new BackupManager(fusionDir, { retention: 2, centralDbPath: join(fusionDir, "fusion-central.db") });
 
       // Create 4 backups and record their names by advancing time
       const backupNames: string[] = [];
@@ -232,6 +314,18 @@ describe("BackupManager", () => {
       expect(remainingNames).toContain(backupNames[3]);
       expect(remainingNames).not.toContain(backupNames[0]);
       expect(remainingNames).not.toContain(backupNames[1]);
+    });
+
+    it("deletes sibling central backup when deleting project backup", async () => {
+      const manager = new BackupManager(fusionDir, { retention: 1, centralDbPath: join(fusionDir, "fusion-central.db") });
+      await manager.createBackup();
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
+      await manager.createBackup();
+      const backupDir = join(tempDir, ".fusion/backups");
+      const oldestCentral = join(backupDir, "fusion-central-2026-01-01-000000.db");
+      expect(existsSync(oldestCentral)).toBe(true);
+      await manager.cleanupOldBackups();
+      expect(existsSync(oldestCentral)).toBe(false);
     });
   });
 
@@ -271,6 +365,32 @@ describe("BackupManager", () => {
 
       expect(preRestoreBackup).toBeDefined();
       expect(preRestoreBackup!.filename).toMatch(/^fusion-pre-restore-/);
+    });
+
+    it("restores paired central backup when restoring project backup", async () => {
+      const backup = await backupManager.createBackup();
+      await writeFile(join(fusionDir, "fusion.db"), "project modified");
+      await writeFile(join(fusionDir, "fusion-central.db"), "central modified");
+
+      await backupManager.restoreBackup(backup.filename, { createPreRestoreBackup: true });
+
+      expect(readFileSync(join(fusionDir, "fusion.db"), "utf-8")).toBe("dummy database content");
+      expect(readFileSync(join(fusionDir, "fusion-central.db"), "utf-8")).toBe("dummy central database content");
+      const backups = await readdir(join(tempDir, ".fusion/backups"));
+      expect(backups.some((name) => name.startsWith("fusion-pre-restore-"))).toBe(true);
+      expect(backups.some((name) => name.startsWith("fusion-central-pre-restore-"))).toBe(true);
+    });
+
+    it("restores central-only backup when filename is fusion-central-*", async () => {
+      const backup = await backupManager.createBackup();
+      if (!backup.centralBackup || !("filename" in backup.centralBackup)) {
+        throw new Error("expected central backup file");
+      }
+      await writeFile(join(fusionDir, "fusion-central.db"), "central modified");
+      await backupManager.restoreBackup(backup.centralBackup.filename, { centralOnly: true, createPreRestoreBackup: true });
+      expect(readFileSync(join(fusionDir, "fusion-central.db"), "utf-8")).toBe("dummy central database content");
+      const backups = await readdir(join(tempDir, ".fusion/backups"));
+      expect(backups.some((name) => name.startsWith("fusion-central-pre-restore-"))).toBe(true);
     });
   });
 });
@@ -667,6 +787,25 @@ describe("runBackupCommand", () => {
 
     expect(result.success).toBe(true);
     expect(result.deletedCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should report central copy failure while keeping success true", async () => {
+    const settings: ProjectSettings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: true,
+      autoBackupEnabled: true,
+    };
+
+    await rm(join(fusionDir, "fusion-central.db"), { force: true });
+    await mkdir(join(fusionDir, "fusion-central.db"), { recursive: true });
+
+    const result = await runBackupCommand(fusionDir, settings);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Central DB backup failed");
   });
 
   it("should return failure when database file is missing", async () => {

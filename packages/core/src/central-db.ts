@@ -15,6 +15,10 @@ import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { Statement } from "./db.js";
 import { resolveGlobalDir } from "./global-settings.js";
+
+export function getDefaultCentralDbPath(globalDir?: string): string {
+  return join(resolveGlobalDir(globalDir), "fusion-central.db");
+}
 import type { CentralClaimStore, TaskClaimRow } from "./types.js";
 
 // ── JSON Helpers (reused from db.ts) ─────────────────────────────────────

@@ -510,6 +510,8 @@ export {
   BackupManager,
   createBackupManager,
   generateBackupFilename,
+  generateCentralBackupFilename,
+  currentBackupTimestamp,
   validateBackupSchedule,
   validateBackupRetention,
   validateBackupDir,
@@ -518,7 +520,7 @@ export {
   syncBackupRoutine,
   BACKUP_SCHEDULE_NAME,
 } from "./backup.js";
-export type { BackupInfo, BackupOptions } from "./backup.js";
+export type { BackupInfo, BackupOptions, BackupFileInfo, BackupPairInfo } from "./backup.js";
 export {
   MemoryBackupManager,
   createMemoryBackupManager,

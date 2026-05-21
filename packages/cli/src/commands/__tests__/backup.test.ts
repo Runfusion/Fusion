@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const {
   mockListBackups,
+  mockListBackupPairs,
   mockRestoreBackup,
   mockCleanupOldBackups,
   mockGetSettings,
@@ -9,6 +10,7 @@ const {
   mockResolveProject,
 } = vi.hoisted(() => ({
   mockListBackups: vi.fn(),
+  mockListBackupPairs: vi.fn(),
   mockRestoreBackup: vi.fn(),
   mockCleanupOldBackups: vi.fn(),
   mockGetSettings: vi.fn(),
@@ -25,6 +27,7 @@ vi.mock("@fusion/core", () => ({
   })),
   createBackupManager: vi.fn(() => ({
     listBackups: mockListBackups,
+    listBackupPairs: mockListBackupPairs,
     restoreBackup: mockRestoreBackup,
     cleanupOldBackups: mockCleanupOldBackups,
   })),
@@ -53,6 +56,7 @@ describe("backup commands", () => {
     mockGetSettings.mockResolvedValue({ autoBackupDir: ".fusion/backups" });
     mockRunBackupCommand.mockResolvedValue({ success: true, output: "backup created" });
     mockListBackups.mockResolvedValue([]);
+    mockListBackupPairs.mockResolvedValue([]);
     mockRestoreBackup.mockResolvedValue(undefined);
     mockCleanupOldBackups.mockResolvedValue(0);
     mockResolveProject.mockResolvedValue({
@@ -77,10 +81,18 @@ describe("backup commands", () => {
   });
 
   it("runBackupList uses resolved project store with --project", async () => {
-    mockListBackups.mockResolvedValue([{ filename: "fusion.db.bak", size: 1024, createdAt: new Date().toISOString() }]);
+    mockListBackupPairs.mockResolvedValue([
+      { timestamp: "2026-01-01-000000", project: { filename: "fusion-2026-01-01-000000.db", size: 1024, createdAt: "2026-01-01T00:00:00.000Z" }, central: { filename: "fusion-central-2026-01-01-000000.db", size: 512, createdAt: "2026-01-01T00:00:00.000Z" } },
+      { timestamp: "2026-01-01-000001", central: { filename: "fusion-central-2026-01-01-000001.db", size: 256, createdAt: "2026-01-01T00:00:01.000Z" } },
+    ]);
     await runBackupList("demo-project");
     expect(mockResolveProject).toHaveBeenCalledWith("demo-project");
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Found 1 backup"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Date"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("2026-01-01 00:00:00"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("fusion-2026-01-01-000000.db"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("└─ fusion-central-2026-01-01-000000.db"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("orphan central backup"));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Total: 1.75 KB"));
   });
 
   it("runBackupRestore uses resolved project store with --project", async () => {
@@ -93,7 +105,7 @@ describe("backup commands", () => {
     mockCleanupOldBackups.mockResolvedValue(2);
     await runBackupCleanup("demo-project");
     expect(mockResolveProject).toHaveBeenCalledWith("demo-project");
-    expect(logSpy).toHaveBeenCalledWith("Removed 2 old backup(s).");
+    expect(logSpy).toHaveBeenCalledWith("Removed 2 old backup(s) and any paired central backup files.");
   });
 
   it("runBackupList without project uses shared resolution flow", async () => {

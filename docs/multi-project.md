@@ -32,6 +32,8 @@ Core tables:
 
 Per-project task data remains in each repo’s `.fusion/fusion.db`.
 
+Backups now include this central DB alongside project backups: each `fn backup --create` run writes a paired `fusion-central-<timestamp>(-N).db` next to `fusion-<timestamp>(-N).db` under `.fusion/backups/` in the active project. Restore operations create a central pre-restore snapshot `fusion-central-pre-restore-<timestamp>.db` before replacing `~/.fusion/fusion-central.db`.
+
 `taskClaims` is the central cross-node lease mutex introduced by FN-4819 §2: claim acquisition/renewal/release happen in `~/.fusion/fusion-central.db`, while per-project lease fields mirror the central winner for local scheduler/runtime consumption.
 
 Peer/mesh coordination spans core + engine, with startup ownership in CLI process entrypoints:

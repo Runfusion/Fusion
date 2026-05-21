@@ -60,28 +60,38 @@ export async function runBackupCreate(projectName?: string): Promise<void> {
 export async function runBackupList(projectName?: string): Promise<void> {
   const { manager } = await getBackupManager(projectName);
   
-  const backups = await manager.listBackups();
-  
-  if (backups.length === 0) {
+  const pairs = await manager.listBackupPairs();
+
+  if (pairs.length === 0) {
     console.log("No backups found.");
     return;
   }
-  
-  console.log(`Found ${backups.length} backup(s):\n`);
-  
-  // Calculate total size
-  const totalSize = backups.reduce((sum, b) => sum + b.size, 0);
+
+  const totalSize = pairs.reduce((sum, pair) => sum + (pair.project?.size ?? 0) + (pair.central?.size ?? 0), 0);
   const formattedTotal = formatBytes(totalSize);
-  
-  console.log("Date                      Size     Filename");
+
+  console.log("Date                      Size      Filename");
   console.log("-".repeat(60));
-  
-  for (const backup of backups) {
-    const date = new Date(backup.createdAt).toLocaleString();
-    const size = formatBytes(backup.size).padEnd(8);
-    console.log(`${date}  ${size}  ${backup.filename}`);
+
+  for (const pair of pairs) {
+    if (pair.project) {
+      const date = formatListDate(pair.project.createdAt);
+      const pairSize = formatBytes((pair.project?.size ?? 0) + (pair.central?.size ?? 0)).padEnd(10);
+      const noSibling = pair.central ? "" : "   (no central sibling)";
+      console.log(`${date}  ${pairSize}  ${pair.project.filename}${noSibling}`);
+      if (pair.central) {
+        console.log(`${" ".repeat(28)}${formatBytes(pair.central.size).padEnd(10)}  └─ ${pair.central.filename}`);
+      }
+      continue;
+    }
+
+    if (pair.central) {
+      const date = formatListDate(pair.central.createdAt);
+      const size = formatBytes(pair.central.size).padEnd(10);
+      console.log(`${date}  ${size}  ${pair.central.filename}   (orphan central backup)`);
+    }
   }
-  
+
   console.log("-".repeat(60));
   console.log(`Total: ${formattedTotal}`);
 }
@@ -98,8 +108,13 @@ export async function runBackupRestore(filename: string, projectName?: string): 
   
   try {
     await manager.restoreBackup(filename, { createPreRestoreBackup: true });
-    console.log(`Successfully restored from ${filename}`);
-    console.log("Note: The pre-restore backup was saved in case you need to undo this operation.");
+    if (filename.startsWith("fusion-central-")) {
+      console.log(`Successfully restored central database from ${filename}`);
+      console.log("Created pre-restore snapshot: fusion-central-pre-restore-<timestamp>.db");
+    } else {
+      console.log(`Successfully restored project database from ${filename}`);
+      console.log("Created pre-restore snapshots: fusion-pre-restore-<timestamp>.db and (if paired) fusion-central-pre-restore-<timestamp>.db");
+    }
   } catch (err) {
     console.error(`Restore failed: ${(err as Error).message}`);
     process.exit(1);
@@ -118,7 +133,7 @@ export async function runBackupCleanup(projectName?: string): Promise<void> {
   const deletedCount = await manager.cleanupOldBackups();
   
   if (deletedCount > 0) {
-    console.log(`Removed ${deletedCount} old backup(s).`);
+    console.log(`Removed ${deletedCount} old backup(s) and any paired central backup files.`);
   } else {
     console.log("No backups to clean up (within retention limit).");
   }
@@ -127,6 +142,17 @@ export async function runBackupCleanup(projectName?: string): Promise<void> {
 /**
  * Format bytes as human-readable string.
  */
+function formatListDate(iso: string): string {
+  const d = new Date(iso);
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const hours = String(d.getUTCHours()).padStart(2, "0");
+  const minutes = String(d.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
