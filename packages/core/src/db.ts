@@ -5,6 +5,20 @@
  * synchronous transaction handling. The database runs in WAL mode
  * for concurrent reader/writer access.
  *
+ * ## Automatic Connection Recovery (FN-117)
+ *
+ * The `Database` class automatically recovers from corruption-family errors
+ * (e.g., "database disk image is malformed") by reopening the underlying
+ * SQLite connection and retrying the failed operation once. This handles the
+ * scenario where an external process (e.g., `sqlite3 .recover`) replaces the
+ * database file while the runtime holds a stale connection with outdated WAL
+ * frames. The recovery is transparent to callers — no runtime restart needed.
+ *
+ * Only `prepare()` and `exec()` are wrapped with automatic recovery.
+ * `transaction()` is NOT wrapped because transactions cannot survive a
+ * connection reopen (SAVEPOINT state is lost). Callers must retry failed
+ * transactions at the application level.
+ *
  * Schema version tracking is managed via a `__meta` table.
  */
 
@@ -1256,7 +1270,7 @@ export class Database {
   integrityCheckLastRunAt: string | null = null;
   /** Tracks transaction nesting depth for savepoint-based nested transactions. */
   private transactionDepth = 0;
-  private readonly _fts5Available: boolean;
+  private _fts5Available: boolean;
   private integrityCheckScheduled = false;
   private closed = false;
   private readonly busyTimeoutMs: number;
@@ -3564,6 +3578,27 @@ export class Database {
   }
 
   /**
+   * Check whether an error represents a SQLite database corruption error.
+   * Covers the full family of corruption error codes and messages, including
+   * FTS5-specific patterns (delegates to isFts5CorruptionError for those).
+   *
+   * This is a static method so callers can use it without a Database instance.
+   */
+  static isCorruptionError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const lower = message.toLowerCase();
+    return (
+      lower.includes("database disk image is malformed") ||
+      lower.includes("database is malformed") ||
+      lower.includes("malformed database schema") ||
+      lower.includes("corruption found reading blob") ||
+      lower.includes("sqlite_corrupt") ||
+      lower.includes("sqlite_notadb") ||
+      (lower.includes("fts5") && lower.includes("corrupt"))
+    );
+  }
+
+  /**
    * Read the declared columns for a table.
    */
   private getTableColumns(table: string, useCache = false, cache?: TableColumnsCache): Set<string> {
@@ -3721,6 +3756,56 @@ export class Database {
   }
 
   /**
+   * Close and reopen the database connection, picking up the current on-disk state.
+   *
+   * This is used to recover from corruption errors where the in-process connection
+   * holds stale WAL frames that reference old (corrupted) data. After reopen, the
+   * connection will read from the current on-disk database file.
+   *
+   * @throws {Error} If called on an in-memory database (cannot be reopened)
+   * @throws {Error} If called inside a transaction (SAVEPOINT state is lost on reconnect)
+   * @throws {Error} If the database has been deliberately closed
+   */
+  reopen(): void {
+    if (this.closed) {
+      throw new Error("[fusion:db] Cannot reopen a deliberately closed database");
+    }
+    if (this.inMemory) {
+      throw new Error("[fusion:db] Cannot reopen an in-memory database");
+    }
+    if (this.transactionDepth > 0) {
+      throw new Error("[fusion:db] Cannot reopen database inside a transaction (SAVEPOINT state would be lost)");
+    }
+
+    // Close the old connection — wrap in try/catch since it may be in a bad state
+    try {
+      this.db.close();
+    } catch (e) {
+      console.warn(`[fusion:db] Error closing connection during reopen: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Open a fresh connection at the same path
+    this.db = new DatabaseSync(this.dbPath);
+
+    // Re-apply PRAGMA settings
+    this.db.exec(`PRAGMA busy_timeout = ${this.busyTimeoutMs}`);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA synchronous = FULL");
+    this.db.exec("PRAGMA wal_autocheckpoint = 1000");
+    this.db.exec("PRAGMA journal_size_limit = 4194304");
+    this.db.exec("PRAGMA foreign_keys = ON");
+
+    // Reset corruption/integrity state
+    this.corruptionDetected = false;
+    this.integrityCheckPending = false;
+
+    // Re-probe FTS5 availability
+    this._fts5Available = probeFts5(this.db);
+
+    console.warn("[fusion:db] Reopened database connection after corruption error");
+  }
+
+  /**
    * Close the database connection.
    */
   close(): void {
@@ -3861,17 +3946,50 @@ export class Database {
   }
 
   /**
+   * Execute a function with automatic corruption recovery.
+   * If the function throws a corruption-family error, the connection is
+   * reopened (picking up the current on-disk state) and the function is
+   * retried once. Non-corruption errors propagate immediately.
+   *
+   * @param fn The function to execute (typically a query against this.db)
+   * @param label A human-readable label for logging (e.g., "prepare(SELECT ...)")
+   * @returns The return value of fn()
+   */
+  private withCorruptionRecovery<T>(fn: () => T, label?: string): T {
+    try {
+      return fn();
+    } catch (error) {
+      if (!Database.isCorruptionError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[fusion:db] Corruption error during ${label ?? "query"}: ${message}. Reopening connection.`);
+      this.reopen();
+      // Retry once after reopen
+      return fn();
+    }
+  }
+
+  /**
    * Prepare a SQL statement. Returns a Statement object.
+   * Automatically reopens the connection and retries on corruption errors.
    */
   prepare(sql: string): Statement {
-    return this.db.prepare(sql);
+    return this.withCorruptionRecovery(
+      () => this.db.prepare(sql),
+      `prepare(${sql.slice(0, 50)})`,
+    );
   }
 
   /**
    * Execute a raw SQL string (no parameters).
+   * Automatically reopens the connection and retries on corruption errors.
    */
   exec(sql: string): void {
-    this.db.exec(sql);
+    this.withCorruptionRecovery(
+      () => this.db.exec(sql),
+      `exec(${sql.slice(0, 50)})`,
+    );
   }
 
   private getMetaValue(key: string): string | undefined {

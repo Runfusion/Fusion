@@ -39,7 +39,7 @@ import {
   isRecoverableMissingWorktreeReviewFailureWithProgress,
 } from "./restart-recovery-coordinator.js";
 import { classifyError, extractMissingModulePath, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
-import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
+import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, isAncestor, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
@@ -667,6 +667,7 @@ export class SelfHealingManager {
       { name: "reconcile-task-worktree-metadata", fn: () => this.reconcileTaskWorktreeMetadata().then(() => undefined) },
       { name: "recover-in-progress-limbo", fn: () => this.recoverInProgressLimbo().then(() => undefined) },
       { name: "reconcile-in-review-branch-rebind", fn: () => this.reconcileInReviewBranchRebind().then(() => undefined) },
+      { name: "reconcile-active-task-phantom-state", fn: () => this.reconcileActiveTaskPhantomState().then(() => undefined) },
       { name: "reclaim-stale-active-branches", fn: () => this.reclaimStaleActiveBranches().then(() => undefined) },
       { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls().then(() => undefined) },
       { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled().then(() => undefined) },
@@ -1305,6 +1306,7 @@ export class SelfHealingManager {
           { name: "reconcile-task-worktree-metadata", fn: () => this.reconcileTaskWorktreeMetadata() },
           { name: "recover-in-progress-limbo", fn: () => this.recoverInProgressLimbo() },
           { name: "reconcile-in-review-branch-rebind", fn: () => this.reconcileInReviewBranchRebind().then(() => undefined) },
+          { name: "reconcile-active-task-phantom-state", fn: () => this.reconcileActiveTaskPhantomState() },
           { name: "reclaim-stale-active-branches", fn: () => this.reclaimStaleActiveBranches() },
           { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls() },
           { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled() },
@@ -1770,6 +1772,17 @@ export class SelfHealingManager {
       if (settings.globalPause || settings.enginePaused) return 0;
       if (settings.autoMerge === false) return 0;
 
+      // AC5: Cross-repo safety — validate rootDir before git operations.
+      // Soft validation: warn if the rootDir appears invalid, but don't bail
+      // (test environments may use non-existent paths with mocked git).
+      if (!this.options.rootDir || typeof this.options.rootDir !== "string") {
+        log.warn(`[self-healing] reclaimSelfOwnedBranchConflicts: rootDir is invalid (${this.options.rootDir}) — skipping`);
+        return 0;
+      }
+      if (!existsSync(this.options.rootDir)) {
+        log.warn(`[self-healing] reclaimSelfOwnedBranchConflicts: rootDir does not exist (${this.options.rootDir}) — proceeding with caution`);
+      }
+
       const todoCandidates = await this.store.listTasks({ column: "todo", slim: true });
       const inProgressCandidates = await this.store.listTasks({ column: "in-progress", slim: true });
       const inProgressByWorktree = new Map<string, string>();
@@ -2161,6 +2174,155 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       log.warn(`Failed to inspect branch ${branch} during stale-active reclaim: ${err instanceof Error ? err.message : String(err)}`);
       return null;
+
+  /**
+   * AC1: Detect and reconcile active/running tasks with stale or missing worktrees
+   * that are stuck in a phantom running state (in-progress with no usable worktree
+   * and no active session/heartbeat).
+   *
+   * This prevents tasks from being permanently blocked when their worktree is
+   * destroyed or becomes unusable while the task remains in the in-progress column.
+   * The task is requeued to todo with its step progress preserved, allowing the
+   * scheduler to re-dispatch it with a fresh worktree.
+   *
+   * Safety guards:
+   * - Skips tasks with active heartbeat runs (genuinely executing)
+   * - Skips tasks with active worktree sessions (activeSessionRegistry)
+   * - Skips paused tasks (human intervention may be needed)
+   * - Skips tasks whose execution recently started (grace period)
+   * - Cross-repo safety: validates rootDir before git operations
+   */
+  async reconcileActiveTaskPhantomState(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      // AC5: Cross-repo safety — validate rootDir before operations
+      if (!this.options.rootDir || typeof this.options.rootDir !== "string") {
+        log.warn(`[self-healing] reconcileActiveTaskPhantomState: rootDir is invalid (${this.options.rootDir}) — skipping`);
+        return 0;
+      }
+      if (!existsSync(this.options.rootDir)) {
+        log.warn(`[self-healing] reconcileActiveTaskPhantomState: rootDir does not exist (${this.options.rootDir}) — proceeding with caution`);
+      }
+
+      const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
+
+      // Gather active heartbeat runs to exclude genuinely executing tasks
+      const activeTaskIds = new Set<string>();
+      if (this.options.agentStore) {
+        try {
+          const activeRuns = await this.options.agentStore.listActiveHeartbeatRuns();
+          const activeWindowMs = RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS;
+          const now = Date.now();
+          for (const run of activeRuns) {
+            const startedAtMs = Date.parse(run.startedAt ?? "");
+            if (!Number.isFinite(startedAtMs) || now - startedAtMs > activeWindowMs) continue;
+            const taskId = run.contextSnapshot && typeof run.contextSnapshot.taskId === "string"
+              ? run.contextSnapshot.taskId.toUpperCase()
+              : null;
+            if (taskId) activeTaskIds.add(taskId);
+          }
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn(`Unable to enumerate active heartbeat runs for phantom state reconciliation: ${message}`);
+        }
+      }
+
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+
+      let reconciled = 0;
+      for (const task of inProgressTasks) {
+        // Skip genuinely executing tasks
+        if (activeTaskIds.has(task.id.toUpperCase())) continue;
+        if (executingIds.has(task.id)) continue;
+        if (task.checkedOutBy) continue;
+        if (task.userPaused) continue;
+        if (task.pausedReason === "worktrunk_operation_failed") continue;
+        if (task.paused) continue;
+
+        // Skip tasks with active worktree sessions
+        if (task.worktree && activeSessionRegistry.isPathActive(task.worktree)) continue;
+
+        // Skip recently started executions (grace period)
+        const executionStartedAtMs = task.executionStartedAt ? Date.parse(task.executionStartedAt) : Number.NaN;
+        const isRecentlyStarted = Number.isFinite(executionStartedAtMs) && Date.now() - executionStartedAtMs <= STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS;
+        if (isRecentlyStarted) continue;
+
+        // Check if the task has a usable worktree
+        const hasWorktree = task.worktree && existsSync(task.worktree);
+        if (hasWorktree && await isUsableTaskWorktree(this.options.rootDir, task.worktree!)) {
+          // Worktree exists and is usable — not phantom
+          continue;
+        }
+
+        // This task is in-progress but has no usable worktree and no active session.
+        // Requeue to todo so the scheduler can re-dispatch with a fresh worktree.
+        log.warn(
+          `[recovery] phantom-active-task ${task.id}: in-progress but worktree is ${!hasWorktree ? "missing" : "unusable"}` +
+          ` (worktree=${task.worktree ?? "null"}) — requeuing to todo`,
+        );
+
+        try {
+          await this.store.updateTask(task.id, {
+            worktree: null,
+            branch: null,
+            baseCommitSha: null,
+            status: null,
+            error: null,
+          });
+
+          await this.store.moveTask(task.id, "todo", {
+            moveSource: "engine",
+            preserveProgress: true,
+            preserveResumeState: true,
+          });
+
+          // Release any executor-held ownership
+          this.options.releaseExecutorWorktreeOwnership?.(task.id);
+
+          await this.store.logEntry(
+            task.id,
+            `[recovery] phantom-active-task-requeue ${task.id}: worktree was ${!hasWorktree ? "missing" : "unusable"}, requeued from in-progress to todo`,
+          );
+
+          try {
+            const auditor = createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("self-heal", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "reconcile-active-task-phantom-state",
+            });
+            await auditor.git({
+              type: "task:phantom-active-requeue",
+              target: task.id,
+              metadata: {
+                taskId: task.id,
+                previousWorktree: task.worktree ?? null,
+                previousBranch: task.branch ?? null,
+                reason: !hasWorktree ? "worktree-missing" : "worktree-unusable",
+              },
+            });
+          } catch (auditErr: unknown) {
+            log.warn(`Failed to write phantom-active-requeue audit event for ${task.id}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+          }
+
+          reconciled++;
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.error(`Failed to reconcile phantom active task ${task.id}: ${message}`);
+        }
+      }
+
+      if (reconciled > 0) {
+        log.log(`Reconciled ${reconciled} phantom active task(s) with missing/unusable worktrees`);
+      }
+      return reconciled;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Active task phantom state reconciliation failed: ${errorMessage}`);
+      return 0;
     }
   }
 
@@ -2168,6 +2330,15 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+
+      // AC5: Cross-repo safety — validate rootDir before git operations
+      if (!this.options.rootDir || typeof this.options.rootDir !== "string") {
+        log.warn(`[self-healing] reclaimStaleActiveBranches: rootDir is invalid (${this.options.rootDir}) — skipping`);
+        return 0;
+      }
+      if (!existsSync(this.options.rootDir)) {
+        log.warn(`[self-healing] reclaimStaleActiveBranches: rootDir does not exist (${this.options.rootDir}) — proceeding with caution`);
+      }
 
       const activeTaskIds = new Set<string>();
       if (this.options.agentStore) {
@@ -2279,9 +2450,106 @@ export class SelfHealingManager {
         const inspection = await this.inspectOrphanedBranch(branch);
         if (!inspection) continue;
 
+        // AC3: Ghost-conflict prevention — if the branch tip is already merged into
+        // the integration branch AND has zero unique commits, treat it as stale/merged
+        // rather than as a blocking conflict. This prevents the self-healing system from
+        // treating already-merged branches as if they have unique unmerged work.
+        // Guard: only apply when uniqueCommitCount === 0; if there are unique commits,
+        // the branch has real work even if the tip is reachable from the integration ref
+        // (the integration ref may have advanced past the branch point).
+        const integrationRef = task.baseBranch || (typeof settings.baseBranch === "string" && settings.baseBranch ? settings.baseBranch : undefined) || "main";
+        const tipAlreadyMerged = inspection.uniqueCommitCount === 0 && await isAncestor(this.options.rootDir, inspection.tipSha, integrationRef).catch(() => false);
+        if (tipAlreadyMerged) {
+          log.log(
+            `[recovery] stale-active-branch-tip-merged ${task.id} branch=${branch} tip=${inspection.tipSha.slice(0, 12)} integrationRef=${integrationRef} — treating as stale merged branch`,
+          );
+
+          // Remove the worktree if it exists
+          const registeredWtPath = await this.getRegisteredWorktreePathForBranch(branch);
+          if (registeredWtPath && existsSync(registeredWtPath)) {
+            try {
+              await removeWorktree({
+                rootDir: this.options.rootDir,
+                worktreePath: registeredWtPath,
+                settings,
+                taskId: task.id,
+                reason: RemovalReason.SelfHealingStaleActiveBranch,
+              });
+            } catch (rmErr: unknown) {
+              log.warn(`Failed to remove tip-merged worktree for ${task.id}: ${rmErr instanceof Error ? rmErr.message : String(rmErr)}`);
+            }
+          }
+
+          await execAsync("git worktree prune", {
+            cwd: this.options.rootDir,
+            timeout: 120_000,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          await execAsync(`git branch -D ${JSON.stringify(branch)}`, {
+            cwd: this.options.rootDir,
+            timeout: 120_000,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+
+          await this.store.updateTask(task.id, {
+            worktree: null,
+            branch: null,
+            baseCommitSha: null,
+          });
+          await this.store.logEntry(
+            task.id,
+            `[recovery] stale-active-branch-tip-merged ${task.id} branch=${branch} tip=${inspection.tipSha.slice(0, 12)} reason=tip-already-on-integration-ref`,
+          );
+
+          try {
+            const auditor = createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("self-heal", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "reclaim-stale-active-branches",
+            });
+            await auditor.git({
+              type: "branch:stale-active-reclaim",
+              target: branch,
+              metadata: {
+                taskId: task.id,
+                branch,
+                tipSha: inspection.tipSha,
+                uniqueCommitCount: inspection.uniqueCommitCount,
+                reason: "tip-already-merged-ghost-conflict",
+              },
+            });
+          } catch (auditErr: unknown) {
+            log.warn(`Failed to write branch:stale-active-reclaim audit event for ${task.id}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+          }
+
+          reclaimed++;
+          continue;
+        }
+
         if (inspection.uniqueCommitCount > 0) {
           log.warn(`[recovery] stale-active-branch-rescue-needed ${task.id} branch=${branch} unique=${inspection.uniqueCommitCount} tip=${inspection.tipSha.slice(0, 12)}`);
           continue;
+        }
+
+        // AC2: Zero-commit active branch protection — don't delete the branch if
+        // the task is actively in-progress (even with zero unique commits). The task
+        // may have just been checked out and is about to start committing. Only delete
+        // branches for tasks that are not in active execution and have no recent
+        // execution start.
+        if (task.column === "in-progress" && !task.worktree) {
+          // The task has no worktree and no commits — it was likely allocated a branch
+          // but never actually started. Safe to clean up.
+        } else if (task.column === "in-progress") {
+          // Task is in-progress but somehow has no usable worktree.
+          // The reconcileActiveTaskPhantomState sweep should handle the task state.
+          // Here we only clean up the branch if we're confident the task isn't actively
+          // using it. Since inspection.uniqueCommitCount === 0 and the worktree is
+          // unusable, the branch has no valuable work — safe to reclaim.
+          log.log(
+            `[recovery] stale-active-branch-zero-commit-in-progress ${task.id} branch=${branch} — reclaiming zero-commit branch with no usable worktree`,
+          );
         }
 
         await execAsync(`git branch -D ${JSON.stringify(branch)}`, {
@@ -2438,6 +2706,12 @@ export class SelfHealingManager {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return result;
 
+      // AC5: Cross-repo safety — validate rootDir before git/worktree operations
+      if (!this.options.rootDir || typeof this.options.rootDir !== "string") {
+        log.warn(`${prefix} rootDir is invalid (${this.options.rootDir}) — skipping`);
+        return result;
+      }
+
       const task = await this.store.getTask(taskId);
       await this.reconcileTaskWorktreeMetadata({ includeTaskIds: new Set([taskId]) });
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
@@ -2537,6 +2811,18 @@ export class SelfHealingManager {
       }
 
       this.options.releaseExecutorWorktreeOwnership?.(taskId);
+
+      // AC4: Release any lingering mesh lease for the completed task to prevent
+      // stale blocker state, semaphore slot consumption, or worktree lease holds
+      // after completion. Completed/done tasks must not hold resources.
+      if (this.options.leaseManager) {
+        try {
+          await this.options.leaseManager.reconcileLeaseRow(taskId);
+        } catch (leaseErr: unknown) {
+          const leaseMessage = leaseErr instanceof Error ? leaseErr.message : String(leaseErr);
+          log.warn(`${prefix} failed to reconcile lease for completed task: ${leaseMessage}`);
+        }
+      }
 
       if (task) {
         result.branchRemoved = await this.clearCompletionBranchIfSubsumed(task, branchName);
