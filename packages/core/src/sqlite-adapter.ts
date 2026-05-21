@@ -69,10 +69,12 @@ function loadDatabaseCtor(): DatabaseCtor {
  */
 export class DatabaseSync {
   private impl: RawDatabase;
+  private readonly path: string;
 
   constructor(path: string) {
     assertOutsideRealFusionPath(path, "SQLite database open");
     const Ctor = loadDatabaseCtor();
+    this.path = path;
     this.impl = new Ctor(path);
   }
 
@@ -98,5 +100,24 @@ export class DatabaseSync {
       },
       run: (...params: unknown[]) => stmt.run(...params),
     };
+  }
+
+  /**
+   * Close the current connection and reopen at the same path.
+   * Used for recovering from corruption errors where the in-process
+   * connection holds stale WAL frames.
+   *
+   * If close() fails (old connection may be in a bad state), a warning
+   * is logged and the reopen proceeds — the old connection is effectively
+   * discarded. If the new connection cannot be opened, the error propagates.
+   */
+  reopen(): void {
+    try {
+      this.impl.close();
+    } catch (e) {
+      console.warn(`[fusion:sqlite-adapter] Error closing connection during reopen: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const Ctor = loadDatabaseCtor();
+    this.impl = new Ctor(this.path);
   }
 }
