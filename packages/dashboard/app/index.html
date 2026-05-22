@@ -2,7 +2,63 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <script>
+      // Append ?vpdebug to the URL to show a fixed overlay with the live
+      // viewport / element dimensions. Diagnostic only — remove once the
+      // Android tablet cut-off issue is understood.
+      (function () {
+        if (!/[?&]vpdebug\b/.test(location.search)) return;
+        var box = document.createElement('div');
+        box.style.cssText =
+          'position:fixed;top:0;right:0;z-index:2147483647;background:#000;color:#0f0;font:11px/1.3 monospace;padding:6px 8px;border:1px solid #0f0;white-space:pre;pointer-events:none;max-width:60vw;';
+        var update = function () {
+          var f = function (el) {
+            if (!el) return 'none';
+            var r = el.getBoundingClientRect();
+            return Math.round(r.width) + 'x' + Math.round(r.height) + ' @' + Math.round(r.left) + ',' + Math.round(r.top);
+          };
+          var vv = window.visualViewport;
+          var nav = document.querySelector('.mobile-nav-bar');
+          var navInfo = 'null';
+          if (nav) {
+            var cs = window.getComputedStyle(nav);
+            navInfo = f(nav) + ' disp=' + cs.display + ' vis=' + cs.visibility + ' z=' + cs.zIndex + ' op=' + cs.opacity;
+          }
+          var dialogs = document.querySelectorAll('[role="dialog"],.modal,.modal-overlay').length;
+          var focused = document.activeElement && document.activeElement.tagName;
+          box.textContent =
+            'win ' + window.innerWidth + 'x' + window.innerHeight + '\n' +
+            'vv ' + (vv ? Math.round(vv.width) + 'x' + Math.round(vv.height) + ' s' + vv.scale.toFixed(2) + ' o' + Math.round(vv.offsetLeft) + ',' + Math.round(vv.offsetTop) : 'n/a') + '\n' +
+            'dpr ' + window.devicePixelRatio + '\n' +
+            'html ' + f(document.documentElement) + '\n' +
+            'body ' + f(document.body) + '\n' +
+            'root ' + f(document.getElementById('root')) + '\n' +
+            'board ' + f(document.getElementById('board')) + '\n' +
+            'mNav ' + navInfo + '\n' +
+            'mq768 ' + window.matchMedia('(max-width: 768px)').matches + '\n' +
+            'dialogs ' + dialogs + ' focus ' + focused + '\n' +
+            'sx ' + window.scrollX + ' sy ' + window.scrollY + '\n' +
+            'ua ' + (navigator.userAgent || '').slice(0, 80);
+        };
+        var attach = function () {
+          if (!document.body) {
+            requestAnimationFrame(attach);
+            return;
+          }
+          document.body.appendChild(box);
+          update();
+          setInterval(update, 500);
+          window.addEventListener('resize', update);
+          window.addEventListener('orientationchange', update);
+          if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', update);
+            window.visualViewport.addEventListener('scroll', update);
+          }
+        };
+        attach();
+      })();
+    </script>
     <title>Fusion</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="manifest" href="/manifest.json" />
