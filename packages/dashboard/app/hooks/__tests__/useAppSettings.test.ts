@@ -43,6 +43,8 @@ describe("useAppSettings", () => {
       expect(result.current.maxConcurrent).toBe(4);
       expect(result.current.rootDir).toBe("/workspace/project");
       expect(result.current.autoMerge).toBe(false);
+      expect(result.current.testMode).toBe(false);
+      expect(result.current.isTestMode).toBe(false);
       expect(result.current.globalPaused).toBe(true);
       expect(result.current.enginePaused).toBe(false);
       expect(result.current.prAuthAvailable).toBe(true);
@@ -118,6 +120,25 @@ describe("useAppSettings", () => {
       { globalPause: true, globalPauseReason: "manual" },
       "proj_123",
     );
+  });
+
+  it("derives isTestMode from defaultProvider=mock", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      autoMerge: false,
+      globalPause: true,
+      enginePaused: false,
+      prAuthAvailable: true,
+      taskStuckTimeoutMs: 600000,
+      showQuickChatFAB: false,
+      defaultProvider: "mock",
+    } as never);
+
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => {
+      expect(result.current.testMode).toBe(false);
+      expect(result.current.isTestMode).toBe(true);
+    });
   });
 
   it("propagates capacity risk settings from fetchSettings", async () => {

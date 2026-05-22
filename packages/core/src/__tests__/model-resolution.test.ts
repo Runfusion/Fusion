@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyTestModeOverrides,
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
@@ -8,6 +9,7 @@ import {
   resolveTaskValidatorModel,
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
+  TEST_MODE_RESOLVED,
 } from "../model-resolution.js";
 
 describe("model-resolution", () => {
@@ -115,5 +117,61 @@ describe("model-resolution", () => {
         },
       ),
     ).toEqual({ provider: "openai", modelId: "gpt-4.1" });
+  });
+
+  it("forces every lane to mock when testMode is true", () => {
+    const settings = {
+      testMode: true,
+      executionProvider: "anthropic",
+      executionModelId: "claude-sonnet-4-5",
+      planningProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+      validatorProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+      titleSummarizerProvider: "anthropic",
+      titleSummarizerModelId: "claude-sonnet-4-5",
+      defaultProviderOverride: "anthropic",
+      defaultModelIdOverride: "claude-sonnet-4-5",
+    };
+    const taskOverrides = {
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "anthropic",
+      validatorModelId: "claude-sonnet-4-5",
+      planningModelProvider: "anthropic",
+      planningModelId: "claude-sonnet-4-5",
+    };
+
+    expect(resolveProjectDefaultModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveExecutionSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolvePlanningSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveValidatorSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveTitleSummarizerSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveTaskExecutionModel(taskOverrides, settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveTaskValidatorModel(taskOverrides, settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveTaskPlanningModel(taskOverrides, settings)).toEqual(TEST_MODE_RESOLVED);
+  });
+
+  it("forces mock when defaultProvider is mock without testMode", () => {
+    const settings = {
+      defaultProvider: "mock",
+      defaultModelId: "anything",
+      executionProvider: "anthropic",
+      executionModelId: "claude-sonnet-4-5",
+    };
+
+    expect(resolveExecutionSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolvePlanningSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+    expect(resolveValidatorSettingsModel(settings)).toEqual(TEST_MODE_RESOLVED);
+  });
+
+  it("passes through when test mode is inactive", () => {
+    const resolved = resolveExecutionSettingsModel({
+      executionProvider: "anthropic",
+      executionModelId: "claude-sonnet-4-5",
+    });
+
+    expect(applyTestModeOverrides(resolved, { testMode: false })).toEqual(resolved);
+    expect(applyTestModeOverrides(resolved, {})).toEqual(resolved);
   });
 });

@@ -1465,6 +1465,20 @@ describe("TaskStore", () => {
       expect(settings.maxConcurrent).toBe(8);
     });
 
+    it("round-trips testMode in both project and global scopes", async () => {
+      await harness.store().updateGlobalSettings({ testMode: true });
+      let merged = await harness.store().getSettings();
+      expect(merged.testMode).toBe(true);
+
+      await harness.store().updateSettings({ testMode: false });
+      merged = await harness.store().getSettings();
+      expect(merged.testMode).toBe(false);
+
+      const { global, project } = await harness.store().getSettingsByScope();
+      expect(global.testMode).toBe(true);
+      expect(project.testMode).toBe(false);
+    });
+
     it("updateSettings silently filters out global-only fields", async () => {
       // themeMode is a global field — should not be persisted to project config
       await harness.store().updateSettings({ maxConcurrent: 5, themeMode: "light" } as any);

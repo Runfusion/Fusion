@@ -24,6 +24,7 @@ import { SessionNotificationBanner } from "./components/SessionNotificationBanne
 import { CliBinaryInstallBanner } from "./components/CliBinaryInstallBanner";
 import { SetupWarningBanner } from "./components/SetupWarningBanner";
 import { CapacityRiskBanner } from "./components/CapacityRiskBanner";
+import { TestModeBanner } from "./components/TestModeBanner";
 import { TaskIdIntegrityBanner } from "./components/TaskIdIntegrityBanner";
 import { DbCorruptionBanner } from "./components/DbCorruptionBanner";
 import { UpdateAvailableBanner } from "./components/UpdateAvailableBanner";
@@ -773,6 +774,7 @@ function AppInner() {
     autoMerge,
     globalPaused,
     enginePaused,
+    isTestMode,
     taskStuckTimeoutMs,
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
@@ -1777,6 +1779,9 @@ function AppInner() {
           ) : undefined
         }
       />
+      {viewMode === "project" && currentProject && (
+        <TestModeBanner isActive={isTestMode} />
+      )}
       {viewMode === "project" && currentProject && !nodesOpen && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}

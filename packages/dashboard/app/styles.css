@@ -3189,6 +3189,13 @@ input[type="range"]:focus-visible {
   }
 }
 
+@media (min-width: 769px) and (max-width: 1024px) {
+  .board {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    overflow-x: hidden;
+  }
+}
+
 /* === Mobile Responsive Overrides ===
    Cross-cutting mobile rules only. Component-specific overrides have been
    moved into co-located @media blocks at the bottom of each component's

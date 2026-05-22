@@ -299,6 +299,7 @@ describe("settings key parity", () => {
     const projectKeySet = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
     const overlap = (GLOBAL_SETTINGS_KEYS as readonly string[]).filter((key) => projectKeySet.has(key));
     expect(overlap).toEqual([
+      "testMode",
       "taskTokenBudget",
       "githubTrackingDefaultRepo",
       "worktrunk",
@@ -432,6 +433,11 @@ describe("model lane key parity regression (FN-1729)", () => {
     expect(isProjectSettingsKey("defaultModelIdOverride")).toBe(true);
     expect(isGlobalSettingsKey("defaultProviderOverride")).toBe(false);
     expect(isGlobalSettingsKey("defaultModelIdOverride")).toBe(false);
+  });
+
+  it("testMode key is recognized in both project and global scopes", () => {
+    expect(isProjectSettingsKey("testMode")).toBe(true);
+    expect(isGlobalSettingsKey("testMode")).toBe(true);
   });
 
   it("no model lane provider exists without its corresponding modelId key", () => {

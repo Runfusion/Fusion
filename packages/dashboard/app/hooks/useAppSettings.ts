@@ -9,6 +9,8 @@ export interface UseAppSettingsResult {
   maxConcurrent: number;
   rootDir: string;
   autoMerge: boolean;
+  testMode: boolean;
+  isTestMode: boolean;
   globalPaused: boolean;
   enginePaused: boolean;
   taskStuckTimeoutMs: number | undefined;
@@ -42,6 +44,8 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
+  const [testMode, setTestMode] = useState(false);
+  const [isTestMode, setIsTestMode] = useState(false);
   const [globalPaused, setGlobalPaused] = useState(false);
   const [enginePaused, setEnginePaused] = useState(false);
   const [taskStuckTimeoutMs, setTaskStuckTimeoutMs] = useState<number | undefined>(undefined);
@@ -78,6 +82,10 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     if (settingsResult.status === "fulfilled") {
       const settings = settingsResult.value;
       setAutoMerge(Boolean(settings.autoMerge));
+      const nextTestMode = settings.testMode === true;
+      const nextIsTestMode = nextTestMode || settings.defaultProvider?.trim().toLowerCase() === "mock";
+      setTestMode(nextTestMode);
+      setIsTestMode(nextIsTestMode);
       setGlobalPaused(Boolean(settings.globalPause));
       setEnginePaused(Boolean(settings.enginePaused));
       setPrAuthAvailable(Boolean(settings.prAuthAvailable));
@@ -183,6 +191,8 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     maxConcurrent,
     rootDir,
     autoMerge,
+    testMode,
+    isTestMode,
     globalPaused,
     enginePaused,
     taskStuckTimeoutMs,

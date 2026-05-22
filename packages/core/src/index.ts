@@ -581,6 +581,8 @@ export {
   __resetSummarizeState,
 } from "./ai-summarize.js";
 export {
+  applyTestModeOverrides,
+  isTestModeActive,
   resolveExecutionSettingsModel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
@@ -589,6 +591,7 @@ export {
   resolveTaskValidatorModel,
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
+  TEST_MODE_RESOLVED,
 } from "./model-resolution.js";
 export type { ResolvedModelSelection } from "./model-resolution.js";
 

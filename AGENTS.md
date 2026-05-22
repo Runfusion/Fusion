@@ -146,6 +146,10 @@ Per-task opt-out exists: `task.scopeOverride = true` (log the reason).
 
 When `settings.autoMerge: false`, `in-review` is terminal-until-merged by a human. Lifecycle-mutating self-healing must not move these tasks backward, pause/fail them, or re-enqueue them for execution.
 
+### Mock provider (test mode)
+
+`testMode?: boolean` is now available in both project and global settings. If project `testMode === true` (or the resolved default provider is `"mock"` at any tier), every AI lane is forced to `mock/scripted`, overriding per-task and per-lane model selections. The dashboard exposes this via the Settings Modal "Enable test mode" toggle and a persistent "Test mode — no real AI calls" banner.
+
 ---
 
 ## Reference docs (deeper detail)

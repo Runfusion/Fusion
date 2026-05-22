@@ -12,9 +12,11 @@ import type { SkillSelectionContext } from "./skill-resolver.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import {
+  isTestModeActive,
   resolveExecutionSettingsModel,
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
+  TEST_MODE_RESOLVED,
   type Settings,
 } from "@fusion/core";
 import { resolveRuntime, buildRuntimeResolutionContext, isMockProviderId, type SessionPurpose } from "./runtime-resolution.js";
@@ -122,6 +124,13 @@ export function resolveExecutorSessionModel(
   settings: Partial<Settings> | undefined,
   assignedAgentRuntimeConfig?: Record<string, unknown>,
 ): { provider: string | undefined; modelId: string | undefined } {
+  if (isTestModeActive(settings)) {
+    return {
+      provider: TEST_MODE_RESOLVED.provider,
+      modelId: TEST_MODE_RESOLVED.modelId,
+    };
+  }
+
   const assignedRuntimeModel = extractRuntimeModel(assignedAgentRuntimeConfig);
   if (assignedRuntimeModel.provider && assignedRuntimeModel.modelId) {
     return assignedRuntimeModel;
@@ -147,6 +156,13 @@ export function resolvePlanningSessionModel(
   settings: Partial<Settings> | undefined,
   assignedAgentRuntimeConfig?: Record<string, unknown>,
 ): { provider: string | undefined; modelId: string | undefined } {
+  if (isTestModeActive(settings)) {
+    return {
+      provider: TEST_MODE_RESOLVED.provider,
+      modelId: TEST_MODE_RESOLVED.modelId,
+    };
+  }
+
   const assignedRuntimeModel = extractRuntimeModel(assignedAgentRuntimeConfig);
   if (assignedRuntimeModel.provider && assignedRuntimeModel.modelId) {
     return assignedRuntimeModel;
@@ -175,6 +191,15 @@ export function resolveHeartbeatSessionModels(
   fallbackProvider: string | undefined;
   fallbackModelId: string | undefined;
 } {
+  if (isTestModeActive(settings)) {
+    return {
+      defaultProvider: TEST_MODE_RESOLVED.provider,
+      defaultModelId: TEST_MODE_RESOLVED.modelId,
+      fallbackProvider: undefined,
+      fallbackModelId: undefined,
+    };
+  }
+
   const assignedRuntimeModel = extractRuntimeModel(assignedAgentRuntimeConfig);
   const executionSettingsModel = resolveExecutionSettingsModel(settings);
 
@@ -197,6 +222,13 @@ export function resolveMergerSessionModel(
   settings: Partial<Settings> | undefined,
   assignedAgentRuntimeConfig?: Record<string, unknown>,
 ): { provider: string | undefined; modelId: string | undefined } {
+  if (isTestModeActive(settings)) {
+    return {
+      provider: TEST_MODE_RESOLVED.provider,
+      modelId: TEST_MODE_RESOLVED.modelId,
+    };
+  }
+
   const assignedRuntimeModel = extractRuntimeModel(assignedAgentRuntimeConfig);
   if (assignedRuntimeModel.provider && assignedRuntimeModel.modelId) {
     return assignedRuntimeModel;

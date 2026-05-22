@@ -219,6 +219,15 @@ describe("GlobalSettingsStore", () => {
       expect(settings.themeMode).toBe("dark"); // preserved default
     });
 
+    it("round-trips testMode in global settings", async () => {
+      await store.init();
+
+      await store.updateSettings({ testMode: true });
+
+      const settings = await store.getSettings();
+      expect(settings.testMode).toBe(true);
+    });
+
     it("creates directory if missing", async () => {
       const nested = join(dir, "auto", "create");
       const nestedStore = new GlobalSettingsStore(nested);

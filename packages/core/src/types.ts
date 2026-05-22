@@ -2227,6 +2227,10 @@ export interface GlobalSettings {
    *  Must be set together with `defaultProvider`. When both are undefined,
    *  the engine uses pi's automatic model resolution. */
   defaultModelId?: string;
+  /** When true, force every AI lane onto the deterministic mock provider regardless
+   *  of per-task or per-lane overrides. No network calls, zero token cost.
+   *  Project `testMode` takes precedence over the global value. */
+  testMode?: boolean;
   /** Fallback AI model provider used when the primary default model fails due to
    *  transient provider-side issues such as rate limits or overloaded capacity.
    *  Must be set together with `fallbackModelId`. */
@@ -2710,6 +2714,9 @@ export interface ProjectSettings {
    *  active in-progress tasks and in-review tasks with unmerged worktrees. */
   overlapIgnorePaths?: string[];
   autoMerge: boolean;
+  /** When true, force every AI lane onto the deterministic mock provider regardless
+   *  of per-task or per-lane overrides. No network calls, zero token cost. */
+  testMode?: boolean;
   /** How completed in-review tasks should be finalized when autoMerge is enabled.
    *  - "direct": preserve the existing local squash-merge flow into the current branch
    *  - "pull-request": create or reuse a GitHub PR and wait for GitHub-side checks/reviews

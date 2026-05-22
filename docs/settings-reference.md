@@ -1303,6 +1303,8 @@ Per-task and global script overrides live in `mockScriptRegistry` (`setMockScrip
 The mock runtime never registers with pi's `ModelRegistry` and is guarded by tests that fail on any `fetch`, `http.request`, or `https.request` usage.
 Activation UX/settings affordances are handled separately in FN-5204.
 
+`testMode?: boolean` exists at both global and project scopes. Project `testMode: true` takes precedence and forces planning, executor, reviewer/validator, merger, and heartbeat to `mock/scripted` regardless of per-task or per-lane overrides. The dashboard surfaces this with the Settings Modal "Enable test mode" toggle and the shell banner: "Test mode — no real AI calls".
+
 ## Per-task token budget precedence
 
 1. `task.tokenBudgetOverride`

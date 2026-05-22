@@ -4523,6 +4523,23 @@ export function SettingsModal({
               </details>
             </div>
             <div className="form-group">
+              <label htmlFor="testMode" className="checkbox-label">
+                <input
+                  id="testMode"
+                  type="checkbox"
+                  checked={form.testMode === true}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, testMode: e.target.checked }))
+                  }
+                />
+                Enable test mode
+              </label>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>Forces all AI lanes to use the deterministic mock provider. No network calls, zero token cost.</small>
+              </details>
+            </div>
+            <div className="form-group">
               <label htmlFor="workflowRevisionForkOnScopeMismatch" className="checkbox-label">
                 <input
                   id="workflowRevisionForkOnScopeMismatch"
