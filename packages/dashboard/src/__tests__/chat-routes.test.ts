@@ -505,6 +505,48 @@ describe("Chat API Routes", () => {
       expect(enrichedSession.lastMessagePreview).toBeUndefined();
       expect(enrichedSession.lastMessageAt).toBeUndefined();
     });
+
+    it("uses engine chatStore when engineManager is configured for requested projectId", async () => {
+      const { createServer } = await import("../server.js");
+
+      // Engine-scoped chatStore — simulates a secondary project's DB
+      const engineListSessions = vi.fn().mockReturnValue([sampleSession]);
+      const engineChatStore = {
+        ...mockChatStoreInstance,
+        listSessions: engineListSessions,
+        getLastMessageForSessions: vi.fn().mockReturnValue(new Map()),
+      };
+      const mockEngine = { getChatStore: () => engineChatStore };
+      const mockEngineManager = {
+        getEngine: vi.fn((id: string) => (id === "proj-secondary" ? mockEngine : undefined)),
+        getAllEngines: vi.fn().mockReturnValue(new Map([["proj-secondary", mockEngine]])),
+      };
+
+      const appWithEngine = createServer(store as any, {
+        chatStore: mockChatStore as any,
+        chatManager: mockChatManager as any,
+        engineManager: mockEngineManager as any,
+      });
+
+      const response = await request(appWithEngine, "GET", "/api/chat/sessions?projectId=proj-secondary");
+
+      expect(response.status).toBe(200);
+      // Engine chatStore was used, not the default one
+      expect(engineListSessions).toHaveBeenCalled();
+      expect(mockListSessions).not.toHaveBeenCalled();
+    });
+
+    it("falls back to default chatStore when no engineManager is configured", async () => {
+      mockListSessions.mockReturnValue([sampleSession]);
+
+      // app has no engineManager (the default setup)
+      const response = await request(app, "GET", "/api/chat/sessions?projectId=proj-001");
+
+      expect(response.status).toBe(200);
+      expect(mockListSessions).toHaveBeenCalledWith({ projectId: "proj-001" });
+    });
+  });
+    });
   });
 
   describe("POST /api/chat/sessions", () => {
@@ -683,6 +725,34 @@ describe("Chat API Routes", () => {
 
       expect(response.status).toBe(404);
       expect((response.body as any).error).toContain("not found");
+    });
+
+    it("uses engine chatStore to find session when projectId is provided", async () => {
+      const { createServer } = await import("../server.js");
+
+      const engineSession = { ...sampleSession, id: "chat-engine-456", projectId: "proj-secondary" };
+      const engineGetSession = vi.fn((id: string) => (id === "chat-engine-456" ? engineSession : undefined));
+      const engineChatStore = { ...mockChatStoreInstance, getSession: engineGetSession };
+      const mockEngine = { getChatStore: () => engineChatStore };
+      const mockEngineManager = {
+        getEngine: vi.fn((id: string) => (id === "proj-secondary" ? mockEngine : undefined)),
+        getAllEngines: vi.fn().mockReturnValue(new Map([["proj-secondary", mockEngine]])),
+      };
+
+      // Default chatStore does NOT have this session
+      mockGetSession.mockReturnValue(undefined);
+
+      const appWithEngine = createServer(store as any, {
+        chatStore: mockChatStore as any,
+        chatManager: mockChatManager as any,
+        engineManager: mockEngineManager as any,
+      });
+
+      const response = await request(appWithEngine, "GET", "/api/chat/sessions/chat-engine-456?projectId=proj-secondary");
+
+      expect(response.status).toBe(200);
+      expect((response.body as any).session.id).toBe("chat-engine-456");
+      expect(engineGetSession).toHaveBeenCalledWith("chat-engine-456");
     });
   });
 
