@@ -184,6 +184,22 @@ function mapChatMessageToInfo(message: ChatMessage): ChatMessageInfo {
 }
 
 /**
+ * Fetch all messages for a session, paginating through the API's 200-message cap.
+ * Replaces the former hardcoded `limit: 50` that silently truncated long sessions.
+ */
+async function fetchAllMessages(sessionId: string, projectId?: string): Promise<ChatMessageInfo[]> {
+  const PAGE = 200; // API hard cap (Math.min(limit, 200))
+  const all: ChatMessageInfo[] = [];
+  let offset = 0;
+  for (;;) {
+    const data = await fetchChatMessages(sessionId, { limit: PAGE, offset }, projectId);
+    all.push(...data.messages.map(mapChatMessageToInfo));
+    if (data.messages.length < PAGE) break;
+    offset += PAGE;
+  }
+  return all;
+}
+/**
  * Hook for the QuickChatFAB component.
  * Provides chat session management and SSE streaming for real-time AI responses.
  */
@@ -330,8 +346,8 @@ export function useQuickChat(
         isStreamingRef.current = false;
         streamRef.current = null;
         lastAttachedGenerationRef.current = null;
-        void fetchChatMessages(sessionId, { limit: 50 }, projectId).then((data) => {
-          setMessages(data.messages.map(mapChatMessageToInfo));
+        void fetchAllMessages(sessionId, projectId).then((msgs) => {
+          if (activeSessionRef.current?.id === sessionId) setMessages(msgs);
         }).catch(() => {});
         flushPendingMessage();
       },
@@ -347,8 +363,8 @@ export function useQuickChat(
         if (!options?.silent) {
           addToast?.(errorMessage, "error");
         }
-        void fetchChatMessages(sessionId, { limit: 50 }, projectId).then((resp) => {
-          setMessages(resp.messages.map(mapChatMessageToInfo));
+        void fetchAllMessages(sessionId, projectId).then((msgs) => {
+          if (activeSessionRef.current?.id === sessionId) setMessages(msgs);
         }).catch(() => {});
         flushPendingMessage();
       },
@@ -427,8 +443,9 @@ export function useQuickChat(
 
     setMessagesLoading(true);
     try {
-      const data = await fetchChatMessages(activeSession.id, { limit: 50 }, projectId);
-      setMessages(data.messages.map(mapChatMessageToInfo));
+      const sessionId = activeSession.id;
+      const msgs = await fetchAllMessages(sessionId, projectId);
+      if (activeSessionRef.current?.id === sessionId) setMessages(msgs);
     } catch (err) {
       console.error("[useQuickChat] Failed to load messages:", err);
     } finally {
@@ -471,8 +488,9 @@ export function useQuickChat(
         if (!data.session.isGenerating) {
           clearInterval(interval);
           // Reload messages to pick up the completed assistant message
-          const msgData = await fetchChatMessages(activeSession.id, { limit: 50 }, projectId);
-          setMessages(msgData.messages.map(mapChatMessageToInfo));
+          const sessionId = activeSession.id;
+          const msgs = await fetchAllMessages(sessionId, projectId);
+          if (activeSessionRef.current?.id === sessionId) setMessages(msgs);
           setStreamingText("");
           setStreamingThinking("");
           setStreamingToolCalls([]);
@@ -493,8 +511,9 @@ export function useQuickChat(
     if (!activeSession) return;
     setMessagesLoading(true);
     try {
-      const data = await fetchChatMessages(activeSession.id, { limit: 50 }, projectId);
-      setMessages(data.messages.map(mapChatMessageToInfo));
+      const sessionId = activeSession.id;
+      const msgs = await fetchAllMessages(sessionId, projectId);
+      if (activeSessionRef.current?.id === sessionId) setMessages(msgs);
     } catch (err) {
       console.error("[useQuickChat] Failed to reload messages:", err);
     } finally {
