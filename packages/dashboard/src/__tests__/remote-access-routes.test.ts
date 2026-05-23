@@ -131,6 +131,7 @@ afterEach(() => {
 
 beforeEach(() => {
   mockExecFile.mockReset();
+  mockMkdir.mockReset();
   mockExecFile.mockImplementation((command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string, stderr?: string) => void) => {
     const callback = typeof optionsOrCallback === "function"
       ? optionsOrCallback as (error: Error | null, stdout?: string, stderr?: string) => void
@@ -389,7 +390,7 @@ describe("remote access provider/lifecycle contracts", () => {
 
     expect(result.status).toBe(200);
     expect(result.body).toEqual(expect.objectContaining({ success: true }));
-    expect(mockMkdir).toHaveBeenCalled();
+    expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining('/.local/bin'), { recursive: true });
     expect(mockExecFile.mock.calls.some(([command, args]) => command === "mv" && Array.isArray(args) && String(args[1]).includes("/.local/bin/cloudflared"))).toBe(true);
   });
 
