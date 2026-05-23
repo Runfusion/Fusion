@@ -15,7 +15,6 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
     setupFiles: [
       resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts"),
     ],
@@ -38,6 +37,9 @@ export default defineConfig({
     // Split into two projects so the reliability-interactions suite (real
     // worktrees + real git, contention-sensitive event ordering) runs
     // single-threaded without throttling the rest of the engine suite.
+    // Keep include globs project-scoped (not at root) so engine-reliability
+    // does not inherit full-suite include and rerun everything single-threaded
+    // (FN-5537: this caused long runs and external SIGTERM 143 kills).
     projects: [
       {
         extends: true,
