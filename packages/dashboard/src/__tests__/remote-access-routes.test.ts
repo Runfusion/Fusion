@@ -20,6 +20,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     mkdir: mockMkdir.mockImplementation(async () => undefined),
+  };
 });
 
 import { writeFileSync } from "node:fs";
