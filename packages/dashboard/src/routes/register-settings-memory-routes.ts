@@ -346,7 +346,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       } catch (error) {
         const localBinDir = `${homedir()}/.local/bin`;
         const localInstallPath = `${localBinDir}/cloudflared`;
-        attemptedCommands.push(`mkdir -p ${localBinDir}`);
+        attemptedCommands.push(`mkdir(${localBinDir}, { recursive: true })`);
         attemptedCommands.push(`mv ${tempPath} ${localInstallPath}`);
         await mkdir(localBinDir, { recursive: true });
         try {

@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { TaskStore } from "@fusion/core";
 
-const { mockExecFile } = vi.hoisted(() => ({
+const { mockExecFile, mockMkdir } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
+  mockMkdir: vi.fn(),
 }));
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -13,6 +14,12 @@ vi.mock("node:child_process", async (importOriginal) => {
     ...actual,
     execFile: mockExecFile,
   };
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: mockMkdir.mockImplementation(async () => undefined),
 });
 
 import { writeFileSync } from "node:fs";
@@ -381,7 +388,7 @@ describe("remote access provider/lifecycle contracts", () => {
 
     expect(result.status).toBe(200);
     expect(result.body).toEqual(expect.objectContaining({ success: true }));
-    expect(mockExecFile.mock.calls.some(([command, args]) => command === "mkdir" && Array.isArray(args) && args[0] === "-p")).toBe(true);
+    expect(mockMkdir).toHaveBeenCalled();
     expect(mockExecFile.mock.calls.some(([command, args]) => command === "mv" && Array.isArray(args) && String(args[1]).includes("/.local/bin/cloudflared"))).toBe(true);
   });
 
