@@ -10389,9 +10389,11 @@ export function buildExecutionPrompt(
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
 
-  // Build author arg for git commits based on settings
+  // Build co-author trailer arg for git commits based on settings. The user's
+  // configured git identity remains the primary author; Fusion is appended as
+  // a `Co-authored-by` trailer for shared credit (recognized by GitHub).
   const authorArg = settings?.commitAuthorEnabled !== false
-    ? ` --author="${settings?.commitAuthorName || "Fusion"} <${settings?.commitAuthorEmail || "noreply@runfusion.ai"}>"`
+    ? ` -m "Co-authored-by: ${settings?.commitAuthorName || "Fusion"} <${settings?.commitAuthorEmail || "noreply@runfusion.ai"}>"`
     : "";
 
   const sourceIssueRef = buildSourceIssueRef(task.sourceIssue);

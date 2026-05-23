@@ -580,55 +580,57 @@ describe("buildExecutionPrompt", () => {
     });
   });
 
-  describe("commit author attribution", () => {
-    it("includes default author in commit instruction when commitAuthorEnabled is true", () => {
+  describe("commit co-author attribution", () => {
+    it("includes default co-author trailer in commit instruction when commitAuthorEnabled is true", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
         commitAuthorEnabled: true,
       } as any);
-      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+      expect(result).toContain('-m "Co-authored-by: Fusion <noreply@runfusion.ai>"');
+      expect(result).not.toContain("--author=");
     });
 
-    it("includes custom author name and email in commit instruction", () => {
+    it("includes custom co-author name and email in commit instruction", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
         commitAuthorEnabled: true,
         commitAuthorName: "CustomBot",
         commitAuthorEmail: "bot@example.com",
       } as any);
-      expect(result).toContain('--author="CustomBot <bot@example.com>"');
+      expect(result).toContain('-m "Co-authored-by: CustomBot <bot@example.com>"');
     });
 
-    it("omits author from commit instruction when commitAuthorEnabled is false", () => {
+    it("omits co-author trailer from commit instruction when commitAuthorEnabled is false", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
         commitAuthorEnabled: false,
       } as any);
+      expect(result).not.toContain("Co-authored-by");
       expect(result).not.toContain("--author");
-      // Should still contain commit instruction without author
+      // Should still contain commit instruction without co-author
       expect(result).toContain("git commit -m");
     });
 
-    it("uses default author when commitAuthorEnabled is true but name/email are undefined", () => {
+    it("uses default co-author when commitAuthorEnabled is true but name/email are undefined", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {
         commitAuthorEnabled: true,
         commitAuthorName: undefined,
         commitAuthorEmail: undefined,
       } as any);
-      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+      expect(result).toContain('-m "Co-authored-by: Fusion <noreply@runfusion.ai>"');
     });
 
-    it("uses default author when settings is undefined", () => {
+    it("uses default co-author when settings is undefined", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project");
-      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+      expect(result).toContain('-m "Co-authored-by: Fusion <noreply@runfusion.ai>"');
     });
 
-    it("uses default author when settings is empty object", () => {
+    it("uses default co-author when settings is empty object", () => {
       const task = createMockTaskDetail();
       const result = buildExecutionPrompt(task, "/project", {} as any);
-      expect(result).toContain('--author="Fusion <noreply@runfusion.ai>"');
+      expect(result).toContain('-m "Co-authored-by: Fusion <noreply@runfusion.ai>"');
     });
   });
 });

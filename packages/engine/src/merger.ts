@@ -5112,7 +5112,10 @@ async function applyBranchCommitsPreservingHistory(params: {
   };
 }
 
-/** Build the --author flag for git commits based on project settings. */
+/** Build the `-m "Co-authored-by: ..."` trailer arg for git commits based on
+ *  project settings. The user's configured git identity remains the primary
+ *  author/committer; Fusion (or whatever name/email is configured) is appended
+ *  as a co-author trailer that GitHub recognizes for shared attribution. */
 function getCommitAuthorArg(settings: {
   commitAuthorEnabled?: boolean;
   commitAuthorName?: string;
@@ -5121,7 +5124,7 @@ function getCommitAuthorArg(settings: {
   if (settings.commitAuthorEnabled === false) return "";
   const name = settings.commitAuthorName || "Fusion";
   const email = settings.commitAuthorEmail || "noreply@runfusion.ai";
-  return ` --author="${name} <${email}>"`;
+  return ` -m "Co-authored-by: ${name} <${email}>"`;
 }
 
 export function buildSourceIssueRef(sourceIssue?: TaskSourceIssue | null): string {
@@ -5151,7 +5154,7 @@ Message format:
 - **Summary:** one line describing what the squash brings in (imperative mood)
 - **Body:** 2-5 bullet points summarizing the key changes, each starting with "- "
 - **GitHub reference:** when the prompt includes a source issue reference, add \`Ref: owner/repo#N\` to the commit body
-${authorArg ? `- **Author:** Always include the --author flag as shown in the example above.` : ""}
+${authorArg ? `- **Co-author:** Always include the \`Co-authored-by\` trailer as shown in the example above so Fusion is credited alongside your git identity.` : ""}
 
 Example:
 \`\`\`
@@ -5170,7 +5173,7 @@ Message format:
 - **Summary:** one line describing what the squash brings in (imperative mood)
 - **Body:** 2-5 bullet points summarizing the key changes, each starting with "- "
 - **GitHub reference:** when the prompt includes a source issue reference, add \`Ref: owner/repo#N\` to the commit body
-${authorArg ? `- **Author:** Always include the --author flag as shown in the example above.` : ""}
+${authorArg ? `- **Co-author:** Always include the \`Co-authored-by\` trailer as shown in the example above so Fusion is credited alongside your git identity.` : ""}
 Do NOT include a scope in the commit message type.
 
 Example:
@@ -10764,14 +10767,14 @@ export function buildMergePrompt(params: MergePromptParams): string {
       "## ⚠️ There are merge conflicts",
       "Run `git diff --name-only --diff-filter=U` to see which files.",
       "Resolve each conflict, then `git add` the resolved files.",
-      `After resolving all conflicts, write and run the commit command.${authorArg ? ` Be sure to include \`${authorArg.trim()}\` in the commit command.` : ""}`,
+      `After resolving all conflicts, write and run the commit command.${authorArg ? ` Be sure to append \`${authorArg.trim()}\` to the commit command so Fusion is recorded as a co-author.` : ""}`,
     );
   } else {
     parts.push(
       "",
       "## No conflicts",
       "The merge applied cleanly. All changes are staged.",
-      `Write and run the \`git commit\` command with a good message summarizing the work.${authorArg ? ` Be sure to include \`${authorArg.trim()}\` in the commit command.` : ""}`,
+      `Write and run the \`git commit\` command with a good message summarizing the work.${authorArg ? ` Be sure to append \`${authorArg.trim()}\` to the commit command so Fusion is recorded as a co-author.` : ""}`,
     );
   }
 

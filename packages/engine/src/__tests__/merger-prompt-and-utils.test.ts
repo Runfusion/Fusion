@@ -789,7 +789,7 @@ describe("buildMergePrompt — truncation behavior", () => {
     expect(prompt).toContain(shortDiffStat);
   });
 
-  it("includes author arg in no-conflicts commit instruction", async () => {
+  it("includes co-author trailer arg in no-conflicts commit instruction", async () => {
     const { buildMergePrompt } = await import("../merger.js");
 
     const prompt = buildMergePrompt({
@@ -798,13 +798,13 @@ describe("buildMergePrompt — truncation behavior", () => {
       commitLog: "- feat: something",
       diffStat: "1 file changed",
       hasConflicts: false,
-      authorArg: ' --author="Fusion <noreply@runfusion.ai>"',
+      authorArg: ' -m "Co-authored-by: Fusion <noreply@runfusion.ai>"',
     });
 
-    expect(prompt).toContain('Be sure to include `--author="Fusion <noreply@runfusion.ai>"` in the commit command');
+    expect(prompt).toContain('Be sure to append `-m "Co-authored-by: Fusion <noreply@runfusion.ai>"` to the commit command');
   });
 
-  it("includes author arg in conflicts commit instruction", async () => {
+  it("includes co-author trailer arg in conflicts commit instruction", async () => {
     const { buildMergePrompt } = await import("../merger.js");
 
     const prompt = buildMergePrompt({
@@ -813,10 +813,10 @@ describe("buildMergePrompt — truncation behavior", () => {
       commitLog: "- feat: something",
       diffStat: "1 file changed",
       hasConflicts: true,
-      authorArg: ' --author="CustomBot <bot@example.com>"',
+      authorArg: ' -m "Co-authored-by: CustomBot <bot@example.com>"',
     });
 
-    expect(prompt).toContain('Be sure to include `--author="CustomBot <bot@example.com>"` in the commit command');
+    expect(prompt).toContain('Be sure to append `-m "Co-authored-by: CustomBot <bot@example.com>"` to the commit command');
   });
 
   it("omits author instruction when authorArg is not provided", async () => {

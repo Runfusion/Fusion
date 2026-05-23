@@ -4752,13 +4752,14 @@ export function SettingsModal({
                     setForm((f) => ({ ...f, commitAuthorEnabled: e.target.checked }))
                   }
                 />
-                Add author attribution to commits
+                Add Fusion as co-author on commits
               </label>
               <details className="settings-option-details">
                 <summary>More details</summary>
                 <small>
-                  When enabled, all commits made by Fusion include <code>--author</code>{" "}
-                  attribution identifying them as AI-generated
+                  When enabled, commits made by Fusion keep your git identity as the
+                  primary author and append a <code>Co-authored-by</code> trailer crediting
+                  Fusion (recognized by GitHub for shared attribution).
                 </small>
               </details>
             </div>
@@ -4766,7 +4767,7 @@ export function SettingsModal({
             {form.commitAuthorEnabled !== false && (
               <>
                 <div className="form-group">
-                  <label htmlFor="commitAuthorName">Author Name</label>
+                  <label htmlFor="commitAuthorName">Co-author Name</label>
                   <input
                     id="commitAuthorName"
                     type="text"
@@ -4779,10 +4780,10 @@ export function SettingsModal({
                       }))
                     }
                   />
-                  <small>Name used in commit author attribution</small>
+                  <small>Name used in the <code>Co-authored-by</code> trailer</small>
                 </div>
                 <div className="form-group">
-                  <label htmlFor="commitAuthorEmail">Author Email</label>
+                  <label htmlFor="commitAuthorEmail">Co-author Email</label>
                   <input
                     id="commitAuthorEmail"
                     type="email"
@@ -4795,7 +4796,7 @@ export function SettingsModal({
                       }))
                     }
                   />
-                  <small>Email used in commit author attribution</small>
+                  <small>Email used in the <code>Co-authored-by</code> trailer</small>
                 </div>
               </>
             )}
