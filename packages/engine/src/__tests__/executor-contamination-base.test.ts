@@ -109,13 +109,17 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
       return {} as any;
     }) as any);
     vi.spyOn(branchConflicts, "assertCleanBranchAtBase").mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({
+    // Not `mockResolvedValueOnce`: the acquireTaskWorktree resume-path
+    // verifier (FN-5475 fix) also consults classifyBootstrapMisbinding
+    // before the executor's primary contamination check runs, so a
+    // once-spy is exhausted before the executor's call lands.
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValue({
       isBootstrapMisbinding: true,
       ownCommitCount: 0,
       foreignCommitCount: 1,
       nonAttributedCount: 0,
     });
-    vi.spyOn(branchConflicts, "reanchorBranchToBase").mockResolvedValueOnce({
+    vi.spyOn(branchConflicts, "reanchorBranchToBase").mockResolvedValue({
       previousTipSha: "3333333333333333333333333333333333333333",
       newTipSha: "4444444444444444444444444444444444444444",
     });
