@@ -152,7 +152,7 @@ When `settings.autoMerge: false`, `in-review` is terminal-until-merged by a huma
 
 ### Reliability Mechanism Coverage
 
-- FN-5432 backstop: `packages/engine/src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts` extends FN-5256 coverage with long-cycle ambiguous sweep, write-boundary/sweep race, self-defeating+cycle non-contradiction across one maintenance flow, and audit-event shape regression; core regression cases (long cycle, self-loop via update, incremental-update closes a loop, moveTask seam invariant, DependencyCycleError shape) live in `packages/core/src/__tests__/store-dependency-cycle.test.ts`.
+- FN-5432 backstop: `packages/engine/src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts` extends FN-5256 coverage with long-cycle ambiguous sweep, write-boundary/sweep race, self-defeating+cycle non-contradiction across one maintenance flow, and audit-event shape regression; core regression cases (long cycle, self-loop via update, incremental-update closes a loop, moveTask seam invariant, DependencyCycleError shape) live in `packages/core/src/__tests__/store-dependency-cycle.test.ts`. User-facing pull/stash audit event behavior (`pull:fast-forward`, `stash:pop-conflict`) is documented in `docs/dashboard-guide.md` under Merge Advance Notice / Smart Pull.
 - FN-5403 backstop: `packages/engine/src/__tests__/reliability-interactions/engine-stop-aborts-execution.test.ts` locks stop-ordering behavior so engine shutdown aborts executor AI sessions before drain wait and preserves task-row lifecycle semantics.
 
 ---
@@ -161,7 +161,7 @@ When `settings.autoMerge: false`, `in-review` is terminal-until-merged by a huma
 
 - `./docs/architecture.md` — lifecycle invariants, self-healing rules, reliability interaction backstops, run-audit internals.
 - `./docs/testing.md` — full testing lanes, worker fanout guidance, test taxonomy, and file organization.
-- `./docs/dashboard-guide.md` — dashboard behavior and **Styling Guide** details.
+- `./docs/dashboard-guide.md` — dashboard behavior and **Styling Guide** details. User-facing docs for Merge Advance Notice and Smart Pull live here.
 - `./docs/agents.md` — pi extension scope, coordination tools, checkout leasing, runtime config.
 - `./docs/settings-reference.md` — model-selection hierarchy, mock provider mode, token budget precedence, presets.
 - `./docs/storage.md` — hybrid storage model details.
