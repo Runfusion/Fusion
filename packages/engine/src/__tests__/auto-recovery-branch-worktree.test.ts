@@ -60,12 +60,19 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
   it("reanchors bootstrap misbinding then requeues", async () => {
     const f = createFixtures();
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "reclaimable", livePath: "/tmp/wt", tipSha: "abc", taskAttributedCommitCount: 0, strandedCommits: [] });
-    branchConflictMocks.classifyBootstrapMisbinding.mockResolvedValue({ isBootstrapMisbinding: true, ownCommitCount: 0, nonAttributedCount: 0 });
+    branchConflictMocks.classifyBootstrapMisbinding.mockResolvedValue({ isBootstrapMisbinding: true, ownCommitCount: 0, foreignCommitCount: 2, nonAttributedCount: 0 });
     branchConflictMocks.reanchorBranchToBase.mockResolvedValue({});
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
     expect(branchConflictMocks.reanchorBranchToBase).toHaveBeenCalledTimes(1);
     expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "todo", expect.objectContaining({ moveSource: "engine" }));
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "bootstrap-misbinding-reanchor" }) }));
+
+    // Regression: prior to the fix, the handler passed `foreignCommits: []`
+    // to classifyBootstrapMisbinding, which silently disabled the predicate
+    // (foreignCommits.length > 0 was always false) and turned this entire
+    // branch into dead code for the FN-5475-class misbinding.
+    const classifyCall = branchConflictMocks.classifyBootstrapMisbinding.mock.calls[0][0];
+    expect(classifyCall.foreignCommits).toBeUndefined();
   });
 
   it("unparks stale paused conflict", async () => {

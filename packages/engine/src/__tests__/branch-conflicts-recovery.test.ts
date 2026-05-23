@@ -125,8 +125,30 @@ describe("branch contamination recovery classification", () => {
     expect(result).toEqual({
       isBootstrapMisbinding: true,
       ownCommitCount: 0,
+      foreignCommitCount: 1,
       nonAttributedCount: 0,
     });
+  }, 20_000);
+
+  // Regression: the auto-recovery fallback in branch-worktree.ts has no
+  // BranchCrossContaminationError in hand (it walks via inspectBranchConflict),
+  // so it cannot supply a foreignCommits array. Before the fix that path
+  // passed `[]` and the predicate became dead code.
+  it("classifies bootstrap misbinding when foreignCommits is omitted by the caller", async () => {
+    const { repoDir, baseSha } = await setupRepo();
+    await makeCommit(repoDir, "foreign-bootstrap-no-list", "feat(FN-4367): dependency change", "FN-4367");
+
+    const result = await classifyBootstrapMisbinding({
+      repoDir,
+      branchName: "feature",
+      baseSha,
+      taskId: "FN-4488",
+    });
+
+    expect(result.isBootstrapMisbinding).toBe(true);
+    expect(result.foreignCommitCount).toBe(1);
+    expect(result.ownCommitCount).toBe(0);
+    expect(result.nonAttributedCount).toBe(0);
   }, 20_000);
 
   it("does not classify bootstrap misbinding when an own-task commit exists", async () => {
@@ -182,6 +204,7 @@ describe("branch contamination recovery classification", () => {
     expect(result).toEqual({
       isBootstrapMisbinding: false,
       ownCommitCount: 0,
+      foreignCommitCount: 0,
       nonAttributedCount: 0,
     });
   });

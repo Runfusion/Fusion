@@ -112,6 +112,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({
       isBootstrapMisbinding: true,
       ownCommitCount: 0,
+      foreignCommitCount: 1,
       nonAttributedCount: 0,
     });
     vi.spyOn(branchConflicts, "reanchorBranchToBase").mockResolvedValueOnce({
@@ -139,7 +140,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: contamination.foreignCommits, unique: [] });
     const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
       newTipSha: "2222222222222222222222222222222222222222",
@@ -173,7 +174,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: contamination.foreignCommits, unique: [] });
     const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
       newTipSha: "2222222222222222222222222222222222222222",
@@ -202,7 +203,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [], unique: [misroutedCommit] });
     vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({
       misrouted: true,
@@ -237,7 +238,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [], unique: [foreignCommit] });
     vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({
       misrouted: false,
@@ -276,7 +277,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
 
     const firstStore = createMockStore();
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [upstreamCommit], unique: [misroutedCommit] });
     vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
     const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
@@ -290,7 +291,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
 
     const secondStore = createMockStore();
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [upstreamCommit], unique: [misroutedCommit] });
     vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
 
@@ -309,7 +310,7 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     });
 
     mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: true, ownCommitCount: 0, nonAttributedCount: 0 });
+    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: true, ownCommitCount: 0, foreignCommitCount: 1, nonAttributedCount: 0 });
     vi.spyOn(branchConflicts, "reanchorBranchToBase").mockRejectedValueOnce(new Error("reanchor failed"));
     vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [], unique: contamination.foreignCommits });
 

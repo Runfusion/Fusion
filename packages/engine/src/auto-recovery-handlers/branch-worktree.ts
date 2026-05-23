@@ -89,6 +89,27 @@ export class BranchWorktreeAutoRecoveryHandler {
     return map;
   }
 
+  /**
+   * Compute a fresh merge-base for contamination checks. Mirrors the
+   * executor's `resolveContaminationBaseRef`: prefer local `main` (the
+   * canonical integration target for Fusion), fall back to `origin/main`
+   * if the local ref isn't resolvable, and finally fall back to the
+   * caller-supplied integration ref if both lookups fail (e.g. in repos
+   * with a non-standard layout).
+   */
+  private async resolveContaminationBase(worktreePath: string, fallback: string): Promise<string> {
+    try {
+      const out = await this.runGit(
+        worktreePath,
+        "git merge-base HEAD main 2>/dev/null || git merge-base HEAD origin/main",
+      );
+      if (out) return out;
+    } catch {
+      // fall through to fallback
+    }
+    return fallback;
+  }
+
   private async resolveRepoDir(ctx: AutoRecoveryContext, failure: AutoRecoveryFailure): Promise<string> {
     const repoFromFailure = typeof failure.evidence?.repoDir === "string" ? failure.evidence.repoDir : undefined;
     if (repoFromFailure) return repoFromFailure;
@@ -199,20 +220,33 @@ export class BranchWorktreeAutoRecoveryHandler {
     }
 
     if (inspection.kind === "reclaimable" && inspection.taskAttributedCommitCount === 0) {
+      // Resolve a fresh merge-base against local main (falling back to
+      // origin/main) for the contamination base — `ctx.task.baseCommitSha`
+      // is deliberately preserved across sessions for diff math (FN-4417)
+      // and can lag main by hundreds of commits, which would flag every
+      // legitimate landing as foreign.
+      const misbindingBaseSha = await this.resolveContaminationBase(
+        inspection.livePath,
+        ctx.task.baseCommitSha ?? integrationBranch,
+      );
       const bootstrap = await classifyBootstrapMisbinding({
         repoDir,
         branchName,
-        baseSha: ctx.task.baseCommitSha ?? integrationBranch,
+        baseSha: misbindingBaseSha,
         taskId: ctx.task.id,
-        foreignCommits: [],
-      }).catch(() => ({ isBootstrapMisbinding: false, ownCommitCount: 0, nonAttributedCount: 0 }));
+      }).catch(() => ({
+        isBootstrapMisbinding: false,
+        ownCommitCount: 0,
+        foreignCommitCount: 0,
+        nonAttributedCount: 0,
+      }));
 
       if (bootstrap.isBootstrapMisbinding) {
         const reanchor = await reanchorBranchToBase({
           repoDir,
           worktreePath: inspection.livePath,
           branchName,
-          baseSha: ctx.task.baseCommitSha ?? integrationBranch,
+          baseSha: misbindingBaseSha,
           taskId: ctx.task.id,
         }).catch(() => null);
 

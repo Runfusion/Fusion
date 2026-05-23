@@ -433,25 +433,34 @@ export interface ClassifyBootstrapMisbindingInput {
   branchName: string;
   baseSha: string;
   taskId: string;
-  foreignCommits: BranchCrossContaminationCommit[];
+  /**
+   * Optional and advisory only. The classifier derives the foreign-commit
+   * count from its own `git log baseSha..branchName` walk because callers
+   * such as the auto-recovery fallback in `branch-worktree.ts` only have a
+   * `BranchConflictInspectionResult` (no foreign-commit list) and used to
+   * pass `[]`, which silently disabled the predicate.
+   */
+  foreignCommits?: BranchCrossContaminationCommit[];
 }
 
 export interface ClassifyBootstrapMisbindingResult {
   isBootstrapMisbinding: boolean;
   ownCommitCount: number;
+  foreignCommitCount: number;
   nonAttributedCount: number;
 }
 
 export async function classifyBootstrapMisbinding(
   input: ClassifyBootstrapMisbindingInput,
 ): Promise<ClassifyBootstrapMisbindingResult> {
-  const { repoDir, branchName, baseSha, taskId, foreignCommits } = input;
+  const { repoDir, branchName, baseSha, taskId } = input;
   const output = await runGit(repoDir, `git log --format=%H%x1f%s%x1f%b ${quoteShellArg(`${baseSha}..${branchName}`)}`)
     .catch(() => "");
   if (!output) {
     return {
       isBootstrapMisbinding: false,
       ownCommitCount: 0,
+      foreignCommitCount: 0,
       nonAttributedCount: 0,
     };
   }
@@ -464,6 +473,7 @@ export async function classifyBootstrapMisbinding(
 
   let ownCommitCount = 0;
   let nonAttributedCount = 0;
+  let foreignCommitCount = 0;
   for (const line of output.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
     const [, subject = "", body = ""] = line.split("\u001f");
     if (ownSubjectPattern.test(subject) || ownTrailerPattern.test(body)) {
@@ -476,12 +486,15 @@ export async function classifyBootstrapMisbinding(
     const attributedTaskId = (trailerMatch?.[1] ?? subjectMatch?.[2] ?? "").toUpperCase();
     if (!attributedTaskId) {
       nonAttributedCount += 1;
+    } else {
+      foreignCommitCount += 1;
     }
   }
 
   return {
-    isBootstrapMisbinding: foreignCommits.length > 0 && ownCommitCount === 0 && nonAttributedCount === 0,
+    isBootstrapMisbinding: foreignCommitCount > 0 && ownCommitCount === 0 && nonAttributedCount === 0,
     ownCommitCount,
+    foreignCommitCount,
     nonAttributedCount,
   };
 }
