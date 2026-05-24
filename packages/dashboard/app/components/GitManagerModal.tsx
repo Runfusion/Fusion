@@ -1022,6 +1022,9 @@ function StatusPanel({
           <span className="gm-status-value">
             <GitBranchIcon size={14} />
             <span>{status.branch}</span>
+            {/* Only flag "not on <integration>" when we know the worktree IS
+                on a branch — detached HEAD (isOnIntegrationBranch undefined)
+                is a non-branch state, not "on the wrong branch." */}
             {status.integrationBranch && status.isOnIntegrationBranch === false && (
               <span className="gm-status-sub" title="Currently on a non-integration branch">
                 {" "}(not on {status.integrationBranch})
@@ -1035,11 +1038,21 @@ function StatusPanel({
             <code className="gm-hash">{status.commit}</code>
             <button
               className="gm-icon-btn"
-              onClick={() => copyToClipboard(status.headSha ?? status.commit, "commit hash")}
-              title="Copy commit hash"
+              onClick={() => copyToClipboard(status.commit, "commit hash")}
+              title={`Copy short commit hash${status.headSha ? " (use the full SHA below for git operations)" : ""}`}
             >
               <Copy size={12} />
             </button>
+            {status.headSha && (
+              <button
+                className="gm-icon-btn"
+                onClick={() => copyToClipboard(status.headSha!, "full commit hash")}
+                title="Copy full 40-char SHA"
+              >
+                <Copy size={12} />
+                <span style={{ fontSize: 10, marginLeft: 2 }}>full</span>
+              </button>
+            )}
           </span>
         </div>
         <div className="gm-status-card">
@@ -1113,6 +1126,16 @@ function StatusPanel({
             {status.integrationTipSha && (
               <span className="gm-status-sub">
                 tip <code className="gm-hash">{status.integrationTipSha.slice(0, 8)}</code>
+                {status.integrationTipSource === "remote-only" && (
+                  <>
+                    {" "}<span title="No local refs/heads/<branch>; using refs/remotes/origin/<branch> as the integration tip.">(remote-only — run <code>git switch {status.integrationBranch}</code> to track locally)</span>
+                  </>
+                )}
+              </span>
+            )}
+            {status.integrationTipSource === "missing" && (
+              <span className="gm-status-sub gm-status-conflict" title="Neither refs/heads nor refs/remotes/origin has this branch">
+                no ref found for {status.integrationBranch}
               </span>
             )}
           </div>

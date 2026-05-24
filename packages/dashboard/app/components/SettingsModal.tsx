@@ -2065,8 +2065,17 @@ export function SettingsModal({
             }
           }
         } else {
-          // For non-model settings: existing behavior
-          (projectPatch as Record<string, unknown>)[key] = value;
+          // For non-model settings: pass value through. Apply the same
+          // null-as-delete semantics as the global patch builder above so the
+          // user can actually CLEAR an explicit value (e.g. unpin
+          // `integrationBranch` back to auto-detect). Without this, setting
+          // the form value to `undefined` causes JSON.stringify to drop the
+          // key and the server retains the previous explicit value.
+          if (value === undefined && initialProjectValue !== undefined && initialProjectValue !== null) {
+            (projectPatch as Record<string, unknown>)[key] = null;
+          } else {
+            (projectPatch as Record<string, unknown>)[key] = value;
+          }
         }
       }
 

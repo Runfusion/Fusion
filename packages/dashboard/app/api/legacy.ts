@@ -2584,6 +2584,10 @@ export interface GitStatus {
   integrationBranchSource?: "settings" | "origin-head" | "fallback";
   isOnIntegrationBranch?: boolean;
   integrationTipSha?: string | null;
+  /** "local" = `refs/heads/<branch>` exists; "remote-only" = only
+   *  `refs/remotes/origin/<branch>` exists and was used as fallback;
+   *  "missing" = neither ref exists. */
+  integrationTipSource?: "local" | "remote-only" | "missing";
   originIntegrationTipSha?: string | null;
   aheadOfIntegration?: number;
   behindIntegration?: number;
