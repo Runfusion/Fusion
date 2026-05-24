@@ -19,7 +19,7 @@ type SearchType = "repos" | "issues" | "both";
 interface GitHubRepoResult {
   fullName: string;
   description?: string;
-  htmlUrl: string;
+  url: string;
   stargazersCount?: number;
   language?: string;
   updatedAt?: string;
@@ -28,7 +28,7 @@ interface GitHubRepoResult {
 interface GitHubIssueResult {
   title: string;
   body?: string;
-  htmlUrl: string;
+  url: string;
   state?: string;
   labels?: Array<{ name?: string }>;
 }
@@ -60,7 +60,7 @@ export class GitHubProvider implements ResearchProvider {
             "repos",
             query,
             "--json",
-            "fullName,description,htmlUrl,stargazersCount,language,updatedAt",
+            "fullName,description,url,stargazersCount,language,updatedAt",
             "--limit",
             String(maxResults),
           ],
@@ -69,9 +69,9 @@ export class GitHubProvider implements ResearchProvider {
 
         sources.push(
           ...repos.slice(0, maxResults).map((repo, idx) => ({
-            id: `github-repo-${idx}-${repo.htmlUrl}`,
+            id: `github-repo-${idx}-${repo.url}`,
             type: "github" as const,
-            reference: repo.htmlUrl,
+            reference: repo.url,
             title: repo.fullName,
             excerpt: repo.description ?? "",
             status: "completed" as const,
@@ -93,7 +93,7 @@ export class GitHubProvider implements ResearchProvider {
             "issues",
             query,
             "--json",
-            "title,body,htmlUrl,state,labels",
+            "title,body,url,state,labels",
             "--limit",
             String(maxResults),
           ],
@@ -102,9 +102,9 @@ export class GitHubProvider implements ResearchProvider {
 
         sources.push(
           ...issues.slice(0, maxResults).map((issue, idx) => ({
-            id: `github-issue-${idx}-${issue.htmlUrl}`,
+            id: `github-issue-${idx}-${issue.url}`,
             type: "github" as const,
-            reference: issue.htmlUrl,
+            reference: issue.url,
             title: issue.title,
             excerpt: issue.body?.slice(0, 280) ?? "",
             status: "completed" as const,
