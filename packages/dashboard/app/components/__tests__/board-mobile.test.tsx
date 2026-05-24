@@ -71,6 +71,25 @@ function getMainMobileSection(css: string): string {
   return blocks.join("\n");
 }
 
+describe("getMainMobileSection — compound media queries", () => {
+  it("matches simple and compound 768px blocks but excludes other breakpoints", () => {
+    const syntheticCss = `
+      @media (max-width: 768px)
+      { .a { color: red; } }
+      @media (max-width: 768px), (max-height: 480px)
+      { .b { color: blue; } }
+      @media (max-width: 640px)
+      { .c { color: green; } }
+    `;
+
+    const section = getMainMobileSection(syntheticCss);
+
+    expect(section).toContain(".a { color: red;");
+    expect(section).toContain(".b { color: blue;");
+    expect(section).not.toContain(".c { color: green;");
+  });
+});
+
 function expectRuleToContain(section: string, selectorFragment: string, declaration: string): void {
   const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
   let foundSelector = false;

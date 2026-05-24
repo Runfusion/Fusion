@@ -14,7 +14,7 @@ describe("column fixed-width CSS", () => {
 
   // Extract the mobile media block
   const mediaStart = css.search(
-    /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{/,
+    /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{/,
   );
   const mobileBlock = css.slice(mediaStart);
 

@@ -19,7 +19,7 @@ const css = loadAllAppCss();
 describe("terminal mobile keyboard layout CSS contract", () => {
   // Extract the mobile @media block
   const mediaMatch = css.match(
-    /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{/,
+    /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{/,
   );
   const mediaStart = mediaMatch ? css.indexOf(mediaMatch[0]) : -1;
 

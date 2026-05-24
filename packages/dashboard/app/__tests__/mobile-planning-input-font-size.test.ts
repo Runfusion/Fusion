@@ -19,13 +19,13 @@ describe("mobile planning input font size CSS", () => {
     it("contains mobile font-size override for planning-textarea", () => {
       // Find the mobile planning modal media query
       const planningModalMediaMatch = css.match(
-        /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{[^}]*\.planning-modal/s,
+        /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{[^}]*\.planning-modal/s,
       );
       expect(planningModalMediaMatch).not.toBeNull();
 
       // Extract the mobile planning modal block
       const mediaStart = css.search(
-        /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{[^}]*\.planning-modal/s,
+        /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{[^}]*\.planning-modal/s,
       );
       const afterMedia = css.slice(mediaStart);
 
