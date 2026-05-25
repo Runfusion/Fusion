@@ -55,6 +55,7 @@ import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import { ApiError, badRequest } from "../api-error.js";
 import { resolveGithubTrackingAuth } from "../github-auth.js";
@@ -345,9 +346,9 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       } catch (error) {
         const localBinDir = `${homedir()}/.local/bin`;
         const localInstallPath = `${localBinDir}/cloudflared`;
-        attemptedCommands.push(`mkdir -p ${localBinDir}`);
+        attemptedCommands.push(`mkdir(${localBinDir}, { recursive: true })`);
         attemptedCommands.push(`mv ${tempPath} ${localInstallPath}`);
-        await execFileAsync("mkdir", ["-p", localBinDir], { timeout: 30_000 });
+        await mkdir(localBinDir, { recursive: true });
         try {
           await execFileAsync("mv", [tempPath, localInstallPath], { timeout: 30_000 });
         } catch (fallbackError) {
