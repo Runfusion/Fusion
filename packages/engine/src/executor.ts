@@ -5788,6 +5788,19 @@ export class TaskExecutor {
       };
     }
 
+    // FN-009: If worktree directory doesn't exist, skip git validation for task completion.
+    // This is safe because:
+    // 1. Task completion doesn't modify the worktree
+    // 2. Deliverables (task documents, follow-up tasks) are stored in fusion.db
+    // 3. If code changes were made, the worktree would exist
+    // 4. This prevents ENOENT errors when agents complete documentation/coordination tasks
+    if (!existsSync(worktreePath)) {
+      executorLog.log(
+        `${task.id}: worktree directory not found at ${worktreePath} — skipping git validation for task completion`,
+      );
+      return { ok: true };
+    }
+
     try {
       const { stdout } = await execAsync("git rev-parse --show-toplevel", {
         cwd: worktreePath,

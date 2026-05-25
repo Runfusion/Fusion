@@ -293,6 +293,7 @@
 
 ### Patch Changes
 
+- Fixed `fn_task_done` to gracefully handle missing worktree directories. When a task's worktree has been deleted (common for documentation/coordination tasks with no code changes), `fn_task_done` previously failed with ENOENT attempting to spawn git commands in non-existent directories. The fix adds an `existsSync` check in `verifyWorktreeInvariants` before executing git commands, allowing legitimate task completions to proceed. This is safe because task completion is read-only, deliverables are stored in fusion.db (not the worktree), and if code changes were made, the worktree would exist. Resolves infinite loops where agents couldn't complete tasks without shell access to missing directories.
 - Updated dependencies [1f0bb7e]
   - @fusion/core@0.32.0
   - @fusion/pi-claude-cli@0.32.0
