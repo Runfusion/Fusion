@@ -4,6 +4,13 @@ import { computeMaxWorkers } from "../../packages/core/src/__test-utils__/vitest
 
 const maxWorkers = computeMaxWorkers();
 
+const coreSetup = fileURLToPath(
+  new URL("../../packages/core/src/__test-utils__/vitest-setup.ts", import.meta.url),
+);
+const dashboardSetup = fileURLToPath(
+  new URL("./src/dashboard/test-setup.ts", import.meta.url),
+);
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -13,9 +20,8 @@ export default defineConfig({
     },
   },
   test: {
-    setupFiles: [
-      fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-setup.ts", import.meta.url)),
-    ],
+    // coreSetup runs for all projects via extends: true inheritance
+    setupFiles: [coreSetup],
     globalSetup: [fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-teardown.ts", import.meta.url))],
     pool: "threads",
     maxWorkers,
@@ -27,10 +33,9 @@ export default defineConfig({
           name: "reports-dashboard",
           environment: "jsdom",
           include: ["src/dashboard/**/__tests__/**/*.test.{ts,tsx}", "src/dashboard/**/*.test.{ts,tsx}"],
-          setupFiles: [
-            fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-setup.ts", import.meta.url)),
-            fileURLToPath(new URL("./src/dashboard/test-setup.ts", import.meta.url)),
-          ],
+          // coreSetup is inherited from root via extends: true.
+          // Only add dashboardSetup which is jsdom-specific.
+          setupFiles: [dashboardSetup],
         },
       },
       {
