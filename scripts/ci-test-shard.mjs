@@ -396,9 +396,15 @@ export function main(argv = process.argv.slice(2), env = process.env) {
     console.log(
       `[ci-test-shard] shard ${shard}/${total}: running ${entry.name} --shard ${entry.shardIndex}/${entry.shardCount}`,
     );
-    run("pnpm", ["--filter", entry.name, "test", "--", "--shard", `${entry.shardIndex}/${entry.shardCount}`], {
-      env: shardEnv,
-    });
+    // NB: no `--` between `test` and `--shard`. pnpm 10 forwards extra args to
+    // the script regardless, and inserting `--` causes vitest's CLI parser
+    // (cac) to treat `--shard X/Y` as positional file filters → sharding is
+    // silently disabled and every shard runs the full suite.
+    run(
+      "pnpm",
+      ["--filter", entry.name, "test", `--shard=${entry.shardIndex}/${entry.shardCount}`],
+      { env: shardEnv },
+    );
   }
 }
 

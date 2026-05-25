@@ -3,6 +3,10 @@ name: PR Checks
 on:
   pull_request:
     branches: [main]
+  # Also run on every push to main so post-merge regressions surface
+  # immediately instead of being discovered on the next PR.
+  push:
+    branches: [main]
 
 concurrency:
   group: pr-checks-${{ github.ref }}
@@ -69,6 +73,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Engine tests run real git operations (merge-base against main,
+          # case-variant ref checks) that require full history. Shallow
+          # clones silently break tests like worktree-acquisition's resume
+          # misbinding path.
+          fetch-depth: 0
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm

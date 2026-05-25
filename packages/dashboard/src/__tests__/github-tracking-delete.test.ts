@@ -3,8 +3,11 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import express from "express";
 import { TaskStore } from "@fusion/core";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
+import { createApiRoutes } from "../routes.js";
+import { request as performRequest } from "../test-request.js";
 
 type GitHubIssueActionPayload = Record<string, unknown>;
 type StoreEventApi = {
@@ -71,6 +74,11 @@ async function expectNoGithubIssueAction(
       timeoutMessage,
     }),
   ).rejects.toThrow(timeoutMessage);
+}
+
+async function requestDelete(app: express.Express, path: string): Promise<{ status: number; body: any }> {
+  const res = await performRequest(app, "DELETE", path);
+  return { status: res.status, body: res.body };
 }
 
 describe("github tracking delete flow", () => {
@@ -155,6 +163,98 @@ describe("github tracking delete flow", () => {
     );
 
     expect(mockSetIssueState).not.toHaveBeenCalled();
+  });
+
+  it("closes linked issue when delete receives explicit githubIssueAction=close", async () => {
+    const task = await store.createTask({
+      description: "delete tracked task with explicit close",
+      githubTracking: { enabled: true },
+    });
+
+    await store.linkGithubIssue(task.id, {
+      owner: "octocat",
+      repo: "hello-world",
+      number: 10,
+      url: "https://github.com/octocat/hello-world/issues/10",
+      createdAt: new Date().toISOString(),
+    });
+
+    const closeAction = waitForGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "success",
+      { timeoutMessage: `Timed out waiting for explicit close action for deleted task ${task.id}` },
+    );
+
+    await store.deleteTask(task.id, { githubIssueAction: "close" });
+    await closeAction;
+
+    expect(mockSetIssueState).toHaveBeenCalledWith("octocat", "hello-world", 10, "closed", "not_planned");
+  });
+
+  it("does not report failed close when task is done then deleted", async () => {
+    const task = await store.createTask({
+      description: "done then deleted task",
+      githubTracking: { enabled: true },
+    });
+
+    await store.linkGithubIssue(task.id, {
+      owner: "octocat",
+      repo: "hello-world",
+      number: 11,
+      url: "https://github.com/octocat/hello-world/issues/11",
+      createdAt: new Date().toISOString(),
+    });
+
+    await store.moveTask(task.id, "done");
+    mockSetIssueState.mockClear();
+    mockGetIssue.mockResolvedValue({ state: "closed" });
+
+    const skippedCloseAction = waitForGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "skipped",
+      { timeoutMessage: `Timed out waiting for skipped close action for deleted task ${task.id}` },
+    );
+
+    await store.deleteTask(task.id);
+    await skippedCloseAction;
+
+    expect(mockSetIssueState).not.toHaveBeenCalled();
+    await expectNoGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "failed",
+      `Unexpected failed close action for done-then-deleted task ${task.id}`,
+    );
+  });
+
+  it("route delete uses same store instance observed by tracking state service", async () => {
+    const task = await store.createTask({
+      description: "route delete tracked task",
+      githubTracking: { enabled: true },
+    });
+
+    await store.linkGithubIssue(task.id, {
+      owner: "octocat",
+      repo: "hello-world",
+      number: 12,
+      url: "https://github.com/octocat/hello-world/issues/12",
+      createdAt: new Date().toISOString(),
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+
+    const closeAction = waitForGithubIssueAction(
+      store,
+      (payload) => payload.taskId === task.id && payload.action === "close" && payload.outcome === "success",
+      { timeoutMessage: `Timed out waiting for route close action for deleted task ${task.id}` },
+    );
+
+    const response = await requestDelete(app, `/api/tasks/${task.id}?githubIssueAction=close`);
+    expect(response.status).toBe(200);
+
+    await closeAction;
+    expect(mockSetIssueState).toHaveBeenCalledWith("octocat", "hello-world", 12, "closed", "not_planned");
   });
 
   it("does not trigger an unhandled rejection when closing linked issue fails on delete", async () => {

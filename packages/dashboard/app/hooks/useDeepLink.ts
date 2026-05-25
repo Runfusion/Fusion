@@ -46,6 +46,12 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
   // Track whether the currently open detail modal came from a deep-link.
   const deepLinkTaskIdRef = useRef<string | null>(null);
 
+  // Avoid duplicate not-found toasts in StrictMode double-effect runs.
+  const projectNotFoundToastRef = useRef<string | null>(null);
+
+  // Ensure project switching from ?project= only happens once per project value.
+  const projectSwitchAppliedRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!pathRewroteRef.current) {
       const pathMatch = window.location.pathname.match(/^\/tasks\/([A-Z]+-\d+)\/?$/);
@@ -66,25 +72,40 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
     const projectParam = params.get("project");
     const taskId = params.get("task");
 
-    if (!taskId) return;
     if (projectsLoading) return;
+
+    let taskProjectId = projectId;
 
     if (projectParam) {
       const matchingProject = projects.find((project) => project.id === projectParam);
       if (!matchingProject) {
-        addToast(`Project '${projectParam}' not found`, "error");
+        if (projectNotFoundToastRef.current !== projectParam) {
+          addToast(`Project '${projectParam}' not found`, "error");
+          projectNotFoundToastRef.current = projectParam;
+        }
         return;
       }
 
-      if (currentProject?.id !== matchingProject.id) {
+      projectNotFoundToastRef.current = null;
+      taskProjectId = matchingProject.id;
+
+      if (
+        currentProject?.id !== matchingProject.id
+        && projectSwitchAppliedRef.current !== matchingProject.id
+      ) {
         setCurrentProject(matchingProject);
+        projectSwitchAppliedRef.current = matchingProject.id;
       }
+    } else {
+      projectNotFoundToastRef.current = null;
+      projectSwitchAppliedRef.current = null;
     }
+
+    if (!taskId) return;
 
     if (deepLinkFetchedRef.current) return;
     deepLinkFetchedRef.current = true;
 
-    const taskProjectId = projectParam ?? projectId;
     fetchTaskDetail(taskId, taskProjectId)
       .then((detail) => {
         openTaskDetail(detail);

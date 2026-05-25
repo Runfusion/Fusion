@@ -2946,16 +2946,26 @@ export class SelfHealingManager {
         }
 
         const integrationBase = task.baseBranch || await resolveIntegrationBranch(this.options.rootDir, undefined);
-        const existingCandidatesByRef = new Map<string, { branch: string; aheadCount: number }>();
+        // Dedup by resolved SHA, not by lowercase name. On case-insensitive
+        // filesystems (macOS APFS default) two case-variant refs resolve to the
+        // same underlying ref → same SHA → collapse to canonical. On
+        // case-sensitive filesystems (Linux) two case-variants are physically
+        // distinct refs with distinct SHAs → keep both, so downstream detects
+        // the ambiguity rather than silently picking one.
+        const candidateByRefSha = new Map<string, { branch: string; aheadCount: number }>();
+        const normalizedCandidate = canonicalFusionBranchName(task.id);
         for (const branch of candidates) {
+          let branchSha: string;
           try {
-            await execAsync(`git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`, {
+            const { stdout } = await execAsync(`git rev-parse --verify ${shellQuote(`refs/heads/${branch}`)}`, {
               cwd: this.options.rootDir,
               timeout: 30_000,
             });
+            branchSha = stdout.trim();
           } catch {
             continue;
           }
+          if (!branchSha) continue;
 
           let comparisonBase = integrationBase;
           try {
@@ -2980,18 +2990,16 @@ export class SelfHealingManager {
             timeout: 30_000,
           });
           const aheadCount = Number.parseInt(aheadCountRaw.stdout.trim(), 10);
-          const normalizedBranchRef = branch.toLowerCase();
-          const existingCandidate = existingCandidatesByRef.get(normalizedBranchRef);
-          const normalizedCandidate = canonicalFusionBranchName(task.id);
-          if (!existingCandidate || branch === normalizedCandidate) {
-            existingCandidatesByRef.set(normalizedBranchRef, {
+          const existing = candidateByRefSha.get(branchSha);
+          if (!existing || branch === normalizedCandidate) {
+            candidateByRefSha.set(branchSha, {
               branch,
               aheadCount: Number.isFinite(aheadCount) ? aheadCount : 0,
             });
           }
         }
 
-        const existingCandidates = [...existingCandidatesByRef.values()];
+        const existingCandidates = [...candidateByRefSha.values()];
 
         if (existingCandidates.length === 0) {
           await this.emitBranchRebindAuditEvent({
