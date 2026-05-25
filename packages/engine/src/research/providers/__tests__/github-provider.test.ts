@@ -29,7 +29,7 @@ describe("GitHubProvider", () => {
 
   it("searches repositories", async () => {
     runGhJsonAsyncMock.mockResolvedValueOnce([
-      { fullName: "org/repo", description: "desc", htmlUrl: "https://github.com/org/repo", stargazersCount: 12, language: "ts", updatedAt: "2026" },
+      { fullName: "org/repo", description: "desc", url: "https://github.com/org/repo", stargazersCount: 12, language: "ts", updatedAt: "2026" },
     ]);
     const provider = new GitHubProvider();
 
@@ -41,7 +41,7 @@ describe("GitHubProvider", () => {
 
   it("searches issues", async () => {
     runGhJsonAsyncMock.mockResolvedValueOnce([
-      { title: "Issue", body: "body", htmlUrl: "https://github.com/org/repo/issues/1", state: "open", labels: [{ name: "bug" }] },
+      { title: "Issue", body: "body", url: "https://github.com/org/repo/issues/1", state: "open", labels: [{ name: "bug" }] },
     ]);
 
     const provider = new GitHubProvider();
@@ -52,8 +52,8 @@ describe("GitHubProvider", () => {
 
   it("supports combined search", async () => {
     runGhJsonAsyncMock
-      .mockResolvedValueOnce([{ fullName: "org/repo", htmlUrl: "https://github.com/org/repo" }])
-      .mockResolvedValueOnce([{ title: "Issue", htmlUrl: "https://github.com/org/repo/issues/1" }]);
+      .mockResolvedValueOnce([{ fullName: "org/repo", url: "https://github.com/org/repo" }])
+      .mockResolvedValueOnce([{ title: "Issue", url: "https://github.com/org/repo/issues/1" }]);
 
     const provider = new GitHubProvider();
     const results = await provider.search("query", {});
