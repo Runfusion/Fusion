@@ -198,16 +198,16 @@ export class FirstRunExperience {
           continue;
         }
 
-        // Register the project
-        const newProject = await this.centralCore.registerProject({
+        const ensured = await this.centralCore.ensureProjectForPath({
           name: project.name,
           path: project.path,
+          identity: project.identity,
           isolationMode: project.isolationMode ?? "in-process",
         });
 
         // Activate the project
         const activeProject = await this.centralCore.updateProject(
-          newProject.id,
+          ensured.project.id,
           { status: "active" }
         );
 

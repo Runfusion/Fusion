@@ -2,6 +2,921 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.33.0
+
+### @fusion/core
+
+#### Minor Changes
+
+- a201f56: feat(core): add `mergeAdvanceAutoSync` project setting (`"off" | "ff-only" | "stash-and-ff"`)
+
+  Adds the schema for a new project setting that controls what happens in **other** worktrees still checked out on the integration branch when the merger advances the branch ref. Previously the merger only updated `refs/heads/<branch>` and left every other checkout's index and working tree pinned at the old tip, so `git status` in the user's project-root checkout reported the new commits as inverted "staged changes to be committed."
+
+  Modes (default `"stash-and-ff"`):
+
+  - `"off"` — preserve the legacy behavior; user must `git pull` or click the Merge Advance Notice banner Pull button.
+  - `"ff-only"` — auto-fast-forward only clean worktrees; dirty worktrees stay untouched and the banner still surfaces.
+  - `"stash-and-ff"` — run the Smart Pull pipeline (stash → fast-forward → pop). Pop conflicts emit `merge:auto-sync` audit events with `outcome: "stash-pop-conflict"` and surface through the existing dashboard stash-conflict modal.
+
+  Schema-only in this changeset; the merger hook that consumes the setting lands in the follow-up engine change.
+
+- 51fc826: fix(engine,core): dedup heartbeat-spawned follow-ups by parent task
+
+  Heartbeat agents create follow-up tasks via `fn_task_create`. Until
+  now, the intake similarity guard scoped candidates by `sourceAgentId`
+  only, so the same parent task could spawn many sibling tasks across
+  heartbeats whenever triage rewrote their titles enough to dodge the
+  title-fingerprint guard.
+
+  The task-scoped heartbeat now stamps `sourceParentTaskId` (and
+  `sourceRunId`) on every `fn_task_create`, and the intake duplicate
+  matcher treats a candidate as a sibling when it shares either the
+  caller's agent ID or the caller's parent task ID. Same-parent
+  siblings with similar descriptions are auto-archived as before.
+
+  Tool description and heartbeat prompts also now instruct agents to
+  scan existing open tasks before creating, as a belt-and-suspenders
+  layer above the deterministic dedup.
+
+#### Patch Changes
+
+- 408e20b: fix(merger): two root-cause fixes for tasks landing in Done with no commit on main
+
+  **Bug 1: sibling fusion/fn-\* branch as merge target** — `resolveTaskMergeTarget`
+  previously returned `task.baseBranch` unconditionally before falling back to the
+  project default. When a task was dispatched as a sibling/dependent off another
+  in-flight task's worktree, `baseBranch` ended up as the upstream's
+  `fusion/fn-<id>` branch. The merger then detached onto that sibling, squashed
+  on top of it, and advanced `refs/heads/fusion/fn-<id>` — never main. FN-5233's
+  squash (`84563e549`) stranded on `fusion/fn-5339`; FN-5530's
+  (`4140a3e0a`) stranded on `fusion/fn-5543`. The resolver now refuses any
+  `fusion/fn-\*` candidate as a merge destination and falls through to the
+  project default. The merger emits a new `merge:merge-target-rejected-fusion-sibling`
+  audit event so the upstream `baseBranch`-propagation bug stays observable.
+
+  **Bug 2: deadlock-recovery mis-attributed tasks to unrelated commits** —
+  `findLandedTaskCommit` step (4) used `git log --grep=FN-XXXX` which matches the
+  entire commit message (not just the subject) and blindly accepted the first
+  hit. FN-5441 and FN-5446 were both marked done against `e3dbfaae` — an
+  FN-5483 commit whose body merely _mentioned_ them by name in a paragraph about
+  a refusal. The grep fallback now fetches each candidate's body and re-verifies
+  ownership via a tightened `commitOwnedByTask`: trailers must be line-anchored
+  (`(?:^|\n)Fusion-Task-Id: <id>(?:\n|$)`), and the subject fallback must match
+  a conventional-commit form (`<type>(<id>):` or `<id>:`), not a substring.
+  Prose mentions can no longer claim a task.
+
+  The historical recovery for FN-5233 has been cherry-picked to main as
+  `2d2e5b809`. The other 11 affected tasks (FN-5441, FN-5446, FN-5472, FN-5484,
+  FN-5487, FN-5490, FN-5515, FN-5517, FN-5526, FN-5539, FN-5540, FN-5542)
+  remain in Done but need separate triage — 3 look like legitimate
+  verification-only no-ops, the remaining 9 likely lost real work.
+
+- ec6643e: fix(test-utils): cancel subprocess tracking timer for every proc in afterEach
+
+  The vitest subprocess guard registered a 60 s "command timed out" timer for
+  each tracked child process and relied on `afterEach` to cancel it. Under
+  concurrent load (`pnpm` recursive test runs) the timer could outlive the
+  originating test and fire during a later test's `afterEach`, surfacing as
+  spurious "Test subprocess guard detected unsafe child-process usage:
+  Timed out after 60000ms" failures attributed to a different test name.
+
+  The cleanup loop now scopes "Left running" failure reporting + SIGKILL to
+  processes spawned by the current test, but unconditionally clears each
+  tracked subprocess's timer so the 60 s timeout cannot fire after the
+  afterEach completes. The grace period before declaring a process leaked
+  is also raised from 200 ms to 1 s to absorb event-loop contention from
+  slow git shells under recursive test load.
+
+- 4c31e88: feat(engine): merger auto-syncs project-root checkout after advancing integration-branch ref
+
+  Wires `mergeAdvanceAutoSync` into the merger's post-ref-advance code path. After `advanceIntegrationBranchRef` ff-updates `refs/heads/<integrationBranch>`, the merger now enumerates other worktrees still on that branch (typically the user's project-root checkout) and reconciles each one's index + working tree to the new tip via `syncWorktreeToHead`.
+
+  The reconciliation primitive is **not** a `git pull` — origin may still be at the previous tip (no `pushAfterMerge`), in which case `git pull --ff-only` is a no-op and a naive `stash → pull → pop` ends with the worktree restored to the old state. Instead `syncWorktreeToHead`:
+
+  1. Diffs the worktree against the _previous_ tip to isolate real user edits from the stale-index "phantom diff" that looks like inverted commits.
+  2. When the worktree is clean against the previous tip, runs `git reset --hard HEAD` to snap index + files forward.
+  3. In `stash-and-ff` mode with real edits, captures them as a binary patch against the previous tip, snaps to HEAD, then `git apply --3way` to restore. Untracked files are copied to a temp dir and restored after the snap. Patch conflicts surface as `synced-with-pop-conflict` with the patch left on disk for manual recovery.
+
+  Each per-worktree attempt emits a `merge:auto-sync` audit event (new `GitMutationType`) with the outcome; the per-step `pull:fast-forward`, `stash:push`, `stash:pop`, and `stash:pop-conflict` events that pass through the auditor are tagged `metadata.autoSync = true` so downstream consumers can attribute them.
+
+  The user-facing effect: with the default `mergeAdvanceAutoSync: "stash-and-ff"`, after a Fusion task merges the user's `git status` in the project-root checkout becomes clean and the working tree shows the new commits' content — no manual `git reset` or Pull-button click required. Set `mergeAdvanceAutoSync: "off"` to restore the legacy behavior (the Merge Advance Notice banner still surfaces and the user pulls by hand).
+
+  Backstopped by `merger-auto-sync.slow.test.ts` covering: clean-sync snaps both index and files forward, ff-only with real edits is a no-op, stash-and-ff preserves untracked local files across the snap, task worktrees on `fusion/fn-*` branches are correctly skipped, and an empty branch map emits nothing.
+
+### @fusion/dashboard
+
+#### Minor Changes
+
+- 6e7f1e5: feat(dashboard): explain "Recent integration-branch advances" and add a one-click "Sync working tree" fix
+
+  Two additions to Git Manager → Status:
+
+  **Info disclosure** — an `[i]` button next to the "Recent integration-branch advances (N need action)" header toggles an inline explainer. Covers what an "advance" is, what each `autoSyncOutcome` value means (`clean-sync`, `synced-with-edits-restored`, `off / not run`, `stash-failed`, `would-conflict`, …), and where to enable `mergeAdvanceAutoSync` for the permanent fix.
+
+  **Sync working tree button** — when ≥1 advance shows `needsAction`, a button surfaces in the same header that calls the existing `POST /api/git/pull` (FN-5358 Smart Pull machinery: auto-stash dirty edits, fast-forward pull, restore stash, surface conflicts). On success the extended git status auto-refetches and the "need action" count drops; on conflict, the existing error toast fires.
+
+  No new state machine — `handlePull`/`remoteLoading === "pull"` is the same plumbing the existing Pull button uses.
+
+- 85786e7: feat(dashboard): show extended integration-branch + working-tree state in Git Manager
+
+  Repository Status panel now answers "what is the actual state of my project root vs the integration branch?" so operators can be sure of the picture even when the Merge Advance Notice banner has been dismissed.
+
+  `GET /api/git/status` accepts a new `?extended=1` query and returns additional optional fields:
+
+  - **integrationBranch** + **integrationBranchSource** — the canonical branch (resolved via `settings.integrationBranch` → legacy `baseBranch` → `origin/HEAD` → `main`) and where the value came from.
+  - **integrationTipSha / originIntegrationTipSha** — SHAs at both ends, so operators can spot when local main has been advanced by the merger but origin/main hasn't caught up.
+  - **aheadOfIntegration / behindIntegration** — HEAD vs local integration tip (useful when on a non-integration branch).
+  - **aheadOfOriginIntegration / behindOriginIntegration** — local integration tip vs `origin/<branch>`.
+  - **dirtyDetails** — staged/modified/untracked/conflicted counts + a 12-line porcelain sample.
+  - **indexStaleVsHead** — true when the index reflects a previous tip and the worktree is clean against the index but not against HEAD. Surfaces the exact "phantom staged changes" scenario that `mergeAdvanceAutoSync` exists to fix.
+  - **stashCount** — for at-a-glance recovery awareness.
+  - **recentMergeAdvances** — up to 5 recent `merge:integration-ref-advance` audit events for the project root, joined with their `merge:auto-sync` outcomes; entries whose auto-sync didn't successfully bring this worktree forward are flagged `needsAction: true`.
+
+  `GitManagerModal` now renders all of this:
+
+  - The existing Branch / Commit / Working Tree / Remote Sync cards gain sub-text — Working Tree shows staged/modified/untracked/conflicted breakdown; Branch shows whether you're on the integration branch.
+  - A second row of cards adds Integration branch (with resolution source + tip SHA), HEAD-vs-integration ahead/behind, local-integration-vs-origin ahead/behind, and stash count.
+  - A yellow warning panel appears when `indexStaleVsHead` is true, telling the operator to enable `mergeAdvanceAutoSync` or run `git reset --hard HEAD`.
+  - A "Recent integration-branch advances" list shows the last few merger advances with their per-advance auto-sync outcome, color-coded by whether they still need action.
+
+  All `fetchGitStatus(projectId)` calls inside `GitManagerModal` now pass `{ extended: true }`. Other callers in the app are unaffected — the extra fields are optional and the un-extended response shape is unchanged.
+
+#### Patch Changes
+
+- 60a0012: fix(dashboard): stop main-chat and quick-chat composers from instantly dismissing the Android soft keyboard
+
+  Two layered Android-specific fixes for the chat composers:
+
+  1. The body scroll-lock applied while the keyboard is open in main chat was an iOS-specific workaround for visualViewport drift. On Android Chrome it does the opposite of what we want — mutating `body { position: fixed; ... }` while the keyboard is opening causes Chrome to treat it as a focus-target relayout and immediately dismisses the keyboard. `useMobileScrollLock` is now gated to iOS UAs.
+
+  2. ChatView and QuickChatFAB both had an iOS-specific `onTouchStart` on the textarea that called `event.preventDefault()` and then programmatically refocused the input (to suppress iOS's visualViewport auto-scroll on re-focus). On Android, `preventDefault` on a textarea touchstart prevents the soft keyboard from opening — programmatic `focus()` alone does not raise the Android keyboard. Result: tapping the composer focused the input but the keyboard never appeared, looking like an instant dismiss. The touchstart workaround is now gated to iOS UAs via `isIOS()`.
+
+- a10fc56: fix(dashboard): keep Android keyboard open in main chat; disable kanban pinch-zoom
+
+  Two Android-specific fixes:
+
+  1. **Keyboard dismissing in main chat.** `mobileKeyboardOpen` in `App.tsx` (derived from `useMobileKeyboard`) gates `project-content--with-mobile-nav` / `--with-footer` className assignment and MobileNavBar rendering. When the soft keyboard opened, those classes were removed and the nav unmounted, shrinking padding-bottom by ~80px in a single render. Android Chrome treats the resulting jump of the focused chat input as the focus target moving and instantly dismisses the keyboard. With `interactive-widget=resizes-content` set on Android, the layout viewport itself shrinks with the keyboard, so the hide-nav-on-keyboard behavior was redundant on Android (and harmful). The whole pattern is now gated to iOS via `isIOS()`. iOS path is unchanged.
+
+  2. **Pinch-zoom on kanban.** Android Chrome ignores `user-scalable=no` for accessibility, and the kanban board's `overflow-x: auto` columns combined with the inflated ICB produce a broken visual when the user zooms out. Adds `touch-action: pan-x pan-y` to `html, body` inside the mobile media query, which keeps scroll panning but disables pinch-zoom (Chat and MissionManager were unaffected because they don't expose a wide horizontal scrollable region).
+
+- de67c51: fix(dashboard): pull syncs the worktree to local integration tip, not just to origin
+
+  The integration-mode `POST /api/git/pull` (used by the merge-advance-notice banner) only ran `git merge --ff-only origin/<branch>` after fetching. When the merger had advanced local `refs/heads/<integrationBranch>` via `update-ref` but the user hadn't pushed yet, the worktree's HEAD already resolved to the new sha (symbolic ref follow) but the working tree and index were still at the old state. The fast-forward step short-circuited (`already up to date with origin`) and the user saw "Pull completed" with `fromSha === toSha` while their files visibly stayed behind.
+
+  Pull now explicitly resets the worktree to `refs/heads/<integrationBranch>` after the origin fast-forward step. The autostash above protects user edits, so the reset is safe regardless of whether the origin FF ran.
+
+- 5d35b64: fix(dashboard): remove duplicate integration-advances UI; Sync working tree is now pure-local (no origin fetch)
+
+  **Removed duplicate UI** — Git Manager → Status had two overlapping sections rendering the same data: a `Sync local tip` button + a `Recent integration advances` list, sitting above the highlighted `Recent integration-branch advances` block (the one with the lost-work warnings). Deleted the duplicate (`gm-integration-actions` + `gm-recent-advances`) along with the dead `mergeAdvanceEvents` state, fetcher, and SSE subscription that only fed it.
+
+  **Sync working tree is now pure-local** — for the "N need action" case the merger has already advanced `refs/heads/<integration>` locally and the worktree just needs to follow. Previously the button called the integration-mode pull which ran `tryFastForwardFromOrigin` first, silently pulling in unrelated remote commits. New `skipOriginFetch` option on `PullGitBranchOptions.integration` (and the matching `POST /api/git/pull` body field) skips the origin step entirely. The Sync button passes `skipOriginFetch: true`, so the sequence is: auto-stash → `git reset --hard refs/heads/<integration>` → restore stash. Origin is not touched.
+
+  Help disclosure updated to match the new behavior.
+
+- 4f38ed1: fix(dashboard): clear `needs action` on recent integration-branch advances after manual sync
+
+  The Git Manager's "Recent integration-branch advances" list derived `needsAction` purely from the original `merge:auto-sync` audit-event outcome. When the operator clicked "Sync working tree" — or fixed up the worktree by hand — the worktree caught up to the integration tip, but the list kept showing "(N need action)" because the historical audit events still recorded the original failure/disabled state.
+
+  `collectRecentMergeAdvances` now also checks whether each advance's `toSha` is reachable from the current HEAD. If it is, the worktree already contains that advance and `needsAction` is false regardless of what the audit trail recorded.
+
+- ef12df4: fix(dashboard): close 8 review findings on extended Git Manager status + Integration branch setting
+
+  **Settings persistence (data-loss)** — the project-settings patch builder now applies null-as-delete to all non-model keys, matching the global-settings branch. Previously, clearing the Integration branch field (picking `(auto-detect)` or clicking `Use dropdown`) set `integrationBranch: undefined`, which `JSON.stringify` silently dropped — the server retained the stale explicit value and the operator could not un-pin the branch from the UI.
+
+  **`isIndexStale` was wrong both directions** — the heuristic (`diff --cached --name-only` non-empty AND `diff --name-only` empty) fired false-positive on benign `git add` and false-negative whenever the worktree had any unrelated edit. Replaced with a reflog-anchored check: stale iff `refs/heads/<integrationBranch>@{1}` exists, HEAD is a descendant of it, and `git diff-index --cached <prevTip>` is empty (i.e. the index exactly matches the pre-advance state).
+
+  **Auto-sync attribution** — two fixes to `collectRecentMergeAdvances` in `register-git-github.ts`:
+
+  - Auto-sync events are now matched by `(taskId, newSha)` instead of `taskId`-only. A task that produced multiple advances over time no longer has all its older entries mislabeled with the most-recent outcome.
+  - `worktreePath` comparison now runs both sides through `fs.realpathSync` first. On macOS the merger emits canonicalized paths (via `canonicalizePath` in `worktree-pool.ts`) while the route was called with the store's raw `rootDir`; symlinked project paths caused every advance to be marked `needsAction: true` indefinitely.
+
+  **Extended path no longer 500s on git failure** — the `?extended=1` branch wraps `computeExtendedGitStatus` in its own try/catch and falls back to the basic status shape on any unhandled failure. Previously an unguarded `git branch --show-current` throw escaped to the route's outer catch and returned HTTP 500, while the basic path returned 200 with the swallowed-failure shape — surface parity matters because the dashboard always passes `extended=1` and would otherwise render an error toast where it should render the degraded panel. Also wrapped the same call inside `computeExtendedGitStatus` so detached-HEAD / non-git states return an empty `currentBranch` instead of throwing.
+
+  **Integration branch falls back to `refs/remotes/origin/<branch>`** — when the configured branch exists only as a remote-tracking ref (e.g. operator set `integrationBranch: "release/v2"` without ever `git switch`-ing it locally), `integrationTipSha` now resolves to the origin tip instead of being null. A new `integrationTipSource: "local" | "remote-only" | "missing"` field tells the UI which side won; the Git Manager surfaces this with a `(remote-only — run git switch <branch> to track locally)` sub-text and a `no ref found` error state when both refs are missing.
+
+  **Copy commit hash shows two buttons** — the Copy button now copies `status.commit` (the short SHA actually displayed in the `<code>` element). A second Copy-full button surfaces `status.headSha` for git operations that need the 40-char SHA. Previously the single button silently copied the full SHA when extended was on, so what the user saw on screen was no longer what they pasted.
+
+  **Detached HEAD no longer shows misleading "(not on main)"** — `git branch --show-current` returns empty on detached HEAD; the route now leaves `isOnIntegrationBranch` as `undefined` (not `false`) in that case, and the UI's "(not on <branch>)" sub-text only renders when we know we're on a different branch — not when we're on no branch at all.
+
+- d5cfa92: fix(dashboard): close 7 review findings on the extended-status hardening pass
+
+  Follow-up to the prior fix commit; closes 7 more issues that an independent code review surfaced.
+
+  **Settings inheritance regression (high)** — `SettingsModal.handleSave`'s non-model project branch lost the "only write if changed" gate when the prior commit added null-as-delete support. Result: every effective/inherited project key was being persisted as an explicit project override on every save, silently breaking inheritance across ~30+ keys. Restored the `value !== initialProjectValue` gate, matched against the model-lane branch's existing pattern.
+
+  **Git Manager `Local <branch> vs origin` card showed misleading "Synced" in remote-only mode** — when `integrationTipSource === "remote-only"`, both `aheadOfOriginIntegration` / `behindOriginIntegration` are deliberately undefined (there's no local branch to compare), but the card's render fell through to `(ahead ?? 0) === 0 && (behind ?? 0) === 0 → "Synced"`. Now renders an explicit "no local tracking" sub-text in that case, with a separate `HEAD vs origin/<branch>` card surfacing a meaningful distance.
+
+  **`isIndexStale` extended to multi-hop and gated to integration-branch worktrees** —
+
+  - Walks up to 16 `refs/heads/<integration>` reflog entries so an A→B→C burst whose middle sync also missed is detected (the prior check only consulted `@{1}`).
+  - Only fires when `isOnIntegrationBranch === true`. Previously, a feature-branch worktree whose HEAD happened to descend from `<integration>@{1}` (e.g. `git switch -c hotfix main@{N}`) would trip the stale-index warning despite being perfectly healthy.
+
+  **`enumeration-failed` auto-sync events no longer dropped** — the new `(taskId, newSha)` join filter required both `worktreePath` and `newSha` on every auto-sync event, which discarded the merger's early-failure events that emit neither. Now: events with both fields use the per-advance pair-key (with macOS realpath canonicalization on both sides); events with neither use a task-id fallback so the diagnostic outcome still surfaces on the matching advance.
+
+  **`aheadOfIntegration` no longer silently shifts semantics** — split into three distinct distance fields so consumers don't have to read `integrationTipSource` to know which comparison they got:
+
+  - `aheadOfIntegration` / `behindIntegration` — HEAD vs **local** integration tip; undefined when only the remote tip exists.
+  - `aheadOfIntegrationRemote` / `behindIntegrationRemote` — HEAD vs `origin/<integrationBranch>`; defined whenever the remote tracking ref exists.
+  - `aheadOfOriginIntegration` / `behindOriginIntegration` — local integration tip vs `origin/<integrationBranch>`; defined only when both refs exist.
+
+  **`currentBranch` failure no longer masks wrong-branch state** — `git branch --show-current` returns empty on detached HEAD (success) and throws on transient git errors (lock contention, timeout). The prior catch collapsed both into `currentBranch = ""` so the UI couldn't distinguish them. New `currentBranchDetectionFailed?: boolean` field on `GitStatus` lets the UI surface "branch detection unavailable" on a real failure rather than silently hiding the wrong-branch warning.
+
+- 916047c: feat(dashboard): Integration branch setting is now a dropdown of local branches with Custom… fallback
+
+  Replaces the plain text input with a `<select>` that lists the project's local branches (loaded via `fetchGitBranches` when the Merge section becomes visible) plus an `(auto-detect — origin/HEAD → main)` default and a `Custom…` option for branches that don't exist locally yet.
+
+  Branch list is deduplicated and sorted with common integration names (`main`, `master`, `trunk`, `develop`) pinned to the top so the typical case is one click. Choosing `Custom…` swaps in a text input with a `Use dropdown` link to revert.
+
+  A previously-saved value that isn't in the loaded list (e.g. branch deleted locally, or initial load before branches fetch resolved) falls through to the custom text input automatically so the operator can still see and edit it.
+
+- 084bdc6: feat(dashboard): expose `integrationBranch` setting in the project settings modal
+
+  Adds a text input for the canonical integration branch (the branch Fusion merges tasks into, and the reference for all ahead/behind / overlap / pre-rebase computations). Lives directly under the Auto-completion mode select inside the merge-strategy panel — visible regardless of direct vs PR mode, since the setting applies to both.
+
+  Blank value (the default) preserves the existing auto-resolution cascade: `integrationBranch` → legacy `baseBranch` → `origin/HEAD` symbolic ref → fallback `main`. Setting it to `master` / `trunk` / `develop` / etc. pins the resolution explicitly without changing other settings.
+
+  Field trims whitespace and stores `undefined` (not empty string) when cleared so the auto-resolution remains active.
+
+- d8493f9: feat(dashboard): expose `mergeAdvanceAutoSync` in the project settings modal
+
+  Adds the missing form control for the auto-sync mode introduced by the merger hook. Lives next to the existing Direct merge commit routing / Integration worktree controls inside the merge-strategy panel and only renders when `mergeStrategy === "direct"`. Three options with the same labels and descriptions as `docs/settings-reference.md`:
+
+  - **Stash + fast-forward (default)** — preserve local edits across the auto-snap
+  - **Fast-forward only** — skip dirty worktrees, surface the banner instead
+  - **Off** — legacy behavior, project root stays stale until manual pull
+
+  Value is normalized through `normalizeMergeAdvanceAutoSyncMode` on both the merged-settings and scoped-settings load paths so a missing/invalid stored value cleanly falls back to the default without spamming validation errors.
+
+- 99359b6: fix(dashboard): unbreak Merge Advance Notice banner dismiss and suppress when auto-sync already handled it
+
+  Two bugs were keeping the banner stuck on screen even when there was nothing for the user to do:
+
+  - **Dismiss was dead.** The `notice` memo never applied `dismissedShas`, so clicking the close button (or a successful Pull, which calls `dismiss()` after the API returns) updated localStorage but the same advance event kept matching the filter and the banner re-rendered immediately.
+  - **Auto-sync success was ignored.** With the new `mergeAdvanceAutoSync` setting at its `stash-and-ff` default, the merger snaps the project-root checkout forward as part of the merge — there is nothing left to pull. The banner kept appearing anyway because the route's `autoSync` payload wasn't consulted. Clicking Pull then hit `/api/git/pull`, which fetched origin (no change, since the merger only advanced the local ref) and returned `pull-clean` with no actual work done.
+
+  The `notice` memo now (a) filters out `dismissedShas`, and (b) suppresses any advance event whose `autoSync` entry for the _current user's_ `worktreePath` reports `clean-sync` or `synced-with-edits-restored`. Conflict and skipped outcomes (`synced-with-pop-conflict`, `skipped-dirty`, `skipped-*`, `failed`) still surface the banner so the user can recover.
+
+  Banner suppression checks the per-worktree path, so a multi-checkout project where auto-sync handled one root and a sibling root is still stale will keep showing the banner on the stale one.
+
+- 6083de2: fix(dashboard): unbreak Merge Advance Notice banner by preserving store `this` binding in events endpoint
+
+  `GET /api/tasks/merge-advance-events` was extracting `getRunAuditEvents` off the scoped store as a bare function reference and calling it without `this`, which made `this.db.prepare(...)` throw "Cannot read properties of undefined (reading 'db')" on every request. The `useMergeAdvanceNotice` hook caught the failure silently (`catch { setEvents([]) }`), so the banner never appeared even after the merger advanced the integration branch ref.
+
+  Fix: keep the store reference and call `storeWithRunAudit.getRunAuditEvents(...)` as a method so `this` is preserved, matching the pattern used by other routes that read run-audit events.
+
+- dc94494: fix(engine,dashboard): close 7 code-review findings on the mergeAdvanceAutoSync hook
+
+  Tightens the freshly-landed merger auto-sync feature based on a structured code review.
+
+  **Data-loss fixes in `syncWorktreeToHead`:**
+
+  - Untracked-file restore now compares against `git ls-tree -r --name-only HEAD` to detect when the new tip introduced a tracked file at the same path; collisions are reported in `untrackedSkippedAsTracked` and the user's bytes stay in the stage dir instead of clobbering the merged content.
+  - When `git apply --3way` fails because a patched file was deleted/renamed at the new tip (`--diff-filter=U` returns nothing because nothing got staged), `conflictedFiles` falls back to parsing `diff --git a/<p> b/<p>` headers out of the captured patch — so the conflict surfaces with the right file names instead of `[]`.
+  - `git ls-files` / `diff` calls now pass `-c core.quotePath=false` so paths with non-ASCII or special characters round-trip through `copyFileSync` instead of failing on backslash-escaped octal tokens.
+  - The stash-and-ff path re-verifies `rev-parse HEAD === newSha` immediately before each destructive `reset --hard HEAD`; a concurrent merger advance now bails with `skipped-head-not-at-new-sha` (with the captured patch preserved on disk) instead of applying the patch against the wrong tree.
+  - The stage dir is now tracked with a `preserveStageDir` flag in a `try/finally`: it is rm'd on all clean paths and on `skipped-head-not-at-new-sha` exits, but preserved whenever the user's edits live only in `patchPath` (pop-conflict, untracked-collides-with-tracked, reset failure, outer exception).
+  - Patch is written to disk before the apply attempt, not only on failure, so a crash between snapshot and apply doesn't lose the user's edits.
+
+  **Multi-worktree-same-branch fix:**
+
+  - New `getRegisteredWorktreeBranches` helper in `worktree-pool.ts` returns ALL `(branch, worktreePath)` entries rather than collapsing duplicates into a `Map<branch, path>`. Multiple worktrees can legitimately share a branch when the user created secondary checkouts via `git worktree add --force -b`; the merger now syncs every one of them instead of silently skipping all but the last.
+
+  **Contract + surfacing fixes:**
+
+  - JSDoc on `merge:auto-sync` GitMutationType now documents the actually-emitted outcome strings (`clean-sync`, `synced-with-edits-restored`, `synced-with-pop-conflict`, `skipped-*`, `failed`, `enumeration-failed`, `exception`) and the actual `stage` enum, replacing the obsolete `smartPull`-shaped strings.
+  - `GET /api/tasks/merge-advance-events` now joins `merge:auto-sync` events within a ±5min window of each advance and returns them in a new `autoSync: AutoSyncOutcome[]` field; `useMergeAdvanceNotice` exposes the same shape so the banner can surface pop-conflicts (including `patchPath` pointing at the user's saved edits) instead of leaving them in a black hole.
+
+  **Hygiene:**
+
+  - Merger's setting read now uses `normalizeMergeAdvanceAutoSyncMode(settings.mergeAdvanceAutoSync)` (the exported normalizer) instead of an inline equality check + `as unknown` cast that bypassed type-checking.
+
+  **New backstop tests** in `merger-auto-sync.slow.test.ts`:
+
+  - Untracked file colliding with a newly-tracked path is NOT overwritten and the merged content survives.
+  - `git apply --3way` failure on a file deleted at the new tip populates `conflictedFiles` from the patch header.
+
+  **Route test** asserts `autoSync` outcomes are joined onto the matching advance event within the time window.
+
+- e138289: fix(dashboard): compensate Android Chrome inflated ICB for fixed-position UI
+
+  Android Chrome (multi-window / split-screen / certain WebView configs) can leave the initial containing block (window.innerWidth/Height) stuck larger than the actual rendered canvas — DOM, body, and visualViewport report the true dimensions, but `position: fixed` uses the ICB, pinning fixed-bottom elements off the bottom of the visible viewport. JS-side meta override (both setAttribute and full element replacement) does not force Chrome to recompute the ICB on these builds.
+
+  Instead, publish the ICB→visualViewport delta as CSS variables (`--icb-bottom-offset`, `--icb-right-offset`) on `<html>` and consume them in `MobileNavBar` and `ExecutorStatusBar` so they pin to the visible viewport edge regardless of ICB drift. The math also handles pinch-zoom in (offsets compensate) and pinch-zoom out (offsets clamp at 0). Healthy browsers see 0px and behave unchanged.
+
+- 76429a8: fix(dashboard): keep mobile nav bar pinned to page bottom when keyboard opens
+
+  The mobile nav bar's `bottom` defaults to `var(--icb-bottom-offset)`, which on iOS equals the soft-keyboard height once it opens — floating the bar above the keyboard. The existing `.mobile-nav-bar--keyboard-open` override (which pins `bottom: 0`) was only applied when `!modalManager.anyModalOpen && isIOS()`, so the bar still tracked the keyboard with a modal open. Introduces `mobileNavKeyboardOpen = isMobile && keyboardOpen` as a nav-bar-only flag so the bar stays pinned in all keyboard cases. Content padding and ExecutorStatusBar remain on the gated `mobileKeyboardOpen` to preserve their existing behavior.
+
+- ed4d021: fix(dashboard): keep mobile nav visible on Android in landscape and when keyboard opens
+
+  - Broaden mobile media query to `(max-width: 768px), (max-height: 480px)` so phones held in landscape (which exceed 768 CSS px wide) still render the bottom nav and mobile board layout instead of the desktop horizontally-scrollable columns.
+  - Distinguish pinch-zoom from keyboard-open in `useMobileKeyboard` by checking `visualViewport.scale > 1` — Android Chrome ignores `user-scalable=no` for a11y, and a zoomed-in textarea was false-positiving keyboard-open and hiding `MobileNavBar`.
+  - Use `documentElement.clientHeight` instead of stale `window.innerHeight` when computing keyboard overlap (Android multi-window can leave `innerHeight` cached at a wildly different value than the actual layout viewport).
+  - Add `interactive-widget=resizes-content` to the viewport meta so Android Chrome shrinks the layout viewport with the soft keyboard, matching iOS behavior.
+
+- Updated dependencies [98033bc]
+- Updated dependencies [db9928a]
+- Updated dependencies [02971ef]
+- Updated dependencies [9ce26ee]
+- Updated dependencies [e708870]
+- Updated dependencies [a3ec2e5]
+- Updated dependencies [408e20b]
+- Updated dependencies [acf3502]
+- Updated dependencies [ec6643e]
+- Updated dependencies [a201f56]
+- Updated dependencies [4c31e88]
+- Updated dependencies [dc94494]
+- Updated dependencies [bf4428c]
+- Updated dependencies [0c0839e]
+- Updated dependencies [ec1269f]
+- Updated dependencies [51fc826]
+- Updated dependencies [d02cd38]
+  - @fusion/engine@0.33.0
+  - @fusion/core@0.33.0
+  - @fusion-plugin-examples/cli-printing-press@0.1.10
+  - @fusion-plugin-examples/dependency-graph@0.1.24
+  - @fusion-plugin-examples/roadmap@0.1.12
+  - @fusion-plugin-examples/cursor-runtime@0.1.12
+  - @fusion-plugin-examples/droid-runtime@0.1.19
+  - @fusion-plugin-examples/hermes-runtime@0.2.43
+  - @fusion-plugin-examples/openclaw-runtime@0.2.43
+  - @fusion-plugin-examples/paperclip-runtime@0.2.43
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- Updated dependencies [60a0012]
+- Updated dependencies [a10fc56]
+- Updated dependencies [de67c51]
+- Updated dependencies [6e7f1e5]
+- Updated dependencies [5d35b64]
+- Updated dependencies [408e20b]
+- Updated dependencies [4f38ed1]
+- Updated dependencies [ec6643e]
+- Updated dependencies [85786e7]
+- Updated dependencies [ef12df4]
+- Updated dependencies [d5cfa92]
+- Updated dependencies [916047c]
+- Updated dependencies [084bdc6]
+- Updated dependencies [a201f56]
+- Updated dependencies [d8493f9]
+- Updated dependencies [99359b6]
+- Updated dependencies [6083de2]
+- Updated dependencies [4c31e88]
+- Updated dependencies [dc94494]
+- Updated dependencies [e138289]
+- Updated dependencies [76429a8]
+- Updated dependencies [ed4d021]
+- Updated dependencies [51fc826]
+  - @fusion/dashboard@0.33.0
+  - @fusion/core@0.33.0
+
+### @fusion/engine
+
+#### Minor Changes
+
+- 98033bc: feat(engine): guard one engine per project per machine
+
+  Adds a per-machine singleton lock that engages before each engine
+  starts, preventing two `fn` dashboard processes from running engines
+  for the same project on the same host (a scenario that previously
+  caused worktree corruption and task-state races for in-process
+  projects).
+
+  The guard combines two independent checks:
+
+  - A `proper-lockfile`-backed file at `<project>/.fusion/engine.lock`
+    with stale-lock recovery.
+  - A loopback listener (UDS on POSIX, named pipe on Windows) on a
+    hashed per-project address.
+
+  Failures throw `EngineAlreadyRunningError`; both guards are released
+  on `stopAll()` / `pauseProject()`.
+
+- db9928a: feat(engine): export `smartPull()` library for stash-aware fast-forward of a worktree
+
+  Standalone stash → fast-forward → pop implementation that the merger's upcoming `mergeAdvanceAutoSync` hook calls after advancing the integration-branch ref to auto-sync other worktrees still pinned at the previous tip. Returns a discriminated union (`clean-pull | stash-pull-pop | stash-pop-conflict | skipped-dirty | skipped-not-on-branch | failed`) and accepts an optional audit emitter so callers can record `pull:fast-forward`, `stash:push`, `stash:pop`, and `stash:pop-conflict` run-audit events.
+
+  The dashboard's user-triggered Pull continues to use the existing `POST /api/git/pull` integration path (which runs the AI-aware autostash through `restoreUnrelatedRootDirChanges`) and is unchanged by this changeset — `smartPull()` is intentionally simpler so the merger's post-advance auto-sync stays free of mid-merge AI conflict resolution.
+
+- 4c31e88: feat(engine): merger auto-syncs project-root checkout after advancing integration-branch ref
+
+  Wires `mergeAdvanceAutoSync` into the merger's post-ref-advance code path. After `advanceIntegrationBranchRef` ff-updates `refs/heads/<integrationBranch>`, the merger now enumerates other worktrees still on that branch (typically the user's project-root checkout) and reconciles each one's index + working tree to the new tip via `syncWorktreeToHead`.
+
+  The reconciliation primitive is **not** a `git pull` — origin may still be at the previous tip (no `pushAfterMerge`), in which case `git pull --ff-only` is a no-op and a naive `stash → pull → pop` ends with the worktree restored to the old state. Instead `syncWorktreeToHead`:
+
+  1. Diffs the worktree against the _previous_ tip to isolate real user edits from the stale-index "phantom diff" that looks like inverted commits.
+  2. When the worktree is clean against the previous tip, runs `git reset --hard HEAD` to snap index + files forward.
+  3. In `stash-and-ff` mode with real edits, captures them as a binary patch against the previous tip, snaps to HEAD, then `git apply --3way` to restore. Untracked files are copied to a temp dir and restored after the snap. Patch conflicts surface as `synced-with-pop-conflict` with the patch left on disk for manual recovery.
+
+  Each per-worktree attempt emits a `merge:auto-sync` audit event (new `GitMutationType`) with the outcome; the per-step `pull:fast-forward`, `stash:push`, `stash:pop`, and `stash:pop-conflict` events that pass through the auditor are tagged `metadata.autoSync = true` so downstream consumers can attribute them.
+
+  The user-facing effect: with the default `mergeAdvanceAutoSync: "stash-and-ff"`, after a Fusion task merges the user's `git status` in the project-root checkout becomes clean and the working tree shows the new commits' content — no manual `git reset` or Pull-button click required. Set `mergeAdvanceAutoSync: "off"` to restore the legacy behavior (the Merge Advance Notice banner still surfaces and the user pulls by hand).
+
+  Backstopped by `merger-auto-sync.slow.test.ts` covering: clean-sync snaps both index and files forward, ff-only with real edits is a no-op, stash-and-ff preserves untracked local files across the snap, task worktrees on `fusion/fn-*` branches are correctly skipped, and an empty branch map emits nothing.
+
+- 51fc826: fix(engine,core): dedup heartbeat-spawned follow-ups by parent task
+
+  Heartbeat agents create follow-up tasks via `fn_task_create`. Until
+  now, the intake similarity guard scoped candidates by `sourceAgentId`
+  only, so the same parent task could spawn many sibling tasks across
+  heartbeats whenever triage rewrote their titles enough to dodge the
+  title-fingerprint guard.
+
+  The task-scoped heartbeat now stamps `sourceParentTaskId` (and
+  `sourceRunId`) on every `fn_task_create`, and the intake duplicate
+  matcher treats a candidate as a sibling when it shares either the
+  caller's agent ID or the caller's parent task ID. Same-parent
+  siblings with similar descriptions are auto-archived as before.
+
+  Tool description and heartbeat prompts also now instruct agents to
+  scan existing open tasks before creating, as a belt-and-suspenders
+  layer above the deterministic dedup.
+
+- d02cd38: feat(merger): scope pnpm verification to changed packages and short-circuit out-of-scope fix loop
+
+  In a pnpm workspace, inferDefaultTestCommand now derives the set of packages touched by the branch diff and emits `pnpm --filter "<pkg>...^" test` instead of `pnpm test`. This prevents flakes in unrelated packages from blocking merges. When git context is unavailable or changes are root-only, the command falls back to the unscoped `pnpm test`.
+
+  When the in-merge fix agent makes no changes and all failing test files are outside the branch's diff, the merger now marks the task `status: "failed"` immediately with a clear "out-of-scope flake" message rather than retrying into the limbo-recovery cycle.
+
+#### Patch Changes
+
+- 02971ef: fix(engine): treat foreign-attributed commits already on main as promoted
+
+  `assertCleanBranchAtBase` flagged any commit in `baseSha..branchName`
+  whose `Fusion-Task-Id` trailer pointed at a different task as
+  contamination. That misclassified the FN-5475 cascade: the engine
+  fast-forwards local `main` with single-parent task commits, and any
+  worktree created during the brief window where local `main` carried a
+  sibling task's tip inherited that commit. The audit later (correctly)
+  saw the commit as not-yet-on-main from its merge-base perspective and
+  threw `BranchCrossContaminationError`.
+
+  The audit now skips foreign-attributed commits that are reachable from
+  local `main` (`git merge-base --is-ancestor <sha> main`). Commits on
+  main were promoted through integration regardless of whose trailer
+  they carry, and downstream branches that inherited them via main are
+  not contaminated.
+
+  Resume verifier (FN-5475 fix #2) and the auto-recovery handler
+  fallback (FN-5475 fix #3) remain in place as defense-in-depth for
+  the rarer variants (local main rewound, foreign commit not yet on
+  main when the audit fires).
+
+- 9ce26ee: fix(engine): un-deadcode the bootstrap-misbinding auto-recovery fallback
+
+  The auto-recovery handler in `auto-recovery-handlers/branch-worktree.ts`
+  called `classifyBootstrapMisbinding` with `foreignCommits: []` because it
+  had no `BranchCrossContaminationError` in hand (it discovers the conflict
+  via `inspectBranchConflict`). The classifier's predicate gated on
+  `foreignCommits.length > 0`, so the input always resolved to
+  `isBootstrapMisbinding: false` and the re-anchor block was effectively
+  dead code.
+
+  The handler also used `ctx.task.baseCommitSha` as the contamination base,
+  which is deliberately preserved across sessions for diff math (FN-4417)
+  and can lag local `main` by many commits — causing legitimately-merged
+  landings to be classified as foreign at this layer.
+
+  Changes:
+
+  - `classifyBootstrapMisbinding` now derives the foreign-commit count from
+    its own `git log baseSha..branchName` walk; `input.foreignCommits` is
+    optional and advisory only. The result type gains `foreignCommitCount`.
+  - The `branch-worktree` recovery handler stops passing an empty array and
+    computes a fresh merge-base against local `main` (falling back to
+    `origin/main`), mirroring the executor's primary contamination path.
+  - Regression tests cover both the no-`foreignCommits` call shape and the
+    `foreignCommitCount` field.
+
+- e708870: fix(engine): verify resumed worktree branches aren't bootstrap-misbound
+
+  `acquireTaskWorktree` short-circuited the resume path when
+  `task.worktree` existed on disk and classified `ok`, handing the
+  worktree back to the executor without inspecting its branch history.
+  If the branch had been created from a poisoned local-main tip (a
+  sibling task's commit), the executor preflight would later flag every
+  intermediate landing as foreign and the task would loop through
+  contamination recovery until pausing for human adjudication
+  (observed in the FN-5475 cascade).
+
+  The resume path now computes a fresh merge-base against local `main`
+  (falling back to `origin/main`) and runs `classifyBootstrapMisbinding`
+  on the branch. When the range is purely foreign with zero own commits,
+  it re-anchors the branch inline via `reanchorBranchToBase` and emits a
+  `branch:reanchor` audit event with `trigger: "resume-misbinding"`.
+
+  Mixed contamination (own + foreign, or non-attributed commits) is
+  deliberately left to the executor's existing primary path so the
+  richer adjudication flow still applies.
+
+- a3ec2e5: fix(engine): never create task branches from arbitrary HEAD in autocorrect
+
+  `attemptBranchAutocorrect` previously fell back to `git checkout -B
+<expected>` with no start point when rename was not applicable. If the
+  worktree's HEAD happened to be at a previous occupant's commit (e.g. an
+  orphaned tip from a different task), the new branch label silently
+  captured that commit — the "branch: Created from HEAD" contamination
+  pattern that the cross-contamination guard then refuses to auto-resolve.
+
+  This is the only branch-creation site in the engine that did not thread
+  a resolved base SHA; every other path (`prepareForTask`,
+  `reanchorBranchToBase`) already passes the base explicitly.
+
+  Autocorrect now verifies the expected ref exists and uses a plain
+  `git checkout`, so it can only _switch to_ an already-existing branch.
+  When the ref is missing it returns `failed`, letting upstream recovery
+  (which knows the proper base) re-anchor with `prepareForTask` /
+  `reanchorBranchToBase`.
+
+- 408e20b: fix(merger): two root-cause fixes for tasks landing in Done with no commit on main
+
+  **Bug 1: sibling fusion/fn-\* branch as merge target** — `resolveTaskMergeTarget`
+  previously returned `task.baseBranch` unconditionally before falling back to the
+  project default. When a task was dispatched as a sibling/dependent off another
+  in-flight task's worktree, `baseBranch` ended up as the upstream's
+  `fusion/fn-<id>` branch. The merger then detached onto that sibling, squashed
+  on top of it, and advanced `refs/heads/fusion/fn-<id>` — never main. FN-5233's
+  squash (`84563e549`) stranded on `fusion/fn-5339`; FN-5530's
+  (`4140a3e0a`) stranded on `fusion/fn-5543`. The resolver now refuses any
+  `fusion/fn-\*` candidate as a merge destination and falls through to the
+  project default. The merger emits a new `merge:merge-target-rejected-fusion-sibling`
+  audit event so the upstream `baseBranch`-propagation bug stays observable.
+
+  **Bug 2: deadlock-recovery mis-attributed tasks to unrelated commits** —
+  `findLandedTaskCommit` step (4) used `git log --grep=FN-XXXX` which matches the
+  entire commit message (not just the subject) and blindly accepted the first
+  hit. FN-5441 and FN-5446 were both marked done against `e3dbfaae` — an
+  FN-5483 commit whose body merely _mentioned_ them by name in a paragraph about
+  a refusal. The grep fallback now fetches each candidate's body and re-verifies
+  ownership via a tightened `commitOwnedByTask`: trailers must be line-anchored
+  (`(?:^|\n)Fusion-Task-Id: <id>(?:\n|$)`), and the subject fallback must match
+  a conventional-commit form (`<type>(<id>):` or `<id>:`), not a substring.
+  Prose mentions can no longer claim a task.
+
+  The historical recovery for FN-5233 has been cherry-picked to main as
+  `2d2e5b809`. The other 11 affected tasks (FN-5441, FN-5446, FN-5472, FN-5484,
+  FN-5487, FN-5490, FN-5515, FN-5517, FN-5526, FN-5539, FN-5540, FN-5542)
+  remain in Done but need separate triage — 3 look like legitimate
+  verification-only no-ops, the remaining 9 likely lost real work.
+
+- acf3502: fix(merger): refuse to finalize a task as no-op when modifiedFiles is non-empty
+
+  Third root-cause fix for tasks marked Done with no commit on main (the first
+  two — sibling-branch merge target + grep mis-attribution — landed in the
+  previous commit). When the executor produced edits but the squash didn't
+  land them as a commit (uncommitted in the worktree, squashed against the
+  wrong branch, branch dropped by reuse-handoff churn, etc.), the merger's
+  `classifyOwnedLandedEvidence` would return `proven-no-op` or
+  `no-changes-finalized` and both `aiMergeTask` and `recoverNoOpReviewTasks`
+  would happily move the task to Done while clearing `modifiedFiles` to `[]`
+  — silently destroying the audit trail of what was lost.
+
+  Both call sites now gate the no-op finalize on `task.modifiedFiles.length`:
+  if the task claims work was done but no commit landed, move the task back
+  to `todo` with progress preserved and emit a new
+  `task:finalize-lost-work-blocked` audit event. The next executor run
+  re-attempts the work; the operator sees the audit event in the run-audit
+  timeline.
+
+  The post-hoc `reconcileDoneTaskIntegrity` path is intentionally NOT gated —
+  it cleans up tasks that are already in Done (legacy state), which is
+  out-of-scope for the lost-work prevention. This matters: 9 lost-work tasks
+  were already in this state at sweep time (FN-5441, FN-5446, FN-5487,
+  FN-5490, FN-5517, FN-5526, FN-5539, FN-5540, FN-5542) and need to be
+  re-spec'd as fresh tasks rather than auto-reconciled. See
+  `docs/incidents/2026-05-23-lost-work-tasks.md` for the per-task catalog.
+
+- dc94494: fix(engine,dashboard): close 7 code-review findings on the mergeAdvanceAutoSync hook
+
+  Tightens the freshly-landed merger auto-sync feature based on a structured code review.
+
+  **Data-loss fixes in `syncWorktreeToHead`:**
+
+  - Untracked-file restore now compares against `git ls-tree -r --name-only HEAD` to detect when the new tip introduced a tracked file at the same path; collisions are reported in `untrackedSkippedAsTracked` and the user's bytes stay in the stage dir instead of clobbering the merged content.
+  - When `git apply --3way` fails because a patched file was deleted/renamed at the new tip (`--diff-filter=U` returns nothing because nothing got staged), `conflictedFiles` falls back to parsing `diff --git a/<p> b/<p>` headers out of the captured patch — so the conflict surfaces with the right file names instead of `[]`.
+  - `git ls-files` / `diff` calls now pass `-c core.quotePath=false` so paths with non-ASCII or special characters round-trip through `copyFileSync` instead of failing on backslash-escaped octal tokens.
+  - The stash-and-ff path re-verifies `rev-parse HEAD === newSha` immediately before each destructive `reset --hard HEAD`; a concurrent merger advance now bails with `skipped-head-not-at-new-sha` (with the captured patch preserved on disk) instead of applying the patch against the wrong tree.
+  - The stage dir is now tracked with a `preserveStageDir` flag in a `try/finally`: it is rm'd on all clean paths and on `skipped-head-not-at-new-sha` exits, but preserved whenever the user's edits live only in `patchPath` (pop-conflict, untracked-collides-with-tracked, reset failure, outer exception).
+  - Patch is written to disk before the apply attempt, not only on failure, so a crash between snapshot and apply doesn't lose the user's edits.
+
+  **Multi-worktree-same-branch fix:**
+
+  - New `getRegisteredWorktreeBranches` helper in `worktree-pool.ts` returns ALL `(branch, worktreePath)` entries rather than collapsing duplicates into a `Map<branch, path>`. Multiple worktrees can legitimately share a branch when the user created secondary checkouts via `git worktree add --force -b`; the merger now syncs every one of them instead of silently skipping all but the last.
+
+  **Contract + surfacing fixes:**
+
+  - JSDoc on `merge:auto-sync` GitMutationType now documents the actually-emitted outcome strings (`clean-sync`, `synced-with-edits-restored`, `synced-with-pop-conflict`, `skipped-*`, `failed`, `enumeration-failed`, `exception`) and the actual `stage` enum, replacing the obsolete `smartPull`-shaped strings.
+  - `GET /api/tasks/merge-advance-events` now joins `merge:auto-sync` events within a ±5min window of each advance and returns them in a new `autoSync: AutoSyncOutcome[]` field; `useMergeAdvanceNotice` exposes the same shape so the banner can surface pop-conflicts (including `patchPath` pointing at the user's saved edits) instead of leaving them in a black hole.
+
+  **Hygiene:**
+
+  - Merger's setting read now uses `normalizeMergeAdvanceAutoSyncMode(settings.mergeAdvanceAutoSync)` (the exported normalizer) instead of an inline equality check + `as unknown` cast that bypassed type-checking.
+
+  **New backstop tests** in `merger-auto-sync.slow.test.ts`:
+
+  - Untracked file colliding with a newly-tracked path is NOT overwritten and the merged content survives.
+  - `git apply --3way` failure on a file deleted at the new tip populates `conflictedFiles` from the patch header.
+
+  **Route test** asserts `autoSync` outcomes are joined onto the matching advance event within the time window.
+
+- bf4428c: fix(merger): require fast-forward ref advances and read integration tip from refs/heads/&lt;branch&gt;
+
+  Closes a class of "orphaned merge" bug where a subsequent merger could overwrite the integration branch tip with a sibling commit, leaving the previous squash reachable only from a feature branch.
+
+  Two coupled fixes:
+
+  1. `advanceIntegrationBranchRef` now refuses non-fast-forward advances. The CAS check still guards against concurrent ref movement, but the new `merge-base --is-ancestor` check additionally requires the new sha to descend from the expected current sha. Non-FF attempts return `reason: "non-fast-forward-advance"` instead of silently orphaning the prior tip.
+
+  2. `runMerge` resolves the integration-branch tip via `git rev-parse --verify refs/heads/<integrationBranch>` instead of `git rev-parse HEAD` in `rootDir`. In reuse-task-worktree mode, `rootDir`'s HEAD can lag behind the shared ref after a sibling merger advanced it via `update-ref` without re-checking-out — using HEAD there caused the eventual squash commit to parent off an earlier sha and orphan the previously-merged tip.
+
+  Together these uphold the invariant: local `<integrationBranch>` only advances via fast-forward, and the merger never builds a squash off a stale base sha.
+
+- 0c0839e: fix(merger): treat non-FF ref-advance as concurrent-advance so it triggers retry
+
+  When the merger's squash commit was built off a stale integration tip (integration moved between squash prep and `update-ref`), the FF guard in `advanceIntegrationBranchRef` correctly refused the swap with reason `non-fast-forward-advance` — but the caller in `merger.ts` only mapped `concurrent-advance` to `IntegrationBranchConcurrentAdvanceError`. The non-FF case fell through as a plain `Error`, failing the task instead of routing to the FN-4500/FN-5083 rebind/retry path. Both reasons share a root cause (integration tip moved during the merge window), so they now share the retry path. Observed on FN-5576.
+
+- ec1269f: feat(merger): auto-rehome FF-recoverable orphan commits during contamination recovery
+
+  Follow-up to the FF-only ref advance fix: contamination recovery now classifies a fourth bucket — `orphan-our-advance` — and fast-forwards the integration branch onto pre-fix orphan commits when safe.
+
+  When the executor's contamination handler sees a "unique" foreign commit, it now also asks:
+
+  - Does the commit's `Fusion-Task-Id` trailer point at a `done` task?
+  - Is the commit unreachable from `refs/heads/<integrationBranch>`?
+
+  If both, the commit is an orphan from the pre-fix non-FF ref-advance bug. Recovery attempts to fast-forward the integration branch onto the orphan:
+
+  - **FF possible** (integration tip is an ancestor of the orphan): advance via `advanceIntegrationBranchRef`, then drop the orphan from the task branch alongside `already-upstream` commits. Emits `merger:orphan-rehome-ff`.
+  - **Non-FF** (orphan diverges from integration tip — would require cherry-pick): refuse to auto-rehome. The commit stays in `genuinelyUnique` for human adjudication, but the recovery log line now includes the exact `git cherry-pick <sha>` command an operator can run to unstick it. Emits `merger:orphan-rehome-refused`.
+
+  The non-FF refusal is intentional: cherry-pick into the integration branch from inside automated recovery introduces conflict-resolution surface that's too high blast radius for a never-event recovery path.
+
+- Updated dependencies [408e20b]
+- Updated dependencies [ec6643e]
+- Updated dependencies [a201f56]
+- Updated dependencies [4c31e88]
+- Updated dependencies [51fc826]
+  - @fusion/core@0.33.0
+  - @fusion/pi-claude-cli@0.33.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- Updated dependencies [408e20b]
+- Updated dependencies [ec6643e]
+- Updated dependencies [a201f56]
+- Updated dependencies [4c31e88]
+- Updated dependencies [51fc826]
+  - @fusion/core@0.33.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 1b49cbc: Surface SQLite corruption in notifications, the dashboard health API, and a persistent dashboard banner.
+- 2baaad7: `fn backup` now also snapshots the central database (`~/.fusion/fusion-central.db`)
+  alongside the per-project database. Scheduled and manual backups produce a paired
+  `fusion-central-<timestamp>.db` file in `.fusion/backups/`; `fn backup --list`,
+  `--cleanup`, and `--restore` operate on the pair. Restoring a `fusion-central-*`
+  file restores only the central DB. A missing central DB is skipped silently and
+  does not fail the project backup.
+- b12ff26: Saving an opencode or opencode-go API key from the dashboard now immediately refreshes the opencode-go model catalog (no restart required), reports how many models were registered, and surfaces actionable errors when the local `opencode` CLI is missing or returns no models. `opencode-go` is now always listed as an API-key target in Settings, even before models are registered.
+- 8a3afcf: feat(executor+engine-tests): preflight premise-stale exit and serialize reliability-interactions
+
+  - Executor: teach the system prompt a Preflight escape hatch. When Step 0 reproduces the issue described in PROMPT.md and finds the work is already done (HEAD matches the desired state), the agent now marks Step 0 done, marks remaining steps `skipped`, and calls `fn_task_done` with a `PREMISE STALE: …` summary. Skipped steps already pass `evaluateTaskDoneRefusal`, and the merger's empty-own-diff fast-path auto-finalizes the zero-diff branch — no new tool or refusal class is needed. This stops the executor from looping through plan/review/test/doc when PROMPT.md is out of sync with HEAD (the failure mode that exhausted FN-5521 across four worktrees).
+
+  - Engine vitest: split `packages/engine/vitest.config.ts` into two projects. `engine-default` keeps the full-parallelism layout for the bulk of the suite; `engine-reliability` scopes `src/__tests__/reliability-interactions/**` to `poolOptions.threads.singleThread: true` so the contention-sensitive event-ordering assertions (e.g. `merge-reuse-task-worktree`'s newest-first audit ordering check) no longer flake under workspace-concurrent merge-gate runs. Within-file order was already linear; this only removes inter-file parallelism for ~99 files that always shared a single git/SQLite contention surface.
+
+- e291d86: Attribute Fusion as a `Co-authored-by` trailer on managed commits instead of overriding the primary author. The user's configured git identity now remains the author/committer of every commit Fusion produces, and the configured commit author (default `Fusion <noreply@runfusion.ai>`) is appended as a `Co-authored-by:` trailer that GitHub recognizes for shared attribution. The `commitAuthorEnabled` toggle and `commitAuthorName`/`commitAuthorEmail` settings keep their existing keys; the dashboard settings UI relabels them from "Author" to "Co-author" to match the new behavior.
+- 22d59b5: Add mergeIntegrationWorktree setting (default reuse-task-worktree) to decouple auto-merge from project-root mutation. Legacy cwd-main behavior preserved as an opt-in escape hatch.
+- 5f9f777: Increase default group chat context retention (`chatRoomRecentVerbatimMessages` 12 → 25, `chatRoomCompactionFetchLimit` 80 → 200, `chatRoomSummaryMaxChars` 1500 → 3000) and raise the room transcript cap from 8KB to 20KB.
+- 687237b: Per-project `fusion.db` now persists the canonical `projectId` in `__meta.projectIdentity`. If the central registry loses a project row, the next startup reattaches the same id from the stored identity instead of silently minting a new one (which would hide all project-scoped data keyed to the old id). Interactive flows prompt before destructive overwrites.
+
+#### Patch Changes
+
+- f403926: Make `fn agent import` extract `.tar.gz`/`.tgz` Agent Companies archives in-process instead of relying on a host `tar` binary.
+- b7ddfc9: Layer FN-5152's near-duplicate intent guard onto the CLI `fn task create`
+  direct-store path. Aligned thresholds (≥2 shared high-signal tokens AND
+  title-token Jaccard ≥ 0.30 within a 7-day window), `--no-dedup` bypass,
+  `source.sourceMetadata.intentSignature` stamping, and fail-open semantics
+  match the dashboard `POST /api/tasks` gate. Non-TTY runs refuse with exit
+  1; TTY runs prompt before creating. GitHub-import and AI-planning paths
+  intentionally skip the gate (FN-5060 contract).
+- 35b2971: Duplicating or restoring a task no longer fails when the source PROMPT.md
+  contains legacy/invalid File Scope tokens. Invalid tokens are dropped from
+  the rewritten PROMPT.md with a `[file-scope-sanitize]` log entry. Authoring
+  paths (createTask, updateTask) continue to reject invalid tokens strictly.
+- 8f2d5e7: Block explicit `DUPLICATE: FN-NNNN` redirect tasks from consuming planning
+  cycles. The triage planning loop now short-circuits when the generated
+  PROMPT.md is a one-line duplicate marker (bypassing the `fn_review_spec`
+  APPROVE gate), a self-healing sweep resolves already-stuck duplicate-marker
+  tasks in `triage`/`todo`, and the dashboard `POST /api/tasks` route
+  surfaces a `409 duplicate_candidates` with `reason: "explicit-marker"` when
+  the description is exactly a duplicate redirect. Layered on top of
+  FN-4829 / FN-4918 / FN-5152; fails open.
+- f6f3867: Merger Layer 2.5: auto-widen `## File Scope` for files whose branch-side commits
+  are exclusively attributed to the current task before the FN-4956 scope
+  partition strips them. Emits `merge:scope:auto-widen` run-audit events.
+  Fail-closed against foreign commits, cross-task scope claims, and ignored paths.
+- 8f5c1f9: New projects now default `directMergeCommitStrategy` to `"always-squash"` for direct merges.
+  Existing projects keep their persisted setting value.
+  Per-project Settings UI controls and per-task `**Direct Merge Commit Strategy:** ...` PROMPT overrides are unchanged.
+- b936ab9: Apply `heartbeatMultiplier` to heartbeat unresponsive timeout calculations in `HeartbeatMonitor`.
+
+  When heartbeat speed is slowed (for example `heartbeatMultiplier=2`), unresponsive detection/recovery and orphaned-running reconciliation now use the correspondingly scaled timeout base, preventing false unresponsive recovery for expected slower cadence. Dashboard health classifier behavior is unchanged.
+
+- 6fdfb1a: Add a Room Coordination Notices prompt-injected advisory that fires when a
+  user posts an explicit "file a task" / "create a task" request into a chat
+  room with multiple agent members. Each agent is instructed to either post a
+  one-line claim before calling fn_task_create (claim branch) or to defer and
+  acknowledge a peer's prior claim/announcement (defer-suggested branch),
+  reducing the upstream duplicate pressure on the existing FN-4918 / FN-4829
+  / FN-5152 / FN-5220 dedup backstop. Emits a structured
+  room:coordination:branch run-audit event per decision. Single-agent rooms
+  and non-task-filing messages are unaffected.
+- 025683c: Manual merge ("Merge now") no longer rejects in-review tasks that the scheduler has stamped with status: "queued". Auto-merge still honors all existing blockers.
+- 4a99e3f: PR-mode merge cleanup (`cleanupMergedTaskArtifacts`) now releases the `WorktreePool` lease for the merged task worktree before removing it, preventing stranded lease bookkeeping after pull-request merges (FN-5420 / FN-4954 follow-up).
+- 7a20b95: Add `session:runtime-resolved` run-audit event (FN-5544) emitted from `createResolvedAgentSession` for per-lane provider/runtime/model attribution. Additive surface; existing events unchanged. Replaces the diagnostic-log workaround introduced by FN-5206.
+- 8380024: fix(executor): exempt `PREMISE STALE:` summaries from `summary-claims-incomplete` refusals
+
+  The preflight escape hatch added in the prior commit instructs the agent to call `fn_task_done` with a summary that begins `PREMISE STALE:` when reproduction shows HEAD already matches the desired state. Natural premise-stale wording such as _"PREMISE STALE: the task has no remaining work — implementation is already done on HEAD"_ tripped `evaluateTaskDoneRefusal`'s scoped-incomplete regex (`/\b(incomplete|not implemented|not done|not finished)\b/i`) when the 40-char window contained `the task`/`this task`/first-person pronouns, refusing `fn_task_done` and deadlocking the executor — the exact failure the escape hatch was meant to prevent.
+
+  Add a sentinel bypass: when `summary` starts (case-insensitive) with `PREMISE STALE:`, skip the dissent-pattern and scoped-incomplete summary checks. The `pending-code-review-revise` and `bulk-step-completion-without-review` guards still run unchanged, so the bypass cannot dodge real review obligations or unfinished work — only the summary-phrasing checks are relaxed.
+
+- 1be0702: Mobile (Android Chrome edge-to-edge): the top brand header no longer sits underneath the system status bar — its mobile `padding-top` is now additive (`var(--space-md) + env(safe-area-inset-top)`) instead of `max(...)`, so the row keeps its normal breathing room _below_ the system inset. The executor status footer also no longer bleeds into the bottom-nav padding band: its `bottom` offset now uses the same `max(env(safe-area-inset-bottom), 12px)` floor that `MobileNavBar` already applies, so the two surfaces meet flush even when Chrome under-reports the bottom inset. Bare `TypeError: Failed to fetch` toasts (raised by in-flight requests aborted on tab background/resume) are now swallowed at the toast layer; toasts with additional context still surface.
+- ba9d632: Mobile bottom nav no longer occasionally hides behind Android Chrome's gesture pill. Chrome under `viewport-fit=cover` intermittently reports `env(safe-area-inset-bottom)` as `0` while the address bar is visible or during URL-bar collapse; the nav now floors that inset to 12px so it always clears the gesture area. Devices that report a larger inset are unaffected.
+- fbf7e2c: Dashboard no longer renders into a small upper-left rectangle on Android Chrome in multi-window/freeform/split-screen mode. The page now re-asserts its viewport meta with the live `innerWidth` on every resize and orientation change, defeating Chrome's habit of caching `device-width` at the original screen size (which left the layout viewport wider than the actual window, so normal-flow elements clipped while position-fixed elements pinned to the full window). Also drops `maximum-scale=1.0, user-scalable=no` from the viewport meta, and broadens the existing board scroll-snap stabilization from phones to all touch-primary devices so Android tablets get the same first-cards-loaded reflow that iOS Safari mobile already had.
+- 5548dc5: Dashboard git pull now autostashes dirty local changes (including untracked files) before pulling and reapplies them on success. If reapplying conflicts, the stash is preserved and the operation reports `stashConflict` with the stash label so the user can resolve later from the Stashes view. Previously a dirty working tree caused the pull to fail outright with no recovery path.
+- f58fb89: fix(engine-tests): eliminate full-suite temp-dir leak and harden subprocess guard against concurrent-workspace contention.
+
+  - Two engine merger tests (`merger-no-op-fix-finalize.test.ts`, `merger-verification-fix-already-on-main.test.ts`) created `mkdtempSync` workspaces directly under `tmpdir()` with the tracked `fusion-test-` prefix. Under `pnpm -r --workspace-concurrency=2` load, transient cleanup races left orphans flagged by `check-test-isolation`. Route both through `FUSION_TEST_WORKER_ROOT` like sibling merger tests so the dirs nest inside the already-tracked worker root and never appear as top-level leaks.
+
+  - Bump the engine vitest subprocess guard from 60 s to 120 s and the per-test timeout to 30 s. Under concurrent workspace runs, plain git commands (`git branch -d`, `git worktree remove --force`) queued behind system contention were timing out and failing reliability-interactions tests. The guard fires only on hangs, so healthy tests pay nothing for the higher ceiling.
+
+- 97e6a0c: Skip the dependency-cycle preflight in `TaskStore.assertNoDependencyCycle` when the new task or update has no dependencies. The FN-5256 cycle-check rollout (e12adeb3f) added an unconditional `listTasks()` call on every write to build the dependency lookup, but an empty dependency list can never form a cycle so the query was wasted work. It also broke fail-open semantics in the same-agent duplicate intake path: tests that stubbed `listTasks` to throw saw the cycle check consume the rejection and propagate "boom" out of `createTask` before the duplicate-intake try/catch could swallow it.
+- cf0101b: fix(FN-5256): harden three independent code paths that were losing live task worktrees mid-execution and producing `wrong_toplevel` errors.
+
+  - Executor stale-self-owned classifier (`reconcileSelfOwnedActiveSessionForRemoval`) now requires two additional signals before dropping a same-task registry entry: a process-active probe (`executingTaskLock.has`) and a minimum-idle window (default 5s) since the entry was registered. This closes the pause/resume race where the new executor cycle hadn't repopulated `activeWorktrees` yet and the old session's registry entry was reaped under a still-live shell. The post-throw reconcile in `removeOwnWorktreeWithReconcile` and the `removeWorktree` defensive reconcile in `worktree-backend.ts` route through the same hardened path.
+
+  - Pause-before-park now synchronously awaits agent/step/workflow session disposal via a new `awaitAbortInFlightTaskWork` method, so by the time `parkTaskAfterWorkflowStepPause` calls `moveTask("todo")` the spawned shells are already reaped and any fast re-dispatch sees a clean slate. The user-initiated pause handler on `task:updated` was collapsed onto the same await path for the same reason.
+
+  - Self-healing `reconcileTaskWorktreeMetadata` now normalizes both sides via `realpathSync` (with ENOENT fallback) before comparing the task worktree against the registered set, fixing the macOS `/private/var/...` false-stale flag. It additionally refuses to clear `worktree`/`branch` metadata for in-progress or in-review tasks — those go through `task:auto-recover-worktree-metadata-skipped-active` audit events and leave executor-level recovery in charge.
+
+  - The `task:moved`-away and `task:deleted` listeners now track an awaited disposal promise per task. A re-dispatch (`task:moved` → in-progress) awaits any in-flight disposal for the same task before calling `execute()`, so a fast bounce (in-progress → todo → in-progress) can no longer race the conflict-cleanup path against a still-live shell. `awaitAbortInFlightTaskWork` claims each session surface synchronously before awaiting its abort, so concurrent disposal calls dedupe naturally and the legacy fire-and-forget `abortInFlightTaskWork` has been removed.
+
+- c824810: Fix reuse-task-worktree merge mode (FN-5279) never applying the squash commit to the project root's local integration branch. The merger detaches HEAD in the task worktree and lands the squash on the detached HEAD; previously nothing advanced the project root's local `main`, so changes never appeared on the user's `main` (and any subsequent `pushAfterMerge` would push the stale ref or fail outright because `parsePushRemoteTarget` can't resolve a branch from a detached HEAD). A new step 5c now applies the squash to the project root's integration branch via `git merge --ff-only`, falling back to a regular merge with AI conflict resolution if `main` has diverged. Push-after-merge (when enabled) now runs from the project root where the integration branch was just advanced.
+- 1983dac: Engine reliability: prevent the FN-5345 in-review wedge class.
+
+  - Fusion task worktrees now install a `prepare-commit-msg` empty-commit guard that refuses `git commit --allow-empty` and other zero-staged-diff commits, while still allowing legitimate amend / merge / squash / cherry-pick / revert / rebase paths. Amend detection scans `ps -o args=` (with `/proc/$PPID/cmdline` fallback for Alpine/busybox) tokenized, stopping at the first message-supplying flag (`-m`, `-F`, `--message`, `--file`) so a commit message containing the substring `--amend` cannot bypass the guard.
+  - Merger gains an early empty-own-diff fast-path in `reuse-task-worktree` integration mode: branches with own commits but zero net tree change vs merge-base now auto-finalize as no-op BEFORE any reuse-handoff acquisition runs, preventing `registered-branch-mismatch` + `merge-deadlock-detected: verified content not on main` wedges. The fast-path best-effort cleans up the stranded worktree and `fusion/<id>` branch so empty-own-diff residuals do not accumulate.
+  - `classifyOwnedLandedEvidence` also detects the empty-own-diff case and returns `proven-no-op` so downstream self-healing and post-handoff finalize paths benefit too.
+  - Merger's reuse-fallback path now consults `git worktree list --porcelain` before creating a new worktree, reusing extant usable registrations of `fusion/<id>` and pruning stale ones, eliminating FN-5083-class branch-registration double-registration. The direct-reuse shortcut is guarded by FN-4811 (refuses paths owned by a different task in `activeSessionRegistry`) and FN-4954 (skipped when `recycleWorktrees=true` with a pool attached, so `WorktreePool.acquire` lease bookkeeping stays consistent). Two new audit subtypes (`merge:reuse-fallback-pruned-stale-registration`, `merge:reuse-fallback-reused-existing-registration`) replace the prior overloading of `merge:reuse-fallback-new-worktree` for these cases.
+
+- 57dbff4: Fix `fn backup` corrupting the live database. The paired-central-backup feature opened a second `node:sqlite` connection against the live `fusion.db` and ran `PRAGMA wal_checkpoint(TRUNCATE)` before the file copy. A `node:sqlite` SIGSEGV mid-checkpoint (a known recurring crash mode for this codebase) could leave the main DB file extended-but-zeroed. Backups now copy the main DB plus any sibling `-wal`/`-shm` files via plain `cp`; SQLite replays the WAL on first open, so uncheckpointed pages are preserved without us ever opening a second connection against the live database.
+- 1bffa22: fix(FN-5483): allow merger-driven commits past the identity-guard pre-commit hook (detached HEAD false-positive).
+
+  The reuse-task-worktree merge path intentionally detaches HEAD at the integration target before running squash and verification-fix ceremonies. The identity-guard hook (`buildIdentityGuardHook`) refused every such commit because `HEAD_BRANCH=detached` never matches the owning task branch, surfacing as `merge-deadlock-detected: requires manual intervention — verified content not on main` on FN-5441 and FN-5446.
+
+  The hook now honors a `FUSION_MERGER_BYPASS_IDENTITY_GUARD=1` env-var bypass (gated to the exact value `"1"`), set only on merger-driven `git commit` calls. The marker is placed after the `TASK_FILE` check so non-fusion worktrees stay no-op, and before `EXPECTED_BRANCH` so detached HEAD never reaches the refusal printf. Agent commits never set this env, so the guard still catches executor/reviewer misuse. `buildCommitMsgTrailerHook` and `buildPrepareCommitMsgEmptyGuardHook` are unchanged and continue to run on every merger commit, preserving FN-5089 trailer attribution and FN-5345/FN-5377 empty-commit refusal.
+
+- 2d425b1: fix: clear scheduler-side `status='queued'`, `blockedBy`, and `overlapBlockedBy` when a task transitions into `in-review` so the merge gate is no longer permanently blocked by stale todo-dispatch markers.
+
+  Repro: a task that picked up `status='queued'` while waiting in `todo` (e.g. file-scope overlap with a higher-priority queued peer) and then completed and was handed off to `in-review` — directly via `handoffToReview` or indirectly via stranded-completed-todo recovery — would carry the queued flag into review. Every subsequent merge attempt failed with `Cannot merge <id>: task is marked 'queued'`, and the in-review stall surface kept re-firing `[no-worktree-no-merge-confirmed]` without progress. Ghost-review → todo → scheduler re-queue → stranded → in-review formed a steady-state loop.
+
+  Fix: `TaskStore.moveTaskInternal` now treats `queued`/`blockedBy`/`overlapBlockedBy` as todo-only dispatch state and scrubs them on every transition into `in-review`. Failed/awaiting-\* statuses are unaffected.
+
+- d947197: Engine reliability: auto-recover merge handoff from HEAD drift when the branch ref is authoritative.
+
+  - `acquireReuseHandoff` previously refused outright with `head-branch-mismatch / unexpected-branch` whenever the worktree's HEAD pointed at anything other than `fusion/<id>` (detached, recycled to `main`, on a sibling branch). The existing case-mismatch autocorrect did not cover these states, leaving FN-5339-class tasks wedged in review even though their branch ref still held a clean, task-attributed lineage.
+  - New `isBranchAuthoritativeForTask` helper (in `branch-conflicts.ts`) confirms the expected branch ref exists, its tip carries the `Fusion-Task-Id: <id>` trailer, and the `base..branch` range has no foreign FN-attributed commits.
+  - When that probe passes, the handoff now performs a plain `git checkout <branch>` (not `-B`, which would clobber the ref) inside the already-asserted-clean worktree, re-reads HEAD, and emits a `branch:auto-reattach-authoritative` audit. Refusal still fires unchanged when the branch ref itself is missing, missing a trailer, or contaminated — so the FN-5363 strict-lease and foreign-commit protections remain authoritative.
+
+- 5c15031: Make the dashboard's "Refresh health" button actually re-run the SQLite integrity check. The background scheduler in `Database.scheduleBackgroundIntegrityCheck` only ran the check once at engine boot, so once `corruptionDetected` flipped to `true` it was sticky for the life of the process — the refresh action just re-read the same cached flag and the corruption banner could not be cleared even after the user repaired the DB (e.g. via `REINDEX`). `POST /api/health/refresh` now calls a new `TaskStore.refreshDatabaseHealth` which synchronously re-runs the integrity check and updates the cached state before responding.
+- 24686ca: Stop losing uncommitted dev edits during task merges. Two fixes to the merger:
+
+  1. The pre-merge autostash in `stashUnrelatedRootDirChanges` no longer silently proceeds when stash creation fails over a dirty working tree. It now throws `AutostashCreationFailedError`, which the merger catches and surfaces to the task feed before any destructive `git reset --hard` / `git clean -fd` runs — your edits stay in the working tree.
+
+  2. `acquireReuseHandoff` no longer refuses the handoff on a dirty reused task worktree (the FN-5138 "Merge handoff refused (working-tree-dirty)" failure). It now autostashes the dirty content (`git add -A` → `git stash create` → `git stash store -m fusion-reuse-handoff-autostash:<taskId>:<ts>`), emits a `merge:reuse-handoff-autostash` audit event with the stash SHA and a recover command, and lets the merge proceed.
+
+  The new failure mode `dirty-worktree-autostash-failed` is reserved for the (rare) case where stash creation itself fails — so the operator can distinguish "we tried and failed" from the old "we refused to try."
+
+- a7ad30f: Mobile (iOS): the bottom navigation bar no longer slides up when the on-screen keyboard appears. The viewport-compensation offset that pulls fixed elements back into the visible area (intended for Android ICB quirks / pinch-zoom) was also being driven by the keyboard's shrunken `visualViewport.height` on iOS, pushing the nav bar above the keyboard. The nav now ignores that offset while `keyboardOpen` is true and stays pinned at the page bottom — the keyboard simply covers it.
+- a2a5db8: Engine reliability: better diagnostics + clean-baseline reset on phantom finalize.
+
+  - `commitOrAmendMergeWithFixes` previously swallowed all unexpected errors as `reason: "unknown-phantom"` and the two callers re-threw a `verification fix finalize failed (unknown phantom)` error with no surface area beyond the SHAs. FN-5422-class tasks wedged in review with no actionable signal in the failure message.
+  - The catch now captures the original error message and runs an `isBranchAuthoritativeForTask` probe (existing branch ref carries this task's `Fusion-Task-Id` trailer + foreign-contamination check against base). When the branch ref is authoritative — meaning the AI's work is safely stored on `fusion/<id>` and only the in-merge attempt's integration worktree drifted — the catch resets rootDir to `preAttemptHeadSha` and returns `reason: "branch-ref-ahead-reset"`. The next merge attempt then starts from a known-good baseline instead of inheriting half-built squash state.
+  - Verification-fix and build-verification-fix callers now include the original error and the branch-authority probe outcome in the thrown error, so operators see the actual failure cause (e.g. diff-volume regression, file-scope violation, transient git error) rather than `unknown phantom`.
+
+- 5848606: Engine reliability: post-session branch-attribution audit catches contamination within minutes instead of days.
+
+  - The executor already checks branch contamination at _acquisition_ time (`assertCleanBranchAtBase`) and at _reclaim_ time. The gap was the _active session window_ itself: commits added to `fusion/<id>` between acquisition and merge handoff went undetected until merge-time refusal, which is how FN-5233 ended up with two untrailered `feat(FN-5353):` commits sitting on `fusion/fn-5233`.
+  - New `reportBranchAttribution(repoDir, branch, baseSha, taskId)` walks `base..branch` and classifies every commit into four buckets: `ownTrailed` (subject tag + `Fusion-Task-Id` trailer — healthy), `ownUntrailed` (subject tag but missing trailer — signals the commit-msg hook didn't fire), `foreign` (different FN-id via subject or trailer — contamination), and `unattributed` (neither — typically a hand-merge or plumbing commit).
+  - Wired into the executor's post-session path (right after `captureModifiedFiles`): if any anomaly bucket is non-empty, the executor logs a structured `branch:attribution-anomaly` audit event and a task log entry. Failures in the audit itself are caught and warn-only — the audit must never destabilize a completing session. New `branch:attribution-anomaly` and `branch:auto-reattach-authoritative` git-mutation types accept the structured metadata.
+  - Five new vitest cases cover the four anomaly buckets and the empty-range no-op.
+
+- fbf7e2c: Dashboard board no longer squeezes all 6 columns into the visible width on tablet-sized viewports (769–1024px). Columns now keep a 260px minimum and the board scrolls horizontally, matching desktop behavior. Previously the tablet rule used `minmax(0, 1fr)` with `overflow-x: hidden`, collapsing columns to ~130–170px wide on Android tablets and forcing task card titles to stack one word per line.
+- d90da81: Coerce `task.description` to an empty string when persisting in `TaskStore.getTaskPersistValues`. The `description` column is `NOT NULL`, so a task with a missing description previously failed insertion with a constraint error. Defaulting to `""` mirrors the existing `?? null` / `?? 0` treatment of other optional fields.
+- 2d661df: fix(engine): prevent worktree-pool branch creation from inheriting a previous occupant's tip, and auto-reanchor branches that already inherited foreign commits.
+
+  - `WorktreePool.prepareForTask` now rejects empty/`HEAD` base values and verifies post-detach HEAD matches the resolved base SHA before creating the branch. This closes the FN-5432 / FN-5255 contamination pattern where recycled worktrees branched from a stale HEAD (reflog: `branch: Created from HEAD`) and pinned the new task's tip to the previous task's commit.
+
+  - `SelfHealingManager` now attempts a foreign-only contamination reanchor before pausing a task with `branch-conflict-unrecoverable`. When the task's branch carries only foreign commits (no own work), the branch is reset back to its base via the existing `recoverForeignOnlyContamination` path instead of stranding the task for human adjudication.
+
+- 93b11c6: Atomic in-review handoff: introduce `TaskStore.handoffToReview` that performs the column move and `mergeQueue` enqueue inside a single transaction, and migrate every executor + self-healing site that promotes a completed task into `in-review` to use it. Direct `moveTask(taskId, "in-review")` writes now emit a `task:handoff-invariant-violation` run-audit event for forensics. Pairs with FN-5242 (queue schema) and FN-5243 (merger lease consumption).
+- 9efcf93: Fix Fusion worktree pre-commit identity-guard hook to accept canonical lowercase `fusion/<id>` branches when the on-disk `fusion-task-id` metadata stores an uppercase id, eliminating spurious "refusing commit" rejections that previously required `--no-verify`.
+- e908cbc: Downgrade merge-time file-scope invariant violations from task-failing errors to warning-only logs so merges can continue while still recording audit telemetry.
+- 9011c21: Fix the Worktrunk integration to probe the canonical `wt` binary, point release metadata at the real `max-sixty/worktrunk` upstream, and fail closed when install metadata is still unverified. This preserves default-off behavior when `worktrunk.enabled=false` and hardens enabled setups that rely on an explicit `worktrunk.binaryPath`.
+- b06cf64: Add deterministic external-integration safeguards by introducing a shared integration manifest validator, a triage-time spec evidence gate, and registry contract tests that prevent hallucinated third-party repo/binary/checksum metadata from landing.
+- 232a9fe: Fix main chat composer (direct chat and rooms) so it visually grows on
+  multi-paragraph paste up to the 640px cap, matching QuickChat behavior.
+  The 640px cap from FN-5146 was already in place but an ancestor layout
+  constraint was clipping the rendered height.
+- fd202e9: Remove the `fn task branch-recovery` surface and retire orphan-branch auto-rescue wiring.
+
+  Fusion now treats orphan `fusion/*` branches as operator-managed git state: branch conflicts still fail loudly with diagnostics, and operators resolve/reclaim/discard branches manually with standard git tooling before retrying.
+
+- a8715ed: Self-healing: gate every backward-moving recovery stage on triple proof (dead session + unusable worktree + no recent executor activity). Stages that cannot satisfy the predicate are downgraded to observation-only, emitting task:<stage>-no-action audit events instead of lifecycle moves. Authoritative per-stage disposition lives in docs/self-healing-backward-move-audit.md. Companion to FN-5337.
+- 1a5aff9: Self-healing: remove speculative auto-requeue from `recoverOrphanedExecutions`. The sweep no longer calls lease-manager recovery/reconcile, no longer writes `status: "stuck-killed"` or clears `worktree`/`branch`, no longer writes the `Auto-recovered orphaned executor task` log entry, and no longer moves tasks back to `todo`.
+
+  `recoverOrphanedExecutions` is now observation-only and emits `task:orphan-detected-no-action` run-audit events plus `[orphan-detected]` diagnostics when stale in-progress candidates are detected. Proof-based lifecycle recovery remains owned by `recoverInProgressLimbo`, `RestartRecoveryCoordinator`, and explicit executor/merger failure paths (fixes FN-5279 false-positive class).
+
+- 216c32b: Manual task retry now resets the full persisted retry-budget counter set (and `nextRecoveryAt`) across CLI, pi extension, and dashboard retry surfaces, so retry badges/details no longer stay inflated after a user-triggered fresh attempt.
+- 8df21a6: Fix in-review merge stall under the new mergeIntegrationWorktree=reuse-task-worktree default: strict targetTaskId leasing prevents cross-task lease bleed, and missing task.worktree always triggers the reacquire fallback instead of misrouting handoff gates against the project root.
+- dbccdb1: Harden cloudflared auto-install (dashboard remote-access opt-in flow): add a pinned release manifest and SHA-256 verification, mirroring the FN-5320 Worktrunk pattern. Auto-download fails closed in `upstream-pending-verification` mode; package-manager paths (`brew`, `winget`) are unchanged. Replaces the previous unverified `releases/latest/download` direct-curl install path.
+- a04ba3c: Coerce null or undefined `task.description` values to an empty string when persisting TaskStore rows.
+- c3890a9: Improve soft-deleted blocker recovery so blocked tasks become schedulable without manual intervention. `SelfHealingManager.clearStaleBlockedBy` now emits an explicit `soft-deleted at ...` reason when a stale blocker is a soft-deleted row, and the scheduler now reconciles downstream `blockedBy`/dependency state immediately on `task:deleted` events to reblock on remaining live deps or unblock tasks in the same tick.
+- 31c71a3: Surface exhausted soft-deleted in-review blockers through opt-in visibility paths so operators can diagnose stalled dependent chains without direct DB access. `fn_task_show` now falls back to include soft-deleted task reads and prints a `[SOFT-DELETED at ...]` marker, while `fn_task_list` adds an `includeDeleted` flag for listing hidden blockers.
+
+  Also adds dashboard/API visibility with `GET /api/tasks/exhausted-in-review` (including `?includeDeleted=true`), `GET /api/tasks/:id?includeDeleted=true`, and a ReliabilityView panel for exhausted hidden blockers plus blocked dependents.
+
+- 3ccb132: Fix Windows worktree creation and cleanup by replacing POSIX shell `mkdir -p` / `rm -rf` calls in worktree setup paths with cross-platform Node.js filesystem APIs.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [f403926]
+- Updated dependencies [b7ddfc9]
+- Updated dependencies [35b2971]
+- Updated dependencies [8f2d5e7]
+- Updated dependencies [f6f3867]
+- Updated dependencies [8f5c1f9]
+- Updated dependencies [1b49cbc]
+- Updated dependencies [2baaad7]
+- Updated dependencies [b936ab9]
+- Updated dependencies [b12ff26]
+- Updated dependencies [6fdfb1a]
+- Updated dependencies [025683c]
+- Updated dependencies [4a99e3f]
+- Updated dependencies [7a20b95]
+- Updated dependencies [8a3afcf]
+- Updated dependencies [8380024]
+- Updated dependencies [e291d86]
+- Updated dependencies [1be0702]
+- Updated dependencies [ba9d632]
+- Updated dependencies [fbf7e2c]
+- Updated dependencies [5548dc5]
+- Updated dependencies [f58fb89]
+- Updated dependencies [97e6a0c]
+- Updated dependencies [cf0101b]
+- Updated dependencies [c824810]
+- Updated dependencies [1983dac]
+- Updated dependencies [57dbff4]
+- Updated dependencies [1bffa22]
+- Updated dependencies [2d425b1]
+- Updated dependencies [d947197]
+- Updated dependencies [5c15031]
+- Updated dependencies [24686ca]
+- Updated dependencies [a7ad30f]
+- Updated dependencies [a2a5db8]
+- Updated dependencies [5848606]
+- Updated dependencies [fbf7e2c]
+- Updated dependencies [d90da81]
+- Updated dependencies [2d661df]
+- Updated dependencies [93b11c6]
+- Updated dependencies [9efcf93]
+- Updated dependencies [22d59b5]
+- Updated dependencies [e908cbc]
+- Updated dependencies [9011c21]
+- Updated dependencies [b06cf64]
+- Updated dependencies [232a9fe]
+- Updated dependencies [fd202e9]
+- Updated dependencies [a8715ed]
+- Updated dependencies [1a5aff9]
+- Updated dependencies [216c32b]
+- Updated dependencies [8df21a6]
+- Updated dependencies [5f9f777]
+- Updated dependencies [dbccdb1]
+- Updated dependencies [687237b]
+- Updated dependencies [a04ba3c]
+- Updated dependencies [c3890a9]
+- Updated dependencies [31c71a3]
+- Updated dependencies [3ccb132]
+  - @runfusion/fusion@0.33.0
+
 ## 0.32.0
 
 ### @fusion/core
@@ -6003,6 +6918,14 @@ for reference.
 - Updated dependencies [25d44e1]
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
+
+## 0.11.19
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.19
 
 ## 0.11.18
 

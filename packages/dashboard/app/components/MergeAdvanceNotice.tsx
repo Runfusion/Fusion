@@ -1,177 +1,114 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { api, ApiRequestError } from "../api";
-import { subscribeSse } from "../sse-bus";
+import { useRef } from "react";
 import StashConflictModal from "./StashConflictModal";
+import { useMergeAdvanceNotice } from "../hooks/useMergeAdvanceNotice";
 import "./MergeAdvanceNotice.css";
-
-interface MergeAdvanceEvent {
-  taskId: string;
-  integrationBranch: string;
-  refName: string;
-  toSha: string;
-  fromSha: string | null;
-  advanceMode: "fast-forward" | "non-fast-forward" | "update-ref" | string;
-  succeeded: boolean;
-  advancedAt: string;
-  userCheckout: {
-    worktreePath: string;
-    dirty: boolean;
-    untrackedCount: number;
-  } | null;
-}
-
-interface MergeAdvanceEventsResponse {
-  events: MergeAdvanceEvent[];
-}
-
-type SmartPullResponse =
-  | { kind: "clean-pull"; toSha: string }
-  | { kind: "stash-pull-pop"; toSha: string }
-  | { kind: "stash-pop-conflict"; toSha: string; stashSha: string; stashLabel: string; conflictedFiles: string[] };
 
 interface MergeAdvanceNoticeProps {
   projectId?: string;
   apiBase?: string;
 }
 
-function shortSha(sha: string): string {
+function shortSha(sha: string | null): string {
+  if (!sha) return "";
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
 
-function dismissedStorageKey(projectId?: string): string {
-  return `kb:merge-advance-notice-dismissed:${projectId ?? "default"}`;
-}
-
-function readDismissedShas(projectId?: string): string[] {
-  try {
-    const raw = window.localStorage.getItem(dismissedStorageKey(projectId));
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((value): value is string => typeof value === "string");
-  } catch {
-    return [];
-  }
-}
-
-function persistDismissedShas(projectId: string | undefined, values: string[]): void {
-  try {
-    window.localStorage.setItem(dismissedStorageKey(projectId), JSON.stringify(values.slice(-50)));
-  } catch {
-    // ignore storage failures
-  }
-}
+const disabledReasonCopy: Record<string, string> = {
+  "no-remote": "No `origin` remote configured.",
+  "no-upstream": "Branch has no upstream on origin.",
+  "merge-locked": "Push paused — a Fusion merge is in progress.",
+};
 
 export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: MergeAdvanceNoticeProps) {
   const bannerRef = useRef<HTMLDivElement | null>(null);
-  const [events, setEvents] = useState<MergeAdvanceEvent[]>([]);
-  const [dismissedShas, setDismissedShas] = useState<string[]>(() => readDismissedShas(projectId));
-  const [pulling, setPulling] = useState(false);
-  const [pullError, setPullError] = useState<string | null>(null);
-  const [conflictState, setConflictState] = useState<{
-    stashSha: string;
-    stashLabel: string;
-    conflictedFiles: string[];
-  } | null>(null);
+  const {
+    notice,
+    dismiss,
+    pull,
+    pullState,
+    conflictState,
+    setConflictState,
+    pushStatus,
+    pushState,
+    push,
+    clearPushError,
+    forceWithLease,
+    setForceWithLease,
+  } = useMergeAdvanceNotice({ projectId, apiBase });
 
-  useEffect(() => {
-    setDismissedShas(readDismissedShas(projectId));
-  }, [projectId]);
-
-  const fetchEvents = useCallback(async () => {
-    try {
-      const query = new URLSearchParams({ limit: "5" });
-      if (projectId) {
-        query.set("projectId", projectId);
-      }
-      const response = await api<MergeAdvanceEventsResponse>(`/tasks/merge-advance-events?${query.toString()}`);
-      setEvents(Array.isArray(response.events) ? response.events : []);
-    } catch {
-      setEvents([]);
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    void fetchEvents();
-    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-    const unsubscribe = subscribeSse(`${apiBase}/events${query}`, {
-      events: {
-        "task:merged": () => {
-          void fetchEvents();
-        },
-      },
-    });
-    return () => {
-      unsubscribe();
-    };
-  }, [apiBase, fetchEvents, projectId]);
-
-  const notice = useMemo(() => events.find((event) => (
-    event.succeeded === true
-    && event.userCheckout !== null
-    && event.userCheckout.worktreePath.trim().length > 0
-  )), [events]);
-
-  if (!notice || dismissedShas.includes(notice.toSha) || !notice.userCheckout) {
+  if (!notice || !notice.userCheckout) {
     return null;
   }
 
   const checkout = notice.userCheckout;
   const localChangesPreserved = checkout.dirty || checkout.untrackedCount > 0;
-
-  const dismiss = () => {
-    const next = [...dismissedShas.filter((sha) => sha !== notice.toSha), notice.toSha].slice(-50);
-    setDismissedShas(next);
-    persistDismissedShas(projectId, next);
-  };
+  const pulling = pullState === "pending" || pullState === "stashing";
+  const pullError = typeof pullState === "object" ? pullState.error : null;
 
   const dismissWithFocusGuard = () => {
     const activeElement = document.activeElement;
     const focusedInsideBanner = activeElement instanceof HTMLElement && bannerRef.current?.contains(activeElement);
     dismiss();
-    if (focusedInsideBanner) {
-      document.body.focus();
-    }
+    if (focusedInsideBanner) document.body.focus();
   };
 
-  const handlePull = async () => {
-    setPulling(true);
-    setPullError(null);
-    try {
-      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-      const response = await api<SmartPullResponse>(`/git/smart-pull${query}`, {
-        method: "POST",
-        body: JSON.stringify({
-          worktreePath: checkout.worktreePath,
-          integrationBranch: notice.integrationBranch,
-          taskId: notice.taskId,
-        }),
-      });
-      if (response.kind === "stash-pop-conflict") {
-        setConflictState({
-          stashSha: response.stashSha,
-          stashLabel: response.stashLabel,
-          conflictedFiles: response.conflictedFiles,
-        });
-        return;
-      }
-      dismissWithFocusGuard();
-    } catch (error: unknown) {
-      if (error instanceof ApiRequestError) {
-        setPullError(error.message || "Pull failed");
-      } else if (error instanceof Error && error.message) {
-        setPullError(error.message);
-      } else {
-        setPullError("Pull failed");
-      }
-    } finally {
-      setPulling(false);
+  const renderPushSection = () => {
+    if (!pushStatus || pushStatus.aheadCount <= 0) {
+      return null;
     }
+
+    const disablePush = pushState === "pending" || pushStatus.canPush === false || pulling;
+    const pushLabel = forceWithLease ? "Push (force-with-lease)" : "Push to origin";
+
+    return (
+      <section className="merge-advance-notice__push">
+        <p className="merge-advance-notice__push-heading">
+          Push {pushStatus.integrationBranch} to origin — ahead by {pushStatus.aheadCount} commit{pushStatus.aheadCount === 1 ? "" : "s"}.
+        </p>
+        <div className="merge-advance-notice__push-actions">
+          {pushState === "ok" ? (
+            <span>Pushed to origin/{pushStatus.integrationBranch} @ {shortSha(pushStatus.remoteSha)}.</span>
+          ) : (
+            <button
+              type="button"
+              className={`btn btn-sm ${forceWithLease ? "btn-warning" : ""}`.trim()}
+              disabled={disablePush}
+              onClick={() => { void push(); }}
+            >
+              {pushState === "pending" ? "Pushing…" : pushLabel}
+            </button>
+          )}
+          {!pushStatus.canPush && pushStatus.disabledReason && pushStatus.disabledReason in disabledReasonCopy ? (
+            <span className="merge-advance-notice__push-error">{disabledReasonCopy[pushStatus.disabledReason]}</span>
+          ) : null}
+        </div>
+        {typeof pushState === "object" && (pushState.outcome === "rejected-non-ff" || pushState.outcome === "sha-mismatch") ? (
+          <div className="merge-advance-notice__push-error" role="alert">
+            <span>{pushState.error}</span>{" "}
+            <button type="button" className="btn btn-sm" onClick={() => { void pull(); }}>Smart Pull</button>
+          </div>
+        ) : null}
+        {typeof pushState === "object" && (pushState.outcome === "rejected-other" || pushState.outcome === "failed") ? (
+          <div className="merge-advance-notice__push-error" role="alert">
+            <span>{pushState.error}</span>
+            {pushState.stderr ? <pre>{pushState.stderr}</pre> : null}
+            <button type="button" className="btn btn-sm" onClick={clearPushError}>Dismiss</button>
+          </div>
+        ) : null}
+        <details className="merge-advance-notice__push-advanced">
+          <summary>Advanced</summary>
+          <label>
+            <input
+              type="checkbox"
+              checked={forceWithLease}
+              onChange={(event) => setForceWithLease(event.target.checked)}
+            />
+            {" "}Allow force-with-lease (use only when you know origin diverged intentionally)
+          </label>
+        </details>
+      </section>
+    );
   };
 
   return (
@@ -183,10 +120,11 @@ export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: Merg
           {localChangesPreserved ? " (local changes will be auto-stashed and restored)" : ""}
           {pullError ? <span className="merge-advance-notice__error" role="alert"> {pullError}</span> : null}
           {pulling ? <span className="merge-advance-notice__hint"> Pulling…</span> : null}
+          {renderPushSection()}
         </div>
         <div className="merge-advance-notice__actions">
           {conflictState ? null : (
-            <button type="button" className="btn btn-sm" disabled={pulling} onClick={handlePull}>
+            <button type="button" className="btn btn-sm" disabled={pulling} onClick={() => { void pull(); }}>
               Pull
             </button>
           )}
@@ -202,15 +140,18 @@ export default function MergeAdvanceNotice({ projectId, apiBase = "/api" }: Merg
       </div>
       <StashConflictModal
         open={conflictState !== null}
-        onClose={() => {
+        onClose={(stashDropped) => {
           setConflictState(null);
-          dismissWithFocusGuard();
+          if (stashDropped) {
+            dismissWithFocusGuard();
+          }
         }}
         worktreePath={checkout.worktreePath}
         integrationBranch={notice.integrationBranch}
         stashSha={conflictState?.stashSha ?? ""}
         stashLabel={conflictState?.stashLabel ?? ""}
         conflictedFiles={conflictState?.conflictedFiles ?? []}
+        autostashOutcome={conflictState?.autostashOutcome ?? "conflict-needs-manual"}
         taskId={notice.taskId}
       />
     </>

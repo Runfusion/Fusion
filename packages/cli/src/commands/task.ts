@@ -1023,7 +1023,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
   console.log();
 }
 
-export async function runTaskDelete(id: string, force?: boolean, projectName?: string) {
+export async function runTaskDelete(id: string, force?: boolean, allowResurrection?: boolean, projectName?: string) {
   const store = await getStore(projectName);
 
   // Check if task exists first
@@ -1051,6 +1051,7 @@ export async function runTaskDelete(id: string, force?: boolean, projectName?: s
 
   try {
     await store.deleteTask(id, {
+      allowResurrection: allowResurrection === true,
       auditContext: {
         agentId: "cli",
         runId: `synthetic-cli-delete-${id}-${Date.now()}`,

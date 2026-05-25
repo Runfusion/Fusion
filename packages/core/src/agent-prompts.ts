@@ -1,3 +1,4 @@
+// port-4040-allowlist: this file embeds the "never kill port 4040" rule in agent prompts.
 /**
  * Agent role prompt templates for customizable system prompts.
  *

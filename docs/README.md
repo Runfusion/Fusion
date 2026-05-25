@@ -110,6 +110,8 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Soft-Delete Verification Matrix](./soft-delete-verification-matrix.md) | Authoritative checklist for the FN-5105 → FN-5143 soft-delete stream: scenario × layer coverage |
 | [Self-Healing Backward Move Audit](./self-healing-backward-move-audit.md) | Audit of self-healing backward-move safety checks and edge-case validation |
 
+| [Lost-Work Tasks Incident (2026-05-23)](./incidents/2026-05-23-lost-work-tasks.md) | Incident catalog of 9 lost-work tasks from no-op finalize and reuse-handoff bugs |
+
 ## External Resources
 
 - GitHub repository: https://github.com/Runfusion/Fusion

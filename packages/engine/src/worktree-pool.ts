@@ -128,8 +128,25 @@ export async function getRegisteredWorktreePaths(rootDir: string): Promise<Set<s
 }
 
 export async function getRegisteredWorktreeBranchMap(rootDir: string): Promise<Map<string, string>> {
-  const { rawOutput } = await describeRegisteredWorktrees(rootDir);
   const branchMap = new Map<string, string>();
+  for (const entry of await getRegisteredWorktreeBranches(rootDir)) {
+    branchMap.set(entry.branch, entry.worktreePath);
+  }
+  return branchMap;
+}
+
+/**
+ * Same source as `getRegisteredWorktreeBranchMap` but returns ALL
+ * (branch, worktreePath) pairs rather than collapsing duplicates by branch.
+ * Multiple worktrees can legitimately share a branch when the user has
+ * created secondary checkouts via `git worktree add --force -b <branch>`;
+ * callers that need to act on every such worktree (e.g. the merger's
+ * post-advance auto-sync) must use this array form to avoid silently
+ * skipping all but the last-iterated checkout.
+ */
+export async function getRegisteredWorktreeBranches(rootDir: string): Promise<Array<{ branch: string; worktreePath: string }>> {
+  const { rawOutput } = await describeRegisteredWorktrees(rootDir);
+  const entries: Array<{ branch: string; worktreePath: string }> = [];
   let currentWorktree: string | null = null;
 
   for (const line of rawOutput.split("\n")) {
@@ -144,12 +161,12 @@ export async function getRegisteredWorktreeBranchMap(rootDir: string): Promise<M
         ? branchRef.slice("refs/heads/".length)
         : branchRef;
       if (branchName) {
-        branchMap.set(branchName, currentWorktree);
+        entries.push({ branch: branchName, worktreePath: currentWorktree });
       }
     }
   }
 
-  return branchMap;
+  return entries;
 }
 
 export async function isRegisteredGitWorktree(rootDir: string, worktreePath: string): Promise<boolean> {

@@ -653,12 +653,12 @@ describe("acquireReuseHandoff", () => {
     });
   });
 
-  it("refuses when no merge queue lease can be acquired", async () => {
+  it("FN-5444: no-lease refusal carries queue-head diagnostics and nulls when head is absent", async () => {
     const store = createStore();
-    store.acquireMergeQueueLease.mockReturnValue(null);
+    store.acquireMergeQueueLease.mockReturnValue({ taskId: "FN-5329" });
     store.peekMergeQueueHead.mockReturnValue({ taskId: "FN-5329", leasedBy: "merger-reuse-handoff", column: "todo" });
 
-    const refusal = await expectRefusal(
+    const refusalWithHead = await expectRefusal(
       acquireReuseHandoff({
         task: await store.getTask("FN-5279"),
         store,
@@ -667,11 +667,32 @@ describe("acquireReuseHandoff", () => {
         worktreePath: "/tmp/task-worktree",
       }),
       "lease-handoff-failed",
-      "target-not-queued",
+      "no-lease",
     );
-    expect(refusal.payload).toMatchObject({
+    expect(refusalWithHead.payload).toMatchObject({
       taskId: "FN-5279",
       worktreePath: "/tmp/task-worktree",
+      acquiredTaskId: "FN-5329",
+      queueHeadTaskId: "FN-5329",
+      queueHeadLeasedBy: "merger-reuse-handoff",
+    });
+
+    store.acquireMergeQueueLease.mockReturnValue({ taskId: "FN-5329" });
+    store.peekMergeQueueHead.mockReturnValue(null);
+    const refusalWithoutHead = await expectRefusal(
+      acquireReuseHandoff({
+        task: await store.getTask("FN-5279"),
+        store,
+        projectRoot: "/tmp/project-root",
+        settings: {} as any,
+        worktreePath: "/tmp/task-worktree",
+      }),
+      "lease-handoff-failed",
+      "no-lease",
+    );
+    expect(refusalWithoutHead.payload).toMatchObject({
+      queueHeadTaskId: null,
+      queueHeadLeasedBy: null,
     });
   });
 

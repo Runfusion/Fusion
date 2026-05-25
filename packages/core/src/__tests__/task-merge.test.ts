@@ -79,6 +79,55 @@ describe("resolveTaskMergeTarget", () => {
       source: "legacy-main",
     });
   });
+
+  // Regression for FN-5233/FN-5530: when a sibling-dispatched task inherits
+  // `baseBranch = fusion/fn-<id>`, the merger must NOT use that as the squash
+  // destination — otherwise the commit lands on the sibling branch and is
+  // lost from main. Falls through to projectDefault, and reports the rejection.
+  it("rejects task baseBranch when it points at a sibling fusion/fn-* branch", () => {
+    const result = resolveTaskMergeTarget(
+      { baseBranch: "fusion/fn-5339", branchContext: undefined },
+      { projectDefaultBranch: "main" },
+    );
+    expect(result.branch).toBe("main");
+    expect(result.source).toBe("project-default");
+    expect(result.rejected).toEqual({
+      branch: "fusion/fn-5339",
+      source: "task-base-branch",
+      reason: "fusion-sibling-branch",
+    });
+  });
+
+  it("rejects inherited branch context that points at a sibling fusion/fn-* branch", () => {
+    const result = resolveTaskMergeTarget(
+      {
+        baseBranch: undefined,
+        branchContext: {
+          groupId: "G-1",
+          source: "planning",
+          assignmentMode: "shared",
+          inheritedBaseBranch: "FUSION/FN-1234",
+        },
+      },
+      { projectDefaultBranch: "main" },
+    );
+    expect(result.branch).toBe("main");
+    expect(result.source).toBe("project-default");
+    expect(result.rejected).toEqual({
+      branch: "FUSION/FN-1234",
+      source: "task-branch-context",
+      reason: "fusion-sibling-branch",
+    });
+  });
+
+  it("does not reject non-fusion branches that happen to share a prefix", () => {
+    // `fusion/release-1.0` is a legitimate human-chosen base; only the
+    // canonical `fusion/fn-<id>` pattern is a sibling-task marker.
+    expect(resolveTaskMergeTarget({ baseBranch: "fusion/release-1.0", branchContext: undefined })).toEqual({
+      branch: "fusion/release-1.0",
+      source: "task-base-branch",
+    });
+  });
 });
 
 describe("getTaskMergeBlocker", () => {

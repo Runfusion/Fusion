@@ -3,6 +3,13 @@ import type { Task, WorkflowStepResult } from "./types.js";
 export interface MergeTargetResolution {
   branch: string;
   source: "task-base-branch" | "task-branch-context" | "project-default" | "legacy-main";
+  /**
+   * When the resolver rejects a candidate (e.g. baseBranch points at a sibling
+   * `fusion/fn-*` branch), this records the rejected value and the reason. The
+   * merger uses this to emit an audit event so the steering bug is observable
+   * in the run-audit timeline rather than failing silently.
+   */
+  rejected?: { branch: string; source: "task-base-branch" | "task-branch-context"; reason: "fusion-sibling-branch" };
 }
 
 export interface MergeTargetResolverOptions {
@@ -10,27 +17,49 @@ export interface MergeTargetResolverOptions {
   legacyFallbackBranch?: string;
 }
 
+/**
+ * Sibling task branches (`fusion/fn-<id>`) MUST NOT be used as merge targets.
+ * They are start-point/rebase anchors, not destinations: landing a squash onto
+ * a sibling branch strands the commit on a feature ref instead of advancing
+ * the project integration branch (root cause of FN-5233/FN-5530 lost-on-main).
+ */
+const FUSION_SIBLING_BRANCH_RE = /^fusion\/fn-/i;
+
+function isFusionSiblingBranch(branch: string): boolean {
+  return FUSION_SIBLING_BRANCH_RE.test(branch);
+}
+
 export function resolveTaskMergeTarget(
   task: Pick<Task, "baseBranch" | "branchContext">,
   options: MergeTargetResolverOptions = {},
 ): MergeTargetResolution {
+  let rejected: MergeTargetResolution["rejected"];
+
   const configuredBase = task.baseBranch?.trim();
   if (configuredBase) {
-    return { branch: configuredBase, source: "task-base-branch" };
+    if (isFusionSiblingBranch(configuredBase)) {
+      rejected = { branch: configuredBase, source: "task-base-branch", reason: "fusion-sibling-branch" };
+    } else {
+      return { branch: configuredBase, source: "task-base-branch" };
+    }
   }
 
   const inheritedBase = task.branchContext?.inheritedBaseBranch?.trim();
   if (inheritedBase) {
-    return { branch: inheritedBase, source: "task-branch-context" };
+    if (isFusionSiblingBranch(inheritedBase)) {
+      rejected = rejected ?? { branch: inheritedBase, source: "task-branch-context", reason: "fusion-sibling-branch" };
+    } else {
+      return { branch: inheritedBase, source: "task-branch-context", rejected };
+    }
   }
 
   const projectDefault = options.projectDefaultBranch?.trim();
   if (projectDefault) {
-    return { branch: projectDefault, source: "project-default" };
+    return { branch: projectDefault, source: "project-default", rejected };
   }
 
   const legacyFallback = options.legacyFallbackBranch?.trim() || "main";
-  return { branch: legacyFallback, source: "legacy-main" };
+  return { branch: legacyFallback, source: "legacy-main", rejected };
 }
 
 export const HARD_BLOCKING_TASK_STATUSES = new Set([

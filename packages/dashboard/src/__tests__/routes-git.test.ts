@@ -156,6 +156,7 @@ vi.mock("@fusion/engine", async () => {
 
 import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
+import * as engineModule from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
 const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
@@ -950,6 +951,156 @@ describe("Git Management endpoints", () => {
       } finally {
         rmSync(repo.root, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe("POST /git/pull — integration worktree", () => {
+    let runGitSpy: ReturnType<typeof vi.spyOn>;
+
+    function buildIntegrationApp(store = createMockStore({ getRootDir: vi.fn().mockReturnValue("/repo"), recordRunAuditEvent: vi.fn().mockResolvedValue(undefined) })) {
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store));
+      return { app, store };
+    }
+
+    beforeEach(() => {
+      vi.mocked(engineModule.stashUnrelatedRootDirChanges).mockResolvedValue(null as never);
+      vi.mocked(engineModule.tryFastForwardFromOrigin).mockResolvedValue(undefined);
+      vi.mocked(engineModule.restoreUnrelatedRootDirChanges).mockResolvedValue({ status: "restored" } as never);
+      vi.mocked(engineModule.getConflictedFiles).mockResolvedValue([]);
+      vi.mocked(engineModule.resolveIntegrationRemote).mockResolvedValue("origin");
+      runGitSpy = vi.spyOn(resolveDiffBaseModule, "runGitCommand").mockImplementation((async (args: string[]) => {
+        const cmd = args.join(" ");
+        if (cmd.startsWith("worktree list --porcelain")) return "worktree /repo\nworktree /outside/worktree\n";
+        if (cmd.startsWith("rev-parse --git-dir")) return ".git\n";
+        if (cmd.startsWith("rev-parse --abbrev-ref HEAD")) return "integration\n";
+        if (cmd.startsWith("rev-parse HEAD")) return "abc123\n";
+        if (cmd.startsWith("stash list --format=%H|%gd")) return "stashsha|stash@{0}\n";
+        if (cmd.startsWith("stash drop stash@{0}")) return "Dropped\n";
+        if (cmd.startsWith("stash apply stash@{0}")) return "Applied\n";
+        if (cmd.startsWith("checkout --ours -- src/file.ts") || cmd.startsWith("checkout --theirs -- src/file.ts")) return "";
+        if (cmd.startsWith("add -- src/file.ts")) return "";
+        return "";
+      }) as typeof resolveDiffBaseModule.runGitCommand);
+    });
+
+    afterEach(() => {
+      runGitSpy?.mockRestore();
+    });
+
+    it("returns pull-clean and emits pull audit for clean integration worktree", async () => {
+      const { app, store } = buildIntegrationApp();
+      const res = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "/repo", integrationBranch: "integration", taskId: "FN-5419" }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(200);
+      expect(res.body.kind).toBe("pull-clean");
+      expect(vi.mocked(engineModule.tryFastForwardFromOrigin)).toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ domain: "git", mutationType: "pull:fast-forward", taskId: "FN-5419", target: "/repo" }));
+    });
+
+    it("returns pull-restored for restored/ai-resolved with ordered audits", async () => {
+      vi.mocked(engineModule.stashUnrelatedRootDirChanges).mockResolvedValue({ sha: "stashsha", label: "label" } as never);
+      vi.mocked(engineModule.restoreUnrelatedRootDirChanges).mockResolvedValueOnce({ status: "restored" } as never).mockResolvedValueOnce({ status: "ai-resolved" } as never);
+      const { app, store } = buildIntegrationApp();
+      for (const expected of ["restored", "ai-resolved"]) {
+        vi.mocked(store.recordRunAuditEvent).mockClear();
+        const res = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "/repo", integrationBranch: "integration", taskId: "FN-5419" }), { "Content-Type": "application/json" });
+        expect(res.status).toBe(200);
+        expect(res.body.kind).toBe("pull-restored");
+        const mutationTypes = vi.mocked(store.recordRunAuditEvent).mock.calls.map(([e]) => e.mutationType);
+        expect(mutationTypes).toEqual(["stash:push", "pull:fast-forward", "stash:pop"]);
+        expect(vi.mocked(store.recordRunAuditEvent).mock.calls[2]?.[0]?.metadata).toEqual(expect.objectContaining({ autostashOutcome: expected }));
+      }
+    });
+
+    it.each(["conflict-needs-manual", "failed"] as const)("returns stash-conflict for %s", async (status) => {
+      vi.mocked(engineModule.stashUnrelatedRootDirChanges).mockResolvedValue({ sha: "stashsha", label: "label" } as never);
+      vi.mocked(engineModule.restoreUnrelatedRootDirChanges).mockImplementation(async () => ({ status } as never));
+      vi.mocked(engineModule.getConflictedFiles).mockResolvedValue(["src/file.ts"]);
+      const { app, store } = buildIntegrationApp();
+      const res = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "/repo", integrationBranch: "integration", taskId: "FN-5419" }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(200);
+      expect(res.body.kind).toBe("stash-conflict");
+      expect(res.body.conflictedFiles).toEqual(["src/file.ts"]);
+      const mutationTypes = vi.mocked(store.recordRunAuditEvent).mock.calls.map(([e]) => e.mutationType);
+      expect(mutationTypes).toEqual(["stash:push", "pull:fast-forward", "stash:pop-conflict"]);
+    });
+
+    it("returns 409 on branch mismatch", async () => {
+      runGitSpy.mockImplementation((async (args: string[]) => {
+        if (args.join(" ").startsWith("worktree list --porcelain")) return "worktree /repo\n";
+        if (args.join(" ").startsWith("rev-parse --git-dir")) return ".git\n";
+        if (args.join(" ").startsWith("rev-parse --abbrev-ref HEAD")) return "other\n";
+        return "abc\n";
+      }) as typeof resolveDiffBaseModule.runGitCommand);
+      const { app, store } = buildIntegrationApp();
+      const res = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "/repo", integrationBranch: "integration" }), { "Content-Type": "application/json" });
+      expect(res.status).toBe(409);
+      expect(res.body.details).toMatchObject({ reason: "branch-mismatch", currentBranch: "other" });
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it("validates path traversal and rebase conflict", async () => {
+      const { app, store } = buildIntegrationApp();
+      const traversal = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "../../etc", integrationBranch: "integration" }), { "Content-Type": "application/json" });
+      expect(traversal.status).toBe(400);
+      const rebase = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "/repo", integrationBranch: "integration", rebase: true }), { "Content-Type": "application/json" });
+      expect(rebase.status).toBe(400);
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it("syncs working tree to local integration tip when origin is behind (local-ahead-of-origin case)", async () => {
+      // Simulate the merger-update-ref scenario: HEAD is symbolic to
+      // refs/heads/integration, the merger advanced the ref to a new sha,
+      // and origin doesn't have it yet (tryFastForwardFromOrigin returns
+      // no-op). The pull must still sync the worktree to the new local tip.
+      const issuedCommands: string[] = [];
+      runGitSpy.mockImplementation((async (args: string[]) => {
+        const cmd = args.join(" ");
+        issuedCommands.push(cmd);
+        if (cmd.startsWith("worktree list --porcelain")) return "worktree /repo\n";
+        if (cmd.startsWith("rev-parse --git-dir")) return ".git\n";
+        if (cmd.startsWith("rev-parse --abbrev-ref HEAD")) return "integration\n";
+        if (cmd === "rev-parse --verify refs/heads/integration") return "newtip0000\n";
+        if (cmd.startsWith("rev-parse HEAD")) return "newtip0000\n";
+        return "";
+      }) as typeof resolveDiffBaseModule.runGitCommand);
+
+      const { app, store } = buildIntegrationApp();
+      const res = await REQUEST(app, "POST", "/api/git/pull", JSON.stringify({ worktreePath: "/repo", integrationBranch: "integration", taskId: "FN-5419" }), { "Content-Type": "application/json" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.kind).toBe("pull-clean");
+      // The fix: a `reset --hard <localTip>` must have been issued so the
+      // worktree advances to the merger-updated ref, not just left at
+      // whatever HEAD symbolically resolved to.
+      expect(issuedCommands).toContain("reset --hard newtip0000");
+      // tryFastForwardFromOrigin still ran (origin sync is still attempted).
+      expect(vi.mocked(engineModule.tryFastForwardFromOrigin)).toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ mutationType: "pull:fast-forward", taskId: "FN-5419" }),
+      );
+    });
+
+    it("supports stash-resolve, stash-drop, and stash-apply", async () => {
+      vi.mocked(engineModule.getConflictedFiles).mockResolvedValueOnce(["src/file.ts"]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce(["src/file.ts"]);
+      const { app, store } = buildIntegrationApp();
+      const resolved = await REQUEST(app, "POST", "/api/git/stash-resolve", JSON.stringify({ worktreePath: "/repo", file: "src/file.ts", choice: "ours" }), { "Content-Type": "application/json" });
+      expect(resolved.status).toBe(200);
+      const dropped = await REQUEST(app, "POST", "/api/git/stash-drop", JSON.stringify({ worktreePath: "/repo", stashSha: "stashsha", taskId: "FN-5419" }), { "Content-Type": "application/json" });
+      expect(dropped.status).toBe(200);
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "stash:pop", taskId: "FN-5419" }));
+      runGitSpy.mockImplementation((async (args: string[]) => {
+        if (args.join(" ").startsWith("worktree list --porcelain")) return "worktree /repo\n";
+        if (args.join(" ").startsWith("stash list --format=%H|%gd")) return "stashsha|stash@{0}\n";
+        if (args.join(" ").startsWith("stash apply stash@{0}")) throw new Error("CONFLICT (content): Merge conflict in src/file.ts");
+        if (args.join(" ").startsWith("rev-parse --git-dir")) return ".git\n";
+        return "";
+      }) as typeof resolveDiffBaseModule.runGitCommand);
+      vi.mocked(engineModule.getConflictedFiles).mockResolvedValue(["src/file.ts"]);
+      const applied = await REQUEST(app, "POST", "/api/git/stash-apply", JSON.stringify({ worktreePath: "/repo", stashSha: "stashsha", taskId: "FN-5419" }), { "Content-Type": "application/json" });
+      expect(applied.status).toBe(200);
+      expect(applied.body).toMatchObject({ applied: true, conflict: true, conflictedFiles: ["src/file.ts"] });
     });
   });
 

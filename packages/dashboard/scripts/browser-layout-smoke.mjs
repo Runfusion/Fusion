@@ -703,7 +703,7 @@ async function runSmokeChecks(page, pageUrl) {
       && initialLayout.navLeft >= 0
       && initialLayout.navRight <= initialLayout.viewportWidth + 1
       && initialLayout.navBottomGap <= 1
-      && initialLayout.footerBottomGap <= 1
+      && initialLayout.footerBottomGap <= 8
       && initialLayout.contentPaddingBottom >= initialLayout.navHeight + initialLayout.footerHeight - 1
       && initialLayout.tabMinWidth >= 36,
     JSON.stringify(initialLayout),

@@ -21,7 +21,8 @@ function setupFixture() {
       worktree TEXT,
       paused INTEGER,
       log TEXT,
-      updatedAt TEXT
+      updatedAt TEXT,
+      deletedAt TEXT
     );
   `);
 
@@ -36,8 +37,17 @@ function writePrompt(tasksDir, taskId, scopeLines) {
 }
 
 function insertTask(db, row) {
-  db.prepare(`INSERT INTO tasks (id, "column", blockedBy, worktree, paused, log, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(row.id, row.column, row.blockedBy ?? null, row.worktree ?? null, row.paused ?? 0, row.log ?? "[]", row.updatedAt ?? new Date().toISOString());
+  db.prepare(`INSERT INTO tasks (id, "column", blockedBy, worktree, paused, log, updatedAt, deletedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      row.id,
+      row.column,
+      row.blockedBy ?? null,
+      row.worktree ?? null,
+      row.paused ?? 0,
+      row.log ?? "[]",
+      row.updatedAt ?? new Date().toISOString(),
+      row.deletedAt ?? null,
+    );
 }
 
 test("clears stale blocker when blocker is terminal", () => {
@@ -95,6 +105,48 @@ test("dry-run reports repairs without writing", () => {
     assert.equal(findings.find((f) => f.taskId === "FN-BLOCKED")?.reason, "blocker-in-review-without-worktree");
     assert.equal(blocked.blockedBy, "FN-MISSING-SCOPE");
     assert.equal(blocked.log, "[]");
+  } finally {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("recoverBlockedBy ignores soft-deleted blockers and dependents (FN-5528)", () => {
+  const { dir, tasksDir, db } = setupFixture();
+  try {
+    writePrompt(tasksDir, "FN-LIVE-DEPENDENT", ["packages/core/src/store.ts"]);
+    writePrompt(tasksDir, "FN-DELETED-BLOCKER", ["packages/core/src/store.ts"]);
+    writePrompt(tasksDir, "FN-DELETED-TODO", ["packages/dashboard/app/App.tsx"]);
+    writePrompt(tasksDir, "FN-LIVE-TERMINAL", ["packages/engine/src/self-healing.ts"]);
+    writePrompt(tasksDir, "FN-LIVE-TERMINAL-DEP", ["packages/engine/src/self-healing.ts"]);
+
+    insertTask(db, {
+      id: "FN-DELETED-BLOCKER",
+      column: "in-review",
+      deletedAt: "2026-05-20T05:50:51.015Z",
+    });
+    insertTask(db, { id: "FN-LIVE-DEPENDENT", column: "todo", blockedBy: "FN-DELETED-BLOCKER" });
+
+    const deletedTodoUpdatedAt = "2026-05-22T01:00:00.000Z";
+    insertTask(db, {
+      id: "FN-DELETED-TODO",
+      column: "todo",
+      blockedBy: "FN-LIVE-TERMINAL",
+      updatedAt: deletedTodoUpdatedAt,
+      deletedAt: "2026-05-20T05:50:51.015Z",
+    });
+
+    insertTask(db, { id: "FN-LIVE-TERMINAL", column: "done" });
+    insertTask(db, { id: "FN-LIVE-TERMINAL-DEP", column: "todo", blockedBy: "FN-LIVE-TERMINAL" });
+
+    const findings = recoverBlockedBy({ db, tasksDir, dryRun: false });
+
+    assert.equal(findings.find((f) => f.taskId === "FN-LIVE-DEPENDENT")?.reason, "blocker-missing");
+    assert.equal(findings.find((f) => f.taskId === "FN-LIVE-TERMINAL-DEP")?.reason, "blocker-terminal:done");
+
+    const deletedTodo = db.prepare("SELECT blockedBy, updatedAt FROM tasks WHERE id = ?").get("FN-DELETED-TODO");
+    assert.equal(deletedTodo.blockedBy, "FN-LIVE-TERMINAL");
+    assert.equal(deletedTodo.updatedAt, deletedTodoUpdatedAt);
   } finally {
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });

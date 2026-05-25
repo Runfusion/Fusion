@@ -126,6 +126,97 @@ describe("createResolvedAgentSession", () => {
       }),
     );
   });
+
+  it("emits session:runtime-resolved when runAuditor is provided", async () => {
+    const mockSession = { prompt: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({ session: mockSession });
+    const auditDatabaseMock = vi.fn().mockResolvedValue(undefined);
+
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+
+    await createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      defaultProvider: "mock",
+      defaultModelId: "mock-default",
+      runAuditor: { database: auditDatabaseMock } as any,
+      settings: { testMode: true } as any,
+    });
+
+    expect(createSessionMock).not.toHaveBeenCalled();
+    expect(auditDatabaseMock).toHaveBeenCalledTimes(1);
+    expect(auditDatabaseMock).toHaveBeenCalledWith({
+      type: "session:runtime-resolved",
+      target: "mock",
+      metadata: {
+        sessionPurpose: "executor",
+        runtimeId: "mock",
+        wasConfigured: true,
+        provider: "mock",
+        modelId: "mock-default",
+        mockProviderActive: true,
+        testModeActive: true,
+      },
+    });
+  });
+
+  it("succeeds when runAuditor is omitted", async () => {
+    const mockSession = { prompt: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({
+      session: mockSession,
+      sessionFile: "session.json",
+    });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "pi",
+        name: "Default PI Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "mock/model"),
+      },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+
+    await expect(createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+    })).resolves.toMatchObject({ runtimeId: "pi", wasConfigured: false });
+  });
+
+  it("warns and continues when runAuditor throws", async () => {
+    const mockSession = { prompt: vi.fn() } as any;
+    const createSessionMock = vi.fn().mockResolvedValue({ session: mockSession });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "pi",
+        name: "Default PI Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "mock/model"),
+      },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { createResolvedAgentSession } = await import("../agent-session-helpers.js");
+
+    await expect(createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      runAuditor: {
+        database: vi.fn().mockRejectedValue(new Error("audit down")),
+      } as any,
+    })).resolves.toMatchObject({ session: mockSession, runtimeId: "pi", wasConfigured: false });
+
+    warnSpy.mockRestore();
+  });
 });
 
 describe("resolveMergerSessionModel", () => {

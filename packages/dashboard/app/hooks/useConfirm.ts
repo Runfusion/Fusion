@@ -11,18 +11,25 @@ export interface ConfirmOptions {
   danger?: boolean;
   tertiaryLabel?: string;
   tertiaryDanger?: boolean;
+  checkbox?: {
+    label: string;
+    description?: string;
+    defaultChecked?: boolean;
+  };
 }
 
 export type ConfirmChoice = "primary" | "tertiary" | "cancel";
 
 interface PendingConfirm {
   options: ConfirmOptions;
-  resolve: (value: ConfirmChoice) => void;
+  checkboxValue: boolean;
+  resolve: (value: { choice: ConfirmChoice; checkboxValue: boolean }) => void;
 }
 
 interface ConfirmContextValue {
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   confirmWithChoice: (options: ConfirmOptions) => Promise<ConfirmChoice>;
+  confirmWithCheckbox: (options: ConfirmOptions) => Promise<{ choice: ConfirmChoice; checkboxValue: boolean }>;
 }
 
 const ConfirmContext = createContext<ConfirmContextValue | null>(null);
@@ -39,11 +46,23 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const confirmWithChoice = useCallback((options: ConfirmOptions) => {
-    return new Promise<ConfirmChoice>((resolve) => {
-      updateQueue((current) => [...current, { options, resolve }]);
+  const confirmWithCheckbox = useCallback((options: ConfirmOptions) => {
+    return new Promise<{ choice: ConfirmChoice; checkboxValue: boolean }>((resolve) => {
+      updateQueue((current) => [
+        ...current,
+        {
+          options,
+          checkboxValue: options.checkbox?.defaultChecked ?? false,
+          resolve,
+        },
+      ]);
     });
   }, [updateQueue]);
+
+  const confirmWithChoice = useCallback(async (options: ConfirmOptions) => {
+    const { choice } = await confirmWithCheckbox(options);
+    return choice;
+  }, [confirmWithCheckbox]);
 
   const confirm = useCallback(async (options: ConfirmOptions) => {
     const choice = await confirmWithChoice(options);
@@ -56,13 +75,16 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    current.resolve(value);
+    current.resolve({ choice: value, checkboxValue: current.checkboxValue });
     updateQueue((items) => items.slice(1));
   }, [updateQueue]);
 
   const active = queue[0] ?? null;
 
-  const contextValue = useMemo<ConfirmContextValue>(() => ({ confirm, confirmWithChoice }), [confirm, confirmWithChoice]);
+  const contextValue = useMemo<ConfirmContextValue>(
+    () => ({ confirm, confirmWithChoice, confirmWithCheckbox }),
+    [confirm, confirmWithCheckbox, confirmWithChoice]
+  );
 
   return React.createElement(
     ConfirmContext.Provider,
@@ -74,6 +96,18 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
       onConfirm: () => resolveCurrent("primary"),
       onTertiary: () => resolveCurrent("tertiary"),
       onCancel: () => resolveCurrent("cancel"),
+      checkboxLabel: active?.options.checkbox?.label,
+      checkboxDescription: active?.options.checkbox?.description,
+      checkboxChecked: active?.checkboxValue ?? false,
+      onCheckboxChange: (next) => {
+        updateQueue((current) => {
+          if (current.length === 0) {
+            return current;
+          }
+          const [head, ...tail] = current;
+          return [{ ...head, checkboxValue: next }, ...tail];
+        });
+      },
     })
   );
 }
@@ -87,5 +121,9 @@ export function useConfirm(): ConfirmContextValue {
   return {
     confirm: async (_options: ConfirmOptions) => false,
     confirmWithChoice: async (_options: ConfirmOptions) => "cancel",
+    confirmWithCheckbox: async (options: ConfirmOptions) => ({
+      choice: "cancel",
+      checkboxValue: options.checkbox?.defaultChecked ?? false,
+    }),
   };
 }

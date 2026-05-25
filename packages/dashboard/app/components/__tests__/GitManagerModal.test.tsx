@@ -5,6 +5,11 @@ import { GitManagerModal } from "../GitManagerModal";
 import type { Task } from "@fusion/core";
 import { loadAllAppCss } from "../../test/cssFixture";
 
+// Mock SSE bus before module imports so the GitManagerModal SSE effect is a no-op
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: vi.fn(() => () => {}),
+}));
+
 const mockUseViewportMode = vi.fn(() => "desktop");
 const mockUseMobileKeyboard = vi.fn(() => ({
   keyboardOverlap: 0,
@@ -28,6 +33,8 @@ vi.mock("../../hooks/useMobileScrollLock", () => ({
 // Mock the API module with all functions
 vi.mock("../../api", async () => {
   return {
+    api: vi.fn(),
+    fetchConfig: vi.fn(),
     fetchGitStatus: vi.fn(),
     fetchGitCommits: vi.fn(),
     fetchCommitDiff: vi.fn(),
@@ -68,6 +75,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 }));
 
 import {
+  api,
+  fetchConfig,
   fetchGitStatus,
   fetchGitCommits,
   fetchCommitDiff,
@@ -99,6 +108,7 @@ import {
   fetchRemoteCommits,
   fetchBranchCommits,
 } from "../../api";
+import { subscribeSse } from "../../sse-bus";
 
 function expectLatestCallStartsWith(mockFn: { mock: { calls: unknown[][] } }, ...expectedArgs: unknown[]) {
   expect(mockFn.mock.calls.length).toBeGreaterThan(0);
@@ -147,6 +157,9 @@ describe("GitManagerModal", () => {
     mockConfirm.mockResolvedValue(true);
 
     // Default mock implementations
+    (fetchConfig as any).mockResolvedValue({ maxConcurrent: 4, rootDir: "/project/root" });
+    (api as any).mockResolvedValue({ events: [] });
+    (subscribeSse as any).mockReturnValue(() => {});
     (fetchGitStatus as any).mockResolvedValue({
       branch: "main",
       commit: "abc1234",
@@ -2977,6 +2990,54 @@ describe("GitManagerModal", () => {
       });
     });
   });
+
+  describe("Sync local tip button (Remotes panel)", () => {
+    it("renders the Sync local tip button in the remotes panel when integrationBranch is set", async () => {
+      (fetchGitStatus as any).mockResolvedValue({
+        branch: "main",
+        commit: "abc1234",
+        isDirty: false,
+        ahead: 0,
+        behind: 0,
+        integrationBranch: "main",
+        isOnIntegrationBranch: true,
+      });
+
+      render(
+        <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+      );
+
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("remotes-sync-integration-tip-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("the Remotes Sync local tip button is disabled when not on integration branch", async () => {
+      (fetchGitStatus as any).mockResolvedValue({
+        branch: "feature/bar",
+        commit: "abc1234",
+        isDirty: false,
+        ahead: 0,
+        behind: 0,
+        integrationBranch: "main",
+        isOnIntegrationBranch: false,
+      });
+
+      render(
+        <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+      );
+
+      fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+      await waitFor(() => {
+        const btn = screen.getByTestId("remotes-sync-integration-tip-btn");
+        expect(btn).toBeDisabled();
+      });
+    });
+  });
+
 
   describe("CSS regression coverage", () => {
     it("includes remotes layout selectors and mobile rules", () => {

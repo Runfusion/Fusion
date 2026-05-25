@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
 import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "../spec-validation/task-document-references.js";
 
 describe("detectDanglingTaskDocReferences", () => {
@@ -80,10 +79,5 @@ describe("detectDanglingTaskDocReferences", () => {
     ]);
     expect(formatted).toContain("REVISE — Dangling task-document references");
     expect(formatted).toContain("Step 0, Step 4, Step 5");
-  });
-
-  it("can read the FN-5110 fixture prompt", async () => {
-    const fixture = await readFile("/Users/eclipxe/Projects/kb/.fusion/tasks/FN-5110/PROMPT.md", "utf8");
-    expect(fixture).toContain("# Task: FN-5110");
   });
 });

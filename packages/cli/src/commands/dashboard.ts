@@ -48,6 +48,7 @@ import {
   processPullRequestMergeTask,
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
+import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getClaudeCodeCredentialPaths, getCodexCliAuthPath, getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
@@ -1589,7 +1590,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // Phase 5 removes this fallback entirely.
     let cwdEngine: ReturnType<typeof engineManager.getEngine>;
     try {
-      const registered = await centralCoreForEngine.getProjectByPath(cwd).catch(() => null);
+      const registered = await ensureCwdProjectRegistered({
+        cwd,
+        central: centralCoreForEngine,
+        logPrefix: "dashboard",
+        autoRegister: true,
+      });
       if (registered) {
         // Ensure the cwd project's engine exists before handing HTTP defaults to
         // createServer; background startAll may still be warming other projects.

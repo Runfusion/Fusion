@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/whatsapp-chat",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "description": "WhatsApp Web (Baileys) chat bridge for Fusion agents",
   "keywords": [

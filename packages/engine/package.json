@@ -1,6 +1,6 @@
 {
   "name": "@fusion/engine",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "license": "MIT",
   "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -30,7 +30,9 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --silent=passed-only --reporter=dot",
+    "test": "vitest run --silent=passed-only --reporter=dot --project=engine-default --project=engine-reliability",
+    "test:slow": "vitest run --silent=passed-only --reporter=dot --project=engine-slow",
+    "test:all": "vitest run --silent=passed-only --reporter=dot",
     "test:executor": "vitest run src/__tests__/executor-*.test.ts",
     "test:watch": "vitest src/__tests__/executor-*.test.ts --watch"
   },

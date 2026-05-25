@@ -650,6 +650,16 @@ describe("bin command routing and fallbacks", () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Usage: fn pr create <task-id>"));
   });
 
+  it("routes task delete with allow-resurrection flag", async () => {
+    await runBin(["task", "delete", "FN-1", "--force", "--allow-resurrection"]);
+    expect(commandMocks.runTaskDelete).toHaveBeenCalledWith("FN-1", true, true, undefined);
+  });
+
+  it("routes task delete default allow-resurrection=false", async () => {
+    await runBin(["task", "delete", "FN-1", "--force"]);
+    expect(commandMocks.runTaskDelete).toHaveBeenCalledWith("FN-1", true, false, undefined);
+  });
+
   it("routes desktop flags to runDesktop", async () => {
     await runBin(["desktop", "--dev", "--paused", "--interactive"]);
     expect(commandMocks.runDesktop).toHaveBeenCalledWith({

@@ -48,6 +48,10 @@ export default defineConfig({
           include: ["src/**/*.test.ts"],
           exclude: [
             "src/__tests__/reliability-interactions/**/*.test.ts",
+            // Real-git heavy files run in the engine-slow project so local
+            // `pnpm test` stays snappy. CI picks them up via `test:slow`
+            // / `test:all` invoked from the root `test:full` script.
+            "src/**/*.slow.test.ts",
             "node_modules/**",
             "dist/**",
           ],
@@ -58,11 +62,27 @@ export default defineConfig({
         test: {
           name: "engine-reliability",
           include: ["src/__tests__/reliability-interactions/**/*.test.ts"],
+          // Mirror the engine-default exclusion so reliability slow tests
+          // also tier into engine-slow.
+          exclude: ["src/**/*.slow.test.ts"],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and
           // SQLite rowid interleaving (e.g. FN-5521 hit
           // `expected 24 to be less than 19` in merge-reuse-task-worktree).
           // Serialize at the file level; within-file order is already linear.
+          poolOptions: { threads: { singleThread: true } },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "engine-slow",
+          // Files matching `*.slow.test.ts` are the long-tail real-git suites
+          // (`mkdtemp` + `git init` + multiple commits per test). They run
+          // single-threaded to avoid spawning many concurrent git processes
+          // and inflating wall time further. Excluded from the default
+          // `pnpm test` lane; run via `pnpm test:slow` / `pnpm test:all`.
+          include: ["src/**/*.slow.test.ts"],
           poolOptions: { threads: { singleThread: true } },
         },
       },

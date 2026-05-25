@@ -279,6 +279,13 @@ describe("PluginRunner", () => {
         pluginRunner.invokeHook("onLoad")
       ).rejects.toThrow("Hook failed");
     });
+
+    it("should isolate hook invocation errors in invokeHookSafe", async () => {
+      mockPluginLoader.invokeHook = vi.fn().mockRejectedValue(new Error("Hook failed"));
+      await pluginRunner.init();
+
+      await expect(pluginRunner.invokeHookSafe("onLoad")).resolves.toBeUndefined();
+    });
   });
 
   describe("getPluginTools()", () => {

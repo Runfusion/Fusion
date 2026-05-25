@@ -339,7 +339,7 @@ The `tasks.githubTracking` JSON column stores per-task GitHub tracking state (`e
 | `secrets` | Encrypted secret KV rows (`key` unique) with raw BLOB `value_ciphertext` + per-row random `nonce` (AES-256-GCM), per-secret `access_policy` CHECK (`auto`/`prompt`/`deny`), env-materialization metadata (`env_exportable`, `env_export_key`), and read-audit fields (`last_read_at`, `last_read_by`). Plaintext is never written to the database. |
 | `task_documents` | Task-scoped document metadata/content keyed by `(taskId, key)` with current revision pointer. |
 | `task_document_revisions` | Immutable revision history for task documents (content snapshots by revision). |
-| `__meta` | Schema version + monotonic `lastModified` change detector, plus one-time bootstrap metadata such as `bootstrappedAt`. |
+| `__meta` | Schema version + monotonic `lastModified` change detector, plus one-time bootstrap metadata such as `bootstrappedAt` and `projectIdentity`. |
 | `missions` | Mission-level planning hierarchy root. |
 | `milestones` | Milestones under missions, including dependency lists and validation state. |
 | `slices` | Slices under milestones with plan-state/activation metadata. |
@@ -392,6 +392,16 @@ The `tasks.githubTracking` JSON column stores per-task GitHub tracking state (`e
 - **Fingerprint absent or mismatched:** run the full schema-compatibility reconciliation pass, unioning table definitions from `SCHEMA_SQL` plus `MIGRATION_ONLY_TABLE_SCHEMAS` and backfilling missing columns on tables that already exist, then persist the new fingerprint.
 
 Invariant: after init, every declared column for covered tables exists regardless of `__meta.schemaVersion` whenever the fingerprint is stale or missing, preventing legacy drift from causing `no such column` regressions on newly added fields while keeping unchanged-schema opens fast.
+
+### Project identity row (`__meta.projectIdentity`)
+
+Each project-scoped `.fusion/fusion.db` now stores the canonical central registry identity in `__meta.projectIdentity` as JSON:
+
+```json
+{ "id": "proj_0123456789abcdef", "createdAt": "2026-05-21T12:00:00.000Z", "firstSeenPath": "/abs/project/path" }
+```
+
+This is written on first successful registration (and back-filled on later startup for older projects). If `~/.fusion/fusion-central.db` loses the row for that path, startup reads this identity and reattaches the same `projectId` instead of minting a new id. That preserves project-scoped rows keyed by `projectId` (`todo_lists`, `chat_sessions`, `project_insights`, etc.).
 
 ---
 

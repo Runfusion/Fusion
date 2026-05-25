@@ -2461,6 +2461,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "pnpm test",
       mergeConflictStrategy: "ai-only",
+      directMergeCommitStrategy: "auto",
       worktreeRebaseBeforeMerge: false,
       worktreeRebaseLocalBase: false,
       ...overrides,

@@ -1936,7 +1936,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
   router.get("/settings/scopes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const scopes = await scopedStore.getSettingsByScope();
+      const scopes = await scopedStore.getSettingsByScopeFast();
       res.json(scopes);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

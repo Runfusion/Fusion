@@ -122,7 +122,7 @@ Use `superviseSpawn(...)` from `@fusion/core` for managed child processes; do no
 ### Merging Branches Into Main
 
 1. **Drop duplicate commits before merging.** Rebase away duplicates already on main.
-2. **Rebase over squash for multi-commit branches.** `directMergeCommitStrategy="auto"` squashes only tiny branches.
+2. **Squash is now the project default; history-preserving merge paths require opt-in.** New projects default `directMergeCommitStrategy="always-squash"`. To preserve multi-commit history, explicitly set project `directMergeCommitStrategy` to `"auto"` or `"always-rebase"`, or set a per-task `**Direct Merge Commit Strategy:** ...` override in `PROMPT.md`.
 3. **Empty cherry-picks are no-ops.** Do not create empty commits.
 4. **Already-on-main classifier applies.** Allow finalize/self-healing recovery when lineage is landed.
 5. **Contamination auto-recovery is bounded.** First pass can auto-drop upstream foreign commits; repeated/ambiguous cases escalate.
@@ -150,9 +150,13 @@ When `settings.autoMerge: false`, `in-review` is terminal-until-merged by a huma
 
 `testMode?: boolean` is now available in both project and global settings. If project `testMode === true` (or the resolved default provider is `"mock"` at any tier), every AI lane is forced to `mock/scripted`, overriding per-task and per-lane model selections. The dashboard exposes this via the Settings Modal "Enable test mode" toggle and a persistent "Test mode — no real AI calls" banner.
 
+### Run Audit
+
+- FN-5419: git run-audit now includes `pull:fast-forward` and `stash:pop-conflict`; dashboard git surfaces now include the extended `POST /api/git/pull` integration-worktree path plus companion `POST /api/git/stash-resolve`, `POST /api/git/stash-drop`, and `POST /api/git/stash-apply` routes.
+
 ### Reliability Mechanism Coverage
 
-- FN-5432 backstop: `packages/engine/src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts` extends FN-5256 coverage with long-cycle ambiguous sweep, write-boundary/sweep race, self-defeating+cycle non-contradiction across one maintenance flow, and audit-event shape regression; core regression cases (long cycle, self-loop via update, incremental-update closes a loop, moveTask seam invariant, DependencyCycleError shape) live in `packages/core/src/__tests__/store-dependency-cycle.test.ts`.
+- FN-5432 backstop: `packages/engine/src/__tests__/reliability-interactions/dependency-cycle-reconcile.test.ts` extends FN-5256 coverage with long-cycle ambiguous sweep, write-boundary/sweep race, self-defeating+cycle non-contradiction across one maintenance flow, and audit-event shape regression; core regression cases (long cycle, self-loop via update, incremental-update closes a loop, moveTask seam invariant, DependencyCycleError shape) live in `packages/core/src/__tests__/store-dependency-cycle.test.ts`. User-facing pull/stash audit event behavior (`pull:fast-forward`, `stash:pop-conflict`) is documented in `docs/dashboard-guide.md` under Merge Advance Notice / Smart Pull.
 - FN-5403 backstop: `packages/engine/src/__tests__/reliability-interactions/engine-stop-aborts-execution.test.ts` locks stop-ordering behavior so engine shutdown aborts executor AI sessions before drain wait and preserves task-row lifecycle semantics.
 
 ---
@@ -161,7 +165,7 @@ When `settings.autoMerge: false`, `in-review` is terminal-until-merged by a huma
 
 - `./docs/architecture.md` — lifecycle invariants, self-healing rules, reliability interaction backstops, run-audit internals.
 - `./docs/testing.md` — full testing lanes, worker fanout guidance, test taxonomy, and file organization.
-- `./docs/dashboard-guide.md` — dashboard behavior and **Styling Guide** details.
+- `./docs/dashboard-guide.md` — dashboard behavior and **Styling Guide** details. User-facing docs for Merge Advance Notice and Smart Pull live here.
 - `./docs/agents.md` — pi extension scope, coordination tools, checkout leasing, runtime config.
 - `./docs/settings-reference.md` — model-selection hierarchy, mock provider mode, token budget precedence, presets.
 - `./docs/storage.md` — hybrid storage model details.

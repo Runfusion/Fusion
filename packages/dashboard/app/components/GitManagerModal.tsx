@@ -23,6 +23,8 @@ import type {
   GitRemoteDetailed,
 } from "../api";
 import {
+  api,
+  fetchConfig,
   fetchGitStatus,
   fetchGitCommits,
   fetchCommitDiff,
@@ -86,11 +88,13 @@ import {
   XCircle,
   Send,
   Pencil,
+  Info,
 } from "lucide-react";
 
 // ── Types & Constants ─────────────────────────────────────────────
 
 type SectionId = "status" | "changes" | "commits" | "branches" | "worktrees" | "stashes" | "remotes";
+
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { id: "status", label: "Status", icon: Radio },
@@ -216,6 +220,8 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   // ── Status state
   const [status, setStatus] = useState<GitStatus | null>(null);
 
+  const [rootDir, setRootDir] = useState<string | null>(null);
+
   // ── Changes state
   const [fileChanges, setFileChanges] = useState<GitFileChange[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
@@ -273,12 +279,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     try {
       switch (activeSection) {
         case "status": {
-          const statusData = await fetchGitStatus(projectId);
+          const statusData = await fetchGitStatus(projectId, { extended: true });
           setStatus(statusData);
           break;
         }
         case "changes": {
-          const [statusData, changes] = await Promise.all([fetchGitStatus(projectId), fetchFileChanges(projectId)]);
+          const [statusData, changes] = await Promise.all([fetchGitStatus(projectId, { extended: true }), fetchFileChanges(projectId)]);
           setStatus(statusData);
           setFileChanges(changes);
           setSelectedFiles(new Set());
@@ -293,7 +299,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           break;
         }
         case "branches": {
-          const [branchesData, statusForBranch] = await Promise.all([fetchGitBranches(projectId), fetchGitStatus(projectId)]);
+          const [branchesData, statusForBranch] = await Promise.all([fetchGitBranches(projectId), fetchGitStatus(projectId, { extended: true })]);
           setBranches(branchesData);
           setStatus(statusForBranch);
           break;
@@ -313,7 +319,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           break;
         }
         case "remotes": {
-          const remoteStatus = await fetchGitStatus(projectId);
+          const remoteStatus = await fetchGitStatus(projectId, { extended: true });
           setStatus(remoteStatus);
           break;
         }
@@ -398,7 +404,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     try {
       await discardChanges(files, projectId);
       addToast(`Discarded changes to ${files.length} file(s)`, "success");
-      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId)]);
+      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId, { extended: true })]);
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedFiles(new Set());
@@ -419,7 +425,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       addToast(`Committed: ${result.hash}`, "success");
       setCommitMessage("");
       // Refresh changes and status
-      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId)]);
+      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId, { extended: true })]);
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedDiffTarget(null);
@@ -443,7 +449,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const result = await createCommit(commitMessage.trim(), projectId);
       addToast(`Committed: ${result.hash}`, "success");
       setCommitMessage("");
-      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId)]);
+      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId, { extended: true })]);
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedDiffTarget(null);
@@ -557,7 +563,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     try {
       await checkoutBranch(name, projectId);
       addToast(`Switched to ${name}`, "success");
-      const [statusData, branchesData] = await Promise.all([fetchGitStatus(projectId), fetchGitBranches(projectId)]);
+      const [statusData, branchesData] = await Promise.all([fetchGitStatus(projectId, { extended: true }), fetchGitBranches(projectId)]);
       setStatus(statusData);
       setBranches(branchesData);
     } catch (err) {
@@ -768,7 +774,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const result = await fetchRemote(undefined, projectId);
       setLastRemoteResult(result);
       addToast(result.message || "Fetch completed", result.fetched ? "success" : "info");
-      const statusData = await fetchGitStatus(projectId);
+      const statusData = await fetchGitStatus(projectId, { extended: true });
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || "Fetch failed", "error");
@@ -788,7 +794,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
         const fallbackMessage = options?.rebase ? "Pull --rebase completed" : "Pull completed";
         addToast(result.message || fallbackMessage, "success");
       }
-      const statusData = await fetchGitStatus(projectId);
+      const statusData = await fetchGitStatus(projectId, { extended: true });
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || "Pull failed", "error");
@@ -803,7 +809,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const result = await pushBranch(projectId);
       setLastRemoteResult(result);
       addToast(result.message || "Push completed", "success");
-      const statusData = await fetchGitStatus(projectId);
+      const statusData = await fetchGitStatus(projectId, { extended: true });
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || "Push failed", "error");
@@ -811,6 +817,45 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       setRemoteLoading(null);
     }
   }, [addToast, projectId]);
+
+  // Fetch rootDir from config (used as worktreePath for the per-task sync
+  // button surfaced from RemotesPanel below).
+  useEffect(() => {
+    fetchConfig(projectId).then((cfg) => setRootDir(cfg.rootDir)).catch(() => setRootDir(null));
+  }, [projectId]);
+
+  const handleSyncIntegrationTip = useCallback(async () => {
+    if (!status?.integrationBranch || status.isOnIntegrationBranch === false) return;
+    const worktreePath = rootDir;
+    if (!worktreePath) {
+      addToast("Project root path not available", "error");
+      return;
+    }
+    setRemoteLoading("sync-integration");
+    try {
+      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+      await api(`/git/pull${query}`, {
+        method: "POST",
+        body: JSON.stringify({
+          worktreePath,
+          integrationBranch: status.integrationBranch,
+          taskId: undefined,
+          // Pure-local catch-up: the merger advanced refs/heads/<integration>
+          // locally; the worktree just needs to hard-reset to that ref.
+          // No reason to fetch/merge from origin here — that would silently
+          // pull in unrelated remote work the operator didn't ask for.
+          skipOriginFetch: true,
+        }),
+      });
+      addToast("Synced worktree to local integration tip", "success");
+      const statusData = await fetchGitStatus(projectId, { extended: true });
+      setStatus(statusData);
+    } catch (err) {
+      addToast(getErrorMessage(err) || "Sync failed", "error");
+    } finally {
+      setRemoteLoading(null);
+    }
+  }, [addToast, projectId, rootDir, status?.integrationBranch, status?.isOnIntegrationBranch]);
 
   // ── Derived state ───────────────────────────────────────────────
 
@@ -887,7 +932,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
             {/* ── Status Panel ── */}
             {activeSection === "status" && !loading && status && (
-              <StatusPanel status={status} copyToClipboard={copyToClipboard} />
+              <StatusPanel
+                status={status}
+                copyToClipboard={copyToClipboard}
+                onSyncWorkingTree={handleSyncIntegrationTip}
+                syncing={remoteLoading === "sync-integration"}
+              />
             )}
 
             {/* ── Changes Panel ── */}
@@ -989,6 +1039,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                 onFetch={handleFetch}
                 onPull={handlePull}
                 onPush={handlePush}
+                onSyncIntegrationTip={handleSyncIntegrationTip}
+                syncIntegrationDisabled={
+                  !status?.integrationBranch ||
+                  status?.isOnIntegrationBranch === false ||
+                  remoteLoading !== null
+                }
                 addToast={addToast}
                 projectId={projectId}
                 copyToClipboard={copyToClipboard}
@@ -1007,10 +1063,15 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 function StatusPanel({
   status,
   copyToClipboard,
+  onSyncWorkingTree,
+  syncing,
 }: {
   status: GitStatus;
   copyToClipboard: (text: string, label?: string) => void;
+  onSyncWorkingTree: () => void;
+  syncing: boolean;
 }) {
+  const [advancesHelpOpen, setAdvancesHelpOpen] = useState(false);
   return (
     <div className="gm-panel" data-testid="status-panel">
       <div className="gm-panel-header">
@@ -1022,6 +1083,14 @@ function StatusPanel({
           <span className="gm-status-value">
             <GitBranchIcon size={14} />
             <span>{status.branch}</span>
+            {/* Only flag "not on <integration>" when we know the worktree IS
+                on a branch — detached HEAD (isOnIntegrationBranch undefined)
+                is a non-branch state, not "on the wrong branch." */}
+            {status.integrationBranch && status.isOnIntegrationBranch === false && (
+              <span className="gm-status-sub" title="Currently on a non-integration branch">
+                {" "}(not on {status.integrationBranch})
+              </span>
+            )}
           </span>
         </div>
         <div className="gm-status-card">
@@ -1031,10 +1100,20 @@ function StatusPanel({
             <button
               className="gm-icon-btn"
               onClick={() => copyToClipboard(status.commit, "commit hash")}
-              title="Copy commit hash"
+              title={`Copy short commit hash${status.headSha ? " (use the full SHA below for git operations)" : ""}`}
             >
               <Copy size={12} />
             </button>
+            {status.headSha && (
+              <button
+                className="gm-icon-btn"
+                onClick={() => copyToClipboard(status.headSha!, "full commit hash")}
+                title="Copy full 40-char SHA"
+              >
+                <Copy size={12} />
+                <span style={{ fontSize: 10, marginLeft: 2 }}>full</span>
+              </button>
+            )}
           </span>
         </div>
         <div className="gm-status-card">
@@ -1052,18 +1131,33 @@ function StatusPanel({
               </>
             )}
           </span>
+          {status.dirtyDetails && (status.dirtyDetails.staged + status.dirtyDetails.modified + status.dirtyDetails.untracked + status.dirtyDetails.conflicted) > 0 && (
+            <span className="gm-status-sub">
+              {status.dirtyDetails.staged > 0 && <span title="Staged">{status.dirtyDetails.staged} staged</span>}
+              {status.dirtyDetails.staged > 0 && (status.dirtyDetails.modified + status.dirtyDetails.untracked + status.dirtyDetails.conflicted) > 0 && " · "}
+              {status.dirtyDetails.modified > 0 && <span title="Modified">{status.dirtyDetails.modified} modified</span>}
+              {status.dirtyDetails.modified > 0 && (status.dirtyDetails.untracked + status.dirtyDetails.conflicted) > 0 && " · "}
+              {status.dirtyDetails.untracked > 0 && <span title="Untracked">{status.dirtyDetails.untracked} untracked</span>}
+              {status.dirtyDetails.untracked > 0 && status.dirtyDetails.conflicted > 0 && " · "}
+              {status.dirtyDetails.conflicted > 0 && (
+                <span title="Unresolved merge conflicts" className="gm-status-conflict">
+                  {status.dirtyDetails.conflicted} conflicted
+                </span>
+              )}
+            </span>
+          )}
         </div>
         <div className="gm-status-card">
-          <span className="gm-status-label">Remote Sync</span>
+          <span className="gm-status-label">vs origin</span>
           <span className="gm-status-value">
             {status.ahead > 0 && (
-              <span className="gm-ahead" title={`${status.ahead} commit(s) ahead`}>
+              <span className="gm-ahead" title={`${status.ahead} commit(s) ahead of upstream`}>
                 <ArrowUp size={12} />
                 {status.ahead}
               </span>
             )}
             {status.behind > 0 && (
-              <span className="gm-behind" title={`${status.behind} commit(s) behind`}>
+              <span className="gm-behind" title={`${status.behind} commit(s) behind upstream`}>
                 <ArrowDown size={12} />
                 {status.behind}
               </span>
@@ -1077,6 +1171,237 @@ function StatusPanel({
           </span>
         </div>
       </div>
+      {status.integrationBranch && (
+        <div className="gm-status-grid">
+          <div className="gm-status-card" data-testid="integration-branch-card">
+            <span className="gm-status-label">Integration branch</span>
+            <span className="gm-status-value">
+              <GitBranchIcon size={14} />
+              <span>{status.integrationBranch}</span>
+              {status.integrationBranchSource && (
+                <span className="gm-status-sub" title={`Resolved from ${status.integrationBranchSource}`}>
+                  {" "}({status.integrationBranchSource})
+                </span>
+              )}
+            </span>
+            {status.integrationTipSha && (
+              <span className="gm-status-sub">
+                tip <code className="gm-hash">{status.integrationTipSha.slice(0, 8)}</code>
+                {status.integrationTipSource === "remote-only" && (
+                  <>
+                    {" "}<span title="No local refs/heads/<branch>; using refs/remotes/origin/<branch> as the integration tip.">(remote-only — run <code>git switch {status.integrationBranch}</code> to track locally)</span>
+                  </>
+                )}
+              </span>
+            )}
+            {status.integrationTipSource === "missing" && (
+              <span className="gm-status-sub gm-status-conflict" title="Neither refs/heads nor refs/remotes/origin has this branch">
+                no ref found for {status.integrationBranch}
+              </span>
+            )}
+          </div>
+          {status.integrationTipSha !== undefined && (status.aheadOfIntegration !== undefined || status.behindIntegration !== undefined) && (
+            <div className="gm-status-card">
+              <span className="gm-status-label">HEAD vs {status.integrationBranch}</span>
+              <span className="gm-status-value">
+                {(status.aheadOfIntegration ?? 0) === 0 && (status.behindIntegration ?? 0) === 0 ? (
+                  <span className="gm-in-sync">
+                    <CheckCircle size={12} />
+                    Aligned
+                  </span>
+                ) : (
+                  <>
+                    {(status.aheadOfIntegration ?? 0) > 0 && (
+                      <span className="gm-ahead" title={`HEAD has ${status.aheadOfIntegration} commit(s) not on ${status.integrationBranch}`}>
+                        <ArrowUp size={12} />
+                        {status.aheadOfIntegration}
+                      </span>
+                    )}
+                    {(status.behindIntegration ?? 0) > 0 && (
+                      <span className="gm-behind" title={`${status.integrationBranch} has ${status.behindIntegration} commit(s) HEAD doesn't`}>
+                        <ArrowDown size={12} />
+                        {status.behindIntegration}
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+          {status.originIntegrationTipSha !== undefined && (
+            <div className="gm-status-card">
+              <span className="gm-status-label">Local {status.integrationBranch} vs origin</span>
+              <span className="gm-status-value">
+                {status.originIntegrationTipSha === null ? (
+                  <span className="gm-status-sub">no origin tracking</span>
+                ) : status.integrationTipSource === "remote-only" ? (
+                  // Local branch doesn't exist — comparing "local vs origin"
+                  // is undefined. Show an honest state instead of a green
+                  // "Synced" badge that would imply the local ref is in
+                  // sync with origin when there's no local ref at all.
+                  <span className="gm-status-sub" title="No local refs/heads/<branch> exists; nothing to compare against origin.">
+                    no local tracking
+                  </span>
+                ) : (status.aheadOfOriginIntegration ?? 0) === 0 && (status.behindOriginIntegration ?? 0) === 0 ? (
+                  <span className="gm-in-sync">
+                    <CheckCircle size={12} />
+                    Synced
+                  </span>
+                ) : (
+                  <>
+                    {(status.aheadOfOriginIntegration ?? 0) > 0 && (
+                      <span className="gm-ahead" title={`Local ${status.integrationBranch} is ${status.aheadOfOriginIntegration} commit(s) ahead of origin/${status.integrationBranch}`}>
+                        <ArrowUp size={12} />
+                        {status.aheadOfOriginIntegration}
+                      </span>
+                    )}
+                    {(status.behindOriginIntegration ?? 0) > 0 && (
+                      <span className="gm-behind" title={`Local ${status.integrationBranch} is ${status.behindOriginIntegration} commit(s) behind origin/${status.integrationBranch}`}>
+                        <ArrowDown size={12} />
+                        {status.behindOriginIntegration}
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+          {status.integrationTipSource === "remote-only" && status.aheadOfIntegrationRemote !== undefined && (
+            // In remote-only mode the `HEAD vs <branch>` card is suppressed
+            // (no local tip to compare against). Surface a dedicated HEAD vs
+            // origin/<branch> card so the operator still sees a meaningful
+            // distance.
+            <div className="gm-status-card">
+              <span className="gm-status-label">HEAD vs origin/{status.integrationBranch}</span>
+              <span className="gm-status-value">
+                {(status.aheadOfIntegrationRemote ?? 0) === 0 && (status.behindIntegrationRemote ?? 0) === 0 ? (
+                  <span className="gm-in-sync">
+                    <CheckCircle size={12} />
+                    Aligned
+                  </span>
+                ) : (
+                  <>
+                    {(status.aheadOfIntegrationRemote ?? 0) > 0 && (
+                      <span className="gm-ahead" title={`HEAD has ${status.aheadOfIntegrationRemote} commit(s) not on origin/${status.integrationBranch}`}>
+                        <ArrowUp size={12} />
+                        {status.aheadOfIntegrationRemote}
+                      </span>
+                    )}
+                    {(status.behindIntegrationRemote ?? 0) > 0 && (
+                      <span className="gm-behind" title={`origin/${status.integrationBranch} has ${status.behindIntegrationRemote} commit(s) HEAD doesn't`}>
+                        <ArrowDown size={12} />
+                        {status.behindIntegrationRemote}
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+          {(status.stashCount ?? 0) > 0 && (
+            <div className="gm-status-card">
+              <span className="gm-status-label">Stashes</span>
+              <span className="gm-status-value">
+                <Archive size={14} />
+                <span>{status.stashCount}</span>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {status.indexStaleVsHead === true && (
+        <div className="gm-status-warning" data-testid="index-stale-warning" role="alert">
+          <AlertCircle size={14} />
+          <div>
+            <strong>Stale index detected.</strong>{" "}
+            HEAD has advanced (typically because Fusion's merger updated the integration-branch ref)
+            but the index still reflects the previous tip — `git status` will report the new commits
+            inverted as &quot;staged changes.&quot; Enable <code>mergeAdvanceAutoSync</code> in Settings to
+            have the merger reconcile automatically, or run <code>git reset --hard HEAD</code> to
+            snap forward manually.
+          </div>
+        </div>
+      )}
+      {(status.recentMergeAdvances ?? []).length > 0 && (
+        <div className="gm-status-advances" data-testid="recent-merge-advances">
+          <div className="gm-status-advances-header">
+            <span>
+              Recent integration-branch advances
+              <span className="gm-status-sub">
+                {" "}({(status.recentMergeAdvances ?? []).filter((a) => a.needsAction).length} need action)
+              </span>
+              <button
+                type="button"
+                className="gm-icon-btn"
+                style={{ marginLeft: 6 }}
+                aria-expanded={advancesHelpOpen}
+                aria-label={advancesHelpOpen ? "Hide explanation" : "What does this mean?"}
+                onClick={() => setAdvancesHelpOpen((open) => !open)}
+                title="What does this mean?"
+              >
+                <Info size={13} />
+              </button>
+            </span>
+            {(status.recentMergeAdvances ?? []).some((a) => a.needsAction) && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={onSyncWorkingTree}
+                disabled={syncing}
+                data-testid="sync-working-tree-btn"
+                title="Pull the integration branch into your working tree (auto-stashes uncommitted edits and restores them)"
+              >
+                {syncing ? "Syncing…" : "Sync working tree"}
+              </button>
+            )}
+          </div>
+          {advancesHelpOpen && (
+            <div className="gm-status-advances-help" data-testid="recent-merge-advances-help">
+              <p>
+                Each entry is a Fusion task whose squash commit advanced the
+                integration branch ref (<code>{status.integrationBranch ?? "main"}</code>).
+                The <em>auto-sync outcome</em> says whether your working tree
+                was also fast-forwarded to that new tip.
+              </p>
+              <ul className="gm-status-advances-help-list">
+                <li><code>clean-sync</code> / <code>synced-with-edits-restored</code> — working tree is in sync; nothing to do.</li>
+                <li><code>off / not run</code> — auto-sync is disabled in Settings; the branch ref moved but your worktree didn&apos;t follow.</li>
+                <li><code>stash-failed</code> / <code>would-conflict</code> / similar — auto-sync tried but couldn&apos;t reconcile (usually local edits collide with the new commit).</li>
+              </ul>
+              <p>
+                <strong>Fix:</strong> click <em>Sync working tree</em> to catch
+                up now. Pure-local — it auto-stashes any uncommitted edits,
+                hard-resets the worktree to match the local integration tip
+                (the sha the merger advanced <code>refs/heads/{status.integrationBranch ?? "main"}</code> to),
+                and restores your stash. Origin is not touched, so no unrelated
+                remote work gets pulled in. To make this automatic going
+                forward, enable <code>mergeAdvanceAutoSync</code> in Settings.
+              </p>
+            </div>
+          )}
+          <ul>
+            {(status.recentMergeAdvances ?? []).map((advance) => (
+              <li key={`${advance.taskId}-${advance.toSha}`} className={advance.needsAction ? "gm-advance-needs-action" : "gm-advance-handled"}>
+                <code className="gm-hash">{advance.toSha.slice(0, 8)}</code>
+                {" "}
+                <strong>{advance.taskId}</strong>
+                {advance.autoSyncOutcome ? (
+                  <span className="gm-status-sub">
+                    {" "}auto-sync: <code>{advance.autoSyncOutcome}</code>
+                  </span>
+                ) : (
+                  <span className="gm-status-sub">
+                    {" "}auto-sync: <em>off / not run</em>
+                  </span>
+                )}
+                <span className="gm-status-sub">
+                  {" "}· {new Date(advance.advancedAt).toLocaleTimeString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -1902,6 +2227,8 @@ function RemotesPanel({
   onFetch,
   onPull,
   onPush,
+  onSyncIntegrationTip,
+  syncIntegrationDisabled,
   addToast,
   projectId,
   copyToClipboard,
@@ -1912,6 +2239,8 @@ function RemotesPanel({
   onFetch: () => void;
   onPull: (options?: { rebase?: boolean }) => void;
   onPush: () => void;
+  onSyncIntegrationTip: () => void;
+  syncIntegrationDisabled: boolean;
   addToast: (message: string, type?: ToastType) => void;
   projectId?: string;
   copyToClipboard: (text: string, label?: string) => void;
@@ -2415,6 +2744,26 @@ function RemotesPanel({
                     )}
                     Push
                   </button>
+                  {status?.integrationBranch && (
+                    <button
+                      className="btn gm-sync-integration-btn"
+                      onClick={onSyncIntegrationTip}
+                      disabled={syncIntegrationDisabled}
+                      title={
+                        status.isOnIntegrationBranch === false
+                          ? `Not on integration branch (${status.integrationBranch})`
+                          : "Sync working tree to local integration tip (same as banner Pull)"
+                      }
+                      data-testid="remotes-sync-integration-tip-btn"
+                    >
+                      {remoteLoading === "sync-integration" ? (
+                        <Loader2 size={14} className="spin" />
+                      ) : (
+                        <GitMerge size={14} />
+                      )}
+                      Sync local tip
+                    </button>
+                  )}
                 </div>
               </div>
 

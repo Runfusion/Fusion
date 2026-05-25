@@ -1899,6 +1899,122 @@
   color: var(--text);
 }
 
+.gm-status-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.gm-status-conflict {
+  color: var(--danger, #c0392b);
+  font-weight: 600;
+}
+
+.gm-status-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  margin-top: var(--space-md);
+  background: color-mix(in srgb, var(--warning, #f4b400) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #f4b400) 40%, transparent);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.gm-status-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warning, #f4b400);
+}
+
+.gm-status-warning code {
+  background: var(--card);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.gm-status-advances {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.gm-status-advances-header {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.gm-status-advances-help {
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--accent, #4a8af4) 6%, transparent);
+  border-left: 3px solid var(--accent, #4a8af4);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  font-weight: normal;
+}
+
+.gm-status-advances-help p {
+  margin: 0 0 var(--space-sm) 0;
+}
+
+.gm-status-advances-help p:last-child {
+  margin-bottom: 0;
+}
+
+.gm-status-advances-help-list {
+  list-style: disc;
+  margin: 0 0 var(--space-sm) 0;
+  padding-left: var(--space-lg);
+  display: block;
+}
+
+.gm-status-advances-help-list li {
+  padding: 2px 0;
+  background: none;
+}
+
+.gm-status-advances ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.gm-status-advances li {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.gm-status-advances .gm-advance-needs-action {
+  background: color-mix(in srgb, var(--warning, #f4b400) 8%, transparent);
+}
+
+.gm-status-advances .gm-advance-handled {
+  background: color-mix(in srgb, var(--success, #27ae60) 6%, transparent);
+  color: var(--text-muted);
+}
+
 .gm-status-badge {
   display: inline-flex;
   align-items: center;

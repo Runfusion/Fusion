@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -14,8 +14,8 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "pretest": "node scripts/check-no-nohup.mjs",
-    "pretest:full": "node scripts/check-no-nohup.mjs",
+    "pretest": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs",
+    "pretest:full": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",
     "dev:ui": "pnpm --filter @fusion/dashboard dev",
@@ -31,7 +31,7 @@
     "test": "node scripts/test-changed.mjs",
     "test:scripts": "node --test scripts/__tests__/*.test.mjs",
     "fn:cache-stats": "node scripts/cache-stats.mjs",
-    "test:full": "node scripts/test-changed.mjs --full --no-cache",
+    "test:full": "node scripts/test-changed.mjs --full --no-cache && pnpm --filter @fusion/engine test:slow",
     "test:ci:shard": "node scripts/ci-test-shard.mjs",
     "test:serial": "FUSION_TEST_CONCURRENCY=1 FUSION_TEST_WORKSPACE_CONCURRENCY=1 pnpm test:full",
     "test:fast": "FUSION_TEST_CONCURRENCY=4 FUSION_TEST_WORKSPACE_CONCURRENCY=4 pnpm test:full",

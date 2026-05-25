@@ -22,6 +22,18 @@ vi.mock("@fusion/core", async () => {
       getProject = vi.fn().mockResolvedValue(undefined);
       getProjectByPath = vi.fn().mockResolvedValue(undefined);
       registerProject = vi.fn();
+      ensureProjectForPath = vi.fn().mockImplementation(async ({ path, name }: { path: string; name?: string }) => ({
+        outcome: "registered",
+        project: {
+          id: "proj_1234567890abcdef",
+          name: name ?? "project",
+          path,
+          status: "initializing",
+          isolationMode: "in-process",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      }));
       updateProject = vi.fn().mockResolvedValue({});
       unregisterProject = vi.fn().mockResolvedValue(undefined);
       getProjectHealth = vi.fn().mockResolvedValue(undefined);
@@ -33,6 +45,8 @@ vi.mock("@fusion/core", async () => {
       init: vi.fn().mockResolvedValue(undefined),
       listTasks: vi.fn().mockResolvedValue([]),
     })),
+    readProjectIdentity: vi.fn().mockReturnValue(undefined),
+    writeProjectIdentity: vi.fn(),
   };
 });
 

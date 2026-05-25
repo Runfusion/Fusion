@@ -1,6 +1,12 @@
 import * as fsPromises from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { ensureMemoryFileWithBackend, isValidSqliteDatabaseFile } from "@fusion/core";
+import {
+  ensureMemoryFileWithBackend,
+  isValidSqliteDatabaseFile,
+  ProjectIdentityConflictError,
+  readProjectIdentity,
+  writeProjectIdentity,
+} from "@fusion/core";
 import type { CentralCore as CentralCoreApi } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
@@ -338,16 +344,29 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         hasFusionDir = false;
       }
 
-      const activeProject = await withCentralCore(async (central) => {
-        const project = await central.registerProject({
-          name: normalizedName,
+      const activeProjectWithOutcome = await withCentralCore(async (central) => {
+        const identity = readProjectIdentity(fusionDirPath);
+        const ensured = await central.ensureProjectForPath({
           path: normalizedPath,
+          identity: identity ?? undefined,
+          name: normalizedName,
           isolationMode,
           nodeId,
         });
+        const project = ensured.project;
 
         // Activate the project (registration sets it to 'initializing')
-        return await central.updateProject(project.id, { status: "active" });
+        const activeProject = await central.updateProject(project.id, { status: "active" });
+        try {
+          writeProjectIdentity(fusionDirPath, {
+            id: activeProject.id,
+            createdAt: activeProject.createdAt,
+          });
+        } catch {
+          // Best-effort stamp only.
+        }
+
+        return { activeProject, outcome: ensured.outcome };
       });
 
       // Bootstrap memory files (non-blocking, non-fatal)
@@ -363,9 +382,9 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       if (options?.onProjectRegistered) {
         try {
           options.onProjectRegistered({
-            id: activeProject.id,
-            name: activeProject.name,
-            path: activeProject.path,
+            id: activeProjectWithOutcome.activeProject.id,
+            name: activeProjectWithOutcome.activeProject.name,
+            path: activeProjectWithOutcome.activeProject.path,
           });
         } catch (hookErr) {
           runtimeLogger.warn(
@@ -373,10 +392,21 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           );
         }
       }
-      res.status(201).json({ ...activeProject, _meta: { hasFusionDir: hasFusionDir ? undefined : false } });
+      res.status(201).json({
+        ...activeProjectWithOutcome.activeProject,
+        outcome: activeProjectWithOutcome.outcome,
+        _meta: { hasFusionDir: hasFusionDir ? undefined : false },
+      });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
+      }
+      if (err instanceof ProjectIdentityConflictError) {
+        throw new ApiError(409, "orphan-identity", {
+          projectId: err.projectId,
+          path: err.incomingPath,
+          message: err.message,
+        });
       }
       const status = (err instanceof Error ? err.message : String(err)).includes("already registered")
         ? 409

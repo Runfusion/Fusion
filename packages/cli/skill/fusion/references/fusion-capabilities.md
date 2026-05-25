@@ -24,7 +24,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_refine` | Request a refinement of a completed or in-review task. Creates a new follow-up task in planning that references the original task as a dependency. Use this when a done or in-review task needs additional work, improvements, or follow-up changes. |
 | `fn_task_archive` | Archive a done task (move from done → archived). Archived tasks are preserved for historical reference but moved out of the main board view. |
 | `fn_task_unarchive` | Unarchive an archived task (move from archived → done). Restores the task to the done column. |
-| `fn_task_delete` | Soft-delete a task from active Fusion board views. The task row and artifacts are preserved, and the task ID remains reserved for potential operator recovery. |
+| `fn_task_delete` | Soft-delete a task from active Fusion board views. The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. |
 | `fn_task_import_github` | Import GitHub issues as Fusion tasks. Fetches open issues from a repository and creates tasks in the planning column. Each task includes the issue title and body with a link to the source issue. |
 | `fn_task_import_github_issue` | Import a specific GitHub issue as a Fusion task. Fetches the issue by number and creates a single task in the planning column with the issue title and body. |
 | `fn_task_browse_github_issues` | List open GitHub issues from a repository to browse before importing. Returns issue numbers, titles, and URLs for selection. Use with fn_task_import_github_issue to import specific issues by number. |

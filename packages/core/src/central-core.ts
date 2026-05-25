@@ -88,11 +88,17 @@ import { NodeDiscovery } from "./node-discovery.js";
 import { collectSystemMetrics } from "./system-metrics.js";
 import type { ConnectionOptions, ConnectionResult } from "./node-connection.js";
 import { createAuthMaterialSnapshot, createProjectSettingsSnapshot, validateSnapshotEnvelope, type AuthMaterialSnapshot, type ProjectSettingsSnapshot } from "./shared-mesh-state.js";
+import {
+  ProjectIdentityConflictError,
+  type ProjectIdentity,
+} from "./project-identity.js";
 // ── Event Types ───────────────────────────────────────────────────────────
 
 export interface CentralCoreEvents {
   /** Emitted when a new project is registered */
   "project:registered": [project: RegisteredProject];
+  /** Emitted when a project is reattached using stored identity */
+  "project:reattached": [project: RegisteredProject, reason: string];
   /** Emitted when a project is unregistered */
   "project:unregistered": [projectId: string];
   /** Emitted when project metadata is updated */
@@ -140,6 +146,21 @@ export interface CentralCoreEvents {
 }
 
 // ── CentralCore Class ─────────────────────────────────────────────────────
+
+export interface EnsureProjectForPathInput {
+  path: string;
+  identity?: ProjectIdentity | null;
+  name?: string;
+  isolationMode?: IsolationMode;
+  nodeId?: string;
+  settings?: ProjectSettings;
+}
+
+export interface EnsureProjectForPathResult {
+  project: RegisteredProject;
+  reattached: boolean;
+  outcome: "existing" | "reattached" | "registered";
+}
 
 export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private db: CentralDatabase | null = null;
@@ -242,55 +263,20 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   // ── Project Registry API ────────────────────────────────────────────────
 
-  /**
-   * Register a new project in the central database.
-   *
-   * @param input — Project registration input
-   * @returns The registered project
-   * @throws Error if path doesn't exist, isn't absolute, or is already registered
-   */
-  async registerProject(input: {
-    name: string;
-    path: string;
-    isolationMode?: IsolationMode;
-    settings?: ProjectSettings;
-    nodeId?: string;
-  }): Promise<RegisteredProject> {
-    this.ensureInitialized();
-
-    // Validate path
-    if (!isAbsolute(input.path)) {
-      throw new Error(`Project path must be absolute: ${input.path}`);
+  private validateProjectPath(projectPath: string): void {
+    if (!isAbsolute(projectPath)) {
+      throw new Error(`Project path must be absolute: ${projectPath}`);
     }
-    if (!existsSync(input.path)) {
-      throw new Error(`Project path does not exist: ${input.path}`);
+    if (!existsSync(projectPath)) {
+      throw new Error(`Project path does not exist: ${projectPath}`);
     }
-    if (!statSync(input.path).isDirectory()) {
-      throw new Error(`Project path must be a directory: ${input.path}`);
+    if (!statSync(projectPath).isDirectory()) {
+      throw new Error(`Project path must be a directory: ${projectPath}`);
     }
+  }
 
-    // Check for duplicate path
-    const existingByPath = await this.getProjectByPath(input.path);
-    if (existingByPath) {
-      throw new Error(`Project already registered at path: ${input.path}`);
-    }
-
-    const now = new Date().toISOString();
-    const project: RegisteredProject = {
-      id: `proj_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-      name: input.name,
-      path: input.path,
-      status: "initializing",
-      isolationMode: input.isolationMode ?? "in-process",
-      nodeId: input.nodeId,
-      createdAt: now,
-      updatedAt: now,
-      lastActivityAt: now,
-      settings: input.settings,
-    };
-
+  private insertProjectRow(project: RegisteredProject, now: string): void {
     this.db!.transaction(() => {
-      // Insert project
       this.db!.prepare(
         `INSERT INTO projects (id, name, path, status, isolationMode, createdAt, updatedAt, lastActivityAt, nodeId, settings)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -322,16 +308,146 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           .run(project.id, localNode.id, project.path, now, now);
       }
 
-      // Initialize health record
       this.db!.prepare(
         `INSERT INTO projectHealth (projectId, status, updatedAt, totalTasksCompleted, totalTasksFailed)
          VALUES (?, ?, ?, 0, 0)`
       ).run(project.id, project.status, now);
     });
+  }
 
+  /**
+   * Register a new project in the central database.
+   */
+  async registerProject(input: {
+    id?: string;
+    name: string;
+    path: string;
+    isolationMode?: IsolationMode;
+    settings?: ProjectSettings;
+    nodeId?: string;
+  }): Promise<RegisteredProject> {
+    this.ensureInitialized();
+    this.validateProjectPath(input.path);
+
+    const existingByPath = await this.getProjectByPath(input.path);
+    if (existingByPath) {
+      throw new Error(`Project already registered at path: ${input.path}`);
+    }
+
+    if (input.id && !/^proj_[a-f0-9]{16}$/.test(input.id)) {
+      throw new Error(`Invalid project id format: ${input.id}`);
+    }
+
+    const now = new Date().toISOString();
+    const project: RegisteredProject = {
+      id: input.id ?? `proj_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      name: input.name,
+      path: input.path,
+      status: "initializing",
+      isolationMode: input.isolationMode ?? "in-process",
+      nodeId: input.nodeId,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      settings: input.settings,
+    };
+
+    this.insertProjectRow(project, now);
     this.db!.bumpLastModified();
     this.emit("project:registered", project);
     return project;
+  }
+
+  async reattachProject(input: {
+    id: string;
+    name: string;
+    path: string;
+    isolationMode?: IsolationMode;
+    settings?: ProjectSettings;
+    nodeId?: string;
+  }): Promise<RegisteredProject> {
+    this.ensureInitialized();
+    this.validateProjectPath(input.path);
+    if (!/^proj_[a-f0-9]{16}$/.test(input.id)) {
+      throw new Error(`Invalid project id format: ${input.id}`);
+    }
+
+    const existingById = await this.getProject(input.id);
+    if (existingById) {
+      if (existingById.path === input.path) {
+        return existingById;
+      }
+      throw new Error(
+        `Project id ${input.id} is already registered at a different path: ${existingById.path}`,
+      );
+    }
+
+    const existingByPath = await this.getProjectByPath(input.path);
+    if (existingByPath && existingByPath.id !== input.id) {
+      throw new Error(
+        `Project path ${input.path} is already registered with id ${existingByPath.id}; refusing silent reassignment`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const project: RegisteredProject = {
+      id: input.id,
+      name: input.name,
+      path: input.path,
+      status: "initializing",
+      isolationMode: input.isolationMode ?? "in-process",
+      nodeId: input.nodeId,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      settings: input.settings,
+    };
+
+    this.insertProjectRow(project, now);
+    this.db!.bumpLastModified();
+    console.log(
+      `[central] reattached project ${project.id} at ${project.path} using stored identity (createdAt=${now})`,
+    );
+    this.emit("project:reattached", project, "identity-recovered");
+    return project;
+  }
+
+  async ensureProjectForPath(input: EnsureProjectForPathInput): Promise<EnsureProjectForPathResult> {
+    this.ensureInitialized();
+
+    const existing = await this.getProjectByPath(input.path);
+    if (existing) {
+      return { project: existing, reattached: false, outcome: "existing" };
+    }
+
+    if (input.identity?.id) {
+      const byId = await this.getProject(input.identity.id);
+      if (!byId) {
+        const reattached = await this.registerProject({
+          id: input.identity.id,
+          name: input.name ?? basename(input.path),
+          path: input.path,
+          isolationMode: input.isolationMode,
+          nodeId: input.nodeId,
+          settings: input.settings,
+        });
+        this.emit("project:reattached", reattached, "identity-recovered");
+        return { project: reattached, reattached: true, outcome: "reattached" };
+      }
+      if (byId.path !== input.path) {
+        throw new ProjectIdentityConflictError(input.identity.id, byId.path, input.path);
+      }
+      return { project: byId, reattached: false, outcome: "existing" };
+    }
+
+    const registered = await this.registerProject({
+      name: input.name ?? basename(input.path),
+      path: input.path,
+      isolationMode: input.isolationMode,
+      nodeId: input.nodeId,
+      settings: input.settings,
+    });
+    return { project: registered, reattached: false, outcome: "registered" };
   }
 
   /**

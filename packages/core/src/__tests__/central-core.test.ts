@@ -246,6 +246,111 @@ describe("CentralCore", () => {
       const retrieved = await central.getProject(project.id);
       expect(retrieved?.nodeId).toBeUndefined();
     });
+
+    it("should reattach using supplied id and initialize mapping + health", async () => {
+      const projectPath = join(tempDir, "reattach-project");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      const project = await central.reattachProject({
+        id: "proj_0123456789abcdef",
+        name: "Reattach",
+        path: projectPath,
+      });
+
+      expect(project.id).toBe("proj_0123456789abcdef");
+      const mappings = await central.listProjectNodePathMappingsForProject(project.id);
+      expect(mappings.length).toBeGreaterThan(0);
+      const health = await central.getProjectHealth(project.id);
+      expect(health?.projectId).toBe(project.id);
+    });
+
+    it("should reject reattach when id is already bound to another path", async () => {
+      const projectPathA = join(tempDir, "reattach-a");
+      const projectPathB = join(tempDir, "reattach-b");
+      mkdirSync(projectPathA);
+      mkdirSync(projectPathB);
+      projectPaths.push(projectPathA, projectPathB);
+
+      await central.reattachProject({
+        id: "proj_0123456789abcdef",
+        name: "A",
+        path: projectPathA,
+      });
+
+      await expect(
+        central.reattachProject({
+          id: "proj_0123456789abcdef",
+          name: "B",
+          path: projectPathB,
+        }),
+      ).rejects.toThrow("already registered at a different path");
+    });
+
+    it("should reject reattach when path already has another id", async () => {
+      const projectPath = join(tempDir, "reattach-dup-path");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      await central.registerProject({ name: "Original", path: projectPath });
+
+      await expect(
+        central.reattachProject({
+          id: "proj_0123456789abcdef",
+          name: "Other",
+          path: projectPath,
+        }),
+      ).rejects.toThrow("refusing silent reassignment");
+    });
+
+    it("should ensure project for path with existing, reattached, and registered outcomes", async () => {
+      const existingPath = join(tempDir, "ensure-existing");
+      const reattachPath = join(tempDir, "ensure-reattach");
+      const newPath = join(tempDir, "ensure-new");
+      mkdirSync(existingPath);
+      mkdirSync(reattachPath);
+      mkdirSync(newPath);
+      projectPaths.push(existingPath, reattachPath, newPath);
+
+      const existing = await central.registerProject({ name: "Existing", path: existingPath });
+      const existingResult = await central.ensureProjectForPath({ path: existingPath });
+      expect(existingResult.outcome).toBe("existing");
+      expect(existingResult.project.id).toBe(existing.id);
+
+      const reattachResult = await central.ensureProjectForPath({
+        path: reattachPath,
+        identity: { id: "proj_fedcba9876543210", createdAt: "2026-05-20T00:00:00.000Z" },
+        name: "Recovered",
+      });
+      expect(reattachResult.outcome).toBe("reattached");
+      expect(reattachResult.project.id).toBe("proj_fedcba9876543210");
+
+      const registeredResult = await central.ensureProjectForPath({ path: newPath, name: "New" });
+      expect(registeredResult.outcome).toBe("registered");
+      expect(registeredResult.project.id).toMatch(/^proj_[a-f0-9]{16}$/);
+    });
+
+    it("should error when ensure identity id is already bound to another path", async () => {
+      const originalPath = join(tempDir, "ensure-id-original");
+      const secondPath = join(tempDir, "ensure-id-second");
+      mkdirSync(originalPath);
+      mkdirSync(secondPath);
+      projectPaths.push(originalPath, secondPath);
+
+      await central.reattachProject({
+        id: "proj_0123456789abcdef",
+        name: "Original",
+        path: originalPath,
+      });
+
+      await expect(
+        central.ensureProjectForPath({
+          path: secondPath,
+          identity: { id: "proj_0123456789abcdef", createdAt: "2026-05-20T00:00:00.000Z" },
+          name: "Second",
+        }),
+      ).rejects.toThrow("Project identity conflict");
+    });
   });
 
   describe("project unregistration", () => {

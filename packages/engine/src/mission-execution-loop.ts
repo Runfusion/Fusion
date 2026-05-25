@@ -24,6 +24,7 @@ import { createFnAgent, promptWithFallback, type AgentResult } from "./pi.js";
 import { createResolvedAgentSession, extractRuntimeHint } from "./agent-session-helpers.js";
 import { createLogger } from "./logger.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
+import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 
 /** Logger for the mission execution loop subsystem. */
 export const loopLog = createLogger("mission-loop");
@@ -308,6 +309,13 @@ export class MissionExecutionLoop extends EventEmitter {
 
     try {
       // Create validation agent session
+      const runAuditor = createRunAuditor(this.taskStore, {
+        runId: generateSyntheticRunId("mission", feature.taskId ?? feature.id),
+        agentId: "reviewer",
+        taskId: task?.id,
+        phase: "mission",
+        source: "mission-execution-loop",
+      });
       const sessionResult = await createResolvedAgentSession({
         sessionPurpose: "validation",
         runtimeHint: validationRuntimeHint,
@@ -316,6 +324,7 @@ export class MissionExecutionLoop extends EventEmitter {
         systemPrompt: this.buildValidationSystemPrompt(feature, assertions, taskContext),
         tools: "readonly",
         defaultThinkingLevel: "medium",
+        runAuditor,
         onText: (_delta) => {
           // Could stream this to a log entry if needed
         },

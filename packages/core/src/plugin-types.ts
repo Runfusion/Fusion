@@ -165,6 +165,10 @@ export type PluginOnTaskMoved = (task: Task, fromColumn: string, toColumn: strin
 export type PluginOnTaskCompleted = (task: Task, ctx: PluginContext) => Promise<void> | void;
 /** Lifecycle hook: called when an error occurs */
 export type PluginOnError = (error: Error, ctx: PluginContext) => Promise<void> | void;
+/** Lifecycle hook: called when an agent session begins running for a task. */
+export type PluginOnAgentRunStart = (taskId: string, ctx: PluginContext) => Promise<void> | void;
+/** Lifecycle hook: called when an agent session ends for a task. */
+export type PluginOnAgentRunEnd = (taskId: string, ctx: PluginContext) => Promise<void> | void;
 
 // ── Plugin Tools ─────────────────────────────────────────────────────
 
@@ -674,6 +678,8 @@ export interface FusionPlugin {
     onTaskCompleted?: PluginOnTaskCompleted;
     onError?: PluginOnError;
     onSchemaInit?: PluginOnSchemaInit;
+    onAgentRunStart?: PluginOnAgentRunStart;
+    onAgentRunEnd?: PluginOnAgentRunEnd;
   };
   tools?: PluginToolDefinition[];
   routes?: PluginRouteDefinition[];

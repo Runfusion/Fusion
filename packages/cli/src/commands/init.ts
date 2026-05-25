@@ -13,7 +13,14 @@ import { join, resolve, basename } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
-import { CentralCore, QMD_INSTALL_COMMAND, isQmdAvailable, isValidSqliteDatabaseFile } from "@fusion/core";
+import {
+  CentralCore,
+  QMD_INSTALL_COMMAND,
+  isQmdAvailable,
+  isValidSqliteDatabaseFile,
+  readProjectIdentity,
+  writeProjectIdentity,
+} from "@fusion/core";
 import { maybeInstallClaudeSkillForNewProject } from "./claude-skills-runner.js";
 import { isGitRepo } from "./git.js";
 import {
@@ -52,6 +59,14 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
 
     const existing = await central.getProjectByPath(cwd);
     if (existing) {
+      try {
+        writeProjectIdentity(join(cwd, ".fusion"), {
+          id: existing.id,
+          createdAt: existing.createdAt,
+        });
+      } catch {
+        // Best-effort backfill only.
+      }
       console.log(`✓ fn project already initialized: "${existing.name}"`);
       console.log(`  Path: ${cwd}`);
       console.log(`\n  Project is registered in the central registry.`);
@@ -131,15 +146,26 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
       return;
     }
 
-    // Register new project
-    const project = await central.registerProject({
-      name: projectName,
+    const identity = existsSync(dbPath) ? readProjectIdentity(fusionDir) : null;
+    const ensured = await central.ensureProjectForPath({
       path: cwd,
-      isolationMode: "in-process",
+      identity: identity ?? undefined,
+      name: projectName,
     });
+
+    const project = ensured.project;
 
     // Activate the project (registration sets it to 'initializing')
     await central.updateProject(project.id, { status: "active" });
+
+    try {
+      writeProjectIdentity(join(cwd, ".fusion"), {
+        id: project.id,
+        createdAt: project.createdAt,
+      });
+    } catch (identityError) {
+      console.warn(`  ⚠ Could not persist project identity: ${identityError instanceof Error ? identityError.message : String(identityError)}`);
+    }
 
     maybeInstallClaudeSkillForNewProject(cwd);
 

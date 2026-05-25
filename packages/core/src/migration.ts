@@ -17,6 +17,7 @@ import type { CentralCore } from "./central-core.js";
 import { CentralCore as CentralCoreClass } from "./central-core.js";
 import { resolveGlobalDir } from "./global-settings.js";
 import { isValidSqliteDatabaseFile } from "./sqlite-validation.js";
+import { readProjectIdentity, writeProjectIdentity, type ProjectIdentity } from "./project-identity.js";
 
 function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || homedir();
@@ -50,6 +51,8 @@ export interface DetectedProject {
   name: string;
   /** Whether the project has a valid fusion.db */
   hasDb: boolean;
+  /** Persisted project identity id if present */
+  identityId?: string;
 }
 
 /** Result of a migration operation */
@@ -70,6 +73,8 @@ export interface ProjectSetupInput {
   name: string;
   /** Isolation mode preference */
   isolationMode?: "in-process" | "child-process";
+  /** Persisted local project identity for central recovery */
+  identity?: ProjectIdentity | null;
 }
 
 /** Resolved project context for backward compatibility */
@@ -232,10 +237,12 @@ export class FirstRunDetector {
 
       if (this.hasFusionProject(current)) {
         const name = await this.generateProjectName(current);
+        const identity = readProjectIdentity(join(current, ".fusion"));
         projects.push({
           path: current,
           name,
           hasDb: true,
+          identityId: identity?.id,
         });
         // Only detect one project - stop at first match
         break;
@@ -479,14 +486,24 @@ export class MigrationCoordinator {
 
     // Register the project
     try {
-      const project = await this.central.registerProject({
-        name: uniqueName,
+      const identity = readProjectIdentity(join(projectPath, ".fusion"));
+      const ensured = await this.central.ensureProjectForPath({
         path: projectPath,
-        isolationMode: "in-process",
+        identity: identity ? { id: identity.id, createdAt: identity.createdAt } : undefined,
+        name: uniqueName,
       });
+      const project = ensured.project;
 
       // Activate the project after successful registration
       await this.central.updateProject(project.id, { status: "active" });
+      try {
+        writeProjectIdentity(join(projectPath, ".fusion"), {
+          id: project.id,
+          createdAt: project.createdAt,
+        });
+      } catch {
+        // Best-effort stamp only.
+      }
 
       result.success = true;
       result.projectsRegistered.push(project.id);
@@ -529,15 +546,24 @@ export class MigrationCoordinator {
         // Ensure unique name
         const uniqueName = await this.ensureUniqueName(input.name);
 
-        // Register
-        const project = await this.central.registerProject({
-          name: uniqueName,
+        const identity = input.identity ?? readProjectIdentity(join(input.path, ".fusion"));
+        const ensured = await this.central.ensureProjectForPath({
           path: input.path,
-          isolationMode: input.isolationMode ?? "in-process",
+          identity: identity ? { id: identity.id, createdAt: identity.createdAt } : undefined,
+          name: uniqueName,
         });
+        const project = ensured.project;
 
         // Activate after registration
         await this.central.updateProject(project.id, { status: "active" });
+        try {
+          writeProjectIdentity(join(input.path, ".fusion"), {
+            id: project.id,
+            createdAt: project.createdAt,
+          });
+        } catch {
+          // Best-effort stamp only.
+        }
 
         result.projectsRegistered.push(project.id);
       } catch (err) {

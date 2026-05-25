@@ -220,6 +220,73 @@ export type GitMutationType =
    * ```
    */
   | "merge:integration-ref-advance"
+  /**
+   * Emitted by the merger's post-ref-advance auto-sync hook for each other
+   * worktree it attempts to fast-forward (typically the user's project-root
+   * checkout). Records the per-worktree outcome of the
+   * `mergeAdvanceAutoSync` pipeline (`stash → ff → pop`, or pure `ff-only`).
+   * Per-worktree `pull:fast-forward`, `stash:push`, `stash:pop`, and
+   * `stash:pop-conflict` events are still emitted in addition, with
+   * `metadata.autoSync = true` so downstream consumers can attribute them.
+   *
+   * Metadata shape:
+   * ```ts
+   * {
+   *   taskId: string;
+   *   integrationBranch: string;
+   *   mode: "ff-only" | "stash-and-ff";
+   *   newSha?: string;
+   *   worktreePath?: string;
+   *   outcome:
+   *     | "clean-sync"                  // worktree was clean against previousSha; reset --hard HEAD snapped it forward
+   *     | "synced-with-edits-restored"  // real edits captured as patch, snapped to HEAD, patch re-applied cleanly
+   *     | "synced-with-pop-conflict"    // patch failed to reapply OR untracked file collided with newly-tracked path
+   *     | "skipped-dirty"               // ff-only mode + real edits → no-op (banner surfaces for manual handling)
+   *     | "skipped-not-on-branch"       // worktree's HEAD is on a different branch than integrationBranch
+   *     | "skipped-head-not-at-new-sha" // concurrent advance moved HEAD past newSha between guard and reset
+   *     | "failed"                      // git command exited non-zero; see stage + error
+   *     | "enumeration-failed"          // `git worktree list --porcelain` failed in the project root
+   *     | "exception";                  // syncWorktreeToHead threw outside its own try/catch
+   *   stashedFiles?: string[];          // tracked-file edits captured into patchPath
+   *   patchPath?: string;               // /tmp/fusion-worktree-sync-<id>/edits.patch (preserved when outcome surfaces a conflict)
+   *   conflictedFiles?: string[];       // paths git apply --3way couldn't reconcile; falls back to patch-header parsing when the index has no unmerged entries
+   *   untrackedRestored?: string[];     // untracked files copied back into the worktree after the snap
+   *   untrackedSkippedAsTracked?: string[]; // untracked files whose paths collided with newly-tracked files at HEAD; left in the stage dir
+   *   stage?: "snapshot" | "reset" | "apply" | "untracked-restore"; // only on outcome === "failed"
+   *   error?: string;
+   * }
+   * ```
+   *
+   * Per-step `pull:fast-forward`, `stash:push`, `stash:pop`, and
+   * `stash:pop-conflict` events that flow through the merger's auditor as
+   * part of this auto-sync carry `metadata.autoSync = true` so consumers can
+   * filter them apart from user-triggered git operations.
+   */
+  | "merge:auto-sync"
+  /**
+   * Emitted when contamination recovery detects a foreign commit attributable
+   * to a `done` task that is not reachable from the integration branch — an
+   * orphan produced by a pre-fix non-FF ref advance. `merger:orphan-rehome-ff`
+   * fires after a successful fast-forward rehome; `merger:orphan-rehome-refused`
+   * fires when the orphan diverges from the integration tip and would require
+   * a cherry-pick (refused as too high-blast-radius for automated recovery).
+   *
+   * Metadata shape:
+   * ```ts
+   * {
+   *   taskId: string;
+   *   integrationBranch: string;
+   *   orphanSha: string;
+   *   integrationTipSha?: string;
+   *   previousTipSha?: string;
+   *   newTipSha?: string;
+   *   reason?: "non-fast-forward";
+   *   cherryPickHint?: string;
+   * }
+   * ```
+   */
+  | "merger:orphan-rehome-ff"
+  | "merger:orphan-rehome-refused"
   | "merge:audit-failure"
   | "branch:auto-reclaim"
   | "branch:auto-canonicalize-case"
@@ -264,15 +331,36 @@ export type GitMutationType =
    *   taskId?: string;
    *   worktreePath: string;
    *   integrationBranch: string;
+   *   remote?: string;
    *   fromSha: string;
    *   toSha: string;
    *   durationMs: number;
    *   succeeded: boolean;
    *   error?: string;
+   *   behind?: number;
+   *   ahead?: number;
    * }
    * ```
    */
   | "pull:fast-forward"
+  /**
+   * Metadata shape:
+   * ```ts
+   * {
+   *   integrationBranch: string;
+   *   remote: "origin";
+   *   localSha: string;
+   *   remoteSha: string | null;
+   *   aheadCount: number;
+   *   behindCount: number;
+   *   forceWithLease: boolean;
+   *   outcome: "ok" | "rejected-non-ff" | "rejected-other" | "no-upstream" | "no-remote" | "merge-locked" | "failed";
+   *   stderrPreview?: string;
+   *   durationMs: number;
+   * }
+   * ```
+   */
+  | "push:origin"
   /**
    * Metadata shape:
    * ```ts
@@ -282,7 +370,8 @@ export type GitMutationType =
    *   stashSha: string;
    *   stashLabel: string;
    *   conflictedFiles: string[];
-   *   advice: string;
+   *   autostashOutcome: "conflict-needs-manual" | "failed";
+   *   advice?: string;
    * }
    * ```
    */
@@ -329,6 +418,7 @@ export type DatabaseMutationType =
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   | "task:auto-reconciled-self-defeating-dep"
+  | "task:soft-delete-column-reconciled"
   | "task:dependency-cycle-rejected"
   | "task:dependency-cycle-detected"
   | "task:auto-reconciled-dependency-cycle"
@@ -386,8 +476,36 @@ export type DatabaseMutationType =
   | "task:auto-board-stall-unrecovered"
   /** Metadata: { errors: string[], lastCheckedAt: string | null, notificationDispatched: boolean } */
   | "task:auto-db-corruption-detected"
+  /**
+   * Per-lane runtime/provider/model selection telemetry, emitted once per
+   * `createResolvedAgentSession` call. Target is the resolved runtime id
+   * (e.g., `"pi"`, `"mock"`, `"hermes"`).
+   *
+   * Metadata shape:
+   * ```ts
+   * {
+   *   sessionPurpose: SessionPurpose;        // canonical lane label
+   *   runtimeId: string;                     // resolved runtime id (same as target)
+   *   wasConfigured: boolean;                // runtime was explicitly configured (vs default fallback)
+   *   provider: string | null;               // resolved AI provider id (null when not yet set)
+   *   modelId: string | null;                // resolved model id (null when not yet set)
+   *   mockProviderActive: boolean;           // isMockProviderId(provider) — convenience flag for test-mode assertions
+   *   testModeActive: boolean;               // isTestModeActive(settings) at resolution time
+   *   runtimeHint?: string;                  // raw runtime hint when present
+   * }
+   * ```
+   */
+  | "session:runtime-resolved"
   | "task:in-review-stall-deadlock-disposed"
   | "task:finalize-unproven-blocked"
+  /**
+   * FN-5490/FN-5517/FN-5526/FN-5540 lost-work guard: the merger or self-heal
+   * sweep refused to finalize a task as no-op because its record claimed
+   * `modifiedFiles` while no commit landed. Task is moved back to todo with
+   * progress preserved instead of silently clearing modifiedFiles to [].
+   * Metadata: { modifiedFilesCount, classification, baseRef? }
+   */
+  | "task:finalize-lost-work-blocked"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
   /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a done/archived task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */

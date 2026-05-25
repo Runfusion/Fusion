@@ -57,8 +57,17 @@ function isTerminalColumn(column) {
   return column === "done" || column === "archived";
 }
 
+function hasDeletedAtColumn(db) {
+  const columns = db.prepare("PRAGMA table_info('tasks')").all();
+  return columns.some((column) => column?.name === "deletedAt");
+}
+
 export function recoverBlockedBy({ db, tasksDir, dryRun = true }) {
-  const rows = db.prepare("SELECT id, \"column\", blockedBy, worktree, paused, log FROM tasks").all();
+  const includeDeletedAt = hasDeletedAtColumn(db);
+  const selectSql = includeDeletedAt
+    ? "SELECT id, \"column\", blockedBy, worktree, paused, log, deletedAt FROM tasks WHERE deletedAt IS NULL"
+    : "SELECT id, \"column\", blockedBy, worktree, paused, log FROM tasks";
+  const rows = db.prepare(selectSql).all();
   const byId = new Map(rows.map((row) => [row.id, row]));
 
   const activeScopes = new Map();

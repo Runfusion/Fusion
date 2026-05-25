@@ -99,9 +99,84 @@ describe("merge advance events route", () => {
             dirty: true,
             untrackedCount: 2,
           },
+          autoSync: [],
         },
       ],
     });
+  });
+
+  it("surfaces merge:auto-sync outcomes (clean-sync + synced-with-pop-conflict) alongside the advance event", async () => {
+    const advance = makeEvent({
+      id: "evt-advance",
+      mutationType: "merge:integration-ref-advance",
+      timestamp: "2026-05-21T10:00:00.000Z",
+      metadata: {
+        integrationBranch: "main",
+        refName: "refs/heads/main",
+        toSha: "newSha",
+        fromSha: "prevSha",
+        advanceMode: "update-ref",
+        succeeded: true,
+      },
+    });
+    const clean = makeEvent({
+      id: "evt-auto-clean",
+      mutationType: "merge:auto-sync",
+      timestamp: "2026-05-21T10:00:01.000Z",
+      metadata: {
+        worktreePath: "/repo",
+        mode: "stash-and-ff",
+        outcome: "clean-sync",
+        integrationBranch: "main",
+      },
+    });
+    const conflict = makeEvent({
+      id: "evt-auto-conflict",
+      mutationType: "merge:auto-sync",
+      timestamp: "2026-05-21T10:00:02.000Z",
+      metadata: {
+        worktreePath: "/secondary",
+        mode: "stash-and-ff",
+        outcome: "synced-with-pop-conflict",
+        integrationBranch: "main",
+        conflictedFiles: ["packages/foo/old.ts"],
+        patchPath: "/tmp/fusion-worktree-sync-abc/edits.patch",
+        untrackedSkippedAsTracked: [],
+      },
+    });
+    // Stale event outside the 5-minute window must be excluded.
+    const stale = makeEvent({
+      id: "evt-auto-stale",
+      mutationType: "merge:auto-sync",
+      timestamp: "2026-05-20T10:00:00.000Z",
+      metadata: { worktreePath: "/old", mode: "stash-and-ff", outcome: "clean-sync" },
+    });
+
+    const store: TaskStore = {
+      getRootDir: vi.fn(() => process.cwd()),
+      getRunAuditEvents: vi.fn((filters?: { mutationType?: string }) => {
+        if (filters?.mutationType === "merge:integration-ref-advance") return [advance];
+        if (filters?.mutationType === "merge:auto-sync") return [clean, conflict, stale];
+        return [];
+      }),
+    } as unknown as TaskStore;
+
+    const app = express();
+    app.use("/api", createApiRoutes(store));
+    const res = await REQUEST(app, "GET", "/api/tasks/merge-advance-events");
+    expect(res.status).toBe(200);
+    const body = res.body as { events: Array<{ autoSync: Array<Record<string, unknown>> }> };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0].autoSync).toHaveLength(2);
+    expect(body.events[0].autoSync).toEqual(expect.arrayContaining([
+      expect.objectContaining({ worktreePath: "/repo", outcome: "clean-sync" }),
+      expect.objectContaining({
+        worktreePath: "/secondary",
+        outcome: "synced-with-pop-conflict",
+        conflictedFiles: ["packages/foo/old.ts"],
+        patchPath: "/tmp/fusion-worktree-sync-abc/edits.patch",
+      }),
+    ]));
   });
 
   it("maps succeeded false from metadata", async () => {

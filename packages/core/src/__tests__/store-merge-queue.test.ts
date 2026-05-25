@@ -294,6 +294,72 @@ describe("TaskStore merge queue", () => {
     expect(store.peekMergeQueue().some((entry) => entry.taskId === taskId)).toBe(false);
   });
 
+  it("FN-5444: emits metadata-rich enqueue-rejected and stale-lease-on-column-exit audits", async () => {
+    const todoTask = await createTask();
+    await store.moveTask(todoTask, "todo");
+    expect(() => store.enqueueMergeQueue(todoTask)).toThrow(MergeQueueInvalidColumnError);
+
+    const rejected = store.getRunAuditEvents({ taskId: todoTask, mutationType: "mergeQueue:enqueue-rejected" });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].metadata).toMatchObject({
+      taskId: todoTask,
+      column: "todo",
+      reason: "not-in-review",
+    });
+
+    const leasedTaskId = await createInReviewTask();
+    const lease = store.acquireMergeQueueLease("worker-fn-5444", { leaseDurationMs: 60_000, now: "2099-05-19T00:00:10.000Z" });
+    expect(lease?.taskId).toBe(leasedTaskId);
+    await store.moveTask(leasedTaskId, "todo");
+
+    const staleLeaseAudit = store.getRunAuditEvents({ taskId: leasedTaskId, mutationType: "mergeQueue:stale-lease-on-column-exit" });
+    expect(staleLeaseAudit).toHaveLength(1);
+    expect(staleLeaseAudit[0].metadata).toMatchObject({
+      taskId: leasedTaskId,
+      previousColumn: "in-review",
+      nextColumn: "todo",
+      leasedBy: "worker-fn-5444",
+    });
+    expect(typeof staleLeaseAudit[0].metadata?.leaseExpiresAt).toBe("string");
+  });
+
+  it("FN-5444: auto-cleanup-stale-row fires for targeted and untargeted acquisition", async () => {
+    const staleTaskId = await createTask();
+    await store.moveTask(staleTaskId, "todo");
+
+    const targetTaskId = await createInReviewTask();
+    store.getDatabase().prepare("DELETE FROM mergeQueue WHERE taskId = ?").run(targetTaskId);
+    store.enqueueMergeQueue(targetTaskId, { now: "2026-05-19T00:00:00.100Z" });
+    store.getDatabase().prepare("INSERT INTO mergeQueue (taskId, enqueuedAt, priority, attemptCount) VALUES (?, ?, ?, 0)").run(
+      staleTaskId,
+      "2026-05-19T00:00:00.000Z",
+      "normal",
+    );
+
+    const targetedLease = store.acquireMergeQueueLease("worker-targeted", {
+      targetTaskId,
+      leaseDurationMs: 60_000,
+      now: "2026-05-19T00:01:00.000Z",
+    });
+    expect(targetedLease?.taskId).toBe(targetTaskId);
+    store.releaseMergeQueueLease(targetTaskId, "worker-targeted", { kind: "failure", error: "retry" });
+
+    const untargetedLease = store.acquireMergeQueueLease("worker-untargeted", {
+      leaseDurationMs: 60_000,
+      now: "2026-05-19T00:02:00.000Z",
+    });
+    expect(untargetedLease?.taskId).toBe(targetTaskId);
+
+    const cleanupEvents = store.getRunAuditEvents({ taskId: staleTaskId, mutationType: "mergeQueue:auto-cleanup-stale-row" });
+    expect(cleanupEvents).toHaveLength(1);
+    expect(cleanupEvents[0].metadata).toMatchObject({
+      taskId: staleTaskId,
+      column: "todo",
+      reason: "not-in-review",
+    });
+    expect(store.peekMergeQueue().some((entry) => entry.taskId === staleTaskId)).toBe(false);
+  });
+
   it("auto-cleans polluted non-in-review rows before lease selection", async () => {
     const reviewTaskId = await createInReviewTask();
     const todoTaskId = await createTask();

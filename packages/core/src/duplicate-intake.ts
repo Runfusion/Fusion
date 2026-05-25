@@ -21,11 +21,17 @@ export interface SameAgentDuplicateCandidate {
   createdAt: number;
   sourceAgentId: string | null;
   sourceParentTaskId?: string | null;
+  tombstoned?: boolean;
+  deletedAt?: string;
+  allowResurrection?: boolean;
 }
 
 export interface SameAgentDuplicateMatch {
   id: string;
   score: number;
+  tombstoned?: boolean;
+  deletedAt?: string;
+  allowResurrection?: boolean;
 }
 
 /**
@@ -51,10 +57,11 @@ export function findSameAgentDuplicates(
   const inputParentId = input.sourceParentTaskId ?? null;
 
   const recent = candidates.filter((candidate) => {
-    if (candidate.createdAt < cutoff) return false;
     const agentMatch = inputAgentId != null && candidate.sourceAgentId === inputAgentId;
     const parentMatch = inputParentId != null && candidate.sourceParentTaskId === inputParentId;
-    return agentMatch || parentMatch;
+    if (!agentMatch && !parentMatch) return false;
+    if (candidate.tombstoned) return true;
+    return candidate.createdAt >= cutoff;
   });
 
   const matches = findDuplicateMatches(
@@ -68,7 +75,17 @@ export function findSameAgentDuplicates(
     { threshold },
   );
 
-  return matches.map((match) => ({ id: match.id, score: match.score }));
+  const metadataById = new Map(recent.map((candidate) => [candidate.id, candidate]));
+  return matches.map((match) => {
+    const candidate = metadataById.get(match.id);
+    return {
+      id: match.id,
+      score: match.score,
+      tombstoned: candidate?.tombstoned,
+      deletedAt: candidate?.deletedAt,
+      allowResurrection: candidate?.allowResurrection,
+    };
+  });
 }
 
 export async function archiveAsSameAgentDuplicate(

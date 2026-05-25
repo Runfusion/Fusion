@@ -1158,6 +1158,7 @@ describe("DELETE /tasks/:id", () => {
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("KB-001");
     expect(store.deleteTask).toHaveBeenCalledWith("KB-001", expect.objectContaining({
+      allowResurrection: false,
       removeDependencyReferences: false,
       removeLineageReferences: false,
       githubIssueAction: undefined,
@@ -1220,6 +1221,20 @@ describe("DELETE /tasks/:id", () => {
         agentId: "system",
         runId: expect.stringMatching(/^synthetic-dashboard-delete-KB-001-/),
       }),
+    }));
+  });
+
+  it("passes allowResurrection when explicitly requested", async () => {
+    const deletedTask = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    (store.deleteTask as ReturnType<typeof vi.fn>).mockResolvedValue(deletedTask);
+
+    const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001?allowResurrection=true");
+
+    expect(res.status).toBe(200);
+    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", expect.objectContaining({
+      allowResurrection: true,
+      removeDependencyReferences: false,
+      removeLineageReferences: false,
     }));
   });
 

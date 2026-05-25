@@ -156,6 +156,14 @@ const mocks = vi.hoisted(() => {
         projects.push(project);
         return Promise.resolve(project);
       }),
+      ensureProjectForPath: vi.fn().mockImplementation(async ({ path, name, isolationMode }: { path: string; name?: string; isolationMode?: "in-process" | "child-process" }) => ({
+        outcome: "registered",
+        project: await instance.registerProject({
+          name: name ?? "unnamed",
+          path,
+          isolationMode: isolationMode ?? "in-process",
+        }),
+      })),
       updateProject: vi.fn().mockImplementation((id: string, patch: { status?: string }) => {
         const index = projects.findIndex((project) => project.id === id);
         if (index >= 0) {

@@ -1327,7 +1327,7 @@ describe("GET /settings/scopes", () => {
   }
 
   it("returns settings separated by scope", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValue({
       global: {
         themeMode: "dark",
         defaultProvider: "anthropic",
@@ -1357,7 +1357,7 @@ describe("GET /settings/scopes", () => {
   });
 
   it("returns exact response envelope shape with only global and project keys", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValue({
       global: { themeMode: "dark" },
       project: { maxConcurrent: 4 },
     });
@@ -1374,8 +1374,25 @@ describe("GET /settings/scopes", () => {
     expect(keys).toEqual(["global", "project"]);
   });
 
+  it("uses getSettingsByScopeFast and does not call getSettingsByScope", async () => {
+    const fastSpy = vi.spyOn(store, "getSettingsByScopeFast");
+    const slowSpy = vi.spyOn(store, "getSettingsByScope");
+    fastSpy.mockResolvedValue({
+      global: { themeMode: "dark", defaultProvider: "anthropic" },
+      project: { maxConcurrent: 4 },
+    });
+
+    const res = await GET(buildApp(), "/api/settings/scopes");
+
+    expect(res.status).toBe(200);
+    expect(fastSpy).toHaveBeenCalledTimes(1);
+    expect(slowSpy).not.toHaveBeenCalled();
+    expect(res.body).toHaveProperty("global");
+    expect(res.body).toHaveProperty("project");
+  });
+
   it("global settings include model defaults", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValue({
       global: {
         themeMode: "dark",
         defaultProvider: "anthropic",
@@ -1396,7 +1413,7 @@ describe("GET /settings/scopes", () => {
   });
 
   it("project settings include execution and planning overrides", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValue({
       global: { themeMode: "dark" },
       project: {
         executionProvider: "openai",
@@ -1420,7 +1437,7 @@ describe("GET /settings/scopes", () => {
   });
 
   it("returns evalSettings in project scope only", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValue({
       global: { themeMode: "dark" },
       project: {
         evalSettings: {
@@ -1445,7 +1462,7 @@ describe("GET /settings/scopes", () => {
   });
 
   it("returns remoteAccess only under project scope", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValue({
       global: { themeMode: "dark" },
       project: {
         remoteAccess: {
@@ -1493,7 +1510,7 @@ describe("GET /settings/scopes", () => {
   });
 
   it("returns 500 on store error", async () => {
-    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Failed"));
+    (store.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Failed"));
 
     const res = await GET(buildApp(), "/api/settings/scopes");
 
@@ -1526,7 +1543,7 @@ describe("GET /settings/scopes with projectId scoping", () => {
   }
 
   it("uses scoped store when projectId is provided", async () => {
-    (scopedStore.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (scopedStore.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       global: { themeMode: "light" },
       project: { maxConcurrent: 8, planningProvider: "anthropic", planningModelId: "claude-sonnet-4-5" },
     });
@@ -1535,21 +1552,21 @@ describe("GET /settings/scopes with projectId scoping", () => {
 
     expect(res.status).toBe(200);
     expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
-    expect(scopedStore.getSettingsByScope).toHaveBeenCalled();
-    expect(defaultStore.getSettingsByScope).not.toHaveBeenCalled();
+    expect(scopedStore.getSettingsByScopeFast).toHaveBeenCalled();
+    expect(defaultStore.getSettingsByScopeFast).not.toHaveBeenCalled();
     expect(res.body.project.maxConcurrent).toBe(8);
     expect(res.body.project.planningProvider).toBe("anthropic");
   });
 
   it("does not leak default store values into scoped response", async () => {
     // Default store with conflicting values
-    (defaultStore.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (defaultStore.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       global: { defaultProvider: "default-global-provider", defaultModelId: "default-global-model" },
       project: { maxConcurrent: 2 },
     });
 
     // Scoped store with different values
-    (scopedStore.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (scopedStore.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       global: { themeMode: "dark" },
       project: { maxConcurrent: 6 },
     });
@@ -1559,8 +1576,8 @@ describe("GET /settings/scopes with projectId scoping", () => {
     expect(res.status).toBe(200);
     expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
     // Verify scoped store was used exclusively
-    expect(scopedStore.getSettingsByScope).toHaveBeenCalled();
-    expect(defaultStore.getSettingsByScope).not.toHaveBeenCalled();
+    expect(scopedStore.getSettingsByScopeFast).toHaveBeenCalled();
+    expect(defaultStore.getSettingsByScopeFast).not.toHaveBeenCalled();
     // Verify values come from scoped store
     expect(res.body.project.maxConcurrent).toBe(6);
     // No leakage from default store
@@ -1568,7 +1585,7 @@ describe("GET /settings/scopes with projectId scoping", () => {
   });
 
   it("returns project settings from scoped store only", async () => {
-    (scopedStore.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (scopedStore.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       global: { themeMode: "light" },
       project: {
         executionProvider: "scoped-execution-provider",
@@ -1581,15 +1598,15 @@ describe("GET /settings/scopes with projectId scoping", () => {
     const res = await GET(buildApp(), `/api/settings/scopes?projectId=${projectId}`);
 
     expect(res.status).toBe(200);
-    expect(scopedStore.getSettingsByScope).toHaveBeenCalled();
+    expect(scopedStore.getSettingsByScopeFast).toHaveBeenCalled();
     expect(res.body.project.executionProvider).toBe("scoped-execution-provider");
     expect(res.body.project.executionModelId).toBe("scoped-execution-model");
     expect(res.body.project.planningProvider).toBe("scoped-planning-provider");
     expect(res.body.project.planningModelId).toBe("scoped-planning-model");
   });
 
-  it("returns 500 when scoped store getSettingsByScope fails", async () => {
-    (scopedStore.getSettingsByScope as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Scoped store failed"));
+  it("returns 500 when scoped store getSettingsByScopeFast fails", async () => {
+    (scopedStore.getSettingsByScopeFast as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Scoped store failed"));
 
     const res = await GET(buildApp(), `/api/settings/scopes?projectId=${projectId}`);
 

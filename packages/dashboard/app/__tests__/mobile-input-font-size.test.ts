@@ -33,7 +33,7 @@ describe("mobile input font size CSS", () => {
   describe("mobile @media (max-width: 768px)", () => {
     // Extract the main mobile media block for scoped assertions
     const mediaStart = css.search(
-      /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{/,
+      /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{/,
     );
     const afterMedia = css.slice(mediaStart);
 

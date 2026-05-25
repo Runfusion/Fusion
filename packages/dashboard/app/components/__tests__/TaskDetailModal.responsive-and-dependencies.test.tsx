@@ -10,6 +10,7 @@ import {
   noopOpenDetail,
   mockConfirm,
   mockConfirmWithChoice,
+  mockConfirmWithCheckbox,
   mockUsePluginUiSlots,
   expectBaseRule,
   readDashboardStylesSource,
@@ -125,14 +126,13 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "close" });
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "close", allowResurrection: false });
       });
     });
 
     it("passes githubIssueAction=delete for tracked tasks", async () => {
       const onDeleteTask = vi.fn().mockResolvedValue({} as Task);
       mockConfirm
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(true);
 
@@ -152,14 +152,13 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "delete" });
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "delete", allowResurrection: false });
       });
     });
 
     it("passes githubIssueAction=leave for tracked tasks", async () => {
       const onDeleteTask = vi.fn().mockResolvedValue({} as Task);
       mockConfirm
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(false);
 
@@ -179,7 +178,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "leave" });
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "leave", allowResurrection: false });
       });
     });
 
@@ -203,7 +202,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(onDeleteTask).toHaveBeenCalledWith("FN-099");
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { allowResurrection: false });
       });
     });
 
@@ -219,8 +218,8 @@ describe("TaskDetailModal", () => {
         .mockRejectedValueOnce(conflict)
         .mockResolvedValueOnce({} as Task);
 
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
       mockConfirm
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false)
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true);
@@ -242,24 +241,19 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(mockConfirm).toHaveBeenNthCalledWith(1, {
-          title: "Delete Task",
-          message: "Delete FN-099?",
-          danger: true,
-        });
-        expect(mockConfirm).toHaveBeenNthCalledWith(2, {
           title: "Linked GitHub Issue",
           message: "Choose what to do with owner/repo#42 when deleting FN-099.\n\nClose the issue?",
           confirmLabel: "Close Issue",
           cancelLabel: "More Options",
         });
-        expect(mockConfirm).toHaveBeenNthCalledWith(3, {
+        expect(mockConfirm).toHaveBeenNthCalledWith(2, {
           title: "Delete Linked GitHub Issue",
           message: "Delete owner/repo#42 on GitHub, or leave it unchanged?",
           confirmLabel: "Delete Issue",
           cancelLabel: "Leave Unchanged",
           danger: true,
         });
-        expect(mockConfirm).toHaveBeenNthCalledWith(4, {
+        expect(mockConfirm).toHaveBeenNthCalledWith(3, {
           title: "Force Delete Task",
           message: "FN-099 is a dependency of FN-100, FN-101.\n\nDelete anyway by removing these dependency references first?",
           danger: true,
@@ -267,11 +261,12 @@ describe("TaskDetailModal", () => {
       });
 
       await waitFor(() => {
-        expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-099", { githubIssueAction: "delete" });
+        expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-099", { githubIssueAction: "delete", allowResurrection: false });
         expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
           removeDependencyReferences: true,
           removeLineageReferences: true,
           githubIssueAction: "delete",
+          allowResurrection: false,
         });
         expect(noop).toHaveBeenCalledWith("Deleted FN-099 after removing dependency references", "info");
       });
@@ -287,9 +282,8 @@ describe("TaskDetailModal", () => {
       conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-102"] };
       onDeleteTask.mockRejectedValue(conflict);
 
-      mockConfirm
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
+      mockConfirm.mockResolvedValueOnce(false);
 
       render(
         <TaskDetailModal
@@ -307,7 +301,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(mockConfirm).toHaveBeenCalledTimes(2);
+        expect(mockConfirm).toHaveBeenCalledTimes(1);
         expect(onDeleteTask).toHaveBeenCalledTimes(1);
       });
     });
@@ -322,8 +316,8 @@ describe("TaskDetailModal", () => {
       conflict.details = { code: "TASK_HAS_LINEAGE_CHILDREN", lineageChildIds: ["FN-104"] };
       onDeleteTask.mockRejectedValue(conflict);
 
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
       mockConfirm
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false);
 
@@ -343,7 +337,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(mockConfirm).toHaveBeenCalledTimes(3);
+        expect(mockConfirm).toHaveBeenCalledTimes(2);
         expect(onDeleteTask).toHaveBeenCalledTimes(1);
       });
     });
@@ -360,9 +354,8 @@ describe("TaskDetailModal", () => {
         .mockRejectedValueOnce(conflict)
         .mockRejectedValueOnce(new Error("Retry failed"));
 
-      mockConfirm
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(true);
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
+      mockConfirm.mockResolvedValueOnce(true);
 
       render(
         <TaskDetailModal
@@ -383,6 +376,7 @@ describe("TaskDetailModal", () => {
         expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", {
           removeDependencyReferences: true,
           removeLineageReferences: true,
+          allowResurrection: false,
         });
         expect(noop).toHaveBeenCalledWith("Retry failed", "error");
       });
@@ -400,8 +394,8 @@ describe("TaskDetailModal", () => {
         .mockRejectedValueOnce(conflict)
         .mockResolvedValueOnce({} as Task);
 
+      mockConfirmWithCheckbox.mockResolvedValueOnce({ choice: "primary", checkboxValue: false });
       mockConfirm
-        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true);
 
@@ -425,6 +419,7 @@ describe("TaskDetailModal", () => {
           removeDependencyReferences: true,
           removeLineageReferences: true,
           githubIssueAction: "close",
+          allowResurrection: false,
         });
       });
     });

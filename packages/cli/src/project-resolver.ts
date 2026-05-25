@@ -9,9 +9,16 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { basename, dirname, resolve, normalize } from "node:path";
+import { basename, dirname, join, normalize, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { CentralCore, isValidSqliteDatabaseFile, type RegisteredProject, type TaskStore } from "@fusion/core";
+import {
+  CentralCore,
+  isValidSqliteDatabaseFile,
+  readProjectIdentity,
+  writeProjectIdentity,
+  type RegisteredProject,
+  type TaskStore,
+} from "@fusion/core";
 import { ProjectManager } from "@fusion/engine";
 
 // Singleton instances for reuse across commands
@@ -246,6 +253,44 @@ export async function resolveProject(options: ResolveOptions = {}): Promise<Reso
     // 4. Has .fusion/ but not registered
     if (interactive) {
       console.log(`\n  Found fn project at ${fusionDir} but it's not registered.`);
+      const identity = readProjectIdentity(fusionDir);
+
+      if (identity) {
+        const recover = await promptConfirm(
+          `Found orphaned project data for this path under id ${identity.id} (createdAt=${identity.createdAt}). Restore it?`,
+          true,
+        );
+
+        if (recover) {
+          try {
+            const ensured = await central.ensureProjectForPath({
+              path: fusionDir,
+              identity,
+              name: basename(fusionDir) || "unnamed",
+            });
+            const recoveredProject = ensured.project;
+            await central.updateProject(recoveredProject.id, { status: "active" });
+            try {
+              writeProjectIdentity(fusionDir, {
+                id: recoveredProject.id,
+                createdAt: recoveredProject.createdAt,
+              });
+            } catch {
+              // Best-effort stamp only.
+            }
+            console.log(`\n  ✓ Restored project "${recoveredProject.name}" (${recoveredProject.id})`);
+            return createResolvedProject(recoveredProject);
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            throw new ProjectResolutionError(
+              `Failed to restore project identity: ${errMsg}`,
+              "NOT_REGISTERED",
+              { directory: fusionDir, error: errMsg },
+            );
+          }
+        }
+      }
+
       const shouldRegister = await promptConfirm("Register this project now?", true);
 
       if (shouldRegister) {
@@ -257,14 +302,39 @@ export async function resolveProject(options: ResolveOptions = {}): Promise<Reso
         const finalName = name.trim() || defaultName;
 
         try {
-          const newProject = await central.registerProject({
-            name: finalName,
+          const ensured = await central.ensureProjectForPath({
             path: fusionDir,
-            isolationMode: "in-process",
+            identity: undefined,
+            name: finalName,
           });
+          const newProject = ensured.project;
 
           // Activate the project (registration sets it to 'initializing')
           await central.updateProject(newProject.id, { status: "active" });
+          try {
+            writeProjectIdentity(fusionDir, {
+              id: newProject.id,
+              createdAt: newProject.createdAt,
+            });
+          } catch (error) {
+            if (identity && error instanceof Error && error.name === "ProjectIdentityConflictError") {
+              const overwrite = await promptConfirm(
+                "Stored identity differs from newly registered id. Overwrite stored identity with new id?",
+                false,
+              );
+              if (!overwrite) {
+                throw new ProjectResolutionError(
+                  "Registration cancelled to preserve existing stored identity.",
+                  "CANCELLED",
+                  { directory: fusionDir },
+                );
+              }
+              writeProjectIdentity(fusionDir, {
+                id: newProject.id,
+                createdAt: newProject.createdAt,
+              });
+            }
+          }
 
           console.log(`\n  ✓ Registered project "${newProject.name}"`);
           return createResolvedProject(newProject);
@@ -602,15 +672,25 @@ export async function registerProjectInteractive(
     );
   }
 
-  // Register the project
-  const project = await central.registerProject({
-    name,
+  const identity = readProjectIdentity(join(absPath, ".fusion"));
+  const ensured = await central.ensureProjectForPath({
     path: absPath,
-    isolationMode: options.isolation ?? "in-process",
+    identity: identity ?? undefined,
+    name,
   });
+
+  const project = ensured.project;
 
   // Activate the project (registration sets it to 'initializing')
   await central.updateProject(project.id, { status: "active" });
+  try {
+    writeProjectIdentity(join(absPath, ".fusion"), {
+      id: project.id,
+      createdAt: project.createdAt,
+    });
+  } catch {
+    // Best-effort stamp only.
+  }
 
   return createResolvedProject(project);
 }

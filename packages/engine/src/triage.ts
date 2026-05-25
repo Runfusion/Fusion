@@ -1210,6 +1210,14 @@ export class TriageProcessor {
           defaultProvider: planningModel.provider,
           defaultModelId: planningModel.modelId,
         };
+        const runAuditor = createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("triage", task.id),
+          agentId: assignedAgent?.id ?? "triage",
+          taskId: task.id,
+          taskLineageId: task.lineageId,
+          phase: "plan",
+          source: "triage",
+        });
 
         let { session } = await createResolvedAgentSession({
           sessionPurpose: "triage",
@@ -1232,6 +1240,8 @@ export class TriageProcessor {
             ? settings.planningFallbackModelId
             : settings.fallbackModelId,
           defaultThinkingLevel: settings.defaultThinkingLevel,
+          runAuditor,
+          settings,
           // Skill selection: use assigned agent skills if available, otherwise role fallback
           ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
           taskId: task.id,
@@ -1460,6 +1470,8 @@ export class TriageProcessor {
               defaultProvider: planningFallbackProvider,
               defaultModelId: planningFallbackModelId,
               defaultThinkingLevel: settings.defaultThinkingLevel,
+              runAuditor,
+              settings,
               ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
               taskId: task.id,
               taskTitle: task.title,

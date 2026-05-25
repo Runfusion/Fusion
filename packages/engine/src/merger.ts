@@ -83,13 +83,14 @@ import {
   type TaskSourceIssue,
   type Task,
   type AutostashOrphanRecord,
+  normalizeMergeAdvanceAutoSyncMode,
 } from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel } from "./agent-session-helpers.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
-import { classifyTaskWorktree, RemovalReason, removeWorktree, type WorktreePool } from "./worktree-pool.js";
+import { classifyTaskWorktree, getRegisteredWorktreeBranches, RemovalReason, removeWorktree, type WorktreePool } from "./worktree-pool.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
 import { AgentLogger } from "./agent-logger.js";
 import { mergerLog } from "./logger.js";
@@ -125,10 +126,139 @@ import {
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
+import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree-ref-sync.js";
 import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merger-scope-auto-widen.js";
 
 export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 export { IntegrationBranchConcurrentAdvanceError } from "./merger-ref-update-advance.js";
+
+/**
+ * After `advanceIntegrationBranchRef` ff-updates `refs/heads/<integrationBranch>`,
+ * any other worktree still checked out on that branch keeps its index + working
+ * tree pinned at the previous tip. `git status` in such a worktree then shows
+ * the new commits inverted as "staged changes to be committed" — the surprise
+ * behavior that made many users think the merge had been silently reverted.
+ *
+ * This helper enumerates other worktrees on the integration branch and calls
+ * `syncWorktreeToHead` inside each — snap-forward when the worktree is clean
+ * against the previous tip, or capture-patch + reset + reapply when the user
+ * has real local edits. Each attempt emits a `merge:auto-sync` audit event
+ * with the outcome.
+ *
+ * Best-effort: any per-worktree failure is recorded as an audit event and the
+ * loop continues — the merge has already landed and the auto-sync is convenience.
+ */
+async function runMergeAdvanceAutoSync(input: {
+  store: TaskStore;
+  audit: RunAuditor;
+  taskId: string;
+  projectRootDir: string;
+  integrationBranch: string;
+  previousSha: string;
+  newSha: string;
+  mode: "ff-only" | "stash-and-ff";
+}): Promise<void> {
+  const { audit, taskId, projectRootDir, integrationBranch, previousSha, newSha, mode } = input;
+  // `getRegisteredWorktreeBranches` returns ALL (branch, path) pairs, not a
+  // Map keyed by branch — multiple worktrees can share a branch when the user
+  // created secondary checkouts via `git worktree add --force -b`. Collapsing
+  // to a Map would silently skip all but the last-iterated of those, which is
+  // exactly the surprise-`git status` bug this hook was meant to fix.
+  let entries: Array<{ branch: string; worktreePath: string }>;
+  try {
+    entries = await getRegisteredWorktreeBranches(projectRootDir);
+  } catch (err: unknown) {
+    await audit.git({
+      type: "merge:auto-sync",
+      target: projectRootDir,
+      metadata: {
+        taskId,
+        integrationBranch,
+        mode,
+        outcome: "enumeration-failed",
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+    return;
+  }
+
+  const matchingWorktrees: string[] = [];
+  for (const entry of entries) {
+    if (entry.branch === integrationBranch) {
+      matchingWorktrees.push(entry.worktreePath);
+    }
+  }
+
+  if (matchingWorktrees.length === 0) {
+    return;
+  }
+
+  for (const worktreePath of matchingWorktrees) {
+    let result: SyncWorktreeResult;
+    try {
+      result = await syncWorktreeToHead({
+        worktreePath,
+        integrationBranch,
+        previousSha,
+        newSha,
+        mode,
+        taskId,
+        emit: async (event) => {
+          try {
+            await audit.git({
+              type: event.mutationType,
+              target: worktreePath,
+              metadata: { ...event.metadata, autoSync: true },
+            });
+          } catch {
+            // best-effort: never let inner audit failure abort the loop
+          }
+        },
+      });
+    } catch (err: unknown) {
+      await audit.git({
+        type: "merge:auto-sync",
+        target: worktreePath,
+        metadata: {
+          taskId,
+          integrationBranch,
+          mode,
+          newSha,
+          worktreePath,
+          outcome: "exception",
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+      continue;
+    }
+
+    await audit.git({
+      type: "merge:auto-sync",
+      target: worktreePath,
+      metadata: {
+        taskId,
+        integrationBranch,
+        mode,
+        newSha,
+        previousSha,
+        worktreePath,
+        outcome: result.kind,
+        ...(result.kind === "synced-with-pop-conflict"
+          ? { conflictedFiles: result.conflictedFiles, patchPath: result.patchPath, stashedFiles: result.stashedFiles, untrackedSkippedAsTracked: result.untrackedSkippedAsTracked }
+          : {}),
+        ...(result.kind === "synced-with-edits-restored"
+          ? { stashedFiles: result.stashedFiles, untrackedRestored: result.untrackedRestored, untrackedSkippedAsTracked: result.untrackedSkippedAsTracked }
+          : {}),
+        ...(result.kind === "failed"
+          ? { stage: result.stage, error: result.error }
+          : {}),
+        ...(result.kind === "skipped-dirty"
+          ? { dirtyFiles: result.dirtyFiles, untrackedFiles: result.untrackedFiles }
+          : {}),
+      },
+    });
+  }
+}
 
 /** Conflict type classification for merge conflict resolution */
 export type ConflictType =
@@ -437,8 +567,8 @@ async function syncDependenciesForMerge(
   }
 
   throwIfAborted(signal, taskId);
-  mergerLog.log(`${taskId}: syncing dependencies before merge build verification`);
-  await store.logEntry(taskId, `Syncing dependencies before merge build verification: ${installCommand}`);
+  mergerLog.log(`${taskId}: syncing dependencies before merge verification`);
+  await store.logEntry(taskId, `Syncing dependencies before merge verification: ${installCommand}`);
   try {
     await execAsync(installCommand, {
       cwd: rootDir,
@@ -491,8 +621,23 @@ export type OwnedLandedClassification =
     details: Record<string, unknown>;
   };
 
+function escapeRegexForOwnership(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Decide whether a git commit belongs to a given task. Line-anchored trailers
+ * and subject-anchored conventional commits only — prose mentions never count.
+ * Mirrors `commitOwnedByTask` in self-healing.ts (FN-5441/FN-5446 regression).
+ */
 function commitOwnedByTask(taskId: string, subject: string, body: string): boolean {
-  return body.includes(`${FUSION_TASK_ID_TRAILER_KEY}: ${taskId}`) || subject.includes(taskId);
+  if (new RegExp(`(?:^|\\n)${escapeRegexForOwnership(FUSION_TASK_ID_TRAILER_KEY)}: ${escapeRegexForOwnership(taskId)}\\s*(?:\\n|$)`).test(body)) {
+    return true;
+  }
+  const subjectAnchor = new RegExp(
+    `^(?:[A-Za-z]+(?:\\([^)]*\\b${escapeRegexForOwnership(taskId)}\\b[^)]*\\))?:|${escapeRegexForOwnership(taskId)}:)`,
+  );
+  return subjectAnchor.test(subject);
 }
 
 async function findOwnedLandedCommitForTask(rootDir: string, task: Task): Promise<OwnedLandedCommit | null> {
@@ -899,7 +1044,7 @@ export function packageNamesForFiles(rootDir: string, files: string[]): string[]
  *
  * @internal Exported for testing only.
  */
-export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string): string | null {
+export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string, branch: string): string | null {
   // 1. Read and parse pnpm-workspace.yaml
   const workspacePath = join(rootDir, "pnpm-workspace.yaml");
   let workspaceContent: string;
@@ -915,11 +1060,11 @@ export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string)
   const packageRoots = resolveWorkspacePackageRoots(rootDir, globs);
   if (packageRoots.length === 0) return null;
 
-  // 3. Get the changed files between base and branch tip
+  // 3. Get the changed files between base and the branch tip passed by caller.
   let changedFilesOutput: string;
   try {
     changedFilesOutput = execSync(
-      `git diff --name-only ${quoteArg(baseBranch)}...HEAD`,
+      `git diff --name-only ${quoteArg(baseBranch)}...${quoteArg(branch)}`,
       { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
     ).toString();
   } catch {
@@ -988,7 +1133,7 @@ export function inferDefaultTestCommand(
     if (existsSync(join(rootDir, "pnpm-workspace.yaml"))) {
       if (baseBranch?.trim() && branch?.trim()) {
         try {
-          const scoped = deriveScopedPnpmTestCommand(rootDir, baseBranch.trim());
+          const scoped = deriveScopedPnpmTestCommand(rootDir, baseBranch.trim(), branch.trim());
           if (scoped) {
             mergerLog.log(
               `Scoped inferred test command to changed packages: ${scoped}`,
@@ -1664,6 +1809,14 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
       defaultThinkingLevel: settings.defaultThinkingLevel,
+      runAuditor: createRunAuditor(store, {
+        runId: mergeRunContext?.runId ?? generateSyntheticRunId("merge", taskId),
+        agentId: mergeRunContext?.agentId ?? "merger",
+        taskId,
+        phase: "merge",
+        source: "merger",
+      }),
+      settings,
       // Skill selection: use assigned agent skills if available, otherwise role fallback
       ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
       taskId,
@@ -1888,7 +2041,7 @@ function resetMergeWithWarn(rootDir: string, taskId: string, label: string): voi
  *  `rescueShas` lists any race-rescue stashes the autostash captured for
  *  late-dirty paths (concurrent dev edits during the merger run). They are
  *  surfaced separately so the caller can log them to the task feed. */
-interface AutostashHandle {
+export interface AutostashHandle {
   sha: string;
   label: string;
   rescueShas?: { sha: string; label: string }[];
@@ -2451,9 +2604,10 @@ export const __test__ = {
   applyAutostashBySha,
   getAutostashDiff,
   notifyAutostashOrphans,
+  runMergeAdvanceAutoSync,
 };
 
-async function stashUnrelatedRootDirChanges(
+export async function stashUnrelatedRootDirChanges(
   rootDir: string,
   taskId: string,
 ): Promise<AutostashHandle | null> {
@@ -2680,7 +2834,7 @@ async function isAutostashLive(rootDir: string, sha: string): Promise<boolean> {
   }
 }
 
-async function dropAutostashHandle(
+export async function dropAutostashHandle(
   rootDir: string,
   taskId: string,
   handle: AutostashHandle,
@@ -2848,6 +3002,14 @@ ${fileList}
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
+    runAuditor: createRunAuditor(store, {
+      runId: generateSyntheticRunId("merge", taskId),
+      agentId: "merger",
+      taskId,
+      phase: "merge",
+      source: "merger",
+    }),
+    settings,
     ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     taskId,
     taskTitle: taskForSkillContext?.title,
@@ -3251,6 +3413,14 @@ ${fileList}
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
+    runAuditor: createRunAuditor(store, {
+      runId: generateSyntheticRunId("merge", taskId),
+      agentId: "merger",
+      taskId,
+      phase: "merge",
+      source: "merger",
+    }),
+    settings,
     ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     taskId,
     taskTitle: taskForSkillContext?.title,
@@ -3360,7 +3530,7 @@ async function restoreRescueAutostashes(
   return { unresolvedCount };
 }
 
-async function restoreUnrelatedRootDirChanges(
+export async function restoreUnrelatedRootDirChanges(
   rootDir: string,
   taskId: string,
   handle: AutostashHandle,
@@ -5824,7 +5994,7 @@ function resolveDirectMergeCommitStrategy(
     return { strategy: promptOverride, source: "prompt" };
   }
   return {
-    strategy: settings.directMergeCommitStrategy ?? "auto",
+    strategy: settings.directMergeCommitStrategy ?? "always-squash",
     source: "project",
   };
 }
@@ -6521,6 +6691,14 @@ You are assisting with a paused \`git pull --rebase\`.
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
+    runAuditor: createRunAuditor(store, {
+      runId: generateSyntheticRunId("merge", taskId),
+      agentId: "merger",
+      taskId,
+      phase: "merge",
+      source: "merger",
+    }),
+    settings,
     taskId,
     onFallbackModelUsed: createFallbackModelObserver({
       agent: "merger",
@@ -7134,6 +7312,31 @@ export async function aiMergeTask(
   const mergeTarget = resolveTaskMergeTarget(task, {
     projectDefaultBranch: resolvedIntegrationBranch,
   });
+  if (mergeTarget.rejected) {
+    // FN-5233/FN-5530 regression: the task's baseBranch/inheritedBaseBranch
+    // pointed at a sibling fusion/fn-* branch. The resolver fell through to
+    // projectDefault, but we surface the steering miss in the audit timeline
+    // so the underlying baseBranch-propagation bug stays observable.
+    mergerLog.warn(
+      `${taskId}: merge target rejected (${mergeTarget.rejected.reason}): ${mergeTarget.rejected.source}=${mergeTarget.rejected.branch} → using ${mergeTarget.branch}`,
+    );
+    try {
+      await (store as any).recordRunAuditEvent?.({
+        domain: "git",
+        mutationType: "merge:merge-target-rejected-fusion-sibling",
+        target: taskId,
+        metadata: {
+          rejectedBranch: mergeTarget.rejected.branch,
+          rejectedSource: mergeTarget.rejected.source,
+          reason: mergeTarget.rejected.reason,
+          fallbackBranch: mergeTarget.branch,
+          fallbackSource: mergeTarget.source,
+        },
+      });
+    } catch {
+      // best-effort audit; never block the merge on telemetry
+    }
+  }
   const integrationBranch = resolvedIntegrationBranch;
   let branch = task.branch || canonicalFusionBranchName(taskId);
 
@@ -7698,6 +7901,44 @@ export async function aiMergeTask(
     }
 
     if (classification.kind === "proven-no-op" || classification.kind === "no-changes-finalized") {
+      // FN-5490/FN-5517/FN-5526/FN-5540 guard: the classifier only sees git
+      // evidence, but the task itself can attest that work happened. When
+      // modifiedFiles is non-empty AND no commit landed, that's lost work
+      // (uncommitted in the worktree, or the squash committed the wrong tree)
+      // — NOT a legitimate no-op. Demote to the unproven-recovery path which
+      // moves the task back to todo with progress preserved instead of
+      // clearing modifiedFiles to [].
+      if (task.modifiedFiles && task.modifiedFiles.length > 0) {
+        const reason = `lost-work-detected: ${task.modifiedFiles.length} modifiedFiles claimed but no commit landed`;
+        await store.updateTask(taskId, { error: reason });
+        await store.logEntry(
+          taskId,
+          `Finalize blocked (lost-work guard): task claims ${task.modifiedFiles.length} modifiedFiles but classification would finalize as no-op — moving back to todo with progress preserved`,
+          JSON.stringify({
+            modifiedFilesSample: task.modifiedFiles.slice(0, 5),
+            classification: classification.kind,
+          }, null, 2),
+        );
+        await (store as any).recordRunAuditEvent?.({
+          domain: "database",
+          mutationType: "task:finalize-lost-work-blocked",
+          target: taskId,
+          metadata: {
+            modifiedFilesCount: task.modifiedFiles.length,
+            classification: classification.kind,
+          },
+        });
+        await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as any);
+        await releaseReuseHandoffEarly("lost-work-blocked");
+        return {
+          task,
+          branch,
+          merged: false,
+          worktreeRemoved: false,
+          branchDeleted: false,
+          error: reason,
+        };
+      }
       const noOpReason = classification.kind === "proven-no-op"
         ? `branch has zero commits ahead of ${classification.baseRef}`
         : "verification-only finalize: no branch and no owned commits";
@@ -7890,6 +8131,7 @@ export async function aiMergeTask(
     }
 
     if (classification.kind === "owned-commit") {
+      const mergedAt = new Date().toISOString();
       await store.updateTask(taskId, {
         mergeDetails: {
           commitSha: classification.commit.sha,
@@ -7897,16 +8139,27 @@ export async function aiMergeTask(
           insertions: classification.commit.insertions,
           deletions: classification.commit.deletions,
           mergeCommitMessage: classification.commit.subject,
-          mergedAt: new Date().toISOString(),
+          mergedAt,
           mergeConfirmed: true,
           prNumber: task.prInfo?.number,
           mergeTargetBranch: mergeTarget.branch,
           mergeTargetSource: mergeTarget.source,
         },
       });
+      result.merged = true;
+      result.mergeConfirmed = true;
+      result.commitSha = classification.commit.sha;
+      result.filesChanged = classification.commit.filesChanged;
+      result.insertions = classification.commit.insertions;
+      result.deletions = classification.commit.deletions;
+      result.mergeCommitMessage = classification.commit.subject;
+      result.mergedAt = mergedAt;
+      result.mergeTargetBranch = mergeTarget.branch;
+      result.mergeTargetSource = mergeTarget.source;
       mergerLog.log(`${taskId}: branch missing; recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
     } else {
       const noOpReason = `branch has zero commits ahead of ${classification.baseRef}`;
+      const mergedAt = new Date().toISOString();
       await store.updateTask(taskId, {
         modifiedFiles: [],
         mergeDetails: {
@@ -7915,17 +8168,25 @@ export async function aiMergeTask(
           noOpMerge: true,
           noOpReason,
           landedFiles: [],
-          mergedAt: new Date().toISOString(),
+          mergedAt,
           prNumber: task.prInfo?.number,
           mergeTargetBranch: classification.baseRef,
           mergeTargetSource: mergeTarget.source,
         },
       });
+      result.merged = true;
+      result.mergeConfirmed = true;
+      result.noOp = true;
+      result.noOpMerge = true;
+      result.noOpReason = noOpReason;
+      result.mergedAt = mergedAt;
+      result.mergeTargetBranch = classification.baseRef;
+      result.mergeTargetSource = mergeTarget.source;
       await store.logEntry(taskId, `Auto-finalized no-op (proven): start point on ${classification.baseRef}; modifiedFiles cleared`);
     }
 
     // Audit trail: record merge completion (FN-1404)
-    await audit.database({ type: "task:move", target: taskId, metadata: { to: "done", merged: false } });
+    await audit.database({ type: "task:move", target: taskId, metadata: { to: "done", merged: true } });
     await completeTask(store, taskId, result);
     return result;
   }
@@ -8000,10 +8261,18 @@ export async function aiMergeTask(
   if (worktreePath && task.baseCommitSha) {
     try {
       throwIfAborted(options.signal, taskId);
-      const { stdout: mainHeadOut } = await execAsync("git rev-parse HEAD", {
-        cwd: rootDir,
-        encoding: "utf-8",
-      });
+      // Read the authoritative integration-branch tip from the shared ref —
+      // NOT rootDir's HEAD. In reuse-task-worktree mode rootDir's HEAD can
+      // lag behind refs/heads/<integrationBranch> when a sibling merger
+      // advanced the ref via update-ref without re-checking-out, and using a
+      // stale base sha here causes the eventual squash commit to parent off
+      // an earlier sha and orphan the previously-merged tip on a subsequent
+      // non-FF ref advance.
+      const refName = `refs/heads/${mergeTarget.branch}`;
+      const { stdout: mainHeadOut } = await execAsync(
+        `git rev-parse --verify ${refName}`,
+        { cwd: rootDir, encoding: "utf-8" },
+      );
       const mainHead = mainHeadOut.trim();
       if (mainHead) {
         const divergence = await probeDivergence({
@@ -9539,7 +9808,14 @@ export async function aiMergeTask(
           audit,
         });
         if (!advanceResult.advanced) {
-          if (advanceResult.reason === "concurrent-advance") {
+          // `non-fast-forward-advance` has the same root cause as
+          // `concurrent-advance` — integration moved during the merge window,
+          // here detected by ancestry rather than CAS old-value mismatch —
+          // so route it through the same rebind/retry path (FN-5576).
+          if (
+            advanceResult.reason === "concurrent-advance"
+            || advanceResult.reason === "non-fast-forward-advance"
+          ) {
             throw new IntegrationBranchConcurrentAdvanceError({
               integrationBranch,
               expectedCurrentSha,
@@ -9553,6 +9829,33 @@ export async function aiMergeTask(
         mergerLog.log(
           `${taskId}: ${integrationBranch} advanced to ${worktreeHeadSha.slice(0, 8)} via update-ref; your checked-out worktree at ${projectRootDir} is now behind`,
         );
+
+        // Auto-sync other worktrees still on the integration branch so their
+        // index + working tree catch up to the new tip. When `off`, the legacy
+        // surprise behavior is preserved and the user pulls manually via the
+        // Merge Advance Notice banner. Isolated in its own try-catch because
+        // the merge has already landed at this point: failing the merger run
+        // because a downstream worktree sync threw would leave the project in
+        // a worse state than just emitting the failure as an audit event.
+        const autoSyncMode = normalizeMergeAdvanceAutoSyncMode(settings.mergeAdvanceAutoSync);
+        if (autoSyncMode !== "off") {
+          try {
+            await runMergeAdvanceAutoSync({
+              store,
+              audit,
+              taskId,
+              projectRootDir,
+              integrationBranch,
+              previousSha: expectedCurrentSha,
+              newSha: worktreeHeadSha,
+              mode: autoSyncMode,
+            });
+          } catch (syncErr: unknown) {
+            mergerLog.warn(
+              `${taskId}: mergeAdvanceAutoSync threw — continuing merge: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`,
+            );
+          }
+        }
       }
     } catch (advErr: unknown) {
       const advMsg = advErr instanceof Error ? advErr.message : String(advErr);
@@ -9886,7 +10189,7 @@ export async function aiMergeTask(
  *  NOTE: This is NOT FN-5350's integration-branch ref advance path. FN-5350
  *  advances refs/heads/<integration-branch> via compare-and-swap `git update-ref`.
  */
-async function tryFastForwardFromOrigin(
+export async function tryFastForwardFromOrigin(
   rootDir: string,
   taskId: string,
   integrationBranch: string,
@@ -10339,7 +10642,7 @@ export async function executeMergeAttempt(
       }
     }
 
-    if (buildCommand) {
+    if (testCommand || buildCommand) {
       throwIfAborted(options.signal, taskId);
       const stagedFiles = await getStagedFiles(rootDir);
       if (shouldSyncDependenciesForMerge(stagedFiles, hasInstallState(rootDir))) {
@@ -10870,6 +11173,14 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
+    runAuditor: createRunAuditor(store, {
+      runId: generateSyntheticRunId("merge", taskId),
+      agentId: "merger",
+      taskId,
+      phase: "merge",
+      source: "merger",
+    }),
+    settings,
     // Skill selection: use assigned agent skills if available, otherwise role fallback
     ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     taskId,
@@ -11286,7 +11597,7 @@ async function runPostMergeWorkflowSteps(
 
     try {
       const result = stepMode === "script"
-        ? await executePostMergeScriptStep(store, taskId, ws, cwd, settings, auditor)
+        ? await executePostMergeScriptStep(store, taskId, ws, cwd, settings, auditor, mergeOptions.signal)
         : await executePostMergePromptStep(store, taskId, ws, rootDir, cwd, settings, mergeOptions);
       const completedAt = new Date().toISOString();
 
@@ -11348,6 +11659,7 @@ async function executePostMergeScriptStep(
   cwd: string,
   settings: Settings,
   auditor?: RunAuditor,
+  signal?: AbortSignal,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const scriptName = workflowStep.scriptName!.trim();
   const scripts = settings.scripts || {};
@@ -11363,6 +11675,7 @@ async function executePostMergeScriptStep(
     encoding: "utf-8",
     timeoutMs: 120_000,
     maxBuffer: 10 * 1024 * 1024,
+    ...(signal !== undefined && { signal }),
   });
 
   if (result.exitCode === 0 && !result.signal && !result.timedOut && !result.bufferExceeded && !result.spawnError) {
@@ -11390,8 +11703,9 @@ export async function __executePostMergeScriptStepForTests(
   cwd: string,
   settings: Settings,
   auditor?: RunAuditor,
+  signal?: AbortSignal,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
-  return executePostMergeScriptStep(store, taskId, workflowStep, cwd, settings, auditor);
+  return executePostMergeScriptStep(store, taskId, workflowStep, cwd, settings, auditor, signal);
 }
 
 /** Execute a prompt-mode post-merge workflow step using an AI agent in the provided execution directory. */
@@ -11503,6 +11817,14 @@ If issues are found that need attention, describe them clearly and include concr
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
       defaultThinkingLevel: settings.defaultThinkingLevel,
+      runAuditor: createRunAuditor(store, {
+        runId: generateSyntheticRunId("merge", taskId),
+        agentId: "merger",
+        taskId,
+        phase: "merge",
+        source: "merger",
+      }),
+      settings,
       // Skill selection: use assigned agent skills if available, otherwise role fallback
       ...(postMergeSkillContext?.skillSelectionContext ? { skillSelection: postMergeSkillContext.skillSelectionContext } : {}),
       ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),

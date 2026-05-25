@@ -2542,6 +2542,8 @@ export class HeartbeatMonitor {
           defaultModelId: heartbeatSessionModels.defaultModelId,
           fallbackProvider: heartbeatSessionModels.fallbackProvider,
           fallbackModelId: heartbeatSessionModels.fallbackModelId,
+          runAuditor: audit,
+          settings: heartbeatModelSettings,
           onText: (delta) => {
             outputLength += delta.length;
             appendStdoutExcerpt(delta);

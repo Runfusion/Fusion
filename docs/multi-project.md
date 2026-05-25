@@ -61,6 +61,18 @@ If one side succeeds and the other fails, the next scheduler/self-healing tick r
 
 This fencing prevents double-claims: a restarted or delayed stale owner cannot reclaim work once central ownership has been released and lease generation has advanced.
 
+## Recovering after a central DB wipe
+
+If a project's row is deleted from `~/.fusion/fusion-central.db`, Fusion now automatically recovers on next startup:
+
+1. Startup checks central for a row at the project path.
+2. If missing, it reads `__meta.projectIdentity` from `<project>/.fusion/fusion.db`.
+3. If present, central reattaches that exact `projectId` instead of creating a new one.
+
+This prevents “empty workspace” regressions where project data still exists locally but is keyed to an older `projectId`.
+
+Backups remain the first-line protection strategy (see FN-5407), but this identity reattach path lets operators recover even when no central backup is available.
+
 ## Registering and Managing Projects
 
 ```bash
@@ -331,3 +343,11 @@ flowchart TD
 ```
 
 See also: [Architecture](./architecture.md), [CLI Reference](./cli-reference.md), and [Missions](./missions.md).
+
+## Identity persistence and recovery
+
+Each project persists its canonical central identity inside `.fusion/fusion.db` `__meta` as `projectId` and `projectCreatedAt`. Registration paths should use `CentralCore.ensureProjectForPath({ path, identity, ... })` after reading local identity with `readProjectIdentity()`; this reattaches central rows when central was wiped and refuses silent remint if the persisted id is owned by another path.
+
+Dashboard `POST /api/projects` now surfaces this mismatch as `409` with `error: "orphan-identity"` and recovery metadata, and callers can opt into recovery flows with `acceptRecovery: true` behavior at the route layer.
+
+Central DB backup coverage is already enabled by default (`BackupManager` uses `includeCentralDb: true`), so identity recovery data remains in the normal daily backup set.

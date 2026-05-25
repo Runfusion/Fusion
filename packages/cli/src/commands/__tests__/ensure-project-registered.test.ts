@@ -1,7 +1,7 @@
-import { mkdtempSync, existsSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CentralCore } from "@fusion/core";
+import { CentralCore, readProjectIdentity } from "@fusion/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureCwdProjectRegistered } from "../ensure-project-registered.js";
 
@@ -44,21 +44,22 @@ describe("ensureCwdProjectRegistered", () => {
     });
 
     expect(result?.id).toBe(existing.id);
-    expect(existsSync(join(cwd, ".fusion"))).toBe(false);
+    expect(existsSync(join(cwd, ".fusion"))).toBe(true);
+    expect(readProjectIdentity(cwd)?.id).toBe(existing.id);
     expect(registerSpy).not.toHaveBeenCalled();
     expect(updateSpy).not.toHaveBeenCalled();
 
     await central.close();
   });
 
-  it("auto-registers unregistered project when enabled", async () => {
+  it("auto-registers unregistered project when enabled and persists identity", async () => {
     const globalDir = makeTempDir("fn-4266-global-");
     const cwd = makeTempDir("fn-4266-project-");
 
     const central = new CentralCore(globalDir);
     await central.init();
 
-    const registerSpy = vi.spyOn(central, "registerProject");
+    const ensureSpy = vi.spyOn(central, "ensureProjectForPath");
     const updateSpy = vi.spyOn(central, "updateProject");
 
     const result = await ensureCwdProjectRegistered({
@@ -71,14 +72,42 @@ describe("ensureCwdProjectRegistered", () => {
     expect(result).not.toBeNull();
     expect(existsSync(join(cwd, ".fusion"))).toBe(true);
     expect(existsSync(join(cwd, ".fusion", "fusion.db"))).toBe(true);
-    expect(statSync(join(cwd, ".fusion", "fusion.db")).size).toBe(0);
-    expect(registerSpy).toHaveBeenCalledWith(
+    expect(ensureSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         path: cwd,
-        isolationMode: "in-process",
       }),
     );
     expect(updateSpy).toHaveBeenCalledWith(expect.any(String), { status: "active" });
+    expect(readProjectIdentity(cwd)?.id).toBe(result?.id);
+
+    await central.close();
+  });
+
+  it("reattaches using stored identity when central row was wiped", async () => {
+    const globalDir = makeTempDir("fn-4266-global-");
+    const cwd = makeTempDir("fn-4266-project-");
+
+    const central = new CentralCore(globalDir);
+    await central.init();
+
+    const first = await ensureCwdProjectRegistered({
+      cwd,
+      central,
+      logPrefix: "serve",
+      autoRegister: true,
+    });
+    expect(first).not.toBeNull();
+
+    await central.unregisterProject(first!.id);
+
+    const second = await ensureCwdProjectRegistered({
+      cwd,
+      central,
+      logPrefix: "serve",
+      autoRegister: true,
+    });
+
+    expect(second?.id).toBe(first?.id);
 
     await central.close();
   });
@@ -90,7 +119,7 @@ describe("ensureCwdProjectRegistered", () => {
     const central = new CentralCore(globalDir);
     await central.init();
 
-    const registerSpy = vi.spyOn(central, "registerProject");
+    const ensureSpy = vi.spyOn(central, "ensureProjectForPath");
 
     const result = await ensureCwdProjectRegistered({
       cwd,
@@ -101,7 +130,7 @@ describe("ensureCwdProjectRegistered", () => {
 
     expect(result).toBeNull();
     expect(existsSync(join(cwd, ".fusion"))).toBe(false);
-    expect(registerSpy).not.toHaveBeenCalled();
+    expect(ensureSpy).not.toHaveBeenCalled();
 
     await central.close();
   });
@@ -113,7 +142,7 @@ describe("ensureCwdProjectRegistered", () => {
     const central = new CentralCore(globalDir);
     await central.init();
 
-    vi.spyOn(central, "registerProject").mockRejectedValueOnce(new Error("boom"));
+    vi.spyOn(central, "ensureProjectForPath").mockRejectedValueOnce(new Error("boom"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await ensureCwdProjectRegistered({

@@ -269,14 +269,14 @@ export class MigrationOrchestrator {
       ]);
 
       try {
-        const newProject = await this.centralCore.registerProject({
+        const ensured = await this.centralCore.ensureProjectForPath({
           name: uniqueName,
           path: project.path,
           isolationMode: "in-process",
         });
 
         // Update status to active (registration sets it to 'initializing')
-        const activeProject = await this.centralCore.updateProject(newProject.id, { status: "active" });
+        const activeProject = await this.centralCore.updateProject(ensured.project.id, { status: "active" });
 
         registered.push(activeProject);
       } catch (err) {

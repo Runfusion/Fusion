@@ -473,6 +473,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       }
       await store.logEntry(task.id, `[timing] Worktree init command completed in ${Date.now() - initStartedAt}ms`, settings.worktreeInitCommand, runContext);
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw err;
+      }
       await store.logEntry(task.id, `[timing] Worktree init command failed after ${Date.now() - initStartedAt}ms`, undefined, runContext);
       const message = err instanceof Error ? err.message : String(err);
       const outcome = formatInitFailureOutcome(initResult, err);

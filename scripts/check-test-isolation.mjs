@@ -99,10 +99,32 @@ const RUNTIME_IGNORE_PATTERNS = [
   /^scripts\.json$/,
   /^update-check\.json$/,
   /^disabled-auto-extension-discovery$/,
+  // Engine singleton lock (proper-lockfile creates `engine.lock.lock/` while
+  // held; `engine.lock` is the sentinel file). Their entries appear/disappear
+  // as the local dashboard starts/stops, which is not test pollution.
+  /^engine\.lock$/,
+  /^engine\.lock\.lock(?:[/\\]|$)/,
 ];
 
 function isRuntimePath(relPath) {
   return RUNTIME_IGNORE_PATTERNS.some((re) => re.test(relPath));
+}
+
+// A .fusion dir is "engine-active" when an engine process currently holds the
+// singleton lock. proper-lockfile materializes this as `engine.lock.lock/`
+// being present alongside the `engine.lock` sentinel. This is a deterministic
+// signal — no timing/probe required — so we use it to auto-skip live-engine
+// dirs instead of relying on the post-run mutability burst landing inside
+// our 2-second probe window.
+function isFusionEngineActive(fusionDir) {
+  if (!existsSync(fusionDir)) return false;
+  try {
+    const lockHeldDir = join(fusionDir, "engine.lock.lock");
+    const stat = statSync(lockHeldDir);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function collectFusionSignature(rootDir, out = []) {
@@ -160,6 +182,13 @@ function recordBaseline() {
   const unstableProtectedDirs = [];
   const firstProtected = samples[0];
   for (const first of firstProtected) {
+    // Live engine lock present → auto-mark unstable. Same outcome as the
+    // mutability probe below would (eventually) reach, but deterministic and
+    // immune to write-cadence gaps.
+    if (isFusionEngineActive(first.dir)) {
+      unstableProtectedDirs.push(first.dir);
+      continue;
+    }
     let unstable = false;
     for (let i = 1; i < samples.length; i++) {
       const current = samples[i].find((entry) => entry.dir === first.dir);
@@ -239,28 +268,39 @@ function checkAgainstBaseline() {
 
   const protectedViolations = [];
   if (candidateViolations.length > 0) {
-    // A live local app can write in bursts (e.g. heartbeat every few seconds),
-    // so do a short mutability probe before blaming tests.
-    const postSamples = [currentProtected];
-    for (let i = 0; i < 4; i++) {
-      sleepMs(500);
-      postSamples.push(snapshotProtectedFusion());
-    }
+    // First: skip any candidate dir where an engine is currently holding the
+    // singleton lock. This is the dominant local-dev case (`fn` dashboard
+    // running while tests are invoked) and the engine-lock signal is
+    // race-free, unlike the post-test mutability probe.
+    const remainingCandidates = candidateViolations.filter((dir) => !isFusionEngineActive(dir));
 
-    for (const dir of candidateViolations) {
-      let externallyActive = false;
-      for (let i = 1; i < postSamples.length; i++) {
-        const prev = postSamples[i - 1].find((entry) => entry.dir === dir);
-        const next = postSamples[i].find((entry) => entry.dir === dir);
-        if (!prev || !next) continue;
-        if (JSON.stringify(prev.entries) !== JSON.stringify(next.entries)) {
-          externallyActive = true;
-          break;
-        }
+    if (remainingCandidates.length > 0) {
+      // A live local app can write in bursts (e.g. heartbeat every few seconds),
+      // so do a short mutability probe before blaming tests. Retained as a
+      // backstop for dirs that don't have an engine lock but do have an
+      // external writer (e.g. an `fn` process that crashed mid-run and left
+      // the lock stale).
+      const postSamples = [currentProtected];
+      for (let i = 0; i < 4; i++) {
+        sleepMs(500);
+        postSamples.push(snapshotProtectedFusion());
       }
 
-      if (!externallyActive) {
-        protectedViolations.push(dir);
+      for (const dir of remainingCandidates) {
+        let externallyActive = false;
+        for (let i = 1; i < postSamples.length; i++) {
+          const prev = postSamples[i - 1].find((entry) => entry.dir === dir);
+          const next = postSamples[i].find((entry) => entry.dir === dir);
+          if (!prev || !next) continue;
+          if (JSON.stringify(prev.entries) !== JSON.stringify(next.entries)) {
+            externallyActive = true;
+            break;
+          }
+        }
+
+        if (!externallyActive) {
+          protectedViolations.push(dir);
+        }
       }
     }
   }

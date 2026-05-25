@@ -221,6 +221,7 @@ function ensureProjectRegistered(opts) {
   const nameLiteral = JSON.stringify(projectNameFromPackage());
   const helper = `
     import { CentralCore } from "./packages/core/src/central-core.ts";
+    import { readProjectIdentity, writeProjectIdentity } from "./packages/core/src/db.ts";
     import { ensureMemoryFileWithBackend } from "./packages/core/src/project-memory.ts";
 
     async function main() {
@@ -255,14 +256,29 @@ function ensureProjectRegistered(opts) {
           name = baseName.slice(0, 64 - suffixText.length) + suffixText;
         }
 
-        const project = await central.registerProject({
-          name,
+        const identity = readProjectIdentity(root);
+        const ensured = await central.ensureProjectForPath({
           path: root,
-          isolationMode: "in-process",
+          identity: identity ? { id: identity.id, createdAt: identity.createdAt } : undefined,
+          name,
         });
+        const project = ensured.project;
         await central.updateProject(project.id, { status: "active" });
+        try {
+          writeProjectIdentity(root, {
+            id: project.id,
+            createdAt: project.createdAt,
+            firstSeenPath: root,
+          });
+        } catch {
+          // best effort
+        }
         await ensureMemoryFileWithBackend(root).catch(() => false);
-        console.log("Registered project " + name);
+        if (ensured.outcome === "reattached") {
+          console.log("[start-local] Reattached project " + project.id + " at " + root + " using stored identity");
+        } else {
+          console.log("Registered project " + name);
+        }
       } finally {
         await central.close();
       }

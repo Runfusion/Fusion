@@ -118,11 +118,12 @@ Unarchive an archived task (move from archived → done). Restores the task to t
 
 ### fn_task_delete
 
-Soft-delete a task from active Fusion board views. The task row and artifacts are preserved, and the task ID remains reserved for potential operator recovery.
+Soft-delete a task from active Fusion board views. The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID to delete (e.g. FN-001) |
+| `allowResurrection` | boolean | — | When true, mark this tombstone as explicitly reusable for future recreation. |
 
 ### fn_task_plan
 

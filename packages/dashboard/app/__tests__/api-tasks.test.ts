@@ -1185,3 +1185,46 @@ describe("task review data api wrappers", () => {
     );
   });
 });
+
+describe("deleteTask", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("serializes allowResurrection with other delete options in query params", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_DETAIL));
+
+    await deleteTask("FN-001", "proj-1", {
+      allowResurrection: true,
+      removeDependencyReferences: true,
+      removeLineageReferences: true,
+      githubIssueAction: "close",
+    });
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const parsed = new URL(url, "http://localhost");
+    expect(parsed.pathname).toBe("/api/tasks/FN-001");
+    expect(parsed.searchParams.get("projectId")).toBe("proj-1");
+    expect(parsed.searchParams.get("removeDependencyReferences")).toBe("true");
+    expect(parsed.searchParams.get("removeLineageReferences")).toBe("true");
+    expect(parsed.searchParams.get("githubIssueAction")).toBe("close");
+    expect(parsed.searchParams.get("allowResurrection")).toBe("true");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("keeps delete request shape unchanged when allowResurrection is omitted", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_DETAIL));
+
+    await deleteTask("FN-001", "proj-1", { removeDependencyReferences: true });
+
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const parsed = new URL(url, "http://localhost");
+    expect(parsed.pathname).toBe("/api/tasks/FN-001");
+    expect(parsed.searchParams.get("projectId")).toBe("proj-1");
+    expect(parsed.searchParams.get("removeDependencyReferences")).toBe("true");
+    expect(parsed.searchParams.get("allowResurrection")).toBeNull();
+    expect(init).toMatchObject({ method: "DELETE", headers: { "Content-Type": "application/json" } });
+  });
+});

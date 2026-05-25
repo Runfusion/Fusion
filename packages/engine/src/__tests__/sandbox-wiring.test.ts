@@ -44,8 +44,9 @@ describe("sandbox wiring", () => {
     });
     const stub = makeStub({ run });
     __setSandboxBackendForTests(stub);
+    const controller = new AbortController();
 
-    const result = await __runConfiguredCommandForTests("echo hi", "/tmp", 1200, { A: "1" });
+    const result = await __runConfiguredCommandForTests("echo hi", "/tmp", 1200, { A: "1" }, undefined, controller.signal);
 
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith("echo hi", {
@@ -54,6 +55,7 @@ describe("sandbox wiring", () => {
       maxBuffer: 10 * 1024 * 1024,
       encoding: "utf-8",
       env: { A: "1" },
+      signal: controller.signal,
     });
     expect((stub.runStreaming as any)).not.toHaveBeenCalled();
     expect(result).toMatchObject({
@@ -77,6 +79,7 @@ describe("sandbox wiring", () => {
       bufferExceeded: false,
     });
     __setSandboxBackendForTests(makeStub({ run }));
+    const controller = new AbortController();
 
     const result = await __executePostMergeScriptStepForTests(
       { updateTask: vi.fn() } as any,
@@ -84,6 +87,8 @@ describe("sandbox wiring", () => {
       { scriptName: "post" } as any,
       "/tmp/worktree",
       { scripts: { post: "echo post" } } as any,
+      undefined,
+      controller.signal,
     );
 
     expect(result.success).toBe(true);
@@ -92,6 +97,7 @@ describe("sandbox wiring", () => {
       encoding: "utf-8",
       timeoutMs: 120_000,
       maxBuffer: 10 * 1024 * 1024,
+      signal: controller.signal,
     });
   });
 

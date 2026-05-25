@@ -275,7 +275,8 @@ Usage:
   fn task refine <id> [opts]          Create a refinement task from done/in-review
   fn task archive <id>                Archive a done task
   fn task unarchive <id>              Unarchive an archived task
-  fn task delete <id> [--force]       Delete a task (use --force to skip confirmation)
+  fn task delete <id> [--force] [--allow-resurrection]
+                                      Delete a task (use --force to skip confirmation; --allow-resurrection permits intentional ID recreation)
   fn task attach <id> <file>          Attach a file to a task
   fn task pause <id>                  Pause a task (stops all automation)
   fn task unpause <id>                Unpause a task (resumes automation)
@@ -1138,9 +1139,10 @@ async function main() {
           }
           case "delete": {
             const id = args[2];
-            if (!id) { console.error("Usage: fn task delete <id> [--force]"); process.exit(1); }
+            if (!id) { console.error("Usage: fn task delete <id> [--force] [--allow-resurrection]"); process.exit(1); }
             const force = args.includes("--force");
-            await runTaskDelete(id, force, projectName);
+            const allowResurrection = args.includes("--allow-resurrection");
+            await runTaskDelete(id, force, allowResurrection, projectName);
             break;
           }
           case "attach": {

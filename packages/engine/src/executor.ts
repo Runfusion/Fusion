@@ -1,3 +1,4 @@
+// port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
 import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -72,6 +73,10 @@ import {
   inspectBranchConflict,
   reportBranchAttribution,
 } from "./branch-conflicts.js";
+import {
+  classifyOrphanOurAdvance,
+  rehomeOrphanOntoIntegration,
+} from "./merger-orphan-rehome.js";
 import { BranchAttributionError, filterFilesToOwnTaskCommits } from "./branch-attribution.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import { AgentLogger } from "./agent-logger.js";
@@ -590,6 +595,7 @@ async function runConfiguredCommand(
   timeoutMs: number,
   extraEnv?: NodeJS.ProcessEnv,
   auditor?: RunAuditor,
+  signal?: AbortSignal,
 ): Promise<RunCommandResult> {
   const backend = getConfiguredCommandSandboxBackend(auditor);
   const result = await backend.run(command, {
@@ -598,6 +604,7 @@ async function runConfiguredCommand(
     maxBuffer: 10 * 1024 * 1024,
     encoding: "utf-8",
     ...(extraEnv !== undefined && { env: extraEnv }),
+    ...(signal !== undefined && { signal }),
   });
 
   return {
@@ -617,8 +624,9 @@ export async function __runConfiguredCommandForTests(
   timeoutMs: number,
   extraEnv?: NodeJS.ProcessEnv,
   auditor?: RunAuditor,
+  signal?: AbortSignal,
 ): Promise<RunCommandResult> {
-  return runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor);
+  return runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal);
 }
 
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
@@ -1044,6 +1052,8 @@ export class TaskExecutor {
   private activeStepExecutors = new Map<string, StepSessionExecutor>();
   /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
+  /** Active configured-command abort controllers keyed by task. */
+  private activeConfiguredCommandControllers = new Map<string, Set<AbortController>>();
   private readonlyWorkflowStepAuditDone = false;
   /**
    * Reviewer subagent sessions per task. Reviewers (`reviewer.ts`) create their
@@ -1124,6 +1134,27 @@ export class TaskExecutor {
     if (resolvedWorktreePath) {
       activeSessionRegistry.unregisterPath(resolvedWorktreePath);
     }
+  }
+
+  private registerConfiguredCommandController(taskId: string, controller: AbortController): void {
+    const controllers = this.activeConfiguredCommandControllers.get(taskId) ?? new Set<AbortController>();
+    controllers.add(controller);
+    this.activeConfiguredCommandControllers.set(taskId, controllers);
+  }
+
+  private unregisterConfiguredCommandController(taskId: string, controller: AbortController): void {
+    const controllers = this.activeConfiguredCommandControllers.get(taskId);
+    if (!controllers) return;
+    controllers.delete(controller);
+    if (controllers.size === 0) {
+      this.activeConfiguredCommandControllers.delete(taskId);
+    }
+  }
+
+  private createConfiguredCommandAbortError(taskId: string, command: string): Error {
+    const error = new Error(`Configured command aborted for ${taskId}: ${command}`);
+    error.name = "AbortError";
+    return error;
   }
 
   private getAutoRecoveryDispatcher(audit: RunAuditor): AutoRecoveryDispatcher {
@@ -1264,6 +1295,18 @@ export class TaskExecutor {
       await this.store.logEntry(
         taskId,
         `Completion handoff deferred — task paused (${context})`,
+        undefined,
+        this.getRunContextFor(taskId),
+      ).catch(() => undefined);
+      return true;
+    }
+
+    if ((latestTask && latestTask.column !== "in-progress") || this.userCanceledTaskIds.has(taskId)) {
+      this.clearCompletedTaskWatchdog(taskId);
+      executorLog.log(`${taskId}: completion handoff deferred — task no longer active (${context})`);
+      await this.store.logEntry(
+        taskId,
+        `Completion handoff deferred — task no longer active (${context})`,
         undefined,
         this.getRunContextFor(taskId),
       ).catch(() => undefined);
@@ -1604,6 +1647,14 @@ export class TaskExecutor {
       hadActiveSurface = true;
       this.deleteActiveWorkflowStepSession(taskId);
     }
+    const claimedConfiguredCommands = this.activeConfiguredCommandControllers.get(taskId);
+    if (claimedConfiguredCommands && claimedConfiguredCommands.size > 0) {
+      hadActiveSurface = true;
+      this.activeConfiguredCommandControllers.delete(taskId);
+      for (const controller of claimedConfiguredCommands) {
+        controller.abort();
+      }
+    }
     const claimedSubagents = this.activeSubagentSessions.has(taskId);
     if (claimedSubagents) {
       hadActiveSurface = true;
@@ -1667,6 +1718,7 @@ export class TaskExecutor {
       ...this.activeSessions.keys(),
       ...this.activeStepExecutors.keys(),
       ...this.activeWorkflowStepSessions.keys(),
+      ...this.activeConfiguredCommandControllers.keys(),
       ...this.activeSubagentSessions.keys(),
     ]);
 
@@ -1806,6 +1858,7 @@ export class TaskExecutor {
             this.activeSessions.has(task.id)
             || this.activeStepExecutors.has(task.id)
             || this.activeWorkflowStepSessions.has(task.id)
+            || this.activeConfiguredCommandControllers.has(task.id)
           )
         ) {
           executorLog.log(`Pausing ${task.id} — awaiting in-flight session disposal`);
@@ -1978,6 +2031,18 @@ export class TaskExecutor {
     // When globalPause transitions from false → true, terminate all active agent sessions.
     store.on("settings:updated", ({ settings, previous }) => {
       if (settings.globalPause && !previous.globalPause) {
+        for (const [taskId, controllers] of this.activeConfiguredCommandControllers) {
+          executorLog.log(`Global pause — aborting configured command(s) for ${taskId}`);
+          this.pausedAborted.add(taskId);
+          this.options.stuckTaskDetector?.untrackTask(taskId);
+          for (const controller of controllers) {
+            controller.abort();
+          }
+          this.activeConfiguredCommandControllers.delete(taskId);
+          this.loopRecoveryState.delete(taskId);
+          this.spawnedAgents.delete(taskId);
+          this.stuckAborted.delete(taskId);
+        }
         // Dispose every reviewer subagent across every task. The per-task loops
         // below handle main + step sessions; reviewers live in their own map
         // and would otherwise outlive the global pause.
@@ -3078,21 +3143,42 @@ export class TaskExecutor {
       }
 
       const hadAssignedWorktree = Boolean(task.worktree);
-      const acquisition = await acquireTaskWorktree({
-        task,
-        rootDir: this.rootDir,
-        store: this.store,
-        settings,
-        pool: this.options.pool,
-        logger: executorLog,
-        audit,
-        runContext: this.getRunContextFor(task.id),
-        runInitCommand: true,
-        createWorktree: this.createWorktree.bind(this),
-        runConfiguredCommand,
-        taskEnv,
-        secretsStore: this.options.secretsStore,
-      });
+      const taskCommandAbortController = new AbortController();
+      this.registerConfiguredCommandController(task.id, taskCommandAbortController);
+      const acquisition = await (async () => {
+        try {
+          return await acquireTaskWorktree({
+            task,
+            rootDir: this.rootDir,
+            store: this.store,
+            settings,
+            pool: this.options.pool,
+            logger: executorLog,
+            audit,
+            runContext: this.getRunContextFor(task.id),
+            runInitCommand: true,
+            createWorktree: this.createWorktree.bind(this),
+            runConfiguredCommand: (command, cwd, timeoutMs, env) =>
+              runConfiguredCommand(
+                command,
+                cwd,
+                timeoutMs,
+                env,
+                audit,
+                taskCommandAbortController.signal,
+              ).then((result) => {
+                if (taskCommandAbortController.signal.aborted) {
+                  throw this.createConfiguredCommandAbortError(task.id, command);
+                }
+                return result;
+              }),
+            taskEnv,
+            secretsStore: this.options.secretsStore,
+          });
+        } finally {
+          this.unregisterConfiguredCommandController(task.id, taskCommandAbortController);
+        }
+      })();
       worktreePath = acquisition.worktreePath;
 
       if (acquisition.reclaimed) {
@@ -3114,18 +3200,35 @@ export class TaskExecutor {
         const scriptCommand = settings.scripts?.[settings.setupScript];
         if (scriptCommand) {
           const setupStartedAt = Date.now();
+          const setupAbortController = new AbortController();
+          this.registerConfiguredCommandController(task.id, setupAbortController);
           try {
-            const setupResult = await runConfiguredCommand(scriptCommand, worktreePath, 120_000, taskEnv, audit);
+            const setupResult = await runConfiguredCommand(
+              scriptCommand,
+              worktreePath,
+              120_000,
+              taskEnv,
+              audit,
+              setupAbortController.signal,
+            );
+            if (setupAbortController.signal.aborted) {
+              throw this.createConfiguredCommandAbortError(task.id, scriptCommand);
+            }
             if (setupResult.spawnError || setupResult.timedOut || setupResult.exitCode !== 0) {
               throw new Error(configuredCommandErrorMessage(setupResult));
             }
             await this.store.logEntry(task.id, `[timing] Setup script '${settings.setupScript}' completed in ${Date.now() - setupStartedAt}ms`, scriptCommand, this.getRunContextFor(task.id));
           } catch (err: unknown) {
+            if (err instanceof Error && err.name === "AbortError") {
+              throw err;
+            }
             const execError = err instanceof Error ? err : new Error(String(err));
             const message = "stderr" in execError && typeof (execError as Record<string, unknown>).stderr === "string"
               ? String((execError as Record<string, unknown>).stderr)
               : execError.message;
             await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' failed: ${message}`, undefined, this.getRunContextFor(task.id));
+          } finally {
+            this.unregisterConfiguredCommandController(task.id, setupAbortController);
           }
         } else {
           await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' not found in scripts map — skipping`, undefined, this.getRunContextFor(task.id));
@@ -4001,6 +4104,8 @@ export class TaskExecutor {
             fallbackProvider: executorFallbackProvider,
             fallbackModelId: executorFallbackModelId,
             defaultThinkingLevel: executorThinkingLevel,
+            runAuditor: audit,
+            settings,
             sessionManager,
             taskEnv,
             // Skill selection: use assigned agent skills if available, otherwise role fallback
@@ -4078,8 +4183,7 @@ export class TaskExecutor {
         executorLog.log(`${task.id}: session registered (model=${describeModel(session)}, stuckDetector=${!!stuckDetector})`);
 
         // Invoke plugin onAgentRunStart hook (fire-and-forget)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        void (this.options.pluginRunner as any)?.invokeHook("onAgentRunStart", task.id);
+        void this.options.pluginRunner?.invokeHookSafe("onAgentRunStart", task.id);
 
         try {
           // Record activity on prompt start (heartbeat for stuck detection)
@@ -4417,6 +4521,8 @@ export class TaskExecutor {
                   fallbackProvider: executorFallbackProvider,
                   fallbackModelId: executorFallbackModelId,
                   defaultThinkingLevel: executorThinkingLevel,
+                  runAuditor: audit,
+                  settings,
                   sessionManager: SessionManager.create(worktreePath),
                   taskEnv,
                   // Skill selection: use assigned agent skills if available, otherwise role fallback
@@ -4653,8 +4759,7 @@ export class TaskExecutor {
             });
           }
           // Invoke plugin onAgentRunEnd hook (fire-and-forget)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          void (this.options.pluginRunner as any)?.invokeHook("onAgentRunEnd", task.id);
+          void this.options.pluginRunner?.invokeHookSafe("onAgentRunEnd", task.id);
         }
       };
 
@@ -4884,7 +4989,7 @@ export class TaskExecutor {
             });
 
             const misrouted: Array<{ commit: (typeof classified.unique)[number]; foreignTaskId: string; paths: string[] }> = [];
-            const genuinelyUnique: typeof classified.unique = [];
+            const preOrphanUnique: typeof classified.unique = [];
             for (const commit of classified.unique) {
               const misroutedResult = await classifyMisroutedForeignCommit({
                 repoDir: this.rootDir,
@@ -4896,16 +5001,79 @@ export class TaskExecutor {
               if (misroutedResult.misrouted && misroutedResult.foreignTaskId) {
                 misrouted.push({ commit, foreignTaskId: misroutedResult.foreignTaskId, paths: misroutedResult.paths ?? [] });
               } else {
+                preOrphanUnique.push(commit);
+              }
+            }
+
+            // Orphan-our-advance: a "unique" foreign commit attributed to a
+            // task that's already `done` is a stranded merge from the pre-FF
+            // ref-advance bug. FF-rehomeable orphans are advanced onto the
+            // integration branch and then dropped from this task's branch
+            // alongside already-upstream commits. Non-FF orphans (diverged
+            // from current integration tip) are logged with a cherry-pick
+            // hint and left as `genuinelyUnique` for human adjudication.
+            const rehomedOrphans: typeof classified.unique = [];
+            const genuinelyUnique: typeof classified.unique = [];
+            const integrationBranchForOrphan = task.mergeDetails?.mergeTargetBranch
+              ?? task.baseBranch
+              ?? "main";
+            for (const commit of preOrphanUnique) {
+              const orphanBody = await execAsync(`git log -1 --format=%b ${commit.sha}`, { cwd: this.rootDir, encoding: "utf-8" })
+                .then((r) => r.stdout)
+                .catch(() => "");
+              const orphanClass = await classifyOrphanOurAdvance({
+                repoDir: this.rootDir,
+                taskStore: this.store,
+                integrationBranch: integrationBranchForOrphan,
+                currentTaskId: task.id,
+                commitSha: commit.sha,
+                commitSubject: commit.subject,
+                commitBody: orphanBody,
+              });
+              if (!orphanClass.orphan) {
+                genuinelyUnique.push(commit);
+                continue;
+              }
+              const rehome = await rehomeOrphanOntoIntegration({
+                rootDir: this.rootDir,
+                projectRootDir: this.rootDir,
+                integrationBranch: integrationBranchForOrphan,
+                orphanSha: commit.sha,
+                taskId: task.id,
+                audit,
+              }).catch((rehomeError: unknown): { rehomed: false; reason: string } => ({
+                rehomed: false,
+                reason: rehomeError instanceof Error ? rehomeError.message : String(rehomeError),
+              }));
+              if (rehome.rehomed) {
+                rehomedOrphans.push(commit);
+                await this.store.logEntry(
+                  task.id,
+                  `[recovery] rehomed orphan-our-advance commit ${commit.sha.slice(0, 12)} (source ${orphanClass.sourceTaskId}) onto ${integrationBranchForOrphan} via fast-forward; dropping from branch`,
+                  undefined,
+                  this.getRunContextFor(task.id),
+                );
+              } else {
+                const hint = "cherryPickHint" in rehome && rehome.cherryPickHint
+                  ? ` — manual rehome: \`${rehome.cherryPickHint}\``
+                  : "";
+                await this.store.logEntry(
+                  task.id,
+                  `[recovery] orphan-our-advance commit ${commit.sha.slice(0, 12)} (source ${orphanClass.sourceTaskId}) refused auto-rehome: ${rehome.reason}${hint}`,
+                  undefined,
+                  this.getRunContextFor(task.id),
+                );
                 genuinelyUnique.push(commit);
               }
             }
 
             const alreadyShas = classified.alreadyUpstream.map((commit) => commit.sha.slice(0, 12)).join(", ") || "none";
             const misroutedShas = misrouted.map(({ commit }) => commit.sha.slice(0, 12)).join(", ") || "none";
+            const rehomedShas = rehomedOrphans.map((commit) => commit.sha.slice(0, 12)).join(", ") || "none";
             const uniqueShas = genuinelyUnique.map((commit) => commit.sha.slice(0, 12)).join(", ") || "none";
             await this.store.logEntry(
               task.id,
-              `[recovery] contamination classification: already-upstream=[${alreadyShas}] misrouted=[${misroutedShas}] unique=[${uniqueShas}]`,
+              `[recovery] contamination classification: already-upstream=[${alreadyShas}] misrouted=[${misroutedShas}] rehomed-orphan=[${rehomedShas}] unique=[${uniqueShas}]`,
               undefined,
               this.getRunContextFor(task.id),
             );
@@ -4928,6 +5096,7 @@ export class TaskExecutor {
                 shasToDrop: [
                   ...classified.alreadyUpstream.map((commit) => commit.sha),
                   ...misrouted.map(({ commit }) => commit.sha),
+                  ...rehomedOrphans.map((commit) => commit.sha),
                 ],
               });
 
@@ -6804,6 +6973,8 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         defaultProvider: executorProvider,
         defaultModelId: executorModelId,
         defaultThinkingLevel: settings.defaultThinkingLevel,
+        runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
+        settings,
         taskEnv: extraEnv,
         ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
       });
@@ -7641,18 +7812,33 @@ ${failureFeedback}
     executorLog.log(`${task.id}: workflow step '${workflowStep.name}' executing script '${scriptName}': ${scriptCommand}`);
     await this.store.logEntry(task.id, `Workflow step '${workflowStep.name}' executing script '${scriptName}': ${scriptCommand}`);
 
+    const scriptAbortController = new AbortController();
+    this.registerConfiguredCommandController(task.id, scriptAbortController);
     try {
-      const scriptResult = await runConfiguredCommand(scriptCommand, worktreePath, 120_000, extraEnv, createRunAuditor(this.store, {
-        runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("exec-script", task.id),
-        agentId: this.getRunContextFor(task.id)?.agentId ?? (task.assignedAgentId ?? "executor"),
-        taskId: task.id,
-        phase: "execute",
-      }));
+      const scriptResult = await runConfiguredCommand(
+        scriptCommand,
+        worktreePath,
+        120_000,
+        extraEnv,
+        createRunAuditor(this.store, {
+          runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("exec-script", task.id),
+          agentId: this.getRunContextFor(task.id)?.agentId ?? (task.assignedAgentId ?? "executor"),
+          taskId: task.id,
+          phase: "execute",
+        }),
+        scriptAbortController.signal,
+      );
+      if (scriptAbortController.signal.aborted) {
+        throw this.createConfiguredCommandAbortError(task.id, scriptCommand);
+      }
       if (scriptResult.spawnError || scriptResult.timedOut || scriptResult.exitCode !== 0) {
         return { success: false, error: configuredCommandErrorMessage(scriptResult) };
       }
       return { success: true, output: `Script '${scriptName}' completed successfully` };
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw err;
+      }
       const execError = err instanceof Error ? err : new Error(String(err));
       const stderr = "stderr" in execError && typeof execError.stderr === "string" ? execError.stderr.trim() : "";
       const stdout = "stdout" in execError && typeof execError.stdout === "string" ? execError.stdout.trim() : "";
@@ -7664,6 +7850,8 @@ ${failureFeedback}
       if (!parts.length) parts.push(execError.message || "Unknown error");
       const errorOutput = parts.join("\n");
       return { success: false, error: errorOutput };
+    } finally {
+      this.unregisterConfiguredCommandController(task.id, scriptAbortController);
     }
   }
 
@@ -7893,6 +8081,8 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
         fallbackProvider: settings.fallbackProvider,
         fallbackModelId: settings.fallbackModelId,
         defaultThinkingLevel: settings.defaultThinkingLevel,
+        runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
+        settings,
         taskEnv,
         // Skill selection: use assigned agent skills if available, otherwise role fallback
         ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
@@ -10344,6 +10534,8 @@ Child agent: ${agent.id} (${name})`;
             defaultModelId: childExecutorModelId,
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
+            runAuditor: createRunAuditor(this.store, this.getRunContextFor(taskId)),
+            settings,
             taskEnv,
             // Skill selection: use assigned agent skills if available, otherwise role fallback
             ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),

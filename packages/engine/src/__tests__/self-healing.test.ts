@@ -3820,6 +3820,9 @@ describe("SelfHealingManager", () => {
       mockedExecSync.mockImplementation((command: string | Buffer) => {
         const cmd = String(command);
         if (cmd.includes("Fusion-Task-Id: FN-stuck")) return "abc12345\x1fRecovered subject\n" as any;
+        // FN-5441 ownership verification: post-grep body fetch must contain
+        // the anchored trailer so commitOwnedByTask accepts the candidate.
+        if (cmd.includes("--format=%b") && cmd.includes("abc12345")) return "Fusion-Task-Id: FN-stuck\n" as any;
         if (cmd.includes("--shortstat")) return " 2 files changed, 3 insertions(+), 1 deletions(-)\n" as any;
         return "" as any;
       });
@@ -3958,6 +3961,50 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    // FN-5441/FN-5446 regression: a deadlock-recovery sweep mis-attributed
+    // both to e3dbfaae, an FN-5483 commit whose body merely *mentioned* them
+    // by name. findLandedTaskCommit step (4) used `git log --grep=FN-XXXX`
+    // which matches the entire commit message (not just subject) and the
+    // previous code blindly accepted the first hit. The fix anchors ownership
+    // on trailer/subject so prose mentions can never claim a task.
+    it("FN-5441/FN-5446: does not attribute to a commit that only mentions the task ID in prose", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue(baseSettings);
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([
+          { id: "FN-5441", column: "in-review", paused: false, status: "failed", mergeRetries: 3, mergeDetails: undefined, worktree: "/tmp/wt-a", log: [] },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      mockedExecSync.mockImplementation((command: string | Buffer) => {
+        const cmd = String(command);
+        // grep step finds the unrelated FN-5483 commit whose body mentions FN-5441 in prose
+        if (cmd.includes("FN-5441") && cmd.includes("--grep")) return "e3dbfaae\x1ffix(FN-5483): allow merger commits past identity-guard\n" as any;
+        // ownership-verification body fetch returns prose-mention body, no anchored trailer
+        if (cmd.includes("--format=%b") && cmd.includes("e3dbfaae")) {
+          return "The refusal surfaced as merge-deadlock-detected on FN-5441 and FN-5446. ...\n" as any;
+        }
+        return "" as any;
+      });
+
+      const result = await managerWithRecovery.recoverStuckMergeDeadlocks();
+
+      // No attribution → no recovery → no move to done.
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-5441", "done");
+      // result of 0 OR a "paused-for-manual" path (proof gate) is acceptable;
+      // the load-bearing assertion is that we did NOT advance the task to done
+      // against the wrong commit.
+      expect(result).toBeLessThanOrEqual(1);
+      const updateCalls = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls;
+      const movedToDone = updateCalls.some(([id, patch]) =>
+        id === "FN-5441" && (patch as any)?.mergeDetails?.commitSha === "e3dbfaae",
+      );
+      expect(movedToDone).toBe(false);
+
+      managerWithRecovery.stop();
+    });
+
     it("recovers worktree-only orphans and reproduces three-task incident", async () => {
       const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue(baseSettings);
@@ -3975,6 +4022,11 @@ describe("SelfHealingManager", () => {
         if (cmd.includes("Fusion-Task-Id: FN-3794")) return "278a2825\x1fone\n" as any;
         if (cmd.includes("Fusion-Task-Id: FN-3814")) return "69c25e2b\x1ftwo\n" as any;
         if (cmd.includes("Fusion-Task-Id: FN-3829")) return "0d3f51b6\x1fthree\n" as any;
+        // FN-5441 ownership verification: post-grep body fetch must contain
+        // the anchored trailer so commitOwnedByTask accepts each candidate.
+        if (cmd.includes("--format=%b") && cmd.includes("278a2825")) return "Fusion-Task-Id: FN-3794\n" as any;
+        if (cmd.includes("--format=%b") && cmd.includes("69c25e2b")) return "Fusion-Task-Id: FN-3814\n" as any;
+        if (cmd.includes("--format=%b") && cmd.includes("0d3f51b6")) return "Fusion-Task-Id: FN-3829\n" as any;
         return "" as any;
       });
 
@@ -6120,7 +6172,7 @@ describe("clearStaleBlockedBy", () => {
       column: "in-review",
       status: "failed",
       mergeRetries: 0,
-      error: "Refusing to start coding agent in missing worktree: /Users/eclipxe/Projects/kb/.worktrees/bright-wren",
+      error: "Refusing to start coding agent in missing worktree: /tmp/test-project/.worktrees/bright-wren",
       steps: [{ status: "done" }, { status: "pending" }] as any,
     });
     mockSweepTasks(store, { todo: [taskA], inReview: [taskB], all: [taskA, taskB] });
@@ -7912,6 +7964,15 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     expect(result).toBeGreaterThanOrEqual(0);
     expect(store.moveTask).not.toHaveBeenCalled();
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:reclaim-self-owned-branch-conflict-no-action" }));
+  });
+
+  it("returns active merge task id via public accessor", () => {
+    const manager = new SelfHealingManager(createMockStore(), {
+      rootDir: "/tmp/test-project",
+      getActiveMergeTaskId: () => "FN-MERGE",
+    });
+
+    expect(manager.getActiveMergeTaskId()).toBe("FN-MERGE");
   });
 
   it("emits finalize-no-op-review no-action when unproven fallback fails triple proof", async () => {

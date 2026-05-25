@@ -2,7 +2,13 @@ import { exec } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { CentralCore, RegisteredProject } from "@fusion/core";
+import {
+  type CentralCore,
+  type RegisteredProject,
+  type ProjectIdentity,
+  readProjectIdentity,
+  writeProjectIdentity,
+} from "@fusion/core";
 
 const execAsync = promisify(exec);
 
@@ -13,6 +19,23 @@ export interface EnsureCwdProjectRegisteredOptions {
   autoRegister: boolean;
 }
 
+function stampProjectIdentityBestEffort(
+  cwd: string,
+  project: RegisteredProject,
+  logPrefix: string,
+): void {
+  try {
+    writeProjectIdentity(join(cwd, ".fusion"), {
+      id: project.id,
+      createdAt: project.createdAt,
+    });
+  } catch (error) {
+    console.warn(
+      `[${logPrefix}] Could not persist project identity for ${cwd}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export async function ensureCwdProjectRegistered(
   options: EnsureCwdProjectRegisteredOptions,
 ): Promise<RegisteredProject | null> {
@@ -20,6 +43,7 @@ export async function ensureCwdProjectRegistered(
 
   const existing = await central.getProjectByPath(cwd);
   if (existing) {
+    stampProjectIdentityBestEffort(cwd, existing, logPrefix);
     return existing;
   }
 
@@ -41,14 +65,25 @@ export async function ensureCwdProjectRegistered(
     }
 
     const projectName = await detectProjectName(cwd);
-    const project = await central.registerProject({
-      name: projectName,
+    const identity: ProjectIdentity | null = existsSync(dbPath) ? readProjectIdentity(fusionDir) : null;
+
+    const ensured = await central.ensureProjectForPath({
       path: cwd,
-      isolationMode: "in-process",
+      identity: identity ?? undefined,
+      name: projectName,
     });
 
+    const project = ensured.project;
     await central.updateProject(project.id, { status: "active" });
-    console.log(`[${logPrefix}] Auto-registered project "${project.name}" at ${cwd}`);
+    stampProjectIdentityBestEffort(cwd, project, logPrefix);
+
+    if (ensured.outcome === "reattached") {
+      console.log(
+        `[${logPrefix}] Recovered project identity ${project.id} from ${dbPath} (central had no row)`,
+      );
+    } else if (ensured.outcome === "registered") {
+      console.log(`[${logPrefix}] Auto-registered project "${project.name}" at ${cwd}`);
+    }
 
     return project;
   } catch (error) {

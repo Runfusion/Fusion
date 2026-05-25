@@ -472,6 +472,12 @@ function AppInner() {
   // iOS doesn't shrink the layout viewport, so the iOS path keeps the
   // hide-nav-on-keyboard behavior intact.
   const mobileKeyboardOpen = isMobile && keyboardOpen && !modalManager.anyModalOpen && isIOS();
+  // Nav-bar-only: pin the bar to the page bottom whenever the keyboard is up on
+  // mobile, regardless of modal state or platform. The bar's `bottom` defaults
+  // to `var(--icb-bottom-offset)`, which equals the keyboard height on iOS and
+  // would otherwise float the bar above the keyboard. We want the keyboard to
+  // simply cover the bar instead.
+  const mobileNavKeyboardOpen = isMobile && keyboardOpen;
   // App-level scroll lock for inline editing (TaskCard inline edit, etc.):
   // when the keyboard is up outside of any modal, pin the body so iOS can't
   // shift the document or visualViewport, and so the dashboard snaps back
@@ -1905,7 +1911,7 @@ function AppInner() {
         onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : () => {}}
         footerVisible={viewMode === "project" && !!currentProject}
         modalOpen={modalManager.anyModalOpen}
-        keyboardOpen={mobileKeyboardOpen}
+        keyboardOpen={mobileNavKeyboardOpen}
         onOpenSettings={openSettingsWithNav}
         onOpenActivityLog={openActivityLogWithNav}
         onOpenSystemStats={openSystemStatsWithNav}

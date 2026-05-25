@@ -630,8 +630,64 @@ describe("aiMergeTask — build verification", () => {
     expect(installCall).toBeDefined();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      "Syncing dependencies before merge build verification: pnpm install --frozen-lockfile",
+      "Syncing dependencies before merge verification: pnpm install --frozen-lockfile",
     );
+  });
+
+  it("syncs dependencies before test verification when install state is missing", async () => {
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    mockedExistsSync.mockImplementation((path: any) => {
+      const pathStr = String(path);
+      if (pathStr.includes("node_modules") || pathStr.endsWith(".pnp.cjs")) return false;
+      return true;
+    });
+
+    let cachedQuietChecks = 0;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "2 files changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "" as any;
+      if (cmdStr.includes("git diff --cached --name-only")) {
+        return "package.json\npackages/desktop/package.json" as any;
+      }
+      if (cmdStr.includes("pnpm install --frozen-lockfile")) return "Lockfile is up to date" as any;
+      if (cmdStr.includes("diff --cached --quiet")) {
+        cachedQuietChecks += 1;
+        return cachedQuietChecks === 1 ? "1" as any : "0" as any;
+      }
+      if (cmdStr.includes("show --shortstat")) return "3 files changed, 10 insertions(+), 2 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore(
+      { id: "FN-051", worktree: "/tmp/root/.worktrees/KB-051" },
+      [{ id: "FN-051", worktree: "/tmp/root/.worktrees/KB-051", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+      testCommand: "pnpm test",
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-051");
+
+    expect(result.merged).toBe(true);
+    expect(
+      mockedExecSync.mock.calls.some((call) => String(call[0]).includes("pnpm install --frozen-lockfile")),
+    ).toBe(true);
   });
 });
 
@@ -2868,6 +2924,10 @@ describe("inferDefaultTestCommand — pnpm workspace scoping", () => {
     const result = inferDefaultTestCommand("/tmp/root", undefined, undefined, "main", "fusion/fn-123");
     expect(result?.command).toBe(`pnpm --filter "@fusion/dashboard...^" test`);
     expect(result?.testSource).toBe("inferred-scoped");
+    expect(mockedExecSync).toHaveBeenCalledWith(
+      'git diff --name-only "main"..."fusion/fn-123"',
+      expect.objectContaining({ cwd: "/tmp/root", encoding: "utf-8" }),
+    );
   });
 
   it("returns command with 2 filters when 2 packages are changed", () => {

@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from "vitest";
 import * as reportsHook from "../useReports.js";
 import { ReportsView } from "../ReportsView.js";
 
+// ReportDetailPanel transitively calls useReportPreview → fetch(), and jsdom
+// has no fetch. The rejection lands after teardown and React's state update
+// then references `window`, surfacing as an unhandled error that fails the
+// suite. Stub the preview API to resolve synchronously.
+vi.mock("../api.js", () => ({
+  listReports: vi.fn().mockResolvedValue([]),
+  getReport: vi.fn().mockResolvedValue(null),
+  getReportPreviewHtml: vi.fn().mockResolvedValue(""),
+  getReportExportUrl: vi.fn().mockReturnValue(""),
+  approveReport: vi.fn().mockResolvedValue(null),
+  rejectReport: vi.fn().mockResolvedValue(null),
+  publishReport: vi.fn().mockResolvedValue(null),
+  getShareBlocks: vi.fn().mockResolvedValue({}),
+}));
+
 describe("ReportsView", () => {
   it("renders list and compare toggle", () => {
     vi.spyOn(reportsHook, "useReports").mockReturnValue({

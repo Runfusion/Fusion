@@ -26,7 +26,7 @@ describe("scroll-snap CSS", () => {
   describe("mobile @media (max-width: 768px)", () => {
     // Extract the mobile media block for scoped assertions
     const mediaStart = css.search(
-      /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{/,
+      /@media\s*\([^)]*max-width:\s*768px[^)]*\)[^{]*\{/,
     );
     const afterMedia = css.slice(mediaStart);
 

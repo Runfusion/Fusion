@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/ci-status",
-  "version": "0.2.42",
+  "version": "0.2.43",
   "type": "module",
   "description": "Polls CI status for branches and provides a custom API to query results",
   "keywords": [

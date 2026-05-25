@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode, createElement, type PropsWithChildren } from "react";
 import { renderHook, waitFor } from "@testing-library/react";
 import { useDeepLink } from "../useDeepLink";
 import * as api from "../../api";
@@ -150,17 +151,65 @@ describe("useDeepLink", () => {
     expect(window.history.replaceState).not.toHaveBeenCalledWith(expect.anything(), "", "/?task=FN-123");
   });
 
+  it("switches project for project-only deep links without opening task detail", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_456"),
+    });
+
+    const { setCurrentProject, openTaskDetail, addToast } = renderUseDeepLink();
+
+    await waitFor(() => {
+      expect(setCurrentProject).toHaveBeenCalledTimes(1);
+      expect(setCurrentProject).toHaveBeenCalledWith(otherProject);
+    });
+
+    expect(openTaskDetail).not.toHaveBeenCalled();
+    expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+    expect(addToast).not.toHaveBeenCalled();
+  });
+
+  it("shows unknown project toast only once under StrictMode", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=missing"),
+    });
+
+    const addToast = vi.fn();
+    const strictWrapper = ({ children }: PropsWithChildren) => createElement(StrictMode, null, children);
+
+    renderHook(() => useDeepLink({
+      projectId: defaultProject.id,
+      projects: [defaultProject, otherProject],
+      projectsLoading: false,
+      currentProject: defaultProject,
+      setCurrentProject: vi.fn(),
+      addToast,
+      openTaskDetail: vi.fn(),
+      closeTaskDetail: vi.fn(),
+    }), { wrapper: strictWrapper });
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledTimes(1);
+      expect(addToast).toHaveBeenCalledWith("Project 'missing' not found", "error");
+    });
+
+    expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+  });
+
   it("switches project and uses project param for task fetch", async () => {
     Object.defineProperty(window, "location", {
       configurable: true,
       value: new URL("http://localhost:3000/?project=proj_456&task=FN-999"),
     });
 
-    const { setCurrentProject } = renderUseDeepLink();
+    const { setCurrentProject, openTaskDetail } = renderUseDeepLink();
 
     await waitFor(() => {
+      expect(setCurrentProject).toHaveBeenCalledTimes(1);
       expect(setCurrentProject).toHaveBeenCalledWith(otherProject);
       expect(mockFetchTaskDetail).toHaveBeenCalledWith("FN-999", "proj_456");
+      expect(openTaskDetail).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -170,13 +219,72 @@ describe("useDeepLink", () => {
       value: new URL("http://localhost:3000/?project=missing&task=FN-123"),
     });
 
-    const { addToast } = renderUseDeepLink();
+    const { addToast, setCurrentProject } = renderUseDeepLink();
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith("Project 'missing' not found", "error");
     });
 
+    expect(addToast).toHaveBeenCalledTimes(1);
+    expect(setCurrentProject).not.toHaveBeenCalled();
     expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it("keeps task-only deep-link behavior and strips task on detail close", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?task=FN-9999"),
+    });
+
+    const { result, setCurrentProject, closeTaskDetail } = renderUseDeepLink();
+
+    await waitFor(() => {
+      expect(mockFetchTaskDetail).toHaveBeenCalledWith("FN-9999", "proj_123");
+    });
+
+    expect(setCurrentProject).not.toHaveBeenCalled();
+
+    result.current.handleDetailClose();
+    expect(window.history.replaceState).toHaveBeenCalledWith(expect.anything(), "", "/");
+    expect(closeTaskDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves mailbox view deep-link params intact after project switch", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_456&view=mailbox&mailbox-message=msg-1#message-msg-1"),
+    });
+
+    const { setCurrentProject, openTaskDetail } = renderUseDeepLink();
+
+    await waitFor(() => {
+      expect(setCurrentProject).toHaveBeenCalledTimes(1);
+      expect(setCurrentProject).toHaveBeenCalledWith(otherProject);
+    });
+
+    expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+    expect(openTaskDetail).not.toHaveBeenCalled();
+    expect(window.location.search).toContain("view=mailbox");
+    expect(window.location.search).toContain("mailbox-message=msg-1");
+  });
+
+  it("switches project for rooms view deep links without consuming room params", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new URL("http://localhost:3000/?project=proj_456&view=rooms&room=room-1"),
+    });
+
+    const { setCurrentProject, openTaskDetail } = renderUseDeepLink();
+
+    await waitFor(() => {
+      expect(setCurrentProject).toHaveBeenCalledTimes(1);
+      expect(setCurrentProject).toHaveBeenCalledWith(otherProject);
+    });
+
+    expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+    expect(openTaskDetail).not.toHaveBeenCalled();
+    expect(window.location.search).toContain("view=rooms");
+    expect(window.location.search).toContain("room=room-1");
   });
 
   it("waits for projects to load before resolving deep links", async () => {

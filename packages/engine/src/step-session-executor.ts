@@ -36,6 +36,7 @@ import { StuckTaskDetector } from "./stuck-task-detector.js";
 import { AgentLogger } from "./agent-logger.js";
 import { createLogger } from "./logger.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
+import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { checkSessionError } from "./usage-limit-detector.js";
 import {
@@ -1015,6 +1016,15 @@ Follow instructions precisely and avoid unrelated changes.`,
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
             defaultThinkingLevel: taskDetail.thinkingLevel ?? settings.defaultThinkingLevel,
+            runAuditor: createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("workflow-step", taskDetail.id),
+              agentId: taskDetail.assignedAgentId ?? "executor",
+              taskId: taskDetail.id,
+              taskLineageId: taskDetail.lineageId,
+              phase: "execute",
+              source: "step-session-executor",
+            }),
+            settings,
             customTools: [
               ...pluginTools,
               ...documentTools,

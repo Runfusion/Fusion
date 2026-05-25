@@ -1,5 +1,104 @@
 # @fusion/core
 
+## 0.33.0
+
+### Minor Changes
+
+- a201f56: feat(core): add `mergeAdvanceAutoSync` project setting (`"off" | "ff-only" | "stash-and-ff"`)
+
+  Adds the schema for a new project setting that controls what happens in **other** worktrees still checked out on the integration branch when the merger advances the branch ref. Previously the merger only updated `refs/heads/<branch>` and left every other checkout's index and working tree pinned at the old tip, so `git status` in the user's project-root checkout reported the new commits as inverted "staged changes to be committed."
+
+  Modes (default `"stash-and-ff"`):
+
+  - `"off"` — preserve the legacy behavior; user must `git pull` or click the Merge Advance Notice banner Pull button.
+  - `"ff-only"` — auto-fast-forward only clean worktrees; dirty worktrees stay untouched and the banner still surfaces.
+  - `"stash-and-ff"` — run the Smart Pull pipeline (stash → fast-forward → pop). Pop conflicts emit `merge:auto-sync` audit events with `outcome: "stash-pop-conflict"` and surface through the existing dashboard stash-conflict modal.
+
+  Schema-only in this changeset; the merger hook that consumes the setting lands in the follow-up engine change.
+
+- 51fc826: fix(engine,core): dedup heartbeat-spawned follow-ups by parent task
+
+  Heartbeat agents create follow-up tasks via `fn_task_create`. Until
+  now, the intake similarity guard scoped candidates by `sourceAgentId`
+  only, so the same parent task could spawn many sibling tasks across
+  heartbeats whenever triage rewrote their titles enough to dodge the
+  title-fingerprint guard.
+
+  The task-scoped heartbeat now stamps `sourceParentTaskId` (and
+  `sourceRunId`) on every `fn_task_create`, and the intake duplicate
+  matcher treats a candidate as a sibling when it shares either the
+  caller's agent ID or the caller's parent task ID. Same-parent
+  siblings with similar descriptions are auto-archived as before.
+
+  Tool description and heartbeat prompts also now instruct agents to
+  scan existing open tasks before creating, as a belt-and-suspenders
+  layer above the deterministic dedup.
+
+### Patch Changes
+
+- 408e20b: fix(merger): two root-cause fixes for tasks landing in Done with no commit on main
+
+  **Bug 1: sibling fusion/fn-\* branch as merge target** — `resolveTaskMergeTarget`
+  previously returned `task.baseBranch` unconditionally before falling back to the
+  project default. When a task was dispatched as a sibling/dependent off another
+  in-flight task's worktree, `baseBranch` ended up as the upstream's
+  `fusion/fn-<id>` branch. The merger then detached onto that sibling, squashed
+  on top of it, and advanced `refs/heads/fusion/fn-<id>` — never main. FN-5233's
+  squash (`84563e549`) stranded on `fusion/fn-5339`; FN-5530's
+  (`4140a3e0a`) stranded on `fusion/fn-5543`. The resolver now refuses any
+  `fusion/fn-\*` candidate as a merge destination and falls through to the
+  project default. The merger emits a new `merge:merge-target-rejected-fusion-sibling`
+  audit event so the upstream `baseBranch`-propagation bug stays observable.
+
+  **Bug 2: deadlock-recovery mis-attributed tasks to unrelated commits** —
+  `findLandedTaskCommit` step (4) used `git log --grep=FN-XXXX` which matches the
+  entire commit message (not just the subject) and blindly accepted the first
+  hit. FN-5441 and FN-5446 were both marked done against `e3dbfaae` — an
+  FN-5483 commit whose body merely _mentioned_ them by name in a paragraph about
+  a refusal. The grep fallback now fetches each candidate's body and re-verifies
+  ownership via a tightened `commitOwnedByTask`: trailers must be line-anchored
+  (`(?:^|\n)Fusion-Task-Id: <id>(?:\n|$)`), and the subject fallback must match
+  a conventional-commit form (`<type>(<id>):` or `<id>:`), not a substring.
+  Prose mentions can no longer claim a task.
+
+  The historical recovery for FN-5233 has been cherry-picked to main as
+  `2d2e5b809`. The other 11 affected tasks (FN-5441, FN-5446, FN-5472, FN-5484,
+  FN-5487, FN-5490, FN-5515, FN-5517, FN-5526, FN-5539, FN-5540, FN-5542)
+  remain in Done but need separate triage — 3 look like legitimate
+  verification-only no-ops, the remaining 9 likely lost real work.
+
+- ec6643e: fix(test-utils): cancel subprocess tracking timer for every proc in afterEach
+
+  The vitest subprocess guard registered a 60 s "command timed out" timer for
+  each tracked child process and relied on `afterEach` to cancel it. Under
+  concurrent load (`pnpm` recursive test runs) the timer could outlive the
+  originating test and fire during a later test's `afterEach`, surfacing as
+  spurious "Test subprocess guard detected unsafe child-process usage:
+  Timed out after 60000ms" failures attributed to a different test name.
+
+  The cleanup loop now scopes "Left running" failure reporting + SIGKILL to
+  processes spawned by the current test, but unconditionally clears each
+  tracked subprocess's timer so the 60 s timeout cannot fire after the
+  afterEach completes. The grace period before declaring a process leaked
+  is also raised from 200 ms to 1 s to absorb event-loop contention from
+  slow git shells under recursive test load.
+
+- 4c31e88: feat(engine): merger auto-syncs project-root checkout after advancing integration-branch ref
+
+  Wires `mergeAdvanceAutoSync` into the merger's post-ref-advance code path. After `advanceIntegrationBranchRef` ff-updates `refs/heads/<integrationBranch>`, the merger now enumerates other worktrees still on that branch (typically the user's project-root checkout) and reconciles each one's index + working tree to the new tip via `syncWorktreeToHead`.
+
+  The reconciliation primitive is **not** a `git pull` — origin may still be at the previous tip (no `pushAfterMerge`), in which case `git pull --ff-only` is a no-op and a naive `stash → pull → pop` ends with the worktree restored to the old state. Instead `syncWorktreeToHead`:
+
+  1. Diffs the worktree against the _previous_ tip to isolate real user edits from the stale-index "phantom diff" that looks like inverted commits.
+  2. When the worktree is clean against the previous tip, runs `git reset --hard HEAD` to snap index + files forward.
+  3. In `stash-and-ff` mode with real edits, captures them as a binary patch against the previous tip, snaps to HEAD, then `git apply --3way` to restore. Untracked files are copied to a temp dir and restored after the snap. Patch conflicts surface as `synced-with-pop-conflict` with the patch left on disk for manual recovery.
+
+  Each per-worktree attempt emits a `merge:auto-sync` audit event (new `GitMutationType`) with the outcome; the per-step `pull:fast-forward`, `stash:push`, `stash:pop`, and `stash:pop-conflict` events that pass through the auditor are tagged `metadata.autoSync = true` so downstream consumers can attribute them.
+
+  The user-facing effect: with the default `mergeAdvanceAutoSync: "stash-and-ff"`, after a Fusion task merges the user's `git status` in the project-root checkout becomes clean and the working tree shows the new commits' content — no manual `git reset` or Pull-button click required. Set `mergeAdvanceAutoSync: "off"` to restore the legacy behavior (the Merge Advance Notice banner still surfaces and the user pulls by hand).
+
+  Backstopped by `merger-auto-sync.slow.test.ts` covering: clean-sync snaps both index and files forward, ff-only with real edits is a no-op, stash-and-ff preserves untracked local files across the snap, task worktrees on `fusion/fn-*` branches are correctly skipped, and an empty branch map emits nothing.
+
 ## 0.32.0
 
 ### Patch Changes

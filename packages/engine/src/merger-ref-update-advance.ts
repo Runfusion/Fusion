@@ -55,7 +55,7 @@ export async function advanceIntegrationBranchRef(args: {
   | { advanced: true; previousSha: string; newSha: string }
   | {
     advanced: false;
-    reason: "concurrent-advance" | "ref-update-refused" | "missing-current-sha";
+    reason: "concurrent-advance" | "ref-update-refused" | "missing-current-sha" | "non-fast-forward-advance";
     diagnostic: string;
     observedCurrentSha?: string;
   }
@@ -150,6 +150,34 @@ export async function advanceIntegrationBranchRef(args: {
       diagnostic,
       observedCurrentSha,
     };
+  }
+
+  // Fast-forward-only invariant: the new sha must descend from the current
+  // tip. CAS alone (old-value match) lets a sibling commit overwrite the ref
+  // and orphan the prior tip — the exact shape that left an FN-trailered
+  // squash reachable only from a feature branch when a subsequent merger
+  // built its squash off a stale base. Reject non-FF advances.
+  if (newSha !== expectedCurrentSha) {
+    try {
+      await testHooks.runGit(
+        ["merge-base", "--is-ancestor", expectedCurrentSha, newSha],
+        rootDir,
+      );
+    } catch (_error: unknown) {
+      const diagnostic = `newSha ${newSha} is not a descendant of ${expectedCurrentSha} on ${ref}`;
+      await emitRefAdvance({
+        succeeded: false,
+        fromSha: expectedCurrentSha,
+        toSha: newSha,
+        error: `non-fast-forward-advance: ${diagnostic}`,
+      });
+      return {
+        advanced: false,
+        reason: "non-fast-forward-advance",
+        diagnostic,
+        observedCurrentSha,
+      };
+    }
   }
 
   try {

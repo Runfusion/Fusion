@@ -88,9 +88,14 @@ vi.mock("../../hooks/usePluginUiSlots", () => ({
 
 export const mockConfirm = vi.fn();
 export const mockConfirmWithChoice = vi.fn();
+export const mockConfirmWithCheckbox = vi.fn();
 
 vi.mock("../../hooks/useConfirm", () => ({
-  useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice }),
+  useConfirm: () => ({
+    confirm: mockConfirm,
+    confirmWithChoice: mockConfirmWithChoice,
+    confirmWithCheckbox: mockConfirmWithCheckbox,
+  }),
 }));
 
 export function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
@@ -143,8 +148,10 @@ export function setupTaskDetailModalHooks(): void {
   beforeEach(() => {
     mockConfirm.mockReset();
     mockConfirmWithChoice.mockReset();
+    mockConfirmWithCheckbox.mockReset();
     mockConfirm.mockResolvedValue(true);
     mockConfirmWithChoice.mockResolvedValue("primary");
+    mockConfirmWithCheckbox.mockResolvedValue({ choice: "primary", checkboxValue: false });
     clearAuthToken();
     localStorage.removeItem("fn.authToken");
   });

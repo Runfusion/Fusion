@@ -1024,7 +1024,7 @@ export class PluginRunner {
   /**
    * Invoke a hook with error isolation and logging.
    */
-  private async invokeHookSafe(hookName: keyof FusionPlugin["hooks"], ...args: unknown[]): Promise<void> {
+  async invokeHookSafe(hookName: keyof FusionPlugin["hooks"], ...args: unknown[]): Promise<void> {
     try {
       await this.withTimeout(
         this.invokeHook(hookName, ...args),

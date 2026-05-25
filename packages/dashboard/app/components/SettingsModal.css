@@ -647,6 +647,31 @@
   color: var(--text-muted);
 }
 
+/* Inline text input + secondary action ("Use dropdown") for fields that
+   sometimes want a free-text fallback. */
+.form-inline-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.form-inline-group .input {
+  flex: 1;
+  min-width: 0;
+}
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent, #4a90e2);
+  cursor: pointer;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.btn-link:hover {
+  text-decoration: none;
+}
+
 .settings-overlap-ignore-group code {
   font-family: var(--font-mono);
   font-size: 0.9em;

@@ -3181,6 +3181,11 @@ describe("executeHeartbeat", () => {
         source: expect.objectContaining({
           sourceType: "agent_heartbeat",
           sourceAgentId: "agent-001",
+          sourceRunId: "run-001",
+          sourceParentTaskId: "FN-001",
+          sourceMetadata: expect.objectContaining({
+            contentFingerprint: expect.any(String),
+          }),
         }),
       }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
     });

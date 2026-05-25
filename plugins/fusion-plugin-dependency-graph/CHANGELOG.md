@@ -1,5 +1,36 @@
 # @fusion-plugin-examples/dependency-graph
 
+## 0.1.24
+
+### Patch Changes
+
+- Updated dependencies [60a0012]
+- Updated dependencies [a10fc56]
+- Updated dependencies [de67c51]
+- Updated dependencies [6e7f1e5]
+- Updated dependencies [5d35b64]
+- Updated dependencies [408e20b]
+- Updated dependencies [4f38ed1]
+- Updated dependencies [ec6643e]
+- Updated dependencies [85786e7]
+- Updated dependencies [ef12df4]
+- Updated dependencies [d5cfa92]
+- Updated dependencies [916047c]
+- Updated dependencies [084bdc6]
+- Updated dependencies [a201f56]
+- Updated dependencies [d8493f9]
+- Updated dependencies [99359b6]
+- Updated dependencies [6083de2]
+- Updated dependencies [4c31e88]
+- Updated dependencies [dc94494]
+- Updated dependencies [e138289]
+- Updated dependencies [76429a8]
+- Updated dependencies [ed4d021]
+- Updated dependencies [51fc826]
+  - @fusion/dashboard@0.33.0
+  - @fusion/core@0.33.0
+  - @fusion/plugin-sdk@0.33.0
+
 ## 0.1.23
 
 ### Patch Changes

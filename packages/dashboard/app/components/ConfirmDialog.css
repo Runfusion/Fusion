@@ -10,6 +10,17 @@
   overflow-y: auto;
 }
 
+.confirm-dialog__checkbox {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: 0 var(--space-xl) var(--space-lg);
+}
+
+.confirm-dialog__checkbox-description {
+  color: var(--text-muted);
+  margin-inline-start: var(--space-lg);
+}
+
 .confirm-dialog__actions {
   display: flex;
   justify-content: flex-end;

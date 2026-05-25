@@ -151,7 +151,13 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(classification).toEqual({ kind: "proven-no-op", baseRef: "main", ownDiffEmpty: true });
   });
 
-  it("auto-finalizes proven no-op and clears stale modifiedFiles", async () => {
+  // FN-5490/FN-5517/FN-5526/FN-5540 regression: the previous contract here
+  // was "auto-finalize proven no-op and clear stale modifiedFiles", which
+  // turned out to be the bug — claimed modifiedFiles + no commit = lost work
+  // (uncommitted in the worktree or squashed against the wrong branch), not
+  // a legitimate no-op. The merger now refuses to finalize and moves the
+  // task back to todo with progress preserved instead.
+  it("FN-5490: refuses no-op finalize when modifiedFiles are claimed without a commit", async () => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-merger-noop-finalize-"));
     repos.push(repo);
     git(repo, "git init -b main");
@@ -183,10 +189,17 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     const store = createStore(task);
     const result = await aiMergeTask(store, repo, "FN-C");
 
-    expect(result.merged).toBe(true);
-    expect(result.noOpMerge).toBe(true);
-    expect((store.updateTask as ReturnType<typeof vi.fn>).mock.calls.some(([, patch]) => patch?.modifiedFiles?.length === 0)).toBe(true);
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(true);
+    // Lost-work guard fires — task does NOT advance to done, does NOT have
+    // modifiedFiles cleared, and gets moved back to todo with progress.
+    expect(result.merged).toBe(false);
+    expect(result.error).toMatch(/lost-work/);
+    expect(
+      (store.updateTask as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([, patch]) => Array.isArray(patch?.modifiedFiles) && patch.modifiedFiles.length === 0,
+      ),
+    ).toBe(false);
+    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
+    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "todo")).toBe(true);
   }, 20_000);
 
   it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {

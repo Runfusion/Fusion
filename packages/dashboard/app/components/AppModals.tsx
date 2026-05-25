@@ -58,6 +58,7 @@ interface AppModalsProps {
       removeDependencyReferences?: boolean;
       removeLineageReferences?: boolean;
       githubIssueAction?: GithubIssueAction;
+      allowResurrection?: boolean;
     }) => Promise<Task>;
     mergeTask: (taskId: string) => Promise<MergeResult>;
     archiveTask: (taskId: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;

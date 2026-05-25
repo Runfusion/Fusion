@@ -14,13 +14,13 @@ describe("TodoView action row CSS contract", () => {
     expect(css).toMatch(/\.todo-item\s*\{[^}]*flex-direction:\s*column;/);
     expect(css).toMatch(/\.todo-item-main-row\s*\{[^}]*display:\s*flex;/);
     expect(css).toMatch(/\.todo-item-actions\s*\{[^}]*margin-left:\s*calc\(var\(--space-lg\) \+ var\(--space-sm\)\);/);
-    expect(css).toMatch(/@media \(max-width:\s*768px\)\s*\{[\s\S]*\.todo-item-actions\s*\{[^}]*opacity:\s*1;[^}]*\}/);
+    expect(css).toMatch(/@media \(max-width:\s*768px\)[^{]*\{[\s\S]*\.todo-item-actions\s*\{[^}]*opacity:\s*1;[^}]*\}/);
   });
 
   it("applies keyboard-active mobile layout containment rules", () => {
     const css = loadAllAppCss();
 
-    expect(css).toMatch(/@media \(max-width:\s*768px\)\s*\{[\s\S]*\.todo-view--mobile-keyboard-active \.todo-view-layout\s*\{[^}]*height:\s*100%;[^}]*\}/);
-    expect(css).toMatch(/@media \(max-width:\s*768px\)\s*\{[\s\S]*\.todo-view--mobile-keyboard-active \.todo-view-main\s*\{[^}]*overscroll-behavior:\s*contain;[^}]*\}/);
+    expect(css).toMatch(/@media \(max-width:\s*768px\)[^{]*\{[\s\S]*\.todo-view--mobile-keyboard-active \.todo-view-layout\s*\{[^}]*height:\s*100%;[^}]*\}/);
+    expect(css).toMatch(/@media \(max-width:\s*768px\)[^{]*\{[\s\S]*\.todo-view--mobile-keyboard-active \.todo-view-main\s*\{[^}]*overscroll-behavior:\s*contain;[^}]*\}/);
   });
 });

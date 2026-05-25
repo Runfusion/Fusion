@@ -468,6 +468,81 @@ function shouldBlockRealTestCli(commandLine: string): boolean {
   return !isSafeIntrospectionCommand(commandLine);
 }
 
+// The live Fusion dashboard port(s) must not be killed by tests. We protect:
+//   - the documented default (4040)
+//   - process.env.PORT (set by `fusion serve` / desktop / docker)
+//   - process.env.FUSION_SERVER_PORT (set when desktop spawns serve)
+//   - any ports listed in FUSION_RESERVED_PORTS (comma-separated escape hatch)
+//   - any port detected by a synchronous probe of localhost candidates
+// Detection runs once per worker at setup time so the regex set is stable.
+function parsePortList(value: string | undefined): number[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((port) => Number.isInteger(port) && port > 0 && port < 65_536);
+}
+
+async function probeFusionHealthPort(port: number, timeoutMs: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return false;
+    const text = await response.text();
+    // The Fusion dashboard health payload always includes a `status` field.
+    return /"status"\s*:/.test(text);
+  } catch {
+    return false;
+  }
+}
+
+async function detectLiveFusionPorts(candidates: readonly number[]): Promise<number[]> {
+  const results = await Promise.all(
+    candidates.map(async (port) => ((await probeFusionHealthPort(port, 250)) ? port : null)),
+  );
+  return results.filter((port): port is number => port !== null);
+}
+
+async function resolveReservedFusionPorts(): Promise<number[]> {
+  const reserved = new Set<number>([4040]);
+  for (const port of parsePortList(process.env.FUSION_RESERVED_PORTS)) reserved.add(port);
+  for (const port of parsePortList(process.env.PORT)) reserved.add(port);
+  for (const port of parsePortList(process.env.FUSION_SERVER_PORT)) reserved.add(port);
+  if (process.env.FUSION_TEST_SKIP_PORT_PROBE !== "1") {
+    const probeRange = [4040, 4041, 4042, 4043, 4044, 4045];
+    for (const port of await detectLiveFusionPorts(probeRange)) reserved.add(port);
+  }
+  return [...reserved];
+}
+
+const RESERVED_FUSION_PORTS = await resolveReservedFusionPorts();
+
+function buildPortKillPatterns(ports: readonly number[]): readonly RegExp[] {
+  return ports.flatMap((port) => {
+    const p = String(port);
+    return [
+      new RegExp(`\\b(?:kill|pkill|killall|fuser)\\b[^\\n]*\\b${p}\\b`),
+      new RegExp(`\\blsof\\b[^\\n]*\\b${p}\\b`),
+      new RegExp(`\\b${p}\\b[^\\n]*\\b(?:kill|pkill|killall|fuser)\\b`),
+    ];
+  });
+}
+
+const RESERVED_PORT_KILL_PATTERNS = buildPortKillPatterns(RESERVED_FUSION_PORTS);
+
+function shouldBlockReservedPortKill(commandLine: string): boolean {
+  return RESERVED_PORT_KILL_PATTERNS.some((pattern) => pattern.test(commandLine));
+}
+
+function blockedReservedPortError(commandLine: string): Error {
+  return new Error(
+    `Reserved Fusion port kill blocked during tests: ${commandLine}\n` +
+    `Reserved ports: ${RESERVED_FUSION_PORTS.join(", ")}. ` +
+    "Use --port 0 or another free port for test servers.",
+  );
+}
+
 function blockedCliError(commandLine: string): Error {
   return new Error(
     `Real AI CLI launch blocked during tests: ${commandLine}\n` +
@@ -534,6 +609,9 @@ function installChildProcessGuards(): void {
     const args = Array.isArray(argsOrOptions) ? [...argsOrOptions] : [];
     const options = Array.isArray(argsOrOptions) ? (maybeOptions ?? {}) : (argsOrOptions ?? {});
     const commandLine = describeTestSubprocessCommand(command, args);
+    if (shouldBlockReservedPortKill(commandLine)) {
+      throw blockedReservedPortError(commandLine);
+    }
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
@@ -546,6 +624,9 @@ function installChildProcessGuards(): void {
     const args = Array.isArray(argsOrOptions) ? [...argsOrOptions] : [];
     const options = Array.isArray(argsOrOptions) ? withDefaultTimeout(maybeOptions) : withDefaultTimeout(argsOrOptions);
     const commandLine = describeTestSubprocessCommand(command, args);
+    if (shouldBlockReservedPortKill(commandLine)) {
+      throw blockedReservedPortError(commandLine);
+    }
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
@@ -553,6 +634,9 @@ function installChildProcessGuards(): void {
   }) as ChildProcessModule["spawnSync"];
 
   mutableChildProcess.execSync = ((command: string, options?: ExecSyncOptions) => {
+    if (shouldBlockReservedPortKill(command)) {
+      throw blockedReservedPortError(command);
+    }
     if (shouldBlockRealTestCli(command)) {
       throw blockedCliError(command);
     }
@@ -563,6 +647,9 @@ function installChildProcessGuards(): void {
     const args = Array.isArray(argsOrOptions) ? [...argsOrOptions] : [];
     const options = Array.isArray(argsOrOptions) ? withDefaultTimeout(maybeOptions) : withDefaultTimeout(argsOrOptions);
     const commandLine = describeTestSubprocessCommand(file, args);
+    if (shouldBlockReservedPortKill(commandLine)) {
+      throw blockedReservedPortError(commandLine);
+    }
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
@@ -573,6 +660,9 @@ function installChildProcessGuards(): void {
   // and our wrapper drop the original [util.promisify.custom] symbol, which would otherwise
   // make awaited execAsync resolve to a raw stdout string and break destructuring.
   const execWrapper = ((command: string, optionsOrCallback?: ExecOptions | ((error: Error | null, stdout: string, stderr: string) => void), maybeCallback?: (error: Error | null, stdout: string, stderr: string) => void) => {
+    if (shouldBlockReservedPortKill(command)) {
+      throw blockedReservedPortError(command);
+    }
     if (shouldBlockRealTestCli(command)) {
       throw blockedCliError(command);
     }
@@ -599,6 +689,9 @@ function installChildProcessGuards(): void {
   const execFileWrapper = ((file: string, argsOrOptions?: readonly string[] | ExecFileOptions | ((error: Error | null, stdout: string, stderr: string) => void), optionsOrCallback?: ExecFileOptions | ((error: Error | null, stdout: string, stderr: string) => void), maybeCallback?: (error: Error | null, stdout: string, stderr: string) => void) => {
     const args = Array.isArray(argsOrOptions) ? [...argsOrOptions] : [];
     const commandLine = describeTestSubprocessCommand(file, args);
+    if (shouldBlockReservedPortKill(commandLine)) {
+      throw blockedReservedPortError(commandLine);
+    }
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
@@ -630,6 +723,9 @@ function installChildProcessGuards(): void {
     const args = Array.isArray(argsOrOptions) ? [...argsOrOptions] : [];
     const options = Array.isArray(argsOrOptions) ? maybeOptions : argsOrOptions;
     const commandLine = describeTestSubprocessCommand(modulePath, args);
+    if (shouldBlockReservedPortKill(commandLine)) {
+      throw blockedReservedPortError(commandLine);
+    }
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }

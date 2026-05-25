@@ -20,12 +20,13 @@ interface RestoreResponse {
 
 export interface StashConflictModalProps {
   open: boolean;
-  onClose: () => void;
+  onClose: (stashDropped?: boolean) => void;
   worktreePath: string;
   integrationBranch: string;
   stashSha: string;
   stashLabel: string;
   conflictedFiles: string[];
+  autostashOutcome: "conflict-needs-manual" | "failed";
   taskId?: string;
 }
 
@@ -71,23 +72,24 @@ export default function StashConflictModal({
   stashSha,
   stashLabel,
   conflictedFiles,
+  autostashOutcome,
   taskId,
 }: StashConflictModalProps) {
   const fileBrowser = useFileBrowser();
   const modalRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
-  const [remainingConflicts, setRemainingConflicts] = useState<string[]>(conflictedFiles);
+  const [remainingConflicts, setRemainingConflicts] = useState<string[]>(autostashOutcome === "failed" ? [] : conflictedFiles);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     if (open) {
-      setRemainingConflicts(conflictedFiles);
+      setRemainingConflicts(autostashOutcome === "failed" ? [] : conflictedFiles);
       setError(null);
       setCopyState("idle");
     }
-  }, [conflictedFiles, open]);
+  }, [autostashOutcome, conflictedFiles, open]);
 
   useEffect(() => {
     if (!open) {
@@ -110,7 +112,7 @@ export default function StashConflictModal({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onClose(false);
         return;
       }
 
@@ -185,7 +187,7 @@ export default function StashConflictModal({
         body: JSON.stringify({ worktreePath, stashSha, taskId }),
       });
       if (response.dropped) {
-        onClose();
+        onClose(true);
       }
     } catch (dropError: unknown) {
       setError(getErrorMessage(dropError));
@@ -198,7 +200,7 @@ export default function StashConflictModal({
     setSubmitting(true);
     setError(null);
     try {
-      const response = await api<RestoreResponse>("/git/stash-restore", {
+      const response = await api<RestoreResponse>("/git/stash-apply", {
         method: "POST",
         body: JSON.stringify({ worktreePath, stashSha, taskId }),
       });
@@ -230,6 +232,11 @@ export default function StashConflictModal({
         <p className="stash-conflict-modal__summary">
           Pulled <strong>{integrationBranch}</strong>, but restoring local edits from stash produced conflicts.
         </p>
+        {autostashOutcome === "failed" ? (
+          <p className="stash-conflict-modal__warning">
+            Automatic restore failed. Your changes are preserved in the stash above; use <code>git stash apply &lt;ref&gt;</code> to recover manually, or use Retry below.
+          </p>
+        ) : null}
         <div className="stash-conflict-modal__stash-row">
           <span>{stashDescriptor}</span>
           <button type="button" className="btn btn-sm btn-icon" onClick={copyRef} aria-label="Copy stash reference">
@@ -238,38 +245,40 @@ export default function StashConflictModal({
         </div>
         {copyState === "copied" ? <p className="stash-conflict-modal__hint" role="status">Stash SHA copied.</p> : null}
         {copyState === "failed" ? <p className="stash-conflict-modal__error" role="alert">Could not copy stash SHA.</p> : null}
-        <div className="stash-conflict-modal__list" role="list">
-          {remainingConflicts.map((file) => (
-            <div key={file} className="stash-conflict-row" role="listitem">
-              <code className="stash-conflict-row__path">{file}</code>
-              <div className="stash-conflict-row__actions">
-                <button type="button" className="btn btn-sm" disabled={submitting} onClick={() => void resolveFile(file, "ours")}>
-                  Keep mine
-                </button>
-                <button type="button" className="btn btn-sm" disabled={submitting} onClick={() => void resolveFile(file, "theirs")}>
-                  Keep incoming
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={submitting}
-                  onClick={() => fileBrowser?.openFile(file, { workspace: worktreePath })}
-                >
-                  Open in editor
-                </button>
+        {remainingConflicts.length > 0 ? (
+          <div className="stash-conflict-modal__list" role="list">
+            {remainingConflicts.map((file) => (
+              <div key={file} className="stash-conflict-row" role="listitem">
+                <code className="stash-conflict-row__path">{file}</code>
+                <div className="stash-conflict-row__actions">
+                  <button type="button" className="btn btn-sm" disabled={submitting} onClick={() => void resolveFile(file, "ours")}>
+                    Keep mine
+                  </button>
+                  <button type="button" className="btn btn-sm" disabled={submitting} onClick={() => void resolveFile(file, "theirs")}>
+                    Keep incoming
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={submitting}
+                    onClick={() => fileBrowser?.openFile(file, { workspace: worktreePath })}
+                  >
+                    Open in editor
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : null}
         {error ? <p className="stash-conflict-modal__error" role="alert">{error}</p> : null}
         <div className="modal-actions">
           <div className="modal-actions-left">
             <button type="button" className="btn" disabled={submitting} onClick={() => void restoreStash()}>
-              Restore from stash ref
+              Retry restore
             </button>
           </div>
           <div className="modal-actions-right">
-            <button type="button" className="btn" disabled={submitting} onClick={onClose}>
+            <button type="button" className="btn" disabled={submitting} onClick={() => onClose(false)}>
               Close
             </button>
             <button type="button" className="btn btn-warning" disabled={submitting || remainingConflicts.length > 0} onClick={() => void dropStash()}>

@@ -213,6 +213,12 @@ export function normalizeMergeIntegrationWorktreeMode(
 
 export const DIRECT_MERGE_COMMIT_STRATEGIES = ["auto", "always-squash", "always-rebase"] as const;
 export type DirectMergeCommitStrategy = (typeof DIRECT_MERGE_COMMIT_STRATEGIES)[number];
+
+export const MERGE_ADVANCE_AUTO_SYNC_MODES = ["off", "ff-only", "stash-and-ff"] as const;
+export type MergeAdvanceAutoSyncMode = (typeof MERGE_ADVANCE_AUTO_SYNC_MODES)[number];
+export function normalizeMergeAdvanceAutoSyncMode(value: unknown): MergeAdvanceAutoSyncMode {
+  return value === "off" || value === "ff-only" || value === "stash-and-ff" ? value : "stash-and-ff";
+}
 /** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
  *
  *  Both `smart-*` strategies share the same cascade: pre-merge fetch +
@@ -1873,6 +1879,7 @@ export interface Task {
    *  todo/triage when resume state is not preserved. */
   executionCompletedAt?: string;
   deletedAt?: string;
+  allowResurrection?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1909,6 +1916,11 @@ export interface TaskCreateInput {
   title?: string;
   /** Optional lineage override for trusted replication/import paths only. */
   lineageId?: string;
+  /**
+   * Opt-in createTask override for soft-deleted ID reuse.
+   * Not persisted to storage.
+   */
+  forceResurrect?: boolean;
   description: string;
   /** Configured merge target/base branch for this task (task intent).
    *  Defaults to the project default branch when omitted. */
@@ -2695,6 +2707,9 @@ export interface ProjectSettings {
   heartbeatMultiplier?: number;
   /** Number of auto-claim candidates rendered in no-task heartbeat prompts. Range: 0-10. Default: 5. */
   autoClaimCandidatesInPrompt?: number;
+  /** Sticky window for intake duplicate checks against soft-deleted tasks.
+   * Unit: days. Default: 7. Set to 0 to disable tombstone-window widening. */
+  tombstoneStickyWindowDays?: number;
   /** Heartbeat scope-discipline procedure mode.
    * - "strict": coordination-focused scope discipline (default)
    * - "lite": pre-FN-3884 behavior
@@ -2733,7 +2748,7 @@ export interface ProjectSettings {
    *  - "auto": squash single-substantive branches, preserve history for multi-substantive branches
    *  - "always-squash": always use the legacy squash path for direct merges
    *  - "always-rebase": always preserve individual branch commits during direct merges
-   *  Only applies when mergeStrategy is "direct". Default: "auto". */
+   *  Only applies when mergeStrategy is "direct". Default: "always-squash". */
   directMergeCommitStrategy?: DirectMergeCommitStrategy;
   /** Auto-merge integration-root mode.
    *  - "reuse-task-worktree" (default): run the auto-merge cascade in the task worktree
@@ -2743,6 +2758,21 @@ export interface ProjectSettings {
    *  - "cwd-main": legacy alias for "cwd-integration-branch" (normalized at read time)
    *  Auto-merge only; manual/direct merge entrypoints outside auto-merge are unchanged. */
   mergeIntegrationWorktree?: MergeIntegrationWorktreeMode;
+  /** After the merger advances the integration branch ref, what to do in *other*
+   *  worktrees that have the same branch checked out (typically the user's
+   *  project-root checkout that sat at the previous tip).
+   *  - "off": do nothing; the user must `git pull` (or click the Merge Advance
+   *    Notice banner's Pull button) to bring their checkout forward.
+   *  - "ff-only": fast-forward the other worktree only when its index and
+   *    working tree are clean. Dirty worktrees are left alone and the banner
+   *    still surfaces for manual handling.
+   *  - "stash-and-ff" (default): run the Smart Pull pipeline
+   *    (stash → fast-forward → pop) so local edits survive across the
+   *    auto-sync. Pop conflicts surface as `merge:auto-sync` audit events with
+   *    `outcome: "stash-pop-conflict"` and are forwarded to the dashboard's
+   *    existing stash-conflict modal.
+   *  Only applies to direct merges (`mergeStrategy === "direct"`). */
+  mergeAdvanceAutoSync?: MergeAdvanceAutoSyncMode;
   /** Explicit integration branch name (e.g. `main`, `master`, `trunk`, `develop`).
    *  Resolution order: `integrationBranch` → `baseBranch` → `origin/HEAD` → `main`.
    *  This value is used as the `projectDefaultBranch` input to `resolveTaskMergeTarget`. */
@@ -6075,6 +6105,8 @@ export interface DetectedProject {
   name: string;
   /** Whether the project has a valid fusion.db */
   hasDb: boolean;
+  /** Persisted project identity id if present */
+  identityId?: string;
 }
 
 /** Setup state for the first-run wizard UI */
@@ -6089,6 +6121,8 @@ export interface SetupState {
   registeredProjects: RegisteredProject[];
   /** Recommended action based on current state */
   recommendedAction: "auto-detect" | "create-new" | "manual-setup";
+  /** Local identities whose central rows are missing */
+  orphanIdentities?: Array<{ path: string; identityId: string }>;
 }
 
 /** Input for setting up a project via the wizard */
@@ -6099,6 +6133,8 @@ export interface ProjectSetupInput {
   name: string;
   /** Isolation mode preference */
   isolationMode?: "in-process" | "child-process";
+  /** Persisted local identity for central re-attachment */
+  identity?: { id: string; createdAt: string } | null;
 }
 
 /** Result of completing the first-run setup */

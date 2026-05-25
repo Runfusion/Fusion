@@ -33,6 +33,10 @@ export function decideIssueAction(
     return { action: "close", stateReason: "completed" };
   }
 
+  if (to === "archived" && (from === "done" || from === "in-review")) {
+    return { action: "close", stateReason: "completed" };
+  }
+
   if (from === "done" && to !== "done" && to !== "archived") {
     return { action: "reopen", stateReason: "reopened" };
   }

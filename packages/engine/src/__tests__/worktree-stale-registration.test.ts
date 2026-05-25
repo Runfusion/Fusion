@@ -15,9 +15,9 @@ describe("worktree-stale-registration", () => {
   });
 
   it("parseStaleRegistrationPath parses FN-5056 fixture", () => {
-    const fixture = `Failed to create worktree: Command failed: git worktree add \"/Users/eclipxe/Projects/kb/.worktrees/fast-tiger/.worktrees/happy-olive\" \"fusion/fn-4995\"\nPreparing worktree (checking out 'fusion/fn-4995')\nfatal: '/Users/eclipxe/Projects/kb/.worktrees/fast-tiger/.worktrees/happy-olive' is a missing but already registered worktree; use 'add -f' to override, or 'prune' or 'remove' to clear`;
+    const fixture = `Failed to create worktree: Command failed: git worktree add \"/repo/.worktrees/fast-tiger/.worktrees/happy-olive\" \"fusion/fn-4995\"\nPreparing worktree (checking out 'fusion/fn-4995')\nfatal: '/repo/.worktrees/fast-tiger/.worktrees/happy-olive' is a missing but already registered worktree; use 'add -f' to override, or 'prune' or 'remove' to clear`;
     expect(parseStaleRegistrationPath(fixture)).toBe(
-      "/Users/eclipxe/Projects/kb/.worktrees/fast-tiger/.worktrees/happy-olive",
+      "/repo/.worktrees/fast-tiger/.worktrees/happy-olive",
     );
   });
 

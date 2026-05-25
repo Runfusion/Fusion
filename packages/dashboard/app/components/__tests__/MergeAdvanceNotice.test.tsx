@@ -1,204 +1,163 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import MergeAdvanceNotice from "../MergeAdvanceNotice";
-import { ApiRequestError } from "../../api";
 
 const mocked = vi.hoisted(() => ({
-  api: vi.fn(),
-  mergedHandler: undefined as (() => void) | undefined,
-  stashModalProps: [] as Array<Record<string, unknown>>,
+  useMergeAdvanceNotice: vi.fn(),
+  pull: vi.fn(),
+  push: vi.fn(),
+  dismiss: vi.fn(),
+  clearPushError: vi.fn(),
+  setForceWithLease: vi.fn(),
+  setConflictState: vi.fn(),
+  stashModal: vi.fn(() => null),
 }));
 
-vi.mock("../../api", async () => {
-  const actual = await vi.importActual<typeof import("../../api")>("../../api");
+vi.mock("../../hooks/useMergeAdvanceNotice", () => ({ useMergeAdvanceNotice: mocked.useMergeAdvanceNotice }));
+vi.mock("../StashConflictModal", () => ({ default: mocked.stashModal }));
+
+function baseHookState(overrides: Record<string, unknown> = {}) {
   return {
-    ...actual,
-    api: mocked.api,
-  };
-});
-
-vi.mock("../../sse-bus", () => ({
-  subscribeSse: vi.fn((_url: string, options: { events?: Record<string, () => void> }) => {
-    mocked.mergedHandler = options.events?.["task:merged"];
-    return vi.fn();
-  }),
-}));
-
-vi.mock("../StashConflictModal", () => ({
-  default: (props: Record<string, unknown>) => {
-    mocked.stashModalProps.push(props);
-    return props.open ? <div data-testid="stash-conflict-modal">stash-conflict-modal</div> : null;
-  },
-}));
-
-function makeEvent(overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    taskId: "FN-1",
-    integrationBranch: "release",
-    refName: "refs/heads/release",
-    toSha: "abcdef123456",
-    fromSha: "1234567",
-    advanceMode: "update-ref",
-    succeeded: true,
-    advancedAt: "2026-05-21T12:00:00.000Z",
-    userCheckout: {
-      worktreePath: "/repo",
-      dirty: false,
-      untrackedCount: 0,
+    notice: {
+      taskId: "FN-1",
+      integrationBranch: "trunk",
+      toSha: "abcdef123456",
+      userCheckout: { worktreePath: "/repo", dirty: false, untrackedCount: 0 },
     },
+    dismiss: mocked.dismiss,
+    pull: mocked.pull,
+    pullState: "idle",
+    conflictState: null,
+    setConflictState: mocked.setConflictState,
+    pushStatus: {
+      integrationBranch: "trunk",
+      aheadCount: 2,
+      remoteSha: "abcdef123456",
+      canPush: true,
+      disabledReason: undefined,
+    },
+    pushState: "idle",
+    push: mocked.push,
+    clearPushError: mocked.clearPushError,
+    forceWithLease: false,
+    setForceWithLease: mocked.setForceWithLease,
     ...overrides,
   };
 }
 
-describe("MergeAdvanceNotice", () => {
+describe("MergeAdvanceNotice push affordance", () => {
   beforeEach(() => {
-    mocked.api.mockReset();
-    mocked.mergedHandler = undefined;
-    mocked.stashModalProps = [];
-    window.localStorage.clear();
-  });
-
-  afterEach(() => {
+    vi.useFakeTimers();
     vi.clearAllMocks();
+    mocked.stashModal.mockImplementation(() => null);
   });
 
-  it("renders nothing when api returns no events", async () => {
-    mocked.api.mockResolvedValueOnce({ events: [] });
-    const { container } = render(<MergeAdvanceNotice projectId="proj-1" />);
-    await waitFor(() => expect(mocked.api).toHaveBeenCalledTimes(1));
-    expect(container.firstChild).toBeNull();
+  it("renders push section only when aheadCount > 0", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState());
+    const { rerender } = render(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.getByText(/Push trunk to origin — ahead by 2 commits\./)).toBeInTheDocument();
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushStatus: { integrationBranch: "trunk", aheadCount: 0, canPush: false, remoteSha: null } }));
+    rerender(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.queryByText(/Push trunk to origin/)).toBeNull();
   });
 
-  it("renders notice with dynamic branch name", async () => {
-    mocked.api.mockResolvedValueOnce({ events: [makeEvent()] });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-    expect(await screen.findByText(/release advanced to abcdef1\./)).toBeInTheDocument();
-    expect(screen.getByText(/Your checked-out copy at \/repo is behind\./)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
-    expect(screen.getByRole("button", { name: "Dismiss merge advance notice" })).toBeInTheDocument();
+  it("push button interactions and force-with-lease styling", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState());
+    const { rerender } = render(<MergeAdvanceNotice projectId="p1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Push to origin" }));
+    expect(mocked.push).toHaveBeenCalledTimes(1);
+
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushState: "pending" }));
+    rerender(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.getByRole("button", { name: "Pushing…" })).toBeDisabled();
+
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ forceWithLease: true }));
+    rerender(<MergeAdvanceNotice projectId="p1" />);
+    const warningButton = screen.getByRole("button", { name: "Push (force-with-lease)" });
+    expect(warningButton.className).toContain("btn-warning");
   });
 
   it.each([
-    { dirty: true, untrackedCount: 0 },
-    { dirty: false, untrackedCount: 2 },
-  ])("shows auto-stash copy and keeps pull visible for dirty state", async ({ dirty, untrackedCount }) => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent({ userCheckout: { worktreePath: "/repo", dirty, untrackedCount } })] })
-      .mockResolvedValueOnce({ kind: "clean-pull", toSha: "abcdef123456" });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    expect(await screen.findByText(/local changes will be auto-stashed and restored/)).toBeInTheDocument();
-    const pullButton = screen.getByRole("button", { name: "Pull" });
-    fireEvent.click(pullButton);
-
-    await waitFor(() => expect(mocked.api).toHaveBeenNthCalledWith(2, "/git/smart-pull?projectId=proj-1", {
-      method: "POST",
-      body: JSON.stringify({
-        worktreePath: "/repo",
-        integrationBranch: "release",
-        taskId: "FN-1",
-      }),
-    }));
+    ["no-remote", "No `origin` remote configured."],
+    ["no-upstream", "Branch has no upstream on origin."],
+    ["merge-locked", "Push paused — a Fusion merge is in progress."],
+  ])("shows disabled copy for %s", (reason, copy) => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushStatus: { integrationBranch: "trunk", aheadCount: 2, canPush: false, disabledReason: reason } }));
+    render(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.getByText(copy)).toBeInTheDocument();
   });
 
-  it("clean smart-pull dismisses notice", async () => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent()] })
-      .mockResolvedValueOnce({ kind: "clean-pull", toSha: "abcdef123456" });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pull" }));
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  it("hides section for not-ahead and not-a-git-repo", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushStatus: { integrationBranch: "trunk", aheadCount: 0, canPush: false, disabledReason: "not-ahead" } }));
+    const { rerender } = render(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.queryByText(/Push trunk to origin/)).toBeNull();
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushStatus: { integrationBranch: "trunk", aheadCount: 0, canPush: false, disabledReason: "not-a-git-repo" } }));
+    rerender(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.queryByText(/Push trunk to origin/)).toBeNull();
   });
 
-  it("dirty smart-pull stash-pull-pop dismisses notice", async () => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent({ userCheckout: { worktreePath: "/repo", dirty: true, untrackedCount: 0 } })] })
-      .mockResolvedValueOnce({ kind: "stash-pull-pop", toSha: "abcdef123456" });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pull" }));
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  it("advanced toggle updates forceWithLease", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState());
+    render(<MergeAdvanceNotice projectId="p1" />);
+    const checkbox = screen.getByRole("checkbox");
+    fireEvent.click(checkbox);
+    expect(mocked.setForceWithLease).toHaveBeenCalledWith(true);
   });
 
-  it("stash-pop-conflict opens modal and passes payload", async () => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent({ userCheckout: { worktreePath: "/repo", dirty: true, untrackedCount: 1 } })] })
-      .mockResolvedValueOnce({
-        kind: "stash-pop-conflict",
-        toSha: "abcdef123456",
-        stashSha: "stashsha123",
-        stashLabel: "fusion-auto-stash-FN-1",
+  it("rejected-non-ff shows Smart Pull action", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushState: { error: "Remote diverged", outcome: "rejected-non-ff" } }));
+    render(<MergeAdvanceNotice projectId="p1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Smart Pull" }));
+    expect(mocked.pull).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejected-other/failed shows stderr and dismiss", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pushState: { error: "Push failed", outcome: "rejected-other", stderr: "fatal" } }));
+    render(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.getByText("fatal")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(mocked.clearPushError).toHaveBeenCalledTimes(1);
+  });
+
+  it("push and pull state stay independent", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ pullState: "idle", pushState: { error: "locked", outcome: "merge-locked" } }));
+    render(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeEnabled();
+  });
+
+  it("shows pull and dirty stash copy when checkout is dirty", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({ notice: { ...baseHookState().notice, userCheckout: { worktreePath: "/repo", dirty: true, untrackedCount: 2 } } }));
+    render(<MergeAdvanceNotice projectId="p1" />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeInTheDocument();
+    expect(screen.getByText(/local changes will be auto-stashed and restored/)).toBeInTheDocument();
+  });
+
+  it("hides pull button while stash conflict modal is open", () => {
+    mocked.stashModal.mockImplementation(() => null);
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({
+      conflictState: {
+        stashSha: "abc1234",
+        stashLabel: "fusion-auto",
         conflictedFiles: ["src/a.ts"],
-      });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Pull" }));
-
-    expect(await screen.findByTestId("stash-conflict-modal")).toBeInTheDocument();
+        autostashOutcome: "conflict-needs-manual",
+      },
+    }));
+    render(<MergeAdvanceNotice projectId="p1" />);
     expect(screen.queryByRole("button", { name: "Pull" })).toBeNull();
-
-    const props = mocked.stashModalProps.at(-1);
-    expect(props).toMatchObject({
-      open: true,
-      worktreePath: "/repo",
-      integrationBranch: "release",
-      stashSha: "stashsha123",
-      stashLabel: "fusion-auto-stash-FN-1",
-      conflictedFiles: ["src/a.ts"],
-      taskId: "FN-1",
-    });
   });
 
-  it("shows inline pull failure and keeps notice visible", async () => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent()] })
-      .mockRejectedValueOnce(new ApiRequestError("Merge conflict detected", 409));
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    const pullButton = await screen.findByRole("button", { name: "Pull" });
-    fireEvent.click(pullButton);
-
-    const error = await screen.findByRole("alert");
-    expect(error).toHaveTextContent("Merge conflict detected");
-    expect(screen.getByRole("status")).toBeInTheDocument();
-  });
-
-  it("dismisses current sha and stays hidden when same advance is refetched", async () => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent()] })
-      .mockResolvedValueOnce({ events: [makeEvent()] });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    const dismissButton = await screen.findByRole("button", { name: /dismiss merge advance notice/i });
-    dismissButton.focus();
-    fireEvent.click(dismissButton);
-
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
-    expect(document.activeElement).toBe(document.body);
-
-    mocked.mergedHandler?.();
-    await waitFor(() => expect(mocked.api).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-
-  it("shows fresh advance after previous sha dismissed", async () => {
-    mocked.api
-      .mockResolvedValueOnce({ events: [makeEvent({ toSha: "aaaaaaa111" })] })
-      .mockResolvedValueOnce({ events: [makeEvent({ toSha: "bbbbbbb222" })] });
-    render(<MergeAdvanceNotice projectId="proj-1" />);
-
-    fireEvent.click(await screen.findByRole("button", { name: /dismiss merge advance notice/i }));
-    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
-
-    mocked.mergedHandler?.();
-    expect(await screen.findByText(/release advanced to bbbbbbb\./)).toBeInTheDocument();
-  });
-
-  it("renders nothing for failed advance or null checkout", async () => {
-    mocked.api.mockResolvedValueOnce({ events: [makeEvent({ succeeded: false }), makeEvent({ userCheckout: null })] });
-    const { container } = render(<MergeAdvanceNotice projectId="proj-1" />);
-    await waitFor(() => expect(mocked.api).toHaveBeenCalledTimes(1));
-    expect(container.firstChild).toBeNull();
+  it("does not dismiss notice when modal closes without dropping stash", () => {
+    mocked.useMergeAdvanceNotice.mockReturnValue(baseHookState({
+      conflictState: {
+        stashSha: "abc1234",
+        stashLabel: "fusion-auto",
+        conflictedFiles: ["src/a.ts"],
+        autostashOutcome: "conflict-needs-manual",
+      },
+    }));
+    render(<MergeAdvanceNotice projectId="p1" />);
+    const modalProps = mocked.stashModal.mock.calls.at(-1)?.[0] as { onClose: (stashDropped?: boolean) => void };
+    modalProps.onClose(false);
+    expect(mocked.dismiss).not.toHaveBeenCalled();
   });
 });

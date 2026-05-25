@@ -1,5 +1,244 @@
 # @fusion/dashboard
 
+## 0.33.0
+
+### Minor Changes
+
+- 6e7f1e5: feat(dashboard): explain "Recent integration-branch advances" and add a one-click "Sync working tree" fix
+
+  Two additions to Git Manager → Status:
+
+  **Info disclosure** — an `[i]` button next to the "Recent integration-branch advances (N need action)" header toggles an inline explainer. Covers what an "advance" is, what each `autoSyncOutcome` value means (`clean-sync`, `synced-with-edits-restored`, `off / not run`, `stash-failed`, `would-conflict`, …), and where to enable `mergeAdvanceAutoSync` for the permanent fix.
+
+  **Sync working tree button** — when ≥1 advance shows `needsAction`, a button surfaces in the same header that calls the existing `POST /api/git/pull` (FN-5358 Smart Pull machinery: auto-stash dirty edits, fast-forward pull, restore stash, surface conflicts). On success the extended git status auto-refetches and the "need action" count drops; on conflict, the existing error toast fires.
+
+  No new state machine — `handlePull`/`remoteLoading === "pull"` is the same plumbing the existing Pull button uses.
+
+- 85786e7: feat(dashboard): show extended integration-branch + working-tree state in Git Manager
+
+  Repository Status panel now answers "what is the actual state of my project root vs the integration branch?" so operators can be sure of the picture even when the Merge Advance Notice banner has been dismissed.
+
+  `GET /api/git/status` accepts a new `?extended=1` query and returns additional optional fields:
+
+  - **integrationBranch** + **integrationBranchSource** — the canonical branch (resolved via `settings.integrationBranch` → legacy `baseBranch` → `origin/HEAD` → `main`) and where the value came from.
+  - **integrationTipSha / originIntegrationTipSha** — SHAs at both ends, so operators can spot when local main has been advanced by the merger but origin/main hasn't caught up.
+  - **aheadOfIntegration / behindIntegration** — HEAD vs local integration tip (useful when on a non-integration branch).
+  - **aheadOfOriginIntegration / behindOriginIntegration** — local integration tip vs `origin/<branch>`.
+  - **dirtyDetails** — staged/modified/untracked/conflicted counts + a 12-line porcelain sample.
+  - **indexStaleVsHead** — true when the index reflects a previous tip and the worktree is clean against the index but not against HEAD. Surfaces the exact "phantom staged changes" scenario that `mergeAdvanceAutoSync` exists to fix.
+  - **stashCount** — for at-a-glance recovery awareness.
+  - **recentMergeAdvances** — up to 5 recent `merge:integration-ref-advance` audit events for the project root, joined with their `merge:auto-sync` outcomes; entries whose auto-sync didn't successfully bring this worktree forward are flagged `needsAction: true`.
+
+  `GitManagerModal` now renders all of this:
+
+  - The existing Branch / Commit / Working Tree / Remote Sync cards gain sub-text — Working Tree shows staged/modified/untracked/conflicted breakdown; Branch shows whether you're on the integration branch.
+  - A second row of cards adds Integration branch (with resolution source + tip SHA), HEAD-vs-integration ahead/behind, local-integration-vs-origin ahead/behind, and stash count.
+  - A yellow warning panel appears when `indexStaleVsHead` is true, telling the operator to enable `mergeAdvanceAutoSync` or run `git reset --hard HEAD`.
+  - A "Recent integration-branch advances" list shows the last few merger advances with their per-advance auto-sync outcome, color-coded by whether they still need action.
+
+  All `fetchGitStatus(projectId)` calls inside `GitManagerModal` now pass `{ extended: true }`. Other callers in the app are unaffected — the extra fields are optional and the un-extended response shape is unchanged.
+
+### Patch Changes
+
+- 60a0012: fix(dashboard): stop main-chat and quick-chat composers from instantly dismissing the Android soft keyboard
+
+  Two layered Android-specific fixes for the chat composers:
+
+  1. The body scroll-lock applied while the keyboard is open in main chat was an iOS-specific workaround for visualViewport drift. On Android Chrome it does the opposite of what we want — mutating `body { position: fixed; ... }` while the keyboard is opening causes Chrome to treat it as a focus-target relayout and immediately dismisses the keyboard. `useMobileScrollLock` is now gated to iOS UAs.
+
+  2. ChatView and QuickChatFAB both had an iOS-specific `onTouchStart` on the textarea that called `event.preventDefault()` and then programmatically refocused the input (to suppress iOS's visualViewport auto-scroll on re-focus). On Android, `preventDefault` on a textarea touchstart prevents the soft keyboard from opening — programmatic `focus()` alone does not raise the Android keyboard. Result: tapping the composer focused the input but the keyboard never appeared, looking like an instant dismiss. The touchstart workaround is now gated to iOS UAs via `isIOS()`.
+
+- a10fc56: fix(dashboard): keep Android keyboard open in main chat; disable kanban pinch-zoom
+
+  Two Android-specific fixes:
+
+  1. **Keyboard dismissing in main chat.** `mobileKeyboardOpen` in `App.tsx` (derived from `useMobileKeyboard`) gates `project-content--with-mobile-nav` / `--with-footer` className assignment and MobileNavBar rendering. When the soft keyboard opened, those classes were removed and the nav unmounted, shrinking padding-bottom by ~80px in a single render. Android Chrome treats the resulting jump of the focused chat input as the focus target moving and instantly dismisses the keyboard. With `interactive-widget=resizes-content` set on Android, the layout viewport itself shrinks with the keyboard, so the hide-nav-on-keyboard behavior was redundant on Android (and harmful). The whole pattern is now gated to iOS via `isIOS()`. iOS path is unchanged.
+
+  2. **Pinch-zoom on kanban.** Android Chrome ignores `user-scalable=no` for accessibility, and the kanban board's `overflow-x: auto` columns combined with the inflated ICB produce a broken visual when the user zooms out. Adds `touch-action: pan-x pan-y` to `html, body` inside the mobile media query, which keeps scroll panning but disables pinch-zoom (Chat and MissionManager were unaffected because they don't expose a wide horizontal scrollable region).
+
+- de67c51: fix(dashboard): pull syncs the worktree to local integration tip, not just to origin
+
+  The integration-mode `POST /api/git/pull` (used by the merge-advance-notice banner) only ran `git merge --ff-only origin/<branch>` after fetching. When the merger had advanced local `refs/heads/<integrationBranch>` via `update-ref` but the user hadn't pushed yet, the worktree's HEAD already resolved to the new sha (symbolic ref follow) but the working tree and index were still at the old state. The fast-forward step short-circuited (`already up to date with origin`) and the user saw "Pull completed" with `fromSha === toSha` while their files visibly stayed behind.
+
+  Pull now explicitly resets the worktree to `refs/heads/<integrationBranch>` after the origin fast-forward step. The autostash above protects user edits, so the reset is safe regardless of whether the origin FF ran.
+
+- 5d35b64: fix(dashboard): remove duplicate integration-advances UI; Sync working tree is now pure-local (no origin fetch)
+
+  **Removed duplicate UI** — Git Manager → Status had two overlapping sections rendering the same data: a `Sync local tip` button + a `Recent integration advances` list, sitting above the highlighted `Recent integration-branch advances` block (the one with the lost-work warnings). Deleted the duplicate (`gm-integration-actions` + `gm-recent-advances`) along with the dead `mergeAdvanceEvents` state, fetcher, and SSE subscription that only fed it.
+
+  **Sync working tree is now pure-local** — for the "N need action" case the merger has already advanced `refs/heads/<integration>` locally and the worktree just needs to follow. Previously the button called the integration-mode pull which ran `tryFastForwardFromOrigin` first, silently pulling in unrelated remote commits. New `skipOriginFetch` option on `PullGitBranchOptions.integration` (and the matching `POST /api/git/pull` body field) skips the origin step entirely. The Sync button passes `skipOriginFetch: true`, so the sequence is: auto-stash → `git reset --hard refs/heads/<integration>` → restore stash. Origin is not touched.
+
+  Help disclosure updated to match the new behavior.
+
+- 4f38ed1: fix(dashboard): clear `needs action` on recent integration-branch advances after manual sync
+
+  The Git Manager's "Recent integration-branch advances" list derived `needsAction` purely from the original `merge:auto-sync` audit-event outcome. When the operator clicked "Sync working tree" — or fixed up the worktree by hand — the worktree caught up to the integration tip, but the list kept showing "(N need action)" because the historical audit events still recorded the original failure/disabled state.
+
+  `collectRecentMergeAdvances` now also checks whether each advance's `toSha` is reachable from the current HEAD. If it is, the worktree already contains that advance and `needsAction` is false regardless of what the audit trail recorded.
+
+- ef12df4: fix(dashboard): close 8 review findings on extended Git Manager status + Integration branch setting
+
+  **Settings persistence (data-loss)** — the project-settings patch builder now applies null-as-delete to all non-model keys, matching the global-settings branch. Previously, clearing the Integration branch field (picking `(auto-detect)` or clicking `Use dropdown`) set `integrationBranch: undefined`, which `JSON.stringify` silently dropped — the server retained the stale explicit value and the operator could not un-pin the branch from the UI.
+
+  **`isIndexStale` was wrong both directions** — the heuristic (`diff --cached --name-only` non-empty AND `diff --name-only` empty) fired false-positive on benign `git add` and false-negative whenever the worktree had any unrelated edit. Replaced with a reflog-anchored check: stale iff `refs/heads/<integrationBranch>@{1}` exists, HEAD is a descendant of it, and `git diff-index --cached <prevTip>` is empty (i.e. the index exactly matches the pre-advance state).
+
+  **Auto-sync attribution** — two fixes to `collectRecentMergeAdvances` in `register-git-github.ts`:
+
+  - Auto-sync events are now matched by `(taskId, newSha)` instead of `taskId`-only. A task that produced multiple advances over time no longer has all its older entries mislabeled with the most-recent outcome.
+  - `worktreePath` comparison now runs both sides through `fs.realpathSync` first. On macOS the merger emits canonicalized paths (via `canonicalizePath` in `worktree-pool.ts`) while the route was called with the store's raw `rootDir`; symlinked project paths caused every advance to be marked `needsAction: true` indefinitely.
+
+  **Extended path no longer 500s on git failure** — the `?extended=1` branch wraps `computeExtendedGitStatus` in its own try/catch and falls back to the basic status shape on any unhandled failure. Previously an unguarded `git branch --show-current` throw escaped to the route's outer catch and returned HTTP 500, while the basic path returned 200 with the swallowed-failure shape — surface parity matters because the dashboard always passes `extended=1` and would otherwise render an error toast where it should render the degraded panel. Also wrapped the same call inside `computeExtendedGitStatus` so detached-HEAD / non-git states return an empty `currentBranch` instead of throwing.
+
+  **Integration branch falls back to `refs/remotes/origin/<branch>`** — when the configured branch exists only as a remote-tracking ref (e.g. operator set `integrationBranch: "release/v2"` without ever `git switch`-ing it locally), `integrationTipSha` now resolves to the origin tip instead of being null. A new `integrationTipSource: "local" | "remote-only" | "missing"` field tells the UI which side won; the Git Manager surfaces this with a `(remote-only — run git switch <branch> to track locally)` sub-text and a `no ref found` error state when both refs are missing.
+
+  **Copy commit hash shows two buttons** — the Copy button now copies `status.commit` (the short SHA actually displayed in the `<code>` element). A second Copy-full button surfaces `status.headSha` for git operations that need the 40-char SHA. Previously the single button silently copied the full SHA when extended was on, so what the user saw on screen was no longer what they pasted.
+
+  **Detached HEAD no longer shows misleading "(not on main)"** — `git branch --show-current` returns empty on detached HEAD; the route now leaves `isOnIntegrationBranch` as `undefined` (not `false`) in that case, and the UI's "(not on <branch>)" sub-text only renders when we know we're on a different branch — not when we're on no branch at all.
+
+- d5cfa92: fix(dashboard): close 7 review findings on the extended-status hardening pass
+
+  Follow-up to the prior fix commit; closes 7 more issues that an independent code review surfaced.
+
+  **Settings inheritance regression (high)** — `SettingsModal.handleSave`'s non-model project branch lost the "only write if changed" gate when the prior commit added null-as-delete support. Result: every effective/inherited project key was being persisted as an explicit project override on every save, silently breaking inheritance across ~30+ keys. Restored the `value !== initialProjectValue` gate, matched against the model-lane branch's existing pattern.
+
+  **Git Manager `Local <branch> vs origin` card showed misleading "Synced" in remote-only mode** — when `integrationTipSource === "remote-only"`, both `aheadOfOriginIntegration` / `behindOriginIntegration` are deliberately undefined (there's no local branch to compare), but the card's render fell through to `(ahead ?? 0) === 0 && (behind ?? 0) === 0 → "Synced"`. Now renders an explicit "no local tracking" sub-text in that case, with a separate `HEAD vs origin/<branch>` card surfacing a meaningful distance.
+
+  **`isIndexStale` extended to multi-hop and gated to integration-branch worktrees** —
+
+  - Walks up to 16 `refs/heads/<integration>` reflog entries so an A→B→C burst whose middle sync also missed is detected (the prior check only consulted `@{1}`).
+  - Only fires when `isOnIntegrationBranch === true`. Previously, a feature-branch worktree whose HEAD happened to descend from `<integration>@{1}` (e.g. `git switch -c hotfix main@{N}`) would trip the stale-index warning despite being perfectly healthy.
+
+  **`enumeration-failed` auto-sync events no longer dropped** — the new `(taskId, newSha)` join filter required both `worktreePath` and `newSha` on every auto-sync event, which discarded the merger's early-failure events that emit neither. Now: events with both fields use the per-advance pair-key (with macOS realpath canonicalization on both sides); events with neither use a task-id fallback so the diagnostic outcome still surfaces on the matching advance.
+
+  **`aheadOfIntegration` no longer silently shifts semantics** — split into three distinct distance fields so consumers don't have to read `integrationTipSource` to know which comparison they got:
+
+  - `aheadOfIntegration` / `behindIntegration` — HEAD vs **local** integration tip; undefined when only the remote tip exists.
+  - `aheadOfIntegrationRemote` / `behindIntegrationRemote` — HEAD vs `origin/<integrationBranch>`; defined whenever the remote tracking ref exists.
+  - `aheadOfOriginIntegration` / `behindOriginIntegration` — local integration tip vs `origin/<integrationBranch>`; defined only when both refs exist.
+
+  **`currentBranch` failure no longer masks wrong-branch state** — `git branch --show-current` returns empty on detached HEAD (success) and throws on transient git errors (lock contention, timeout). The prior catch collapsed both into `currentBranch = ""` so the UI couldn't distinguish them. New `currentBranchDetectionFailed?: boolean` field on `GitStatus` lets the UI surface "branch detection unavailable" on a real failure rather than silently hiding the wrong-branch warning.
+
+- 916047c: feat(dashboard): Integration branch setting is now a dropdown of local branches with Custom… fallback
+
+  Replaces the plain text input with a `<select>` that lists the project's local branches (loaded via `fetchGitBranches` when the Merge section becomes visible) plus an `(auto-detect — origin/HEAD → main)` default and a `Custom…` option for branches that don't exist locally yet.
+
+  Branch list is deduplicated and sorted with common integration names (`main`, `master`, `trunk`, `develop`) pinned to the top so the typical case is one click. Choosing `Custom…` swaps in a text input with a `Use dropdown` link to revert.
+
+  A previously-saved value that isn't in the loaded list (e.g. branch deleted locally, or initial load before branches fetch resolved) falls through to the custom text input automatically so the operator can still see and edit it.
+
+- 084bdc6: feat(dashboard): expose `integrationBranch` setting in the project settings modal
+
+  Adds a text input for the canonical integration branch (the branch Fusion merges tasks into, and the reference for all ahead/behind / overlap / pre-rebase computations). Lives directly under the Auto-completion mode select inside the merge-strategy panel — visible regardless of direct vs PR mode, since the setting applies to both.
+
+  Blank value (the default) preserves the existing auto-resolution cascade: `integrationBranch` → legacy `baseBranch` → `origin/HEAD` symbolic ref → fallback `main`. Setting it to `master` / `trunk` / `develop` / etc. pins the resolution explicitly without changing other settings.
+
+  Field trims whitespace and stores `undefined` (not empty string) when cleared so the auto-resolution remains active.
+
+- d8493f9: feat(dashboard): expose `mergeAdvanceAutoSync` in the project settings modal
+
+  Adds the missing form control for the auto-sync mode introduced by the merger hook. Lives next to the existing Direct merge commit routing / Integration worktree controls inside the merge-strategy panel and only renders when `mergeStrategy === "direct"`. Three options with the same labels and descriptions as `docs/settings-reference.md`:
+
+  - **Stash + fast-forward (default)** — preserve local edits across the auto-snap
+  - **Fast-forward only** — skip dirty worktrees, surface the banner instead
+  - **Off** — legacy behavior, project root stays stale until manual pull
+
+  Value is normalized through `normalizeMergeAdvanceAutoSyncMode` on both the merged-settings and scoped-settings load paths so a missing/invalid stored value cleanly falls back to the default without spamming validation errors.
+
+- 99359b6: fix(dashboard): unbreak Merge Advance Notice banner dismiss and suppress when auto-sync already handled it
+
+  Two bugs were keeping the banner stuck on screen even when there was nothing for the user to do:
+
+  - **Dismiss was dead.** The `notice` memo never applied `dismissedShas`, so clicking the close button (or a successful Pull, which calls `dismiss()` after the API returns) updated localStorage but the same advance event kept matching the filter and the banner re-rendered immediately.
+  - **Auto-sync success was ignored.** With the new `mergeAdvanceAutoSync` setting at its `stash-and-ff` default, the merger snaps the project-root checkout forward as part of the merge — there is nothing left to pull. The banner kept appearing anyway because the route's `autoSync` payload wasn't consulted. Clicking Pull then hit `/api/git/pull`, which fetched origin (no change, since the merger only advanced the local ref) and returned `pull-clean` with no actual work done.
+
+  The `notice` memo now (a) filters out `dismissedShas`, and (b) suppresses any advance event whose `autoSync` entry for the _current user's_ `worktreePath` reports `clean-sync` or `synced-with-edits-restored`. Conflict and skipped outcomes (`synced-with-pop-conflict`, `skipped-dirty`, `skipped-*`, `failed`) still surface the banner so the user can recover.
+
+  Banner suppression checks the per-worktree path, so a multi-checkout project where auto-sync handled one root and a sibling root is still stale will keep showing the banner on the stale one.
+
+- 6083de2: fix(dashboard): unbreak Merge Advance Notice banner by preserving store `this` binding in events endpoint
+
+  `GET /api/tasks/merge-advance-events` was extracting `getRunAuditEvents` off the scoped store as a bare function reference and calling it without `this`, which made `this.db.prepare(...)` throw "Cannot read properties of undefined (reading 'db')" on every request. The `useMergeAdvanceNotice` hook caught the failure silently (`catch { setEvents([]) }`), so the banner never appeared even after the merger advanced the integration branch ref.
+
+  Fix: keep the store reference and call `storeWithRunAudit.getRunAuditEvents(...)` as a method so `this` is preserved, matching the pattern used by other routes that read run-audit events.
+
+- dc94494: fix(engine,dashboard): close 7 code-review findings on the mergeAdvanceAutoSync hook
+
+  Tightens the freshly-landed merger auto-sync feature based on a structured code review.
+
+  **Data-loss fixes in `syncWorktreeToHead`:**
+
+  - Untracked-file restore now compares against `git ls-tree -r --name-only HEAD` to detect when the new tip introduced a tracked file at the same path; collisions are reported in `untrackedSkippedAsTracked` and the user's bytes stay in the stage dir instead of clobbering the merged content.
+  - When `git apply --3way` fails because a patched file was deleted/renamed at the new tip (`--diff-filter=U` returns nothing because nothing got staged), `conflictedFiles` falls back to parsing `diff --git a/<p> b/<p>` headers out of the captured patch — so the conflict surfaces with the right file names instead of `[]`.
+  - `git ls-files` / `diff` calls now pass `-c core.quotePath=false` so paths with non-ASCII or special characters round-trip through `copyFileSync` instead of failing on backslash-escaped octal tokens.
+  - The stash-and-ff path re-verifies `rev-parse HEAD === newSha` immediately before each destructive `reset --hard HEAD`; a concurrent merger advance now bails with `skipped-head-not-at-new-sha` (with the captured patch preserved on disk) instead of applying the patch against the wrong tree.
+  - The stage dir is now tracked with a `preserveStageDir` flag in a `try/finally`: it is rm'd on all clean paths and on `skipped-head-not-at-new-sha` exits, but preserved whenever the user's edits live only in `patchPath` (pop-conflict, untracked-collides-with-tracked, reset failure, outer exception).
+  - Patch is written to disk before the apply attempt, not only on failure, so a crash between snapshot and apply doesn't lose the user's edits.
+
+  **Multi-worktree-same-branch fix:**
+
+  - New `getRegisteredWorktreeBranches` helper in `worktree-pool.ts` returns ALL `(branch, worktreePath)` entries rather than collapsing duplicates into a `Map<branch, path>`. Multiple worktrees can legitimately share a branch when the user created secondary checkouts via `git worktree add --force -b`; the merger now syncs every one of them instead of silently skipping all but the last.
+
+  **Contract + surfacing fixes:**
+
+  - JSDoc on `merge:auto-sync` GitMutationType now documents the actually-emitted outcome strings (`clean-sync`, `synced-with-edits-restored`, `synced-with-pop-conflict`, `skipped-*`, `failed`, `enumeration-failed`, `exception`) and the actual `stage` enum, replacing the obsolete `smartPull`-shaped strings.
+  - `GET /api/tasks/merge-advance-events` now joins `merge:auto-sync` events within a ±5min window of each advance and returns them in a new `autoSync: AutoSyncOutcome[]` field; `useMergeAdvanceNotice` exposes the same shape so the banner can surface pop-conflicts (including `patchPath` pointing at the user's saved edits) instead of leaving them in a black hole.
+
+  **Hygiene:**
+
+  - Merger's setting read now uses `normalizeMergeAdvanceAutoSyncMode(settings.mergeAdvanceAutoSync)` (the exported normalizer) instead of an inline equality check + `as unknown` cast that bypassed type-checking.
+
+  **New backstop tests** in `merger-auto-sync.slow.test.ts`:
+
+  - Untracked file colliding with a newly-tracked path is NOT overwritten and the merged content survives.
+  - `git apply --3way` failure on a file deleted at the new tip populates `conflictedFiles` from the patch header.
+
+  **Route test** asserts `autoSync` outcomes are joined onto the matching advance event within the time window.
+
+- e138289: fix(dashboard): compensate Android Chrome inflated ICB for fixed-position UI
+
+  Android Chrome (multi-window / split-screen / certain WebView configs) can leave the initial containing block (window.innerWidth/Height) stuck larger than the actual rendered canvas — DOM, body, and visualViewport report the true dimensions, but `position: fixed` uses the ICB, pinning fixed-bottom elements off the bottom of the visible viewport. JS-side meta override (both setAttribute and full element replacement) does not force Chrome to recompute the ICB on these builds.
+
+  Instead, publish the ICB→visualViewport delta as CSS variables (`--icb-bottom-offset`, `--icb-right-offset`) on `<html>` and consume them in `MobileNavBar` and `ExecutorStatusBar` so they pin to the visible viewport edge regardless of ICB drift. The math also handles pinch-zoom in (offsets compensate) and pinch-zoom out (offsets clamp at 0). Healthy browsers see 0px and behave unchanged.
+
+- 76429a8: fix(dashboard): keep mobile nav bar pinned to page bottom when keyboard opens
+
+  The mobile nav bar's `bottom` defaults to `var(--icb-bottom-offset)`, which on iOS equals the soft-keyboard height once it opens — floating the bar above the keyboard. The existing `.mobile-nav-bar--keyboard-open` override (which pins `bottom: 0`) was only applied when `!modalManager.anyModalOpen && isIOS()`, so the bar still tracked the keyboard with a modal open. Introduces `mobileNavKeyboardOpen = isMobile && keyboardOpen` as a nav-bar-only flag so the bar stays pinned in all keyboard cases. Content padding and ExecutorStatusBar remain on the gated `mobileKeyboardOpen` to preserve their existing behavior.
+
+- ed4d021: fix(dashboard): keep mobile nav visible on Android in landscape and when keyboard opens
+
+  - Broaden mobile media query to `(max-width: 768px), (max-height: 480px)` so phones held in landscape (which exceed 768 CSS px wide) still render the bottom nav and mobile board layout instead of the desktop horizontally-scrollable columns.
+  - Distinguish pinch-zoom from keyboard-open in `useMobileKeyboard` by checking `visualViewport.scale > 1` — Android Chrome ignores `user-scalable=no` for a11y, and a zoomed-in textarea was false-positiving keyboard-open and hiding `MobileNavBar`.
+  - Use `documentElement.clientHeight` instead of stale `window.innerHeight` when computing keyboard overlap (Android multi-window can leave `innerHeight` cached at a wildly different value than the actual layout viewport).
+  - Add `interactive-widget=resizes-content` to the viewport meta so Android Chrome shrinks the layout viewport with the soft keyboard, matching iOS behavior.
+
+- Updated dependencies [98033bc]
+- Updated dependencies [db9928a]
+- Updated dependencies [02971ef]
+- Updated dependencies [9ce26ee]
+- Updated dependencies [e708870]
+- Updated dependencies [a3ec2e5]
+- Updated dependencies [408e20b]
+- Updated dependencies [acf3502]
+- Updated dependencies [ec6643e]
+- Updated dependencies [a201f56]
+- Updated dependencies [4c31e88]
+- Updated dependencies [dc94494]
+- Updated dependencies [bf4428c]
+- Updated dependencies [0c0839e]
+- Updated dependencies [ec1269f]
+- Updated dependencies [51fc826]
+- Updated dependencies [d02cd38]
+  - @fusion/engine@0.33.0
+  - @fusion/core@0.33.0
+  - @fusion-plugin-examples/cli-printing-press@0.1.10
+  - @fusion-plugin-examples/dependency-graph@0.1.24
+  - @fusion-plugin-examples/roadmap@0.1.12
+  - @fusion-plugin-examples/cursor-runtime@0.1.12
+  - @fusion-plugin-examples/droid-runtime@0.1.19
+  - @fusion-plugin-examples/hermes-runtime@0.2.43
+  - @fusion-plugin-examples/openclaw-runtime@0.2.43
+  - @fusion-plugin-examples/paperclip-runtime@0.2.43
+
 ## 0.32.0
 
 ### Patch Changes

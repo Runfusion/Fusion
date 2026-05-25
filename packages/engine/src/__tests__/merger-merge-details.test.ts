@@ -970,7 +970,15 @@ describe("aiMergeTask — merge details collection", () => {
     });
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-3469");
-    expect(result.merged).toBe(false);
+    expect(result.merged).toBe(true);
+    expect((store.emit as ReturnType<typeof vi.fn>).mock.calls).toContainEqual([
+      "task:merged",
+      expect.objectContaining({
+        merged: true,
+        mergeConfirmed: true,
+        commitSha: "a47b1e5d78d626f8b480f1e90d3d64be2625ff6a",
+      }),
+    ]);
 
     const mergeDetailsCall = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(
       (call: any[]) => call[1]?.mergeDetails !== undefined,
@@ -1099,5 +1107,4 @@ describe("aiMergeTask — merge details collection", () => {
     expect(mergeDetails.deletions).toBeUndefined();
   });
 });
-
 

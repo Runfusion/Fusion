@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/cli-printing-press",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "description": "CLI Printing Press plugin package for Fusion",
   "private": true,

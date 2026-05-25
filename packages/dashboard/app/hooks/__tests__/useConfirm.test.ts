@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { ConfirmDialogProvider, useConfirm } from "../useConfirm";
 
 function Harness() {
-  const { confirm, confirmWithChoice } = useConfirm();
+  const { confirm, confirmWithChoice, confirmWithCheckbox } = useConfirm();
   const [result, setResult] = useState<string>("idle");
 
   return React.createElement(
@@ -29,6 +29,34 @@ function Harness() {
         },
       },
       "queue"
+    ),
+    React.createElement(
+      "button",
+      {
+        onClick: async () => {
+          const outcome = await confirmWithCheckbox({
+            title: "Delete Task",
+            message: "Delete FN-001?",
+            checkbox: { label: "Allow re-creation later", defaultChecked: false },
+          });
+          setResult(JSON.stringify(outcome));
+        },
+      },
+      "open-checkbox"
+    ),
+    React.createElement(
+      "button",
+      {
+        onClick: async () => {
+          const outcome = await confirmWithCheckbox({
+            title: "Delete Task",
+            message: "Delete FN-001?",
+            checkbox: { label: "Allow re-creation later", defaultChecked: true },
+          });
+          setResult(JSON.stringify(outcome));
+        },
+      },
+      "open-checkbox-default-checked"
     ),
     React.createElement(
       "button",
@@ -150,5 +178,57 @@ describe("useConfirm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
     expect(await screen.findByRole("dialog", { name: "Second" })).toBeInTheDocument();
+  });
+
+  it("confirmWithCheckbox returns primary with toggled checkbox value", async () => {
+    render(
+      React.createElement(
+        ConfirmDialogProvider,
+        null,
+        React.createElement(Harness)
+      )
+    );
+
+    fireEvent.click(screen.getByText("open-checkbox"));
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("result").textContent).toBe('{"choice":"primary","checkboxValue":true}');
+    });
+  });
+
+  it("confirmWithCheckbox returns cancel with unchecked value on cancel", async () => {
+    render(
+      React.createElement(
+        ConfirmDialogProvider,
+        null,
+        React.createElement(Harness)
+      )
+    );
+
+    fireEvent.click(screen.getByText("open-checkbox"));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("result").textContent).toBe('{"choice":"cancel","checkboxValue":false}');
+    });
+  });
+
+  it("confirmWithCheckbox keeps defaultChecked value when untouched", async () => {
+    render(
+      React.createElement(
+        ConfirmDialogProvider,
+        null,
+        React.createElement(Harness)
+      )
+    );
+
+    fireEvent.click(screen.getByText("open-checkbox-default-checked"));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("result").textContent).toBe('{"choice":"primary","checkboxValue":true}');
+    });
   });
 });

@@ -288,6 +288,7 @@ export interface TaskDetailModalProps {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
     githubIssueAction?: GithubIssueAction;
+    allowResurrection?: boolean;
   }) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
@@ -1347,7 +1348,7 @@ export function TaskDetailContent({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { nodes } = useNodes();
-  const { confirm, confirmWithChoice } = useConfirm();
+  const { confirm, confirmWithChoice, confirmWithCheckbox } = useConfirm();
 
   const handleUnlinkGithubIssue = useCallback(async () => {
     if (!canEdit || !githubTrackedIssue || isSavingGithubTracking) return;
@@ -1438,6 +1439,8 @@ export function TaskDetailContent({
   );
 
   const handleDelete = useCallback(async () => {
+    let allowResurrection = false;
+
     if (task.column === "done" && onArchiveTask) {
       const deleteChoice = await confirmWithChoice({
         title: "Delete Task",
@@ -1484,12 +1487,18 @@ export function TaskDetailContent({
         return;
       }
     } else {
-      const shouldDelete = await confirm({
+      const { choice, checkboxValue } = await confirmWithCheckbox({
         title: "Delete Task",
         message: `Delete ${task.id}?`,
         danger: true,
+        checkbox: {
+          label: "Allow re-creation later (operator unlock)",
+          description: "Lets agents recreate this task ID without --force-resurrect. Leave unchecked to keep this task tombstoned.",
+          defaultChecked: false,
+        },
       });
-      if (!shouldDelete) return;
+      if (choice !== "primary") return;
+      allowResurrection = checkboxValue === true;
     }
 
     const trackedIssue = task.githubTracking?.enabled === true ? task.githubTracking.issue : undefined;
@@ -1519,9 +1528,9 @@ export function TaskDetailContent({
 
     try {
       if (githubIssueAction) {
-        await onDeleteTask(task.id, { githubIssueAction });
+        await onDeleteTask(task.id, { githubIssueAction, allowResurrection });
       } else {
-        await onDeleteTask(task.id);
+        await onDeleteTask(task.id, { allowResurrection });
       }
       requestClose();
       const issueSuffix = trackedIssue?.owner && trackedIssue.repo && trackedIssue.number && githubIssueAction
@@ -1548,6 +1557,7 @@ export function TaskDetailContent({
             removeDependencyReferences: true,
             removeLineageReferences: true,
             githubIssueAction,
+            allowResurrection,
           });
           requestClose();
           addToast(`Deleted ${task.id} after removing dependency references`, "info");
@@ -1574,6 +1584,7 @@ export function TaskDetailContent({
               removeDependencyReferences: true,
               removeLineageReferences: true,
               githubIssueAction,
+              allowResurrection,
             });
             requestClose();
             addToast(`Deleted ${task.id} after unlinking lineage references`, "info");
@@ -1606,6 +1617,7 @@ export function TaskDetailContent({
           removeDependencyReferences: true,
           removeLineageReferences: true,
           githubIssueAction,
+          allowResurrection,
         });
         requestClose();
         addToast(`Deleted ${task.id} after unlinking lineage references`, "info");
@@ -1613,7 +1625,7 @@ export function TaskDetailContent({
         addToast(getErrorMessage(retryErr), "error");
       }
     }
-  }, [task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, onArchiveTask, requestClose, addToast, confirm, confirmWithChoice]);
+  }, [task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, onArchiveTask, requestClose, addToast, confirm, confirmWithChoice, confirmWithCheckbox]);
 
   const handleMerge = useCallback(async () => {
     const shouldMerge = await confirm({

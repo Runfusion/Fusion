@@ -173,6 +173,7 @@ interface TaskRow {
   checkoutLeaseRenewedAt: string | null;
   checkoutLeaseEpoch: number | null;
   deletedAt: string | null;
+  allowResurrection: number | null;
 }
 
 /** Database row shape for the task_documents table. */
@@ -618,6 +619,20 @@ export class TaskDeletedError extends Error {
   ) {
     super(`Task ${taskId} is soft-deleted (deletedAt=${deletedAt}) and cannot be read or mutated`);
     this.name = "TaskDeletedError";
+  }
+}
+
+export class TombstonedTaskResurrectionError extends Error {
+  constructor(
+    public readonly taskId: string,
+    public readonly deletedAt: string,
+    public readonly allowResurrection: boolean,
+  ) {
+    super(
+      `Task ${taskId} is soft-deleted (deletedAt=${deletedAt}) and cannot be recreated without forceResurrect: true. `
+      + `Operator unlock: allowResurrection=${allowResurrection}`,
+    );
+    this.name = "TombstonedTaskResurrectionError";
   }
 }
 
@@ -1499,6 +1514,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       checkoutLeaseRenewedAt: row.checkoutLeaseRenewedAt || undefined,
       checkoutLeaseEpoch: row.checkoutLeaseEpoch ?? undefined,
       deletedAt: row.deletedAt ?? undefined,
+      allowResurrection: row.allowResurrection ? true : undefined,
     };
   }
 
@@ -1740,7 +1756,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
-      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt",
+      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
       // `log` is fetched in slim mode so the server can aggregate
       // `timedExecutionMs` from `[timing] … in <N>ms` entries before
       // returning. The log itself is stripped from the response —
@@ -1789,7 +1805,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
-      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt",
+      "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
     ];
 
     const limitedLog = `
@@ -1926,6 +1942,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.checkoutLeaseRenewedAt ?? null,
       task.checkoutLeaseEpoch ?? 0,
       task.deletedAt ?? null,
+      task.allowResurrection ? 1 : 0,
     ];
   }
 
@@ -1948,7 +1965,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
       ) VALUES (${placeholders})
     `).run(...values);
     this.db.bumpLastModified();
@@ -1975,7 +1992,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
       ) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET
         lineageId = excluded.lineageId,
@@ -2086,7 +2103,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         checkoutRunId = excluded.checkoutRunId,
         checkoutLeaseRenewedAt = excluded.checkoutLeaseRenewedAt,
         checkoutLeaseEpoch = excluded.checkoutLeaseEpoch,
-        deletedAt = excluded.deletedAt
+        deletedAt = excluded.deletedAt,
+        allowResurrection = excluded.allowResurrection
     `).run(...this.getTaskPersistValues(task));
     this.db.bumpLastModified();
   }
@@ -2209,6 +2227,38 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (this.taskIdExistsAnywhere(id)) {
       throw new Error(`Task ID already exists: ${id}`);
     }
+  }
+
+  private maybeResolveTombstonedTaskId(
+    id: string,
+    input: Pick<TaskCreateInput, "forceResurrect">,
+    operation: "createTask" | "duplicateTask" | "refineTask",
+  ): void {
+    const existing = this.readTaskFromDb(id, { includeDeleted: true });
+    if (!existing?.deletedAt) return;
+
+    const allowResurrection = existing.allowResurrection === true;
+    if (input.forceResurrect === true || allowResurrection) {
+      this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+      this.db.bumpLastModified();
+      return;
+    }
+
+    storeLog.warn(`[tombstone-resurrection-blocked] ${id} deletedAt=${existing.deletedAt}`);
+    this.insertRunAuditEventRow({
+      taskId: id,
+      domain: "database",
+      mutationType: "task:resurrection-blocked",
+      target: id,
+      metadata: {
+        id,
+        deletedAt: existing.deletedAt,
+        allowResurrection,
+        operation,
+      },
+    });
+
+    throw new TombstonedTaskResurrectionError(id, existing.deletedAt, allowResurrection);
   }
 
   private isTaskArchived(id: string): boolean {
@@ -3524,6 +3574,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     await this.assertNoDependencyCycle(id, input.dependencies ?? [], "createTaskWithReservedId");
 
+    this.maybeResolveTombstonedTaskId(id, input, "createTask");
     this.assertTaskIdAvailable(id);
 
     const title = input.title?.trim() || undefined;
@@ -3678,6 +3729,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       storeLog.log(`[title-id-drift] normalized title for ${id}: removed=[${removed.join(",")}]`);
     }
 
+    this.maybeResolveTombstonedTaskId(id, input, "createTask");
     this.assertTaskIdAvailable(id);
 
     const dir = this.taskDir(id);
@@ -3730,31 +3782,107 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         return agentMatch || parentMatch;
       });
 
+      const settings = await this.getSettings();
+      const stickyWindowDays = Math.max(0, settings.tombstoneStickyWindowDays ?? 7);
+      let tombstonedCandidates: Array<{
+        id: string;
+        title: string | null;
+        description: string;
+        column: Column;
+        createdAt: string;
+        sourceAgentId: string | null;
+        deletedAt: string;
+        allowResurrection: number | null;
+      }> = [];
+
+      if (stickyWindowDays > 0) {
+        try {
+          const cutoffIso = new Date(nowMs - stickyWindowDays * 24 * 60 * 60 * 1000).toISOString();
+          tombstonedCandidates = this.db.prepare(`
+            SELECT id, title, description, "column", createdAt, sourceAgentId, deletedAt, allowResurrection
+              FROM tasks
+             WHERE deletedAt IS NOT NULL
+               AND deletedAt >= ?
+               AND sourceAgentId = ?
+               AND id != ?
+          `).all(cutoffIso, sourceAgentId, task.id) as typeof tombstonedCandidates;
+        } catch (error) {
+          storeLog.warn(`FN-5233 tombstone candidate widening failed open for ${task.id}: ${getErrorMessage(error)}`);
+        }
+      }
+
       const matches = findSameAgentDuplicates(
         {
           title: input.title ?? task.title,
           description: input.description,
           sourceParentTaskId,
         },
-        recent.map((candidate) => ({
-          id: candidate.id,
-          title: candidate.title ?? "",
-          description: candidate.description,
-          column: candidate.column,
-          createdAt: Date.parse(candidate.createdAt),
-          sourceAgentId: candidate.sourceAgentId ?? null,
-          sourceParentTaskId: candidate.sourceParentTaskId ?? null,
-        })),
+        [
+          ...recent.map((candidate) => ({
+            id: candidate.id,
+            title: candidate.title ?? "",
+            description: candidate.description,
+            column: candidate.column,
+            createdAt: Date.parse(candidate.createdAt),
+            sourceAgentId: candidate.sourceAgentId ?? null,
+            sourceParentTaskId: candidate.sourceParentTaskId ?? null,
+            tombstoned: false,
+          })),
+          ...tombstonedCandidates.map((candidate) => ({
+            id: candidate.id,
+            title: candidate.title ?? "",
+            description: candidate.description,
+            column: "todo" as Column,
+            createdAt: Date.parse(candidate.createdAt),
+            sourceAgentId: candidate.sourceAgentId,
+            sourceParentTaskId: null,
+            tombstoned: true,
+            deletedAt: candidate.deletedAt,
+            allowResurrection: candidate.allowResurrection === 1,
+          })),
+        ],
         { nowMs, sourceAgentId },
       );
 
       if (matches.length === 0) return;
 
-      const siblingTaskIds = matches.map((match) => match.id);
-      const scores = Object.fromEntries(matches.map((match) => [match.id, match.score]));
+      const tombstonedMatch = matches.find((match) => match.tombstoned && match.allowResurrection !== true);
+      if (tombstonedMatch?.deletedAt) {
+        this.insertRunAuditEventRow({
+          taskId: task.id,
+          domain: "database",
+          mutationType: "intake:resurrection-blocked",
+          target: task.id,
+          metadata: {
+            matchedTaskId: tombstonedMatch.id,
+            score: tombstonedMatch.score,
+            tombstoneDeletedAt: tombstonedMatch.deletedAt,
+            stickyWindowDays,
+          },
+        });
+        if (this.isWatching) this.taskCache.delete(task.id);
+        this.deleteTaskById(task.id);
+        const { rm } = await import("node:fs/promises");
+        const taskDir = this.taskDir(task.id);
+        if (existsSync(taskDir)) {
+          await rm(taskDir, { recursive: true, force: true });
+        }
+        throw new TombstonedTaskResurrectionError(
+          tombstonedMatch.id,
+          tombstonedMatch.deletedAt,
+          tombstonedMatch.allowResurrection === true,
+        );
+      }
+
+      const siblingTaskIds = matches.filter((match) => !match.tombstoned).map((match) => match.id);
+      if (siblingTaskIds.length === 0) return;
+      const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
       await archiveAsSameAgentDuplicate(this, task.id, siblingTaskIds, scores);
       task.column = "archived";
     } catch (error) {
+      if (error instanceof TombstonedTaskResurrectionError) {
+        throw error;
+      }
       storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
     }
   }
@@ -3806,6 +3934,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           baseBranch: sourceTask.baseBranch,
         };
 
+        this.maybeResolveTombstonedTaskId(newId, {}, "duplicateTask");
         this.assertTaskIdAvailable(newId);
 
         const newDir = this.taskDir(newId);
@@ -3882,6 +4011,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           attachments: sourceTask.attachments ? [...sourceTask.attachments] : undefined,
         };
 
+        this.maybeResolveTombstonedTaskId(newId, {}, "refineTask");
         this.assertTaskIdAvailable(newId);
 
         const newDir = this.taskDir(newId);
@@ -4150,6 +4280,37 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     return sorted.slice(offset, offset + Math.max(0, limit));
+  }
+
+  async listTasksForGithubTrackingReconcile(): Promise<Task[]> {
+    const reconcileScanLimit = 200;
+    const selectClause = this.getTaskSelectClause(true);
+
+    // FN-5577: GitHub tracking reconciliation must inspect soft-deleted rows,
+    // so this query intentionally bypasses ACTIVE_TASKS_WHERE.
+    const deletedRows = this.db.prepare(
+      `SELECT ${selectClause} FROM tasks WHERE "deletedAt" IS NOT NULL AND "githubTracking" IS NOT NULL ORDER BY updatedAt ASC LIMIT ?`,
+    ).all(reconcileScanLimit) as unknown as TaskRow[];
+
+    const deletedTasks = deletedRows.map((row) => {
+      const task = this.rowToTask(row);
+      task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
+      task.log = [];
+      return task;
+    });
+
+    let archivedTasks: Task[] = [];
+    try {
+      archivedTasks = this.archiveDb
+        .list()
+        .map((entry) => this.archiveEntryToTask(entry, true))
+        .filter((task) => Boolean(task.githubTracking))
+        .slice(0, reconcileScanLimit);
+    } catch {
+      archivedTasks = [];
+    }
+
+    return [...deletedTasks, ...archivedTasks].slice(0, reconcileScanLimit);
   }
 
   async listStrandedRefinements(options?: {
@@ -6620,6 +6781,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     options?: {
       removeDependencyReferences?: boolean;
       removeLineageReferences?: boolean;
+      allowResurrection?: boolean;
       githubIssueAction?: GithubIssueAction;
       auditContext?: { agentId: string; runId: string; sessionId?: string };
     },
@@ -6662,12 +6824,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       let rewrittenDependents: Task[] = [];
+      let rewrittenBlockedByResidueDependents: Task[] = [];
       let rewrittenLineageChildren: Task[] = [];
       this.db.transaction(() => {
         rewrittenDependents = this.rewriteDependentsForRemoval(id, dependentIds);
+        rewrittenBlockedByResidueDependents = this.rewriteBlockedByResidueDependentsForRemoval(id, new Set(dependentIds));
         rewrittenLineageChildren = this.rewriteLineageChildrenForRemoval(id, lineageChildIds);
         const deletedAt = new Date().toISOString();
-        this.db.prepare("UPDATE tasks SET \"column\" = 'archived', deletedAt = ?, updatedAt = ? WHERE id = ?").run(deletedAt, deletedAt, id);
+        const allowResurrection = options?.allowResurrection === true ? 1 : 0;
+        this.db.prepare("UPDATE tasks SET \"column\" = 'archived', deletedAt = ?, allowResurrection = ?, updatedAt = ? WHERE id = ?").run(deletedAt, allowResurrection, deletedAt, id);
         this.recordRunAuditEvent({
           domain: "database",
           mutationType: "task:deleted",
@@ -6681,6 +6846,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
             githubIssueAction: options?.githubIssueAction ?? "auto",
             removeDependencyReferences: !!options?.removeDependencyReferences,
             removeLineageReferences: !!options?.removeLineageReferences,
+            allowResurrection: options?.allowResurrection === true,
             sessionId: options?.auditContext?.sessionId,
           },
         });
@@ -6707,6 +6873,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (this.isWatching) this.taskCache.delete(id);
 
       for (const dependentTask of rewrittenDependents) {
+        this.emit("task:updated", dependentTask);
+      }
+      for (const dependentTask of rewrittenBlockedByResidueDependents) {
         this.emit("task:updated", dependentTask);
       }
       for (const lineageChild of rewrittenLineageChildren) {
@@ -6737,21 +6906,77 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (!dependentTask) continue;
 
       const nextDependencies = dependentTask.dependencies.filter((dependencyId) => dependencyId !== taskId);
-      if (nextDependencies.length === dependentTask.dependencies.length) {
+      const clearsBlockedBy = dependentTask.blockedBy === taskId;
+      if (nextDependencies.length === dependentTask.dependencies.length && !clearsBlockedBy) {
         continue;
       }
 
-      const updatedDependent = {
+      const updatedLog = clearsBlockedBy
+        ? [
+          ...(dependentTask.log ?? []),
+          {
+            timestamp: new Date().toISOString(),
+            action: `Auto-unblocked: blocker ${taskId} was soft-deleted`,
+          },
+        ]
+        : dependentTask.log;
+      const updatedDependent: Task = {
         ...dependentTask,
         dependencies: nextDependencies,
+        blockedBy: clearsBlockedBy ? undefined : dependentTask.blockedBy,
+        status: clearsBlockedBy ? undefined : dependentTask.status,
+        log: updatedLog,
         updatedAt: new Date().toISOString(),
       };
 
-      this.db.prepare("UPDATE tasks SET dependencies = ?, updatedAt = ? WHERE id = ?").run(
+      this.db.prepare("UPDATE tasks SET dependencies = ?, blockedBy = ?, status = ?, log = ?, updatedAt = ? WHERE id = ?").run(
         toJson(updatedDependent.dependencies),
+        updatedDependent.blockedBy ?? null,
+        updatedDependent.status ?? null,
+        toJson(updatedDependent.log ?? []),
         updatedDependent.updatedAt,
         updatedDependent.id,
       );
+      if (this.isWatching) {
+        this.taskCache.set(updatedDependent.id, updatedDependent);
+      }
+      rewrittenDependents.push(updatedDependent);
+    }
+
+    return rewrittenDependents;
+  }
+
+  private rewriteBlockedByResidueDependentsForRemoval(taskId: string, excludedDependentIds: Set<string>): Task[] {
+    const rewrittenDependents: Task[] = [];
+    const candidates = this.db
+      .prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND blockedBy = ?`)
+      .all(taskId) as Array<{ id: string }>;
+
+    for (const candidate of candidates) {
+      if (excludedDependentIds.has(candidate.id)) continue;
+      const dependentTask = this.readTaskFromDb(candidate.id);
+      if (!dependentTask || dependentTask.blockedBy !== taskId) continue;
+
+      const updatedDependent: Task = {
+        ...dependentTask,
+        blockedBy: undefined,
+        status: undefined,
+        log: [
+          ...(dependentTask.log ?? []),
+          {
+            timestamp: new Date().toISOString(),
+            action: `Auto-unblocked: blocker ${taskId} was soft-deleted`,
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+
+      this.db.prepare("UPDATE tasks SET blockedBy = NULL, status = NULL, log = ?, updatedAt = ? WHERE id = ?").run(
+        toJson(updatedDependent.log ?? []),
+        updatedDependent.updatedAt,
+        updatedDependent.id,
+      );
+
       if (this.isWatching) {
         this.taskCache.set(updatedDependent.id, updatedDependent);
       }

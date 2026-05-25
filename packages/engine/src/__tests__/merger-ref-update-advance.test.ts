@@ -174,6 +174,89 @@ describe("advanceIntegrationBranchRef", () => {
     }
   });
 
+  it("refuses non-fast-forward advance even when expectedCurrentSha matches (sibling-commit orphan guard)", async () => {
+    const dir = setupRepo("main");
+    const events: Array<{ type: string; metadata?: Record<string, unknown> }> = [];
+    try {
+      const baseSha = git(dir, "git rev-parse refs/heads/main");
+
+      // First sibling — legitimate prior merger output that advanced main.
+      git(dir, "git checkout -b sibling-a");
+      writeFileSync(join(dir, "a.txt"), "a\n");
+      git(dir, "git add a.txt");
+      git(dir, "git commit -m a");
+      const siblingASha = git(dir, "git rev-parse HEAD");
+      git(dir, "git checkout main");
+      git(dir, `git update-ref refs/heads/main ${siblingASha} ${baseSha}`);
+
+      // Second sibling — built off the stale base (the bug shape). Both
+      // shas have the same parent, so siblingA is NOT an ancestor of
+      // siblingB. CAS alone would happily move main from siblingA to
+      // siblingB and orphan siblingA.
+      git(dir, `git checkout ${baseSha}`);
+      git(dir, "git checkout -b sibling-b");
+      writeFileSync(join(dir, "b.txt"), "b\n");
+      git(dir, "git add b.txt");
+      git(dir, "git commit -m b");
+      const siblingBSha = git(dir, "git rev-parse HEAD");
+
+      const result = await advanceIntegrationBranchRef({
+        rootDir: dir,
+        projectRootDir: dir,
+        integrationBranch: "main",
+        newSha: siblingBSha,
+        expectedCurrentSha: siblingASha,
+        taskId: "FN-5419",
+        audit: {
+          git: async (event: any) => events.push(event),
+        } as any,
+      });
+
+      expect(result.advanced).toBe(false);
+      if (result.advanced) throw new Error("expected refusal");
+      expect(result.reason).toBe("non-fast-forward-advance");
+      // Ref must NOT have moved — siblingA is still reachable from main.
+      expect(git(dir, "git rev-parse refs/heads/main")).toBe(siblingASha);
+      expect(events[0]?.type).toBe("merge:integration-ref-advance");
+      expect(events[0]?.metadata?.succeeded).toBe(false);
+      expect(String(events[0]?.metadata?.error ?? "")).toContain(
+        "non-fast-forward-advance",
+      );
+    } finally {
+      removeTmpDirSync(dir);
+    }
+  });
+
+  it("allows multi-commit fast-forward advance", async () => {
+    const dir = setupRepo("main");
+    try {
+      const baseSha = git(dir, "git rev-parse refs/heads/main");
+      git(dir, "git checkout -b feat");
+      writeFileSync(join(dir, "f1.txt"), "f1\n");
+      git(dir, "git add f1.txt");
+      git(dir, "git commit -m f1");
+      writeFileSync(join(dir, "f2.txt"), "f2\n");
+      git(dir, "git add f2.txt");
+      git(dir, "git commit -m f2");
+      const newSha = git(dir, "git rev-parse HEAD");
+
+      const result = await advanceIntegrationBranchRef({
+        rootDir: dir,
+        projectRootDir: dir,
+        integrationBranch: "main",
+        newSha,
+        expectedCurrentSha: baseSha,
+        taskId: "FN-5419",
+        audit: { git: async () => undefined } as any,
+      });
+
+      expect(result.advanced).toBe(true);
+      expect(git(dir, "git rev-parse refs/heads/main")).toBe(newSha);
+    } finally {
+      removeTmpDirSync(dir);
+    }
+  });
+
   it("throws on missing precondition shas", async () => {
     const dir = setupRepo("main");
     try {

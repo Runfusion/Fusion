@@ -5,6 +5,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockListProjects = vi.fn();
 const mockRegisterProject = vi.fn();
+const mockEnsureProjectForPath = vi.fn(async (...args: unknown[]) => ({
+  outcome: "registered",
+  project: await mockRegisterProject(...args),
+}));
 const mockUpdateProject = vi.fn().mockResolvedValue({});
 const mockUnregisterProject = vi.fn();
 const mockGetProject = vi.fn();
@@ -30,6 +34,7 @@ vi.mock("@fusion/core", () => ({
     close: mockClose.mockResolvedValue(undefined),
     listProjects: mockListProjects,
     registerProject: mockRegisterProject,
+    ensureProjectForPath: mockEnsureProjectForPath,
     updateProject: mockUpdateProject,
     unregisterProject: mockUnregisterProject,
     getProject: mockGetProject,
@@ -45,6 +50,8 @@ vi.mock("@fusion/core", () => ({
     listTasks: mockTaskStoreListTasks,
   })),
   ensureMemoryFileWithBackend: mockEnsureMemoryFileWithBackend,
+  readProjectIdentity: vi.fn().mockReturnValue(undefined),
+  writeProjectIdentity: vi.fn(),
   COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
   COLUMN_LABELS: {
     triage: "Triage",

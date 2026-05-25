@@ -516,6 +516,7 @@ export function useTasks(options?: UseTasksOptions) {
       removeDependencyReferences?: boolean;
       removeLineageReferences?: boolean;
       githubIssueAction?: GithubIssueAction;
+      allowResurrection?: boolean;
     },
   ): Promise<Task> => {
     return normalizeTask(await api.deleteTask(id, projectId, options));

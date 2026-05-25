@@ -8,9 +8,23 @@ export interface ConfirmDialogProps {
   onConfirm: () => void;
   onTertiary?: () => void;
   onCancel: () => void;
+  checkboxLabel?: string;
+  checkboxDescription?: string;
+  checkboxChecked?: boolean;
+  onCheckboxChange?: (next: boolean) => void;
 }
 
-export function ConfirmDialog({ isOpen, options, onConfirm, onTertiary, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  isOpen,
+  options,
+  onConfirm,
+  onTertiary,
+  onCancel,
+  checkboxLabel,
+  checkboxDescription,
+  checkboxChecked = false,
+  onCheckboxChange,
+}: ConfirmDialogProps) {
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -52,6 +66,18 @@ export function ConfirmDialog({ isOpen, options, onConfirm, onTertiary, onCancel
         </div>
 
         <div className="confirm-dialog__body">{options.message}</div>
+
+        {checkboxLabel ? (
+          <label className="checkbox-label confirm-dialog__checkbox">
+            <input
+              type="checkbox"
+              checked={checkboxChecked}
+              onChange={(event) => onCheckboxChange?.(event.target.checked)}
+            />
+            <span>{checkboxLabel}</span>
+            {checkboxDescription ? <small className="confirm-dialog__checkbox-description">{checkboxDescription}</small> : null}
+          </label>
+        ) : null}
 
         <div className="modal-actions confirm-dialog__actions">
           <button ref={cancelButtonRef} className="btn" onClick={onCancel}>

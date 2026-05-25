@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { loadAllAppCss } from "../../test/cssFixture";
 
 describe("ConfirmDialog", () => {
   it("renders title and message", () => {
@@ -120,5 +121,63 @@ describe("ConfirmDialog", () => {
 
     expect(container.querySelector(".confirm-dialog-overlay")).toBeTruthy();
     expect(container.querySelector(".confirm-dialog.modal")).toBeTruthy();
+  });
+
+  it("does not render checkbox when checkboxLabel is omitted", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("renders checkbox label and description when provided", () => {
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        checkboxLabel="Allow re-creation later"
+        checkboxDescription="Keeps this ID unlockable"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox")).toBeInTheDocument();
+    expect(screen.getByText("Allow re-creation later")).toBeInTheDocument();
+    expect(screen.getByText("Keeps this ID unlockable")).toBeInTheDocument();
+  });
+
+  it("calls onCheckboxChange when toggled", () => {
+    const onCheckboxChange = vi.fn();
+    render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Delete Task", message: "Delete FN-001?", danger: true }}
+        checkboxLabel="Allow re-creation later"
+        checkboxChecked={false}
+        onCheckboxChange={onCheckboxChange}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(onCheckboxChange).toHaveBeenCalledWith(true);
+  });
+
+  it("uses only token values in confirm-dialog checkbox css rule", () => {
+    const css = loadAllAppCss();
+    const match = css.match(/\.confirm-dialog__checkbox\s*\{([^}]*)\}/);
+    expect(match).toBeTruthy();
+    const ruleBody = match?.[1] ?? "";
+    expect(ruleBody).toMatch(/var\(--/);
+    expect(ruleBody).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgb\(/);
+    expect(ruleBody).not.toMatch(/\b(?!0(?:\D|$))\d+(?:\.\d+)?px\b/);
   });
 });

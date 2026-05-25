@@ -16,6 +16,7 @@ const mockCentralInit = vi.fn();
 const mockCentralClose = vi.fn();
 const mockGetProjectByPath = vi.fn();
 const mockRegisterProject = vi.fn();
+const mockEnsureProjectForPath = vi.fn();
 const mockUpdateProject = vi.fn().mockResolvedValue({});
 const { mockIsValidSqliteDatabaseFile } = vi.hoisted(() => ({
   mockIsValidSqliteDatabaseFile: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@fusion/core", async () => {
       close: mockCentralClose,
       getProjectByPath: mockGetProjectByPath,
       registerProject: mockRegisterProject,
+      ensureProjectForPath: mockEnsureProjectForPath,
       updateProject: mockUpdateProject,
     })),
     isQmdAvailable: vi.fn(() => Promise.resolve(true)),
@@ -68,13 +70,29 @@ describe("init command", () => {
       name: "test-project",
       path: tempProjectDir,
       isolationMode: "in-process",
+      status: "initializing",
+      createdAt: "",
+      updatedAt: "",
+    });
+    mockEnsureProjectForPath.mockResolvedValue({
+      outcome: "registered",
+      project: {
+        id: "proj_test",
+        name: "test-project",
+        path: tempProjectDir,
+        isolationMode: "in-process",
+        status: "initializing",
+        createdAt: "",
+        updatedAt: "",
+      },
     });
     mockIsValidSqliteDatabaseFile.mockImplementation((dbPath: string) => {
       if (!existsSync(dbPath)) {
         return false;
       }
 
-      return readFileSync(dbPath).length === 0;
+      const content = readFileSync(dbPath);
+      return content.subarray(0, 15).toString("utf8") === "SQLite format 3";
     });
   });
 
@@ -114,7 +132,7 @@ describe("init command", () => {
     await runInit({ path: tempProjectDir });
 
     expect(existsSync(dbPath)).toBe(true);
-    expect(statSync(dbPath).size).toBe(0);
+    expect(statSync(dbPath).size).toBeGreaterThan(0);
   });
 
   it("should reject existing invalid fusion.db files", async () => {

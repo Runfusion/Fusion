@@ -18,6 +18,7 @@ const {
   mockListProjects,
   mockGetProject,
   mockRegisterProject,
+  mockEnsureProjectForPath,
   mockUpdateProject,
   mockUnregisterProject,
   mockGetProjectHealth,
@@ -31,6 +32,8 @@ const {
   mockListNodes,
   mockGetNode,
   mockEnsureMemoryFileWithBackend,
+  mockReadProjectIdentity,
+  mockWriteProjectIdentity,
   mockListProjectNodePathMappingsForProject,
   mockGetProjectNodePathMapping,
   mockUpsertProjectNodePathMapping,
@@ -52,6 +55,18 @@ const {
     isolationMode: "in-process",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+  }),
+  mockEnsureProjectForPath: vi.fn().mockResolvedValue({
+    outcome: "registered",
+    project: {
+      id: "proj_test123",
+      name: "Test Project",
+      path: "/test/path",
+      status: "initializing",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
   }),
   mockUpdateProject: vi.fn().mockResolvedValue({
     id: "proj_test123",
@@ -93,6 +108,8 @@ const {
   mockListNodes: vi.fn().mockResolvedValue([]),
   mockGetNode: vi.fn().mockResolvedValue(null),
   mockEnsureMemoryFileWithBackend: vi.fn().mockResolvedValue(true),
+  mockReadProjectIdentity: vi.fn().mockReturnValue(undefined),
+  mockWriteProjectIdentity: vi.fn(),
   mockListProjectNodePathMappingsForProject: vi.fn().mockResolvedValue([]),
   mockGetProjectNodePathMapping: vi.fn().mockResolvedValue(undefined),
   mockUpsertProjectNodePathMapping: vi.fn(),
@@ -135,6 +152,7 @@ vi.mock("@fusion/core", async () => {
       listProjects: mockListProjects,
       getProject: mockGetProject,
       registerProject: mockRegisterProject,
+      ensureProjectForPath: mockEnsureProjectForPath,
       updateProject: mockUpdateProject,
       unregisterProject: mockUnregisterProject,
       getProjectHealth: mockGetProjectHealth,
@@ -150,6 +168,8 @@ vi.mock("@fusion/core", async () => {
       removeProjectNodePathMapping: mockRemoveProjectNodePathMapping,
     })),
     ensureMemoryFileWithBackend: mockEnsureMemoryFileWithBackend,
+    readProjectIdentity: mockReadProjectIdentity,
+    writeProjectIdentity: mockWriteProjectIdentity,
   };
 });
 
@@ -684,6 +704,19 @@ describe("POST /api/projects route handler", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
+    mockEnsureProjectForPath.mockResolvedValue({
+      outcome: "registered",
+      project: {
+        id: "proj_test123",
+        name: "Test Project",
+        path: "/test/path",
+        status: "initializing",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    mockReadProjectIdentity.mockReturnValue(undefined);
     mockUpdateProject.mockResolvedValue({
       id: "proj_test123",
       name: "Test Project",
@@ -709,17 +742,18 @@ describe("POST /api/projects route handler", () => {
     );
 
     expect(res.status).toBe(201);
-    expect(mockRegisterProject).toHaveBeenCalledWith({
-      name: "Test Project",
+    expect(mockEnsureProjectForPath).toHaveBeenCalledWith({
       path: "/tmp",
+      identity: undefined,
+      name: "Test Project",
       isolationMode: "in-process",
+      nodeId: undefined,
     });
     expect(mockUpdateProject).toHaveBeenCalledWith("proj_test123", { status: "active" });
     expect((res.body as any).status).toBe("active");
   });
 
-  it("passes nodeId to registerProject when provided", async () => {
-    const store = new MockStoreForRoutes();
+  it("passes nodeId to ensureProjectForPath when provided", async () => {    const store = new MockStoreForRoutes();
     const app = await createApp(store);
 
     const res = await request(
@@ -735,12 +769,65 @@ describe("POST /api/projects route handler", () => {
     );
 
     expect(res.status).toBe(201);
-    expect(mockRegisterProject).toHaveBeenCalledWith({
-      name: "Remote Project",
+    expect(mockEnsureProjectForPath).toHaveBeenCalledWith({
       path: "/tmp",
+      identity: undefined,
+      name: "Remote Project",
       isolationMode: "in-process",
       nodeId: "node-remote-1",
     });
+  });
+
+  it("returns outcome metadata and stamps identity on successful registration", async () => {
+    const store = new MockStoreForRoutes();
+    const app = await createApp(store);
+
+    mockEnsureProjectForPath.mockResolvedValueOnce({
+      outcome: "reattached",
+      project: {
+        id: "proj_test123",
+        name: "Recovered Project",
+        path: "/tmp",
+        status: "initializing",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({ name: "Recovered Project", path: "/tmp" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect((res.body as any).outcome).toBe("reattached");
+    expect(mockWriteProjectIdentity).toHaveBeenCalledWith(
+      "/tmp/.fusion",
+      expect.objectContaining({ id: "proj_test123" }),
+    );
+  });
+
+  it("returns 500 when stored identity read fails", async () => {
+    const store = new MockStoreForRoutes();
+    const app = await createApp(store);
+    mockReadProjectIdentity.mockImplementationOnce(() => {
+      throw new Error("bad identity json");
+    });
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({ name: "Test Project", path: "/tmp" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(500);
+    expect((res.body as any).error).toContain("bad identity json");
   });
 
   it("calls ensureMemoryFileWithBackend after project activation", async () => {
@@ -804,9 +891,10 @@ describe("POST /api/projects route handler", () => {
       );
 
       expect(res.status).toBe(201);
-      expect(mockRegisterProject).toHaveBeenCalledWith({
-        name: "Cloned Project",
+      expect(mockEnsureProjectForPath).toHaveBeenCalledWith({
         path: cloneDestination,
+        identity: undefined,
+        name: "Cloned Project",
         isolationMode: "in-process",
         nodeId: undefined,
       });
@@ -838,7 +926,7 @@ describe("POST /api/projects route handler", () => {
 
     expect(res.status).toBe(400);
     expect((res.body as { error?: string }).error).toContain("Git clone failed");
-    expect(mockRegisterProject).not.toHaveBeenCalled();
+    expect(mockEnsureProjectForPath).not.toHaveBeenCalled();
     expect(mockFsRm).toHaveBeenCalledWith("/tmp/broken-clone", { recursive: true, force: true });
   }, 15_000);
 
@@ -864,7 +952,7 @@ describe("POST /api/projects route handler", () => {
     expect(res.status).toBe(400);
     expect((res.body as { error?: string }).error).toContain("Clone destination must be empty");
     expect(mockExecFileAsync).not.toHaveBeenCalled();
-    expect(mockRegisterProject).not.toHaveBeenCalled();
+    expect(mockEnsureProjectForPath).not.toHaveBeenCalled();
   });
 
   it("rejects clone mode when cloneUrl is blank", async () => {

@@ -71,15 +71,22 @@ describe("decideIssueAction", () => {
     expect(decideIssueAction("done", to)).toEqual({ action: "reopen", stateReason: "reopened" });
   });
 
-  it("returns null for done -> archived", () => {
-    expect(decideIssueAction("done", "archived")).toBeNull();
+  it("closes on done -> archived", () => {
+    expect(decideIssueAction("done", "archived")).toEqual({ action: "close", stateReason: "completed" });
+  });
+
+  it("closes on in-review -> archived", () => {
+    expect(decideIssueAction("in-review", "archived")).toEqual({ action: "close", stateReason: "completed" });
+  });
+
+  it.each(["todo", "triage", "in-progress"] as const)("returns null for %s -> archived", (from) => {
+    expect(decideIssueAction(from, "archived")).toBeNull();
   });
 
   it.each([
     ["triage", "todo"],
     ["todo", "in-progress"],
     ["in-progress", "in-review"],
-    ["in-review", "archived"],
     ["done", "done"],
     ["archived", "archived"],
   ] as const)("returns null for %s -> %s", (from, to) => {
@@ -145,14 +152,14 @@ describe("GitHubTrackingStateService", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Reopened linked GitHub tracking issue", "owner/repo#42");
   });
 
-  it("does nothing for done -> archived", async () => {
+  it("closes on done -> archived", async () => {
     service.start();
 
     store.emit("task:moved", { task: createTask(), from: "done", to: "archived" });
     await flushAsync();
 
-    expect(mockSetIssueState).not.toHaveBeenCalled();
-    expect(store.logEntry).not.toHaveBeenCalled();
+    expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "completed");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Closed linked GitHub tracking issue", "owner/repo#42");
   });
 
   it("does nothing for non-done transitions", async () => {
