@@ -253,7 +253,8 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       const enriched: EnrichedChatSession = session;
-      enriched.isGenerating = options?.chatManager?.isGenerating?.(sessionId) ?? false;
+      const chatManager = await resolveScopedChatManager(req.query.projectId as string | undefined).catch(() => options?.chatManager);
+      enriched.isGenerating = chatManager?.isGenerating?.(sessionId) ?? false;
 
       res.json({ session: enriched });
     } catch (err: unknown) {
