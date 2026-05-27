@@ -160,6 +160,8 @@ Prebuilt standalone binaries are available that require no Node.js runtime. You 
 bun run build.ts
 ```
 
+The standalone build defines `process.env.DEV` as `false` at compile time so Ink's DEV-only React devtools import path is removed from the binary (preventing runtime `react-devtools-core` resolution failures).
+
 ### Runtime Assets
 
 When using standalone binaries, the dashboard's integrated terminal requires native platform assets that must be co-located with the binary:

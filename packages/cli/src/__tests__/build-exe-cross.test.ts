@@ -90,7 +90,14 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: --all builds all platfo
     const allBuilt = SUPPORTED_TARGETS.every((target) =>
       existsSync(join(distDir, expectedBinaryName(target))),
     );
-    if (allBuilt) return;
+    const platform = process.platform === "darwin" ? "darwin" :
+      process.platform === "linux" ? "linux" :
+      process.platform === "win32" ? "win32" : "unknown";
+    const arch = process.arch === "arm64" ? "arm64" :
+      process.arch === "x64" ? "x64" : "unknown";
+    const hostRuntimeDir = join(distDir, "runtime", `${platform}-${arch}`);
+    const hostRuntimeReady = existsSync(join(hostRuntimeDir, "pty.node"));
+    if (allBuilt && hostRuntimeReady) return;
     execSync("bun run build.ts --all", {
       cwd: cliRoot,
       stdio: "pipe",
@@ -121,6 +128,16 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: --all builds all platfo
     const prebuildName = `${platform}-${arch}`;
     const runtimeDir = join(distDir, "runtime", prebuildName);
     
+    if (!existsSync(join(runtimeDir, "pty.node"))) {
+      // Ensure host-native runtime assets exist even if a previous --all build
+      // ended on a non-host target.
+      execSync("bun run build.ts", {
+        cwd: cliRoot,
+        stdio: "pipe",
+        timeout: 120_000,
+      });
+    }
+
     // pty.node is required for all platforms
     expect(existsSync(join(runtimeDir, "pty.node"))).toBe(true);
     // spawn-helper is only for Unix platforms

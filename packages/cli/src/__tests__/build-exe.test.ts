@@ -10,6 +10,7 @@ const outBinary = join(cliRoot, "dist", process.platform === "win32" ? "fn.exe" 
 const binaryName = process.platform === "win32" ? "fn.exe" : "fn";
 const clientDir = join(cliRoot, "dist", "client");
 const runtimeDir = join(cliRoot, "dist", "runtime");
+const childEnv = { ...process.env, VITEST: "false" };
 
 /**
  * Create an isolated temp directory containing the binary, client/,
@@ -72,6 +73,7 @@ type AsyncSpawnResult = {
 async function runCommandWithTimeout(binary: string, args: string[], timeoutMs: number): Promise<AsyncSpawnResult> {
   const child = spawn(binary, args, {
     stdio: ["ignore", "pipe", "pipe"],
+    env: childEnv,
   });
 
   let stdout = "";
@@ -179,6 +181,7 @@ describe("build-exe", () => {
         expect(result.stdout).toContain("dashboard");
         expect(result.stdout).toContain("task create");
         expect(result.stdout).toContain("task list");
+        expect(result.stderr).not.toContain("react-devtools-core");
       } finally {
         cleanup();
       }
@@ -192,12 +195,14 @@ describe("build-exe", () => {
       const result = spawnSync(binary, ["task", "list"], {
         encoding: "utf-8",
         timeout: 30_000,
+        env: childEnv,
       });
       if (hasKnownBunSqliteLimitation(result)) {
         return;
       }
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("No tasks yet");
+      expect(result.stderr ?? "").not.toContain("react-devtools-core");
     } finally {
       cleanup();
     }
@@ -212,9 +217,10 @@ describe("build-exe", () => {
     try {
       // Ask the OS for an ephemeral port so this smoke test never collides
       // with a developer's running dashboard or dev server.
-      child = spawn(binary, ["dashboard", "-p", "0"], {
+      child = spawn(binary, ["dashboard", "-p", "0", "--no-auth"], {
         cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
+        env: childEnv,
       });
 
       if (!child.stdout || !child.stderr) {

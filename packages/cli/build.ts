@@ -16,6 +16,9 @@
  * Notes:
  *   - If dashboard client assets are missing, this script generates a
  *     minimal dist/client/index.html stub so clean-checkout tests can run.
+ *   - Ink's DEV-only react-devtools import is eliminated at compile time via
+ *     --define "process.env.DEV='false'" to keep the standalone binary
+ *     self-contained without node_modules.
  */
 
 import { join, dirname } from "node:path";
@@ -339,10 +342,11 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
       target,
       "--minify",
       "--conditions=source",
-      // ink imports react-devtools-core dynamically only when DEV=true; mark
-      // external so Bun's static bundler doesn't try to resolve it at compile.
-      "--external",
-      "react-devtools-core",
+      // Ink conditionally loads devtools when process.env.DEV === "true".
+      // Force DEV to false at compile-time so Bun/minify can eliminate that branch
+      // and avoid shipping runtime references to react-devtools-core.
+      "--define",
+      "process.env.DEV='false'",
       // cpu-features: native .node binding from ssh2 (transitive via dockerode); ssh2 falls back to pure JS when unavailable
       "--external",
       "cpu-features",
