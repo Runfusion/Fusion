@@ -703,16 +703,17 @@ describe("routes/context project scoping helpers", () => {
     expect(getOrCreateSpy).not.toHaveBeenCalled();
   });
 
-  it("getProjectContext falls back to scoped store when ensureEngine throws", async () => {
+  it("getProjectContext triggers background engine start and falls back to scoped store for first request", async () => {
     const store = createMockStore();
     const fallbackStore = createMockStore();
     const getOrCreateSpy = vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValueOnce(fallbackStore);
 
     const req = { query: { projectId: "proj-123" }, body: {} } as unknown as express.Request;
+    const onProjectAccessedMock = vi.fn();
     const options = {
       engineManager: {
         getEngine: vi.fn().mockReturnValue(undefined),
-        ensureEngine: vi.fn().mockRejectedValue(new Error("startup failed")),
+        onProjectAccessed: onProjectAccessedMock,
       },
     } as any;
 
@@ -721,7 +722,8 @@ describe("routes/context project scoping helpers", () => {
     expect(context.projectId).toBe("proj-123");
     expect(context.engine).toBeUndefined();
     expect(context.store).toBe(fallbackStore);
-    expect(options.engineManager.ensureEngine).toHaveBeenCalledWith("proj-123");
+    // Engine start is triggered as fire-and-forget — not blocking the request
+    expect(onProjectAccessedMock).toHaveBeenCalledWith("proj-123");
     expect(getOrCreateSpy).toHaveBeenCalledWith("proj-123");
   });
 });

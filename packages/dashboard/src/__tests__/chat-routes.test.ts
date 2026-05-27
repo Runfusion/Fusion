@@ -1484,3 +1484,117 @@ describe("Chat API Routes", () => {
   //   const chatStore = options?.chatStore ?? new ChatStore(...)
   // This means the route won't fail when chatStore is undefined in tests.
 });
+
+// ── multi-project chat routing ──────────────────────────────────────────────
+
+describe("multi-project chat routing", () => {
+  let store: MockStore;
+  let app: ReturnType<typeof import("../server.js").createServer>;
+  let mockChatStore: typeof mockChatStoreInstance;
+  let mockChatManager: ReturnType<typeof createMockChatManager>;
+
+  const secondarySession = {
+    id: "secondary-session-1",
+    agentId: "agent-001",
+    title: "Secondary Chat",
+    status: "active",
+    projectId: "secondary-proj-id",
+    modelProvider: null,
+    modelId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // Reset per-project caches to ensure no cross-test pollution
+    const { __resetScopedChatManagerCache, __resetScopedChatStoreCache } = await import("../chat-project-services.js");
+    __resetScopedChatManagerCache();
+    __resetScopedChatStoreCache();
+
+    mockInit.mockResolvedValue(undefined);
+    mockGetSession.mockReset();
+    mockListSessions.mockReset();
+    mockGetLastMessageForSessions.mockReset();
+    mockSendMessage.mockReset();
+    mockCancelGeneration.mockReset();
+    mockBeginGeneration.mockReturnValue({ generationId: 1, abortController: new AbortController() });
+    mockIsGenerating.mockReturnValue(false);
+    mockGetActiveGenerationId.mockReturnValue(undefined);
+    mockGetOrCreateProjectStore.mockReset();
+
+    // Default list/message mocks
+    mockListSessions.mockReturnValue([]);
+    mockGetLastMessageForSessions.mockReturnValue(new Map());
+    mockCancelGeneration.mockReturnValue(false);
+
+    store = new MockStore();
+    mockChatStore = mockChatStoreInstance;
+    mockChatManager = createMockChatManager();
+
+    // Secondary project store resolves to same MockStore for simplicity
+    mockGetOrCreateProjectStore.mockResolvedValue(store);
+
+    const { createServer } = await import("../server.js");
+    app = createServer(store as any, {
+      chatStore: mockChatStore as any,
+      chatManager: mockChatManager as any,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POST /cancel uses scoped ChatManager when projectId is provided", async () => {
+    mockCancelGeneration.mockReturnValue(false);
+
+    const response = await request(
+      app,
+      "POST",
+      `/api/chat/sessions/${secondarySession.id}/cancel?projectId=${secondarySession.projectId}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect((response.body as any).success).toBe(false);
+    // Scoped path: getOrCreateProjectStore is called with the secondary projectId
+    expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith(secondarySession.projectId);
+    // cancelGeneration was called on the scoped manager
+    expect(mockCancelGeneration).toHaveBeenCalledWith(secondarySession.id);
+  });
+
+  it("POST /cancel falls back to global ChatManager when no projectId", async () => {
+    mockCancelGeneration.mockReturnValue(false);
+
+    const response = await request(
+      app,
+      "POST",
+      `/api/chat/sessions/${secondarySession.id}/cancel`,
+    );
+
+    expect(response.status).toBe(200);
+    expect((response.body as any).success).toBe(false);
+    // Global path: getOrCreateProjectStore is NOT called
+    expect(mockGetOrCreateProjectStore).not.toHaveBeenCalled();
+    // cancelGeneration was called on the global manager
+    expect(mockCancelGeneration).toHaveBeenCalledWith(secondarySession.id);
+  });
+
+  it("GET /sessions uses scoped ChatManager for isGenerating when projectId is provided", async () => {
+    mockListSessions.mockReturnValue([secondarySession]);
+    mockGetLastMessageForSessions.mockReturnValue(new Map());
+
+    const response = await request(
+      app,
+      "GET",
+      `/api/chat/sessions?projectId=${secondarySession.projectId}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect((response.body as any).sessions).toHaveLength(1);
+    // Scoped path: getOrCreateProjectStore is called for isGenerating resolution
+    expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith(secondarySession.projectId);
+    // isGenerating defaults to false (MockChatManager has no getGeneratingSessionIds)
+    expect((response.body as any).sessions[0].isGenerating).toBe(false);
+  });
+});

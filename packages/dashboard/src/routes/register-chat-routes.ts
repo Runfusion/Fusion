@@ -3,12 +3,14 @@ import { createReadStream } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { EnrichedChatSession, ChatAttachment } from "@fusion/core";
-import { ApiError, badRequest, internalError, notFound } from "../api-error.js";
+import { ApiError, badRequest, notFound } from "../api-error.js";
 import { resolveProjectChatContext } from "../chat-project-services.js";
 import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
 import { rateLimit, RATE_LIMITS } from "../rate-limit.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
 import type { ApiRoutesContext } from "./types.js";
+import { getOrCreateScopedChatManager, getOrCreateScopedChatStore } from "../chat-project-services.js";
+import { getOrCreateProjectStore } from "../project-store-resolver.js";
 
 interface ChatRouteDeps {
   parseLastEventId: (req: import("express").Request) => number | undefined;
@@ -31,15 +33,6 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   const { router, options, store, getProjectContext, chatLogger, rethrowAsApiError } = ctx;
   const { parseLastEventId, replayBufferedSSE, validateOptionalModelField, upload } = deps;
 
-  async function resolveScopedChatStore(projectId: string | undefined) {
-    return resolveProjectChatContext({
-      projectId,
-      defaultStore: store,
-      defaultChatStore: options?.chatStore,
-      engineManager: options?.engineManager,
-    });
-  }
-
   const uploadChatAttachment: import("express").RequestHandler = (req, res, next) => {
     upload.single("file")(req, res, (err?: unknown) => {
       if (!err) {
@@ -55,6 +48,26 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
     });
   };
 
+  // ── Per-project store / manager resolution ───────────────────────────────────
+
+  async function resolveScopedChatStore(projectId: string | undefined) {
+    return resolveProjectChatContext({
+      projectId,
+      defaultStore: store,
+      defaultChatStore: options?.chatStore,
+      engineManager: options?.engineManager,
+    });
+  }
+
+  async function resolveScopedChatManager(projectId: string | undefined) {
+    if (!projectId) {
+      if (!options?.chatManager) throw new ApiError(503, "Chat manager not available");
+      return options.chatManager;
+    }
+    const projectStore = await getOrCreateProjectStore(projectId);
+    const chatStore = getOrCreateScopedChatStore(projectStore);
+    return getOrCreateScopedChatManager(projectStore, chatStore, options?.pluginRunner);
+  }
   // ── Chat Routes ────────────────────────────────────────────────────────────
 
   /**
@@ -114,7 +127,10 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         const lastMessages = chatStore.getLastMessageForSessions(sessionIds);
 
         // Batch-gather generating session IDs to avoid N+1 calls
-        const generatingIds = options?.chatManager?.getGeneratingSessionIds?.() ?? [];
+        const resolvedChatManager = projectId
+          ? await resolveScopedChatManager(projectId).catch(() => options?.chatManager)
+          : options?.chatManager;
+        const generatingIds = resolvedChatManager?.getGeneratingSessionIds?.() ?? [];
         const generatingSet = new Set(generatingIds);
 
         for (const session of sessions) {
@@ -231,7 +247,8 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       const enriched: EnrichedChatSession = session;
-      enriched.isGenerating = options?.chatManager?.isGenerating?.(sessionId) ?? false;
+      const chatManager = await resolveScopedChatManager(req.query.projectId as string | undefined).catch(() => options?.chatManager);
+      enriched.isGenerating = chatManager?.isGenerating?.(sessionId) ?? false;
 
       res.json({ session: enriched });
     } catch (err: unknown) {
@@ -444,10 +461,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   router.get("/chat/sessions/:id/stream", rateLimit(RATE_LIMITS.sse), async (req, res) => {
     try {
       const { chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
-      const chatManager = options?.chatManager;
-      if (!chatManager) {
-        throw internalError("Chat manager not available");
-      }
+      const chatManager = await resolveScopedChatManager(req.query.projectId as string | undefined);
 
       const sessionId = String(req.params.id);
       const session = chatStore.getSession(sessionId);
@@ -533,10 +547,6 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   router.post("/chat/sessions/:id/messages", rateLimit(RATE_LIMITS.sse), async (req, res) => {
     try {
       const { chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
-      const chatManager = options?.chatManager;
-      if (!chatManager) {
-        throw internalError("Chat manager not available");
-      }
 
       const { content, modelProvider, modelId, attachments } = req.body as {
         content?: string;
@@ -555,6 +565,10 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
+
+      // Resolve per-project ChatManager before opening the SSE stream so
+      // failures (e.g. project DB cannot be opened) produce a proper HTTP error.
+      const chatManager = await resolveScopedChatManager(req.query.projectId as string | undefined);
 
       // Set SSE headers
       res.setHeader("Content-Type", "text/event-stream");
@@ -676,11 +690,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    */
   router.post("/chat/sessions/:id/cancel", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
-      const chatManager = options?.chatManager;
-      if (!chatManager) {
-        throw new ApiError(503, "Chat manager not available");
-      }
-
+      const chatManager = await resolveScopedChatManager(req.query.projectId as string | undefined);
       const sessionId = String(req.params.id);
       const success = chatManager.cancelGeneration(sessionId);
       res.json({ success });

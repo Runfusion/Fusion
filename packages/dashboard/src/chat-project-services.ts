@@ -82,3 +82,29 @@ export async function createProjectScopedChatManager(options: {
 export function __resetScopedChatStoreCache(): void {
   scopedChatStoreCache.clear();
 }
+
+const scopedChatManagerCache = new Map<string, ChatManager>();
+
+export function getOrCreateScopedChatManager(
+  store: TaskStore,
+  chatStore: ChatStore,
+  pluginRunner?: ConstructorParameters<typeof ChatManager>[3],
+): ChatManager {
+  const key = store.getFusionDir();
+  const cached = scopedChatManagerCache.get(key);
+  if (cached) return cached;
+  const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+  const manager = new ChatManager(
+    chatStore,
+    store.getRootDir(),
+    agentStore,
+    pluginRunner,
+    () => store.getSettings(),
+  );
+  scopedChatManagerCache.set(key, manager);
+  return manager;
+}
+
+export function __resetScopedChatManagerCache(): void {
+  scopedChatManagerCache.clear();
+}

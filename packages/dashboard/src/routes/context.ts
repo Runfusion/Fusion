@@ -81,13 +81,13 @@ export async function getProjectContext(
   const engineManager = options?.engineManager;
 
   if (projectId && engineManager) {
-    let engine = engineManager.getEngine(projectId);
+    const engine = engineManager.getEngine(projectId);
     if (!engine) {
-      try {
-        engine = await engineManager.ensureEngine(projectId);
-      } catch {
-        // fall through
-      }
+      // Trigger lazy engine start as fire-and-forget so this request is not
+      // blocked while the engine initialises (engine.start() may take several
+      // seconds for a newly-registered project).
+      // The engine will be available for subsequent requests once it starts.
+      engineManager.onProjectAccessed(projectId);
     }
     if (engine) {
       return { store: engine.getTaskStore(), engine, projectId };
