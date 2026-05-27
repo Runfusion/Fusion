@@ -220,7 +220,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
 
   private getParticipantIdsForLookup(ownerId: string, ownerType: ParticipantType): string[] {
     if (ownerType === "user" && ownerId === DASHBOARD_USER_ID) {
-      return [DASHBOARD_USER_ID, "user:dashboard", "User: user:dashboard"];
+      return [DASHBOARD_USER_ID, "user", "user:dashboard", "User: user:dashboard"];
     }
     return [ownerId];
   }

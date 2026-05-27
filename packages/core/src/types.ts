@@ -6132,7 +6132,7 @@ export type ParticipantType = "agent" | "user" | "system";
 /** Canonical recipient ID for dashboard user mailbox routing. */
 export const DASHBOARD_USER_ID = "dashboard";
 
-const DASHBOARD_USER_ALIASES = new Set([DASHBOARD_USER_ID, "user:dashboard", "User: user:dashboard"]);
+const DASHBOARD_USER_ALIASES = new Set([DASHBOARD_USER_ID, "user", "user:dashboard", "User: user:dashboard"]);
 
 /** Normalize participant identity for durable mailbox routing. */
 export function normalizeMessageParticipant(id: string, type: ParticipantType): { id: string; type: ParticipantType } {

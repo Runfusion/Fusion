@@ -917,4 +917,38 @@ describe("MessageStore", () => {
       expect(events[0]).toBe(message.id);
     });
   });
+
+  describe("DASHBOARD_USER_ALIASES — bare 'user' normalization", () => {
+    it("normalizeMessageParticipant('user', 'user') normalises to DASHBOARD_USER_ID", () => {
+      // Messages sent with to_id='user' (the natural human alias) must be routed to the
+      // dashboard mailbox — they should store as toId='dashboard', not 'user'.
+      const msg = store.sendMessage({
+        fromId: "agent-1",
+        fromType: "agent",
+        toId: "user",
+        toType: "user",
+        content: "Inbox test",
+        type: "agent-to-user",
+      });
+      expect(msg.toId).toBe(DASHBOARD_USER_ID);
+    });
+
+    it("getInbox('dashboard', 'user') returns messages stored with toId='user'", () => {
+      // A message stored while toId='user' was not yet in the alias set must now appear
+      // in the operator inbox — validates that the READ path covers the legacy value.
+      // We insert directly into the DB (bypassing normalizeMessageParticipant) to simulate
+      // messages created by the old code that stored toId='user' rather than 'dashboard'.
+      const legacyId = "msg-legacy-test-001";
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO messages (id, fromId, fromType, toId, toType, content, type, read, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+      ).run(legacyId, "agent-1", "agent", "user", "user", "Legacy DM from old session", "agent-to-user", now, now);
+
+      const inbox = store.getInbox(DASHBOARD_USER_ID, "user");
+      const found = inbox.find((m) => m.id === legacyId);
+      expect(found).toBeDefined();
+      expect(found?.content).toBe("Legacy DM from old session");
+    });
+  });
 });
