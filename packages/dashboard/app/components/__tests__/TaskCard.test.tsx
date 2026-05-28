@@ -237,6 +237,111 @@ describe("TaskCard", () => {
     });
   });
 
+  it("uses githubIssueAction for source-imported task delete close", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true);
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          sourceIssue: { provider: "github", repository: "acme/widgets", issueNumber: 42, externalIssueId: "42" },
+        } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Delete task"));
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001", { githubIssueAction: "close" });
+    });
+  });
+
+  it("uses githubIssueAction=delete for source-imported task delete", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          sourceIssue: { provider: "github", repository: "acme/widgets", issueNumber: 42, externalIssueId: "42" },
+        } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Delete task"));
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001", { githubIssueAction: "delete" });
+    });
+  });
+
+  it("uses githubIssueAction=leave for source-imported task delete", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false);
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          sourceIssue: { provider: "github", repository: "acme/widgets", issueNumber: 42, externalIssueId: "42" },
+        } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Delete task"));
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001", { githubIssueAction: "leave" });
+    });
+  });
+
+  it("deletes without githubIssueAction when no linked github issue exists", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+
+    render(
+      <TaskCard
+        task={makeTask({ column: "triage", githubTracking: { enabled: false }, sourceIssue: undefined } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Delete task"));
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001");
+    });
+  });
+
   it("preserves githubIssueAction on dependency-conflict retry", async () => {
     const conflict = new Error("Cannot delete task FN-001: still referenced as a dependency by FN-002.") as Error & { status: number; details: { code: string; dependentIds: string[] } };
     conflict.status = 409;

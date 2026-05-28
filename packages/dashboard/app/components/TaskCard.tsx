@@ -1273,12 +1273,32 @@ function TaskCardComponent({
     }
 
     const trackedIssue = task.githubTracking?.enabled === true ? task.githubTracking.issue : undefined;
+    const sourceIssueRef = (() => {
+      if (trackedIssue) {
+        return null;
+      }
+
+      const sourceIssue = task.sourceIssue;
+      if (sourceIssue?.provider === "github") {
+        const [owner, repo, extra] = sourceIssue.repository.split("/");
+        if (owner && repo && !extra && Number.isInteger(sourceIssue.issueNumber) && sourceIssue.issueNumber > 0) {
+          return { owner, repo, number: sourceIssue.issueNumber };
+        }
+      }
+
+      return parseGithubIssueUrl(getIssueUrlFromMetadata(task.sourceMetadata) ?? task.issueInfo?.url);
+    })();
+
+    const issueRef = trackedIssue?.owner && trackedIssue.repo && trackedIssue.number
+      ? { owner: trackedIssue.owner, repo: trackedIssue.repo, number: trackedIssue.number }
+      : sourceIssueRef;
+
     let githubIssueAction: GithubIssueAction | undefined;
-    if (trackedIssue?.owner && trackedIssue.repo && trackedIssue.number) {
-      const issueRef = `${trackedIssue.owner}/${trackedIssue.repo}#${trackedIssue.number}`;
+    if (issueRef?.owner && issueRef.repo && issueRef.number) {
+      const issueLabel = `${issueRef.owner}/${issueRef.repo}#${issueRef.number}`;
       const shouldCloseIssue = await confirm({
         title: "Linked GitHub Issue",
-        message: `Choose what to do with ${issueRef} when deleting ${task.id}.\n\nClose the issue?`,
+        message: `Choose what to do with ${issueLabel} when deleting ${task.id}.\n\nClose the issue?`,
         confirmLabel: "Close Issue",
         cancelLabel: "More Options",
       });
@@ -1288,7 +1308,7 @@ function TaskCardComponent({
       } else {
         const shouldDeleteIssue = await confirm({
           title: "Delete Linked GitHub Issue",
-          message: `Delete ${issueRef} on GitHub, or leave it unchanged?`,
+          message: `Delete ${issueLabel} on GitHub, or leave it unchanged?`,
           confirmLabel: "Delete Issue",
           cancelLabel: "Leave Unchanged",
           danger: true,
@@ -1303,8 +1323,8 @@ function TaskCardComponent({
       } else {
         await onDeleteTask(task.id);
       }
-      const issueSuffix = trackedIssue?.owner && trackedIssue.repo && trackedIssue.number && githubIssueAction
-        ? ` and ${githubIssueAction === "close" ? "closed" : githubIssueAction === "delete" ? "deleted" : "left"} issue ${trackedIssue.owner}/${trackedIssue.repo}#${trackedIssue.number}`
+      const issueSuffix = issueRef?.owner && issueRef.repo && issueRef.number && githubIssueAction
+        ? ` and ${githubIssueAction === "close" ? "closed" : githubIssueAction === "delete" ? "deleted" : "left"} issue ${issueRef.owner}/${issueRef.repo}#${issueRef.number}`
         : "";
       addToast(`Deleted ${task.id}${issueSuffix}`, "success");
     } catch (err) {
@@ -1389,7 +1409,7 @@ function TaskCardComponent({
         addToast(`Failed to delete ${task.id}: ${getErrorMessage(retryErr)}`, "error");
       }
     }
-  }, [addToast, confirm, onDeleteTask, task.githubTracking?.enabled, task.githubTracking?.issue, task.id]);
+  }, [addToast, confirm, onDeleteTask, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, task.issueInfo?.url, task.sourceIssue, task.sourceMetadata]);
 
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

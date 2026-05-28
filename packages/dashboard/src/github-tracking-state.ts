@@ -231,8 +231,124 @@ export class GitHubTrackingStateService {
     }
   }
 
+  private async handleSourceIssueDelete(store: TaskStore, task: Task, meta?: { githubIssueAction?: GithubIssueAction }): Promise<void> {
+    const sourceIssue = task.sourceIssue;
+    if (sourceIssue?.provider !== "github") {
+      return;
+    }
+
+    const [owner, repo, extra] = sourceIssue.repository.split("/");
+    if (!owner || !repo || extra) {
+      await this.safeLogDeletedTaskEntry(
+        store,
+        task.id,
+        "Failed to close linked source GitHub issue",
+        `Invalid source issue repository: ${sourceIssue.repository}`,
+      );
+      return;
+    }
+
+    const number = sourceIssue.issueNumber;
+    if (!Number.isInteger(number) || number <= 0) {
+      await this.safeLogDeletedTaskEntry(
+        store,
+        task.id,
+        "Failed to close linked source GitHub issue",
+        `Invalid source issue number: ${String(number)}`,
+      );
+      return;
+    }
+
+    const githubIssueAction = meta?.githubIssueAction ?? "auto";
+    // Source-imported issues represent real incoming work; if no explicit action is provided,
+    // deleting the task defaults to closing the source issue.
+    const resolvedAction = githubIssueAction === "auto" ? "close" : githubIssueAction;
+    if (resolvedAction === "leave") {
+      await this.safeLogDeletedTaskEntry(store, task.id, "Left linked source GitHub issue unchanged on task delete", `${owner}/${repo}#${number}`);
+      this.emitGitHubIssueAction(store, { taskId: task.id, action: "leave", owner, repo, number, outcome: "skipped" });
+      return;
+    }
+
+    const projectSettings = await store.getSettings() as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
+    const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
+    const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
+    if (!resolution.ok) {
+      this.emitGitHubIssueAction(store, {
+        taskId: task.id,
+        action: resolvedAction === "delete" ? "delete" : "close",
+        owner,
+        repo,
+        number,
+        outcome: "failed",
+        error: resolution.message,
+      });
+      return;
+    }
+
+    const client = resolution.auth.mode === "token"
+      ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
+      : new GitHubClient({ forceMode: "gh-cli" });
+
+    if (resolvedAction === "delete") {
+      try {
+        const deleteIssue = async () => {
+          await client.deleteIssue(owner, repo, number);
+        };
+        try {
+          await deleteIssue();
+        } catch (error) {
+          if (!isTransientGitHubError(error)) {
+            throw error;
+          }
+          await delay(TRANSIENT_RETRY_DELAY_MS);
+          await deleteIssue();
+        }
+
+        await this.safeLogDeletedTaskEntry(store, task.id, "Deleted linked source GitHub issue", `${owner}/${repo}#${number}`);
+        this.emitGitHubIssueAction(store, { taskId: task.id, action: "delete", owner, repo, number, outcome: "success" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.emitGitHubIssueAction(store, { taskId: task.id, action: "delete", owner, repo, number, outcome: "failed", error: message });
+        await this.safeLogDeletedTaskEntry(store, task.id, "Failed to delete linked source GitHub issue", message);
+      }
+      return;
+    }
+
+    try {
+      const existing = await client.getIssue(owner, repo, number);
+      if (existing?.state === "closed") {
+        await this.safeLogDeletedTaskEntry(store, task.id, "Linked source GitHub issue already closed", `${owner}/${repo}#${number}`);
+        this.emitGitHubIssueAction(store, { taskId: task.id, action: "close", owner, repo, number, outcome: "skipped" });
+        return;
+      }
+
+      const closeIssue = async () => {
+        // Source-imported issues map to completed work, so closure reason is "completed".
+        await client.setIssueState(owner, repo, number, "closed", "completed");
+      };
+
+      try {
+        await closeIssue();
+      } catch (error) {
+        if (!isTransientGitHubError(error)) {
+          throw error;
+        }
+        await delay(TRANSIENT_RETRY_DELAY_MS);
+        await closeIssue();
+      }
+
+      await this.safeLogDeletedTaskEntry(store, task.id, "Closed linked source GitHub issue", `${owner}/${repo}#${number}`);
+      this.emitGitHubIssueAction(store, { taskId: task.id, action: "close", owner, repo, number, outcome: "success" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emitGitHubIssueAction(store, { taskId: task.id, action: "close", owner, repo, number, outcome: "failed", error: message });
+      await this.safeLogDeletedTaskEntry(store, task.id, "Failed to close linked source GitHub issue", message);
+    }
+  }
+
   private async handleTaskDeleted(store: TaskStore, task: Task, meta?: { githubIssueAction?: GithubIssueAction }): Promise<void> {
     if (task.githubTracking?.enabled !== true) {
+      await this.handleSourceIssueDelete(store, task, meta);
       return;
     }
 

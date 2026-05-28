@@ -714,6 +714,8 @@ When tracked tasks later move to `in-progress` or `done`, Fusion also posts a sh
 
 When a tracked task moves into `done`, Fusion closes the linked GitHub issue with `state_reason: completed`; when it leaves `done` for an active column, Fusion reopens the issue with `state_reason: reopened`; and when the Fusion task is permanently deleted from the dashboard, Fusion now prompts for issue handling (`close`, `delete`, or `leave`). If no explicit choice is provided by API callers, Fusion preserves the legacy default and closes the linked issue with `state_reason: not_planned`.
 
+For source-imported GitHub issues (`task.sourceIssue` / `sourceType: "github_import"`) without tracking metadata, delete now follows the same close/delete/leave prompt. The prompt references the source issue (`owner/repo#number`) and forwards the selected `githubIssueAction` through the existing delete route. For non-interactive callers that omit `githubIssueAction` (or send `"auto"`), the source-imported delete default is `close`.
+
 GitHub authentication/settings are configured in [Settings Reference](./settings-reference.md) via `githubAuthMode` (`gh-cli` or `token`) and `githubAuthToken`.
 
 ## Completion Modes (`mergeStrategy`)

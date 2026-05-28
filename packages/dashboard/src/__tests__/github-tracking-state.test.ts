@@ -55,6 +55,19 @@ function createTask(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
+function createSourceTask(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "FN-source",
+    sourceIssue: {
+      provider: "github",
+      repository: "acme/widgets",
+      issueNumber: 42,
+      externalIssueId: "42",
+    },
+    ...overrides,
+  };
+}
+
 async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -349,6 +362,145 @@ describe("GitHubTrackingStateService", () => {
         "Left linked GitHub tracking issue unchanged on task delete",
         "owner/repo#42",
       );
+    });
+
+    describe("source-imported issue delete", () => {
+      it("leaves source issue untouched when githubIssueAction is leave", async () => {
+        service.start();
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "leave" });
+        await flushAsync();
+
+        expect(mockDeleteIssue).not.toHaveBeenCalled();
+        expect(mockSetIssueState).not.toHaveBeenCalled();
+        expect(store.logEntry).toHaveBeenCalledWith(
+          "FN-source",
+          "Left linked source GitHub issue unchanged on task delete",
+          "acme/widgets#42",
+        );
+      });
+
+      it("closes source issue with completed reason", async () => {
+        service.start();
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "close" });
+        await flushAsync();
+
+        expect(mockSetIssueState).toHaveBeenCalledWith("acme", "widgets", 42, "closed", "completed");
+      });
+
+      it("short-circuits when source issue is already closed", async () => {
+        service.start();
+        mockGetIssue.mockResolvedValueOnce({ state: "closed" });
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "close" });
+        await flushAsync();
+
+        expect(mockSetIssueState).not.toHaveBeenCalled();
+        expect(store.logEntry).toHaveBeenCalledWith("FN-source", "Linked source GitHub issue already closed", "acme/widgets#42");
+      });
+
+      it("retries transient source close errors once", async () => {
+        service.start();
+        mockSetIssueState.mockRejectedValueOnce(new Error("ECONNRESET"));
+        mockSetIssueState.mockResolvedValueOnce(undefined);
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "close" });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(mockSetIssueState).toHaveBeenCalledTimes(2);
+      });
+
+      it("emits failure for non-transient source close errors", async () => {
+        service.start();
+        mockSetIssueState.mockRejectedValueOnce(new Error("close failed"));
+        const emitSpy = vi.spyOn(store, "emit");
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "close" });
+        await flushAsync();
+
+        expect(emitSpy).toHaveBeenCalledWith(
+          "github-issue:action",
+          expect.objectContaining({ taskId: "FN-source", action: "close", outcome: "failed", error: "close failed" }),
+        );
+      });
+
+      it("deletes source issue when githubIssueAction is delete", async () => {
+        service.start();
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "delete" });
+        await flushAsync();
+
+        expect(mockDeleteIssue).toHaveBeenCalledWith("acme", "widgets", 42);
+      });
+
+      it("retries transient source delete errors once", async () => {
+        service.start();
+        mockDeleteIssue.mockRejectedValueOnce(new Error("timed out"));
+        mockDeleteIssue.mockResolvedValueOnce(undefined);
+
+        store.emit("task:deleted", createSourceTask(), { githubIssueAction: "delete" });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(mockDeleteIssue).toHaveBeenCalledTimes(2);
+      });
+
+      it.each([undefined, "auto"] as const)("defaults source delete action %s to close", async (action) => {
+        service.start();
+
+        if (action === undefined) {
+          store.emit("task:deleted", createSourceTask());
+        } else {
+          store.emit("task:deleted", createSourceTask(), { githubIssueAction: action });
+        }
+        await flushAsync();
+
+        expect(mockSetIssueState).toHaveBeenCalledWith("acme", "widgets", 42, "closed", "completed");
+      });
+
+      it("ignores non-github source providers", async () => {
+        service.start();
+
+        store.emit("task:deleted", createSourceTask({ sourceIssue: { provider: "gitlab", repository: "group/proj", issueNumber: 42 } }));
+        await flushAsync();
+
+        expect(mockSetIssueState).not.toHaveBeenCalled();
+        expect(mockDeleteIssue).not.toHaveBeenCalled();
+      });
+
+      it("logs malformed source repository", async () => {
+        service.start();
+
+        store.emit("task:deleted", createSourceTask({ sourceIssue: { provider: "github", repository: "no-slash", issueNumber: 42 } }));
+        await flushAsync();
+
+        expect(mockSetIssueState).not.toHaveBeenCalled();
+        expect(store.logEntry).toHaveBeenCalledWith(
+          "FN-source",
+          "Failed to close linked source GitHub issue",
+          "Invalid source issue repository: no-slash",
+        );
+      });
+
+      it.each([0, -1, 1.5] as const)("ignores invalid source issue numbers (%s)", async (issueNumber) => {
+        service.start();
+
+        store.emit("task:deleted", createSourceTask({ sourceIssue: { provider: "github", repository: "acme/widgets", issueNumber } }));
+        await flushAsync();
+
+        expect(mockSetIssueState).not.toHaveBeenCalled();
+        expect(mockDeleteIssue).not.toHaveBeenCalled();
+      });
+
+      it("prefers tracking branch when both tracking and source issue exist", async () => {
+        service.start();
+
+        store.emit("task:deleted", createTask({ sourceIssue: { provider: "github", repository: "acme/widgets", issueNumber: 42 } }), { githubIssueAction: "close" });
+        await flushAsync();
+
+        expect(mockSetIssueState).toHaveBeenCalledWith("owner", "repo", 42, "closed", "not_planned");
+        expect(mockSetIssueState).not.toHaveBeenCalledWith("acme", "widgets", 42, "closed", "completed");
+      });
     });
 
     it.each([
