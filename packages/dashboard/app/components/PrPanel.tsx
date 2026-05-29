@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitPullRequest, ExternalLink, RefreshCw, Plus, MessageSquare, CircleDot, XCircle, GitMerge, ChevronDown, ChevronUp } from "lucide-react";
 import { getErrorMessage, type DirectMergeCommitStrategy, type StructuredGhError } from "@fusion/core";
 import { fetchPrReviews, mergePr, reclaimPrConflict, refreshPrStatus, setAutoMergeOnGreen, unlinkPr, type PrCheckStatus, type PrInfo, type PrRefreshResponse, type PrReviewsResponse } from "../api";
@@ -95,6 +95,7 @@ function PrCard({
   const [mergeStrategy, setMergeStrategy] = useState<"merge" | "squash" | "rebase">(
     directMergeCommitStrategy === "always-rebase" ? "rebase" : directMergeCommitStrategy === "always-squash" ? "squash" : "squash",
   );
+  const autoRefreshedPrNumberRef = useRef<number | null>(null);
 
   useEffect(() => {
     void fetchPrReviews(taskId, projectId, prInfo.number)
@@ -102,7 +103,7 @@ function PrCard({
       .catch(() => setReviewsState(null));
   }, [taskId, projectId, prInfo.number]);
 
-  const handleRefresh = useCallback(async () => {
+  const doRefresh = useCallback(async () => {
     setIsRefreshing(true);
     setLastGhError(null);
     try {
@@ -114,16 +115,32 @@ function PrCard({
       if (targetPr) onPrUpdated(targetPr);
       const latestReviews = await fetchPrReviews(taskId, projectId, prInfo.number);
       setReviewsState(latestReviews);
-      addToast("PR status refreshed", "success");
+      return true;
     } catch (err) {
       const details = (err as { details?: { githubError?: StructuredGhError } })?.details?.githubError;
       const structured = details ? { ...details, operation: "refresh" as const } : { code: "unknown" as const, message: getErrorMessage(err) || "Failed to refresh PR", retryable: true, action: { kind: "retry" as const }, operation: "refresh" as const };
       setLastGhError(structured);
       addToast(structured.message || "Failed to refresh PR", "error");
+      return false;
     } finally {
       setIsRefreshing(false);
     }
-  }, [taskId, projectId, prInfo.number, onPrUpdated, onPrsRefreshed, addToast]);
+  }, [addToast, onPrUpdated, onPrsRefreshed, prInfo.number, projectId, taskId]);
+
+  const handleRefresh = useCallback(async () => {
+    const refreshed = await doRefresh();
+    if (refreshed) {
+      addToast("PR status refreshed", "success");
+    }
+  }, [addToast, doRefresh]);
+
+  useEffect(() => {
+    const isDraft = (prInfo.draft ?? prInfo.isDraft) === true;
+    if (prInfo.status !== "open" || isDraft) return;
+    if (autoRefreshedPrNumberRef.current === prInfo.number) return;
+    autoRefreshedPrNumberRef.current = prInfo.number;
+    void doRefresh();
+  }, [doRefresh, prInfo.draft, prInfo.isDraft, prInfo.number, prInfo.status]);
 
   const handleMerge = useCallback(async () => {
     setIsMerging(true);
@@ -189,9 +206,10 @@ function PrCard({
     initialRollup: checkSummary,
     initialLastCheckedAt: prInfo.lastCheckedAt,
   });
-  const mergeReady = (refreshState?.mergeReady ?? false) && prInfo.status === "open";
+  const isOpenNonDraft = prInfo.status === "open" && (prInfo.draft ?? prInfo.isDraft) !== true;
+  const mergeReady = isOpenNonDraft && (refreshState?.mergeReady === true || prInfo.mergeable === "clean");
   const blockingReasonsTitle = (refreshState?.blockingReasons ?? []).join("; ");
-  const showMergeControls = prInfo.status === "open" && (prInfo.draft ?? prInfo.isDraft) !== true;
+  const showMergeControls = isOpenNonDraft;
   const hasConflictBlockingReason = blockingReasons.some((reason) => reason.toLowerCase().includes("conflict"));
   const showConflictHint = prInfo.mergeable === "conflicting" || hasConflictBlockingReason;
   const conflictDiagnostics = refreshState?.conflictDiagnostics ?? prInfo.conflictDiagnostics;

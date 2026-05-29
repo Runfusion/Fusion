@@ -135,6 +135,9 @@ describe("PrPanel", () => {
 
     render(<PrPanel taskId="FN-001" projectId="project-1" prInfo={mockPrInfo} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
 
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
 
     await waitFor(() => {
@@ -157,6 +160,9 @@ describe("PrPanel", () => {
     });
 
     render(<PrPanel taskId="FN-001" prInfo={mockPrInfo} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
 
     expect(await screen.findByText("1 passing, 1 failing, 1 pending")).toBeInTheDocument();
@@ -175,6 +181,9 @@ describe("PrPanel", () => {
     });
 
     render(<PrPanel taskId="FN-001" prInfo={mockPrInfo} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
 
     expect(await screen.findByText(/No checks reported yet/i)).toBeInTheDocument();
@@ -195,6 +204,9 @@ describe("PrPanel", () => {
     });
 
     render(<PrPanel taskId="FN-001" prInfo={{ ...mockPrInfo, status, draft: status === "draft" }} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
 
     await screen.findByText(/View on GitHub/i);
@@ -224,12 +236,21 @@ describe("PrPanel", () => {
 
     render(<PrPanel taskId="FN-001" prInfo={mockPrInfo} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
 
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
     expect(await screen.findByText("CHANGES_REQUESTED")).toBeInTheDocument();
 
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
     expect(await screen.findByText("APPROVED")).toBeInTheDocument();
 
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
     expect(await screen.findByText("No reviews yet")).toBeInTheDocument();
   });
@@ -424,6 +445,9 @@ describe("PrPanel", () => {
       />,
     );
 
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
     expect(await screen.findByRole("button", { name: /Retry conflict reclaim/i })).toBeInTheDocument();
   });
@@ -443,7 +467,10 @@ describe("PrPanel", () => {
       }))
       .mockResolvedValueOnce({ prInfo: mockPrInfo, checks: [], reviewDecision: null, blockingReasons: [] });
 
-    render(<PrPanel taskId="FN-001" prInfo={mockPrInfo} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
+    render(<PrPanel taskId="FN-001" prInfo={{ ...mockPrInfo, draft: true }} prAuthAvailable={true} onPrUpdated={mockOnPrUpdated} addToast={mockAddToast} />);
+    await waitFor(() => {
+      expect(screen.getByTitle("Refresh PR status")).toBeEnabled();
+    });
     fireEvent.click(screen.getByTitle("Refresh PR status"));
 
     expect((await screen.findAllByText(/gh auth login/i)).length).toBeGreaterThan(0);
