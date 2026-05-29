@@ -276,7 +276,6 @@ type PendingReviewBlockResult =
   | {
     blocked: true;
     reason:
-      | "code-review-revise-outstanding"
       | "review-request-without-verdict"
       | "code-review-rethink-or-unavailable-outstanding"
       | "code-review-unavailable-blocking";
@@ -286,7 +285,7 @@ type PendingReviewBlockResult =
 
 function detectPendingReviewBlock(
   task: Task,
-  codeReviewVerdicts: Map<number, ReviewVerdict>,
+  _codeReviewVerdicts: Map<number, ReviewVerdict>,
 ): PendingReviewBlockResult {
   const inProgressStepIndices: number[] = [];
   for (let stepIndex = 0; stepIndex < task.steps.length; stepIndex++) {
@@ -305,10 +304,6 @@ function detectPendingReviewBlock(
     .filter((action): action is string => Boolean(action));
 
   for (const stepIndex of inProgressStepIndices) {
-    if (codeReviewVerdicts.get(stepIndex) === "REVISE") {
-      return { blocked: true, reason: "code-review-revise-outstanding", stepIndex };
-    }
-
     const stepDisplay = stepIndex + 1;
     const codeRequest = `code review requested for Step ${stepDisplay}`;
     const planRequest = `plan review requested for Step ${stepDisplay}`;

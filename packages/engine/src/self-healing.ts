@@ -3731,7 +3731,7 @@ export class SelfHealingManager {
           const dep = taskById.get(depId);
           // listTasks excludes soft-deleted rows, so missing dependency IDs are
           // treated as resolved here by design.
-          return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+          return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
         });
         const overlapBlocker = task.overlapBlockedBy ? taskById.get(task.overlapBlockedBy) : undefined;
         const hasActiveOverlapBlocker = Boolean(
@@ -3762,6 +3762,9 @@ export class SelfHealingManager {
               reasonCode = "missing-blocker";
               reason = `blocker ${blockerId} missing`;
             }
+          } else if (blocker.deletedAt) {
+            reasonCode = "soft-deleted-blocker";
+            reason = `blocker ${blockerId} soft-deleted at ${blocker.deletedAt}`;
           } else if (blocker.column === "done") {
             reasonCode = "blocker-done";
             reason = `blocker ${blockerId} is done`;
@@ -5612,6 +5615,12 @@ export class SelfHealingManager {
         try {
           const hardBlocker = getTaskHardMergeBlocker({
             ...task,
+            // Merge-confirmed tasks have already landed. Treat stale merge
+            // in-flight statuses as soft state to clear during finalization,
+            // not hard blockers that park an otherwise confirmed merge as failed.
+            paused: false,
+            status: task.status === "merging" || task.status === "merging-pr" ? undefined : task.status,
+            error: undefined,
             steps: task.steps ?? [],
             workflowStepResults: task.workflowStepResults,
           });

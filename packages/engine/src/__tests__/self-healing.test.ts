@@ -4002,6 +4002,42 @@ describe("SelfHealingManager", () => {
 
       managerWithRecovery.stop();
     });
+
+    it("auto-finalizes merge-confirmed tasks with stale transient merging status", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-354",
+          column: "in-review",
+          paused: false,
+          status: "merging",
+          error: "stale transient merge state",
+          mergeDetails: {
+            mergeConfirmed: true,
+            mergedAt: "2026-01-01T00:00:00.000Z",
+          },
+          steps: [{ status: "done" }],
+          workflowStepResults: [],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergedReviewTasks();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-354", {
+        paused: false,
+        status: null,
+        error: null,
+        mergeRetries: 0,
+      });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-354", "done");
+
+      managerWithRecovery.stop();
+    });
   });
 
   describe("recoverStuckMergeDeadlocks", () => {

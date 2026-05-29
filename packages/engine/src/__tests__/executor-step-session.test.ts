@@ -193,7 +193,7 @@ describe("Workflow Steps Execution", () => {
   });
 
   describe("FN-5436: pending-review skip on no-fn_task_done exit", () => {
-    it("parks in-review immediately when code review REVISE is pending", async () => {
+    it("does not park in-review when code review REVISE requires more executor work", async () => {
       const store = createMockStore();
       const baseTask = {
         id: "FN-5436-A",
@@ -240,22 +240,20 @@ describe("Workflow Steps Execution", () => {
 
       await executor.execute(baseTask as any);
 
-      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-5436-A", expect.objectContaining({
+        status: "failed",
+        error: "Agent finished without calling fn_task_done (after 3 retries)",
+      }));
+      expect(store.moveTask).toHaveBeenCalledWith("FN-5436-A", "todo", { preserveProgress: true });
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-5436-A", "in-review");
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-A", {
         status: "failed",
         error: "executor-exit-while-review-pending",
       });
-      expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-A", expect.objectContaining({ taskDoneRetryCount: expect.anything() }));
-      expect(store.moveTask).toHaveBeenCalledWith("FN-5436-A", "in-review");
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-5436-A",
-        expect.stringContaining("blocked on pending review (code-review-revise-outstanding)"),
-        undefined,
-        expect.objectContaining({ agentId: "executor" }),
-      );
-      expect(onError).not.toHaveBeenCalledWith(
+      expect(onError).toHaveBeenCalledWith(
         expect.objectContaining({ id: "FN-5436-A" }),
-        expect.objectContaining({ message: "executor-exit-while-review-pending" }),
+        expect.objectContaining({ message: "Agent finished without calling fn_task_done (after 3 retries)" }),
       );
     });
 

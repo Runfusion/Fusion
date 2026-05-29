@@ -1597,7 +1597,15 @@ export class ProjectEngine {
                 this.internalEnqueueMerge(taskId);
                 continue;
               }
-              const blockerReason = getTaskHardMergeBlocker(task as Task);
+              const blockerReason = getTaskHardMergeBlocker({
+                ...(task as Task),
+                // Merge-confirmed tasks have already landed. Treat stale merge
+                // in-flight statuses as soft state to clear during finalization,
+                // not hard blockers that park an otherwise confirmed merge as failed.
+                paused: false,
+                status: task.status === "merging" || task.status === "merging-pr" ? undefined : task.status,
+                error: undefined,
+              });
               if (blockerReason) {
                 await store.updateTask(taskId, {
                   status: "failed",

@@ -710,6 +710,31 @@ describe("ProjectEngine merge error recovery", () => {
     expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "done");
   });
 
+  it("auto-finalizes merge-confirmed tasks with stale transient merging status", async () => {
+    const store = makeStore({
+      tasks: [
+        makeTask({
+          mergeDetails: { mergeConfirmed: true },
+          status: "merging",
+          error: "stale transient merge state",
+        }),
+      ],
+    });
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, { paused: false, status: null, error: null });
+    expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "done");
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("finalization blocked"),
+      }),
+    );
+  });
+
   it("does not park merge-confirmed tasks as failed when finalize loses in-review ownership", async () => {
     const store = makeStore({
       tasks: [
