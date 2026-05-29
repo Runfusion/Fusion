@@ -1,5 +1,7 @@
 import "./MissionManager.css";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { getErrorMessage } from "@fusion/core";
 import {
   X,
@@ -460,6 +462,14 @@ function getActivityQueryEventType(
 ): MissionEventType | undefined {
   // Keep query unfiltered to support grouped UI filters (e.g. errors + warnings).
   return undefined;
+}
+
+function renderMarkdownText(text: string): ReactNode {
+  return (
+    <div className="markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
 }
 
 function getAutopilotActivitySummary(state: AutopilotState, lastActivityAt?: string): string | null {
@@ -2328,7 +2338,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                   </span>
                 </div>
                 {selectedMission.description && (
-                  <p className="mission-detail__description">{selectedMission.description}</p>
+                  <div className="mission-detail__description">{renderMarkdownText(selectedMission.description)}</div>
                 )}
                 <div className="mission-detail__meta">
                   <span className="mission-detail__meta-info">
@@ -2610,9 +2620,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     {expandedMilestones.has(milestone.id) && (
                       <div className="mission-milestone__body">
                         {milestone.acceptanceCriteria && (
-                          <p className="mission-feature__criteria">
-                            <strong>Acceptance:</strong> {milestone.acceptanceCriteria}
-                          </p>
+                          <div className="mission-feature__criteria">
+                            <strong>Acceptance:</strong>
+                            {renderMarkdownText(milestone.acceptanceCriteria)}
+                          </div>
                         )}
 
                         {/* Create milestone form (inline edit) */}
@@ -2889,9 +2900,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                               {expandedSlices.has(slice.id) && (
                                 <div className="mission-slice__body">
                                   {slice.verification?.trim() && (
-                                    <p className="mission-feature__criteria">
-                                      <strong>Verification:</strong> {slice.verification}
-                                    </p>
+                                    <div className="mission-feature__criteria">
+                                      <strong>Verification:</strong>
+                                      {renderMarkdownText(slice.verification)}
+                                    </div>
                                   )}
 
                                   {/* Create slice form */}
@@ -3104,12 +3116,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                         </div>
 
                                         {feature.description && (
-                                          <p className="mission-feature__description">{feature.description}</p>
+                                          <div className="mission-feature__description">{renderMarkdownText(feature.description)}</div>
                                         )}
                                         {feature.acceptanceCriteria && (
-                                          <p className="mission-feature__criteria">
-                                            <strong>Acceptance:</strong> {feature.acceptanceCriteria}
-                                          </p>
+                                          <div className="mission-feature__criteria">
+                                            <strong>Acceptance:</strong>
+                                            {renderMarkdownText(feature.acceptanceCriteria)}
+                                          </div>
                                         )}
 
                                         {/* Triage preview panel */}
@@ -3587,9 +3600,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                       {featuresWithAcceptanceCriteria.map((feature) => (
                                         <div key={feature.id} className="mission-assertion">
                                           <span className="mission-assertion__title">{feature.title}</span>
-                                          <p className="mission-assertion__text">
-                                            <strong>Acceptance:</strong> {feature.acceptanceCriteria}
-                                          </p>
+                                          <div className="mission-assertion__text">
+                                            <strong>Acceptance:</strong>
+                                            {renderMarkdownText(feature.acceptanceCriteria ?? "")}
+                                          </div>
                                         </div>
                                       ))}
                                     </div>
@@ -3924,7 +3938,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           {isInterviewStyle ? (
             <p className="mission-list__item-description">Mission interview is still in progress. Open this mission to continue planning.</p>
           ) : m.description ? (
-            <p className="mission-list__item-description">{m.description}</p>
+            <div className="mission-list__item-description">{renderMarkdownText(m.description)}</div>
           ) : null}
           {showSummaryBlock && (
             <div className="mission-list__item-summary">

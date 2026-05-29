@@ -837,6 +837,19 @@
   white-space: nowrap;
 }
 
+.mission-list__item-description .markdown-body {
+  color: inherit;
+  font-size: inherit;
+}
+
+.mission-list__item-description .markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.mission-list__item-description .markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
 /* Desktop split-only clamp prevents description overflow in the narrow sidebar column. */
 .mission-manager__sidebar .mission-list__item-description {
   display: -webkit-box;
@@ -977,6 +990,19 @@
   color: var(--text-muted);
   line-height: 1.5;
   margin: 0;
+}
+
+.mission-detail__description .markdown-body {
+  color: inherit;
+  font-size: inherit;
+}
+
+.mission-detail__description .markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.mission-detail__description .markdown-body > :last-child {
+  margin-bottom: 0;
 }
 
 .mission-detail__meta {
@@ -1869,6 +1895,25 @@
   color: var(--text-muted);
   margin: var(--space-xs) 0 0;
   line-height: 1.4;
+}
+
+.mission-feature__description .markdown-body,
+.mission-feature__criteria .markdown-body,
+.mission-assertion__text .markdown-body {
+  color: inherit;
+  font-size: inherit;
+}
+
+.mission-feature__description .markdown-body > :first-child,
+.mission-feature__criteria .markdown-body > :first-child,
+.mission-assertion__text .markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.mission-feature__description .markdown-body > :last-child,
+.mission-feature__criteria .markdown-body > :last-child,
+.mission-assertion__text .markdown-body > :last-child {
+  margin-bottom: 0;
 }
 
 .mission-feature__criteria {

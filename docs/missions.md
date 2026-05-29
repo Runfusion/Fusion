@@ -42,6 +42,8 @@ On mobile, Mission Manager surfaces the primary **Plan New Mission** CTA at the 
 
 Mission detail refreshes now preserve expanded milestone/slice state and keep the selected milestone expanded, so persisted milestone acceptance criteria remain visible across live updates.
 
+Mission, milestone, slice, and feature read-only text surfaces in Mission Manager render Markdown (GFM) for descriptions, verification, and acceptance criteria; edit forms continue to use raw plain-text `<textarea>` inputs.
+
 ### CLI
 
 ```bash

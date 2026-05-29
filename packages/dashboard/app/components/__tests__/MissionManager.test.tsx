@@ -4625,28 +4625,81 @@ describe("MissionManager", () => {
   });
 
   describe("mission acceptance and verification visibility", () => {
-    it("renders milestone acceptance criteria, slice verification, and feature acceptance criteria", async () => {
+    it("renders markdown for mission hierarchy display surfaces while preserving labels and raw textarea editing", async () => {
       const missionDetail = JSON.parse(JSON.stringify(mockMissionDetail)) as any;
-      missionDetail.milestones[0].acceptanceCriteria = "MILESTONE_AC_MARKER";
-      missionDetail.milestones[0].slices[0].verification = "SLICE_VERIFY_MARKER";
-      missionDetail.milestones[0].slices[0].features[0].acceptanceCriteria = "FEATURE_AC_MARKER";
+      missionDetail.description = "Mission detail **DETAIL_BOLD**";
+      missionDetail.milestones[0].acceptanceCriteria = "Milestone acceptance **MILESTONE_BOLD**";
+      missionDetail.milestones[0].slices[0].verification = "- VERIFY_BULLET";
+      missionDetail.milestones[0].slices[0].features[0].description = "Feature description **FEATURE_DESC_BOLD**";
+      missionDetail.milestones[0].slices[0].features[0].acceptanceCriteria = "Feature acceptance **FEATURE_AC_BOLD**";
 
-      globalThis.fetch = createDetailFetchMockForMissionDetail(missionDetail);
+      const missionsWithMarkdown = [
+        { ...mockMissions[0], description: "Mission list **LIST_BOLD**" },
+        mockMissions[1],
+      ];
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/missions/health")) {
+          return Promise.resolve(mockApiResponse(mockMissionHealthById));
+        }
+        if (url.includes("/events")) {
+          return Promise.resolve(mockApiResponse(parseMissionEventsResponse(url, mockMissionEvents)));
+        }
+        if (url.includes("/health")) {
+          const missionId = extractMissionId(url) ?? "M-001";
+          return Promise.resolve(mockApiResponse(getMockMissionHealth(missionId)));
+        }
+        if (url.includes("/autopilot")) {
+          return Promise.resolve(mockApiResponse(mockAutopilotStatus));
+        }
+
+        const validationResponse = getValidationApiMock(url);
+        if (validationResponse !== null) {
+          return Promise.resolve(mockApiResponse(validationResponse));
+        }
+
+        if (url.includes("/api/missions/") && !url.includes("/milestones") && !url.includes("/status")) {
+          return Promise.resolve(mockApiResponse(missionDetail));
+        }
+
+        return Promise.resolve(mockApiResponse(missionsWithMarkdown));
+      });
+
       render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
-      fireEvent.click(await screen.findByText("Build Auth System"));
+      const sidebar = await screen.findByTestId("mission-sidebar");
+      const missionItem = within(sidebar).getByText("Build Auth System").closest(".mission-list__item");
+      expect(missionItem).toBeTruthy();
+      const missionDescription = within(missionItem as HTMLElement).getByText("LIST_BOLD");
+      expect(missionDescription.tagName).toBe("STRONG");
+
+      fireEvent.click(within(sidebar).getByText("Build Auth System"));
       await waitForDetailLoaded();
 
-      if (!screen.queryByText("MILESTONE_AC_MARKER")) {
-        fireEvent.click(screen.getByText("Database Schema"));
-      }
-      if (!screen.queryByText("SLICE_VERIFY_MARKER")) {
-        fireEvent.click(screen.getByText("User Tables"));
-      }
+      const detailDescription = document.querySelector(".mission-detail__description .markdown-body strong");
+      expect(detailDescription).toBeTruthy();
+      expect(detailDescription?.textContent).toBe("DETAIL_BOLD");
 
-      expect(await screen.findByText(/MILESTONE_AC_MARKER/)).toBeInTheDocument();
-      expect(await screen.findByText(/SLICE_VERIFY_MARKER/)).toBeInTheDocument();
-      expect((await screen.findAllByText(/FEATURE_AC_MARKER/)).length).toBeGreaterThan(0);
+      const milestone = screen.getByText("Database Schema").closest(".mission-milestone");
+      expect(milestone).toBeTruthy();
+      const acceptanceLabel = within(milestone as HTMLElement).getByText("Acceptance:");
+      expect(acceptanceLabel.tagName).toBe("STRONG");
+      expect(within(milestone as HTMLElement).getByText("MILESTONE_BOLD").tagName).toBe("STRONG");
+
+      const slice = screen.getByText("User Tables").closest(".mission-slice");
+      expect(slice).toBeTruthy();
+      expect(within(slice as HTMLElement).getByText("Verification:")).toBeInTheDocument();
+      expect((slice as HTMLElement).querySelectorAll("li")).toHaveLength(1);
+      expect(within(slice as HTMLElement).getByText("VERIFY_BULLET")).toBeInTheDocument();
+
+      const feature = screen.getByText("User model").closest(".mission-feature");
+      expect(feature).toBeTruthy();
+      expect(within(feature as HTMLElement).getByText("FEATURE_DESC_BOLD").tagName).toBe("STRONG");
+      expect(within(feature as HTMLElement).getByText("FEATURE_AC_BOLD").tagName).toBe("STRONG");
+
+      fireEvent.click(within(feature as HTMLElement).getByTitle("Edit feature"));
+      expect(screen.getByDisplayValue("Feature description **FEATURE_DESC_BOLD**")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Feature acceptance **FEATURE_AC_BOLD**")).toBeInTheDocument();
     });
   });
 
