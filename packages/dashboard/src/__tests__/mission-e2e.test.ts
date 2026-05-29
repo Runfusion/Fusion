@@ -66,11 +66,13 @@ function createMockMissionStore() {
   const generateAssertionId = () => `CA-MOCK${(assertionCounter++).toString(36).toUpperCase()}-TST`;
 
   return {
-    createMission: vi.fn((input: { title: string; description?: string }) => {
+    createMission: vi.fn((input: { title: string; description?: string; baseBranch?: string; branchStrategy?: Mission["branchStrategy"] }) => {
       const mission: Mission = {
         id: generateMissionId(),
         title: input.title,
         description: input.description,
+        baseBranch: input.baseBranch,
+        branchStrategy: input.branchStrategy,
         status: "planning",
         interviewState: "not_started",
         autoAdvance: false,
@@ -747,6 +749,34 @@ describe("Mission API", () => {
       expect(res.body.baseBranch).toBe("develop");
     });
 
+    it("should persist branchStrategy when provided during creation", async () => {
+      const { app } = buildApp();
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions",
+        JSON.stringify({ title: "Mission", branchStrategy: { mode: "custom-new", branchName: "feature/mission" } }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      expect(res.body.branchStrategy).toEqual({ mode: "custom-new", branchName: "feature/mission" });
+    });
+
+    it("rejects invalid branchStrategy mode", async () => {
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/missions",
+        JSON.stringify({ title: "Mission", branchStrategy: { mode: "bad-mode" } }),
+        { "content-type": "application/json" },
+      );
+      expect(res.status).toBe(400);
+      expect(String(res.body.error)).toContain("branchStrategy.mode");
+    });
+
     it("should persist auto-advance when provided during creation", async () => {
       const { app, missionStore } = buildApp();
 
@@ -1033,6 +1063,23 @@ describe("Mission API", () => {
       expect(res.body.baseBranch).toBe("release/1.0");
       const updated = missionStore.getMission(mission.id);
       expect(updated?.baseBranch).toBe("release/1.0");
+    });
+
+    it("should update mission branchStrategy", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Original Title" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/missions/${mission.id}`,
+        JSON.stringify({ branchStrategy: { mode: "auto-per-task" } }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.branchStrategy).toEqual({ mode: "auto-per-task" });
+      expect(missionStore.getMission(mission.id)?.branchStrategy).toEqual({ mode: "auto-per-task" });
     });
 
     it("should update mission title with generated-format ID", async () => {

@@ -250,12 +250,20 @@ function formatValidationState(state?: string): string {
 }
 
 // Form types
+type MissionBranchStrategyMode = "project-default" | "existing" | "custom-new" | "auto-per-task";
+
+interface MissionBranchStrategy {
+  mode: MissionBranchStrategyMode;
+  branchName?: string;
+}
+
 interface MissionFormData {
   title: string;
   description: string;
   status: MissionStatus;
   autopilotEnabled: boolean;
   baseBranch: string;
+  branchStrategy: MissionBranchStrategy;
 }
 
 interface MilestoneFormData {
@@ -285,6 +293,9 @@ const EMPTY_MISSION_FORM: MissionFormData = {
   status: "planning",
   autopilotEnabled: false,
   baseBranch: "",
+  branchStrategy: {
+    mode: "project-default",
+  },
 };
 
 const EMPTY_MILESTONE_FORM: MilestoneFormData = {
@@ -307,6 +318,53 @@ const EMPTY_FEATURE_FORM: FeatureFormData = {
   acceptanceCriteria: "",
   status: "defined",
 };
+
+function normalizeMissionBranchStrategy(strategy?: Mission["branchStrategy"]): MissionBranchStrategy {
+  if (!strategy) {
+    return { mode: "project-default" };
+  }
+
+  if (strategy.mode === "existing" || strategy.mode === "custom-new") {
+    return {
+      mode: strategy.mode,
+      branchName: strategy.branchName ?? "",
+    };
+  }
+
+  if (strategy.mode === "auto-per-task") {
+    return { mode: "auto-per-task" };
+  }
+
+  return { mode: "project-default" };
+}
+
+function toMissionBranchOptions(mission?: Mission): Parameters<typeof triageFeature>[4] | undefined {
+  if (!mission?.baseBranch && !mission?.branchStrategy) {
+    return undefined;
+  }
+
+  const strategy = mission.branchStrategy;
+  const branchSelection: NonNullable<Parameters<typeof triageFeature>[4]>["branchSelection"] = {
+    mode: "project-default",
+    ...(mission.baseBranch ? { baseBranch: mission.baseBranch } : {}),
+  };
+  const options: NonNullable<Parameters<typeof triageFeature>[4]> = { branchSelection };
+
+  if (strategy?.mode === "existing" || strategy?.mode === "custom-new") {
+    const branchName = strategy.branchName?.trim();
+    if (branchName) {
+      options.branchSelection = {
+        mode: strategy.mode,
+        branchName,
+        ...(mission.baseBranch ? { baseBranch: mission.baseBranch } : {}),
+      };
+    }
+  } else if (strategy?.mode === "auto-per-task") {
+    options.branchAssignment = { mode: "per-task-derived" };
+  }
+
+  return options;
+}
 
 type MissionHealthState = "healthy" | "warning" | "error";
 
@@ -1420,6 +1478,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       status: mission.status,
       autopilotEnabled: mission.autopilotEnabled ?? false,
       baseBranch: mission.baseBranch ?? "",
+      branchStrategy: normalizeMissionBranchStrategy(mission.branchStrategy),
     });
   }, []);
 
@@ -1435,6 +1494,19 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       return;
     }
 
+    const branchNameRequired =
+      missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new";
+    const branchName = missionForm.branchStrategy.branchName?.trim() ?? "";
+    if (branchNameRequired && !branchName) {
+      addToast("Branch name is required for selected branch strategy", "error");
+      return;
+    }
+
+    const branchStrategy: Mission["branchStrategy"] =
+      missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new"
+        ? { mode: missionForm.branchStrategy.mode, branchName }
+        : { mode: missionForm.branchStrategy.mode };
+
     try {
       setSaving(true);
       if (isCreatingMission) {
@@ -1442,6 +1514,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           title: missionForm.title.trim(),
           description: missionForm.description.trim() || undefined,
           autopilotEnabled: missionForm.autopilotEnabled,
+          baseBranch: missionForm.baseBranch.trim() || undefined,
+          branchStrategy,
         }, projectId);
         addToast("Mission created", "success");
       } else if (editingMissionId) {
@@ -1453,6 +1527,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           status: missionForm.status,
           autopilotEnabled: missionForm.autopilotEnabled,
           baseBranch: missionForm.baseBranch.trim() || "",
+          branchStrategy,
         };
         if (missionForm.autopilotEnabled) {
           updates.autoAdvance = true;
@@ -1778,14 +1853,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const handleTriageFeature = useCallback(async (featureId: string) => {
     try {
       setSaving(true);
-      await triageFeature(featureId, undefined, undefined, projectId, selectedMission?.baseBranch
-        ? {
-            branchSelection: {
-              mode: "project-default",
-              baseBranch: selectedMission.baseBranch,
-            },
-          }
-        : undefined);
+      await triageFeature(featureId, undefined, undefined, projectId, toMissionBranchOptions(selectedMission ?? undefined));
       addToast("Feature triaged — task created", "success");
       await loadMissionDetail(selectedMission!.id);
     } catch (err) {
@@ -1825,14 +1893,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const handleTriageAllSliceFeatures = useCallback(async (sliceId: string) => {
     try {
       setSaving(true);
-      const result = await triageAllSliceFeatures(sliceId, projectId, selectedMission?.baseBranch
-        ? {
-            branchSelection: {
-              mode: "project-default",
-              baseBranch: selectedMission.baseBranch,
-            },
-          }
-        : undefined);
+      const result = await triageAllSliceFeatures(sliceId, projectId, toMissionBranchOptions(selectedMission ?? undefined));
       addToast(`Triaged ${result.count} feature${result.count !== 1 ? "s" : ""}`, "success");
       await loadMissionDetail(selectedMission!.id);
     } catch (err) {
@@ -2460,6 +2521,47 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       aria-label="Mission target branch"
                     />
                   </label>
+                  <label>
+                    Branch strategy
+                    <select
+                      value={missionForm.branchStrategy.mode}
+                      onChange={(e) =>
+                        setMissionForm({
+                          ...missionForm,
+                          branchStrategy: {
+                            mode: e.target.value as MissionBranchStrategyMode,
+                            branchName: missionForm.branchStrategy.branchName,
+                          },
+                        })
+                      }
+                      aria-label="Mission branch strategy"
+                    >
+                      <option value="project-default">Use project/default branch</option>
+                      <option value="auto-per-task">Auto-name a branch per task (from details)</option>
+                      <option value="existing">Use existing branch</option>
+                      <option value="custom-new">Create custom branch</option>
+                    </select>
+                  </label>
+                  {(missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new") && (
+                    <label>
+                      Branch name
+                      <input
+                        type="text"
+                        placeholder="e.g. feature/mission-work"
+                        value={missionForm.branchStrategy.branchName ?? ""}
+                        onChange={(e) =>
+                          setMissionForm({
+                            ...missionForm,
+                            branchStrategy: {
+                              ...missionForm.branchStrategy,
+                              branchName: e.target.value,
+                            },
+                          })
+                        }
+                        aria-label="Mission branch name"
+                      />
+                    </label>
+                  )}
                   <div className="mission-form-card__row">
                     <select
                       value={missionForm.status}
@@ -4056,6 +4158,57 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     onChange={(e) => setMissionForm({ ...missionForm, description: e.target.value })}
                     rows={2}
                   />
+                  <label>
+                    Target branch
+                    <input
+                      type="text"
+                      placeholder="e.g. main"
+                      value={missionForm.baseBranch}
+                      onChange={(e) => setMissionForm({ ...missionForm, baseBranch: e.target.value })}
+                      aria-label="Mission target branch"
+                    />
+                  </label>
+                  <label>
+                    Branch strategy
+                    <select
+                      value={missionForm.branchStrategy.mode}
+                      onChange={(e) =>
+                        setMissionForm({
+                          ...missionForm,
+                          branchStrategy: {
+                            mode: e.target.value as MissionBranchStrategyMode,
+                            branchName: missionForm.branchStrategy.branchName,
+                          },
+                        })
+                      }
+                      aria-label="Mission branch strategy"
+                    >
+                      <option value="project-default">Use project/default branch</option>
+                      <option value="auto-per-task">Auto-name a branch per task (from details)</option>
+                      <option value="existing">Use existing branch</option>
+                      <option value="custom-new">Create custom branch</option>
+                    </select>
+                  </label>
+                  {(missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new") && (
+                    <label>
+                      Branch name
+                      <input
+                        type="text"
+                        placeholder="e.g. feature/mission-work"
+                        value={missionForm.branchStrategy.branchName ?? ""}
+                        onChange={(e) =>
+                          setMissionForm({
+                            ...missionForm,
+                            branchStrategy: {
+                              ...missionForm.branchStrategy,
+                              branchName: e.target.value,
+                            },
+                          })
+                        }
+                        aria-label="Mission branch name"
+                      />
+                    </label>
+                  )}
                   <div className="mission-form-card__actions">
                     <button className="mission-btn mission-btn--primary" onClick={handleSaveMission} disabled={saving}>
                       {saving ? <Loader2 size={14} className="spinner" /> : <Check size={14} />}
@@ -4121,6 +4274,47 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       aria-label="Mission target branch"
                     />
                   </label>
+                  <label>
+                    Branch strategy
+                    <select
+                      value={missionForm.branchStrategy.mode}
+                      onChange={(e) =>
+                        setMissionForm({
+                          ...missionForm,
+                          branchStrategy: {
+                            mode: e.target.value as MissionBranchStrategyMode,
+                            branchName: missionForm.branchStrategy.branchName,
+                          },
+                        })
+                      }
+                      aria-label="Mission branch strategy"
+                    >
+                      <option value="project-default">Use project/default branch</option>
+                      <option value="auto-per-task">Auto-name a branch per task (from details)</option>
+                      <option value="existing">Use existing branch</option>
+                      <option value="custom-new">Create custom branch</option>
+                    </select>
+                  </label>
+                  {(missionForm.branchStrategy.mode === "existing" || missionForm.branchStrategy.mode === "custom-new") && (
+                    <label>
+                      Branch name
+                      <input
+                        type="text"
+                        placeholder="e.g. feature/mission-work"
+                        value={missionForm.branchStrategy.branchName ?? ""}
+                        onChange={(e) =>
+                          setMissionForm({
+                            ...missionForm,
+                            branchStrategy: {
+                              ...missionForm.branchStrategy,
+                              branchName: e.target.value,
+                            },
+                          })
+                        }
+                        aria-label="Mission branch name"
+                      />
+                    </label>
+                  )}
                   <div className="mission-form-card__row">
                     <select
                       value={missionForm.status}

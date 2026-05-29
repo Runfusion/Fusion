@@ -18,6 +18,7 @@ import { TaskStore, resolvePlanningSettingsModel } from "@fusion/core";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import type {
   Mission,
+  MissionBranchStrategy,
   Milestone,
   Slice,
   MissionFeature,
@@ -132,6 +133,38 @@ function validateBoolean(value: unknown, fieldName: string): boolean {
     throw new Error(`${fieldName} must be a boolean`);
   }
   return value;
+}
+
+function validateMissionBranchStrategy(value: unknown): MissionBranchStrategy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object") {
+    throw new Error("branchStrategy must be an object");
+  }
+  const input = value as Record<string, unknown>;
+  const mode = input.mode;
+  if (
+    mode !== "project-default" &&
+    mode !== "existing" &&
+    mode !== "custom-new" &&
+    mode !== "auto-per-task"
+  ) {
+    throw new Error("branchStrategy.mode must be one of: project-default, existing, custom-new, auto-per-task");
+  }
+  const branchName = input.branchName;
+  if (branchName !== undefined && typeof branchName !== "string") {
+    throw new Error("branchStrategy.branchName must be a string when provided");
+  }
+  const trimmedBranchName = branchName?.trim();
+  if ((mode === "existing" || mode === "custom-new") && !trimmedBranchName) {
+    throw new Error("branchStrategy.branchName is required for existing/custom-new");
+  }
+  if (mode === "project-default" || mode === "auto-per-task") {
+    return { mode };
+  }
+  return {
+    mode,
+    branchName: trimmedBranchName,
+  };
 }
 
 function validateOrderedIds(body: unknown): string[] {
@@ -299,7 +332,7 @@ export function createMissionRouter(
   router.post(
     "/",
     catchTypedHandler(async (req, res) => {
-      const { title, description, autoAdvance, autopilotEnabled, baseBranch } = req.body;
+      const { title, description, autoAdvance, autopilotEnabled, baseBranch, branchStrategy } = req.body;
 
       const validatedTitle = validateTitle(title);
       const validatedDescription = validateDescription(description);
@@ -308,6 +341,7 @@ export function createMissionRouter(
         title: validatedTitle,
         description: validatedDescription,
         baseBranch: validateDescription(baseBranch),
+        branchStrategy: validateMissionBranchStrategy(branchStrategy),
       };
 
       const mission = missionStore.createMission(input);
@@ -880,7 +914,7 @@ export function createMissionRouter(
     "/:missionId",
     catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
-      const { title, description, status, autoAdvance, autopilotEnabled, baseBranch } = req.body;
+      const { title, description, status, autoAdvance, autopilotEnabled, baseBranch, branchStrategy } = req.body;
 
       if (!validateMissionId(missionId)) {
         throw badRequest("Invalid mission ID format");
@@ -905,6 +939,9 @@ export function createMissionRouter(
       }
       if (baseBranch !== undefined) {
         updates.baseBranch = validateDescription(baseBranch);
+      }
+      if (branchStrategy !== undefined) {
+        updates.branchStrategy = validateMissionBranchStrategy(branchStrategy);
       }
 
       if (Object.keys(updates).length === 0) {

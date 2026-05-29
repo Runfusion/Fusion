@@ -3426,10 +3426,25 @@ export function createTasksFromPlanning(
   planningSessionId: string,
   subtasks: PlanningSubtaskDraft[],
   projectId?: string,
+  options?: {
+    branchSelection?: {
+      mode: "project-default" | "auto-new" | "existing" | "custom-new";
+      branchName?: string;
+      baseBranch?: string;
+    };
+    branchAssignment?: {
+      mode: "shared" | "per-task-derived";
+    };
+  },
 ): Promise<{ tasks: Task[] }> {
   return api<{ tasks: Task[] }>(withProjectId("/planning/create-tasks", projectId), {
     method: "POST",
-    body: JSON.stringify({ planningSessionId, subtasks }),
+    body: JSON.stringify({
+      planningSessionId,
+      subtasks,
+      ...(options?.branchSelection ? { branchSelection: options.branchSelection } : {}),
+      ...(options?.branchAssignment ? { branchAssignment: options.branchAssignment } : {}),
+    }),
   });
 }
 
@@ -6803,6 +6818,10 @@ export interface Mission {
   title: string;
   description?: string;
   baseBranch?: string;
+  branchStrategy?: {
+    mode: "project-default" | "existing" | "custom-new" | "auto-per-task";
+    branchName?: string;
+  };
   status: MissionStatus;
   interviewState: "not_started" | "in_progress" | "completed" | "needs_update";
   autoAdvance?: boolean;
@@ -6890,7 +6909,7 @@ export function fetchMissions(projectId?: string): Promise<MissionWithSummary[]>
 }
 
 /** Create a new mission */
-export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; baseBranch?: string }, projectId?: string): Promise<Mission> {
+export function createMission(input: { title: string; description?: string; autoAdvance?: boolean; autopilotEnabled?: boolean; baseBranch?: string; branchStrategy?: Mission["branchStrategy"] }, projectId?: string): Promise<Mission> {
   return api<Mission>(withProjectId("/missions", projectId), {
     method: "POST",
     body: JSON.stringify(input),

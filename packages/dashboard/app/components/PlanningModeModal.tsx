@@ -1643,6 +1643,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           })),
         ),
         projectId,
+        {
+          branchSelection: {
+            mode: branchMode,
+            ...(branchMode === "existing" || branchMode === "custom-new" ? { branchName: branchName.trim() } : {}),
+            ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
+          },
+        },
       );
       onTasksCreated(result.tasks);
       // Server cleans up the planning session after task creation; mirror that
@@ -1674,7 +1681,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       setIsCreatingFromBreakdown(false);
     }
-  }, [broadcastCompleted, handleClose, view, onTasksCreated, projectId]);
+  }, [baseBranch, branchMode, branchName, broadcastCompleted, handleClose, view, onTasksCreated, projectId]);
 
   const handleBack = useCallback(async () => {
     if (view.type !== "question" || responseHistory.length === 0) {

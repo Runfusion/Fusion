@@ -4703,6 +4703,106 @@ describe("MissionManager", () => {
     });
   });
 
+  describe("mission branch strategy controls", () => {
+    it("renders branch strategy selector and toggles branch-name input", async () => {
+      globalThis.fetch = createFetchMock();
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("Build Auth System"));
+      await waitForDetailLoaded();
+      fireEvent.click(screen.getByLabelText("Edit mission"));
+
+      const strategySelect = await screen.findByLabelText("Mission branch strategy");
+      expect(strategySelect).toBeInTheDocument();
+      expect(screen.queryByLabelText("Mission branch name")).toBeNull();
+
+      fireEvent.change(strategySelect, { target: { value: "existing" } });
+      expect(await screen.findByLabelText("Mission branch name")).toBeInTheDocument();
+    });
+
+    it("sends branch strategy and base branch on mission update", async () => {
+      const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/missions/M-001") && init?.method === "PATCH") {
+          return Promise.resolve(mockApiResponse(mockMissionDetail));
+        }
+        return createFetchMock()(input, init);
+      });
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("Build Auth System"));
+      await waitForDetailLoaded();
+      fireEvent.click(screen.getByLabelText("Edit mission"));
+
+      fireEvent.change(screen.getByLabelText("Mission target branch"), { target: { value: "release/2026" } });
+      fireEvent.change(screen.getByLabelText("Mission branch strategy"), { target: { value: "custom-new" } });
+      fireEvent.change(await screen.findByLabelText("Mission branch name"), { target: { value: "feature/mission-custom" } });
+      fireEvent.click(screen.getByRole("button", { name: "Update" }));
+
+      await waitFor(() => {
+        const patchCall = fetchSpy.mock.calls.find(([input, init]) =>
+          String(input).includes("/api/missions/M-001") && init?.method === "PATCH",
+        );
+        expect(patchCall).toBeTruthy();
+        const body = JSON.parse(String(patchCall?.[1]?.body ?? "{}"));
+        expect(body.baseBranch).toBe("release/2026");
+        expect(body.branchStrategy).toEqual({ mode: "custom-new", branchName: "feature/mission-custom" });
+      });
+    });
+
+    it("maps mission branch strategy into triage branch options", async () => {
+      const triageMission = {
+        ...mockMissionDetail,
+        baseBranch: "main",
+        branchStrategy: { mode: "auto-per-task" as const },
+      };
+
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/missions/M-001") && !url.includes("/milestones") && !url.includes("/events") && !url.includes("/health")) {
+          return Promise.resolve(mockApiResponse(triageMission));
+        }
+        return createFetchMock()(input);
+      }) as unknown as typeof fetch;
+
+      render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Build Auth System")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("Build Auth System"));
+      await waitForDetailLoaded();
+
+      mockPreviewEnrichedDescription.mockRejectedValueOnce(new Error("skip preview"));
+      fireEvent.click(screen.getByTitle("Triage — create task"));
+
+      await waitFor(() => {
+        expect(mockTriageFeature).toHaveBeenCalled();
+      });
+
+      expect(mockTriageFeature).toHaveBeenCalledWith(
+        "F-001",
+        undefined,
+        undefined,
+        undefined,
+        {
+          branchSelection: { mode: "project-default", baseBranch: "main" },
+          branchAssignment: { mode: "per-task-derived" },
+        },
+      );
+    });
+  });
+
   describe("MissionManager tokenized sizing regression", () => {
     it("does not retain targeted hardcoded px literals in MissionManager selectors", async () => {
       const css = await loadAllAppCssBaseOnly();

@@ -675,6 +675,7 @@ export type {
   MissionEventType,
   AutopilotStatus,
   Mission,
+  MissionBranchStrategy,
   Milestone,
   Slice,
   MissionFeature,

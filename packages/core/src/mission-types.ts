@@ -113,6 +113,11 @@ export interface MissionHealth {
  * A Mission represents a high-level objective or project.
  * Missions contain milestones that break down the work into phases.
  */
+export type MissionBranchStrategy = {
+  mode: "project-default" | "existing" | "custom-new" | "auto-per-task";
+  branchName?: string;
+};
+
 export interface Mission {
   /** Unique identifier (e.g., "M-LZ7DN0-A2B5") */
   id: string;
@@ -124,6 +129,8 @@ export interface Mission {
   status: MissionStatus;
   /** Optional integration base branch inherited by triaged feature tasks */
   baseBranch?: string;
+  /** Mission triage branch strategy: auto-per-task => assignmentMode "per-task-derived"; existing/custom-new => shared branchName; project-default/absent => shared default behavior. */
+  branchStrategy?: MissionBranchStrategy;
   /** State of the AI specification interview process */
   interviewState: InterviewState;
   /**
@@ -375,6 +382,8 @@ export interface MissionCreateInput {
   description?: string;
   /** Optional integration base branch for tasks created from this mission */
   baseBranch?: string;
+  /** Optional branch strategy applied as the default for mission triage operations. */
+  branchStrategy?: MissionBranchStrategy;
   /** Optional mission-level auto-merge override for linked task branches. */
   autoMerge?: boolean;
 }

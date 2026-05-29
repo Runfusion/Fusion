@@ -34,6 +34,19 @@ Precedence order during triage:
 2. Mission `baseBranch`
 3. Project default branch resolution
 
+### Mission branch strategy defaults
+
+Missions can also persist a `branchStrategy` used whenever triage is triggered without explicit branch options (manual triage and autopilot triage).
+
+Supported modes:
+
+- `project-default` (or absent): shared branch behavior; no per-task derivation
+- `auto-per-task`: sets `branchAssignment.mode = "per-task-derived"` (task branches auto-derived from task details)
+- `existing`: shared branch using `branchSelection.mode = "existing"` with `branchName`
+- `custom-new`: shared branch using `branchSelection.mode = "custom-new"` with `branchName`
+
+The Mission Manager create/edit form exposes this as **Branch strategy** plus a conditional **Branch name** field for `existing` and `custom-new`.
+
 ### Dashboard
 
 Use the Mission Manager UI to create missions and build hierarchy interactively.

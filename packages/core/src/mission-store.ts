@@ -16,6 +16,7 @@ import type { Database } from "./db.js";
 import { fromJson, toJson, toJsonNullable } from "./db.js";
 import type {
   Mission,
+  MissionBranchStrategy,
   Milestone,
   Slice,
   MissionFeature,
@@ -62,6 +63,22 @@ import { reconcileDeterministicDuplicate, runDeterministicDuplicateGuard } from 
  * 'blocked' state instead of transitioning to 'implementing'.
  */
 const DEFAULT_IMPLEMENTATION_RETRY_BUDGET = 3;
+
+function missionBranchStrategyDefaults(strategy?: MissionBranchStrategy): {
+  branch?: string;
+  assignmentMode: "shared" | "per-task-derived";
+} {
+  if (!strategy) {
+    return { assignmentMode: "shared" };
+  }
+  if (strategy.mode === "auto-per-task") {
+    return { assignmentMode: "per-task-derived" };
+  }
+  if ((strategy.mode === "existing" || strategy.mode === "custom-new") && strategy.branchName?.trim()) {
+    return { branch: strategy.branchName.trim(), assignmentMode: "shared" };
+  }
+  return { assignmentMode: "shared" };
+}
 
 export function deriveMilestoneAcceptanceCriteriaFromFeatures(features: MissionFeature[]): string | undefined {
   const lines = features
@@ -189,6 +206,7 @@ interface MissionRow {
   status: string;
   interviewState: string;
   baseBranch: string | null;
+  branchStrategy: string | null;
   autoMerge: number | null;
   autoAdvance: number;
   autopilotEnabled: number;
@@ -356,6 +374,15 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * Convert a database row to a Mission object.
    */
   private rowToMission(row: MissionRow): Mission {
+    let branchStrategy: MissionBranchStrategy | undefined;
+    if (row.branchStrategy) {
+      try {
+        branchStrategy = JSON.parse(row.branchStrategy) as MissionBranchStrategy;
+      } catch {
+        branchStrategy = undefined;
+      }
+    }
+
     return {
       id: row.id,
       title: row.title,
@@ -363,6 +390,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       status: row.status as MissionStatus,
       interviewState: row.interviewState as InterviewState,
       baseBranch: row.baseBranch || undefined,
+      branchStrategy,
       autoMerge: row.autoMerge === null ? undefined : Boolean(row.autoMerge),
       autoAdvance: Boolean(row.autoAdvance),
       autopilotEnabled: Boolean(row.autopilotEnabled),
@@ -555,6 +583,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       status: "planning",
       interviewState: "not_started",
       baseBranch: input.baseBranch,
+      branchStrategy: input.branchStrategy,
       autoMerge: input.autoMerge,
       autoAdvance: false,
       autopilotEnabled: input.autopilotEnabled ?? false,
@@ -564,8 +593,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     };
 
     this.db.prepare(`
-      INSERT INTO missions (id, title, description, status, interviewState, baseBranch, autoMerge, autoAdvance, autopilotEnabled, autopilotState, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO missions (id, title, description, status, interviewState, baseBranch, branchStrategy, autoMerge, autoAdvance, autopilotEnabled, autopilotState, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       mission.id,
       mission.title,
@@ -573,6 +602,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       mission.status,
       mission.interviewState,
       mission.baseBranch ?? null,
+      mission.branchStrategy ? JSON.stringify(mission.branchStrategy) : null,
       mission.autoMerge === undefined ? null : (mission.autoMerge ? 1 : 0),
       mission.autoAdvance ? 1 : 0,
       mission.autopilotEnabled ? 1 : 0,
@@ -1126,6 +1156,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         status = ?,
         interviewState = ?,
         baseBranch = ?,
+        branchStrategy = ?,
         autoMerge = ?,
         autoAdvance = ?,
         autopilotEnabled = ?,
@@ -1139,6 +1170,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       updated.status,
       updated.interviewState,
       updated.baseBranch ?? null,
+      updated.branchStrategy ? JSON.stringify(updated.branchStrategy) : null,
       updated.autoMerge === undefined ? null : (updated.autoMerge ? 1 : 0),
       updated.autoAdvance ? 1 : 0,
       updated.autopilotEnabled ? 1 : 0,
@@ -3305,7 +3337,10 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const milestone = slice ? this.getMilestone(slice.milestoneId) : undefined;
     const missionId = milestone?.missionId;
     const mission = missionId ? this.getMission(missionId) : undefined;
+    const strategyDefaults = missionBranchStrategyDefaults(mission?.branchStrategy);
     const resolvedBaseBranch = branchOptions?.baseBranch ?? mission?.baseBranch;
+    const resolvedBranch = branchOptions?.branch ?? strategyDefaults.branch;
+    const resolvedAssignmentMode = branchOptions?.assignmentMode ?? strategyDefaults.assignmentMode;
 
     const lockScope = missionId ? `mission:${missionId}` : `mission-store:${this.taskStore.getRootDir()}`;
     const guard = await runDeterministicDuplicateGuard(this.taskStore, {
@@ -3321,14 +3356,14 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         const createdTask = await this.taskStore.createTask({
           title: taskTitle || feature.title,
           description,
-          branch: branchOptions?.branch,
+          branch: resolvedBranch,
           baseBranch: resolvedBaseBranch,
           ...(missionId
             ? {
                 branchContext: {
                   groupId: `mission:${missionId}`,
                   source: "mission" as const,
-                  assignmentMode: branchOptions?.assignmentMode ?? "shared",
+                  assignmentMode: resolvedAssignmentMode,
                   inheritedBaseBranch: resolvedBaseBranch,
                 },
               }
@@ -3389,17 +3424,21 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const definedFeatures = features.filter((f) => f.status === "defined");
     const milestone = this.getMilestone(slice.milestoneId);
     const mission = milestone ? this.getMission(milestone.missionId) : undefined;
+    const strategyDefaults = missionBranchStrategyDefaults(mission?.branchStrategy);
     const resolvedBaseBranch = branchOptions?.baseBranch ?? mission?.baseBranch;
+    const resolvedAssignmentMode = branchOptions?.assignmentMode ?? strategyDefaults.assignmentMode;
+    const resolvedBranch = branchOptions?.branch ?? strategyDefaults.branch;
 
     const triaged: MissionFeature[] = [];
     for (const feature of definedFeatures) {
-      const branch = branchOptions?.assignmentMode === "per-task-derived"
-        ? (branchOptions?.branch ? `${branchOptions.branch}/${feature.id.toLowerCase()}` : undefined)
-        : branchOptions?.branch;
+      const strategyBranch = resolvedAssignmentMode === "per-task-derived"
+        ? (resolvedBranch ? `${resolvedBranch}/${feature.id.toLowerCase()}` : undefined)
+        : resolvedBranch;
       const updated = await this.triageFeature(feature.id, undefined, undefined, {
-        ...branchOptions,
-        branch,
+        branch: strategyBranch,
         baseBranch: resolvedBaseBranch,
+        assignmentMode: resolvedAssignmentMode,
+        ...branchOptions,
       });
       triaged.push(updated);
     }
@@ -3589,13 +3628,14 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     let applied = 0;
 
     for (const mission of snapshot.payload.missions) {
-      this.db.prepare(`INSERT INTO missions (id, title, description, status, interviewState, autoMerge, autoAdvance, autopilotEnabled, autopilotState, lastAutopilotActivityAt, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.db.prepare(`INSERT INTO missions (id, title, description, status, interviewState, baseBranch, branchStrategy, autoMerge, autoAdvance, autopilotEnabled, autopilotState, lastAutopilotActivityAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title=excluded.title, description=excluded.description, status=excluded.status, interviewState=excluded.interviewState,
-          autoMerge=excluded.autoMerge, autoAdvance=excluded.autoAdvance, autopilotEnabled=excluded.autopilotEnabled, autopilotState=excluded.autopilotState,
+          baseBranch=excluded.baseBranch, branchStrategy=excluded.branchStrategy, autoMerge=excluded.autoMerge, autoAdvance=excluded.autoAdvance, autopilotEnabled=excluded.autopilotEnabled, autopilotState=excluded.autopilotState,
           lastAutopilotActivityAt=excluded.lastAutopilotActivityAt, updatedAt=excluded.updatedAt`).run(
         mission.id, mission.title, mission.description ?? null, mission.status, mission.interviewState,
+        mission.baseBranch ?? null, mission.branchStrategy ? JSON.stringify(mission.branchStrategy) : null,
         mission.autoMerge === undefined ? null : (mission.autoMerge ? 1 : 0), mission.autoAdvance ? 1 : 0,
         mission.autopilotEnabled ? 1 : 0, mission.autopilotState, mission.lastAutopilotActivityAt ?? null, mission.createdAt, mission.updatedAt,
       );

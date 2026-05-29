@@ -97,6 +97,35 @@ describe("MissionStore", () => {
       expect(list[2].id).toBe(m1.id);
     });
 
+    it("round-trips mission branchStrategy on create", () => {
+      const mission = store.createMission({
+        title: "Branch strategy",
+        branchStrategy: { mode: "custom-new", branchName: "feature/mission" },
+      });
+
+      const fetched = store.getMission(mission.id);
+      expect(fetched?.branchStrategy).toEqual({ mode: "custom-new", branchName: "feature/mission" });
+    });
+
+    it("updates mission branchStrategy", () => {
+      const mission = store.createMission({ title: "Original" });
+      const updated = store.updateMission(mission.id, {
+        branchStrategy: { mode: "auto-per-task" },
+      });
+
+      expect(updated.branchStrategy).toEqual({ mode: "auto-per-task" });
+      expect(store.getMission(mission.id)?.branchStrategy).toEqual({ mode: "auto-per-task" });
+    });
+
+    it("reads undefined branchStrategy for legacy and corrupt rows", () => {
+      const mission = store.createMission({ title: "Legacy row" });
+      db.prepare("UPDATE missions SET branchStrategy = NULL WHERE id = ?").run(mission.id);
+      expect(store.getMission(mission.id)?.branchStrategy).toBeUndefined();
+
+      db.prepare("UPDATE missions SET branchStrategy = ? WHERE id = ?").run("{not-json", mission.id);
+      expect(store.getMission(mission.id)?.branchStrategy).toBeUndefined();
+    });
+
     it("updates a mission", async () => {
       const mission = store.createMission({ title: "Original" });
       await new Promise((r) => setTimeout(r, 5)); // Ensure timestamp difference
@@ -1901,6 +1930,62 @@ describe("MissionStore", () => {
       expect(task?.baseBranch).toBe("release/1.0");
     });
 
+    it("uses mission branchStrategy auto-per-task when branch options are omitted", async () => {
+      const { TaskStore } = await import("../store.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission", branchStrategy: { mode: "auto-per-task" } });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, { title: "Original" });
+
+      const triaged = await msWithTs.triageFeature(feature.id);
+      const task = await ts.getTask(triaged.taskId!);
+
+      expect(task?.branchContext?.assignmentMode).toBe("per-task-derived");
+    });
+
+    it("uses mission branchStrategy existing branch when branch options are omitted", async () => {
+      const { TaskStore } = await import("../store.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({
+        title: "Mission",
+        branchStrategy: { mode: "existing", branchName: "release/shared" },
+      });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, { title: "Original" });
+
+      const triaged = await msWithTs.triageFeature(feature.id);
+      const task = await ts.getTask(triaged.taskId!);
+
+      expect(task?.branch).toBe("release/shared");
+      expect(task?.branchContext?.assignmentMode).toBe("shared");
+    });
+
+    it("explicit branch options override mission branchStrategy defaults", async () => {
+      const { TaskStore } = await import("../store.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({ title: "Mission", branchStrategy: { mode: "auto-per-task" } });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const feature = msWithTs.addFeature(slice.id, { title: "Original" });
+
+      const triaged = await msWithTs.triageFeature(feature.id, undefined, undefined, {
+        branch: "hotfix/shared",
+        assignmentMode: "shared",
+      });
+      const task = await ts.getTask(triaged.taskId!);
+
+      expect(task?.branch).toBe("hotfix/shared");
+      expect(task?.branchContext?.assignmentMode).toBe("shared");
+    });
+
     it("uses provided title and description overrides", async () => {
       const { TaskStore } = await import("../store.js");
       const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
@@ -2080,6 +2165,52 @@ describe("MissionStore", () => {
       expect(task?.baseBranch).toBe("develop");
     });
 
+    it("triageSlice uses mission auto-per-task branchStrategy defaults", async () => {
+      const { TaskStore } = await import("../store.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({
+        title: "Mission",
+        branchStrategy: { mode: "auto-per-task" },
+      });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      const f1 = msWithTs.addFeature(slice.id, { title: "Feature 1" });
+
+      const triaged = await msWithTs.triageSlice(slice.id);
+      const task = await ts.getTask(triaged[0].taskId!);
+
+      expect(triaged[0].id).toBe(f1.id);
+      expect(task?.branchContext?.assignmentMode).toBe("per-task-derived");
+    });
+
+    it("triageSlice respects explicit branch options over mission strategy defaults", async () => {
+      const { TaskStore } = await import("../store.js");
+      const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
+      const msWithTs = ts.getMissionStore();
+
+      const mission = msWithTs.createMission({
+        title: "Mission",
+        baseBranch: "develop",
+        branchStrategy: { mode: "auto-per-task" },
+      });
+      const milestone = msWithTs.addMilestone(mission.id, { title: "Milestone" });
+      const slice = msWithTs.addSlice(milestone.id, { title: "Slice" });
+      msWithTs.addFeature(slice.id, { title: "Feature 1" });
+
+      const triaged = await msWithTs.triageSlice(slice.id, {
+        branch: "feature/manual",
+        assignmentMode: "shared",
+        baseBranch: "release",
+      });
+      const task = await ts.getTask(triaged[0].taskId!);
+
+      expect(task?.branch).toBe("feature/manual");
+      expect(task?.baseBranch).toBe("release");
+      expect(task?.branchContext?.assignmentMode).toBe("shared");
+    });
+
     it("triageSlice does not inject baseBranch when mission has none", async () => {
       const { TaskStore } = await import("../store.js");
       const ts = new TaskStore(tmpDir, join(tmpDir, ".fusion-global-settings"), { inMemoryDb: true });
@@ -2157,6 +2288,21 @@ describe("MissionStore", () => {
       expect(task2).toBeDefined();
       expect(task2!.sliceId).toBe(slice.id);
       expect(task2!.missionId).toBe(mission.id);
+    });
+
+    it("auto-triage uses mission branchStrategy defaults", async () => {
+      const { ts, ms } = await createStoreWithTaskStore();
+
+      const mission = ms.createMission({ title: "Mission", branchStrategy: { mode: "auto-per-task" } });
+      ms.updateMission(mission.id, { autoAdvance: true });
+      const milestone = ms.addMilestone(mission.id, { title: "Milestone" });
+      const slice = ms.addSlice(milestone.id, { title: "Slice" });
+      const feature = ms.addFeature(slice.id, { title: "Feature 1" });
+
+      await ms.activateSlice(slice.id);
+
+      const task = await ts.getTask(ms.getFeature(feature.id)!.taskId!);
+      expect(task?.branchContext?.assignmentMode).toBe("per-task-derived");
     });
 
     it("does not triage features when autoAdvance is false", async () => {
@@ -3036,7 +3182,7 @@ describe("MissionStore", () => {
 
   describe("Loop State & Validator Run Schema (v31)", () => {
     it("schema version is 40 after migration", () => {
-      expect(db.getSchemaVersion()).toBe(97);
+      expect(db.getSchemaVersion()).toBe(98);
     });
 
     it("mission_features table has loop state columns", () => {

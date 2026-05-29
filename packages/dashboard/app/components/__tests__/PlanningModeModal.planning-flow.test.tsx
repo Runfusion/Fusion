@@ -1184,6 +1184,93 @@ describe("PlanningModeModal", () => {
       expect(screen.getByRole("textbox", { name: "Branch name" })).toBeDefined();
     });
 
+    it("forwards selected branchSelection when creating tasks from breakdown", async () => {
+      const resumedSummary: PlanningSummary = {
+        title: "Resume-branch-breakdown",
+        description: "Recovered summary for branch breakdown",
+        suggestedSize: "M",
+        suggestedDependencies: [],
+        keyDeliverables: ["Implement", "Verify"],
+      };
+
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-branch-breakdown",
+        type: "planning",
+        status: "complete",
+        title: "Resume-branch-breakdown",
+        inputPayload: JSON.stringify({ initialPlan: "Recover and create breakdown with branch controls" }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: JSON.stringify(resumedSummary),
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      mockStartPlanningBreakdown.mockResolvedValueOnce({
+        sessionId: "session-branch-breakdown",
+        subtasks: [
+          {
+            id: "subtask-1",
+            title: "First subtask",
+            description: "First description",
+            suggestedSize: "M",
+            dependsOn: [],
+          },
+        ],
+      });
+      mockCreateTasksFromPlanning.mockResolvedValueOnce({ tasks: [] });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-branch-breakdown"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeDefined();
+      });
+
+      const branchStrategy = screen.getByRole("combobox", { name: "Branch strategy" }) as HTMLSelectElement;
+      fireEvent.change(branchStrategy, { target: { value: "existing" } });
+      fireEvent.change(screen.getByRole("textbox", { name: "Branch name" }), {
+        target: { value: "feat/planning-branch" },
+      });
+      fireEvent.change(screen.getByRole("textbox", { name: "Merge target / base branch (optional)" }), {
+        target: { value: "develop" },
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Break into Tasks" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Create Tasks" })).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Create Tasks" }));
+
+      await waitFor(() => {
+        expect(mockCreateTasksFromPlanning).toHaveBeenCalledWith(
+          "session-branch-breakdown",
+          [{ id: "subtask-1" }],
+          undefined,
+          {
+            branchSelection: {
+              mode: "existing",
+              branchName: "feat/planning-branch",
+              baseBranch: "develop",
+            },
+          },
+        );
+      });
+    });
+
     it("preserves per-subtask priority selections when creating tasks from breakdown", async () => {
       const resumedSummary: PlanningSummary = {
         title: "Resume-to-breakdown-priority",
@@ -1253,6 +1340,7 @@ describe("PlanningModeModal", () => {
           "session-breakdown-priority",
           [{ id: "subtask-1", priority: "urgent" }],
           undefined,
+          { branchSelection: { mode: "project-default" } },
         );
       });
     });
@@ -1342,6 +1430,7 @@ describe("PlanningModeModal", () => {
             { id: "subtask-2", description: "Edited second description" },
           ],
           undefined,
+          { branchSelection: { mode: "project-default" } },
         );
       });
     });
@@ -1429,6 +1518,7 @@ describe("PlanningModeModal", () => {
             },
           ],
           undefined,
+          { branchSelection: { mode: "project-default" } },
         );
       });
     });
@@ -1508,6 +1598,7 @@ describe("PlanningModeModal", () => {
           "session-breakdown-remove-subtask",
           [{ id: "subtask-1" }],
           undefined,
+          { branchSelection: { mode: "project-default" } },
         );
       });
     });
