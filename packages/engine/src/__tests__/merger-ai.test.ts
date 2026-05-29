@@ -148,9 +148,12 @@ describe("runAiMerge", () => {
     expect(mainAfter).not.toBe(mainBefore);
     // The squash landed the feature file.
     expect(existsSync(join(dir, "feature.txt"))).toBe(true);
-    // The landed commit carries the board-association trailer even though the
-    // (mock) merge agent committed without it — ensureTaskTrailersOnHead adds it.
-    expect(git(dir, "log -1 --pretty=%B main")).toContain("Fusion-Task-Id: FN-1");
+    // The landed commit carries the board-association trailer AND its subject
+    // starts with the task id, even though the (mock) merge agent committed
+    // "squash: feature" without either — ensureCommitTaskMetadata adds both.
+    const landedMsg = git(dir, "log -1 --pretty=%B main");
+    expect(landedMsg).toContain("Fusion-Task-Id: FN-1");
+    expect(git(dir, "log -1 --pretty=%s main")).toMatch(/^FN-1: /);
     // Task moved to done + event emitted.
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done");
     expect(emitted.some((e) => e.event === "task:merged")).toBe(true);

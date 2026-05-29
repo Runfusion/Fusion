@@ -92,16 +92,37 @@ function taskTrailers(taskId: string, lineageId?: string | null): string[] {
   return trailers;
 }
 
-/** Idempotently guarantee the task trailers are on HEAD — a safety net so board
- *  association holds even if the AI agent omitted them from its commit. */
-async function ensureTaskTrailersOnHead(mergeRoot: string, trailers: string[]): Promise<void> {
-  const existing = await git(["log", "-1", "--pretty=%B"], mergeRoot).catch(() => "");
-  const missing = trailers.filter((t) => !existing.includes(t));
-  if (missing.length === 0) return;
-  const args = ["-c", "trailer.ifExists=addIfDifferent", "commit", "--amend", "--no-edit"];
-  for (const t of missing) args.push("--trailer", t);
+/** Idempotently guarantee the squash commit's task metadata — a safety net so
+ *  board association and the task-id prefix hold even if the AI agent omitted
+ *  them: the subject starts with `<taskId>:` (when includeTaskId) and the
+ *  association trailers are present. */
+async function ensureCommitTaskMetadata(
+  mergeRoot: string,
+  taskId: string,
+  includeTaskId: boolean,
+  trailers: string[],
+): Promise<void> {
+  const fullMessage = await git(["log", "-1", "--pretty=%B"], mergeRoot).catch(() => "");
+  if (!fullMessage) return;
+  const subject = (fullMessage.split("\n")[0] ?? "").trim();
+  const body = await git(["log", "-1", "--pretty=%b"], mergeRoot).catch(() => "");
+
+  const needsPrefix = includeTaskId && !subject.toLowerCase().startsWith(taskId.toLowerCase());
+  const missingTrailers = trailers.filter((t) => !fullMessage.includes(t));
+  if (!needsPrefix && missingTrailers.length === 0) return;
+
+  const args = ["-c", "trailer.ifExists=addIfDifferent", "commit", "--amend"];
+  if (needsPrefix) {
+    // Rewrite the message with the task-id-prefixed subject (body, which already
+    // carries any existing trailers, is preserved verbatim).
+    args.push("-m", `${taskId}: ${subject}`);
+    if (body.trim()) args.push("-m", body);
+  } else {
+    args.push("--no-edit");
+  }
+  for (const t of missingTrailers) args.push("--trailer", t);
   await git(args, mergeRoot).catch((err: unknown) => {
-    aiMergeLog.warn(`failed to amend task trailers onto squash (${err instanceof Error ? err.message : String(err)})`);
+    aiMergeLog.warn(`failed to amend task metadata onto squash (${err instanceof Error ? err.message : String(err)})`);
   });
 }
 
@@ -793,9 +814,10 @@ async function mergeAndReview(input: {
     let head = await git(["rev-parse", "HEAD"], mergeRoot);
     if (head === tipSha) return null; // empty merge — nothing landed
 
-    // Guarantee the board-association trailers are on the squash even if the
-    // agent omitted them — this amends HEAD, so re-read the sha afterwards.
-    await ensureTaskTrailersOnHead(mergeRoot, trailers);
+    // Guarantee the squash's task metadata (task-id subject prefix + board
+    // association trailers) even if the agent omitted it — this amends HEAD, so
+    // re-read the sha afterwards.
+    await ensureCommitTaskMetadata(mergeRoot, taskId, includeTaskId, trailers);
     head = await git(["rev-parse", "HEAD"], mergeRoot);
 
     await setStatus("reviewing");
