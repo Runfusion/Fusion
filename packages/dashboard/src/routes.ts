@@ -206,9 +206,16 @@ export interface AuthStorageLike {
     providerId: string,
     callbacks: {
       onAuth: (info: { url: string; instructions?: string }) => void;
+      onDeviceCode?: (info: {
+        userCode: string;
+        verificationUri: string;
+        intervalSeconds?: number;
+        expiresInSeconds?: number;
+      }) => void;
       onPrompt: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
       onManualCodeInput?: () => Promise<string>;
       onProgress?: (message: string) => void;
+      onSelect?: (prompt: { message: string; options: Array<{ id: string; label: string }> }) => Promise<string | undefined>;
       signal?: AbortSignal;
     },
   ): Promise<void>;

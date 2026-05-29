@@ -798,32 +798,60 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
       let autoPromptConsumed = false;
 
-      // We need to get the URL from the onAuth callback before responding.
+      // We need to get auth kickoff info from callbacks before responding.
       // The login() call continues in the background until the user completes OAuth.
       let authResolve: (info: { url: string; instructions?: string; deviceCode?: DeviceCodeInfo }) => void;
       let authReject: (err: Error) => void;
+      let authSettled = false;
       const authUrlPromise = new Promise<{ url: string; instructions?: string; deviceCode?: DeviceCodeInfo }>((resolve, reject) => {
         authResolve = resolve;
         authReject = reject;
       });
+      const resolveAuthInfo = (info: { url: string; instructions?: string; deviceCode?: DeviceCodeInfo }) => {
+        if (authSettled) return;
+        authSettled = true;
+        authResolve(info);
+      };
+      const rejectAuthInfo = (err: Error) => {
+        if (authSettled) return;
+        authSettled = true;
+        authReject(err);
+      };
+
+      let resolvedDeviceCode: DeviceCodeInfo | undefined;
 
       // Start login flow in background — don't await the full login
       const loginPromise = storage.login(provider, {
         onAuth: (info) => {
-          const parsedUserCode =
-            provider === "github-copilot" && info.instructions
-              ? parseGitHubCopilotDeviceCode(info.instructions)
-              : undefined;
-          const deviceCode = parsedUserCode
-            ? {
+          if (!resolvedDeviceCode) {
+            const parsedUserCode =
+              provider === "github-copilot" && info.instructions
+                ? parseGitHubCopilotDeviceCode(info.instructions)
+                : undefined;
+            if (parsedUserCode) {
+              resolvedDeviceCode = {
                 userCode: parsedUserCode,
                 verificationUri: info.url,
-              }
-            : undefined;
-          authResolve({
+              };
+            }
+          }
+
+          resolveAuthInfo({
             url: info.url,
             instructions: appendManualCodeHint(info.instructions, provider, origin),
-            deviceCode,
+            deviceCode: resolvedDeviceCode,
+          });
+        },
+        onDeviceCode: (info) => {
+          resolvedDeviceCode = {
+            userCode: info.userCode,
+            verificationUri: info.verificationUri,
+          };
+
+          resolveAuthInfo({
+            url: info.verificationUri,
+            instructions: appendManualCodeHint(undefined, provider, origin),
+            deviceCode: resolvedDeviceCode,
           });
         },
         onPrompt: async (_prompt) => {
@@ -838,21 +866,27 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         // to race pasted codes against the localhost callback server.
         onManualCodeInput: async () => await pendingLogin.inputPromise,
         onProgress: () => {}, // no-op for web UI
+        onSelect: async (prompt) => {
+          if (prompt.options.length === 1) {
+            return prompt.options[0]?.id;
+          }
+          return undefined;
+        },
         signal: abortController.signal,
       });
 
       // Race: either we get the auth URL or the login completes/fails first
       const timeout = setTimeout(() => {
-        authReject(new Error("Login initiation timed out"));
+        rejectAuthInfo(new Error("Login initiation timed out"));
       }, 30_000);
 
       loginPromise
         .then(() => {
           // Login completed (user finished OAuth in browser)
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           // Login failed — also reject auth URL if not yet received
-          authReject(err);
+          rejectAuthInfo(err instanceof Error ? err : new Error(String(err)));
         })
         .finally(() => {
           clearTimeout(timeout);

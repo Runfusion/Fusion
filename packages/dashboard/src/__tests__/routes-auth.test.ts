@@ -1289,6 +1289,27 @@ describe("POST /auth/login", () => {
     });
   });
 
+  it("handles github-copilot device-code callback without crashing", async () => {
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation((_provider: string, callbacks: any) => {
+      callbacks.onDeviceCode({
+        userCode: "WXYZ-9876",
+        verificationUri: "https://github.com/login/device",
+      });
+      return Promise.resolve();
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/login", JSON.stringify({ provider: "github-copilot" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.deviceCode).toEqual({
+      userCode: "WXYZ-9876",
+      verificationUri: "https://github.com/login/device",
+    });
+    expect(res.body.url).toBe("https://github.com/login/device");
+  });
+
   it("auto-resolves first onPrompt invocation for github-copilot with blank input", async () => {
     let promptValue: string | undefined;
     (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(async (_provider: string, callbacks: any) => {
