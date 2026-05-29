@@ -109,7 +109,7 @@ vi.mock("../AgentLogViewer", () => ({
 }));
 
 vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ models, value, onChange, disabled, label, placeholder, id, favoriteProviders = [], favoriteModels = [] }: {
+  CustomModelDropdown: ({ models, value, onChange, disabled, label, placeholder, id, favoriteProviders = [], onToggleFavorite, favoriteModels = [], onToggleModelFavorite }: {
     models: Array<{ provider: string; id: string }>;
     value: string;
     onChange: (v: string) => void;
@@ -146,6 +146,29 @@ vi.mock("../CustomModelDropdown", () => ({
           return createElement("option", { key: modelValue, value: modelValue }, modelValue);
         }),
       ),
+      ...Array.from(new Set(models.map((model) => model.provider))).map((provider) => createElement(
+        "button",
+        {
+          key: `provider-${provider}`,
+          type: "button",
+          "data-testid": `toggle-provider-favorite-${provider}`,
+          onClick: () => onToggleFavorite?.(provider),
+        },
+        `toggle provider ${provider}`,
+      )),
+      ...models.map((model) => {
+        const modelValue = `${model.provider}/${model.id}`;
+        return createElement(
+          "button",
+          {
+            key: `model-${modelValue}`,
+            type: "button",
+            "data-testid": `toggle-model-favorite-${modelValue}`,
+            onClick: () => onToggleModelFavorite?.(modelValue),
+          },
+          `toggle model ${modelValue}`,
+        );
+      }),
     );
   },
 }));

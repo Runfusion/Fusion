@@ -527,6 +527,42 @@ describe("NewAgentDialog", () => {
       expect(mockFetchModels).toHaveBeenCalledOnce();
     });
 
+    it("renders shared favorites and toggles through global favorites flow", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
+
+      await user.type(getStepZeroField(/Name/), "Favorite Toggle Agent");
+      await user.click(screen.getByText("Next"));
+
+      const portal = await openModelDropdown();
+      expect(within(portal).getByLabelText("Remove anthropic from favorites")).toBeInTheDocument();
+      expect(within(portal).getByLabelText("Remove Claude Sonnet 4.5 from favorites")).toBeInTheDocument();
+
+      await user.click(within(portal).getByLabelText("Remove anthropic from favorites"));
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            favoriteProviders: [],
+            favoriteModels: ["anthropic/claude-sonnet-4-5"],
+          }),
+        );
+      });
+
+      await user.click(within(portal).getByLabelText("Remove Claude Sonnet 4.5 from favorites"));
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            favoriteProviders: expect.any(Array),
+            favoriteModels: [],
+          }),
+        );
+      });
+    });
+
     it("shows loading state then model dropdown on step 1", async () => {
       // Create a slow promise to see loading state
       let resolveModels: (v: any) => void;

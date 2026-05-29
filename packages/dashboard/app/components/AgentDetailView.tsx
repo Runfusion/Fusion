@@ -12,7 +12,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules } from "@fusion/core";
 import { getErrorMessage, isEphemeralAgent } from "@fusion/core";
@@ -31,6 +31,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 import { AgentPermissionPolicyEditor } from "./AgentPermissionPolicyEditor";
+import { useFavorites } from "../hooks/useFavorites";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -3684,10 +3685,9 @@ function ConfigTab({
   );
 
   // Model/runtime selector state
+  const { favoriteProviders, favoriteModels, toggleFavoriteProvider, toggleFavoriteModel } = useFavorites();
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
-  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [availableRuntimes, setAvailableRuntimes] = useState<PluginRuntimeInfo[]>([]);
   const [runtimesLoading, setRuntimesLoading] = useState(false);
 
@@ -3854,46 +3854,12 @@ function ConfigTab({
     fetchModels()
       .then((response) => {
         setAvailableModels(response.models);
-        setFavoriteProviders(response.favoriteProviders);
-        setFavoriteModels(response.favoriteModels);
       })
       .catch(() => {
         // Gracefully handle unavailable models endpoint
       })
       .finally(() => setModelsLoading(false));
   }, []);
-
-  const handleToggleFavorite = useCallback(async (provider: string) => {
-    const currentFavorites = favoriteProviders;
-    const isFavorite = currentFavorites.includes(provider);
-    const newFavorites = isFavorite
-      ? currentFavorites.filter((p) => p !== provider)
-      : [provider, ...currentFavorites];
-
-    setFavoriteProviders(newFavorites);
-
-    try {
-      await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
-    } catch {
-      setFavoriteProviders(currentFavorites);
-    }
-  }, [favoriteProviders, favoriteModels]);
-
-  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
-    const currentFavorites = favoriteModels;
-    const isFavorite = currentFavorites.includes(modelId);
-    const newFavorites = isFavorite
-      ? currentFavorites.filter((m) => m !== modelId)
-      : [modelId, ...currentFavorites];
-
-    setFavoriteModels(newFavorites);
-
-    try {
-      await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
-    } catch {
-      setFavoriteModels(currentFavorites);
-    }
-  }, [favoriteProviders, favoriteModels]);
 
   useEffect(() => {
     setRuntimesLoading(true);
@@ -4655,9 +4621,9 @@ function ConfigTab({
                 label="Agent Model"
                 disabled={modelsLoading}
                 favoriteProviders={favoriteProviders}
-                onToggleFavorite={handleToggleFavorite}
+                onToggleFavorite={toggleFavoriteProvider}
                 favoriteModels={favoriteModels}
-                onToggleModelFavorite={handleToggleModelFavorite}
+                onToggleModelFavorite={toggleFavoriteModel}
               />
             </div>
           ) : (

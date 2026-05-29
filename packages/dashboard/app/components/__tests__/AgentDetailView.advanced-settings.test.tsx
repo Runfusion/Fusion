@@ -404,6 +404,47 @@ describe("Advanced Settings", () => {
     expect(dropdown).toHaveAttribute("data-favorite-models", "openai/gpt-4o");
   });
 
+  it("toggles provider and model favorites through shared favorites flow", async () => {
+    mockFetchModels.mockResolvedValue({
+      models: [
+        { provider: "openai", id: "gpt-4o", name: "gpt-4o", reasoning: false, contextWindow: 128000 },
+      ],
+      favoriteProviders: ["openai"],
+      favoriteModels: ["openai/gpt-4o"],
+    });
+
+    const user = userEvent.setup();
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await navigateToSettings(user);
+
+    await user.click(await screen.findByTestId("toggle-provider-favorite-openai"));
+    await waitFor(() => {
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          favoriteProviders: [],
+          favoriteModels: ["openai/gpt-4o"],
+        }),
+      );
+    });
+
+    await user.click(await screen.findByTestId("toggle-model-favorite-openai/gpt-4o"));
+    await waitFor(() => {
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          favoriteProviders: expect.any(Array),
+          favoriteModels: [],
+        }),
+      );
+    });
+  });
+
   it("shows runtime mode selected when agent runtimeConfig has runtimeHint", async () => {
     mockFetchAgent.mockResolvedValue(createMockAgent({
       runtimeConfig: {

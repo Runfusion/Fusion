@@ -2,7 +2,7 @@ import "./NewAgentDialog.css";
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec, PluginRuntimeInfo, AgentOnboardingSummary } from "../api";
-import { createAgent, fetchAgents, fetchModels, updateGlobalSettings } from "../api";
+import { createAgent, fetchAgents, fetchModels } from "../api";
 import * as apiModule from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
@@ -11,6 +11,7 @@ import { AGENT_PRESETS, type AgentPreset } from "./agent-presets";
 import { SkillMultiselect } from "./SkillMultiselect";
 import { AgentAvatar } from "./AgentAvatar";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
+import { useFavorites } from "../hooks/useFavorites";
 
 export interface NewAgentDialogProps {
   isOpen: boolean;
@@ -81,10 +82,9 @@ export function NewAgentDialog({
   const [isInterviewOpen, setIsInterviewOpen] = useState(false);
 
   // Model dropdown state
+  const { favoriteProviders, favoriteModels, toggleFavoriteProvider, toggleFavoriteModel } = useFavorites();
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
-  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [runtimeMode, setRuntimeMode] = useState<"model" | "runtime">("model");
   const [selectedRuntimeId, setSelectedRuntimeId] = useState("");
   const [availableRuntimes, setAvailableRuntimes] = useState<PluginRuntimeInfo[]>([]);
@@ -101,8 +101,6 @@ export function NewAgentDialog({
     fetchModels()
       .then((response) => {
         setAvailableModels(response.models);
-        setFavoriteProviders(response.favoriteProviders);
-        setFavoriteModels(response.favoriteModels);
       })
       .catch(() => {
         // Gracefully handle — dropdown will show empty list
@@ -188,39 +186,6 @@ export function NewAgentDialog({
     }
   }, []);
 
-  const handleToggleFavorite = useCallback(async (provider: string) => {
-    const currentFavorites = favoriteProviders;
-    const isFavorite = currentFavorites.includes(provider);
-    const newFavorites = isFavorite
-      ? currentFavorites.filter(p => p !== provider)
-      : [provider, ...currentFavorites];
-
-    setFavoriteProviders(newFavorites);
-
-    try {
-      await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
-    } catch {
-      // Revert on error
-      setFavoriteProviders(currentFavorites);
-    }
-  }, [favoriteProviders, favoriteModels]);
-
-  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
-    const currentFavorites = favoriteModels;
-    const isFavorite = currentFavorites.includes(modelId);
-    const newFavorites = isFavorite
-      ? currentFavorites.filter(m => m !== modelId)
-      : [modelId, ...currentFavorites];
-
-    setFavoriteModels(newFavorites);
-
-    try {
-      await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
-    } catch {
-      // Revert on error
-      setFavoriteModels(currentFavorites);
-    }
-  }, [favoriteProviders, favoriteModels]);
 
   const handlePresetSelect = useCallback((preset: AgentPreset) => {
     setSelectedPresetId(preset.id);
@@ -382,9 +347,9 @@ export function NewAgentDialog({
               models={availableModels}
               placeholder="Select a model…"
               favoriteProviders={favoriteProviders}
-              onToggleFavorite={handleToggleFavorite}
+              onToggleFavorite={toggleFavoriteProvider}
               favoriteModels={favoriteModels}
-              onToggleModelFavorite={handleToggleModelFavorite}
+              onToggleModelFavorite={toggleFavoriteModel}
             />
           )}
         </div>
