@@ -3333,6 +3333,9 @@ export interface ProjectSettings {
   /** Optional template used for GitHub issue comments posted on task completion.
    *  Supports `{taskId}` and `{taskTitle}` placeholders. */
   githubCommentTemplate?: string;
+  /** When true, automatically close linked source-imported GitHub issues
+   *  when a task moves to done. Default: false. */
+  githubCloseSourceIssueOnDone?: boolean;
   /** When true, new tasks default GitHub tracking to enabled for this project (FN-3868).
    *  Default: false. */
   githubTrackingEnabledByDefault?: boolean;

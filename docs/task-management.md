@@ -656,6 +656,7 @@ Recovery/backfill guidance:
 Import issues:
 
 - GitHub-imported tasks retain typed source issue metadata (`sourceIssue.provider/repository/externalIssueId/issueNumber/url`), which executor and merger flows use to include `Ref: owner/repo#N` in commit bodies.
+- When `githubCloseSourceIssueOnDone` is enabled (default: `false`), Fusion also closes linked source-imported GitHub issues with `state_reason: completed` when the task moves into `done`. On startup, a bounded reconciliation sweep checks done tasks and closes any still-open source issue links that were missed due to transient failures.
 
 ```bash
 fn task import owner/repo --labels bug --limit 20

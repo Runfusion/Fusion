@@ -42,6 +42,7 @@ import { GitHubIssueCommentService } from "../github-issue-comment.js";
 import { GitHubTrackingCommentService } from "../github-tracking-comments.js";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
 import { GitHubTrackingReconciler } from "../github-tracking-reconciler.js";
+import { GitHubSourceIssueCloseService } from "../github-source-issue-close.js";
 import { githubRateLimiter } from "../github-poll.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
 import { generatePrMetadata } from "../pr-metadata-generator.js";
@@ -2345,6 +2346,10 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     githubTrackingCommentService.start();
     ctx.registerDispose(() => githubTrackingCommentService.stop());
 
+    const githubSourceIssueCloseService = new GitHubSourceIssueCloseService(store);
+    githubSourceIssueCloseService.start();
+    ctx.registerDispose(() => githubSourceIssueCloseService.stop());
+
     const githubTrackingStateService = new GitHubTrackingStateService(store);
     const githubTrackingReconciler = new GitHubTrackingReconciler();
     const reconcileScheduledStores = new WeakSet<TaskStore>();
@@ -2357,6 +2362,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
       attachedStateStores.add(projectStore);
       githubTrackingStateService.attach(projectStore);
+      githubSourceIssueCloseService.attach(projectStore);
 
       if (!reconcileScheduledStores.has(projectStore)) {
         reconcileScheduledStores.add(projectStore);
@@ -2369,6 +2375,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           }
           void githubTrackingReconciler.reconcile(projectStore).catch(() => {});
           void githubTrackingReconciler.reconcileDeletedAndArchived(projectStore).catch(() => {});
+          void githubTrackingReconciler.reconcileSourceIssues(projectStore).catch(() => {});
         });
       }
     };
@@ -2412,6 +2419,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       unsubscribeProjectStoreRegistration();
       for (const projectStore of attachedStateStores) {
         githubTrackingStateService.detach(projectStore);
+        githubSourceIssueCloseService.detach(projectStore);
       }
       githubTrackingStateService.stop();
     });

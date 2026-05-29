@@ -342,6 +342,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   autoUpdatePrStatus: false,
   githubCommentOnDone: false,
   githubCommentTemplate: undefined,
+  githubCloseSourceIssueOnDone: false,
   githubTrackingEnabledByDefault: false,
   githubTrackingDefaultRepo: undefined,
   githubTrackingDedupEnabled: true,

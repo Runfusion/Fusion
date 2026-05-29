@@ -59,6 +59,67 @@ export class GitHubTrackingReconciler {
     return { scanned: tasks.length, closed, skipped, errors };
   }
 
+  async reconcileSourceIssues(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
+    const listedTasks = await store.listTasks({ slim: false, includeArchived: false });
+    const tasks = (Array.isArray(listedTasks) ? listedTasks : [])
+      .filter((task) => task.status === "done" && task.sourceIssue?.provider === "github")
+      .slice(0, RECONCILE_SCAN_LIMIT);
+
+    const projectSettings = ((await store.getSettings()) ?? {}) as Pick<ProjectSettings, "githubCloseSourceIssueOnDone" | "githubAuthMode" | "githubAuthToken">;
+    if (projectSettings.githubCloseSourceIssueOnDone !== true) {
+      return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0 };
+    }
+
+    const globalSettings = (await store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
+    const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
+    if (!resolution.ok) {
+      for (const task of tasks) {
+        await store.logEntry(task.id, "Skipped GitHub source issue reconciliation", resolution.message);
+      }
+      return { scanned: tasks.length, closed: 0, skipped: tasks.length, errors: 0 };
+    }
+
+    const client = resolution.auth.mode === "token"
+      ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
+      : new GitHubClient({ forceMode: "gh-cli" });
+
+    let closed = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    await runWithConcurrencyLimit(tasks, RECONCILE_CONCURRENCY_LIMIT, async (task) => {
+      const sourceIssue = task.sourceIssue;
+      const repository = sourceIssue?.repository ?? "";
+      const [owner, repo] = repository.split("/");
+      const issueNumber = sourceIssue?.issueNumber;
+      if (!owner || !repo || !Number.isInteger(issueNumber)) {
+        skipped += 1;
+        return;
+      }
+
+      const issueNumberValue = issueNumber as number;
+      try {
+        const linkedIssue = await client.getIssue(owner, repo, issueNumberValue);
+        if (!linkedIssue || linkedIssue.state === "closed") {
+          skipped += 1;
+          return;
+        }
+
+        await client.setIssueState(owner, repo, issueNumberValue, "closed", "completed");
+        closed += 1;
+      } catch (error) {
+        errors += 1;
+        await store.logEntry(
+          task.id,
+          "Failed to reconcile GitHub source issue",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+
+    return { scanned: tasks.length, closed, skipped, errors };
+  }
+
   async reconcileDeletedAndArchived(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
     const listedTasks = await store.listTasksForGithubTrackingReconcile();
     const tasks = (Array.isArray(listedTasks) ? listedTasks : []).slice(0, RECONCILE_SCAN_LIMIT);

@@ -69,6 +69,11 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  it("keeps github source issue auto-close disabled by default", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.githubCloseSourceIssueOnDone).toBe(false);
+    expect("githubCloseSourceIssueOnDone" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+  });
+
   describe("recycleWorktrees default", () => {
     it("keeps recycleWorktrees explicitly false in project defaults", () => {
       expect(DEFAULT_PROJECT_SETTINGS.recycleWorktrees).toBe(false);

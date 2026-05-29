@@ -44,7 +44,7 @@ export function decideIssueAction(
   return null;
 }
 
-function isTransientGitHubError(error: unknown): boolean {
+export function isTransientGitHubError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
@@ -58,7 +58,7 @@ function isTransientGitHubError(error: unknown): boolean {
     || message.includes("socket hang up");
 }
 
-async function delay(ms: number): Promise<void> {
+export async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
