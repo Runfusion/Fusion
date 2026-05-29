@@ -759,6 +759,12 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
       if (runId) {
         this.missionStore.completeValidatorRun(runId, "passed", summary);
       }
+
+      const feature = this.missionStore.getFeature(featureId);
+      if (feature && feature.status !== "done") {
+        this.missionStore.updateFeatureStatus(featureId, "done");
+      }
+
       loopLog.log(`Feature ${featureId} passed validation`);
 
       // Notify autopilot if configured

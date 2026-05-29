@@ -16,4 +16,9 @@ describe("InProcessRuntime onStart duplicate guard", () => {
     expect(source).toContain("getChatStore(): import(\"@fusion/core\").ChatStore | undefined {");
     expect(source).toContain("return this.chatStore;");
   });
+
+  it("rehydrates autopilot mission watches during startup recovery", () => {
+    const source = readFileSync(join(process.cwd(), "src/runtimes/in-process-runtime.ts"), "utf-8");
+    expect(source).toContain("activeMissionAutopilot.recoverMissions(activeMissionStore)");
+  });
 });
