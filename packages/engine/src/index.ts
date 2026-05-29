@@ -175,6 +175,14 @@ export {
 export { fetchWebContent, assertSafeUrl, WebFetchError, type WebFetchOptions, type WebFetchResult, type WebFetchErrorCode } from "./web-fetch.js";
 export { classifyTaskError, type ErrorClass, type TaskErrorClassification } from "./error-classifier.js";
 export {
+  buildGoalContextSection,
+  DEFAULT_GOAL_INJECTION_CHAR_BUDGET,
+  MAX_INJECTED_GOALS,
+  type GoalInjectionInput,
+  type GoalInjectionResult,
+  type GoalInjectionTruncationEvent,
+} from "./goal-context-injector.js";
+export {
   resolveWorktrunkBinary,
   installWorktrunk,
   probeWorktrunk,
