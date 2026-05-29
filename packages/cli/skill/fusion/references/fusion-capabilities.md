@@ -43,6 +43,9 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_insight_run_show` | Show a single insight-generation run by ID. |
 | `fn_mission_create` | Create a new mission — a high-level objective that can span multiple milestones. Missions contain milestones that break down work into phases. |
 | `fn_mission_list` | List all missions with their current status. |
+| `fn_goal_list` | List goals by status with active-goal warning details. |
+| `fn_goal_create` | Create a new project goal. |
+| `fn_goal_archive` | Archive a goal by ID. |
 | `fn_mission_show` | Show mission details with full hierarchy: milestones → slices → features. |
 | `fn_mission_delete` | Delete a mission and all its milestones, slices, and features. Cannot be undone. |
 | `fn_milestone_add` | Add a milestone to a mission. Milestones represent phases of work. |

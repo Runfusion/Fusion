@@ -62,6 +62,9 @@ fn mission list                            # List all missions
 fn mission show M-001                      # Show mission hierarchy
 fn mission delete M-001 [--force]          # Delete mission (cascades)
 fn mission activate-slice SL-001           # Manually activate a slice
+fn goals list [--status STATE]             # List goals (default: active)
+fn goals create "Title" "Description"      # Create a new goal
+fn goals archive G-001                     # Archive a goal
 ```
 
 ## GitHub Integration

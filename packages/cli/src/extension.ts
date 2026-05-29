@@ -2378,6 +2378,150 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── Goal Tools ───────────────────────────────────────────────
+  // Author-facing goal management
+
+  pi.registerTool({
+    name: "fn_goal_list",
+    label: "fn: List Goals",
+    description: "List goals by status with active-goal warning details.",
+    promptSnippet: "List project goals",
+    promptGuidelines: [
+      "Use to inspect current goals before creating or archiving",
+      "Default status is active; pass archived/all when needed",
+      "Soft warning begins at 3 active goals and hard cap is 5",
+    ],
+    parameters: Type.Object({
+      status: Type.Optional(
+        Type.Union([
+          Type.Literal("active"),
+          Type.Literal("archived"),
+          Type.Literal("all"),
+        ], { description: "Filter by goal status (default: active)" }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const goalStore = store.getGoalStore();
+      const status = params.status ?? "active";
+      const goals = status === "all" ? goalStore.listGoals() : goalStore.listGoals({ status });
+      const activeCount = goalStore.listGoals({ status: "active" }).length;
+      const softWarning = activeCount >= 3;
+
+      const lines: string[] = [];
+      lines.push(`Goals (${goals.length}) [filter: ${status}]`);
+      lines.push(`Active: ${activeCount}/5`);
+      if (softWarning) {
+        lines.push("⚠  3/5 active goals — soft warning at 3, hard cap at 5");
+      }
+      lines.push("");
+      if (goals.length === 0) {
+        lines.push("No goals found.");
+      } else {
+        for (const goal of goals) {
+          const description = goal.description ? ` — ${goal.description}` : "";
+          lines.push(`- ${goal.id} [${goal.status}] ${goal.title}${description}`);
+        }
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { goals, activeCount, softWarning, hardLimit: 5 },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "fn_goal_create",
+    label: "fn: Create Goal",
+    description: "Create a new project goal.",
+    promptSnippet: "Create a new goal",
+    promptGuidelines: [
+      "Use clear titles and optional context-rich descriptions",
+      "Goal creation counts toward the 5 active-goal hard cap",
+      "Archive older goals when the active cap is reached",
+    ],
+    parameters: Type.Object({
+      title: Type.String({ description: "Goal title — brief but descriptive" }),
+      description: Type.Optional(
+        Type.String({ description: "Long-form goal description (free-text markdown)" }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const goalStore = store.getGoalStore();
+
+      try {
+        const goal = goalStore.createGoal({
+          title: params.title.trim(),
+          description: params.description?.trim() || undefined,
+        });
+        const activeCount = goalStore.listGoals({ status: "active" }).length;
+        const softWarning = activeCount >= 3;
+
+        return {
+          content: [{ type: "text", text: `Created ${goal.id}: ${goal.title}\nStatus: ${goal.status}${softWarning ? `\n⚠  ${activeCount}/5 active goals — approaching hard cap` : ""}` }],
+          details: { goalId: goal.id, title: goal.title, status: goal.status, softWarning },
+        };
+      } catch (err) {
+        if (typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "ACTIVE_GOAL_LIMIT_EXCEEDED") {
+          const limit = (err as { limit?: number }).limit ?? 5;
+          const currentActive = (err as { currentActive?: number }).currentActive ?? 5;
+          return {
+            isError: true,
+            content: [{ type: "text", text: `Cannot create goal — already at the hard cap of 5 active goals (currently ${currentActive}). Archive one first.` }],
+            details: { code: "ACTIVE_GOAL_LIMIT_EXCEEDED", limit, currentActive },
+          };
+        }
+        throw err;
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "fn_goal_archive",
+    label: "fn: Archive Goal",
+    description: "Archive a goal by ID.",
+    promptSnippet: "Archive a goal by ID",
+    promptGuidelines: [
+      "Use when a goal is complete or no longer active",
+      "Archiving frees active-goal capacity",
+      "Returns success for already archived goals",
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: "Goal ID (G-…) to archive" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const goalStore = store.getGoalStore();
+      const goal = goalStore.getGoal(params.id);
+
+      if (!goal) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Goal ${params.id} not found` }],
+          details: { code: "GOAL_NOT_FOUND", goalId: params.id },
+        };
+      }
+
+      if (goal.status === "archived") {
+        return {
+          content: [{ type: "text", text: `Goal ${params.id} is already archived` }],
+          details: { goalId: params.id, status: "archived" },
+        };
+      }
+
+      const archived = goalStore.archiveGoal(params.id);
+      return {
+        content: [{ type: "text", text: `Archived ${archived.id}: ${archived.title}` }],
+        details: { goalId: archived.id, status: "archived" },
+      };
+    },
+  });
+
   // ── fn_mission_show ──────────────────────────────────────────────
 
   pi.registerTool({

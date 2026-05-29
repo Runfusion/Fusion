@@ -56,6 +56,9 @@ const commandMocks = vi.hoisted(() => ({
   runMissionShow: vi.fn(),
   runMissionDelete: vi.fn(),
   runMissionActivateSlice: vi.fn(),
+  runGoalsList: vi.fn(),
+  runGoalsCreate: vi.fn(),
+  runGoalsArchive: vi.fn(),
 
   runProjectList: vi.fn(),
   runProjectAdd: vi.fn(),
@@ -168,6 +171,12 @@ vi.mock("../commands/mission.js", () => ({
   runMissionShow: commandMocks.runMissionShow,
   runMissionDelete: commandMocks.runMissionDelete,
   runMissionActivateSlice: commandMocks.runMissionActivateSlice,
+}));
+
+vi.mock("../commands/goals.js", () => ({
+  runGoalsList: commandMocks.runGoalsList,
+  runGoalsCreate: commandMocks.runGoalsCreate,
+  runGoalsArchive: commandMocks.runGoalsArchive,
 }));
 
 vi.mock("../commands/project.js", () => ({
@@ -536,6 +545,35 @@ describe("bin command routing and fallbacks", () => {
   it("routes mission activate-slice", async () => {
     await runBin(["mission", "activate-slice", "SL-001"]);
     expect(commandMocks.runMissionActivateSlice).toHaveBeenCalledWith("SL-001", undefined);
+  });
+
+  it("routes goals list with default status", async () => {
+    await runBin(["goals", "list"]);
+    expect(commandMocks.runGoalsList).toHaveBeenCalledWith(undefined, { status: "active" });
+  });
+
+  it("routes goals ls with explicit status", async () => {
+    await runBin(["goals", "ls", "--status", "all"]);
+    expect(commandMocks.runGoalsList).toHaveBeenCalledWith(undefined, { status: "all" });
+  });
+
+  it("routes goals list with project and archived status", async () => {
+    await runBin(["goals", "list", "--status", "archived", "--project", "demo"]);
+    expect(commandMocks.runGoalsList).toHaveBeenCalledWith("demo", { status: "archived" });
+  });
+
+  it("routes goals create with multi-word description", async () => {
+    await runBin(["goals", "create", "Title", "Long", "desc"]);
+    expect(commandMocks.runGoalsCreate).toHaveBeenCalledWith("Title", "Long desc", undefined);
+  });
+
+  it("routes goals archive with project", async () => {
+    await runBin(["goals", "archive", "G-001", "--project", "demo"]);
+    expect(commandMocks.runGoalsArchive).toHaveBeenCalledWith("G-001", "demo");
+  });
+
+  it("exits on unknown goals subcommand", async () => {
+    await expect(runBin(["goals", "bogus"])).rejects.toThrow("process.exit:1");
   });
 
   it("routes daemon command with all flags", async () => {

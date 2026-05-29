@@ -624,6 +624,24 @@ Subcommands: `create`, `list|ls`, `show|info`, `delete`, `activate-slice`.
 
 ---
 
+## `fn goals`
+
+Goal management operations (Slice 1 author-facing surface only; no agent anchoring yet).
+
+```bash
+fn goals list [--status active|archived|all]
+fn goals create "Improve reliability" "Reduce flaky tests and retries"
+fn goals archive G-001
+```
+
+Subcommands: `list|ls`, `create`, `archive`.
+
+Notes:
+- `fn goals list` defaults to `active` goals.
+- Active goals have a hard cap of 5. Create operations fail cleanly once the cap is reached.
+
+---
+
 ## `fn agent`
 
 Agent runtime operations.

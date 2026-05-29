@@ -274,6 +274,33 @@ Update an existing milestone's title, description, or acceptance criteria (the s
 | `description` | string | — | Updated milestone description |
 | `acceptanceCriteria` | string | — | Updated acceptance criteria for completing the milestone |
 
+## Goal Tools
+
+### fn_goal_list
+
+List goals by status with active-goal warning details.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `status` | union | — | Filter by goal status (default: active) |
+
+### fn_goal_create
+
+Create a new project goal.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `title` | string | ✓ | Goal title — brief but descriptive |
+| `description` | string | — | Long-form goal description (free-text markdown) |
+
+### fn_goal_archive
+
+Archive a goal by ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Goal ID (G-…) to archive |
+
 ## Agent Tools
 
 ### fn_agent_stop
