@@ -23,6 +23,8 @@ export interface PromptLayerInput {
   agentInstructions?: string;
   /** Formatted memory section (agent memory + workspace memory). */
   memorySection?: string;
+  /** Formatted active-goals context section. */
+  goalContext?: string;
   /** Formatted plugin prompt contributions. */
   pluginContributions?: string;
   /** Formatted performance feedback section. */
@@ -38,7 +40,7 @@ export interface PromptLayerInput {
  * sessions of the same role, enabling cross-session prompt caching.
  */
 export function buildPromptLayers(input: PromptLayerInput): SystemPromptLayers {
-  const { basePrompt, agentInstructions, memorySection, pluginContributions, performanceFeedback } = input;
+  const { basePrompt, agentInstructions, memorySection, goalContext, pluginContributions, performanceFeedback } = input;
 
   const dynamicParts: string[] = [];
 
@@ -49,6 +51,11 @@ export function buildPromptLayers(input: PromptLayerInput): SystemPromptLayers {
   const trimmedMemory = memorySection?.trim() ?? "";
   if (trimmedMemory) {
     dynamicParts.push(trimmedMemory);
+  }
+
+  const trimmedGoalContext = goalContext?.trim() ?? "";
+  if (trimmedGoalContext) {
+    dynamicParts.push(trimmedGoalContext);
   }
 
   const trimmedInstructions = agentInstructions?.trim() ?? "";

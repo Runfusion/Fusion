@@ -17,7 +17,7 @@
  * - onTerminated: Called when a heartbeat run is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage, AgentMemoryInclusionMode } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage, AgentMemoryInclusionMode, Goal } from "@fusion/core";
 import { AutoClaimSnapshotManager, type AutoClaimCandidate } from "./auto-claim-snapshot.js";
 import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -32,6 +32,7 @@ import {
 } from "./agent-instructions.js";
 import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "./heartbeat-procedure-resolver.js";
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
+import { buildGoalContextSection } from "./goal-context-injector.js";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
@@ -2382,8 +2383,17 @@ export class HeartbeatMonitor {
           heartbeatLog.log(`applied plugin prompt contributions for heartbeat surface`);
         }
 
+        const goalStore = this.taskStore && typeof (this.taskStore as { getGoalStore?: unknown }).getGoalStore === "function"
+          ? (this.taskStore as { getGoalStore: () => { listGoals?: (input: { status: "active" }) => Goal[] } }).getGoalStore()
+          : undefined;
+        const activeGoals = typeof goalStore?.listGoals === "function"
+          ? goalStore.listGoals({ status: "active" })
+          : [];
+        const heartbeatGoalContext = buildGoalContextSection({ activeGoals }).text;
+
         const heartbeatLayers = buildPromptLayers({
           basePrompt: baseHeartbeatSystemPrompt,
+          goalContext: heartbeatGoalContext,
           agentInstructions: [resolvedInstructionsText, memoryInstructions, selfImprovePrompt].filter((part) => part.trim()).join("\n\n"),
           pluginContributions: heartbeatPluginContributions,
         });

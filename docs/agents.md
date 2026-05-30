@@ -279,6 +279,7 @@ Heartbeat sessions for durable agents resolve models with heartbeat-specific fal
 When the runtime model is present and differs from execution-lane settings, heartbeat passes the execution-lane model as a fallback pair for session creation.
 
 Task-scoped heartbeat runs for durable agents execute inside the task's git worktree (same as ephemeral task execution), while no-task heartbeat runs continue to execute from the project root.
+Heartbeat and executor system prompts share the same active-goal context injector (`buildGoalContextSection`), so both lanes receive identical goal preambles when active goals exist.
 
 If a heartbeat cannot create/run a session due to unavailable provider credentials or missing provider registration, Fusion records `resultJson.reason = "heartbeat_model_unavailable"` with actionable diagnostics in `resultJson.detail`/`stderrExcerpt`.
 
