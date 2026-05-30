@@ -57,6 +57,8 @@ export interface ChatViewProps {
 // Keep a generous cap so pasted multi-paragraph text stays visible while
 // still preventing the composer from overtaking the message pane on short viewports.
 const CHAT_INPUT_MAX_HEIGHT_PX = 640;
+/** Canonical definition lives in packages/dashboard/src/chat.ts (ROOM_SKIP_SENTINEL). */
+const ROOM_SKIP_SENTINEL = "__SKIP__";
 let chatViewWasPreviouslyInactive = false;
 
 export function resolveChatInputOverflowY(scrollHeight: number): "auto" | "hidden" {
@@ -2945,10 +2947,12 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
               <div className="chat-messages" ref={messagesContainerRef} onScroll={updateScrollState}>
                 {rooms.messagesLoading ? (
                   <div className="chat-empty-state">Loading messages...</div>
-                ) : rooms.messages.length === 0 ? (
+                ) : rooms.messages.filter((message) => message.content.trim() !== ROOM_SKIP_SENTINEL).length === 0 ? (
                   <div className="chat-empty-state">No messages yet. Start the conversation!</div>
                 ) : (
-                  rooms.messages.map((message) => {
+                  rooms.messages
+                    .filter((message) => message.content.trim() !== ROOM_SKIP_SENTINEL)
+                    .map((message) => {
                     const senderName = message.senderAgentId ? (agentsMap.get(message.senderAgentId)?.name ?? message.senderAgentId.slice(0, 30)) : "You";
                     const roomMessage: ChatMessageInfo = {
                       id: message.id,

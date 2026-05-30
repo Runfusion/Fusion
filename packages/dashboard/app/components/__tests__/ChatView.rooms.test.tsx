@@ -259,6 +259,22 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
     expect(selectRoom).toHaveBeenCalledWith("room-b");
   });
 
+  it("filters room messages that are trimmed-exact skip sentinels", async () => {
+    setup({}, {
+      messages: [
+        { id: "rmsg-skip", roomId: "room-a", role: "assistant", content: "  __SKIP__  ", createdAt: "2026-04-08T00:00:00.000Z", senderAgentId: "agent-1", mentions: [] },
+        { id: "rmsg-token", roomId: "room-a", role: "assistant", content: "use __SKIP__ as a token", createdAt: "2026-04-08T00:01:00.000Z", senderAgentId: "agent-1", mentions: [] },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-message-rmsg-skip")).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-message-rmsg-token")).toBeInTheDocument();
+    });
+  });
+
   it("shows Create room in mobile footer for Rooms scope and hides New Chat + rooms header", () => {
     const viewportSpy = mockMobileViewport();
 

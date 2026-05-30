@@ -138,6 +138,13 @@ const MAX_MESSAGES_PER_IP_PER_MINUTE = 30;
 /** Maximum file size for # mentions (50KB). Files larger than this are skipped. */
 const MAX_REFERENCED_FILE_SIZE = 50 * 1024;
 const ROOM_AMBIENT_MAX_RESPONDERS = 5;
+
+/** Sentinel response from room responders indicating an intentional no-op/silence. */
+export const ROOM_SKIP_SENTINEL = "__SKIP__";
+
+export function isRoomSkipSentinel(content: string): boolean {
+  return content.trim() === ROOM_SKIP_SENTINEL;
+}
 const DEFAULT_ROOM_THREAD_RECENT_VERBATIM_MESSAGES = 25;
 const DEFAULT_ROOM_THREAD_COMPACTION_FETCH_LIMIT = 200;
 const ROOM_THREAD_CONTEXT_MAX_CHARS = 20_000;
@@ -1157,6 +1164,7 @@ export class ChatManager {
     }
 
     const successfulResponderIds: string[] = [];
+    const skippedResponderIds: string[] = [];
     const responderFailures: string[] = [];
 
     for (const responder of responders) {
@@ -1171,6 +1179,11 @@ export class ChatManager {
           modelProvider,
           modelId,
         });
+
+        if (isRoomSkipSentinel(response.content)) {
+          skippedResponderIds.push(responder.id);
+          continue;
+        }
 
         this.chatStore.addRoomMessage(roomId, {
           role: "assistant",
@@ -1188,7 +1201,7 @@ export class ChatManager {
       }
     }
 
-    if (successfulResponderIds.length === 0) {
+    if (successfulResponderIds.length === 0 && skippedResponderIds.length === 0) {
       throw new RoomReplyGenerationError(
         `Failed to generate room replies for room ${roomId}: ${responderFailures.join("; ")}`,
         roomId,

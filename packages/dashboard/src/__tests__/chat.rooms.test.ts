@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatManager, RoomReplyGenerationError, __setCreateResolvedAgentSession, __resetChatState } from "../chat.js";
+import {
+  ChatManager,
+  ROOM_SKIP_SENTINEL,
+  RoomReplyGenerationError,
+  __setCreateResolvedAgentSession,
+  __resetChatState,
+} from "../chat.js";
 
 const mockChatStore = {
   listRoomMembers: vi.fn(),
@@ -87,6 +93,78 @@ describe("Chat orchestration — rooms (FN-3805..FN-3811 contract)", () => {
 
       expect(userWrite).toMatchObject({ role: "user", content: "hello @Alpha", mentions: ["agent-a"] });
       expect(assistantWrite).toMatchObject({ role: "assistant", senderAgentId: "agent-a", content: "Room reply" });
+    });
+
+    it("suppresses trimmed skip sentinel replies while persisting normal co-responder replies", async () => {
+      mockChatStore.listRoomMembers.mockReturnValue([
+        { roomId: "room-1", agentId: "agent-a", role: "member", addedAt: "2026-01-01" },
+        { roomId: "room-1", agentId: "agent-b", role: "member", addedAt: "2026-01-01" },
+      ]);
+      mockAgentStore.listAgents.mockResolvedValue([
+        { id: "agent-a", name: "Alpha", role: "executor" },
+        { id: "agent-b", name: "Beta", role: "executor" },
+      ]);
+
+      const replySpy = vi.spyOn(ChatManager.prototype as any, "generateRoomResponderReply")
+        .mockResolvedValueOnce({ content: `  ${ROOM_SKIP_SENTINEL}  `, thinkingOutput: null })
+        .mockResolvedValueOnce({ content: "Room reply from Beta", thinkingOutput: null });
+
+      const manager = new ChatManager(mockChatStore as any, "/tmp", mockAgentStore as any);
+      const result = await manager.sendRoomMessage("room-1", "hello");
+
+      expect(result.responders).toEqual(["agent-b"]);
+
+      const assistantWrites = mockChatStore.addRoomMessage.mock.calls
+        .map((call: any[]) => call[1])
+        .filter((entry: any) => entry.role === "assistant");
+      expect(assistantWrites).toHaveLength(1);
+      expect(assistantWrites[0]).toMatchObject({
+        content: "Room reply from Beta",
+        senderAgentId: "agent-b",
+      });
+
+      replySpy.mockRestore();
+    });
+
+    it("treats all-skip responder outcomes as intentional no-op without throwing", async () => {
+      mockChatStore.listRoomMembers.mockReturnValue([
+        { roomId: "room-1", agentId: "agent-a", role: "member", addedAt: "2026-01-01" },
+      ]);
+      mockAgentStore.listAgents.mockResolvedValue([{ id: "agent-a", name: "Alpha", role: "executor" }]);
+
+      const replySpy = vi.spyOn(ChatManager.prototype as any, "generateRoomResponderReply")
+        .mockResolvedValue({ content: ` ${ROOM_SKIP_SENTINEL} `, thinkingOutput: null });
+
+      const manager = new ChatManager(mockChatStore as any, "/tmp", mockAgentStore as any);
+      await expect(manager.sendRoomMessage("room-1", "hello")).resolves.toMatchObject({ responders: [] });
+
+      const assistantWrites = mockChatStore.addRoomMessage.mock.calls
+        .map((call: any[]) => call[1])
+        .filter((entry: any) => entry.role === "assistant");
+      expect(assistantWrites).toHaveLength(0);
+
+      replySpy.mockRestore();
+    });
+
+    it("persists replies that only contain the skip token as a substring", async () => {
+      mockChatStore.listRoomMembers.mockReturnValue([
+        { roomId: "room-1", agentId: "agent-a", role: "member", addedAt: "2026-01-01" },
+      ]);
+      mockAgentStore.listAgents.mockResolvedValue([{ id: "agent-a", name: "Alpha", role: "executor" }]);
+
+      const replySpy = vi.spyOn(ChatManager.prototype as any, "generateRoomResponderReply")
+        .mockResolvedValue({ content: "use __SKIP__ as a token", thinkingOutput: null });
+
+      const manager = new ChatManager(mockChatStore as any, "/tmp", mockAgentStore as any);
+      const result = await manager.sendRoomMessage("room-1", "hello");
+
+      expect(result.responders).toEqual(["agent-a"]);
+      const assistantWrite = mockChatStore.addRoomMessage.mock.calls
+        .map((call: any[]) => call[1])
+        .find((entry: any) => entry.role === "assistant");
+      expect(assistantWrite).toMatchObject({ content: "use __SKIP__ as a token" });
+
+      replySpy.mockRestore();
     });
 
     it("fails deterministically when no member responder can be resolved", async () => {
