@@ -304,6 +304,10 @@ interface MilestoneValidationRollup {
 5. `failed` — at least one assertion failed
 6. `blocked` — at least one assertion is blocked
 
+#### Completion Gate Contract
+
+Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, but mission autopilot enforcement runs through each feature's **linked contract assertions** (store-managed per-feature assertion plus any additive linked milestone assertions). `milestone.acceptanceCriteria` remains authored milestone pass-bar text for humans, while validator gating/advance decisions follow assertion linkage and outcomes; see [Mission Completion Gate Contract](./missions-completion-contract.md) for the authoritative enforced-vs-informational surface map and zero-assertion behavior.
+
 ### Phase 3: Feature Execution Loop
 
 Features track their implementation state via `FeatureLoopState` separate from task status:
