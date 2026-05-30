@@ -2083,6 +2083,10 @@ export class SelfHealingManager {
       for (const task of candidates) {
         if (task.checkedOutBy || activeTaskIds.has(task.id.toUpperCase()) || !task.branch || !task.worktree) continue;
         if (task.userPaused) continue;
+        if (task.column === "todo" && task.blockedBy) {
+          log.log(`[self-healing] skipping blocked todo task ${task.id} during self-owned branch reclaim (blockedBy=${task.blockedBy})`);
+          continue;
+        }
         if (task.pausedReason === "worktrunk_operation_failed") {
           log.log(`[self-healing] skipping worktrunk-paused task ${task.id}`);
           continue;

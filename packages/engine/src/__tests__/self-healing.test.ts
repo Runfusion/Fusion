@@ -7722,6 +7722,20 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({ worktree: "/tmp/fn-500", branch: "fusion/fn-500", status: null, paused: false }));
   });
 
+  it("skips blocked todo tasks with preserved branches", async () => {
+    (store.listTasks as any)
+      .mockResolvedValueOnce([{ id: "FN-516", column: "todo", blockedBy: "FN-216", checkedOutBy: null, branch: "fusion/fn-516", worktree: "/tmp/fn-516" }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const inspectSpy = vi.spyOn(branchConflictModule, "inspectBranchConflict");
+
+    const recovered = await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(recovered).toBe(0);
+    expect(inspectSpy).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
   it("skips checked out tasks", async () => {
     (store.listTasks as any)
       .mockResolvedValueOnce([{ id: "FN-501", checkedOutBy: "agent-1", branch: "fusion/fn-501", worktree: "/tmp/fn-501" }])
