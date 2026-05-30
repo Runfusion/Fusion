@@ -20,6 +20,27 @@
       // `bottom: var(--icb-bottom-offset)` etc. Healthy browsers see 0px.
       (function () {
         if (typeof window === 'undefined') return;
+        var baselineViewportHeight = null;
+        var NON_TEXT_INPUT_TYPES = {
+          checkbox: true,
+          radio: true,
+          button: true,
+          submit: true,
+          reset: true,
+          file: true,
+          range: true,
+          color: true,
+          hidden: true,
+        };
+        var isKeyboardFocusableElement = function (el) {
+          if (!el) return false;
+          if (el instanceof HTMLTextAreaElement) return true;
+          if (el instanceof HTMLInputElement) {
+            var type = (el.type || '').toLowerCase();
+            return !NON_TEXT_INPUT_TYPES[type];
+          }
+          return el instanceof HTMLElement && el.isContentEditable;
+        };
         var apply = function () {
           var vv = window.visualViewport;
           var de = document.documentElement;
@@ -37,8 +58,24 @@
           var vvH = vv ? Math.round(vv.height) : innerH;
           var vvOffTop = vv ? vv.offsetTop : 0;
           var vvOffLeft = vv ? vv.offsetLeft : 0;
+          var vvScale = vv ? vv.scale : 1;
           var rightOffset = Math.max(0, innerW - vvOffLeft - vvW);
-          var bottomOffset = Math.max(0, innerH - vvOffTop - vvH);
+          var rawBottomOffset = Math.max(0, innerH - vvOffTop - vvH);
+          var activeElementIsKeyboardFocusable = isKeyboardFocusableElement(document.activeElement);
+          if (!activeElementIsKeyboardFocusable) {
+            baselineViewportHeight = baselineViewportHeight === null ? vvH : Math.max(baselineViewportHeight, vvH);
+          }
+
+          // Keep in sync with packages/dashboard/app/utils/viewportOffset.ts.
+          // Ignore keyboard-driven visualViewport shrink (iOS) so fixed mobile
+          // bars stay pinned to page bottom and are covered by keyboard.
+          var bottomOffset = rawBottomOffset;
+          if (activeElementIsKeyboardFocusable && vvScale <= 1.01 && baselineViewportHeight !== null) {
+            var keyboardShrink = Math.max(0, baselineViewportHeight - vvH);
+            if (keyboardShrink > 0) {
+              bottomOffset = Math.max(0, rawBottomOffset - keyboardShrink);
+            }
+          }
           de.style.setProperty('--icb-right-offset', rightOffset + 'px');
           de.style.setProperty('--icb-bottom-offset', bottomOffset + 'px');
         };

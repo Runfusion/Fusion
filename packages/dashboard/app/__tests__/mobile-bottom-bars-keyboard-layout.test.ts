@@ -6,7 +6,14 @@ const css = loadAllAppCss();
 describe("mobile bottom bars keyboard-open css contract", () => {
   it("mobile nav keyboard-open rule pins bottom to 0", () => {
     const match = css.match(/\.mobile-nav-bar\.mobile-nav-bar--keyboard-open,\s*\.mobile-nav-bar\.mobile-nav-bar--with-footer\.mobile-nav-bar--keyboard-open\s*\{([^}]*)\}/m);
-    expect(match?.[1] ?? "").toContain("bottom: 0");
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("bottom: 0");
+  });
+
+  it("mobile nav with-footer keyboard-open selector also pins bottom to 0", () => {
+    const match = css.match(/\.mobile-nav-bar\.mobile-nav-bar--keyboard-open,\s*\.mobile-nav-bar\.mobile-nav-bar--with-footer\.mobile-nav-bar--keyboard-open\s*\{([^}]*)\}/m);
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("bottom: 0");
   });
 
   it("mobile nav keyboard-open rule appears after with-footer rule", () => {
@@ -18,7 +25,8 @@ describe("mobile bottom bars keyboard-open css contract", () => {
 
   it("executor status bar keyboard-open rule pins bottom to 0", () => {
     const match = css.match(/\.executor-status-bar\.executor-status-bar--keyboard-open\s*\{([^}]*)\}/m);
-    expect(match?.[1] ?? "").toContain("bottom: 0");
+    expect(match).toBeTruthy();
+    expect(match![1]).toContain("bottom: 0");
   });
 
   it("executor status bar keyboard-open rule appears after mobile base bottom rule", () => {
