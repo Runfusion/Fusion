@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && cp src/*.css dist/ && mkdir -p dist/styles && cp src/styles/*.css dist/styles/",
+    "build": "tsc && node scripts/copy-css.mjs",
     "pretest": "node ../../scripts/ensure-test-artifacts.mjs",
     "test": "vitest run --silent=passed-only --reporter=dot"
   },

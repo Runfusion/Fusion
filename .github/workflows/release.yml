@@ -24,6 +24,11 @@ jobs:
   build-binaries:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # Job-level env so the macOS signing step's `if:` can detect whether the
+    # Apple certificate secret is configured (secrets can't be read in `if:` directly).
+    env:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
     strategy:
       fail-fast: false
       matrix:
@@ -65,9 +70,10 @@ jobs:
         run: test -f packages/cli/dist/${{ matrix.binary }}
 
       - name: Sign macOS binary
-        if: runner.os == 'macOS'
+        # Skip when the Apple certificate secret is absent so unsigned binaries
+        # still publish, mirroring the desktop-macos unsigned fallback path.
+        if: ${{ runner.os == 'macOS' && env.APPLE_CERTIFICATE_BASE64 != '' }}
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -349,6 +355,10 @@ jobs:
   github-release:
     name: Create GitHub Release
     needs: [build-binaries, build-desktop-windows, build-desktop-macos, build-desktop-linux]
+    # Run as long as the workflow wasn't cancelled, even if some build legs failed.
+    # Without this, a single failing matrix leg skips the release entirely and no
+    # binaries are published — including the ones that built successfully.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -360,13 +370,23 @@ jobs:
           path: artifacts
 
       - name: Collect release files
+        id: collect
         run: |
           mkdir release-files
           find artifacts -type f \( -name "fn-*" -o -name "*.sha256" -o -name "*.asc" -o -name "*.exe" -o -name "*.exe.sha256" -o -name "*.blockmap" -o -name "*.dmg" -o -name "*.dmg.sha256" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.AppImage" -o -name "*.AppImage.sha256" -o -name "*.deb" -o -name "*.deb.sha256" -o -name "*.tar.gz" -o -name "*.tar.gz.sha256" -o -name "latest*.yml" \) -exec cp {} release-files/ \;
           ls -la release-files/
+          count=$(find release-files -type f | wc -l | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No release artifacts were produced by any build job; skipping release creation." >&2
+          fi
 
+      # Only create the release if at least one artifact exists. A failed build leg
+      # yields a partial release rather than none; a total wipeout fails loudly.
       - name: Create GitHub Release
+        if: ${{ steps.collect.outputs.count != '0' }}
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: release-files/*

@@ -30,7 +30,10 @@ runs:
         cache: pnpm
         registry-url: ${{ inputs.registry-url }}
 
-    # Cache node_modules only for the exact pnpm-lock.yaml hash and Node/OS tuple.
+    # Cache node_modules only for the exact pnpm-lock.yaml hash and Node/OS/arch tuple.
+    # runner.arch is essential: pnpm only installs the current platform's optional
+    # native deps (e.g. @rollup/rollup-linux-arm64-gnu), so an x64 cache restored on
+    # an arm64 runner (same runner.os) would be missing native binaries and break builds.
     # Intentionally no restore-keys fallback: partial restores can create inconsistent trees.
     - name: Cache node_modules
       id: node-modules-cache
@@ -41,7 +44,7 @@ runs:
           node_modules
           **/node_modules
           !**/.cache
-        key: node-modules-${{ runner.os }}-node${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
 
     - name: Install dependencies
       if: ${{ inputs.skip-install != 'true' && steps.node-modules-cache.outputs.cache-hit != 'true' }}
