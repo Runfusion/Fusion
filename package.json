@@ -44,7 +44,7 @@
     "test:coverage:engine": "pnpm --filter @fusion/engine exec vitest run --silent=passed-only --reporter=dot --coverage",
     "test:coverage:cli": "pnpm --filter @runfusion/fusion exec vitest run --silent=passed-only --reporter=dot --coverage",
     "test:coverage:dashboard": "pnpm --filter @fusion/dashboard exec vitest run --silent=passed-only --reporter=dot --coverage",
-    "test:slow-cli": "pnpm --filter @runfusion/fusion test:pre-release",
+    "test:slow-cli": "pnpm --filter @runfusion/fusion test:slow-cli",
     "typecheck": "pnpm -r --filter=!@fusion/desktop --filter=!@fusion/mobile typecheck",
     "changeset": "changeset",
     "version": "changeset version",
@@ -66,7 +66,10 @@
       "esbuild",
       "koffi",
       "protobufjs"
-    ]
+    ],
+    "overrides": {
+      "@types/node": "^25.5.2"
+    }
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",

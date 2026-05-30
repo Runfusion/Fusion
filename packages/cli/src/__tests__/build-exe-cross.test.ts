@@ -40,10 +40,14 @@ function nativeTarget(): string | null {
 
 // Cross-compiling native binaries pegs CPU for ~60s per target. Skip by
 // default locally; opt in with FUSION_TEST_BUILD_EXE=1 or run on CI.
+// Opt-in only. These tests cross-compile real platform binaries (`bun build
+// --target ...`), so they depend on the release build toolchain working and are
+// slow/flaky on a generic host. They run via `pnpm test:build-exe`
+// (FUSION_TEST_BUILD_EXE=1) for deliberate pre-release validation, NOT on every
+// CI run. Native per-platform binary builds are covered by test-release.yml.
 const SHOULD_RUN_BUILD_EXE =
   process.env.FUSION_TEST_BUILD_EXE === "1" ||
-  process.env.FUSION_TEST_BUILD_EXE === "true" ||
-  Boolean(process.env.CI);
+  process.env.FUSION_TEST_BUILD_EXE === "true";
 
 describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: single target", () => {
   beforeAll(() => {
