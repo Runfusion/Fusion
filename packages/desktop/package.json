@@ -3,6 +3,10 @@
   "productName": "Fusion",
   "version": "0.38.1",
   "license": "MIT",
+  "author": {
+    "name": "Runfusion",
+    "email": "support@runfusion.ai"
+  },
   "description": "Fusion desktop: Electron wrapper around the Fusion dashboard for macOS, Windows, and Linux.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
   "repository": {
