@@ -145,8 +145,10 @@ import {
   resolveTaskDiffBaseRef,
   commitOrAmendMergeWithFixes,
   MergeAbortedError,
+  __testOnlyResolveComplexRebaseConflictsWithAi,
   type ConflictCategory,
 } from "../merger.js";
+import { AgentLogger } from "../agent-logger.js";
 import { mergerLog } from "../logger.js";
 import { createFnAgent } from "../pi.js";
 import { execSync, exec } from "node:child_process";
@@ -266,6 +268,34 @@ function setupFailingFallbackStrategy() {
 /** @deprecated Renamed to setupFailingFallbackStrategy. */
 const setupFailingTheirsStrategy = setupFailingFallbackStrategy;
 
+describe("merger agent logger flushing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("flushes buffered rebase conflict agent logs before disposing session", async () => {
+    const session = {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+      getSessionStats: vi.fn().mockReturnValue(undefined),
+    };
+    mockedCreateFnAgent.mockResolvedValue({ session } as any);
+
+    const flushSpy = vi.spyOn(AgentLogger.prototype, "flush").mockResolvedValue(undefined);
+
+    await __testOnlyResolveComplexRebaseConflictsWithAi(
+      createMockStore(),
+      "/tmp/root",
+      "FN-5752",
+      { ...DEFAULT_SETTINGS },
+      ["src/conflicted.ts"],
+    );
+
+    expect(flushSpy).toHaveBeenCalledTimes(1);
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(flushSpy.mock.invocationCallOrder[0]).toBeLessThan(session.dispose.mock.invocationCallOrder[0]);
+  });
+});
 
 describe("detectResolvableConflicts", () => {
   beforeEach(() => {

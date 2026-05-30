@@ -3055,6 +3055,11 @@ ${fileList}
     return { success: false, error: msg };
   } finally {
     try {
+      await agentLogger.flush();
+    } catch {
+      // ignore
+    }
+    try {
       session.dispose();
     } catch {
       // ignore
@@ -3465,6 +3470,11 @@ ${fileList}
     await store.logEntry(taskId, "Autostash hard-fail recovery agent encountered an error", msg);
     return { success: false, error: msg };
   } finally {
+    try {
+      await agentLogger.flush();
+    } catch {
+      // ignore
+    }
     try {
       session.dispose();
     } catch {
@@ -3983,6 +3993,7 @@ async function buildDeterministicMergeMessage(params: {
 }
 
 export { buildDeterministicMergeMessage as __testOnlyBuildDeterministicMergeMessage };
+export { resolveComplexRebaseConflictsWithAi as __testOnlyResolveComplexRebaseConflictsWithAi };
 
 /**
  * Stage current changes and either:
@@ -6826,7 +6837,16 @@ You are assisting with a paused \`git pull --rebase\`.
     });
     await accumulateSessionTokenUsage(store, taskId, session);
   } finally {
-    session.dispose();
+    try {
+      await agentLogger.flush();
+    } catch {
+      // ignore
+    }
+    try {
+      session.dispose();
+    } catch {
+      // ignore
+    }
   }
 }
 
