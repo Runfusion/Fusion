@@ -159,11 +159,11 @@ describe("AgentMentionPopup", () => {
     expect(screen.getByTestId("agent-mention-popup")).toHaveClass("agent-mention-popup--above");
   });
 
-  it("anchors the below modifier above the input inside the mobile media query", async () => {
+  it("anchors the below modifier above the input through tablet media query", async () => {
     const css = await loadAllAppCss();
 
     expect(css).toMatch(
-      /@media[^{]*\(max-width:\s*768px\)[^{]*\{\s*\.agent-mention-popup\s*\{[^}]*\}\s*\.agent-mention-popup--below,\s*\.agent-mention-popup--above\s*\{[^}]*bottom:\s*calc\(100%\s*\+\s*var\(--space-xs\)\);[^}]*top:\s*auto;[^}]*\}/,
+      /@media[^{]*\(max-width:\s*1024px\)[^{]*\{\s*\.agent-mention-popup\s*\{[^}]*\}\s*\.agent-mention-popup--below,\s*\.agent-mention-popup--above\s*\{[^}]*bottom:\s*calc\(100%\s*\+\s*var\(--space-xs\)\);[^}]*top:\s*auto;[^}]*\}/,
     );
   });
 
