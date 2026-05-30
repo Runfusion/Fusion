@@ -54,6 +54,12 @@ function renderModal(overrides?: Partial<ComponentProps<typeof PrCreateModal>>) 
   return { onClose, onCreated, addToast };
 }
 
+async function renderModalLoaded(overrides?: Partial<ComponentProps<typeof PrCreateModal>>) {
+  const handles = renderModal(overrides);
+  await screen.findByDisplayValue("AI title");
+  return handles;
+}
+
 describe("PrCreateModal", () => {
   let styleEl: HTMLStyleElement;
 
@@ -110,8 +116,8 @@ describe("PrCreateModal", () => {
 
   it("regenerates and reverts AI content", async () => {
     mocks.generatePrMetadata.mockResolvedValueOnce(metadata).mockResolvedValueOnce({ title: "New title", body: "New body", templateUsed: false });
-    renderModal();
-    const titleInput = await screen.findByDisplayValue("AI title");
+    await renderModalLoaded();
+    const titleInput = screen.getByDisplayValue("AI title");
     fireEvent.change(titleInput, { target: { value: "custom" } });
     expect(screen.getByRole("button", { name: /revert to ai version/i })).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: /^regenerate$/i })[0]);
@@ -131,8 +137,7 @@ describe("PrCreateModal", () => {
   });
 
   it("adds and removes chips and submits payload", async () => {
-    const { onCreated, addToast, onClose } = renderModal();
-    await screen.findByDisplayValue("AI title");
+    const { onCreated, addToast, onClose } = await renderModalLoaded();
 
     fireEvent.change(screen.getByLabelText(/base branch/i), { target: { value: "develop" } });
     fireEvent.click(screen.getByLabelText(/create as draft/i));
@@ -166,8 +171,7 @@ describe("PrCreateModal", () => {
 
   it("shows submit error and retries with same payload", async () => {
     mocks.createPr.mockRejectedValueOnce(new Error("bad")).mockResolvedValueOnce({ number: 22, title: "ok", url: "u", status: "open", headBranch: "h", baseBranch: "main", commentCount: 0 } as PrInfo);
-    renderModal();
-    await screen.findByDisplayValue("AI title");
+    await renderModalLoaded();
 
     fireEvent.click(screen.getByRole("button", { name: "Create PR" }));
     expect(await screen.findByText("bad")).toBeInTheDocument();
@@ -189,15 +193,13 @@ describe("PrCreateModal", () => {
       },
     });
     mocks.createPr.mockRejectedValueOnce(err);
-    renderModal();
-    await screen.findByDisplayValue("AI title");
+    await renderModalLoaded();
     fireEvent.click(screen.getByRole("button", { name: "Create PR" }));
     expect((await screen.findAllByText(/gh auth login/i)).length).toBeGreaterThan(0);
   });
 
   it("closes on escape", async () => {
-    const { onClose } = renderModal();
-    await screen.findByDisplayValue("AI title");
+    const { onClose } = await renderModalLoaded();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
   });
