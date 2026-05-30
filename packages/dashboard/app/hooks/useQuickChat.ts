@@ -214,6 +214,7 @@ export function useQuickChat(
   const isStreamingRef = useRef(isStreaming);
   isStreamingRef.current = isStreaming;
   const sendCompletionRef = useRef<{ resolve: () => void; reject: (error?: unknown) => void } | null>(null);
+  const queuedPreSessionCompletionRef = useRef<{ resolve: () => void; reject: (error?: unknown) => void } | null>(null);
 
   // Track the current selected chat target for session management
   const currentSessionKeyRef = useRef<string>("");
@@ -287,7 +288,12 @@ export function useQuickChat(
 
     pendingMessageRef.current = "";
     setPendingMessage("");
-    void sendMessageRef.current(queuedMessage);
+    const queuedCompletion = queuedPreSessionCompletionRef.current;
+    queuedPreSessionCompletionRef.current = null;
+    const sendPromise = sendMessageRef.current(queuedMessage);
+    if (queuedCompletion) {
+      void sendPromise.then(queuedCompletion.resolve).catch(queuedCompletion.reject);
+    }
   }, []);
 
   const attachIfGenerating = useCallback((
@@ -510,6 +516,8 @@ export function useQuickChat(
     cancelStreamingFlushesRef.current = null;
     pendingMessageRef.current = "";
     setPendingMessage("");
+    queuedPreSessionCompletionRef.current?.resolve();
+    queuedPreSessionCompletionRef.current = null;
     setStreamingText("");
     setStreamingThinking("");
     setStreamingToolCalls([]);
@@ -721,8 +729,21 @@ export function useQuickChat(
    */
   const sendMessage = useCallback(
     (content: string, attachments?: File[]) => {
-      if (!activeSession || (!content.trim() && (!attachments || attachments.length === 0))) {
+      if (!content.trim() && (!attachments || attachments.length === 0)) {
         return Promise.resolve();
+      }
+
+      if (!activeSession) {
+        if (attachments && attachments.length > 0) {
+          return Promise.reject(new Error("Cannot send attachments before chat session is ready"));
+        }
+
+        return new Promise<void>((resolve, reject) => {
+          queuedPreSessionCompletionRef.current?.resolve();
+          queuedPreSessionCompletionRef.current = { resolve, reject };
+          pendingMessageRef.current = content;
+          setPendingMessage(content);
+        });
       }
 
       if (isStreamingRef.current) {
@@ -925,6 +946,18 @@ export function useQuickChat(
 
     return unsubscribe;
   }, [attachIfGenerating, projectId, reloadMessages, visibilitySuspension, flushPendingMessage]);
+
+  useEffect(() => {
+    if (!activeSession || isStreamingRef.current || streamRef.current) {
+      return;
+    }
+
+    if (pendingMessageRef.current.trim().length === 0) {
+      return;
+    }
+
+    flushPendingMessage();
+  }, [activeSession, flushPendingMessage]);
 
   // Cleanup on unmount
   useEffect(() => {

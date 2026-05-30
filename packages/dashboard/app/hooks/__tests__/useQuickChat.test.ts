@@ -68,6 +68,40 @@ describe("useQuickChat", () => {
     vi.useRealTimers();
   });
 
+  it("queues first send made before session init completes and streams once ready", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchResumeChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    let onDone: ((data: { messageId: string }) => void) | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      onDone = handlers.onDone as typeof onDone;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const initPromise = act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    const firstSend = result.current.sendMessage("Hello");
+
+    await initPromise;
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      expect(mockStreamChatResponse.mock.calls[0]?.[1]).toBe("Hello");
+      expect(result.current.isStreaming).toBe(true);
+    });
+
+    act(() => {
+      onDone?.({ messageId: "msg-001" });
+    });
+
+    await expect(firstSend).resolves.toBeUndefined();
+  });
+
   it("sendMessage returns a promise that resolves on stream completion", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchResumeChatSession.mockResolvedValue({ session });
