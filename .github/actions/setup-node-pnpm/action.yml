@@ -30,37 +30,16 @@ runs:
         cache: pnpm
         registry-url: ${{ inputs.registry-url }}
 
-    # Cache node_modules only for the exact pnpm-lock.yaml hash and Node/OS/arch tuple.
-    # runner.arch is essential: pnpm only installs the current platform's optional
-    # native deps (e.g. @rollup/rollup-linux-arm64-gnu), so an x64 cache restored on
-    # an arm64 runner (same runner.os) would be missing native binaries and break builds.
-    # github.job scopes the key per job: jobs sharing an OS/arch (e.g. the windows-x64
-    # CLI build and the Windows desktop build) would otherwise race on the same key and
-    # one would fail the post-job cache save ("unable to reserve cache ... another job
-    # may be creating this cache"). Per-job keys trade a little reuse for reliability.
-    # Intentionally no restore-keys fallback: partial restores can create inconsistent trees.
-    - name: Cache node_modules
-      id: node-modules-cache
-      if: ${{ inputs.skip-install != 'true' }}
-      uses: actions/cache@v4
-      with:
-        path: |
-          node_modules
-          **/node_modules
-          !**/.cache
-        key: node-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-node${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
-
+    # Do NOT cache the linked node_modules tree. pnpm builds node_modules from
+    # symlinks/junctions into the content-addressable store, and actions/cache does
+    # not preserve Windows junctions across its tar/restore — a restored tree has
+    # broken peer links (e.g. @vitejs/plugin-react can't resolve its `vite` peer →
+    # ERR_MODULE_NOT_FOUND), which silently broke the Windows release build. The
+    # pnpm *store* is already cached by actions/setup-node above (`cache: pnpm`), so
+    # `pnpm install --frozen-lockfile` is fast with a warm store and relinks
+    # correctly per-OS/arch every time (also fixing the prior arch-key and per-job
+    # cache-race issues this node_modules cache was patched for).
     - name: Install dependencies
-      if: ${{ inputs.skip-install != 'true' && steps.node-modules-cache.outputs.cache-hit != 'true' }}
+      if: ${{ inputs.skip-install != 'true' }}
       shell: bash
       run: pnpm install ${{ inputs.install-args }}
-
-    - name: Verify restored node_modules cache integrity
-      if: ${{ inputs.skip-install != 'true' && steps.node-modules-cache.outputs.cache-hit == 'true' }}
-      shell: bash
-      run: |
-        test -f node_modules/.modules.yaml || {
-          echo "ERROR: node_modules cache hit but node_modules/.modules.yaml is missing"
-          exit 1
-        }
-        pnpm -v
