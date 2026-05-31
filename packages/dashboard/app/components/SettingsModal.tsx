@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense, type CSSProperties, type MouseEvent } from "react";
-import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2, CheckCircle, AlertTriangle } from "lucide-react";
+import { Globe, Folder, RefreshCw, Star, HelpCircle, MessageCircle, Loader2, CheckCircle, AlertTriangle } from "lucide-react";
 import {
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
   THINKING_LEVELS,
@@ -7501,6 +7501,17 @@ export function SettingsModal({
                 )}
               </a>
             )}
+            <a
+              href="https://discord.gg/ksrfuy7WYR"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-sm settings-header-discord-btn"
+              aria-label="Join our Discord"
+              title="Join our Discord"
+            >
+              <MessageCircle size={13} aria-hidden="true" />
+              Discord
+            </a>
             <a
               href="https://github.com/Runfusion/Fusion/discussions"
               target="_blank"

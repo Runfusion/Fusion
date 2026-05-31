@@ -1528,7 +1528,7 @@ describe("SettingsModal", () => {
   });
 
   describe("settings header actions", () => {
-    it("renders Help and GitHub star controls", async () => {
+    it("renders Help, Discord, and GitHub star controls", async () => {
       renderModal();
       await waitForSettingsModalReady();
 
@@ -1536,7 +1536,19 @@ describe("SettingsModal", () => {
       expect(headerActions).toBeInTheDocument();
 
       expect(within(headerActions as HTMLElement).getByRole("link", { name: "Star Fusion on GitHub" })).toBeInTheDocument();
+      expect(within(headerActions as HTMLElement).getByRole("link", { name: "Join our Discord" })).toBeInTheDocument();
       expect(within(headerActions as HTMLElement).getByRole("link", { name: "Help and discussions" })).toBeInTheDocument();
+    });
+
+    it("renders Discord link with hardened external attributes", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const discordLink = screen.getByRole("link", { name: "Join our Discord" });
+      expect(discordLink).toHaveAttribute("href", "https://discord.gg/ksrfuy7WYR");
+      expect(discordLink).toHaveAttribute("target", "_blank");
+      expect(discordLink).toHaveAttribute("rel", expect.stringContaining("noopener"));
+      expect(discordLink).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
     });
   });
 
