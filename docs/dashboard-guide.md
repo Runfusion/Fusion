@@ -593,6 +593,7 @@ Inspect task definition, logs, review feedback, comments, documents, workflow ou
 - The **Review** tab is separate from **Comments**: Review shows actionable PR/reviewer feedback and same-task revision controls, while Comments remains the general collaboration thread.
 - **Request revision** in Review resumes work on the same task ID (no refinement task): `in-progress` tasks get steering injection, while `in-review` tasks are moved back to `in-progress` for the same branch/worktree revision pass.
 - Review supports a manual **Refresh** action in-place: PR mode pulls latest GitHub review state/decision, while direct mode rehydrates reviewer-agent feedback from persisted task data (no GitHub call).
+- For shared `branch_groups` (tasks with `branchContext.groupId`), PR merge mode opens and tracks one group-level PR from the group integration branch to the project default branch; member tasks share that PR state.
 - In direct/non-PR auto-merge mode, Review renders normalized reviewer-agent feedback (verdict/step/timestamp/detail) with dedicated loading/error/empty states; it does not require users to read raw agent logs.
 
 ### Identifying high-impact blockers

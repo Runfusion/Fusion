@@ -18,7 +18,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import type { TaskStore } from "@fusion/core";
 import { resolveTaskMergeTarget } from "@fusion/core";
-import type { Settings, TaskDetail, PrInfo, MergeResult } from "@fusion/core";
+import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
 import { resolveIntegrationBranch } from "@fusion/engine";
 import type { WorktreePool } from "@fusion/engine";
 
@@ -135,6 +135,41 @@ function buildPullRequestTitle(task: Pick<TaskDetail, "id" | "title">): string {
  */
 function buildPullRequestBody(task: Pick<TaskDetail, "id" | "description">): string {
   return [`Automated PR for ${task.id}.`, "", task.description].join("\n");
+}
+
+function buildGroupPullRequestTitle(group: Pick<BranchGroup, "id" | "sourceType" | "sourceId">, members: Task[]): string {
+  return `${group.id}: ${group.sourceType}/${group.sourceId} (${members.length} tasks)`;
+}
+
+function buildGroupPullRequestBody(
+  group: Pick<BranchGroup, "id" | "branchName" | "sourceType" | "sourceId">,
+  members: Array<Pick<Task, "id" | "title"> & { branchName: string }>,
+): string {
+  const lines = members.map((member) => `- ${member.id}: ${member.title || "(untitled)"} — \`${member.branchName}\``);
+  return [
+    `Automated group PR for ${group.id}.`,
+    `Source: ${group.sourceType}/${group.sourceId}`,
+    `Integration branch: \`${group.branchName}\``,
+    "",
+    "Included tasks:",
+    ...(lines.length > 0 ? lines : ["- (none)"]),
+  ].join("\n");
+}
+
+function toBranchGroupPrState(prInfo: PrInfo | null): BranchGroupPrState {
+  if (!prInfo) return "none";
+  if (prInfo.status === "merged") return "merged";
+  if (prInfo.status === "closed") return "closed";
+  return "open";
+}
+
+async function hasCommitsRelativeToBranch(cwd: string, branch: string, baseBranch: string): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync(`git rev-list --count "${baseBranch}..${branch}"`, { cwd, timeout: 30_000 });
+    return Number.parseInt(stdout.trim(), 10) > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -269,9 +304,126 @@ export async function processPullRequestMergeTask(
   const settings = await store.getSettings();
   const resolvedIntegrationBranch = await resolveIntegrationBranch(cwd, settings);
   const projectDefaultBranch = resolvedIntegrationBranch;
-  const branchGroup = task.branchContext?.assignmentMode === "shared"
+
+  // FN-5782 contract: shared group members promote via branch_groups.branchName
+  // integration branch, while non-shared tasks keep per-task PR behavior.
+  const isSharedBranchGroupMember = task.branchContext?.assignmentMode === "shared";
+  const branchGroup = isSharedBranchGroupMember
     ? store.getBranchGroup(task.branchContext.groupId)
     : null;
+
+  if (isSharedBranchGroupMember && branchGroup) {
+    const members = await store.listTasksByBranchGroup(branchGroup.id);
+    const membersWithCommits: Array<Pick<Task, "id" | "title"> & { branchName: string }> = [];
+    for (const member of members) {
+      const memberBranch = getTaskBranchName(member.id);
+      const hasCommits = await hasCommitsRelativeToBranch(cwd, memberBranch, branchGroup.branchName);
+      if (hasCommits || member.id === task.id) {
+        membersWithCommits.push({ id: member.id, title: member.title, branchName: memberBranch });
+      }
+    }
+
+    await store.updateTask(task.id, { status: "creating-pr" });
+    let groupPrInfo: PrInfo | null = null;
+    if (branchGroup.prNumber) {
+      groupPrInfo = {
+        number: branchGroup.prNumber,
+        url: branchGroup.prUrl ?? "",
+        status: branchGroup.prState === "merged" ? "merged" : branchGroup.prState === "closed" ? "closed" : "open",
+      };
+    } else {
+      groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "all" });
+      if (!groupPrInfo) {
+        await pushTaskBranchToOrigin(cwd, branchGroup.branchName);
+        try {
+          groupPrInfo = await github.createPr({
+            title: buildGroupPullRequestTitle(branchGroup, members),
+            body: buildGroupPullRequestBody(branchGroup, membersWithCommits),
+            head: branchGroup.branchName,
+            base: projectDefaultBranch,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("No commits between")) {
+            await store.updateBranchGroup(branchGroup.id, { prState: "none", prNumber: null, prUrl: null });
+            await store.updateTask(task.id, { status: "failed", error: `No pull request created for ${branchGroup.branchName}: no commits relative to ${projectDefaultBranch}.` });
+            await store.logEntry(task.id, "No group pull request created", message);
+            return "skipped";
+          }
+          throw err;
+        }
+        await store.logEntry(task.id, "Created group PR", `PR #${groupPrInfo.number}: ${groupPrInfo.url}`);
+      } else {
+        await store.logEntry(task.id, "Linked existing group PR", `PR #${groupPrInfo.number}: ${groupPrInfo.url}`);
+      }
+    }
+
+    if (!groupPrInfo) {
+      throw new Error(`Failed to create or resolve pull request for branch group ${branchGroup.id}`);
+    }
+
+    await store.updateBranchGroup(branchGroup.id, {
+      prNumber: groupPrInfo.number,
+      prUrl: groupPrInfo.url,
+      prState: toBranchGroupPrState(groupPrInfo),
+    });
+
+    const mergeStatus = await github.getPrMergeStatus(projectDefaultBranch, branchGroup.branchName, groupPrInfo.number);
+    const refreshedPrInfo: PrInfo = {
+      ...groupPrInfo,
+      ...mergeStatus.prInfo,
+      lastCheckedAt: new Date().toISOString(),
+    };
+    await store.updateBranchGroup(branchGroup.id, {
+      prNumber: refreshedPrInfo.number,
+      prUrl: refreshedPrInfo.url,
+      prState: toBranchGroupPrState(refreshedPrInfo),
+    });
+
+    if (mergeStatus.prInfo.status === "merged") {
+      for (const member of members) {
+        const memberDetail = await store.getTask(member.id);
+        await finalizePullRequestMerge(store, cwd, memberDetail, refreshedPrInfo, "Group pull request merged", pool);
+      }
+      await store.updateBranchGroup(branchGroup.id, { status: "finalized", prState: "merged" });
+      return "merged";
+    }
+
+    if (settings.requirePrApproval && mergeStatus.reviewDecision !== "APPROVED") {
+      await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+      return "waiting";
+    }
+
+    if (!mergeStatus.mergeReady) {
+      await store.updateTask(task.id, { status: mergeStatus.prInfo.status === "open" ? "awaiting-pr-checks" : null });
+      return "waiting";
+    }
+
+    const activeMerge = store.getActiveMergingTask(task.id);
+    if (activeMerge) {
+      await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+      return "waiting";
+    }
+
+    await store.updateTask(task.id, { status: "merging-pr" });
+    const mergedPr = await github.mergePr({ number: refreshedPrInfo.number, method: "squash" });
+    await store.updateBranchGroup(branchGroup.id, {
+      prNumber: mergedPr.number,
+      prUrl: mergedPr.url,
+      prState: toBranchGroupPrState(mergedPr),
+    });
+    for (const member of members) {
+      const memberDetail = await store.getTask(member.id);
+      await finalizePullRequestMerge(store, cwd, memberDetail, mergedPr, "Group pull request merged", pool);
+    }
+    await store.updateBranchGroup(branchGroup.id, { status: "finalized", prState: "merged" });
+    return "merged";
+  }
+
+  if (isSharedBranchGroupMember && !branchGroup) {
+    await store.logEntry(task.id, "Branch group missing; falling back to per-task PR path", task.branchContext?.groupId);
+  }
+
   const mergeTarget = resolveTaskMergeTarget(task, {
     projectDefaultBranch,
     branchGroup,
