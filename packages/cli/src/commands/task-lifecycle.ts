@@ -308,9 +308,10 @@ export async function processPullRequestMergeTask(
   // FN-5782 contract: shared group members promote via branch_groups.branchName
   // integration branch, while non-shared tasks keep per-task PR behavior.
   const isSharedBranchGroupMember = task.branchContext?.assignmentMode === "shared";
-  const branchGroup = isSharedBranchGroupMember
-    ? store.getBranchGroup(task.branchContext.groupId)
-    : null;
+  const branchGroup =
+    isSharedBranchGroupMember && task.branchContext
+      ? store.getBranchGroup(task.branchContext.groupId)
+      : null;
 
   if (isSharedBranchGroupMember && branchGroup) {
     const members = await store.listTasksByBranchGroup(branchGroup.id);
@@ -330,6 +331,10 @@ export async function processPullRequestMergeTask(
         number: branchGroup.prNumber,
         url: branchGroup.prUrl ?? "",
         status: branchGroup.prState === "merged" ? "merged" : branchGroup.prState === "closed" ? "closed" : "open",
+        title: buildGroupPullRequestTitle(branchGroup, members),
+        headBranch: branchGroup.branchName,
+        baseBranch: projectDefaultBranch,
+        commentCount: 0,
       };
     } else {
       groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "all" });
