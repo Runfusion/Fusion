@@ -37,6 +37,7 @@ import {
   buildTaskLineageTrailer,
   getTaskMergeBlocker,
   resolveAgentPrompt,
+  resolvePersistAgentThinkingLog,
   resolveTaskMergeTarget,
   resolveValidatorSettingsModel,
   type AgentPromptsConfig,
@@ -50,6 +51,7 @@ import { resolveIntegrationBranch } from "./integration-branch.js";
 import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
 import { createResolvedAgentSession, resolveMergerSessionModel } from "./agent-session-helpers.js";
 import { promptWithFallback } from "./pi.js";
+import { AgentLogger } from "./agent-logger.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { checkSessionError } from "./usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
@@ -412,13 +414,29 @@ interface AgentDeps {
 function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string, options: MergerOptions, audit: RunAuditor, systemPrompt: string) {
   return async (cwd: string, prompt: string): Promise<void> => {
     const model = resolveMergerSessionModel(settings);
+    const logger = new AgentLogger({
+      store,
+      taskId,
+      agent: "merger",
+      persistAgentToolOutput: settings.persistAgentToolOutput,
+      persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+      onAgentText: options.onAgentText
+        ? (_id: string, delta: string) => options.onAgentText?.(delta)
+        : undefined,
+      onAgentTool: options.onAgentTool
+        ? (_id: string, name: string) => options.onAgentTool?.(name)
+        : undefined,
+    });
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
       cwd,
       systemPrompt,
       tools: "coding",
-      onText: options.onAgentText ? (delta: string) => options.onAgentText?.(delta) : undefined,
+      onText: logger.onText,
+      onThinking: logger.onThinking,
+      onToolStart: logger.onToolStart,
+      onToolEnd: logger.onToolEnd,
       defaultProvider: model.provider,
       defaultModelId: model.modelId,
       fallbackProvider: settings.fallbackProvider,
@@ -436,6 +454,7 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
       }, { signal: options.signal });
       await accumulateSessionTokenUsage(store, taskId, session);
     } finally {
+      await logger.flush();
       session.dispose();
     }
   };
@@ -449,6 +468,19 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
     const validator = resolveValidatorSettingsModel(settings);
     const model = validator.provider && validator.modelId ? validator : resolveMergerSessionModel(settings);
     let captured = "";
+    const logger = new AgentLogger({
+      store,
+      taskId,
+      agent: "merger",
+      persistAgentToolOutput: settings.persistAgentToolOutput,
+      persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+      onAgentText: options.onAgentText
+        ? (_id: string, delta: string) => options.onAgentText?.(delta)
+        : undefined,
+      onAgentTool: options.onAgentTool
+        ? (_id: string, name: string) => options.onAgentTool?.(name)
+        : undefined,
+    });
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
@@ -457,8 +489,11 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
       tools: "coding",
       onText: (delta: string) => {
         captured += delta;
-        options.onAgentText?.(delta);
+        logger.onText(delta);
       },
+      onThinking: logger.onThinking,
+      onToolStart: logger.onToolStart,
+      onToolEnd: logger.onToolEnd,
       defaultProvider: model.provider,
       defaultModelId: model.modelId,
       fallbackProvider: settings.fallbackProvider,
@@ -476,6 +511,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
       }, { signal: options.signal });
       await accumulateSessionTokenUsage(store, taskId, session);
     } finally {
+      await logger.flush();
       session.dispose();
     }
     return captured;

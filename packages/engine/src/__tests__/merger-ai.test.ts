@@ -3,6 +3,25 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
+
+const createResolvedAgentSessionMock = vi.hoisted(() => vi.fn());
+vi.mock("../agent-session-helpers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agent-session-helpers.js")>();
+  return {
+    ...actual,
+    createResolvedAgentSession: createResolvedAgentSessionMock,
+  };
+});
+vi.mock("../pi.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../pi.js")>();
+  return {
+    ...actual,
+    promptWithFallback: vi.fn(async (session: { prompt: (prompt: string) => Promise<void> | void }, prompt: string) => {
+      await session.prompt(prompt);
+    }),
+  };
+});
+
 import {
   runAiMerge,
   landSquash,
@@ -177,6 +196,49 @@ describe("runAiMerge", () => {
     // Task moved to done + event emitted.
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done");
     expect(emitted.some((e) => e.event === "task:merged")).toBe(true);
+  });
+
+  it("persists AI merge agent text/thinking/tool output to agent logs", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store } = makeStore(dir, {}, { persistAgentToolOutput: true, persistAgentThinkingLog: true });
+
+    createResolvedAgentSessionMock.mockImplementation(async (opts: any) => {
+      const isReview = String(opts.systemPrompt ?? "").includes(REVIEW_VERDICT_MARKER);
+      const session = {
+        async prompt(prompt: string) {
+          opts.onThinking?.("thinking-delta");
+          opts.onToolStart?.("read", { path: "feature.txt" });
+          opts.onToolEnd?.("read", false, "feature work");
+          opts.onText?.(isReview ? "REVIEW_VERDICT: approve" : "merge-agent-output");
+          if (!isReview) {
+            try {
+              execSync("git merge --squash fusion/fn-1", { cwd: opts.cwd, stdio: "pipe" });
+            } catch {
+              execSync("git checkout --theirs . || true", { cwd: opts.cwd, stdio: "pipe", shell: "/bin/bash" } as any);
+              execSync("git add -A", { cwd: opts.cwd, stdio: "pipe" });
+            }
+            execSync("git add -A", { cwd: opts.cwd, stdio: "pipe" });
+            execSync('git commit -q -m "squash: feature"', { cwd: opts.cwd, stdio: "pipe" });
+          }
+        },
+        dispose: vi.fn(),
+        getSessionStats: vi.fn(() => ({ tokens: { input: 1, output: 1 } })),
+      };
+      return { session };
+    });
+
+    await runAiMerge(store, dir, "FN-1", { manual: true });
+
+    const mergerLogCalls = store.appendAgentLog.mock.calls.filter(
+      ([id, _text, _type, _detail, agent]: [string, string, string, string | undefined, string | undefined]) =>
+        id === "FN-1" && agent === "merger",
+    );
+
+    expect(mergerLogCalls.some(([, text, type]: [string, string, string]) => type === "tool" && text === "read")).toBe(true);
+    expect(mergerLogCalls.some(([, text, type]: [string, string, string]) => type === "tool_result" && text === "read")).toBe(true);
+    expect(mergerLogCalls.some(([, _text, type]: [string, string, string]) => type === "thinking")).toBe(true);
+    expect(mergerLogCalls.some(([, _text, type]: [string, string, string]) => type === "text")).toBe(true);
+    createResolvedAgentSessionMock.mockReset();
   });
 
   it("includes the lineage trailer when the task has a lineageId", async () => {
