@@ -494,6 +494,40 @@ describe("SelfHealingManager", () => {
       );
     });
 
+    it("logs post-move requeue patch failures without executor fallback", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-001",
+        column: "in-progress",
+        stuckKillCount: 6,
+        steps: [
+          { name: "Preflight", status: "done" },
+          { name: "Delivery", status: "in-progress" },
+        ],
+      } as unknown as Task);
+      (store.updateTask as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({} as Task)
+        .mockRejectedValueOnce(new Error("write conflict"));
+
+      manager.start();
+
+      const result = await manager.checkStuckBudget("FN-001", "loop");
+
+      expect(result).toBe(false);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
+        preserveProgress: true,
+        preserveStatus: true,
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move requeue patch failed (write conflict); scheduler retry may wait for the next state repair pass.",
+      );
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Re-queued in todo with progress preserved; scheduler may retry without manual unpause.",
+      );
+      expect(store.handoffToReview).not.toHaveBeenCalled();
+    });
+
     it("terminalizes no-progress churn without incrementing stuck kill budget", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "FN-001",

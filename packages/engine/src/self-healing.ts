@@ -1079,14 +1079,6 @@ export class SelfHealingManager {
               preserveProgress: true,
               preserveStatus: true,
             });
-            const requeueUpdate = {
-              stuckKillCount: newCount,
-              paused: false,
-              userPaused: false,
-              pausedReason: null,
-              status: "queued",
-            } satisfies Parameters<typeof this.store.updateTask>[1] & { userPaused: boolean };
-            await this.store.updateTask(taskId, requeueUpdate);
           } catch (moveErr: unknown) {
             const moveErrMessage = moveErr instanceof Error ? moveErr.message : String(moveErr);
             log.warn(`${taskId} moveTask(todo) failed (${moveErrMessage}) after incomplete STUCK_LOOP_EXHAUSTED terminalization — falling back to executor stuck-kill requeue`);
@@ -1095,6 +1087,24 @@ export class SelfHealingManager {
               `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); falling back to executor stuck-kill requeue.`,
             );
             return true;
+          }
+
+          const requeueUpdate = {
+            stuckKillCount: newCount,
+            paused: false,
+            userPaused: false,
+            pausedReason: null,
+            status: "queued",
+          } satisfies Parameters<typeof this.store.updateTask>[1] & { userPaused: boolean };
+          try {
+            await this.store.updateTask(taskId, requeueUpdate);
+          } catch (patchErr: unknown) {
+            const patchErrMessage = patchErr instanceof Error ? patchErr.message : String(patchErr);
+            log.warn(`${taskId} post-move requeue patch failed after incomplete STUCK_LOOP_EXHAUSTED terminalization: ${patchErrMessage}`);
+            await this.store.logEntry(
+              taskId,
+              `STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move requeue patch failed (${patchErrMessage}); scheduler retry may wait for the next state repair pass.`,
+            );
           }
           await this.store.logEntry(
             taskId,

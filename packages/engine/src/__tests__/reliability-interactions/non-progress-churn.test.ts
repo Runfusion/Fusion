@@ -4,6 +4,7 @@ import "../executor-test-helpers.js";
 import type { Task, TaskStore } from "@fusion/core";
 import { TaskExecutor } from "../../executor.js";
 import { SelfHealingManager } from "../../self-healing.js";
+import { isRunnableQueuedOverlapCandidate } from "../../scheduler.js";
 import { StuckTaskDetector } from "../../stuck-task-detector.js";
 
 type MockTaskStore = TaskStore & EventEmitter & {
@@ -219,6 +220,7 @@ describe("reliability interactions: non-progress churn", () => {
     expect(task.steps).toEqual([{ name: "Implement", status: "in-progress" }]);
     expect(task.log?.some((entry) => entry.action.includes("incomplete task exhausted stuck kill budget"))).toBe(true);
     expect(store.handoffToReview).not.toHaveBeenCalled();
+    expect(isRunnableQueuedOverlapCandidate(task, [task])).toBe(true);
 
     manager.stop();
   });
