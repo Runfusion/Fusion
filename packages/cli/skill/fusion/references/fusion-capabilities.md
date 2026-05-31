@@ -53,6 +53,9 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_milestone_add` | Add a milestone to a mission. Milestones represent phases of work. |
 | `fn_slice_add` | Add a slice to a milestone. Slices are work units that can be activated for implementation. |
 | `fn_feature_add` | Add a feature to a slice. Features are deliverables that can be linked to tasks. |
+| `fn_feature_delete` | Delete a feature. Rejects deletion when linked to a live task unless force=true. |
+| `fn_slice_delete` | Delete a slice and its features. Rejects deletion when child features link to live tasks unless force=true. |
+| `fn_milestone_delete` | Delete a milestone and all descendant slices/features. Rejects deletion when child features link to live tasks unless force=true. |
 | `fn_slice_activate` | Activate a pending slice for implementation. Sets status to 'active' and enables task linking for its features. |
 | `fn_feature_link_task` | Link a feature to a fn task for implementation. Updates the feature status to 'triaged' and associates it with the task. If the target task is not on the active board (for example archived, deleted, or never created), the tool returns a clear validation error indicating that only active tasks can be linked. |
 | `fn_feature_update` | Update an existing feature's title, description, or acceptance criteria. Partial patches leave untouched fields intact. |

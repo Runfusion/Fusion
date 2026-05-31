@@ -2919,6 +2919,112 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_feature_delete ────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_feature_delete",
+    label: "fn: Delete Feature",
+    description: "Delete a feature. Rejects deletion when linked to a live task unless force=true.",
+    promptSnippet: "Delete a mission feature",
+    promptGuidelines: [
+      "Use force=true only when intentionally overriding linked live-task guards",
+      "Deleting a feature is permanent and cannot be undone",
+    ],
+    parameters: Type.Object({
+      featureId: Type.String({ description: "Feature ID to delete (e.g., F-001)" }),
+      force: Type.Optional(Type.Boolean({ description: "Override linked-task guard" })),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      try {
+        missionStore.deleteFeature(params.featureId, params.force === true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: `Deleted ${params.featureId}` }],
+        details: { featureId: params.featureId, force: params.force === true },
+      };
+    },
+  });
+
+  // ── fn_slice_delete ────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_slice_delete",
+    label: "fn: Delete Slice",
+    description: "Delete a slice and its features. Rejects deletion when child features link to live tasks unless force=true.",
+    promptSnippet: "Delete a mission slice",
+    parameters: Type.Object({
+      sliceId: Type.String({ description: "Slice ID to delete (e.g., SL-001)" }),
+      force: Type.Optional(Type.Boolean({ description: "Override linked-task guard" })),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      try {
+        missionStore.deleteSlice(params.sliceId, params.force === true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: `Deleted ${params.sliceId}` }],
+        details: { sliceId: params.sliceId, force: params.force === true },
+      };
+    },
+  });
+
+  // ── fn_milestone_delete ────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_milestone_delete",
+    label: "fn: Delete Milestone",
+    description: "Delete a milestone and all descendant slices/features. Rejects deletion when child features link to live tasks unless force=true.",
+    promptSnippet: "Delete a mission milestone",
+    parameters: Type.Object({
+      milestoneId: Type.String({ description: "Milestone ID to delete (e.g., MS-001)" }),
+      force: Type.Optional(Type.Boolean({ description: "Override linked-task guard" })),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+
+      try {
+        missionStore.deleteMilestone(params.milestoneId, params.force === true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+          details: { error: message },
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: `Deleted ${params.milestoneId}` }],
+        details: { milestoneId: params.milestoneId, force: params.force === true },
+      };
+    },
+  });
+
   // ── fn_slice_activate ────────────────────────────────────────────
 
   pi.registerTool({

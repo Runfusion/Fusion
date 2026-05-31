@@ -245,6 +245,33 @@ Add a feature to a slice. Features are deliverables that can be linked to tasks.
 | `description` | string | — | Feature description |
 | `acceptanceCriteria` | string | — | Acceptance criteria for completing the feature |
 
+### fn_feature_delete
+
+Delete a feature. Rejects deletion when linked to a live task unless force=true.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `featureId` | string | ✓ | Feature ID to delete (e.g., F-001) |
+| `force` | boolean | — | Override linked-task guard |
+
+### fn_slice_delete
+
+Delete a slice and its features. Rejects deletion when child features link to live tasks unless force=true.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sliceId` | string | ✓ | Slice ID to delete (e.g., SL-001) |
+| `force` | boolean | — | Override linked-task guard |
+
+### fn_milestone_delete
+
+Delete a milestone and all descendant slices/features. Rejects deletion when child features link to live tasks unless force=true.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `milestoneId` | string | ✓ | Milestone ID to delete (e.g., MS-001) |
+| `force` | boolean | — | Override linked-task guard |
+
 ### fn_slice_activate
 
 Activate a pending slice for implementation. Sets status to 'active' and enables task linking for its features.

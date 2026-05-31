@@ -220,6 +220,9 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
         "fn_milestone_add",
         "fn_slice_add",
         "fn_feature_add",
+        "fn_feature_delete",
+        "fn_slice_delete",
+        "fn_milestone_delete",
         "fn_slice_activate",
         "fn_feature_link_task",
         "fn_feature_update",
@@ -1331,6 +1334,37 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
       expect(result.content[0].text).toContain("Added");
       expect(persisted?.title).toBe("Feature");
       expect(persisted?.acceptanceCriteria).toBe("Must pass");
+    });
+  });
+
+  describe("fn_feature_delete", () => {
+    it("deletes feature, guards linked task, and handles missing feature", async () => {
+      const missionTool = api.tools.get("fn_mission_create")!;
+      const milestoneTool = api.tools.get("fn_milestone_add")!;
+      const sliceTool = api.tools.get("fn_slice_add")!;
+      const featureTool = api.tools.get("fn_feature_add")!;
+      const createTaskTool = api.tools.get("fn_task_create")!;
+      const linkTool = api.tools.get("fn_feature_link_task")!;
+      const deleteTool = api.tools.get("fn_feature_delete")!;
+
+      const mission = await missionTool.execute("m1", { title: "Mission" }, undefined, undefined, makeCtx(tmpDir));
+      const milestone = await milestoneTool.execute("ms1", { missionId: mission.details.missionId, title: "Milestone" }, undefined, undefined, makeCtx(tmpDir));
+      const slice = await sliceTool.execute("sl1", { milestoneId: milestone.details.milestoneId, title: "Slice" }, undefined, undefined, makeCtx(tmpDir));
+      const feature = await featureTool.execute("f1", { sliceId: slice.details.sliceId, title: "Feature" }, undefined, undefined, makeCtx(tmpDir));
+      const task = await createTaskTool.execute("t1", { description: "Task for feature" }, undefined, undefined, makeCtx(tmpDir));
+      await linkTool.execute("l1", { featureId: feature.details.featureId, taskId: task.details.taskId }, undefined, undefined, makeCtx(tmpDir));
+
+      const guarded = await deleteTool.execute("d1", { featureId: feature.details.featureId }, undefined, undefined, makeCtx(tmpDir));
+      expect(guarded.isError).toBe(true);
+      expect(guarded.content[0].text).toContain("linked to task");
+
+      const forced = await deleteTool.execute("d2", { featureId: feature.details.featureId, force: true }, undefined, undefined, makeCtx(tmpDir));
+      expect(forced.isError).not.toBe(true);
+      expect(forced.content[0].text).toContain("Deleted");
+
+      const missing = await deleteTool.execute("d3", { featureId: feature.details.featureId }, undefined, undefined, makeCtx(tmpDir));
+      expect(missing.isError).toBe(true);
+      expect(missing.content[0].text).toContain("not found");
     });
   });
 

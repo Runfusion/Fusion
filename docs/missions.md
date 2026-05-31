@@ -82,9 +82,12 @@ The canonical per-parameter tool reference lives in `packages/cli/skill/fusion/r
 | `fn_milestone_update` | Update milestone fields using partial patches. |
 | `fn_slice_add` | Add a slice to a milestone. |
 | `fn_slice_activate` | Activate a pending slice for implementation. |
+| `fn_slice_delete` | Delete a slice (with linked-task guard and optional `force`). |
 | `fn_feature_add` | Add a feature to a slice with optional acceptance criteria. |
+| `fn_feature_delete` | Delete a feature (with linked-task guard and optional `force`). |
 | `fn_feature_update` | Update feature fields using partial patches. |
 | `fn_feature_link_task` | Link a feature to a task for implementation. |
+| `fn_milestone_delete` | Delete a milestone (with linked-task guard and optional `force`). |
 
 ### fn_mission_update
 
@@ -123,6 +126,18 @@ Updates an existing feature's `title`, `description`, or `acceptanceCriteria`. P
 | `acceptanceCriteria` | string | — | Updated acceptance criteria for completing the feature |
 
 Use this to edit existing features without delete-and-re-add cycles.
+
+## Mission delete policy (hard delete with linked-task guard)
+
+Mission hierarchy records (`missions`, `milestones`, `slices`, `mission_features`) use hard deletes with FK cascades and do not have `deletedAt` soft-delete columns.
+
+To keep behavior consistent, Fusion uses **hard delete with guard** for feature/slice/milestone deletes:
+
+- Delete is rejected when the target (or any cascading child feature) is linked to a **live** task (`deletedAt IS NULL` and not archived).
+- Callers can pass `force: true` to override the guard. Force clears the mission linkage before deletion, then proceeds with the same hard delete.
+- Linked tasks are preserved; only mission hierarchy rows are removed.
+
+This intentionally differs from task soft-delete behavior described in `docs/soft-delete-verification-matrix.md` and avoids a mission-table soft-delete migration.
 
 ## Mission Interview and Planning Workflow
 

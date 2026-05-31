@@ -1391,17 +1391,35 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * Cascades to delete all slices and features.
    *
    * @param id - Milestone ID
+   * @param force - Override linked live-task guard for child features
    * @throws Error if milestone not found
    */
-  deleteMilestone(id: string): void {
+  deleteMilestone(id: string, force = false): void {
     const milestone = this.getMilestone(id);
     if (!milestone) {
       throw new Error(`Milestone ${id} not found`);
     }
 
     const missionId = milestone.missionId;
+    const features = this.listSlices(id).flatMap((slice) => this.listFeatures(slice.id));
+    const blockingLinks = this.getLiveTaskLinkedFeatures(features);
 
-    this.db.prepare("DELETE FROM milestones WHERE id = ?").run(id);
+    if (blockingLinks.length > 0 && !force) {
+      throw new Error(
+        `Milestone ${id} has features linked to live tasks: ${blockingLinks.map((link) => `${link.featureId}->${link.taskId}`).join(", ")}; pass force to delete anyway`,
+      );
+    }
+
+    this.db.transaction(() => {
+      if (force) {
+        for (const link of blockingLinks) {
+          this.db.prepare("UPDATE mission_features SET taskId = NULL, updatedAt = ? WHERE id = ?").run(new Date().toISOString(), link.featureId);
+          this.db.prepare("UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND \"deletedAt\" IS NULL").run(link.taskId);
+        }
+      }
+
+      this.db.prepare("DELETE FROM milestones WHERE id = ?").run(id);
+    });
     this.db.bumpLastModified();
 
     this.emit("milestone:deleted", id);
@@ -1621,17 +1639,35 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * Cascades to delete all features.
    *
    * @param id - Slice ID
+   * @param force - Override linked live-task guard for child features
    * @throws Error if slice not found
    */
-  deleteSlice(id: string): void {
+  deleteSlice(id: string, force = false): void {
     const slice = this.getSlice(id);
     if (!slice) {
       throw new Error(`Slice ${id} not found`);
     }
 
     const milestoneId = slice.milestoneId;
+    const features = this.listFeatures(id);
+    const blockingLinks = this.getLiveTaskLinkedFeatures(features);
 
-    this.db.prepare("DELETE FROM slices WHERE id = ?").run(id);
+    if (blockingLinks.length > 0 && !force) {
+      throw new Error(
+        `Slice ${id} has features linked to live tasks: ${blockingLinks.map((link) => `${link.featureId}->${link.taskId}`).join(", ")}; pass force to delete anyway`,
+      );
+    }
+
+    this.db.transaction(() => {
+      if (force) {
+        for (const link of blockingLinks) {
+          this.db.prepare("UPDATE mission_features SET taskId = NULL, updatedAt = ? WHERE id = ?").run(new Date().toISOString(), link.featureId);
+          this.db.prepare("UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND \"deletedAt\" IS NULL").run(link.taskId);
+        }
+      }
+
+      this.db.prepare("DELETE FROM slices WHERE id = ?").run(id);
+    });
     this.db.bumpLastModified();
 
     this.emit("slice:deleted", id);
@@ -1906,32 +1942,70 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * Delete a feature.
    *
    * @param id - Feature ID
+   * @param force - Override linked live-task guard
    * @throws Error if feature not found
    */
-  deleteFeature(id: string): void {
+  deleteFeature(id: string, force = false): void {
     const feature = this.getFeature(id);
     if (!feature) {
       throw new Error(`Feature ${id} not found`);
     }
 
-    const sliceId = feature.sliceId;
-    const slice = this.getSlice(sliceId);
-    const milestoneId = slice?.milestoneId;
-    if (milestoneId) {
-      const managedAssertion = this.listContractAssertions(milestoneId)
-        .find((assertion) => assertion.sourceFeatureId === feature.id);
-      if (managedAssertion) {
-        this.deleteContractAssertion(managedAssertion.id);
+    if (feature.taskId) {
+      const linkedTask = this.db.prepare(
+        `SELECT id, "column" FROM tasks WHERE id = ? AND "deletedAt" IS NULL`
+      ).get(feature.taskId) as { id: string; column: string } | undefined;
+      const linkedToLiveTask = linkedTask && linkedTask.column !== "archived";
+
+      if (linkedToLiveTask && !force) {
+        throw new Error(`Feature ${id} is linked to task ${feature.taskId}; pass force to delete anyway`);
       }
     }
 
-    this.db.prepare("DELETE FROM mission_features WHERE id = ?").run(id);
+    const sliceId = feature.sliceId;
+    const slice = this.getSlice(sliceId);
+    const milestoneId = slice?.milestoneId;
+
+    this.db.transaction(() => {
+      if (force && feature.taskId) {
+        this.db.prepare("UPDATE mission_features SET taskId = NULL, updatedAt = ? WHERE id = ?").run(new Date().toISOString(), id);
+        this.db.prepare("UPDATE tasks SET missionId = NULL, sliceId = NULL WHERE id = ? AND \"deletedAt\" IS NULL").run(feature.taskId);
+      }
+
+      if (milestoneId) {
+        const managedAssertion = this.listContractAssertions(milestoneId)
+          .find((assertion) => assertion.sourceFeatureId === feature.id);
+        if (managedAssertion) {
+          this.deleteContractAssertion(managedAssertion.id);
+        }
+      }
+
+      this.db.prepare("DELETE FROM mission_features WHERE id = ?").run(id);
+    });
     this.db.bumpLastModified();
 
     this.emit("feature:deleted", id);
 
     // Recompute slice status after deletion
     this.recomputeSliceStatus(sliceId);
+  }
+
+  private getLiveTaskLinkedFeatures(features: MissionFeature[]): Array<{ featureId: string; taskId: string }> {
+    const links = features
+      .filter((feature): feature is MissionFeature & { taskId: string } => Boolean(feature.taskId))
+      .map((feature) => ({ featureId: feature.id, taskId: feature.taskId }));
+
+    if (links.length === 0) {
+      return [];
+    }
+
+    const placeholders = links.map(() => "?").join(", ");
+    const liveRows = this.db.prepare(
+      `SELECT id FROM tasks WHERE id IN (${placeholders}) AND "deletedAt" IS NULL AND "column" != 'archived'`
+    ).all(...links.map((link) => link.taskId)) as Array<{ id: string }>;
+    const liveTaskIds = new Set(liveRows.map((row) => row.id));
+
+    return links.filter((link) => liveTaskIds.has(link.taskId));
   }
 
   private deriveFeatureAssertion(feature: MissionFeature): { assertionText: string; textSource: MissionAssertionTextSource } {

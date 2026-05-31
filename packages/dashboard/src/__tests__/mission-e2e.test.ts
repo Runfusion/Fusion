@@ -238,8 +238,16 @@ function createMockMissionStore() {
       return updated;
     }),
 
-    deleteMilestone: vi.fn((id: string) => {
+    deleteMilestone: vi.fn((id: string, force?: boolean) => {
       if (!milestones.has(id)) throw new Error("Milestone " + id + " not found");
+      const blockingFeature = Array.from(features.values()).find((feature) => {
+        if (!feature.taskId) return false;
+        const parentSlice = slices.get(feature.sliceId);
+        return parentSlice?.milestoneId === id;
+      });
+      if (blockingFeature && !force) {
+        throw new Error(`Milestone ${id} has features linked to live tasks: ${blockingFeature.id}->${blockingFeature.taskId}; pass force to delete anyway`);
+      }
       milestones.delete(id);
       for (const slice of Array.from(slices.values())) {
         if (slice.milestoneId === id) {
@@ -252,7 +260,6 @@ function createMockMissionStore() {
         }
       }
     }),
-
     addSlice: vi.fn((milestoneId: string, input: { title: string; description?: string; verification?: string }) => {
       const slice: Slice = {
         id: generateSliceId(),
@@ -286,8 +293,14 @@ function createMockMissionStore() {
       return updated;
     }),
 
-    deleteSlice: vi.fn((id: string) => {
+    deleteSlice: vi.fn((id: string, force?: boolean) => {
       if (!slices.has(id)) throw new Error("Slice " + id + " not found");
+      const blockingFeature = Array.from(features.values()).find(
+        (feature) => feature.sliceId === id && Boolean(feature.taskId),
+      );
+      if (blockingFeature && !force) {
+        throw new Error(`Slice ${id} has features linked to live tasks: ${blockingFeature.id}->${blockingFeature.taskId}; pass force to delete anyway`);
+      }
       slices.delete(id);
       for (const feature of Array.from(features.values())) {
         if (feature.sliceId === id) {
@@ -295,7 +308,6 @@ function createMockMissionStore() {
         }
       }
     }),
-
     addFeature: vi.fn((sliceId: string, input: { title: string; description?: string; acceptanceCriteria?: string }) => {
       const feature: MissionFeature = {
         id: generateFeatureId(),
@@ -409,8 +421,12 @@ function createMockMissionStore() {
       return updated;
     }),
 
-    deleteFeature: vi.fn((id: string) => {
-      if (!features.has(id)) throw new Error("Feature " + id + " not found");
+    deleteFeature: vi.fn((id: string, force?: boolean) => {
+      const feature = features.get(id);
+      if (!feature) throw new Error("Feature " + id + " not found");
+      if (feature.taskId && !force) {
+        throw new Error(`Feature ${id} is linked to task ${feature.taskId}; pass force to delete anyway`);
+      }
       features.delete(id);
     }),
 
@@ -1665,13 +1681,19 @@ describe("Mission API", () => {
       expect(missingMilestone.status).toBe(404);
     });
 
-    it("DELETE /api/missions/milestones/:milestoneId validates ID and existence", async () => {
+    it("DELETE /api/missions/milestones/:milestoneId validates ID, existence, and force guard", async () => {
       const { app, missionStore } = buildApp();
       const mission = missionStore.createMission({ title: "Mission" });
       const milestone = missionStore.addMilestone(mission.id, { title: "To Delete" });
+      const guardedSlice = missionStore.addSlice(milestone.id, { title: "Slice" });
+      const guardedFeature = missionStore.addFeature(guardedSlice.id, { title: "Feature" });
+      missionStore.updateFeature(guardedFeature.id, { taskId: "FN-001", status: "triaged" });
 
-      const removed = await request(app, "DELETE", `/api/missions/milestones/${milestone.id}`);
-      expect(removed.status).toBe(204);
+      const conflictResult = await request(app, "DELETE", `/api/missions/milestones/${milestone.id}`);
+      expect(conflictResult.status).toBe(409);
+
+      const forced = await request(app, "DELETE", `/api/missions/milestones/${milestone.id}?force=true`);
+      expect(forced.status).toBe(204);
 
       const missing = await request(app, "DELETE", "/api/missions/milestones/MS-NOT-FOUND");
       expect(missing.status).toBe(404);
@@ -1820,14 +1842,19 @@ describe("Mission API", () => {
       expect(empty.body.error).toContain("No valid fields to update");
     });
 
-    it("DELETE /api/missions/slices/:sliceId validates ID and existence", async () => {
+    it("DELETE /api/missions/slices/:sliceId validates ID, existence, and force guard", async () => {
       const { app, missionStore } = buildApp();
       const mission = missionStore.createMission({ title: "Mission" });
       const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
       const slice = missionStore.addSlice(milestone.id, { title: "To Delete" });
+      const guardedFeature = missionStore.addFeature(slice.id, { title: "Feature" });
+      missionStore.updateFeature(guardedFeature.id, { taskId: "FN-001", status: "triaged" });
 
-      const removed = await request(app, "DELETE", `/api/missions/slices/${slice.id}`);
-      expect(removed.status).toBe(204);
+      const conflictResult = await request(app, "DELETE", `/api/missions/slices/${slice.id}`);
+      expect(conflictResult.status).toBe(409);
+
+      const forced = await request(app, "DELETE", `/api/missions/slices/${slice.id}?force=true`);
+      expect(forced.status).toBe(204);
 
       const missing = await request(app, "DELETE", "/api/missions/slices/SL-NOT-FOUND");
       expect(missing.status).toBe(404);
@@ -1945,15 +1972,22 @@ describe("Mission API", () => {
       });
     });
 
-    it("DELETE /api/missions/features/:featureId succeeds and rejects invalid ID format", async () => {
+    it("DELETE /api/missions/features/:featureId handles guard, force, and invalid ID format", async () => {
       const { app, missionStore } = buildApp();
       const mission = missionStore.createMission({ title: "Mission" });
       const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
       const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
       const feature = missionStore.addFeature(slice.id, { title: "Feature" });
+      missionStore.updateFeature(feature.id, { taskId: "FN-001", status: "triaged" });
 
-      const removed = await request(app, "DELETE", `/api/missions/features/${feature.id}`);
+      const guarded = await request(app, "DELETE", `/api/missions/features/${feature.id}`);
+      expect(guarded.status).toBe(409);
+
+      const removed = await request(app, "DELETE", `/api/missions/features/${feature.id}?force=true`);
       expect(removed.status).toBe(204);
+
+      const missing = await request(app, "DELETE", "/api/missions/features/F-NOT-FOUND");
+      expect(missing.status).toBe(404);
 
       const invalid = await request(app, "DELETE", "/api/missions/features/invalid-id");
       expect(invalid.status).toBe(400);

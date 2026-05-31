@@ -1309,6 +1309,7 @@ export function createMissionRouter(
     "/milestones/:milestoneId",
     catchTypedHandler(async (req, res) => {
       const { milestoneId } = req.params;
+      const force = req.query?.force === "true";
 
       if (!validateMilestoneId(milestoneId)) {
         throw badRequest("Invalid milestone ID format");
@@ -1319,7 +1320,18 @@ export function createMissionRouter(
         throw notFound("Milestone not found");
       }
 
-      missionStore.deleteMilestone(milestoneId);
+      try {
+        missionStore.deleteMilestone(milestoneId, force);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("linked to live tasks")) {
+          throw conflict(errMsg);
+        }
+        if (errMsg.includes("not found")) {
+          throw notFound("Milestone not found");
+        }
+        throw err;
+      }
       res.status(204).send();
     })
   );
@@ -1547,6 +1559,7 @@ export function createMissionRouter(
     "/slices/:sliceId",
     catchTypedHandler(async (req, res) => {
       const { sliceId } = req.params;
+      const force = req.query?.force === "true";
 
       if (!validateSliceId(sliceId)) {
         throw badRequest("Invalid slice ID format");
@@ -1557,7 +1570,18 @@ export function createMissionRouter(
         throw notFound("Slice not found");
       }
 
-      missionStore.deleteSlice(sliceId);
+      try {
+        missionStore.deleteSlice(sliceId, force);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("linked to live tasks")) {
+          throw conflict(errMsg);
+        }
+        if (errMsg.includes("not found")) {
+          throw notFound("Slice not found");
+        }
+        throw err;
+      }
       res.status(204).send();
     })
   );
@@ -2419,6 +2443,7 @@ export function createMissionRouter(
     "/features/:featureId",
     catchTypedHandler(async (req, res) => {
       const { featureId } = req.params;
+      const force = req.query?.force === "true";
 
       if (!validateFeatureId(featureId)) {
         throw badRequest("Invalid feature ID format");
@@ -2429,7 +2454,18 @@ export function createMissionRouter(
         throw notFound("Feature not found");
       }
 
-      missionStore.deleteFeature(featureId);
+      try {
+        missionStore.deleteFeature(featureId, force);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("linked to task")) {
+          throw conflict(errMsg);
+        }
+        if (errMsg.includes("not found")) {
+          throw notFound("Feature not found");
+        }
+        throw err;
+      }
       res.status(204).send();
     })
   );

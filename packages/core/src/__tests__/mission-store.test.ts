@@ -17,11 +17,12 @@ function createTaskInDb(
   taskId: string,
   description = "Test task",
   status?: string,
+  options?: { column?: string; deletedAt?: string | null },
 ): void {
   const now = new Date().toISOString();
   database.prepare(
-    `INSERT INTO tasks (id, description, "column", status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(taskId, description, "triage", status ?? null, now, now);
+    `INSERT INTO tasks (id, description, "column", status, createdAt, updatedAt, "deletedAt") VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(taskId, description, options?.column ?? "triage", status ?? null, now, now, options?.deletedAt ?? null);
 }
 
 describe("MissionStore", () => {
@@ -1211,7 +1212,7 @@ describe("MissionStore", () => {
       expect(updated.title).toBe("Updated");
     });
 
-    it("deletes a feature", () => {
+    it("deletes a feature when no task is linked", () => {
       const mission = store.createMission({ title: "Mission" });
       const milestone = store.addMilestone(mission.id, { title: "Milestone" });
       const slice = store.addSlice(milestone.id, { title: "Slice" });
@@ -1220,6 +1221,79 @@ describe("MissionStore", () => {
 
       const retrieved = store.getFeature(feature.id);
       expect(retrieved).toBeUndefined();
+    });
+
+    it("blocks delete when feature is linked to a live task", () => {
+      createTaskInDb(db, "FN-001");
+
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Guarded" });
+      store.linkFeatureToTask(feature.id, "FN-001");
+
+      expect(() => store.deleteFeature(feature.id)).toThrow(
+        `Feature ${feature.id} is linked to task FN-001; pass force to delete anyway`,
+      );
+      expect(store.getFeature(feature.id)).toBeDefined();
+    });
+
+    it("deletes linked feature with force and keeps task row", () => {
+      createTaskInDb(db, "FN-001");
+
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Force Delete" });
+      store.linkFeatureToTask(feature.id, "FN-001");
+
+      store.deleteFeature(feature.id, true);
+
+      expect(store.getFeature(feature.id)).toBeUndefined();
+      const taskRow = db.prepare("SELECT id, missionId, sliceId FROM tasks WHERE id = ?").get("FN-001") as {
+        id: string;
+        missionId: string | null;
+        sliceId: string | null;
+      };
+      expect(taskRow.id).toBe("FN-001");
+      expect(taskRow.missionId).toBeNull();
+      expect(taskRow.sliceId).toBeNull();
+    });
+
+    it("allows delete without force when linked task is archived", () => {
+      createTaskInDb(db, "FN-ARCHIVE", "Archived", undefined, { column: "archived" });
+
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Archived Link" });
+      store.updateFeature(feature.id, { taskId: "FN-ARCHIVE", status: "triaged" });
+
+      store.deleteFeature(feature.id);
+      expect(store.getFeature(feature.id)).toBeUndefined();
+    });
+
+    it("allows delete without force when linked task is soft-deleted", () => {
+      createTaskInDb(db, "FN-DELETED", "Deleted", undefined, { deletedAt: new Date().toISOString() });
+
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Deleted Link" });
+      store.updateFeature(feature.id, { taskId: "FN-DELETED", status: "triaged" });
+
+      store.deleteFeature(feature.id);
+      expect(store.getFeature(feature.id)).toBeUndefined();
+    });
+
+    it("throws not found on second delete", () => {
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Idempotent" });
+
+      store.deleteFeature(feature.id);
+      expect(() => store.deleteFeature(feature.id)).toThrow(`Feature ${feature.id} not found`);
     });
 
     it("links a feature to a task and persists missionId/sliceId on the task row", () => {
@@ -1365,6 +1439,38 @@ describe("MissionStore", () => {
       expect(store.getFeature(feature.id)).toBeUndefined();
     });
 
+    it("blocks milestone delete when child feature links to live task", () => {
+      createTaskInDb(db, "FN-LIVE");
+      const mission = store.createMission({ title: "Parent" });
+      const milestone = store.addMilestone(mission.id, { title: "Child" });
+      const slice = store.addSlice(milestone.id, { title: "Grandchild" });
+      const feature = store.addFeature(slice.id, { title: "Guarded" });
+      store.linkFeatureToTask(feature.id, "FN-LIVE");
+
+      expect(() => store.deleteMilestone(milestone.id)).toThrow("pass force to delete anyway");
+      expect(store.getMilestone(milestone.id)).toBeDefined();
+    });
+
+    it("force deletes milestone with linked features", () => {
+      createTaskInDb(db, "FN-LIVE");
+      const mission = store.createMission({ title: "Parent" });
+      const milestone = store.addMilestone(mission.id, { title: "Child" });
+      const slice = store.addSlice(milestone.id, { title: "Grandchild" });
+      const feature = store.addFeature(slice.id, { title: "Guarded" });
+      store.linkFeatureToTask(feature.id, "FN-LIVE");
+
+      store.deleteMilestone(milestone.id, true);
+      expect(store.getMilestone(milestone.id)).toBeUndefined();
+      const taskRow = db.prepare("SELECT id, missionId, sliceId FROM tasks WHERE id = ?").get("FN-LIVE") as {
+        id: string;
+        missionId: string | null;
+        sliceId: string | null;
+      };
+      expect(taskRow.id).toBe("FN-LIVE");
+      expect(taskRow.missionId).toBeNull();
+      expect(taskRow.sliceId).toBeNull();
+    });
+
     it("deletes slice → features", () => {
       const mission = store.createMission({ title: "Mission" });
       const milestone = store.addMilestone(mission.id, { title: "Milestone" });
@@ -1379,6 +1485,38 @@ describe("MissionStore", () => {
       // But slice and feature should be gone
       expect(store.getSlice(slice.id)).toBeUndefined();
       expect(store.getFeature(feature.id)).toBeUndefined();
+    });
+
+    it("blocks slice delete when child feature links to live task", () => {
+      createTaskInDb(db, "FN-SLICE");
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Guarded" });
+      store.linkFeatureToTask(feature.id, "FN-SLICE");
+
+      expect(() => store.deleteSlice(slice.id)).toThrow("pass force to delete anyway");
+      expect(store.getSlice(slice.id)).toBeDefined();
+    });
+
+    it("force deletes slice with linked features", () => {
+      createTaskInDb(db, "FN-SLICE");
+      const mission = store.createMission({ title: "Mission" });
+      const milestone = store.addMilestone(mission.id, { title: "Milestone" });
+      const slice = store.addSlice(milestone.id, { title: "Slice" });
+      const feature = store.addFeature(slice.id, { title: "Guarded" });
+      store.linkFeatureToTask(feature.id, "FN-SLICE");
+
+      store.deleteSlice(slice.id, true);
+      expect(store.getSlice(slice.id)).toBeUndefined();
+      const taskRow = db.prepare("SELECT id, missionId, sliceId FROM tasks WHERE id = ?").get("FN-SLICE") as {
+        id: string;
+        missionId: string | null;
+        sliceId: string | null;
+      };
+      expect(taskRow.id).toBe("FN-SLICE");
+      expect(taskRow.missionId).toBeNull();
+      expect(taskRow.sliceId).toBeNull();
     });
   });
 
@@ -1836,7 +1974,7 @@ describe("MissionStore", () => {
       const slice = store.addSlice(milestone.id, { title: "Slice" });
       const feature = store.addFeature(slice.id, { title: "Test" });
       store.linkFeatureToTask(feature.id, "FN-001");
-      store.deleteFeature(feature.id);
+      store.deleteFeature(feature.id, true);
 
       expect(created).toHaveBeenCalledTimes(1);
       // Updated is called twice: once by linkFeatureToTask, once by delete triggering recompute
