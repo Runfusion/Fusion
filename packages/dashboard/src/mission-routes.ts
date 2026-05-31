@@ -2536,6 +2536,65 @@ export function createMissionRouter(
   );
 
   /**
+   * POST /api/missions/features/:featureId/reconcile-done
+   * Reconcile feature completion against a shipped delivery task.
+   */
+  router.post(
+    "/features/:featureId/reconcile-done",
+    catchTypedHandler(async (req, res) => {
+      const { featureId } = req.params;
+      const { taskId } = req.body ?? {};
+
+      if (!validateFeatureId(featureId)) {
+        throw badRequest("Invalid feature ID format");
+      }
+
+      const existing = missionStore.getFeature(featureId);
+      if (!existing) {
+        throw notFound("Feature not found");
+      }
+
+      if (typeof taskId !== "string" || !taskId.trim()) {
+        throw badRequest("taskId is required and must be a non-empty string");
+      }
+
+      const normalizedTaskId = taskId.trim();
+
+      if (existing.taskId && existing.taskId !== normalizedTaskId) {
+        throw conflict(
+          `Feature ${featureId} is already linked to ${existing.taskId}; cannot reconcile against ${normalizedTaskId}`
+        );
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      let task: Awaited<ReturnType<typeof scopedStore.getTask>>;
+      try {
+        task = await scopedStore.getTask(normalizedTaskId);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("not found")) {
+          throw notFound("Delivery task not found");
+        }
+        throw err;
+      }
+
+      if (task.column !== "done" && task.column !== "archived") {
+        throw conflict(
+          `Delivery task ${normalizedTaskId} must be in done or archived to reconcile feature to done. ` +
+          "Use PATCH /api/missions/features/:featureId or triage/link-task endpoints for active work."
+        );
+      }
+
+      if (!existing.taskId) {
+        missionStore.linkFeatureToTask(featureId, normalizedTaskId);
+      }
+
+      const feature = missionStore.updateFeatureStatus(featureId, "done");
+      res.json(feature);
+    })
+  );
+
+  /**
    * POST /api/missions/features/:featureId/unlink-task
    * Unlink feature from task
    */

@@ -258,6 +258,37 @@ If validation cannot run (unexpected loop state, duplicate trigger, blocked vali
 | `POST /api/missions/:missionId/autopilot/start` | Start watching manually |
 | `POST /api/missions/:missionId/autopilot/stop` | Stop watching manually |
 
+## Feature Reconciliation API Endpoint
+
+Use this endpoint when a feature's delivery task has already shipped and is now terminal (`done` or `archived`), but the feature status still needs to be reconciled to `done`.
+
+### `POST /api/missions/features/:featureId/reconcile-done`
+
+**Request body:**
+
+```json
+{ "taskId": "FN-123" }
+```
+
+**Safety gate behavior:**
+
+- Validates `featureId` and requires a non-empty string `taskId`.
+- Looks up the feature and the delivery task in the request's scoped project store.
+- Only allows reconciliation when the delivery task column is `done` or `archived`.
+- If feature has no `taskId`, the endpoint links it first, then marks feature status `done` via `updateFeatureStatus` (which recomputes slice status).
+- If feature already has a different `taskId`, returns `409` (conflict).
+
+**How this differs from `PATCH /api/missions/features/:featureId`:**
+
+- `PATCH` keeps the execution-status guard and rejects `done`/`triaged`/`in-progress`/`blocked` when no linked task exists.
+- `reconcile-done` is a dedicated, evidence-gated path for shipped work where the delivery task is already terminal.
+
+**Error responses:**
+
+- `400` — invalid feature ID format or missing/empty `taskId`.
+- `404` — feature not found or delivery task not found.
+- `409` — feature/task mismatch or delivery task is not in `done`/`archived` (use normal PATCH/triage/link flow for active work).
+
 ## Validation Contract Lifecycle
 
 Fusion's validation contract lifecycle is the structured feature delivery system for missions. It combines validation contracts, AI validation, and bounded retries to provide systematic, auditable feature completion. The lifecycle covers the full end-to-end path from clarification through blocked handoff.

@@ -421,6 +421,14 @@ function createMockMissionStore() {
       return updated;
     }),
 
+    updateFeatureStatus: vi.fn((id: string, status: MissionFeature["status"]) => {
+      const feature = features.get(id);
+      if (!feature) throw new Error("Feature " + id + " not found");
+      const updated = { ...feature, status, updatedAt: new Date().toISOString() };
+      features.set(id, updated);
+      return updated;
+    }),
+
     deleteFeature: vi.fn((id: string, force?: boolean) => {
       const feature = features.get(id);
       if (!feature) throw new Error("Feature " + id + " not found");
@@ -676,6 +684,9 @@ function createMockStore(): TaskStore {
     getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
     getSettings: vi.fn().mockResolvedValue({ promptOverrides: {} }),
+    getTask: vi.fn(async (id: string) => {
+      throw new Error(`Task ${id} not found`);
+    }),
     pauseTask: vi.fn(),
   } as unknown as TaskStore;
 }
@@ -2127,6 +2138,100 @@ describe("Mission API", () => {
       );
       expect(conflict.status).toBe(409);
       expect(conflict.body.error).toContain("already linked");
+    });
+
+    it("POST /api/missions/features/:featureId/reconcile-done safely reconciles shipped delivery tasks", async () => {
+      const { app, store, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Mission" });
+      const milestone = missionStore.addMilestone(mission.id, { title: "Milestone" });
+      const slice = missionStore.addSlice(milestone.id, { title: "Slice" });
+
+      const doneFeature = missionStore.addFeature(slice.id, { title: "Done candidate" });
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: "FN-DONE", column: "done" });
+      const doneResponse = await request(
+        app,
+        "POST",
+        `/api/missions/features/${doneFeature.id}/reconcile-done`,
+        JSON.stringify({ taskId: "FN-DONE" }),
+        { "content-type": "application/json" },
+      );
+      expect(doneResponse.status).toBe(200);
+      expect(doneResponse.body.status).toBe("done");
+      expect(doneResponse.body.taskId).toBe("FN-DONE");
+
+      const archivedFeature = missionStore.addFeature(slice.id, { title: "Archived candidate" });
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: "FN-ARCH", column: "archived" });
+      const archivedResponse = await request(
+        app,
+        "POST",
+        `/api/missions/features/${archivedFeature.id}/reconcile-done`,
+        JSON.stringify({ taskId: "FN-ARCH" }),
+        { "content-type": "application/json" },
+      );
+      expect(archivedResponse.status).toBe(200);
+      expect(archivedResponse.body.status).toBe("done");
+      expect(archivedResponse.body.taskId).toBe("FN-ARCH");
+
+      const activeFeature = missionStore.addFeature(slice.id, { title: "Active candidate" });
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: "FN-ACTIVE", column: "in-progress" });
+      const conflictStatus = await request(
+        app,
+        "POST",
+        `/api/missions/features/${activeFeature.id}/reconcile-done`,
+        JSON.stringify({ taskId: "FN-ACTIVE" }),
+        { "content-type": "application/json" },
+      );
+      expect(conflictStatus.status).toBe(409);
+      expect(missionStore.getFeature(activeFeature.id)?.status).toBe("defined");
+      expect(missionStore.getFeature(activeFeature.id)?.taskId).toBeUndefined();
+
+      const missingBodyTaskId = await request(
+        app,
+        "POST",
+        `/api/missions/features/${activeFeature.id}/reconcile-done`,
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+      expect(missingBodyTaskId.status).toBe(400);
+
+      (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Task FN-MISSING not found"));
+      const missingTask = await request(
+        app,
+        "POST",
+        `/api/missions/features/${activeFeature.id}/reconcile-done`,
+        JSON.stringify({ taskId: "FN-MISSING" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingTask.status).toBe(404);
+
+      const linkedFeature = missionStore.addFeature(slice.id, { title: "Linked candidate" });
+      missionStore.linkFeatureToTask(linkedFeature.id, "FN-ORIGINAL");
+      const mismatchedTask = await request(
+        app,
+        "POST",
+        `/api/missions/features/${linkedFeature.id}/reconcile-done`,
+        JSON.stringify({ taskId: "FN-OTHER" }),
+        { "content-type": "application/json" },
+      );
+      expect(mismatchedTask.status).toBe(409);
+
+      const invalidFeatureId = await request(
+        app,
+        "POST",
+        "/api/missions/features/not-a-feature-id/reconcile-done",
+        JSON.stringify({ taskId: "FN-DONE" }),
+        { "content-type": "application/json" },
+      );
+      expect(invalidFeatureId.status).toBe(400);
+
+      const missingFeature = await request(
+        app,
+        "POST",
+        "/api/missions/features/F-NOT-FOUND/reconcile-done",
+        JSON.stringify({ taskId: "FN-DONE" }),
+        { "content-type": "application/json" },
+      );
+      expect(missingFeature.status).toBe(404);
     });
   });
 
