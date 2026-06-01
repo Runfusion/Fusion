@@ -38,6 +38,7 @@ type SupportedNtfyEvent =
   | "awaiting-user-review"
   | "planning-awaiting-input"
   | "fallback-used"
+  | "task-created"
   | "message:agent-to-user"
   | "message:agent-to-agent"
   | "message:room"
@@ -51,6 +52,7 @@ const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "awaiting-user-review",
   "planning-awaiting-input",
   "fallback-used",
+  "task-created",
   "message:agent-to-user",
   "message:agent-to-agent",
   "message:room",
@@ -171,15 +173,21 @@ export class NtfyNotificationProvider implements NotificationProvider {
         messageId,
         view: "rooms",
       })
-      : event === "oauth-token-expired"
-        ? undefined
-        : buildNtfyClickUrl({
+      : event === "message:agent-to-user" || event === "message:agent-to-agent"
+        ? buildNtfyClickUrl({
           dashboardHost: this.config.dashboardHost,
           projectId: this.config.projectId,
           taskId: payload.taskId,
           messageId,
           view: "mailbox",
-        });
+        })
+        : event === "oauth-token-expired"
+          ? undefined
+          : buildNtfyClickUrl({
+            dashboardHost: this.config.dashboardHost,
+            projectId: this.config.projectId,
+            taskId: payload.taskId,
+          });
 
     const providerId = typeof payload.metadata?.providerId === "string" ? payload.metadata.providerId : "provider";
     const providerName = typeof payload.metadata?.providerName === "string"
@@ -221,6 +229,11 @@ export class NtfyNotificationProvider implements NotificationProvider {
         title: `Fallback model used${payload.taskId ? ` for ${payload.taskId}` : ""}`,
         message: `Fusion switched from ${String(payload.metadata?.primaryModel ?? "primary model")} to ${String(payload.metadata?.fallbackModel ?? "fallback model")} after a retryable failure (${String(payload.metadata?.triggerPoint ?? "unknown trigger")}).`,
         priority: "high",
+      },
+      "task-created": {
+        title: `New task ${taskId} created by agent`,
+        message: `${typeof payload.metadata?.agentName === "string" && payload.metadata.agentName.trim().length > 0 ? payload.metadata.agentName.trim() : "An agent"} created "${identifier}"`,
+        priority: "default",
       },
       "message:agent-to-user": {
         title: `New message from ${senderLabel}`,

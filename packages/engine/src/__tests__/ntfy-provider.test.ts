@@ -29,6 +29,20 @@ describe("NtfyNotificationProvider", () => {
       ntfyAccessToken: "secret-token",
       dashboardHost: "http://dash",
       projectId: "p1",
+      events: [
+        "in-review",
+        "merged",
+        "failed",
+        "awaiting-approval",
+        "awaiting-user-review",
+        "planning-awaiting-input",
+        "fallback-used",
+        "message:agent-to-user",
+        "message:agent-to-agent",
+        "message:room",
+        "oauth-token-expired",
+        "task-created",
+      ],
     });
   });
 
@@ -44,6 +58,7 @@ describe("NtfyNotificationProvider", () => {
     ["awaiting-user-review", "User review needed for FN-1", "needs human review", "high"],
     ["planning-awaiting-input", "Planning input needed for FN-1", "awaiting your input", "high"],
     ["fallback-used", "Fallback model used for FN-1", "switched from", "high"],
+    ["task-created", "New task FN-1 created by agent", "Triage Bot created \"T\"", "default"],
     ["message:agent-to-user", "New message from Triage Bot", "Triage Bot → you: preview text", "high"],
     ["message:agent-to-agent", "Triage Bot → Executor Bot", "Triage Bot messaged Executor Bot: preview text", "default"],
     ["message:room", "#Incident Room — Triage Bot", "Triage Bot in #Incident Room: preview text", "default"],
@@ -66,6 +81,7 @@ describe("NtfyNotificationProvider", () => {
         roomName: "Incident Room",
         providerId: "openai-codex",
         providerName: "OpenAI Codex",
+        agentName: "Triage Bot",
       },
     });
 
@@ -93,6 +109,7 @@ describe("NtfyNotificationProvider", () => {
     expect(provider.isEventSupported("awaiting-user-review" as any)).toBe(true);
     expect(provider.isEventSupported("planning-awaiting-input" as any)).toBe(true);
     expect(provider.isEventSupported("fallback-used" as any)).toBe(true);
+    expect(provider.isEventSupported("task-created" as any)).toBe(true);
     expect(provider.isEventSupported("message:agent-to-user" as any)).toBe(true);
     expect(provider.isEventSupported("message:agent-to-agent" as any)).toBe(true);
     expect(provider.isEventSupported("message:room" as any)).toBe(true);
@@ -131,6 +148,21 @@ describe("NtfyNotificationProvider", () => {
       taskId: "FN-1",
       messageId: "msg-1",
       view: "mailbox",
+    });
+  });
+
+  it("uses task deep link for task-created notifications", async () => {
+    await provider.sendNotification("task-created" as any, {
+      taskId: "FN-1",
+      taskTitle: "T",
+      event: "task-created" as any,
+      metadata: { sourceAgentId: "agent-1", agentName: "Triage Bot" },
+    });
+
+    expect(mocks.buildNtfyClickUrl).toHaveBeenCalledWith({
+      dashboardHost: "http://dash",
+      projectId: "p1",
+      taskId: "FN-1",
     });
   });
 

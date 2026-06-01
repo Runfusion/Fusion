@@ -110,6 +110,77 @@ describe("NotificationService", () => {
     );
   });
 
+  describe("task-created notifications", () => {
+    it("dispatches exactly once for agent-created tasks when enabled", async () => {
+      const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", ntfyEvents: ["task-created"] as any });
+      const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+      const provider: NotificationProvider = {
+        getProviderId: () => "mock",
+        isEventSupported: () => true,
+        sendNotification,
+      };
+
+      const service = new NotificationService(store as any, {
+        agentNameResolver: (agentId) => (agentId === "agent-1" ? "Triage Bot" : null),
+      });
+      service.registerProvider(provider);
+      await service.start();
+
+      store.emit("task:created", task({ id: "FN-201", sourceAgentId: "agent-1", sourceType: "agent_heartbeat" as any }));
+      await vi.waitFor(() => {
+        expect(sendNotification).toHaveBeenCalledWith(
+          "task-created",
+          expect.objectContaining({
+            taskId: "FN-201",
+            event: "task-created",
+            metadata: expect.objectContaining({ sourceAgentId: "agent-1", agentName: "Triage Bot" }),
+          }),
+        );
+      });
+    });
+
+    it("does not dispatch for non-agent task creation", async () => {
+      const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", ntfyEvents: ["task-created"] as any });
+      const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+      const service = new NotificationService(store as any);
+      service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification });
+      await service.start();
+
+      store.emit("task:created", task({ id: "FN-202", sourceAgentId: undefined }));
+      await Promise.resolve();
+
+      expect(sendNotification).not.toHaveBeenCalled();
+    });
+
+    it("filters task-created when event is disabled", async () => {
+      const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", ntfyEvents: ["in-review"] as any });
+      const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+      const service = new NotificationService(store as any);
+      service.registerProvider({ getProviderId: () => "mock", isEventSupported: (event) => event !== "task-created", sendNotification });
+      await service.start();
+
+      store.emit("task:created", task({ id: "FN-203", sourceAgentId: "agent-1", sourceType: "agent_heartbeat" as any }));
+      await Promise.resolve();
+
+      expect(sendNotification).not.toHaveBeenCalled();
+    });
+
+    it("deduplicates duplicate task:created events for the same task id", async () => {
+      const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", ntfyEvents: ["task-created"] as any });
+      const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+      const service = new NotificationService(store as any);
+      service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification });
+      await service.start();
+
+      const createdTask = task({ id: "FN-204", sourceAgentId: "agent-1", sourceType: "agent_heartbeat" as any });
+      store.emit("task:created", createdTask);
+      store.emit("task:created", createdTask);
+      await vi.waitFor(() => {
+        expect(sendNotification).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
   it("deduplicates same task+event but not different event types", async () => {
     const store = createStore({
       ntfyEnabled: true,

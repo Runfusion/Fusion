@@ -31,11 +31,27 @@ export interface NotificationServiceOptions {
   failedNotificationGraceMs?: number;
 }
 
+interface NotificationServiceStoreEvents {
+  "task:created": [task: Task];
+  "task:moved": [data: { task: Task; from: Column; to: Column }];
+  "task:updated": [task: Task];
+  "task:merged": [result: MergeResult];
+  "settings:updated": [payload: { settings: Settings; previous: Settings }];
+}
+
 interface NotificationServiceStore {
   getSettings(): Promise<Settings> | Settings;
   getTask?(id: string): Promise<Task | undefined> | Task | undefined;
-  on(event: string, listener: (...args: any[]) => void): void;
-  off(event: string, listener: (...args: any[]) => void): void;
+  on<K extends keyof NotificationServiceStoreEvents>(
+    event: K,
+    listener: (...args: NotificationServiceStoreEvents[K]) => void,
+  ): void;
+  on(event: string | symbol, listener: (...args: any[]) => void): void;
+  off<K extends keyof NotificationServiceStoreEvents>(
+    event: K,
+    listener: (...args: NotificationServiceStoreEvents[K]) => void,
+  ): void;
+  off(event: string | symbol, listener: (...args: any[]) => void): void;
 }
 
 interface NotificationMessageStore {
@@ -101,6 +117,7 @@ export class NotificationService {
 
     await this.dispatcher.initializeAll();
 
+    this.store.on("task:created", this.handleTaskCreated);
     this.store.on("task:moved", this.handleTaskMoved);
     this.store.on("task:updated", this.handleTaskUpdated);
     this.store.on("task:merged", this.handleTaskMerged);
@@ -117,6 +134,7 @@ export class NotificationService {
     }
 
     if (typeof this.store.off === "function") {
+      this.store.off("task:created", this.handleTaskCreated);
       this.store.off("task:moved", this.handleTaskMoved);
       this.store.off("task:updated", this.handleTaskUpdated);
       this.store.off("task:merged", this.handleTaskMerged);
@@ -137,6 +155,37 @@ export class NotificationService {
     this.started = false;
 
     schedulerLog.log("NotificationService stopped");
+  }
+
+  private handleTaskCreated = (task: Task): void => {
+    void this.handleTaskCreatedAsync(task);
+  };
+
+  private async handleTaskCreatedAsync(task: Task): Promise<void> {
+    if (typeof task.sourceAgentId !== "string" || task.sourceAgentId.trim().length === 0) {
+      return;
+    }
+
+    if (!this.notificationsEnabled) {
+      await this.refreshNotificationState("task:created");
+      if (!this.notificationsEnabled) {
+        return;
+      }
+    }
+
+    const sourceAgentId = task.sourceAgentId.trim();
+    const agentName = await this.resolveAgentName("agent", sourceAgentId, "from");
+
+    this.maybeNotify(task.id, "task-created", {
+      taskId: task.id,
+      taskTitle: task.title,
+      event: "task-created",
+      metadata: {
+        sourceAgentId,
+        ...(agentName ? { agentName } : {}),
+        sourceType: task.sourceType,
+      },
+    });
   }
 
   private handleTaskMoved = (data: { task: Task; from: Column; to: Column }): void => {

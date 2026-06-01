@@ -84,6 +84,11 @@ describe("Ntfy notifier helpers", () => {
     expect(isNtfyEventEnabled(["failed"], "planning-awaiting-input")).toBe(false);
   });
 
+  it("supports task-created enablement while keeping it default-off", () => {
+    expect(isNtfyEventEnabled(["task-created"], "task-created")).toBe(true);
+    expect(DEFAULT_NTFY_EVENTS).not.toContain("task-created");
+  });
+
   it("builds project dashboard root links without task id", () => {
     expect(buildNtfyClickUrl({ dashboardHost: "http://localhost:4040/", projectId: "proj-1" })).toBe(
       "http://localhost:4040/?project=proj-1",

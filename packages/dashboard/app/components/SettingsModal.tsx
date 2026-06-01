@@ -315,6 +315,7 @@ const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: s
   { event: "planning-awaiting-input", label: "Planning needs input", description: "When planning mode is waiting for your response to continue" },
   { event: "gridlock", label: "Pipeline gridlocked", description: "When all schedulable todo tasks are blocked and work cannot advance" },
   { event: "fallback-used", label: "Fallback model used (recovered)", description: "When Fusion recovers from a retryable model failure by switching to a fallback model" },
+  { event: "task-created", label: "Agent created a task", description: "When an agent files a new task on the board" },
   { event: "memory-dreams-processed", label: "DREAMS.md entry added", description: "When manual dream processing writes a new entry to project or agent DREAMS.md" },
   { event: "message:agent-to-user", label: "Agent → user message", description: "An agent sent you a direct message" },
   { event: "message:agent-to-agent", label: "Agent → agent message", description: "Agents are talking to each other (including replies)" },

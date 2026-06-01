@@ -212,7 +212,7 @@ API endpoints reviewed:
 | `ntfyTopic` | Global | `GET/PUT /api/settings/global` | Ntfy topic |
 | `ntfyBaseUrl` | Global | `GET/PUT /api/settings/global` | Custom ntfy server base URL override |
 | `ntfyAccessToken` | Global | `GET/PUT /api/settings/global` | Access token for authenticated ntfy publishes |
-| `ntfyEvents` | Global | `GET/PUT /api/settings/global` | Notification event filters |
+| `ntfyEvents` | Global | `GET/PUT /api/settings/global` | Notification event filters (includes opt-in `task-created` for agent-created task notifications) |
 | `ntfyDashboardHost` | Global | `GET/PUT /api/settings/global` | Host for deep links |
 | `defaultProjectId` | Global | `GET/PUT /api/settings/global` | CLI default project |
 | `setupComplete` | Global | `GET/PUT /api/settings/global` (internal first-run use) | Setup wizard completion flag |

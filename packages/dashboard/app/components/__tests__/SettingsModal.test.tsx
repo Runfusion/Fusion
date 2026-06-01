@@ -4362,26 +4362,51 @@ describe("SettingsModal", () => {
     });
 
     it("shows fallback, dreams, and mailbox/room message events for both providers", async () => {
-      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        ntfyEnabled: true,
+        ntfyTopic: "test-topic",
+        ntfyEvents: [
+          "in-review",
+          "merged",
+          "failed",
+          "awaiting-approval",
+          "awaiting-user-review",
+          "planning-awaiting-input",
+          "gridlock",
+          "fallback-used",
+          "memory-dreams-processed",
+          "message:agent-to-user",
+          "message:agent-to-agent",
+          "message:room",
+          "oauth-token-expired",
+        ],
+      });
       renderModal();
       await waitForSettingsModalReady();
       await openNotificationsSection();
 
       expect(screen.getByLabelText("Fallback model used (recovered)")).toBeInTheDocument();
+      expect(screen.getByLabelText("Agent created a task")).toBeInTheDocument();
       expect(screen.getByLabelText("DREAMS.md entry added")).toBeInTheDocument();
+      const taskCreatedNtfy = screen.getByLabelText("Agent created a task") as HTMLInputElement;
       const agentToUserNtfy = screen.getByLabelText("Agent → user message") as HTMLInputElement;
       const agentToAgentNtfy = screen.getByLabelText("Agent → agent message") as HTMLInputElement;
       const roomMessageNtfy = screen.getByLabelText("Agent message in room") as HTMLInputElement;
+      expect(taskCreatedNtfy.checked).toBe(false);
       expect(agentToUserNtfy.checked).toBe(true);
       expect(agentToAgentNtfy.checked).toBe(true);
       expect(roomMessageNtfy.checked).toBe(true);
 
       await userEvent.click(screen.getByLabelText("Webhook notifications"));
       expect(screen.getAllByLabelText("Fallback model used (recovered)").length).toBeGreaterThan(0);
+      expect(screen.getAllByLabelText("Agent created a task").length).toBeGreaterThan(0);
       expect(screen.getAllByLabelText("DREAMS.md entry added").length).toBeGreaterThan(0);
+      const [taskCreatedWebhook] = screen.getAllByLabelText("Agent created a task") as HTMLInputElement[];
       const [agentToUserWebhook] = screen.getAllByLabelText("Agent → user message") as HTMLInputElement[];
       const [agentToAgentWebhook] = screen.getAllByLabelText("Agent → agent message") as HTMLInputElement[];
       const [roomMessageWebhook] = screen.getAllByLabelText("Agent message in room") as HTMLInputElement[];
+      expect(taskCreatedWebhook.checked).toBe(false);
       expect(agentToUserWebhook.checked).toBe(true);
       expect(agentToAgentWebhook.checked).toBe(true);
       expect(roomMessageWebhook.checked).toBe(true);
