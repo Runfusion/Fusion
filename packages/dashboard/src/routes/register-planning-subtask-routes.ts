@@ -763,6 +763,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         responses,
         scopedStore.getRootDir(),
         settings.promptOverrides,
+        scopedStore,
       );
       res.json(result);
     } catch (err: unknown) {
@@ -807,6 +808,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         sessionId,
         scopedStore.getRootDir(),
         settings.promptOverrides,
+        scopedStore,
       );
       res.json(rewound);
     } catch (err: unknown) {
@@ -852,7 +854,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const { retrySession } = await import("../planning.js");
-      await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides);
+      await retrySession(sessionId, scopedStore.getRootDir(), settings.promptOverrides, scopedStore);
       res.json({ success: true, sessionId });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
