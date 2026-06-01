@@ -238,6 +238,7 @@ function UsageWindowRow({ window, viewMode, isHidden, onToggleHidden }: UsageWin
           {!isHidden && <span className="usage-window-percentage">{headerText}</span>}
           {!isHidden && (
             <button
+              type="button"
               className="btn-icon usage-window-hide-btn"
               onClick={onToggleHidden}
               aria-label={`Hide ${window.label}`}
@@ -444,6 +445,7 @@ function ProviderCard({
           <span className="usage-provider-name">{provider.name}</span>
           {hiddenCount > 0 && (
             <button
+              type="button"
               className="btn btn-sm usage-show-hidden-btn"
               onClick={() => onShowAllHidden(provider.name)}
               data-testid="usage-show-hidden-btn"

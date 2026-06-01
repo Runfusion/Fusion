@@ -979,6 +979,46 @@ describe("UsageIndicator", () => {
     expect(screen.getByRole("button", { name: "Hide Weekly" })).toBeInTheDocument();
   });
 
+  it("show hidden remains revealed across rerender and does not submit parent forms", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    const onSubmit = vi.fn((event: Event) => {
+      event.preventDefault();
+    });
+
+    const { rerender } = render(
+      <form onSubmit={onSubmit}>
+        <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />
+      </form>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+    expect(localStorage.getItem(USAGE_HIDDEN_WINDOWS_KEY)).toBe(
+      JSON.stringify({ Anthropic: ["Session (5h)"] })
+    );
+
+    fireEvent.click(screen.getByTestId("usage-show-hidden-btn"));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(localStorage.getItem(USAGE_HIDDEN_WINDOWS_KEY)).toBe(JSON.stringify({}));
+    expect(screen.getByText("Session (5h)").closest(".usage-window")).not.toHaveClass("usage-window--hidden");
+
+    rerender(
+      <form onSubmit={onSubmit}>
+        <UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />
+      </form>
+    );
+
+    expect(screen.queryByTestId("usage-show-hidden-btn")).not.toBeInTheDocument();
+    expect(screen.getByText("Session (5h)").closest(".usage-window")).not.toHaveClass("usage-window--hidden");
+  });
+
   it("does not show provider-level show hidden button when no windows are hidden", () => {
     mockUseUsageData.mockReturnValue({
       providers: mockProviders,
