@@ -12,6 +12,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "task",
         args: ["task", "list"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: true, reason: "central-db-missing" });
@@ -23,6 +24,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "dashboard",
         args: ["dashboard"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: true, reason: "central-db-missing" });
@@ -36,6 +38,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "task",
         args,
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: false, reason: "skip-flag" });
@@ -47,6 +50,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "task",
         args: ["task", "list"],
         centralDbExists: true,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: false, reason: "central-db-exists" });
@@ -58,6 +62,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "task",
         args: ["task", "list"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: false,
       }),
     ).toEqual({ launch: false, reason: "non-tty" });
@@ -69,6 +74,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "serve",
         args: ["serve"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: false, reason: "command-skip" });
@@ -78,6 +84,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "daemon",
         args: ["daemon"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: false, reason: "command-skip" });
@@ -89,6 +96,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "onboard",
         args: ["onboard"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
       }),
     ).toEqual({ launch: false, reason: "onboard-command" });
@@ -100,6 +108,7 @@ describe("shouldAutoLaunchOnboarding", () => {
         command: "task",
         args: ["task", "list"],
         centralDbExists: false,
+        projectInitialized: false,
         isTTY: true,
         env: { FUSION_SKIP_ONBOARDING: "1" },
       }),
