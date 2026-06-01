@@ -74,6 +74,7 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 | 🧩 **Any model** | Anthropic, OpenAI, Ollama, and more. Local and cloud coexist. |
 | 🏢 **Agent companies** | Import pre-built teams — 440+ agents across 16 companies — and run them autonomously for weeks. |
 | 📬 **Inter-agent messaging** | Built-in mailbox between agents. Delegate, clarify, coordinate. |
+| 🗨️ **Multi-agent Chat Rooms** | Project-scoped group conversations where multiple room members can reply: mentioned members are direct responders, and additional ambient members may respond up to a cap. Currently **experimental** — enable `chatRooms` in **Settings → Experimental Features → Chat Rooms**. ([Chat Rooms docs](./docs/dashboard-guide.md#chat-rooms)) |
 | 🗺️ **Missions** | Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot and validation contracts. |
 | 🔬 **Research** | Bounded research runs with web search, GitHub, local docs, and LLM synthesis (plus runtime builtin WebSearch/WebFetch support in planning + synthesis flows when available). Turn findings into tasks. ([Docs](./docs/research.md)) |
 | 🧪 **Self-improvement** | Agents reflect on their own output and update their prompts as they learn your codebase. |
@@ -280,6 +281,7 @@ For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 | [Getting Started](./docs/getting-started.md) | Installation and onboarding |
 | [Dashboard Guide](./docs/dashboard-guide.md) | Board/list views, terminal, git manager |
 | [Task Management](./docs/task-management.md) | Task lifecycle and CLI commands |
+| [CLI Reference](./docs/cli-reference.md) | Full command and daemon reference |
 | [Settings Reference](./docs/settings-reference.md) | Configuration options |
 | [Architecture](./docs/architecture.md) | System internals |
 | [Agents](./docs/agents.md) | Agent management, spawning, heartbeat |
@@ -301,6 +303,7 @@ For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 - **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, and blocked-handoff semantics
 - **Multi-Project** — Manage multiple projects from a single installation with project isolation
 - **Inter-Agent Messaging** — Built-in messaging for coordination between agents and users
+- **Chat Rooms (Experimental)** — Project-scoped group chat where mentioned members are routed as direct responders and additional ambient members may reply up to a cap (enable via **Settings → Experimental Features → Chat Rooms**; details in [Dashboard Guide → Chat Rooms](./docs/dashboard-guide.md#chat-rooms))
 
 ### Provider authentication
 
