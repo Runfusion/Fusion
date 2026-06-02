@@ -39,7 +39,7 @@ import {
   isRecoverableMissingWorktreeReviewFailureNoProgress,
   isRecoverableMissingWorktreeReviewFailureWithProgress,
 } from "./restart-recovery-coordinator.js";
-import { classifyError, extractMissingModulePath, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
+import { classifyError, extractMissingModulePath, isNonContinuableSessionError, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
 import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./run-audit.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
@@ -73,6 +73,7 @@ const DB_CORRUPTION_NOTIFICATION_COOLDOWN_MS = 60 * 60 * 1000;
 export const STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS = 10 * 60_000;
 export const COMPLETION_HANDOFF_LIMBO_GRACE_MS = 5 * 60_000;
 export const MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES = 3;
+export const MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES = 3;
 const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 2;
 
 type BranchGroupLandingRecorder = {
@@ -838,6 +839,7 @@ export class SelfHealingManager {
       // not stalled by a leaked `status: "merging"` on an already-done task.
       { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus().then(() => undefined) },
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
+      { name: "recover-post-done-noncontinuable-wedge", fn: () => this.recoverPostDoneNonContinuableWedge().then(() => undefined) },
       { name: "recover-completion-handoff-limbo", fn: () => this.recoverCompletionHandoffLimbo().then(() => undefined) },
       { name: "recover-branch-misbound-in-review", fn: () => this.recoverBranchMisboundInReviewTasks().then(() => undefined) },
       { name: "recover-foreign-only-contamination-in-review", fn: () => this.recoverForeignOnlyContaminatedInReviewTasks().then(() => undefined) },
@@ -1697,6 +1699,7 @@ export class SelfHealingManager {
           { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
           { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
           { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
+          { name: "recover-post-done-noncontinuable-wedge", fn: () => this.recoverPostDoneNonContinuableWedge() },
           { name: "recover-completion-handoff-limbo", fn: () => this.recoverCompletionHandoffLimbo() },
           { name: "recover-branch-misbound-in-review", fn: () => this.recoverBranchMisboundInReviewTasks() },
           { name: "recover-foreign-only-contamination-in-review", fn: () => this.recoverForeignOnlyContaminatedInReviewTasks() },
@@ -6530,6 +6533,98 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Already-merged review recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  private getPostDoneNonContinuableEvidence(task: Task): string | null {
+    const candidates: string[] = [];
+    if (typeof task.error === "string" && task.error.trim()) {
+      candidates.push(task.error);
+    }
+    for (const entry of [...(task.log ?? [])].reverse()) {
+      if (typeof entry.outcome === "string" && entry.outcome.trim()) {
+        candidates.push(entry.outcome);
+      }
+      if (typeof entry.action === "string" && entry.action.trim()) {
+        candidates.push(entry.action);
+      }
+    }
+    return candidates.find((value) => isNonContinuableSessionError(value)) ?? null;
+  }
+
+  /**
+   * Recover completed in-review tasks wedged as failed only because a post-done
+   * session continuation hit a non-continuable signature.
+   *
+   * No-op when `settings.autoMerge === false` — PR-based review flow owns lifecycle until human merge.
+   */
+  async recoverPostDoneNonContinuableWedge(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      if (settings.autoMerge === false) return 0;
+
+      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      let recovered = 0;
+
+      for (const task of tasks) {
+        if (task.column !== "in-review" || task.deletedAt) continue;
+        if (task.paused || task.userPaused) continue;
+        if (task.status !== "failed") continue;
+        if (this.options.isTaskActive?.(task.id)) continue;
+        if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) continue;
+        const doneMarker = [...(task.log ?? [])].reverse().find((entry) => entry.action === "Task marked done by agent");
+        if (!doneMarker) continue;
+        if (getTaskHardMergeBlocker({ ...task, status: undefined, error: undefined, steps: task.steps ?? [], workflowStepResults: task.workflowStepResults })) continue;
+
+        const evidence = this.getPostDoneNonContinuableEvidence(task);
+        if (!evidence) continue;
+
+        const currentCount = task.completionHandoffLimboRecoveryCount ?? 0;
+        const audit = createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("self-heal-post-done-noncontinuable", task.id),
+          agentId: "self-healing",
+          taskId: task.id,
+          taskLineageId: task.lineageId,
+          phase: "recover-post-done-noncontinuable-wedge",
+        });
+
+        if (currentCount >= MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES) {
+          await audit.database({
+            type: "task:auto-recover-post-done-noncontinuable-wedge-exhausted",
+            target: task.id,
+            metadata: { attempts: currentCount, errorSnippet: evidence.slice(0, 200) },
+          });
+          continue;
+        }
+
+        await this.store.updateTask(task.id, {
+          completionHandoffLimboRecoveryCount: currentCount + 1,
+          status: null,
+          error: null,
+        });
+        await this.store.logEntry(
+          task.id,
+          "Auto-recovered completed-task non-continuable wedge — cleared failed status after post-done session continuation error",
+          evidence,
+        );
+        await audit.database({
+          type: "task:auto-recover-post-done-noncontinuable-wedge",
+          target: task.id,
+          metadata: {
+            attempts: currentCount + 1,
+            source: "self-healing-in-review-sweep",
+            errorSnippet: evidence.slice(0, 200),
+          },
+        });
+        recovered += 1;
+      }
+
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Post-done non-continuable wedge recovery failed: ${errorMessage}`);
       return 0;
     }
   }

@@ -466,6 +466,8 @@ export type DatabaseMutationType =
   | "task:auto-recover-completion-fanout"
   | "task:auto-recover-completion-handoff-limbo"
   | "task:auto-recover-completion-handoff-limbo-exhausted"
+  | "task:auto-recover-post-done-noncontinuable-wedge"
+  | "task:auto-recover-post-done-noncontinuable-wedge-exhausted"
   | "task:auto-recover-worktree-session-exhausted"
   | "task:auto-recover-in-progress-limbo"
   | "task:resume-limbo-escalated"

@@ -2580,7 +2580,7 @@ export class TaskExecutor {
     await this.store.logEntry(task.id, diagnosticMessage, errorMessage, this.getRunContextFor(task.id));
 
     if (liveTask.status === "failed" || liveTask.error) {
-      await this.store.updateTask(task.id, { status: undefined, error: undefined });
+      await this.store.updateTask(task.id, { status: null, error: null });
     }
 
     await this.persistTokenUsage(task.id);
@@ -4003,12 +4003,15 @@ export class TaskExecutor {
             executorLog.log(`✗ ${task.id} transient retries exhausted → in-review`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           } else {
-            executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
-            await this.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, this.getRunContextFor(task.id));
-            await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
             if (accumulatedStepTokenUsage) {
               await this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage });
             }
+            if (await this.handleNonContinuableSessionError(task, false, errorMessage)) {
+              return;
+            }
+            executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
+            await this.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, this.getRunContextFor(task.id));
+            await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
             await this.handoffTaskToReview(task, "step-session-failed");
             executorLog.log(`✗ ${task.id} step-session execution failed → in-review`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));

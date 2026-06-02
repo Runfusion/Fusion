@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
-import { SelfHealingManager } from "../../self-healing.js";
+import { MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES, SelfHealingManager } from "../../self-healing.js";
 import { MAX_RECOVERY_RETRIES } from "../../recovery-policy.js";
-import { mockedCreateFnAgent, resetExecutorMocks } from "../executor-test-helpers.js";
+import { mockExecuteAll, mockedCreateFnAgent, resetExecutorMocks } from "../executor-test-helpers.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -54,7 +54,10 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
     ...settingsOverrides,
   });
   (emitter as any).updateTask = vi.fn().mockImplementation(async (_taskId: string, updates: Partial<Task>) => {
-    Object.assign(task, updates, { updatedAt: new Date(Date.now()).toISOString() });
+    const normalized = { ...updates } as Record<string, unknown>;
+    if (normalized.status === null) normalized.status = undefined;
+    if (normalized.error === null) normalized.error = undefined;
+    Object.assign(task, normalized, { updatedAt: new Date(Date.now()).toISOString() });
     return task;
   });
   (emitter as any).moveTask = vi.fn().mockImplementation(async (_taskId: string, column: Task["column"]) => {
@@ -89,6 +92,48 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
   (emitter as any).updateSettings = vi.fn().mockResolvedValue(undefined);
   (emitter as any).emit = emitter.emit.bind(emitter);
 
+  return emitter;
+}
+
+function createSelfHealingStore(tasks: Task[], settingsOverrides: Record<string, unknown> = {}): TaskStore & EventEmitter {
+  const emitter = new EventEmitter() as TaskStore & EventEmitter;
+  const audits: any[] = [];
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+
+  (emitter as any).__audits = audits;
+  (emitter as any).getTask = vi.fn().mockImplementation(async (taskId: string) => taskMap.get(taskId));
+  (emitter as any).listTasks = vi.fn().mockImplementation(async ({ column }: { column?: string } = {}) => {
+    const values = [...taskMap.values()];
+    return column ? values.filter((task) => task.column === column) : values;
+  });
+  (emitter as any).getSettings = vi.fn().mockResolvedValue({
+    autoMerge: true,
+    globalPause: false,
+    enginePaused: false,
+    maxConcurrent: 2,
+    maxWorktrees: 4,
+    pollIntervalMs: 15_000,
+    inReviewStallDeadlockThreshold: 3,
+    taskStuckTimeoutMs: 60_000,
+    ...settingsOverrides,
+  });
+  (emitter as any).updateTask = vi.fn().mockImplementation(async (taskId: string, updates: Partial<Task>) => {
+    const task = taskMap.get(taskId)!;
+    const normalized = { ...updates } as Record<string, unknown>;
+    if (normalized.status === null) normalized.status = undefined;
+    if (normalized.error === null) normalized.error = undefined;
+    Object.assign(task, normalized, { updatedAt: new Date(Date.now()).toISOString() });
+    return task;
+  });
+  (emitter as any).logEntry = vi.fn().mockImplementation(async (taskId: string, action: string, detail?: string) => {
+    const task = taskMap.get(taskId)!;
+    task.log = task.log ?? [];
+    task.log.push({ timestamp: new Date(Date.now()).toISOString(), action, detail } as any);
+  });
+  (emitter as any).recordRunAuditEvent = vi.fn().mockImplementation(async (event: any) => {
+    audits.push(event);
+  });
+  (emitter as any).emit = emitter.emit.bind(emitter);
   return emitter;
 }
 
@@ -143,6 +188,39 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     manager.stop();
   });
 
+  it("keeps completed work cleanly in-review when a post-done step-session continuation is not continuable", async () => {
+    const task = makeTask({
+      id: "FN-5889-STEP-SESSION-WEDGE",
+      steps: [{ name: "Implement", status: "in-progress" as const }],
+    });
+    const store = createStore(task, { runStepsInNewSessions: true });
+    const onComplete = vi.fn();
+    const onError = vi.fn();
+
+    mockExecuteAll.mockImplementation(async () => {
+      task.steps = [{ name: "Implement", status: "done" as const }];
+      task.currentStep = 1;
+      task.log = [
+        ...task.log,
+        { timestamp: new Date(Date.now()).toISOString(), action: "Task marked done by agent" } as any,
+      ];
+      throw new Error("Cannot continue from message role: assistant");
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete, onError, agentStore: { getAgent: vi.fn().mockResolvedValue(null) } as any });
+    await executor.execute(task);
+
+    // Pre-fix root cause: the post-done step-session catch in executor.ts marked
+    // status=failed + handoff directly instead of consulting handleNonContinuableSessionError().
+    expect(task.column).toBe("in-review");
+    expect(task.status).toBeUndefined();
+    expect(task.error).toBeUndefined();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalled();
+    expect(store.handoffToReview).toHaveBeenCalledTimes(1);
+    expect((task.log ?? []).some((entry: any) => entry.action.includes("Post-done session continuation suppressed"))).toBe(true);
+  });
+
   it("requeues incomplete work with a fresh session when the session is not continuable", async () => {
     const task = makeTask({
       id: "FN-5866-INCOMPLETE",
@@ -174,6 +252,53 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     expect(store.handoffToReview).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
     expect((task.log ?? []).some((entry: any) => entry.action.includes("Non-continuable session — fresh-session retry"))).toBe(true);
+  });
+
+  it("self-heals already wedged post-done non-continuable failures back to clean in-review", async () => {
+    const wedged = makeTask({
+      id: "FN-5889-WEDGED",
+      column: "in-review",
+      status: "failed",
+      error: "Cannot continue from message role: assistant",
+      steps: [{ name: "Implement", status: "done" as const }],
+      log: [{ timestamp: new Date(Date.now() - 60_000).toISOString(), action: "Task marked done by agent" } as any],
+    });
+    const exhausted = makeTask({
+      id: "FN-5889-EXHAUSTED",
+      column: "in-review",
+      status: "failed",
+      error: "Cannot continue from message role: assistant",
+      completionHandoffLimboRecoveryCount: MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES,
+      steps: [{ name: "Implement", status: "done" as const }],
+      log: [{ timestamp: new Date(Date.now() - 60_000).toISOString(), action: "Task marked done by agent" } as any],
+    });
+    const nonMatching = makeTask({
+      id: "FN-5889-NON-MATCH",
+      column: "in-review",
+      status: "failed",
+      error: "Different failure",
+      steps: [{ name: "Implement", status: "in-progress" as const }],
+      log: [{ timestamp: new Date(Date.now() - 60_000).toISOString(), action: "Task marked done by agent" } as any],
+    });
+    const store = createSelfHealingStore([wedged, exhausted, nonMatching]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+    expect(await manager.recoverPostDoneNonContinuableWedge()).toBe(1);
+
+    expect(wedged.column).toBe("in-review");
+    expect(wedged.status).toBeUndefined();
+    expect(wedged.error).toBeUndefined();
+    expect(wedged.completionHandoffLimboRecoveryCount).toBe(1);
+    expect((wedged.log ?? []).some((entry: any) => entry.action.includes("Auto-recovered completed-task non-continuable wedge"))).toBe(true);
+    expect(((store as any).__audits as any[]).some((event: any) => event.mutationType === "task:auto-recover-post-done-noncontinuable-wedge" && event.target === wedged.id)).toBe(true);
+
+    expect(exhausted.status).toBe("failed");
+    expect(exhausted.error).toBe("Cannot continue from message role: assistant");
+    expect(((store as any).__audits as any[]).some((event: any) => event.mutationType === "task:auto-recover-post-done-noncontinuable-wedge-exhausted" && event.target === exhausted.id)).toBe(true);
+
+    expect(nonMatching.status).toBe("failed");
+    expect(nonMatching.error).toBe("Different failure");
+    manager.stop();
   });
 
   it("falls through to terminal failure after the non-continuable fresh-session retry budget is exhausted", async () => {
