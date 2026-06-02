@@ -413,11 +413,12 @@
   .skills-view-item {
     padding: var(--space-md);
     min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .skills-view-item-info {
-    width: 100%;
+    flex: 1 1 auto;
+    width: auto;
   }
 
   .skills-view-item-toggle {

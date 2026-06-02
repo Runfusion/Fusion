@@ -82,10 +82,10 @@ describe("skills-view mobile css", () => {
     expect(mobileMediaBlock).toMatch(/\.skills-view-grid\s*\{[^}]*grid-template-columns:\s*1fr/);
   });
 
-  it("defines .skills-view-item wrapping on mobile", () => {
+  it("keeps .skills-view-item on one line on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-item");
     const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item");
-    expect(block).toContain("flex-wrap: wrap");
+    expect(block).toContain("flex-wrap: nowrap");
   });
 
   it("defines .skills-view-toggle-slider with minimum dimensions on mobile", () => {
@@ -143,10 +143,11 @@ describe("skills-view mobile css", () => {
     expect(block).toContain("padding: var(--space-md)");
   });
 
-  it("defines .skills-view-item-info with full width on mobile", () => {
+  it("keeps .skills-view-item-info flexible instead of forcing full width on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-item-info");
     const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item-info");
-    expect(block).toContain("width: 100%");
+    expect(block).toContain("flex: 1 1 auto");
+    expect(block).toContain("width: auto");
   });
 
   it("defines .skills-view-item-toggle with padding on mobile", () => {

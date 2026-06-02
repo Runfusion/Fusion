@@ -308,6 +308,53 @@ describe("SkillsView", () => {
       // Should revert to original state
       expect((enabledToggle as HTMLInputElement).checked).toBe(true);
     });
+
+    it("keeps the discovered-skill row structure stable for enabled and disabled states", async () => {
+      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-skill")).toBeTruthy();
+        expect(screen.getByText("another-skill")).toBeTruthy();
+      });
+
+      const enabledRow = screen.getByText("test-skill").closest(".skills-view-item");
+      const disabledRow = screen.getByText("another-skill").closest(".skills-view-item");
+      const disabledToggle = screen.getByLabelText("Enable another-skill") as HTMLInputElement;
+      const enabledToggle = screen.getByLabelText("Disable test-skill") as HTMLInputElement;
+
+      expect(enabledRow?.querySelector(".skills-view-item-info")).toBeTruthy();
+      expect(enabledRow?.querySelector(".skills-view-item-toggle")).toBeTruthy();
+      expect(enabledRow?.querySelector(".skills-view-toggle-slider")).toBeTruthy();
+      expect(disabledRow?.querySelector(".skills-view-item-info")).toBeTruthy();
+      expect(disabledRow?.querySelector(".skills-view-item-toggle")).toBeTruthy();
+      expect(disabledRow?.querySelector(".skills-view-toggle-slider")).toBeTruthy();
+
+      await act(async () => {
+        fireEvent.click(disabledToggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Disable another-skill")).toBeTruthy();
+      });
+
+      await act(async () => {
+        fireEvent.click(enabledToggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Enable test-skill")).toBeTruthy();
+      });
+
+      const enabledRowAfterToggle = screen.getByText("test-skill").closest(".skills-view-item");
+      const disabledRowAfterToggle = screen.getByText("another-skill").closest(".skills-view-item");
+
+      expect(enabledRowAfterToggle?.querySelector(".skills-view-item-info")).toBeTruthy();
+      expect(enabledRowAfterToggle?.querySelector(".skills-view-item-toggle")).toBeTruthy();
+      expect(enabledRowAfterToggle?.querySelector(".skills-view-toggle-slider")).toBeTruthy();
+      expect(disabledRowAfterToggle?.querySelector(".skills-view-item-info")).toBeTruthy();
+      expect(disabledRowAfterToggle?.querySelector(".skills-view-item-toggle")).toBeTruthy();
+      expect(disabledRowAfterToggle?.querySelector(".skills-view-toggle-slider")).toBeTruthy();
+    });
   });
 
   describe("catalog search", () => {
