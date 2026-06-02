@@ -222,12 +222,22 @@ export const SecretsView = ({ addToast }: SecretsViewProps) => {
     }
   };
 
+  const hideSecret = (secret: SecretRecord) => {
+    const existing = revealTimersRef.current.get(secret.id);
+    if (existing) {
+      clearTimeout(existing);
+      revealTimersRef.current.delete(secret.id);
+    }
+    setRevealedValues((current) => ({ ...current, [secret.id]: null }));
+  };
+
   const revealSecret = async (secret: SecretRecord) => {
     const data = await request<{ key: string; value: string }>(`/api/secrets/${secret.scope}/${secret.id}/reveal`, { method: "POST" });
     setRevealedValues((current) => ({ ...current, [secret.id]: data.value }));
     addToast?.("Revealed", "success");
     const timer = setTimeout(() => {
       setRevealedValues((current) => ({ ...current, [secret.id]: null }));
+      revealTimersRef.current.delete(secret.id);
     }, 30000);
     const existing = revealTimersRef.current.get(secret.id);
     if (existing) clearTimeout(existing);
@@ -314,7 +324,13 @@ export const SecretsView = ({ addToast }: SecretsViewProps) => {
                   <button
                     type="button"
                     className="btn btn-icon secrets-visibility-toggle"
-                    onClick={() => void revealSecret(secret)}
+                    onClick={() => {
+                      if (revealed) {
+                        hideSecret(secret);
+                        return;
+                      }
+                      void revealSecret(secret);
+                    }}
                     aria-label={revealed ? "Hide" : "Reveal"}
                   >
                     {revealed ? <EyeOff {...actionIconProps} /> : <Eye {...actionIconProps} />}

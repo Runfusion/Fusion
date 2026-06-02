@@ -225,6 +225,46 @@ describe("SecretsView", () => {
     expectVisibleActionIcon(screen.getByRole("button", { name: "Delete" }));
   });
 
+  it("revealed secret can be hidden again from the row toggle", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          ok: true,
+          body: {
+            secrets: [
+              { id: "secret-1", key: "VISIBLE", scope: "project", description: null, accessPolicy: "prompt", envExportable: false, envExportKey: null, lastReadAt: null },
+            ],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { configured: false } }))
+      .mockResolvedValueOnce(mockJsonResponse({ ok: true, body: { key: "VISIBLE", value: "super-secret-value" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SecretsView addToast={vi.fn()} />);
+    await screen.findByText("VISIBLE");
+
+    const revealButton = screen.getByRole("button", { name: "Reveal" });
+    const copyButton = screen.getByRole("button", { name: "Copy" });
+    expect(copyButton).toBeDisabled();
+
+    await userEvent.click(revealButton);
+
+    expect(await screen.findByText("super-secret-value")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument();
+    expect(copyButton).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Hide" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("super-secret-value")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Reveal" })).toBeInTheDocument();
+    expect(copyButton).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it.each(["dark", "light"] as const)("keeps the modal value toggle icon visible in %s theme", async (theme) => {
     document.documentElement.dataset.theme = theme;
 
