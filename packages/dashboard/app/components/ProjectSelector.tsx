@@ -7,15 +7,12 @@ import {
   Grid3X3,
   Search,
   Clock,
-  Play,
-  Pause,
-  AlertCircle,
-  Loader2,
   X,
 } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import type { ProjectStatus } from "@fusion/core";
 import { getTrailingPath } from "../utils/pathDisplay";
+import { getProjectStatusConfig, isInitializingStatus } from "../utils/projectStatusConfig";
 
 export interface ProjectSelectorProps {
   projects: ProjectInfo[];
@@ -23,24 +20,6 @@ export interface ProjectSelectorProps {
   onSelect: (project: ProjectInfo) => void;
   onViewAll: () => void;
   recentProjectIds?: string[];
-}
-
-type StatusConfig = { color: string; icon: typeof Play };
-
-const STATUS_CONFIG: Record<ProjectStatus, StatusConfig> = {
-  active: { color: "var(--success)", icon: Play },
-  paused: { color: "var(--warning)", icon: Pause },
-  errored: { color: "var(--color-error)", icon: AlertCircle },
-  initializing: { color: "var(--info)", icon: Loader2 },
-};
-
-const FALLBACK_STATUS_CONFIG: StatusConfig = {
-  color: "var(--color-error)",
-  icon: AlertCircle,
-};
-
-function getStatusConfig(status: string | null | undefined): StatusConfig {
-  return STATUS_CONFIG[status as ProjectStatus] ?? FALLBACK_STATUS_CONFIG;
 }
 
 /**
@@ -234,13 +213,13 @@ export function ProjectSelector({
 
   // Render status icon
   const renderStatusIcon = (status: ProjectStatus) => {
-    const config = getStatusConfig(status);
+    const config = getProjectStatusConfig(status);
     const Icon = config.icon;
     return (
       <Icon
         size={14}
         style={{ color: config.color }}
-        className={status === "initializing" ? "animate-spin" : ""}
+        className={isInitializingStatus(status) ? "animate-spin" : ""}
       />
     );
   };

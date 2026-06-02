@@ -1,52 +1,13 @@
 import { useState, useCallback } from "react";
-import { Play, Pause, AlertCircle, Loader2 } from "lucide-react";
 import type { ProjectStatus } from "@fusion/core";
 import type { ProjectHealth } from "../api";
+import { getProjectStatusConfig, isInitializingStatus } from "../utils/projectStatusConfig";
 
 export interface ProjectHealthBadgeProps {
   status: ProjectStatus;
   health?: ProjectHealth | null;
   size?: "sm" | "md" | "lg";
   showTooltip?: boolean;
-}
-
-type StatusConfig = { label: string; color: string; icon: typeof Play };
-
-const STATUS_CONFIG: Record<ProjectStatus, StatusConfig> = {
-  active: { label: "Active", color: "var(--success)", icon: Play },
-  paused: { label: "Paused", color: "var(--warning)", icon: Pause },
-  errored: { label: "Error", color: "var(--color-error)", icon: AlertCircle },
-  initializing: { label: "Initializing", color: "var(--info)", icon: Loader2 },
-};
-
-const FALLBACK_STATUS_CONFIG: StatusConfig = {
-  label: "Unknown",
-  color: "var(--color-error)",
-  icon: AlertCircle,
-};
-
-function formatStatusLabel(status: string | null | undefined): string {
-  if (!status) {
-    return FALLBACK_STATUS_CONFIG.label;
-  }
-
-  return status
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function getStatusConfig(status: string | null | undefined): StatusConfig {
-  const config = STATUS_CONFIG[status as ProjectStatus];
-  if (config) {
-    return config;
-  }
-
-  return {
-    ...FALLBACK_STATUS_CONFIG,
-    label: formatStatusLabel(status),
-  };
 }
 
 /**
@@ -62,7 +23,7 @@ export function ProjectHealthBadge({
   showTooltip = true,
 }: ProjectHealthBadgeProps) {
   const [isHovered, setIsHovered] = useState(false);
-  const config = getStatusConfig(status);
+  const config = getProjectStatusConfig(status);
   const StatusIcon = config.icon;
 
   const handleMouseEnter = useCallback(() => {
@@ -81,7 +42,7 @@ export function ProjectHealthBadge({
     lg: "project-health-badge--lg",
   };
 
-  const isInitializing = status === "initializing";
+  const isInitializing = isInitializingStatus(status);
 
   return (
     <div

@@ -127,7 +127,9 @@ export function ProjectOverview({
             paused: 2,
             active: 3,
           };
-          comparison = statusOrder[a.project.status] - statusOrder[b.project.status];
+          const aOrder = statusOrder[a.project.status] ?? Number.MAX_SAFE_INTEGER;
+          const bOrder = statusOrder[b.project.status] ?? Number.MAX_SAFE_INTEGER;
+          comparison = aOrder - bOrder;
           break;
         }
       }

@@ -328,6 +328,31 @@ describe("ProjectOverview", () => {
     expect(screen.getByTestId("project-card-proj_1")).toBeDefined();
   });
 
+  it("does not crash when sorting by status with unknown project statuses", () => {
+    expect(() => {
+      render(
+        <ProjectOverview
+          projects={[
+            makeProject({ id: "proj_active", name: "Active Project", status: "active" }),
+            makeProject({ id: "proj_unknown", name: "Unknown Project", status: "removing" as ProjectStatus }),
+          ]}
+          onSelectProject={noop}
+          onAddProject={noop}
+          onPauseProject={noop}
+          onResumeProject={noop}
+          onRemoveProject={noop}
+        />
+      );
+    }).not.toThrow();
+
+    fireEvent.change(screen.getByLabelText("Sort projects"), {
+      target: { value: "status-asc" },
+    });
+
+    expect(screen.getByTestId("project-card-proj_active")).toBeDefined();
+    expect(screen.getByTestId("project-card-proj_unknown")).toBeDefined();
+  });
+
   it("shows loading skeleton when loading prop is true", () => {
     render(
       <ProjectOverview

@@ -115,33 +115,20 @@ describe("Project component CSS theme tokens", () => {
     expect(html).not.toContain("var(--error)");
   });
 
-  it("no STATUS_CONFIG in any project component uses bare var(--error)", async () => {
-    // This is a source-code-level regression check.
-    // Read the source files and verify no bare var(--error) remains.
+  it("shared project status config uses canonical error tokens only", async () => {
     const fs = await import("fs");
     const path = await import("path");
 
-    const componentDir = path.resolve(__dirname, "..");
-    const files = [
-      "ProjectHealthBadge.tsx",
-      "ProjectSelector.tsx",
-      "ProjectCard.tsx",
-    ];
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../../utils/projectStatusConfig.ts"),
+      "utf-8"
+    );
 
-    for (const file of files) {
-      const source = fs.readFileSync(path.join(componentDir, file), "utf-8");
-
-      // Should NOT contain the bare var(--error) token
-      expect(
-        source,
-        `${file} should not contain var(--error)`
-      ).not.toMatch(/var\(--error\)(?!\w)/);
-
-      // Should contain the correct token for errored status
-      expect(
-        source,
-        `${file} should contain var(--color-error) for errored status`
-      ).toContain('var(--color-error)');
-    }
+    expect(source, "projectStatusConfig.ts should not contain var(--error)").not.toMatch(
+      /var\(--error\)(?!\w)/
+    );
+    expect(source, "projectStatusConfig.ts should contain var(--color-error)").toContain(
+      "var(--color-error)"
+    );
   });
 });
