@@ -1779,12 +1779,14 @@ describe("ChatView", () => {
 
       // Wrap to bottom from the first item.
       fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      expect(screen.getByRole("option", { name: /gamma/i })).toHaveClass(
-        "chat-skill-menu-item--highlighted",
+      await waitFor(() =>
+        expect(screen.getByRole("option", { name: /gamma/i })).toHaveClass(
+          "chat-skill-menu-item--highlighted",
+        ),
       );
 
       fireEvent.keyDown(textarea, { key: "Enter" });
-      expect(textarea).toHaveValue("/skill:gamma ");
+      await waitFor(() => expect(textarea).toHaveValue("/skill:gamma "));
     });
 
     it("supports selecting highlighted skill with Tab", async () => {
