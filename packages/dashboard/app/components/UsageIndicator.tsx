@@ -170,6 +170,16 @@ function isWindowHidden(
   return hidden[providerName]?.includes(windowLabel) ?? false;
 }
 
+function getRenderedHiddenWindowCount(
+  providerName: string,
+  windows: UsageWindow[],
+  hidden: Record<string, string[]>
+): number {
+  return windows.reduce((count, window) => {
+    return count + (isWindowHidden(providerName, window.label, hidden) ? 1 : 0);
+  }, 0);
+}
+
 interface UsageWindowRowProps {
   window: UsageWindow;
   viewMode: 'used' | 'remaining';
@@ -404,7 +414,7 @@ function ProviderCard({
   onMoveUp,
   onMoveDown,
 }: ProviderCardProps) {
-  const hiddenCount = hiddenWindows[provider.name]?.length ?? 0;
+  const hiddenCount = getRenderedHiddenWindowCount(provider.name, provider.windows, hiddenWindows);
   const getStatusBadge = () => {
     switch (provider.status) {
       case "ok":

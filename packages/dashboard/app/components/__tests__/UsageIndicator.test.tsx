@@ -938,6 +938,48 @@ describe("UsageIndicator", () => {
     expect(screen.getByTestId("usage-show-hidden-btn")).toHaveTextContent("Show hidden (1)");
   });
 
+  it("counts currently rendered hidden rows when persisted labels match duplicate live windows", () => {
+    localStorage.setItem(
+      USAGE_HIDDEN_WINDOWS_KEY,
+      JSON.stringify({ Anthropic: ["Daily"] })
+    );
+
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Anthropic",
+          icon: "🅰️",
+          status: "ok",
+          windows: [
+            {
+              label: "Daily",
+              percentUsed: 20,
+              percentLeft: 80,
+              resetText: "resets in 1h",
+              resetMs: 3600000,
+            },
+            {
+              label: "Daily",
+              percentUsed: 60,
+              percentLeft: 40,
+              resetText: "resets in 4h",
+              resetMs: 14400000,
+            },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    expect(document.querySelectorAll(".usage-window--hidden")).toHaveLength(2);
+    expect(screen.getByTestId("usage-show-hidden-btn")).toHaveTextContent("Show hidden (2)");
+  });
+
   it("renders show hidden button inline within provider info", () => {
     mockUseUsageData.mockReturnValue({
       providers: mockProviders,
