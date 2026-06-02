@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, createEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent, createEvent } from "@testing-library/react";
 import { UsageIndicator } from "../UsageIndicator";
 import "../UsageIndicator.css";
 import * as useUsageDataModule from "../../hooks/useUsageData";
@@ -12,6 +12,19 @@ vi.mock("../../hooks/useUsageData", () => ({
 }));
 
 const mockUseUsageData = vi.mocked(useUsageDataModule.useUsageData);
+type MockUsageDataState = ReturnType<typeof useUsageDataModule.useUsageData>;
+
+function createUsageDataState(overrides: Partial<MockUsageDataState> = {}): MockUsageDataState {
+  return {
+    providers: [],
+    loading: false,
+    error: null,
+    lastUpdated: null,
+    hasFetched: true,
+    refresh: vi.fn(),
+    ...overrides,
+  };
+}
 const TEST_PROJECT_ID = "proj-123";
 
 function createAnchorRect(partial: Partial<DOMRect> = {}): DOMRect {
@@ -91,26 +104,26 @@ describe("UsageIndicator", () => {
   });
 
   it("renders nothing when isOpen is false", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
       loading: false,
       error: null,
       lastUpdated: null,
       refresh: mockRefresh,
-    });
+    }));
 
     const { container } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
     expect(container.firstChild).toBeNull();
   });
 
   it("renders modal when isOpen is true", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(
       <UsageIndicator
@@ -127,13 +140,13 @@ describe("UsageIndicator", () => {
   });
 
   it("renders provider cards with correct data", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -152,13 +165,13 @@ describe("UsageIndicator", () => {
   });
 
   it("renders drag handle in the right-side actions cluster for each provider card", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -181,13 +194,13 @@ describe("UsageIndicator", () => {
   });
 
   it("reorders providers on drag and drop and persists order", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -231,13 +244,13 @@ describe("UsageIndicator", () => {
   it("loads persisted provider order on remount and appends new providers", () => {
     localStorage.setItem(USAGE_PROVIDER_ORDER_KEY, JSON.stringify(["OpenAI", "Anthropic"]));
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -252,13 +265,13 @@ describe("UsageIndicator", () => {
   });
 
   it("applies drag visual feedback classes", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -311,13 +324,13 @@ describe("UsageIndicator", () => {
       })),
     });
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -338,13 +351,14 @@ describe("UsageIndicator", () => {
   });
 
   it("shows loading skeleton when loading", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
       loading: true,
       error: null,
       lastUpdated: null,
+      hasFetched: false,
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -353,13 +367,13 @@ describe("UsageIndicator", () => {
   });
 
   it("shows error state when there is an error", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
       loading: false,
       error: "Failed to fetch usage data",
       lastUpdated: null,
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -368,48 +382,49 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("Retry")).toBeInTheDocument();
   });
 
-  it("shows skeleton when no providers (empty result after fetch completes)", () => {
-    // When useUsageData completes its initial fetch and returns empty providers,
-    // we now show the skeleton (not the empty state) to indicate we're waiting
-    mockUseUsageData.mockReturnValue({
+  it("shows empty state after an empty fetch completes", () => {
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
       loading: false,
       error: null,
       lastUpdated: null,
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
-    // Should show skeleton because initial fetch completed but returned empty
-    expect(document.querySelector(".usage-skeleton")).toBeInTheDocument();
+    expect(screen.getByText("No AI providers configured")).toBeInTheDocument();
+    expect(document.querySelector(".usage-skeleton")).not.toBeInTheDocument();
   });
 
   it("calls refresh when refresh button clicked", async () => {
-    mockUseUsageData.mockReturnValue({
+    mockRefresh.mockResolvedValue(undefined);
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
     const refreshBtn = screen.getByTestId("usage-refresh-btn");
-    fireEvent.click(refreshBtn);
+    await act(async () => {
+      fireEvent.click(refreshBtn);
+    });
 
     expect(mockRefresh).toHaveBeenCalledTimes(1);
   });
 
   it("calls onClose when close button clicked", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -420,13 +435,13 @@ describe("UsageIndicator", () => {
   });
 
   it("renders as popover below anchor on desktop when anchorRect provided", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(
       <UsageIndicator
@@ -444,13 +459,13 @@ describe("UsageIndicator", () => {
   });
 
   it("renders as full-screen modal when anchorRect is null", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={null} />);
 
@@ -459,13 +474,13 @@ describe("UsageIndicator", () => {
   });
 
   it("calls onClose when overlay is clicked", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -476,13 +491,13 @@ describe("UsageIndicator", () => {
   });
 
   it("calls onClose when desktop popover backdrop is clicked", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(
       <UsageIndicator
@@ -498,13 +513,13 @@ describe("UsageIndicator", () => {
   });
 
   it("calls onClose when Escape key is pressed", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -514,7 +529,7 @@ describe("UsageIndicator", () => {
   });
 
   it("renders progress bars with correct color classes", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -531,7 +546,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -546,13 +561,13 @@ describe("UsageIndicator", () => {
   });
 
   it("disables refresh button when loading", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: true,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -561,13 +576,13 @@ describe("UsageIndicator", () => {
   });
 
   it("passes autoRefresh option based on isOpen prop", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
       loading: false,
       error: null,
       lastUpdated: null,
       refresh: mockRefresh,
-    });
+    }));
 
     // Reset mock before testing
     mockUseUsageData.mockClear();
@@ -591,7 +606,7 @@ describe("UsageIndicator", () => {
   });
 
   it("does not render a Connected badge for providers with ok status", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Anthropic",
@@ -604,7 +619,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -612,7 +627,7 @@ describe("UsageIndicator", () => {
   });
 
   it("renders provider error messages", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "ErrorProvider",
@@ -626,7 +641,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -636,13 +651,13 @@ describe("UsageIndicator", () => {
 
   it("shows last updated timestamp", () => {
     const lastUpdated = new Date("2024-01-15T10:30:00");
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated,
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -652,13 +667,13 @@ describe("UsageIndicator", () => {
 
   it("keeps footer metadata on the left and action buttons on the right", () => {
     const lastUpdated = new Date("2024-01-15T10:30:00");
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated,
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -683,7 +698,7 @@ describe("UsageIndicator", () => {
   });
 
   it("renders usage windows with correct percentage text", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -698,7 +713,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -709,13 +724,13 @@ describe("UsageIndicator", () => {
 
   // View mode toggle tests
   it("renders view mode toggle buttons with correct initial state", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -729,7 +744,7 @@ describe("UsageIndicator", () => {
   });
 
   it("switches view mode when toggle buttons are clicked", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -744,7 +759,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -775,7 +790,7 @@ describe("UsageIndicator", () => {
     // Set localStorage to 'remaining' before rendering
     localStorage.setItem(USAGE_VIEW_MODE_KEY, "remaining");
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -790,7 +805,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -807,13 +822,13 @@ describe("UsageIndicator", () => {
   });
 
   it("persists view mode to localStorage when changed", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -830,13 +845,13 @@ describe("UsageIndicator", () => {
   });
 
   it("renders eye icon button on each usage window row", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -844,13 +859,13 @@ describe("UsageIndicator", () => {
   });
 
   it("clicking eye icon hides a window row", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -865,13 +880,13 @@ describe("UsageIndicator", () => {
   });
 
   it("hidden window does not occupy layout space", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -885,13 +900,13 @@ describe("UsageIndicator", () => {
   });
 
   it("persists hidden windows to localStorage", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -908,13 +923,13 @@ describe("UsageIndicator", () => {
       JSON.stringify({ Anthropic: ["Session (5h)"] })
     );
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -923,13 +938,13 @@ describe("UsageIndicator", () => {
   });
 
   it("shows provider-level show hidden button when windows are hidden", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -944,7 +959,7 @@ describe("UsageIndicator", () => {
       JSON.stringify({ Anthropic: ["Daily"] })
     );
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Anthropic",
@@ -972,7 +987,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -981,13 +996,13 @@ describe("UsageIndicator", () => {
   });
 
   it("renders show hidden button inline within provider info", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -999,13 +1014,13 @@ describe("UsageIndicator", () => {
   });
 
   it("show hidden button reveals all hidden windows for a provider", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1022,13 +1037,13 @@ describe("UsageIndicator", () => {
   });
 
   it("show hidden remains revealed across rerender and does not submit parent forms", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     const onSubmit = vi.fn((event: Event) => {
       event.preventDefault();
@@ -1062,13 +1077,13 @@ describe("UsageIndicator", () => {
   });
 
   it("does not show provider-level show hidden button when no windows are hidden", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1078,7 +1093,7 @@ describe("UsageIndicator", () => {
 
   // ProviderIcon integration tests
   it("renders SVG provider icons instead of emoji", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         { name: "Anthropic", icon: "🅰️", status: "ok", windows: [] },
         { name: "OpenAI", icon: "🤖", status: "ok", windows: [] },
@@ -1088,7 +1103,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1099,7 +1114,7 @@ describe("UsageIndicator", () => {
   });
 
   it("maps Claude provider to anthropic icon", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         { name: "Claude", icon: "🅰️", status: "ok", windows: [] },
       ],
@@ -1107,7 +1122,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1116,7 +1131,7 @@ describe("UsageIndicator", () => {
   });
 
   it("maps Codex provider to openai icon", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         { name: "Codex", icon: "🤖", status: "ok", windows: [] },
       ],
@@ -1124,7 +1139,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1133,7 +1148,7 @@ describe("UsageIndicator", () => {
   });
 
   it("maps Gemini provider to google icon", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         { name: "Gemini", icon: "🔍", status: "ok", windows: [] },
       ],
@@ -1141,7 +1156,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1150,7 +1165,7 @@ describe("UsageIndicator", () => {
   });
 
   it("maps Kimi provider to kimi icon", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         { name: "Kimi", icon: "🌙", status: "ok", windows: [] },
       ],
@@ -1158,7 +1173,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1166,7 +1181,7 @@ describe("UsageIndicator", () => {
   });
 
   it("maps Moonshot provider to kimi icon (alias)", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         { name: "Moonshot", icon: "🌙", status: "ok", windows: [] },
       ],
@@ -1174,7 +1189,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1184,7 +1199,7 @@ describe("UsageIndicator", () => {
 
   // Pace indicator tests
   it("renders pace marker for weekly windows with timing data", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1211,7 +1226,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1220,7 +1235,7 @@ describe("UsageIndicator", () => {
   });
 
   it("does not render pace marker for non-weekly windows (Session, Hourly)", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1250,7 +1265,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1259,7 +1274,7 @@ describe("UsageIndicator", () => {
   });
 
   it("does not render pace marker when pace is undefined", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1280,7 +1295,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1289,7 +1304,7 @@ describe("UsageIndicator", () => {
   });
 
   it("shows 'ahead of pace' text when usage exceeds elapsed time by >5%", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1316,7 +1331,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1326,7 +1341,7 @@ describe("UsageIndicator", () => {
   });
 
   it("shows 'behind pace' text when usage is under elapsed time by >5%", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1353,7 +1368,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1363,7 +1378,7 @@ describe("UsageIndicator", () => {
   });
 
   it("shows 'on pace' text when usage is within 5% of elapsed time", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1390,7 +1405,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1400,7 +1415,7 @@ describe("UsageIndicator", () => {
 
   it("pace marker position inverts correctly when switching to remaining mode", () => {
     // Mock provider with weekly window
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1427,7 +1442,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1450,7 +1465,7 @@ describe("UsageIndicator", () => {
     localStorage.removeItem(USAGE_VIEW_MODE_KEY);
     
     // Setup: 70% used (ahead of pace), 30% remaining
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1477,7 +1492,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1496,13 +1511,13 @@ describe("UsageIndicator", () => {
 
   // Refresh-on-open behavior tests
   it("calls refresh when isOpen transitions from false to true", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: null, // No recent update, should refresh
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1517,13 +1532,13 @@ describe("UsageIndicator", () => {
   });
 
   it("does not call refresh when isOpen is already true on mount", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     // Render with isOpen=true initially
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
@@ -1534,13 +1549,13 @@ describe("UsageIndicator", () => {
   });
 
   it("does not call refresh when isOpen becomes false (modal closes)", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1558,13 +1573,13 @@ describe("UsageIndicator", () => {
     // Data was just updated (within 5 seconds)
     const recentUpdate = new Date(Date.now() - 2000); // 2 seconds ago
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: recentUpdate,
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1582,13 +1597,13 @@ describe("UsageIndicator", () => {
     // Data was updated 10 seconds ago (stale)
     const staleUpdate = new Date(Date.now() - 10000); // 10 seconds ago
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: staleUpdate,
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1603,13 +1618,13 @@ describe("UsageIndicator", () => {
   });
 
   it("calls refresh again when modal reopens after being closed", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: null,
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1629,14 +1644,14 @@ describe("UsageIndicator", () => {
 
   // Initial loading state tests
   it("shows skeleton when modal opens with no cached data", () => {
-    // Simulate: initial fetch has not completed, providers array is empty
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
-      loading: false, // loading is false, but no providers yet
+      loading: false,
       error: null,
       lastUpdated: null,
+      hasFetched: false,
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1648,13 +1663,13 @@ describe("UsageIndicator", () => {
     const { rerender } = render(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
     // First open: show data
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1665,14 +1680,14 @@ describe("UsageIndicator", () => {
     // Close the modal
     rerender(<UsageIndicator isOpen={false} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
-    // Reopen with no providers (simulating stale state before fetch completes)
-    mockUseUsageData.mockReturnValue({
-      providers: [], // Empty - will show skeleton until fetch completes
+    mockUseUsageData.mockReturnValue(createUsageDataState({
+      providers: [],
       loading: false,
       error: null,
       lastUpdated: null,
+      hasFetched: false,
       refresh: mockRefresh,
-    });
+    }));
 
     rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1681,14 +1696,14 @@ describe("UsageIndicator", () => {
   });
 
   it("shows providers once data arrives after initial skeleton", () => {
-    // First render: empty providers, no data yet
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [],
       loading: false,
       error: null,
       lastUpdated: null,
+      hasFetched: false,
       refresh: mockRefresh,
-    });
+    }));
 
     const { rerender } = render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1696,13 +1711,13 @@ describe("UsageIndicator", () => {
     expect(document.querySelector(".usage-skeleton")).toBeInTheDocument();
 
     // Simulate data arriving
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: mockProviders,
       loading: false,
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     // Trigger a re-render with new data
     rerender(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
@@ -1715,7 +1730,7 @@ describe("UsageIndicator", () => {
   // Percentage rounding tests
   it("rounds percentage values in display text (whole numbers)", () => {
     // Use decimal percentages to verify rounding
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1730,7 +1745,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1741,7 +1756,7 @@ describe("UsageIndicator", () => {
 
   it("rounds percentage values in remaining view mode", () => {
     // Use decimal percentages to verify rounding
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1756,7 +1771,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1770,7 +1785,7 @@ describe("UsageIndicator", () => {
   });
 
   it("rounds percentage values in progress bar width", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "TestProvider",
@@ -1785,7 +1800,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1798,7 +1813,7 @@ describe("UsageIndicator", () => {
   // resetAt timestamp display tests
   it("shows absolute reset time when resetAt is provided", () => {
     const resetAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -1820,7 +1835,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1830,7 +1845,7 @@ describe("UsageIndicator", () => {
   });
 
   it("does not show absolute reset time when resetAt is absent", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -1852,7 +1867,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1862,7 +1877,7 @@ describe("UsageIndicator", () => {
 
   it("Claude weekly window shows absolute reset time when resetAt is provided", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -1884,7 +1899,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1898,7 +1913,7 @@ describe("UsageIndicator", () => {
     // Simulate a realistic Claude usage payload with Session (5h) + Weekly windows
     const sessionResetAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2h from now
     const weeklyResetAt = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000); // 5d from now
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -1929,7 +1944,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1955,7 +1970,7 @@ describe("UsageIndicator", () => {
   });
 
   it("Claude 5h session row without resetAt only shows relative reset text", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -1977,7 +1992,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -1993,7 +2008,7 @@ describe("UsageIndicator", () => {
 
   it("non-Claude providers are unaffected by resetAt display feature", () => {
     const resetAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Codex",
@@ -2031,7 +2046,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2050,7 +2065,7 @@ describe("UsageIndicator", () => {
 
   it("Claude weekly variant labels show absolute reset time when resetAt is provided", () => {
     const resetAt = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2080,7 +2095,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2094,7 +2109,7 @@ describe("UsageIndicator", () => {
 
   it("Anthropic provider name shows absolute reset time for weekly windows", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Anthropic",
@@ -2116,7 +2131,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2127,7 +2142,7 @@ describe("UsageIndicator", () => {
 
   it("non-Claude weekly windows still show absolute reset time when provided", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Codex",
@@ -2149,7 +2164,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2161,7 +2176,7 @@ describe("UsageIndicator", () => {
   // Claude weekly reset fallback tests
   it("Claude weekly window generates fallback relative text when resetText is null but resetAt exists", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000 + 5 * 60 * 60 * 1000); // 3d 5h
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2183,7 +2198,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2193,7 +2208,7 @@ describe("UsageIndicator", () => {
 
   it("Claude weekly window fallback shows only days when no remainder hours", () => {
     const resetAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // exactly 3d
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2215,7 +2230,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2224,7 +2239,7 @@ describe("UsageIndicator", () => {
 
   it("Claude weekly window fallback shows hours when less than 1 day remaining", () => {
     const resetAt = new Date(Date.now() + 5 * 60 * 60 * 1000); // 5h
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2246,7 +2261,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2255,7 +2270,7 @@ describe("UsageIndicator", () => {
 
   it("Claude weekly window fallback shows minutes when less than 1 hour remaining", () => {
     const resetAt = new Date(Date.now() + 45 * 60 * 1000); // 45m
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2277,7 +2292,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2285,7 +2300,7 @@ describe("UsageIndicator", () => {
   });
 
   it("Claude weekly window does not show fallback when both resetText and resetAt are null", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2306,7 +2321,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2316,7 +2331,7 @@ describe("UsageIndicator", () => {
 
   it("Claude session window generates fallback reset text from resetAt", () => {
     const resetAt = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2338,7 +2353,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2357,7 +2372,7 @@ describe("UsageIndicator", () => {
       14, 30, 0, 0 // 2:30 PM seven days from now
     );
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Codex",
@@ -2379,7 +2394,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2404,7 +2419,7 @@ describe("UsageIndicator", () => {
       now.getSeconds()
     );
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Codex",
@@ -2426,7 +2441,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2445,7 +2460,7 @@ describe("UsageIndicator", () => {
       10, 0, 0, 0
     );
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Codex",
@@ -2467,7 +2482,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2487,7 +2502,7 @@ describe("UsageIndicator", () => {
       1, 0, 0, 0 // 1:00 AM tomorrow
     );
 
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Codex",
@@ -2509,7 +2524,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
@@ -2521,7 +2536,7 @@ describe("UsageIndicator", () => {
 
   // Email display tests
   it("does not render provider email even when email is present in data", () => {
-    mockUseUsageData.mockReturnValue({
+    mockUseUsageData.mockReturnValue(createUsageDataState({
       providers: [
         {
           name: "Claude",
@@ -2538,7 +2553,7 @@ describe("UsageIndicator", () => {
       error: null,
       lastUpdated: new Date(),
       refresh: mockRefresh,
-    });
+    }));
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 

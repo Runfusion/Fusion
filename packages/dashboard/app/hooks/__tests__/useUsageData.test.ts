@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useUsageData } from "../useUsageData";
 import * as api from "../../api";
 
@@ -7,7 +7,7 @@ describe("useUsageData", () => {
   const mockFetchUsageData = vi.spyOn(api, "fetchUsageData");
 
   beforeEach(() => {
-    mockFetchUsageData.mockClear();
+    mockFetchUsageData.mockReset();
   });
 
   it("fetches data on initial mount", async () => {
@@ -25,16 +25,16 @@ describe("useUsageData", () => {
 
     const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
 
-    // Should be loading initially
     expect(result.current.loading).toBe(true);
     expect(result.current.providers).toEqual([]);
+    expect(result.current.hasFetched).toBe(false);
 
-    // Wait for data to load
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.providers).toEqual(mockData.providers);
     expect(result.current.error).toBeNull();
     expect(result.current.lastUpdated).toBeInstanceOf(Date);
+    expect(result.current.hasFetched).toBe(true);
   });
 
   it("handles fetch errors", async () => {
@@ -42,10 +42,13 @@ describe("useUsageData", () => {
 
     const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
 
+    expect(result.current.hasFetched).toBe(false);
+
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.error).toBe("Network error");
     expect(result.current.providers).toEqual([]);
+    expect(result.current.hasFetched).toBe(true);
   });
 
   it("manual refresh fetches new data", async () => {
@@ -64,11 +67,14 @@ describe("useUsageData", () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.providers).toEqual(mockData1.providers);
+    expect(result.current.hasFetched).toBe(true);
 
-    // Manual refresh
-    await result.current.refresh();
+    await act(async () => {
+      await result.current.refresh();
+    });
 
     await waitFor(() => expect(result.current.providers).toEqual(mockData2.providers));
+    expect(result.current.hasFetched).toBe(true);
   });
 
   it("clears error on successful manual refresh after error", async () => {
@@ -82,12 +88,29 @@ describe("useUsageData", () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe("Network error");
+    expect(result.current.hasFetched).toBe(true);
 
-    // Manual refresh
-    await result.current.refresh();
+    await act(async () => {
+      await result.current.refresh();
+    });
 
     await waitFor(() => expect(result.current.error).toBeNull());
     expect(result.current.providers).toHaveLength(1);
+    expect(result.current.hasFetched).toBe(true);
+  });
+
+  it("sets hasFetched to true after a successful empty fetch", async () => {
+    mockFetchUsageData.mockResolvedValue({ providers: [] });
+
+    const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
+
+    expect(result.current.hasFetched).toBe(false);
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.providers).toEqual([]);
+    expect(result.current.error).toBeNull();
+    expect(result.current.hasFetched).toBe(true);
   });
 
   it("exports the correct interface", () => {
@@ -95,7 +118,7 @@ describe("useUsageData", () => {
   });
 
   it("returns expected default values before first fetch", () => {
-    mockFetchUsageData.mockImplementation(() => new Promise(() => {})); // Never resolves
+    mockFetchUsageData.mockImplementation(() => new Promise(() => {}));
 
     const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
 
@@ -103,6 +126,7 @@ describe("useUsageData", () => {
     expect(result.current.loading).toBe(true);
     expect(result.current.error).toBeNull();
     expect(result.current.lastUpdated).toBeNull();
+    expect(result.current.hasFetched).toBe(false);
     expect(typeof result.current.refresh).toBe("function");
   });
 });

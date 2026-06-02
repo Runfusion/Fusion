@@ -558,7 +558,7 @@ function UsageSkeleton() {
  * reset timers, and pace indicators.
  */
 export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: UsageIndicatorProps) {
-  const { providers, loading, error, lastUpdated, refresh } = useUsageData({
+  const { providers, loading, error, lastUpdated, hasFetched, refresh } = useUsageData({
     autoRefresh: isOpen, // Only poll when modal is open
   });
 
@@ -581,7 +581,6 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: Usage
   const contentRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(isOpen);
-  const hasCompletedInitialFetchRef = useRef(false);
   const [savedSize, setSavedSize] = useState<ModalSize | null>(() => getSavedModalSize(projectId));
 
   useEffect(() => {
@@ -615,20 +614,6 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: Usage
       observer.disconnect();
     };
   }, [isOpen, isDesktopViewport, projectId]);
-
-  // Reset initial fetch flag when modal closes to show skeleton on next open
-  useEffect(() => {
-    if (!isOpen) {
-      hasCompletedInitialFetchRef.current = false;
-    }
-  }, [isOpen]);
-
-  // Track when initial fetch completes (providers are populated)
-  useEffect(() => {
-    if (providers.length > 0) {
-      hasCompletedInitialFetchRef.current = true;
-    }
-  }, [providers.length]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -923,7 +908,7 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: Usage
         </div>
 
         <div className="usage-content" ref={contentRef}>
-          {(loading || (!hasCompletedInitialFetchRef.current && !error)) && providers.length === 0 ? (
+          {(!hasFetched && !error) && providers.length === 0 ? (
             <UsageSkeleton />
           ) : error && providers.length === 0 ? (
             <div className="usage-error">

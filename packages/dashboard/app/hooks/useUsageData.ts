@@ -7,6 +7,7 @@ interface UsageDataState {
   loading: boolean;
   error: string | null;
   lastUpdated: Date | null;
+  hasFetched: boolean;
 }
 
 interface UseUsageDataOptions {
@@ -34,6 +35,7 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
     loading: true,
     error: null,
     lastUpdated: null,
+    hasFetched: false,
   });
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -57,6 +59,7 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
         loading: false,
         error: null,
         lastUpdated: new Date(),
+        hasFetched: true,
       });
     } catch (err) {
       // Don't update state if the request was aborted
@@ -66,6 +69,7 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
         ...prev,
         loading: false,
         error: getErrorMessage(err) || "Failed to fetch usage data",
+        hasFetched: true,
       }));
     }
   }, []);
@@ -112,6 +116,7 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
     loading: state.loading,
     error: state.error,
     lastUpdated: state.lastUpdated,
+    hasFetched: state.hasFetched,
     refresh,
   };
 }
