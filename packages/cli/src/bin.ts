@@ -126,7 +126,7 @@ async function loadCommandHandlers() {
   const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
   const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
   const { runMemoryBackupCreate, runMemoryBackupList, runMemoryBackupRestore } = await import("./commands/memory-backup.js");
-  const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
+  const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice, runMissionLinkGoal, runMissionUnlinkGoal, runMissionGoals } = await import("./commands/mission.js");
   const { runGoalsList, runGoalsCreate, runGoalsArchive, runGoalsCitations } = await import("./commands/goals.js");
   const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
   const { runNodeList, runNodeConnect, runNodeDisconnect, runNodeShow, runNodeHealth, runMeshStatus } = await import("./commands/node.js");
@@ -196,6 +196,9 @@ async function loadCommandHandlers() {
     runMissionShow,
     runMissionDelete,
     runMissionActivateSlice,
+    runMissionLinkGoal,
+    runMissionUnlinkGoal,
+    runMissionGoals,
     runGoalsList,
     runGoalsCreate,
     runGoalsArchive,
@@ -322,6 +325,11 @@ PR:
   fn mission create [title] [desc]    Create a new mission
   fn mission list | ls                List missions
   fn mission show | info <id>         Show mission details
+  fn mission goals <id>               List linked goals for a mission
+  fn mission link-goal <mission-id> <goal-id>
+                                      Link a goal to a mission
+  fn mission unlink-goal <mission-id> <goal-id>
+                                      Unlink a goal from a mission
   fn mission delete <id> [--force]    Delete a mission
   fn mission activate-slice <id>      Mark a slice active
   fn goals list [--status STATE]      List goals (default: active)
@@ -627,6 +635,9 @@ async function main() {
     runMissionShow,
     runMissionDelete,
     runMissionActivateSlice,
+    runMissionLinkGoal,
+    runMissionUnlinkGoal,
+    runMissionGoals,
     runGoalsList,
     runGoalsCreate,
     runGoalsArchive,
@@ -1376,6 +1387,23 @@ async function main() {
             await runMissionShow(id, projectName);
             break;
           }
+          case "goals": {
+            const id = args[2];
+            await runMissionGoals(id, projectName);
+            break;
+          }
+          case "link-goal": {
+            const missionId = args[2];
+            const goalId = args[3];
+            await runMissionLinkGoal(missionId, goalId, projectName);
+            break;
+          }
+          case "unlink-goal": {
+            const missionId = args[2];
+            const goalId = args[3];
+            await runMissionUnlinkGoal(missionId, goalId, projectName);
+            break;
+          }
           case "delete": {
             const id = args[2];
             const force = args.includes("--force");
@@ -1389,7 +1417,7 @@ async function main() {
           }
           default:
             console.error(`Unknown subcommand: mission ${subcommand || ""}`);
-            console.log("Try: fn mission create | list | show | delete | activate-slice");
+            console.log("Try: fn mission create | list | show | goals | link-goal | unlink-goal | delete | activate-slice");
             process.exit(1);
         }
         break;

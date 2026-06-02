@@ -1,0 +1,140 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import kbExtension from "../extension.js";
+
+interface RegisteredTool {
+  name: string;
+  description: string;
+  parameters?: {
+    type: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+  execute: (
+    toolCallId: string,
+    params: any,
+    signal: AbortSignal | undefined,
+    onUpdate: ((update: any) => void) | undefined,
+    ctx: any,
+  ) => Promise<any>;
+}
+
+function createMockAPI() {
+  const tools = new Map<string, RegisteredTool>();
+
+  const api = {
+    registerTool(def: RegisteredTool) {
+      tools.set(def.name, def);
+    },
+    registerCommand() {},
+    registerShortcut() {},
+    registerFlag() {},
+    on() {},
+    tools,
+  };
+
+  return api as any;
+}
+
+function makeCtx(cwd: string) {
+  return { cwd } as any;
+}
+
+describe("extension mission goal tools", () => {
+  let tmpDir: string;
+  let api: ReturnType<typeof createMockAPI>;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "kb-mission-goal-tools-"));
+    await mkdir(join(tmpDir, ".fusion"), { recursive: true });
+    api = createMockAPI();
+    kbExtension(api);
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("registers mission goal tools with schemas", () => {
+    expect(api.tools.get("fn_mission_list_goals")?.parameters).toMatchObject({
+      type: "object",
+      required: ["missionId"],
+    });
+    expect(api.tools.get("fn_mission_link_goal")?.parameters).toMatchObject({
+      type: "object",
+      required: ["missionId", "goalId"],
+    });
+    expect(api.tools.get("fn_mission_unlink_goal")?.parameters).toMatchObject({
+      type: "object",
+      required: ["missionId", "goalId"],
+    });
+  });
+
+  it("links, lists, and unlinks goals correctly", async () => {
+    const missionCreate = api.tools.get("fn_mission_create");
+    const goalCreate = api.tools.get("fn_goal_create");
+    const linkGoal = api.tools.get("fn_mission_link_goal");
+    const listGoals = api.tools.get("fn_mission_list_goals");
+    const unlinkGoal = api.tools.get("fn_mission_unlink_goal");
+    expect(missionCreate && goalCreate && linkGoal && listGoals && unlinkGoal).toBeTruthy();
+
+    const missionResult = await missionCreate!.execute("mission-create", { title: "Mission Alpha" }, undefined, undefined, makeCtx(tmpDir));
+    const goalAResult = await goalCreate!.execute("goal-a", { title: "Goal A" }, undefined, undefined, makeCtx(tmpDir));
+    const goalBResult = await goalCreate!.execute("goal-b", { title: "Goal B", description: "Second goal" }, undefined, undefined, makeCtx(tmpDir));
+
+    const missionId = missionResult.details.missionId as string;
+    const goalAId = goalAResult.details.goalId as string;
+    const goalBId = goalBResult.details.goalId as string;
+
+    await linkGoal!.execute("link-a", { missionId, goalId: goalAId }, undefined, undefined, makeCtx(tmpDir));
+    await linkGoal!.execute("link-b", { missionId, goalId: goalBId }, undefined, undefined, makeCtx(tmpDir));
+    const relink = await linkGoal!.execute("link-b-again", { missionId, goalId: goalBId }, undefined, undefined, makeCtx(tmpDir));
+
+    expect(relink.details.goals.map((goal: { id: string }) => goal.id)).toEqual([goalAId, goalBId]);
+
+    const listed = await listGoals!.execute("list", { missionId }, undefined, undefined, makeCtx(tmpDir));
+    expect(listed.isError).toBeUndefined();
+    expect(listed.details.goals.map((goal: { id: string }) => goal.id)).toEqual([goalAId, goalBId]);
+    expect(listed.content[0].text).toContain(`${goalAId} [active] Goal A`);
+    expect(listed.content[0].text).toContain(`${goalBId} [active] Goal B — Second goal`);
+
+    const unlinked = await unlinkGoal!.execute("unlink-a", { missionId, goalId: goalAId }, undefined, undefined, makeCtx(tmpDir));
+    expect(unlinked.isError).toBeUndefined();
+    expect(unlinked.details.goals.map((goal: { id: string }) => goal.id)).toEqual([goalBId]);
+
+    const unlinkAgain = await unlinkGoal!.execute("unlink-a-again", { missionId, goalId: goalAId }, undefined, undefined, makeCtx(tmpDir));
+    expect(unlinkAgain.details.goals.map((goal: { id: string }) => goal.id)).toEqual([goalBId]);
+  });
+
+  it("returns stable missing mission and goal errors", async () => {
+    const missionCreate = api.tools.get("fn_mission_create");
+    const goalCreate = api.tools.get("fn_goal_create");
+    const linkGoal = api.tools.get("fn_mission_link_goal");
+    const listGoals = api.tools.get("fn_mission_list_goals");
+    const unlinkGoal = api.tools.get("fn_mission_unlink_goal");
+    expect(missionCreate && goalCreate && linkGoal && listGoals && unlinkGoal).toBeTruthy();
+
+    const missionResult = await missionCreate!.execute("mission-create", { title: "Mission Alpha" }, undefined, undefined, makeCtx(tmpDir));
+    const goalResult = await goalCreate!.execute("goal-a", { title: "Goal A" }, undefined, undefined, makeCtx(tmpDir));
+    const missionId = missionResult.details.missionId as string;
+    const goalId = goalResult.details.goalId as string;
+
+    const missingMissionList = await listGoals!.execute("missing-mission-list", { missionId: "M-404" }, undefined, undefined, makeCtx(tmpDir));
+    expect(missingMissionList.isError).toBe(true);
+    expect(missingMissionList.details).toEqual({ code: "MISSION_NOT_FOUND", missionId: "M-404" });
+
+    const missingGoalLink = await linkGoal!.execute("missing-goal-link", { missionId, goalId: "G-404" }, undefined, undefined, makeCtx(tmpDir));
+    expect(missingGoalLink.isError).toBe(true);
+    expect(missingGoalLink.details).toEqual({ code: "GOAL_NOT_FOUND", goalId: "G-404" });
+
+    const missingGoalUnlink = await unlinkGoal!.execute("missing-goal-unlink", { missionId, goalId: "G-404" }, undefined, undefined, makeCtx(tmpDir));
+    expect(missingGoalUnlink.isError).toBe(true);
+    expect(missingGoalUnlink.details).toEqual({ code: "GOAL_NOT_FOUND", goalId: "G-404" });
+
+    const missingMissionLink = await linkGoal!.execute("missing-mission-link", { missionId: "M-404", goalId }, undefined, undefined, makeCtx(tmpDir));
+    expect(missingMissionLink.isError).toBe(true);
+    expect(missingMissionLink.details).toEqual({ code: "MISSION_NOT_FOUND", missionId: "M-404" });
+  });
+});

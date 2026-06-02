@@ -92,9 +92,33 @@ Mission, milestone, slice, and feature read-only text surfaces in Mission Manage
 fn mission create "Reliability initiative" "Reduce execution failures and improve recovery"
 fn mission list
 fn mission show mission_123
+fn mission goals mission_123
+fn mission link-goal mission_123 G-001
+fn mission unlink-goal mission_123 G-001
 fn mission activate-slice slice_456
 fn mission delete mission_123 --force
 ```
+
+## Mission ↔ Goal operator surfaces
+
+Fusion surfaces the persisted mission↔goal linkage through REST, CLI, and pi-extension tools.
+
+### REST endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/missions/:missionId/goals` | List linked goals for a mission. Returns `{ goals }`. |
+| `PUT /api/missions/:missionId/goals` | Replace the full linked-goal set with body `{ goalIds: string[] }`. Duplicate ids are deduplicated before reconciliation. |
+| `POST /api/missions/:missionId/goals/:goalId` | Idempotently link one goal to a mission. |
+| `DELETE /api/missions/:missionId/goals/:goalId` | Idempotently unlink one goal from a mission. |
+
+All four endpoints validate mission/goal identifier formats and return `404` for missing mission/goal rows.
+
+### CLI
+
+- `fn mission goals <mission-id>` — list linked goals for a mission.
+- `fn mission link-goal <mission-id> <goal-id>` — idempotently link a goal.
+- `fn mission unlink-goal <mission-id> <goal-id>` — idempotently unlink a goal.
 
 ## Mission Planning Tools (pi extension)
 
@@ -105,6 +129,9 @@ The canonical per-parameter tool reference lives in `packages/cli/skill/fusion/r
 | `fn_mission_create` | Create a mission with title/description, optional `baseBranch`, and optional auto-advance behavior. |
 | `fn_mission_list` | List missions and their current status. |
 | `fn_mission_show` | Show mission details with milestone/slice/feature hierarchy, including milestone/feature acceptance criteria and slice verification when present. |
+| `fn_mission_list_goals` | List the goals linked to a mission. |
+| `fn_mission_link_goal` | Idempotently link a goal to a mission. |
+| `fn_mission_unlink_goal` | Idempotently unlink a goal from a mission. |
 | `fn_mission_delete` | Delete a mission and its hierarchy. |
 | `fn_mission_update` | Update mission title/description using partial patches. |
 | `fn_milestone_add` | Add a milestone to a mission. |

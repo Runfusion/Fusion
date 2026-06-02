@@ -2675,6 +2675,176 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_mission_list_goals ─────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_mission_list_goals",
+    label: "fn: List Mission Goals",
+    description: "List goals linked to a mission.",
+    promptSnippet: "List goals linked to a mission",
+    promptGuidelines: [
+      "Use after fn_mission_list or fn_mission_show when you need goal linkage details",
+      "Returns linked goals in mission-link order",
+      "Prefer this before linking or unlinking to avoid duplicate work",
+    ],
+    parameters: Type.Object({
+      missionId: Type.String({ description: "Mission ID (e.g., M-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+      const goalStore = store.getGoalStore();
+      const mission = missionStore.getMission(params.missionId);
+
+      if (!mission) {
+        return {
+          content: [{ type: "text", text: `Mission ${params.missionId} not found` }],
+          isError: true,
+          details: { code: "MISSION_NOT_FOUND", missionId: params.missionId },
+        };
+      }
+
+      const goals = missionStore
+        .listGoalIdsForMission(params.missionId)
+        .map((goalId) => goalStore.getGoal(goalId))
+        .filter((goal): goal is NonNullable<typeof goal> => Boolean(goal));
+
+      const lines = [`Linked goals for ${mission.id}: ${mission.title}`];
+      if (goals.length === 0) {
+        lines.push("No linked goals.");
+      } else {
+        for (const goal of goals) {
+          const description = goal.description ? ` — ${goal.description}` : "";
+          lines.push(`- ${goal.id} [${goal.status}] ${goal.title}${description}`);
+        }
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: {
+          missionId: mission.id,
+          missionTitle: mission.title,
+          goals,
+        },
+      };
+    },
+  });
+
+  // ── fn_mission_link_goal ───────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_mission_link_goal",
+    label: "fn: Link Mission Goal",
+    description: "Link a goal to a mission.",
+    promptSnippet: "Link a goal to a mission",
+    promptGuidelines: [
+      "Use after confirming both the mission and goal IDs",
+      "Idempotent: linking an already-linked goal is safe",
+      "Use fn_mission_list_goals afterward to verify the resulting set",
+    ],
+    parameters: Type.Object({
+      missionId: Type.String({ description: "Mission ID (e.g., M-001)" }),
+      goalId: Type.String({ description: "Goal ID (e.g., G-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+      const goalStore = store.getGoalStore();
+      const mission = missionStore.getMission(params.missionId);
+      if (!mission) {
+        return {
+          content: [{ type: "text", text: `Mission ${params.missionId} not found` }],
+          isError: true,
+          details: { code: "MISSION_NOT_FOUND", missionId: params.missionId },
+        };
+      }
+
+      const goal = goalStore.getGoal(params.goalId);
+      if (!goal) {
+        return {
+          content: [{ type: "text", text: `Goal ${params.goalId} not found` }],
+          isError: true,
+          details: { code: "GOAL_NOT_FOUND", goalId: params.goalId },
+        };
+      }
+
+      missionStore.linkGoal(params.missionId, params.goalId);
+      const goals = missionStore
+        .listGoalIdsForMission(params.missionId)
+        .map((goalId) => goalStore.getGoal(goalId))
+        .filter((linkedGoal): linkedGoal is NonNullable<typeof linkedGoal> => Boolean(linkedGoal));
+
+      return {
+        content: [{ type: "text", text: `Linked ${goal.id}: ${goal.title} → ${mission.id}` }],
+        details: {
+          missionId: mission.id,
+          missionTitle: mission.title,
+          goal,
+          goals,
+        },
+      };
+    },
+  });
+
+  // ── fn_mission_unlink_goal ─────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_mission_unlink_goal",
+    label: "fn: Unlink Mission Goal",
+    description: "Unlink a goal from a mission.",
+    promptSnippet: "Unlink a goal from a mission",
+    promptGuidelines: [
+      "Use when a goal no longer belongs on a mission",
+      "Idempotent: unlinking an absent link is safe",
+      "Returns the remaining linked goals for quick verification",
+    ],
+    parameters: Type.Object({
+      missionId: Type.String({ description: "Mission ID (e.g., M-001)" }),
+      goalId: Type.String({ description: "Goal ID (e.g., G-001)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const missionStore = store.getMissionStore();
+      const goalStore = store.getGoalStore();
+      const mission = missionStore.getMission(params.missionId);
+      if (!mission) {
+        return {
+          content: [{ type: "text", text: `Mission ${params.missionId} not found` }],
+          isError: true,
+          details: { code: "MISSION_NOT_FOUND", missionId: params.missionId },
+        };
+      }
+
+      const goal = goalStore.getGoal(params.goalId);
+      if (!goal) {
+        return {
+          content: [{ type: "text", text: `Goal ${params.goalId} not found` }],
+          isError: true,
+          details: { code: "GOAL_NOT_FOUND", goalId: params.goalId },
+        };
+      }
+
+      missionStore.unlinkGoal(params.missionId, params.goalId);
+      const goals = missionStore
+        .listGoalIdsForMission(params.missionId)
+        .map((goalId) => goalStore.getGoal(goalId))
+        .filter((linkedGoal): linkedGoal is NonNullable<typeof linkedGoal> => Boolean(linkedGoal));
+
+      return {
+        content: [{ type: "text", text: `Unlinked ${goal.id}: ${goal.title} from ${mission.id}` }],
+        details: {
+          missionId: mission.id,
+          missionTitle: mission.title,
+          goal,
+          goals,
+        },
+      };
+    },
+  });
+
   // ── fn_mission_backfill_assertions ─────────────────────────────
 
   pi.registerTool({

@@ -15,6 +15,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TaskStore, resolvePlanningSettingsModel } from "@fusion/core";
+import type { Goal } from "@fusion/core";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import type {
   Mission,
@@ -82,6 +83,10 @@ function validateAssertionId(id: string): boolean {
   // Assertion IDs follow format: CA-{base36timestamp}-{random}
   // e.g., CA-A3B7CD-E9F2
   return /^CA-[A-Z0-9]+-[A-Z0-9]+$/i.test(id);
+}
+
+function validateGoalId(id: string): boolean {
+  return /^G-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(id);
 }
 
 function validateTitle(title: unknown): string {
@@ -181,6 +186,23 @@ function validateOrderedIds(body: unknown): string[] {
   return orderedIds;
 }
 
+function validateGoalIdsBody(body: unknown): string[] {
+  if (!body || typeof body !== "object") {
+    throw badRequest("Request body must contain goalIds array");
+  }
+  const { goalIds } = body as Record<string, unknown>;
+  if (!Array.isArray(goalIds)) {
+    throw badRequest("goalIds must be an array");
+  }
+  if (!goalIds.every((goalId) => typeof goalId === "string")) {
+    throw badRequest("goalIds must be an array of strings");
+  }
+  if (!goalIds.every((goalId) => validateGoalId(goalId))) {
+    throw badRequest("goalIds must contain valid goal IDs");
+  }
+  return goalIds;
+}
+
 type TypedRequest = Request<Record<string, string>>;
 
 function catchTypedHandler(fn: (req: TypedRequest, res: Response, next: NextFunction) => Promise<void>) {
@@ -254,7 +276,7 @@ export function createMissionRouter(
   engineManager?: import("@fusion/engine").ProjectEngineManager,
 ): Router {
   const router = Router();
-  const requestContext = new AsyncLocalStorage<ReturnType<TaskStore["getMissionStore"]>>();
+  const requestContext = new AsyncLocalStorage<TaskStore>();
 
   function getProjectIdFromRequest(req: Request): string | undefined {
     if (typeof req.query.projectId === "string" && req.query.projectId.trim()) {
@@ -266,12 +288,74 @@ export function createMissionRouter(
     return undefined;
   }
 
+  function getScopedStore(): TaskStore {
+    return requestContext.getStore() ?? store;
+  }
+
   function getScopedMissionStore() {
-    const missionStore = requestContext.getStore();
-    if (!missionStore) {
-      return store.getMissionStore();
+    return getScopedStore().getMissionStore();
+  }
+
+  function getScopedGoalStore() {
+    return getScopedStore().getGoalStore();
+  }
+
+  function requireMission(missionId: string) {
+    if (!validateMissionId(missionId)) {
+      throw badRequest("Invalid mission ID format");
     }
-    return missionStore;
+
+    const mission = missionStore.getMission(missionId);
+    if (!mission) {
+      throw notFound("Mission not found");
+    }
+
+    return mission;
+  }
+
+  function requireGoal(goalId: string): Goal {
+    if (!validateGoalId(goalId)) {
+      throw badRequest("Invalid goal ID format");
+    }
+
+    const goal = getScopedGoalStore().getGoal(goalId);
+    if (!goal) {
+      throw notFound("Goal not found");
+    }
+
+    return goal;
+  }
+
+  function listLinkedGoalsForMission(missionId: string): Goal[] {
+    requireMission(missionId);
+    const goalStore = getScopedGoalStore();
+    return missionStore
+      .listGoalIdsForMission(missionId)
+      .map((goalId) => goalStore.getGoal(goalId))
+      .filter((goal): goal is Goal => Boolean(goal));
+  }
+
+  function setLinkedGoalsForMission(missionId: string, goalIds: string[]): Goal[] {
+    requireMission(missionId);
+    const uniqueGoalIds = Array.from(new Set(goalIds));
+    uniqueGoalIds.forEach((goalId) => requireGoal(goalId));
+
+    const existingGoalIds = new Set(missionStore.listGoalIdsForMission(missionId));
+    const nextGoalIds = new Set(uniqueGoalIds);
+
+    for (const goalId of existingGoalIds) {
+      if (!nextGoalIds.has(goalId)) {
+        missionStore.unlinkGoal(missionId, goalId);
+      }
+    }
+
+    for (const goalId of uniqueGoalIds) {
+      if (!existingGoalIds.has(goalId)) {
+        missionStore.linkGoal(missionId, goalId);
+      }
+    }
+
+    return listLinkedGoalsForMission(missionId);
   }
 
   const missionStore = new Proxy({} as ReturnType<TaskStore["getMissionStore"]>, {
@@ -286,7 +370,7 @@ export function createMissionRouter(
     try {
       const projectId = getProjectIdFromRequest(req);
       const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : store;
-      requestContext.run(scopedStore.getMissionStore(), next);
+      requestContext.run(scopedStore, next);
     } catch (error) {
       next(error);
     }
@@ -896,6 +980,63 @@ export function createMissionRouter(
       }
 
       res.json(mission);
+    })
+  );
+
+  /**
+   * GET /api/missions/:missionId/goals
+   * List linked goals for a mission.
+   */
+  router.get(
+    "/:missionId/goals",
+    catchTypedHandler(async (req, res) => {
+      const { missionId } = req.params;
+      const goals = listLinkedGoalsForMission(missionId);
+      res.json({ goals });
+    })
+  );
+
+  /**
+   * PUT /api/missions/:missionId/goals
+   * Replace the full linked-goal set for a mission.
+   */
+  router.put(
+    "/:missionId/goals",
+    catchTypedHandler(async (req, res) => {
+      const { missionId } = req.params;
+      const goalIds = validateGoalIdsBody(req.body);
+      const goals = setLinkedGoalsForMission(missionId, goalIds);
+      res.json({ goals });
+    })
+  );
+
+  /**
+   * POST /api/missions/:missionId/goals/:goalId
+   * Link a single goal to a mission.
+   */
+  router.post(
+    "/:missionId/goals/:goalId",
+    catchTypedHandler(async (req, res) => {
+      const { missionId, goalId } = req.params;
+      requireMission(missionId);
+      const goal = requireGoal(goalId);
+      missionStore.linkGoal(missionId, goalId);
+      res.json({ goal, goals: listLinkedGoalsForMission(missionId) });
+    })
+  );
+
+  /**
+   * DELETE /api/missions/:missionId/goals/:goalId
+   * Unlink a single goal from a mission.
+   */
+  router.delete(
+    "/:missionId/goals/:goalId",
+    catchTypedHandler(async (req, res) => {
+      const { missionId, goalId } = req.params;
+      requireMission(missionId);
+      requireGoal(goalId);
+      missionStore.unlinkGoal(missionId, goalId);
+      res.json({ removed: true, goals: listLinkedGoalsForMission(missionId) });
     })
   );
 

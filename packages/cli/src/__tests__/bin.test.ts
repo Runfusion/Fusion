@@ -59,6 +59,9 @@ const commandMocks = vi.hoisted(() => ({
   runMissionShow: vi.fn(),
   runMissionDelete: vi.fn(),
   runMissionActivateSlice: vi.fn(),
+  runMissionLinkGoal: vi.fn(),
+  runMissionUnlinkGoal: vi.fn(),
+  runMissionGoals: vi.fn(),
   runGoalsList: vi.fn(),
   runGoalsCreate: vi.fn(),
   runGoalsArchive: vi.fn(),
@@ -200,6 +203,9 @@ vi.mock("../commands/mission.js", () => ({
   runMissionShow: commandMocks.runMissionShow,
   runMissionDelete: commandMocks.runMissionDelete,
   runMissionActivateSlice: commandMocks.runMissionActivateSlice,
+  runMissionLinkGoal: commandMocks.runMissionLinkGoal,
+  runMissionUnlinkGoal: commandMocks.runMissionUnlinkGoal,
+  runMissionGoals: commandMocks.runMissionGoals,
 }));
 
 vi.mock("../commands/goals.js", () => ({
@@ -633,6 +639,21 @@ describe("bin command routing and fallbacks", () => {
   it("routes mission activate-slice", async () => {
     await runBin(["mission", "activate-slice", "SL-001"]);
     expect(commandMocks.runMissionActivateSlice).toHaveBeenCalledWith("SL-001", undefined);
+  });
+
+  it("routes mission goals", async () => {
+    await runBin(["mission", "goals", "M-001"]);
+    expect(commandMocks.runMissionGoals).toHaveBeenCalledWith("M-001", undefined);
+  });
+
+  it("routes mission link-goal", async () => {
+    await runBin(["mission", "link-goal", "M-001", "G-001", "--project", "demo"]);
+    expect(commandMocks.runMissionLinkGoal).toHaveBeenCalledWith("M-001", "G-001", "demo");
+  });
+
+  it("routes mission unlink-goal", async () => {
+    await runBin(["mission", "unlink-goal", "M-001", "G-001"]);
+    expect(commandMocks.runMissionUnlinkGoal).toHaveBeenCalledWith("M-001", "G-001", undefined);
   });
 
   it("routes goals list with default status", async () => {

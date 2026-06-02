@@ -196,6 +196,32 @@ Show mission details with full hierarchy: milestones → slices → features.
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Mission ID (e.g., M-001) |
 
+### fn_mission_list_goals
+
+List goals linked to a mission.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `missionId` | string | ✓ | Mission ID (e.g., M-001) |
+
+### fn_mission_link_goal
+
+Link a goal to a mission.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `missionId` | string | ✓ | Mission ID (e.g., M-001) |
+| `goalId` | string | ✓ | Goal ID (e.g., G-001) |
+
+### fn_mission_unlink_goal
+
+Unlink a goal from a mission.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `missionId` | string | ✓ | Mission ID (e.g., M-001) |
+| `goalId` | string | ✓ | Goal ID (e.g., G-001) |
+
 ### fn_mission_backfill_assertions
 
 Backfill mission assertions by deriving and linking one store-managed assertion for each feature without linked assertions. Supports dry-run mode.

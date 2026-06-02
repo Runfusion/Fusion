@@ -38,6 +38,9 @@ const {
   runMissionShow,
   runMissionDelete,
   runMissionActivateSlice,
+  runMissionLinkGoal,
+  runMissionUnlinkGoal,
+  runMissionGoals,
   runMilestoneAdd,
   runSliceAdd,
   runFeatureAdd,
@@ -145,6 +148,9 @@ function createMockMissionStore(overrides = {}) {
       taskId,
     })),
     deleteMission: vi.fn(),
+    linkGoal: vi.fn().mockReturnValue({ missionId: "M-001", goalId: "G-001", createdAt: "2026-04-01T00:00:00Z" }),
+    unlinkGoal: vi.fn().mockReturnValue(true),
+    listGoalIdsForMission: vi.fn().mockReturnValue(["G-001"]),
     activateSlice: vi.fn().mockReturnValue({
       id: "SL-001",
       title: "Test Slice",
@@ -165,10 +171,17 @@ function createMockDatabase(drafts: Array<{ id: string; title: string; status: s
 
 function mockResolvedProjectStore(
   missionStore: ReturnType<typeof createMockMissionStore>,
-  overrides: Partial<{ getTask: ReturnType<typeof vi.fn>; getDatabase: ReturnType<typeof createMockDatabase> }> = {},
+  overrides: Partial<{ getTask: ReturnType<typeof vi.fn>; getDatabase: ReturnType<typeof createMockDatabase>; getGoalStore: () => { getGoal: ReturnType<typeof vi.fn> } }> = {},
 ) {
   vi.mocked(getStore).mockResolvedValue({
     getMissionStore: () => missionStore,
+    getGoalStore: () => ({
+      getGoal: vi.fn().mockImplementation((id: string) => ({
+        id,
+        title: `Goal ${id}`,
+        status: "active",
+      })),
+    }),
     getTask: vi.fn().mockResolvedValue({ id: "FN-001" }),
     getDatabase: () => createMockDatabase(),
     ...overrides,
@@ -865,6 +878,90 @@ describe("mission commands", () => {
         description: "Interactive feature desc",
         acceptanceCriteria: "Interactive acceptance",
       });
+    });
+  });
+
+  describe("mission goal commands", () => {
+    it("links a goal to a mission", async () => {
+      const mockMissionStore = createMockMissionStore({
+        listGoalIdsForMission: vi.fn().mockReturnValue(["G-001"]),
+      });
+      mockResolvedProjectStore(mockMissionStore);
+
+      await runMissionLinkGoal("M-001", "G-001");
+
+      expect(mockMissionStore.linkGoal).toHaveBeenCalledWith("M-001", "G-001");
+    });
+
+    it("unlinks a goal from a mission", async () => {
+      const mockMissionStore = createMockMissionStore({
+        listGoalIdsForMission: vi.fn().mockReturnValue([]),
+      });
+      mockResolvedProjectStore(mockMissionStore);
+
+      await runMissionUnlinkGoal("M-001", "G-001");
+
+      expect(mockMissionStore.unlinkGoal).toHaveBeenCalledWith("M-001", "G-001");
+    });
+
+    it("lists linked goals", async () => {
+      const mockMissionStore = createMockMissionStore({
+        listGoalIdsForMission: vi.fn().mockReturnValue(["G-001", "G-002"]),
+      });
+      mockResolvedProjectStore(mockMissionStore, {
+        getGoalStore: () => ({
+          getGoal: vi.fn().mockImplementation((id: string) => ({
+            id,
+            title: `Goal ${id}`,
+            status: "active",
+            description: id === "G-002" ? "Second goal" : undefined,
+          })),
+        }),
+      });
+
+      const consoleCapture = captureConsole();
+      try {
+        await runMissionGoals("M-001");
+        expect(consoleCapture.logs.some((line) => line.includes("Linked goals for M-001"))).toBe(true);
+        expect(consoleCapture.logs.some((line) => line.includes("G-001 [active] Goal G-001"))).toBe(true);
+        expect(consoleCapture.logs.some((line) => line.includes("G-002 [active] Goal G-002 — Second goal"))).toBe(true);
+      } finally {
+        consoleCapture.restore();
+      }
+    });
+
+    it("operates end-to-end against a real temp-project store", async () => {
+      const { TaskStore } = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+      const { mkdtempSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+
+      const rootDir = mkdtempSync(join(tmpdir(), "kb-mission-cli-goals-"));
+      const globalDir = join(rootDir, ".fusion-global-settings");
+      const store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+      await store.init();
+
+      const mission = store.getMissionStore().createMission({ title: "CLI Mission" });
+      const goalA = store.getGoalStore().createGoal({ title: "Goal A" });
+      const goalB = store.getGoalStore().createGoal({ title: "Goal B", description: "Second goal" });
+      vi.mocked(getStore).mockResolvedValue(store as any);
+
+      const consoleCapture = captureConsole();
+      try {
+        await runMissionLinkGoal(mission.id, goalA.id);
+        await runMissionLinkGoal(mission.id, goalB.id);
+        expect(store.getMissionStore().listGoalIdsForMission(mission.id)).toEqual([goalA.id, goalB.id]);
+
+        await runMissionGoals(mission.id);
+        expect(consoleCapture.logs.some((line) => line.includes(`${goalA.id} [active] Goal A`))).toBe(true);
+        expect(consoleCapture.logs.some((line) => line.includes(`${goalB.id} [active] Goal B — Second goal`))).toBe(true);
+
+        await runMissionUnlinkGoal(mission.id, goalA.id);
+        expect(store.getMissionStore().listGoalIdsForMission(mission.id)).toEqual([goalB.id]);
+      } finally {
+        consoleCapture.restore();
+        rmSync(rootDir, { recursive: true, force: true });
+      }
     });
   });
 
