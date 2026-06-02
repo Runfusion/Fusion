@@ -1626,6 +1626,22 @@ export class SelfHealingManager {
             log.log(`Maintenance batch 1 step "cleanup-old-mail" succeeded — messagesDeleted=${messagesDeleted}`);
           },
         },
+        {
+          name: "prune-operational-logs",
+          fn: async () => {
+            const days = Number(settings.operationalLogRetentionDays ?? 0);
+            if (!Number.isFinite(days) || days <= 0) {
+              log.log("Maintenance batch 1 step \"prune-operational-logs\" skipped — operationalLogRetentionDays is not enabled");
+              return;
+            }
+            const { deletedTotal, deletedByTable } = this.store.pruneOperationalLogs(days * 86_400_000);
+            const detail = Object.entries(deletedByTable)
+              .filter(([, n]) => n > 0)
+              .map(([t, n]) => `${t}=${n}`)
+              .join(" ");
+            log.log(`Maintenance batch 1 step "prune-operational-logs" succeeded — deleted=${deletedTotal}${detail ? ` (${detail})` : ""}`);
+          },
+        },
         { name: "checkpoint-wal", fn: () => Promise.resolve(this.checkpointWal()) },
         { name: "enforce-worktree-cap", fn: () => this.enforceWorktreeCap() },
       ];

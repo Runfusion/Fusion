@@ -1345,6 +1345,33 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     
     // Initialize SQLite database
     if (!this._db) {
+      // Startup corruption guard: before opening, detect a malformed fusion.db
+      // (a node:sqlite SIGSEGV mid-write can leave the B-tree corrupt in a way
+      // that still opens) and rebuild it via sqlite3 .recover, preserving the
+      // corrupt original. Disk-backed only; opt out with FUSION_DISABLE_DB_AUTORECOVER.
+      if (!this.inMemoryDb && process.env.FUSION_DISABLE_DB_AUTORECOVER !== "1") {
+        try {
+          const recovery = Database.recoverIfCorrupt(this.fusionDir);
+          if (recovery.status === "recovered") {
+            storeLog.warn("Recovered corrupt fusion.db on startup", {
+              phase: "init:db-autorecover",
+              corruptBackupPath: recovery.corruptBackupPath,
+              errors: recovery.errors?.slice(0, 5),
+            });
+          } else if (recovery.status === "failed") {
+            storeLog.error("fusion.db is corrupt and automatic recovery failed", {
+              phase: "init:db-autorecover",
+              errors: recovery.errors?.slice(0, 5),
+            });
+          }
+        } catch (error) {
+          storeLog.warn("Startup db corruption guard threw — continuing to open", {
+            phase: "init:db-autorecover",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       const db = new Database(this.fusionDir, { inMemory: this.inMemoryDb });
       try {
         db.init();
@@ -10809,6 +10836,15 @@ ${stepsSection}`;
    */
   walCheckpoint(mode?: "PASSIVE" | "TRUNCATE"): { busy: number; log: number; checkpointed: number } {
     return this.db.walCheckpoint(mode);
+  }
+
+  /**
+   * Delete append-only operational-log rows older than `retentionMs`. Returns
+   * zeroed counts when retention is disabled (`<= 0`). This is the primary lever
+   * against unbounded database growth — see `Database.pruneOperationalLogs`.
+   */
+  pruneOperationalLogs(retentionMs: number): { deletedByTable: Record<string, number>; deletedTotal: number } {
+    return this.db.pruneOperationalLogs(retentionMs);
   }
 
   getRootDir(): string {

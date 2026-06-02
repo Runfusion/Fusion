@@ -6106,6 +6106,31 @@ export function SettingsModal({
               )}
             </div>
 
+            <h4 className="settings-section-heading settings-section-heading--spaced">Database Maintenance</h4>
+            <div className="form-group">
+              <label htmlFor="operationalLogRetentionDays">Operational log retention</label>
+              <select
+                id="operationalLogRetentionDays"
+                className="select"
+                value={form.operationalLogRetentionDays ?? 0}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, operationalLogRetentionDays: Number(e.target.value) || 0 }))
+                }
+              >
+                <option value={0}>Off</option>
+                <option value={30}>30 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+                <option value={180}>180 days</option>
+                <option value={365}>365 days</option>
+              </select>
+              <small>
+                Prune append-only operational logs (activity log, agent logs, run audit, heartbeats) older than this
+                many days during periodic maintenance. Keeps the database from growing without bound — large databases
+                are slower to checkpoint and more prone to corruption. Default: 30 days.
+              </small>
+            </div>
+
             <h4 className="settings-section-heading">Memory Backups</h4>
             <div className="form-group">
               <label htmlFor="memoryBackupEnabled" className="checkbox-label">

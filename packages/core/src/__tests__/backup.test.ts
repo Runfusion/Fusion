@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm, mkdir, writeFile, readdir } from "node:fs/promises";
@@ -17,6 +18,21 @@ import { Database } from "../db.js";
 import { RoutineStore } from "../routine-store.js";
 import { TaskStore } from "../store.js";
 import type { ProjectSettings } from "../types.js";
+
+/**
+ * Write a real SQLite database file so the production backup path's
+ * `PRAGMA quick_check` verification passes. Falls back to a placeholder string
+ * when the `sqlite3` CLI is unavailable — in that environment verification also
+ * no-ops, so the backup still succeeds and the assertions hold either way.
+ */
+function writeTestDb(path: string): void {
+  const result = spawnSync("sqlite3", [path, "CREATE TABLE IF NOT EXISTS t(x); INSERT INTO t VALUES (1);"], {
+    encoding: "utf-8",
+  });
+  if (result.error || result.status !== 0) {
+    writeFileSync(path, "dummy database content");
+  }
+}
 
 describe("BackupManager", () => {
   let tempDir: string;
@@ -36,6 +52,10 @@ describe("BackupManager", () => {
     writeFileSync(join(fusionDir, "fusion-central.db"), "dummy central database content");
     backupManager = new BackupManager(fusionDir, {
       centralDbPath: join(fusionDir, "fusion-central.db"),
+      // These tests use dummy (non-SQLite) files as the source db, so the
+      // PRAGMA quick_check verification cannot run against them. Integrity
+      // verification has its own dedicated tests with real SQLite databases.
+      verifyIntegrity: false,
     });
   });
 
@@ -75,6 +95,7 @@ describe("BackupManager", () => {
       const manager = new BackupManager(fusionDir, {
         backupDir: customBackupDir,
         centralDbPath: join(fusionDir, "fusion-central.db"),
+        verifyIntegrity: false,
       });
 
       const customBackupPath = join(tempDir, customBackupDir);
@@ -96,6 +117,7 @@ describe("BackupManager", () => {
     it("skips central backup when central DB is missing", async () => {
       const manager = new BackupManager(fusionDir, {
         centralDbPath: join(fusionDir, "does-not-exist.db"),
+        verifyIntegrity: false,
       });
       const backup = await manager.createBackup();
       expect(backup.centralBackup).toEqual({ skipped: "missing" });
@@ -105,6 +127,7 @@ describe("BackupManager", () => {
       const manager = new BackupManager(fusionDir, {
         centralDbPath: join(fusionDir, "fusion-central.db"),
         includeCentralDb: false,
+        verifyIntegrity: false,
       });
       const backup = await manager.createBackup();
       expect(backup.centralBackup).toEqual({ skipped: "disabled" });
@@ -132,7 +155,7 @@ describe("BackupManager", () => {
     it("continues central copy when checkpoint open fails", async () => {
       const notSqlitePath = join(fusionDir, "not-sqlite.db");
       writeFileSync(notSqlitePath, "definitely not sqlite");
-      const manager = new BackupManager(fusionDir, { centralDbPath: notSqlitePath });
+      const manager = new BackupManager(fusionDir, { centralDbPath: notSqlitePath, verifyIntegrity: false });
       const backup = await manager.createBackup();
       expect(backup.centralBackup && "filename" in backup.centralBackup).toBe(true);
       if (backup.centralBackup && "filename" in backup.centralBackup) {
@@ -141,7 +164,7 @@ describe("BackupManager", () => {
     });
 
     it("keeps project backup when central copy fails", async () => {
-      const manager = new BackupManager(fusionDir, { centralDbPath: fusionDir });
+      const manager = new BackupManager(fusionDir, { centralDbPath: fusionDir, verifyIntegrity: false });
       const backup = await manager.createBackup();
       expect(existsSync(backup.path)).toBe(true);
       expect(backup.centralBackup && "failed" in backup.centralBackup).toBe(true);
@@ -279,7 +302,7 @@ describe("BackupManager", () => {
     });
 
     it("should delete oldest backups exceeding retention", async () => {
-      const manager = new BackupManager(fusionDir, { retention: 2, centralDbPath: join(fusionDir, "fusion-central.db") });
+      const manager = new BackupManager(fusionDir, { retention: 2, centralDbPath: join(fusionDir, "fusion-central.db"), verifyIntegrity: false });
 
       // Create 4 backups by advancing time deterministically
       for (let i = 0; i < 4; i++) {
@@ -295,7 +318,7 @@ describe("BackupManager", () => {
     });
 
     it("should keep the newest backups after cleanup", async () => {
-      const manager = new BackupManager(fusionDir, { retention: 2, centralDbPath: join(fusionDir, "fusion-central.db") });
+      const manager = new BackupManager(fusionDir, { retention: 2, centralDbPath: join(fusionDir, "fusion-central.db"), verifyIntegrity: false });
 
       // Create 4 backups and record their names by advancing time
       const backupNames: string[] = [];
@@ -318,7 +341,7 @@ describe("BackupManager", () => {
     });
 
     it("deletes sibling central backup when deleting project backup", async () => {
-      const manager = new BackupManager(fusionDir, { retention: 1, centralDbPath: join(fusionDir, "fusion-central.db") });
+      const manager = new BackupManager(fusionDir, { retention: 1, centralDbPath: join(fusionDir, "fusion-central.db"), verifyIntegrity: false });
       await manager.createBackup();
       vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
       await manager.createBackup();
@@ -427,6 +450,83 @@ describe("BackupManager", () => {
   });
 });
 
+describe("backup integrity verification", () => {
+  let tempDir: string;
+  let fusionDir: string;
+  let sqlite3Available: boolean;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "kb-backup-verify-"));
+    fusionDir = join(tempDir, ".fusion");
+    await mkdir(fusionDir, { recursive: true });
+    // Detect sqlite3 once: verification (and the corruption assertions that
+    // depend on it) only run meaningfully where the CLI exists.
+    const probe = spawnSync("sqlite3", ["--version"], { encoding: "utf-8" });
+    sqlite3Available = !probe.error && probe.status === 0;
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("verifyDatabaseIntegrity returns ok for a real SQLite db", async () => {
+    if (!sqlite3Available) return;
+    const { verifyDatabaseIntegrity } = await import("../backup.js");
+    const dbPath = join(fusionDir, "fusion.db");
+    writeTestDb(dbPath);
+    const result = verifyDatabaseIntegrity(dbPath);
+    expect(result.ok).toBe(true);
+    expect(result.verified).toBe(true);
+  });
+
+  it("verifyDatabaseIntegrity flags a non-SQLite file as corrupt", async () => {
+    if (!sqlite3Available) return;
+    const { verifyDatabaseIntegrity } = await import("../backup.js");
+    const dbPath = join(fusionDir, "fusion.db");
+    writeFileSync(dbPath, "definitely not a sqlite database");
+    const result = verifyDatabaseIntegrity(dbPath);
+    expect(result.ok).toBe(false);
+    expect(result.verified).toBe(true);
+  });
+
+  it("createBackup refuses to keep a corrupt copy and quarantines it", async () => {
+    if (!sqlite3Available) return;
+    // Source db is not a valid SQLite file → verification must reject it.
+    writeFileSync(join(fusionDir, "fusion.db"), "corrupt source");
+    const manager = new BackupManager(fusionDir, {
+      centralDbPath: join(fusionDir, "fusion-central.db"),
+      includeCentralDb: false,
+    });
+
+    await expect(manager.createBackup()).rejects.toThrow(/verification failed/i);
+
+    // No listed (good) backup remains; the corrupt copy is quarantined as *.corrupt.
+    const backups = await manager.listBackups();
+    expect(backups).toEqual([]);
+    const files = await readdir(join(tempDir, ".fusion/backups"));
+    expect(files.some((f) => f.endsWith(".corrupt"))).toBe(true);
+  });
+
+  it("cleanupOldBackups never deletes the last verified-good backup", async () => {
+    if (!sqlite3Available) return;
+    const backupDir = join(tempDir, ".fusion/backups");
+    await mkdir(backupDir, { recursive: true });
+
+    // One real (good) backup, older than two newer corrupt ones.
+    writeTestDb(join(backupDir, "fusion-2026-01-01-000000.db"));
+    writeFileSync(join(backupDir, "fusion-2026-01-02-000000.db"), "corrupt newer 1");
+    writeFileSync(join(backupDir, "fusion-2026-01-03-000000.db"), "corrupt newer 2");
+
+    const manager = new BackupManager(fusionDir, { retention: 2, includeCentralDb: false });
+    await manager.cleanupOldBackups();
+
+    // Retention=2 would normally delete the oldest, but it is the only good one,
+    // so it must survive.
+    const remaining = (await manager.listBackups()).map((b) => b.filename);
+    expect(remaining).toContain("fusion-2026-01-01-000000.db");
+  });
+});
+
 describe("generateBackupFilename", () => {
   it("should generate filename with correct pattern", () => {
     const filename = generateBackupFilename();
@@ -520,7 +620,7 @@ describe("createBackupManager", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     const fusionDir = join(tempDir, ".fusion");
     await mkdir(fusionDir, { recursive: true });
-    writeFileSync(join(fusionDir, "fusion.db"), "test");
+    writeTestDb(join(fusionDir, "fusion.db"));
 
     const settings: Partial<ProjectSettings> = {
       autoBackupDir: "custom/backups",
@@ -547,7 +647,7 @@ describe("createBackupManager", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     const fusionDir = join(tempDir, ".fusion");
     await mkdir(fusionDir, { recursive: true });
-    writeFileSync(join(fusionDir, "fusion.db"), "test");
+    writeTestDb(join(fusionDir, "fusion.db"));
 
     const settings: Partial<ProjectSettings> = {
       autoBackupDir: ".kb/backups", // Legacy value
@@ -572,7 +672,7 @@ describe("createBackupManager", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     const fusionDir = join(tempDir, ".fusion");
     await mkdir(fusionDir, { recursive: true });
-    writeFileSync(join(fusionDir, "fusion.db"), "test");
+    writeTestDb(join(fusionDir, "fusion.db"));
 
     const settings: Partial<ProjectSettings> = {
       autoBackupDir: ".kb/my-custom-backups", // Custom path, not the legacy default
@@ -735,7 +835,7 @@ describe("runBackupCommand", () => {
     tempDir = mkdtempSync(join(tmpdir(), "kb-backup-test-"));
     fusionDir = join(tempDir, ".fusion");
     await mkdir(fusionDir, { recursive: true });
-    writeFileSync(join(fusionDir, "fusion.db"), "dummy database content");
+    writeTestDb(join(fusionDir, "fusion.db"));
   });
 
   afterEach(async () => {

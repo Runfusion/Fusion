@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } 
 import {
   Database,
   createDatabase,
+  quickCheckSqliteFile,
   toJson,
   toJsonNullable,
   fromJson,
@@ -11,13 +12,13 @@ import {
 } from "../db.js";
 import { DEFAULT_PROJECT_SETTINGS } from "../types.js";
 import { TaskStore } from "../store.js";
-import { mkdtempSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync, statSync, openSync, writeSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { rm } from "node:fs/promises";
 import { once } from "node:events";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { ensureRoadmapSchema } from "../../../../plugins/fusion-plugin-roadmap/src/roadmap-schema.js";
 import { createSharedTaskStoreTestHarness } from "./store-test-helpers.js";
 
@@ -2851,6 +2852,168 @@ describe("migration v67 drops orphan project auth tables", () => {
         // already closed
       }
       removeTrackedTmpDirSync(temp);
+    }
+  });
+});
+
+describe("Database operational-log retention and recovery-table cleanup", () => {
+  let tmpDir: string;
+  let fusionDir: string;
+  let db: Database;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    fusionDir = join(tmpDir, ".fusion");
+    db = new Database(fusionDir);
+    db.init();
+  });
+
+  afterEach(async () => {
+    try {
+      db.close();
+    } catch {
+      // already closed
+    }
+    await cleanupTmpDirsAsync();
+  });
+
+  function insertActivity(id: string, timestamp: string): void {
+    db.prepare(
+      "INSERT INTO activityLog (id, timestamp, type, details) VALUES (?, ?, 'test', '{}')",
+    ).run(id, timestamp);
+  }
+
+  it("pruneOperationalLogs deletes rows older than the retention window", () => {
+    const old = new Date(Date.now() - 200 * 86_400_000).toISOString();
+    const recent = new Date(Date.now() - 1 * 86_400_000).toISOString();
+    insertActivity("old-1", old);
+    insertActivity("old-2", old);
+    insertActivity("recent-1", recent);
+
+    const result = db.pruneOperationalLogs(90 * 86_400_000);
+    expect(result.deletedTotal).toBe(2);
+    expect(result.deletedByTable.activityLog).toBe(2);
+
+    const remaining = db.prepare("SELECT id FROM activityLog ORDER BY id").all() as Array<{ id: string }>;
+    expect(remaining.map((r) => r.id)).toEqual(["recent-1"]);
+  });
+
+  it("pruneOperationalLogs is a no-op when retention is disabled (<= 0)", () => {
+    insertActivity("old-1", new Date(Date.now() - 200 * 86_400_000).toISOString());
+    const result = db.pruneOperationalLogs(0);
+    expect(result.deletedTotal).toBe(0);
+    expect(db.prepare("SELECT count(*) AS c FROM activityLog").get()).toMatchObject({ c: 1 });
+  });
+
+  it("dropOrphanRecoveryTables removes lost_and_found scratch tables", () => {
+    db.exec("CREATE TABLE lost_and_found (x)");
+    db.exec("CREATE TABLE lost_and_found_0 (x)");
+    db.exec("CREATE TABLE lost_and_found_2 (x)");
+
+    const dropped = db.dropOrphanRecoveryTables();
+    expect(dropped).toBe(3);
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lost_and_found%'")
+      .all();
+    expect(tables).toEqual([]);
+  });
+
+  it("init() drops pre-existing lost_and_found tables on open", () => {
+    db.exec("CREATE TABLE lost_and_found_0 (x)");
+    db.close();
+
+    const reopened = new Database(fusionDir);
+    reopened.init();
+    try {
+      const tables = reopened
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'lost_and_found%'")
+        .all();
+      expect(tables).toEqual([]);
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+describe("Database.recoverIfCorrupt startup guard", () => {
+  let tmpDir: string;
+  let fusionDir: string;
+  const sqlite3Available = (() => {
+    const probe = spawnSync("sqlite3", ["--version"], { encoding: "utf-8" });
+    return !probe.error && probe.status === 0;
+  })();
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    fusionDir = join(tmpDir, ".fusion");
+  });
+
+  afterEach(async () => {
+    await cleanupTmpDirsAsync();
+  });
+
+  it("returns 'absent' when no database exists", () => {
+    const result = Database.recoverIfCorrupt(fusionDir);
+    expect(result.status).toBe("absent");
+  });
+
+  it("returns 'healthy' for an intact database", () => {
+    if (!sqlite3Available) return;
+    const db = new Database(fusionDir);
+    db.init();
+    db.close();
+    const result = Database.recoverIfCorrupt(fusionDir);
+    expect(result.status).toBe("healthy");
+  });
+
+  it("rebuilds a malformed database and preserves the corrupt original", () => {
+    if (!sqlite3Available) return;
+    const dbPath = join(fusionDir, "fusion.db");
+    const db = new Database(fusionDir);
+    db.init();
+    // Span many pages so mid-file corruption lands on a B-tree page.
+    for (let i = 0; i < 3000; i++) {
+      db.prepare("INSERT INTO activityLog (id, timestamp, type, details) VALUES (?, ?, 'test', '{}')").run(
+        `row-${i}`,
+        new Date().toISOString(),
+      );
+    }
+    db.walCheckpoint("TRUNCATE");
+    db.close();
+
+    // Corrupt an interior region while leaving the header page intact.
+    const size = statSync(dbPath).size;
+    const fd = openSync(dbPath, "r+");
+    try {
+      const garbage = Buffer.alloc(16 * 1024, 0xab);
+      writeSync(fd, garbage, 0, garbage.length, Math.floor(size / 2));
+    } finally {
+      closeSync(fd);
+    }
+
+    // If the corruption didn't trip quick_check on this build, skip rather
+    // than assert flakily.
+    const pre = quickCheckSqliteFile(dbPath);
+    if (pre.ok) return;
+
+    const result = Database.recoverIfCorrupt(fusionDir);
+    expect(result.status).toBe("recovered");
+    expect(result.corruptBackupPath).toBeDefined();
+    expect(existsSync(result.corruptBackupPath!)).toBe(true);
+    // The swapped-in database must now be clean.
+    expect(quickCheckSqliteFile(dbPath).ok).toBe(true);
+    // Stale sidecars must not linger.
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+
+    // And it must open and answer queries.
+    const reopened = new Database(fusionDir);
+    reopened.init();
+    try {
+      const row = reopened.prepare("SELECT count(*) AS c FROM activityLog").get() as { c: number };
+      expect(row.c).toBeGreaterThan(0);
+    } finally {
+      reopened.close();
     }
   });
 });

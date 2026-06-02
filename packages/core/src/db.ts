@@ -10,7 +10,7 @@
 
 import { DatabaseSync } from "./sqlite-adapter.js";
 import { basename, isAbsolute, join } from "node:path";
-import { mkdirSync, existsSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, statSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
@@ -1336,6 +1336,44 @@ export const SCHEMA_COMPAT_FINGERPRINT = createHash("sha1")
   )
   .digest("hex");
 
+/** Compact UTC timestamp (YYYY-MM-DD-HHmmss) for recovery artifact filenames. */
+function formatDbRecoveryTimestamp(date: Date): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const mm = String(date.getUTCMinutes()).padStart(2, "0");
+  const ss = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${y}-${m}-${d}-${hh}${mm}${ss}`;
+}
+
+/**
+ * Run `PRAGMA quick_check` against a SQLite file via the `sqlite3` CLI without
+ * opening a live connection (so we never replay/checkpoint a WAL onto it).
+ * `verified=false` means the check could not run (sqlite3 unavailable) and the
+ * caller should treat the result as non-blocking.
+ */
+export function quickCheckSqliteFile(dbPath: string): { ok: boolean; verified: boolean; errors?: string[] } {
+  if (!existsSync(dbPath)) {
+    return { ok: false, verified: true, errors: ["file does not exist"] };
+  }
+  const result = spawnSync("sqlite3", [dbPath, "PRAGMA quick_check;"], {
+    encoding: "utf-8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error) {
+    return { ok: true, verified: false };
+  }
+  const stdout = (result.stdout ?? "").trim();
+  if (result.status !== 0) {
+    return { ok: false, verified: true, errors: [stdout || (result.stderr ?? "").trim() || `sqlite3 exited ${result.status}`] };
+  }
+  if (stdout.toLowerCase() === "ok") {
+    return { ok: true, verified: true };
+  }
+  return { ok: false, verified: true, errors: stdout.split("\n").slice(0, 5) };
+}
+
 // ── Database Class ───────────────────────────────────────────────────
 
 type SharedIntegrityCheckState = {
@@ -1581,9 +1619,9 @@ export class Database {
       return false;
     }
 
-    const recoveredSql = spawnSync("sqlite3", ["-cmd", ".recover main", this.dbPath], {
+    const recoveredSql = spawnSync("sqlite3", [this.dbPath, ".recover"], {
       encoding: "utf-8",
-      maxBuffer: 50 * 1024 * 1024,
+      maxBuffer: 256 * 1024 * 1024,
     });
     if (recoveredSql.status !== 0 || !recoveredSql.stdout) {
       return false;
@@ -1592,10 +1630,89 @@ export class Database {
     const rebuilt = spawnSync("sqlite3", [outputPath], {
       input: recoveredSql.stdout,
       encoding: "utf-8",
-      maxBuffer: 50 * 1024 * 1024,
+      maxBuffer: 256 * 1024 * 1024,
     });
 
     return rebuilt.status === 0;
+  }
+
+  /**
+   * Startup guard: detect a malformed `fusion.db` and rebuild it via
+   * `sqlite3 .recover` BEFORE any connection is opened for normal use.
+   *
+   * This is the automated form of the manual recovery: a node:sqlite SIGSEGV
+   * mid-write can leave the B-tree malformed in a way that still *opens* and
+   * answers simple queries (so a sentinel SELECT won't catch it) — only an
+   * integrity/quick check does. When corruption is found we:
+   *   1. recover the readable data into a fresh file,
+   *   2. verify the rebuilt file passes quick_check,
+   *   3. preserve the corrupt original as `fusion.db.corrupt-<ts>`,
+   *   4. atomically swap the rebuilt file into place and drop stale -wal/-shm.
+   *
+   * Must run with no open connection to `fusion.db`. Returns a status describing
+   * what happened; on `failed` the original file is left untouched for manual
+   * inspection. `sqlite3` CLI absence yields `unverified` (non-blocking no-op).
+   */
+  static recoverIfCorrupt(fusionDir: string): {
+    status: "absent" | "healthy" | "unverified" | "recovered" | "failed";
+    corruptBackupPath?: string;
+    recoveredPath?: string;
+    errors?: string[];
+  } {
+    const dbPath = join(fusionDir, "fusion.db");
+    if (!existsSync(dbPath)) {
+      return { status: "absent" };
+    }
+
+    const check = quickCheckSqliteFile(dbPath);
+    if (!check.verified) {
+      return { status: "unverified" };
+    }
+    if (check.ok) {
+      return { status: "healthy" };
+    }
+
+    // Corruption confirmed — attempt an offline rebuild.
+    const ts = formatDbRecoveryTimestamp(new Date());
+    const recoveredPath = `${dbPath}.recovered-${ts}`;
+
+    const recoveredSql = spawnSync("sqlite3", [dbPath, ".recover"], {
+      encoding: "utf-8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    if (recoveredSql.status !== 0 || !recoveredSql.stdout) {
+      return { status: "failed", errors: check.errors };
+    }
+    const rebuilt = spawnSync("sqlite3", [recoveredPath], {
+      input: recoveredSql.stdout,
+      encoding: "utf-8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    if (rebuilt.status !== 0) {
+      try { rmSync(recoveredPath, { force: true }); } catch { /* ignore */ }
+      return { status: "failed", errors: check.errors };
+    }
+
+    // Refuse to swap in a rebuild that is itself not clean.
+    const verifyRebuilt = quickCheckSqliteFile(recoveredPath);
+    if (verifyRebuilt.verified && !verifyRebuilt.ok) {
+      try { rmSync(recoveredPath, { force: true }); } catch { /* ignore */ }
+      return { status: "failed", errors: check.errors };
+    }
+
+    try {
+      const corruptBackupPath = `${dbPath}.corrupt-${ts}`;
+      renameSync(dbPath, corruptBackupPath);
+      // Stale WAL/SHM belong to the corrupt file; SQLite must not replay them
+      // onto the rebuilt database.
+      try { rmSync(`${dbPath}-wal`, { force: true }); } catch { /* ignore */ }
+      try { rmSync(`${dbPath}-shm`, { force: true }); } catch { /* ignore */ }
+      renameSync(recoveredPath, dbPath);
+      return { status: "recovered", corruptBackupPath, errors: check.errors };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "failed", errors: [...(check.errors ?? []), message] };
+    }
   }
 
   /**
@@ -1643,11 +1760,97 @@ export class Database {
   }
 
   /**
+   * Drop scratch tables left behind by `sqlite3 .recover`.
+   *
+   * Recovery emits `lost_and_found` / `lost_and_found_N` tables holding orphaned
+   * rows it could not attribute to a real table. They are never part of the
+   * Fusion schema, but a recovered db that gets backed up and restored carries
+   * them forward indefinitely — on this database they had accumulated ~250K dead
+   * rows across prior recoveries, inflating file size and every integrity check.
+   * Returns the number of scratch tables dropped.
+   */
+  dropOrphanRecoveryTables(): number {
+    if (this.inMemory) {
+      return 0;
+    }
+
+    const rows = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'lost\\_and\\_found%' ESCAPE '\\'",
+      )
+      .all() as Array<{ name?: unknown }>;
+
+    let dropped = 0;
+    for (const row of rows) {
+      const name = typeof row.name === "string" ? row.name : null;
+      if (!name) continue;
+      try {
+        // Table names from sqlite_master are trusted identifiers; quote defensively.
+        this.db.exec(`DROP TABLE IF EXISTS "${name.replace(/"/g, '""')}"`);
+        dropped++;
+      } catch (error) {
+        console.warn(`[fusion:db] Failed to drop orphan recovery table ${name}`, error);
+      }
+    }
+    return dropped;
+  }
+
+  /**
+   * Append-only operational log tables that grow without bound. These are the
+   * primary driver of database bloat (activityLog alone accrues tens of
+   * thousands of rows per active day) and the bigger the file, the longer every
+   * checkpoint/VACUUM spends in the write path where a node:sqlite crash can
+   * corrupt it. Each entry has an ISO-8601 `timestamp` column.
+   */
+  private static readonly OPERATIONAL_LOG_TABLES = [
+    "activityLog",
+    "agentLogEntries",
+    "runAuditEvents",
+    "agentHeartbeats",
+  ] as const;
+
+  /**
+   * Delete operational-log rows older than `retentionMs`. No-ops (returns an
+   * empty result) when `retentionMs <= 0` so callers can treat 0 as "disabled".
+   * Each table is pruned independently; a failure on one (e.g. absent in an
+   * older schema) is logged and skipped rather than aborting the sweep.
+   */
+  pruneOperationalLogs(retentionMs: number): { deletedByTable: Record<string, number>; deletedTotal: number } {
+    const deletedByTable: Record<string, number> = {};
+    if (this.inMemory || !Number.isFinite(retentionMs) || retentionMs <= 0) {
+      return { deletedByTable, deletedTotal: 0 };
+    }
+
+    const cutoffIso = new Date(Date.now() - retentionMs).toISOString();
+    let deletedTotal = 0;
+
+    for (const table of Database.OPERATIONAL_LOG_TABLES) {
+      if (!this.tableExists(table)) continue;
+      try {
+        const result = this.db
+          .prepare(`DELETE FROM "${table}" WHERE timestamp < ?`)
+          .run(cutoffIso);
+        const changes = typeof result.changes === "bigint" ? Number(result.changes) : result.changes;
+        deletedByTable[table] = changes;
+        deletedTotal += changes;
+      } catch (error) {
+        console.warn(`[fusion:db] Failed to prune operational log table ${table}`, error);
+      }
+    }
+
+    return { deletedByTable, deletedTotal };
+  }
+
+  /**
    * Initialize the database: create tables if they don't exist
    * and seed meta values.
    */
   init(): void {
     this.db.exec(SCHEMA_SQL);
+
+    // Drop scratch tables from any prior `.recover` so they don't accumulate
+    // across backup/restore cycles. Idempotent and cheap when none exist.
+    this.dropOrphanRecoveryTables();
 
     this.scheduleBackgroundIntegrityCheck();
 
@@ -3845,6 +4048,14 @@ export class Database {
    */
   private hasColumn(table: string, column: string): boolean {
     return this.getTableColumns(table).has(column);
+  }
+
+  /** Check whether a table exists in the current schema. */
+  private tableExists(table: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+      .get(table);
+    return row !== undefined && row !== null;
   }
 
   /**

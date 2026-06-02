@@ -403,6 +403,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   showQuickChatFAB: false,
   chatAutoCleanupDays: 0,
   mailAutoCleanupDays: 0,
+  operationalLogRetentionDays: 30,
   chatRoomRecentVerbatimMessages: 25,
   chatRoomCompactionFetchLimit: 200,
   chatRoomSummaryMaxChars: 3_000,

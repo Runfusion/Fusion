@@ -3696,6 +3696,11 @@ export interface ProjectSettings {
   /** Number of days of inactivity before old inbox/outbox messages are auto-pruned.
    *  Allowed values: 0 (off, default) or one of 7 | 14 | 30 | 60 | 90. Uses messages.updatedAt inactivity age. */
   mailAutoCleanupDays?: number;
+  /** Number of days to retain append-only operational-log rows (activityLog,
+   *  agentLogEntries, runAuditEvents, agentHeartbeats) before periodic maintenance
+   *  prunes them. These tables are the main driver of unbounded database growth.
+   *  Default: 30. Set 0 to disable pruning. Uses each row's `timestamp` column. */
+  operationalLogRetentionDays?: number;
   /** Number of most-recent chat-room messages kept verbatim in the responder transcript.
    *  Older messages are compacted into a summary block. Default: 12. */
   chatRoomRecentVerbatimMessages?: number;

@@ -1,5 +1,6 @@
-import { cp, mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { cp, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { getDefaultCentralDbPath } from "./central-db.js";
@@ -34,6 +35,12 @@ export interface BackupOptions {
   retention?: number;
   centralDbPath?: string;
   includeCentralDb?: boolean;
+  /**
+   * Verify each backup copy with `PRAGMA quick_check` and refuse to keep or
+   * rotate-in a corrupt copy. Defaults to true. Set false only where the
+   * source is intentionally not a real SQLite file (e.g. unit tests).
+   */
+  verifyIntegrity?: boolean;
 }
 
 export class BackupManager {
@@ -42,6 +49,7 @@ export class BackupManager {
   private retention: number;
   private centralDbPath: string;
   private includeCentralDb: boolean;
+  private verifyIntegrity: boolean;
 
   constructor(fusionDir: string, options?: BackupOptions) {
     this.fusionDir = fusionDir;
@@ -49,6 +57,7 @@ export class BackupManager {
     this.retention = options?.retention ?? 7;
     this.centralDbPath = options?.centralDbPath ?? join(this.fusionDir, "..", ".fusion", "fusion-central.db");
     this.includeCentralDb = options?.includeCentralDb ?? true;
+    this.verifyIntegrity = options?.verifyIntegrity ?? true;
   }
 
   private getBackupDirPath(): string {
@@ -89,6 +98,21 @@ export class BackupManager {
 
     await copyLiveDatabase(sourcePath, targetPath);
 
+    // Verify the freshly-written copy. A copy of a live WAL db can capture a
+    // torn/corrupt main file; refusing to keep a corrupt backup guarantees
+    // that every retained `fusion-*.db` is restorable and that a corrupt copy
+    // is never counted as the "last known-good" by cleanupOldBackups().
+    if (this.verifyIntegrity) {
+      const integrity = verifyDatabaseIntegrity(targetPath);
+      if (!integrity.ok) {
+        await quarantineCorruptBackup(targetPath);
+        throw new Error(
+          `Backup verification failed for ${filename}: ${integrity.error ?? "database disk image is malformed"}. ` +
+            "The source database may be corrupt; the unusable copy was quarantined as *.corrupt.",
+        );
+      }
+    }
+
     const stats = await stat(targetPath);
     const backup: BackupInfo = {
       filename,
@@ -112,6 +136,16 @@ export class BackupManager {
 
     try {
       await copyLiveDatabase(this.centralDbPath, centralTargetPath);
+
+      if (this.verifyIntegrity) {
+        const centralIntegrity = verifyDatabaseIntegrity(centralTargetPath);
+        if (!centralIntegrity.ok) {
+          await quarantineCorruptBackup(centralTargetPath);
+          throw new Error(
+            `central DB verification failed: ${centralIntegrity.error ?? "database disk image is malformed"}`,
+          );
+        }
+      }
 
       const centralStats = await stat(centralTargetPath);
       backup.centralBackup = {
@@ -223,6 +257,28 @@ export class BackupManager {
       return a.filename.localeCompare(b.filename);
     });
     const toDelete = sorted.slice(0, sorted.length - this.retention);
+
+    // Never rotate out the last known-good backup. The retained set is the
+    // newest `retention` files, but if every one of them fails verification
+    // (e.g. a run of corrupt copies from a flaky source db) we must protect the
+    // newest verifiably-good backup from deletion even though it falls outside
+    // the retention window. Verification is lazy: in the common case the newest
+    // kept backup is good and we run exactly one check.
+    if (this.verifyIntegrity) {
+      const kept = sorted.slice(sorted.length - this.retention);
+      const keptHasGood = kept
+        .slice()
+        .reverse()
+        .some((b) => verifyDatabaseIntegrity(b.path).ok);
+      if (!keptHasGood) {
+        for (let i = toDelete.length - 1; i >= 0; i--) {
+          if (verifyDatabaseIntegrity(toDelete[i].path).ok) {
+            toDelete.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
 
     let deletedCount = 0;
     for (const backup of toDelete) {
@@ -349,6 +405,81 @@ async function copyLiveDatabase(sourcePath: string, targetPath: string): Promise
   const shmSource = `${sourcePath}-shm`;
   if (existsSync(shmSource)) {
     await cp(shmSource, `${targetPath}-shm`, { preserveTimestamps: true });
+  }
+}
+
+/**
+ * Result of an on-disk SQLite integrity verification.
+ *
+ * `verified` distinguishes "we ran the check" from "we couldn't run it". When
+ * the `sqlite3` CLI is unavailable (e.g. a packaged environment with no system
+ * binary on PATH) we return `{ ok: true, verified: false }` so verification
+ * degrades to a no-op rather than blocking backups or rotation.
+ */
+export interface DatabaseIntegrityResult {
+  ok: boolean;
+  verified: boolean;
+  error?: string;
+}
+
+/**
+ * Verify a SQLite database file with `PRAGMA quick_check`.
+ *
+ * Uses the `sqlite3` CLI (the same dependency the recovery path relies on) so
+ * we never open the file through the live `node:sqlite` connection — opening a
+ * WAL-mode copy through node:sqlite would replay/checkpoint pages and mutate
+ * the very backup we are trying to validate. `quick_check` is far cheaper than
+ * a full `integrity_check` but still detects the B-tree malformations
+ * ("rowid out of order", "2nd reference to page") that node:sqlite SIGSEGVs
+ * leave behind.
+ */
+export function verifyDatabaseIntegrity(dbPath: string): DatabaseIntegrityResult {
+  if (!existsSync(dbPath)) {
+    return { ok: false, verified: true, error: "file does not exist" };
+  }
+
+  const result = spawnSync("sqlite3", [dbPath, "PRAGMA quick_check;"], {
+    encoding: "utf-8",
+    maxBuffer: 8 * 1024 * 1024,
+  });
+
+  // ENOENT (or any spawn error) means the sqlite3 binary is unavailable — we
+  // cannot verify, so treat as a non-blocking pass.
+  if (result.error) {
+    return { ok: true, verified: false, error: result.error.message };
+  }
+
+  const stdout = (result.stdout ?? "").trim();
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      verified: true,
+      error: stdout || (result.stderr ?? "").trim() || `sqlite3 exited ${result.status}`,
+    };
+  }
+
+  if (stdout.toLowerCase() === "ok") {
+    return { ok: true, verified: true };
+  }
+
+  return { ok: false, verified: true, error: stdout.split("\n").slice(0, 3).join(" | ") };
+}
+
+/** Move a verifiably-corrupt backup copy aside so it never masquerades as good. */
+async function quarantineCorruptBackup(targetPath: string): Promise<void> {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const path = `${targetPath}${suffix}`;
+    if (!existsSync(path)) continue;
+    try {
+      await rename(path, `${path}.corrupt`);
+    } catch {
+      // Best effort — fall back to deleting so a corrupt copy is never listed.
+      try {
+        await unlink(path);
+      } catch {
+        // Ignore.
+      }
+    }
   }
 }
 
