@@ -572,7 +572,7 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
   };
 }
 
-function usePanelResize(projectId: string | undefined, fabRight: number, fabBottom: number) {
+function usePanelResize(projectId: string | undefined, fabRight: number, fabBottom: number, isOpen: boolean) {
   const storageKey = `fusion:quick-chat-size-${projectId || "default"}`;
 
   const isDesktopViewport = useCallback(
@@ -631,19 +631,19 @@ function usePanelResize(projectId: string | undefined, fabRight: number, fabBott
   const [anchorOffset, setAnchorOffset] = useState<PanelAnchorOffset>({ right: 0, bottom: 0 });
 
   useEffect(() => {
-    if (!isDesktopViewport()) return;
+    if (!isOpen || !isDesktopViewport()) return;
     const effective = { right: fabRight + anchorOffset.right, bottom: fabBottom + anchorOffset.bottom };
     setPanelSize((current) => clampPanelSize(current, effective.right, effective.bottom));
-  }, [clampPanelSize, isDesktopViewport, fabRight, fabBottom, anchorOffset]);
+  }, [anchorOffset, clampPanelSize, fabBottom, fabRight, isDesktopViewport, isOpen]);
 
   useEffect(() => {
-    if (!isDesktopViewport()) return;
+    if (!isOpen || !isDesktopViewport()) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify(panelSize));
     } catch {
       // Ignore storage errors (private mode / quota)
     }
-  }, [isDesktopViewport, panelSize, storageKey]);
+  }, [isDesktopViewport, isOpen, panelSize, storageKey]);
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1003,7 +1003,7 @@ export function QuickChatFAB({
 
   // Panel stays 60px above FAB (FAB is 48px tall + 12px gap)
   const panelY = position.y + 60;
-  const { panelSize, anchorOffset, handleResizeStart } = usePanelResize(projectId, position.x, panelY);
+  const { panelSize, anchorOffset, handleResizeStart } = usePanelResize(projectId, position.x, panelY, isOpen);
   const shouldApplyDesktopPanelSize = typeof window !== "undefined" && window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT;
 
   // Chat session hook

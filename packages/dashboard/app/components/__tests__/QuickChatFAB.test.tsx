@@ -988,6 +988,29 @@ describe("QuickChatFAB session-first UX", () => {
     expect(saved).toContain("\"y\"");
   });
 
+  it("keeps persisted desktop panel size when dragging a closed FAB", async () => {
+    const persistedSize = { width: 420, height: 360 };
+    localStorage.setItem("fusion:quick-chat-size-proj-1", JSON.stringify(persistedSize));
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+
+    const fab = screen.getByTestId("quick-chat-fab");
+    fireEvent.pointerDown(fab, { pointerId: 44, pointerType: "mouse", button: 0, clientX: 960, clientY: 700 });
+    fireEvent.pointerMove(document, { pointerId: 44, pointerType: "mouse", clientX: 900, clientY: 620 });
+    fireEvent.pointerUp(document, { pointerId: 44, pointerType: "mouse", clientX: 900, clientY: 620 });
+
+    expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+    expect(JSON.parse(localStorage.getItem("fusion:quick-chat-size-proj-1") || "null")).toEqual(persistedSize);
+
+    fireEvent.click(fab);
+    expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+
+    fireEvent.click(fab);
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel).toHaveStyle({ width: "420px", height: "360px" });
+  });
+
   it("shows jump-to-latest only after leaving live tail and scrolls back on click", async () => {
     mockFetchChatMessages.mockResolvedValueOnce({
       messages: [
