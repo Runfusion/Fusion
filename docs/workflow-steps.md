@@ -55,7 +55,7 @@ Current reconciliation in v1:
 - `agent-call` semantics are represented using existing `prompt` nodes with `config` fields (for example stage/role metadata).
 - Typed-edge semantics are represented using `condition` token conventions.
 
-Potential first-class schema support for `agent-call`/typed edges is deferred to a follow-up IR extension task (v1.1 candidate), not part of v1 contract changes.
+FN-5769 evaluated whether those conventions required a `1.1.0` schema bump and recorded the answer as **no**: the current `prompt` + `config` and canonical `edge.condition` token conventions are sufficient for the parity-critical interpreter rollout, so they remain the canonical v1 contract until a future consumer needs stronger schema-level validation or discoverability.
 
 ## What They Are
 
