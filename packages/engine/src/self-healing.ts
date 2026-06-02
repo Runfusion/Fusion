@@ -5758,7 +5758,11 @@ export class SelfHealingManager {
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
       const tasks = await this.store.listTasks({ column: "done", slim: true });
-      const candidates = tasks.filter((task) => task.column === "done" && !task.paused && Boolean(task.mergeDetails?.commitSha));
+      const candidates = tasks.filter((task) => {
+        if (task.column !== "done" || task.paused) return false;
+        if (task.mergeDetails?.commitSha) return true;
+        return Boolean(task.baseCommitSha);
+      });
       if (candidates.length === 0) return 0;
 
       let repaired = 0;
@@ -5769,9 +5773,9 @@ export class SelfHealingManager {
         }
         try {
           const storedSha = task.mergeDetails?.commitSha;
-          if (!storedSha) continue;
 
           if (task.mergeDetails?.mergeConfirmed === true) {
+            if (!storedSha) continue;
             const landed = await this.findLandedTaskCommit(task);
             if (!landed || landed.sha !== storedSha) {
               log.warn(
@@ -5841,6 +5845,9 @@ export class SelfHealingManager {
 
           const landed = await this.findLandedTaskCommit(task, { preferEarliestOwnedCommit: true });
           if (!landed) {
+            if (!storedSha) {
+              continue;
+            }
             await this.store.updateTask(task.id, { mergeDetails: undefined });
             await this.store.logEntry(task.id, "Auto-recovered: cleared unowned done-task mergeDetails commitSha");
             repaired++;

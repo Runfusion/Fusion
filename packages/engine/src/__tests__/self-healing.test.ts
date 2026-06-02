@@ -7016,6 +7016,82 @@ describe("recoverDoneTaskMergeMetadata", () => {
     manager.stop();
   });
 
+  it("repairs empty mergeDetails for landed done task with recorded base commit", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-5854",
+        column: "done",
+        paused: false,
+        baseCommitSha: "base5854",
+        mergeDetails: undefined,
+      },
+    ]);
+
+    vi.spyOn(manager as any, "findLandedTaskCommit").mockResolvedValue({
+      sha: "be95b3f2c1234567",
+      subject: "FN-5854: landed",
+      filesChanged: 2,
+      insertions: 75,
+      deletions: 0,
+    });
+    vi.spyOn(manager as any, "readLandedFilesForSha").mockResolvedValue([
+      "packages/engine/src/merger-ai.ts",
+      "packages/engine/src/self-healing.ts",
+    ]);
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-5854", {
+      mergeDetails: expect.objectContaining({
+        commitSha: "be95b3f2c1234567",
+        filesChanged: 2,
+        insertions: 75,
+        deletions: 0,
+        mergeCommitMessage: "FN-5854: landed",
+        mergeConfirmed: true,
+        landedFiles: [
+          "packages/engine/src/merger-ai.ts",
+          "packages/engine/src/self-healing.ts",
+        ],
+      }),
+      modifiedFiles: [
+        "packages/engine/src/merger-ai.ts",
+        "packages/engine/src/self-healing.ts",
+      ],
+    });
+
+    manager.stop();
+  });
+
+  it("leaves empty mergeDetails untouched when no owned landed commit is found", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-5854-MISS",
+        column: "done",
+        paused: false,
+        baseCommitSha: "base5854",
+        mergeDetails: undefined,
+      },
+    ]);
+
+    vi.spyOn(manager as any, "findLandedTaskCommit").mockResolvedValue(null);
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+
+    manager.stop();
+  });
+
   it("FN-3862: confirmed task with reachable owned stored SHA preserves canonical commitSha", async () => {
     const store = createMockStore();
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });

@@ -5934,7 +5934,7 @@ function quoteArg(value: string): string {
   return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
-function parseShortstatSummary(statsOutput: string): { filesChanged: number; insertions: number; deletions: number } {
+export function parseShortstatSummary(statsOutput: string): { filesChanged: number; insertions: number; deletions: number } {
   const normalized = statsOutput.trim().replace(/\n/g, " ");
   const filesMatch = normalized.match(/(\d+) files? changed/);
   const insertionsMatch = normalized.match(/(\d+) insertions?\(\+\)/);
@@ -5943,6 +5943,34 @@ function parseShortstatSummary(statsOutput: string): { filesChanged: number; ins
     filesChanged: filesMatch ? Number.parseInt(filesMatch[1], 10) : 0,
     insertions: insertionsMatch ? Number.parseInt(insertionsMatch[1], 10) : 0,
     deletions: deletionsMatch ? Number.parseInt(deletionsMatch[1], 10) : 0,
+  };
+}
+
+export async function captureSingleCommitLandedMetadata(
+  rootDir: string,
+  sha: string,
+): Promise<Pick<MergeDetails, "landedFiles" | "filesChanged" | "insertions" | "deletions">> {
+  const [{ stdout: landedFilesOutput }, { stdout: shortstatOutput }] = await Promise.all([
+    execAsync(`git show --name-only --format= ${quoteArg(sha)}`, {
+      cwd: rootDir,
+      encoding: "utf-8",
+      maxBuffer: 2 * 1024 * 1024,
+    }),
+    execAsync(`git show --shortstat --format= ${quoteArg(sha)}`, {
+      cwd: rootDir,
+      encoding: "utf-8",
+      maxBuffer: 2 * 1024 * 1024,
+    }),
+  ]);
+  const landedFiles = Array.from(new Set(
+    landedFilesOutput
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  ));
+  return {
+    landedFiles,
+    ...parseShortstatSummary(shortstatOutput),
   };
 }
 

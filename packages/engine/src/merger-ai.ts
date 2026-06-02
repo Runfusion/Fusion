@@ -37,12 +37,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildTaskLineageTrailer,
+  getPrimaryPrInfo,
   getTaskMergeBlocker,
   resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
   resolveTaskMergeTarget,
   resolveValidatorSettingsModel,
   type AgentPromptsConfig,
+  type MergeDetails,
   type MergeResult,
   type Settings,
   type Task,
@@ -59,7 +61,7 @@ import { checkSessionError } from "./usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
 import { createLogger } from "./logger.js";
-import type { MergerOptions } from "./merger.js";
+import { captureSingleCommitLandedMetadata, type MergerOptions } from "./merger.js";
 
 const execFileAsync = promisify(execFile);
 const aiMergeLog = createLogger("merger-ai");
@@ -933,6 +935,40 @@ async function finalizeMerged(
   log: (message: string) => Promise<void>,
   opts: { empty: boolean },
 ): Promise<MergeResult> {
+  let mergeDetails: MergeDetails | undefined;
+  let modifiedFiles: string[] | undefined;
+  if (!opts.empty && landedSha) {
+    const [{ landedFiles: capturedLandedFiles, filesChanged, insertions, deletions }, mergeCommitMessage] = await Promise.all([
+      captureSingleCommitLandedMetadata(projectRootDir, landedSha),
+      git(["log", "-1", "--format=%s", landedSha], projectRootDir).catch(() => ""),
+    ]);
+    const landedFiles = capturedLandedFiles ?? [];
+    const mergedAt = new Date().toISOString();
+    mergeDetails = {
+      commitSha: landedSha,
+      landedFiles,
+      filesChanged,
+      insertions,
+      deletions,
+      mergeCommitMessage: mergeCommitMessage || undefined,
+      mergedAt,
+      mergeConfirmed: true,
+      prNumber: getPrimaryPrInfo(task)?.number,
+    };
+    modifiedFiles = landedFiles.length > 0 ? landedFiles : undefined;
+    await store.updateTask(taskId, { mergeDetails, modifiedFiles });
+    if (task.lineageId && typeof (store as Partial<TaskStore>).upsertTaskCommitAssociation === "function") {
+      await store.upsertTaskCommitAssociation({
+        taskLineageId: task.lineageId,
+        taskIdSnapshot: task.id,
+        commitSha: landedSha,
+        commitSubject: mergeCommitMessage || task.title || task.id,
+        authoredAt: mergedAt,
+        matchedBy: "canonical-lineage-trailer",
+        confidence: "canonical",
+      }).catch(() => undefined);
+    }
+  }
   let branchDeleted = false;
   // NEVER delete the integration branch itself — a task whose branch name
   // coincides with the target (or merges into its own branch) must not have the
@@ -955,7 +991,7 @@ async function finalizeMerged(
     noOp: opts.empty,
     ok: true,
     reason: opts.empty ? "no-net-changes" : undefined,
-    commitSha: opts.empty ? undefined : landedSha,
+    commitSha: opts.empty ? undefined : mergeDetails?.commitSha ?? landedSha,
     mergeConfirmed: !opts.empty,
     worktreeRemoved,
     branchDeleted,
