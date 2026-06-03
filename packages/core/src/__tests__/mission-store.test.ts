@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MissionStore, deriveMilestoneAcceptanceCriteriaFromFeatures } from "../mission-store.js";
+import { GoalStore } from "../goal-store.js";
 import { Database } from "../db.js";
 import type { MissionFeature } from "../mission-types.js";
 import { mkdtempSync } from "node:fs";
@@ -30,6 +31,7 @@ describe("MissionStore", () => {
   let fusionDir: string;
   let db: Database;
   let store: MissionStore;
+  let goalStore: GoalStore;
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
@@ -40,6 +42,7 @@ describe("MissionStore", () => {
     db = new Database(fusionDir, { inMemory: true });
     db.init();
     store = new MissionStore(fusionDir, db);
+    goalStore = new GoalStore(fusionDir, db);
   });
 
   afterEach(async () => {
@@ -1838,6 +1841,8 @@ describe("MissionStore", () => {
         title: "Hierarchy Test",
         description: "Testing full tree loading",
       });
+      const linkedGoal = goalStore.createGoal({ title: "Ship linked goal visibility" });
+      store.linkGoal(mission.id, linkedGoal.id);
       const m1 = store.addMilestone(mission.id, { title: "Milestone 1" });
       const m2 = store.addMilestone(mission.id, { title: "Milestone 2" });
       const s1 = store.addSlice(m1.id, { title: "Slice 1" });
@@ -1849,6 +1854,7 @@ describe("MissionStore", () => {
 
       expect(withHierarchy.id).toBe(mission.id);
       expect(withHierarchy.title).toBe("Hierarchy Test");
+      expect(withHierarchy.linkedGoals).toEqual([linkedGoal]);
       expect(withHierarchy.milestones).toHaveLength(2);
 
       const m1Data = withHierarchy.milestones.find((m) => m.id === m1.id)!;
@@ -1858,6 +1864,14 @@ describe("MissionStore", () => {
       expect(s1Data.features).toHaveLength(2);
       expect(s1Data.features.find((f: import("../mission-types.js").MissionFeature) => f.id === f1.id)).toBeDefined();
       expect(s1Data.features.find((f: import("../mission-types.js").MissionFeature) => f.id === f2.id)).toBeDefined();
+    });
+
+    it("returns an empty linkedGoals array when no goals are linked", () => {
+      const mission = store.createMission({ title: "Hierarchy without goals" });
+
+      const withHierarchy = store.getMissionWithHierarchy(mission.id)!;
+
+      expect(withHierarchy.linkedGoals).toEqual([]);
     });
   });
 

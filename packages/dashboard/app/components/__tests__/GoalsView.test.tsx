@@ -42,6 +42,37 @@ describe("GoalsView", () => {
     expect(screen.getByTestId("goals-empty-state")).toBeInTheDocument();
   });
 
+  it("anchors the matching goal card without requiring scrollIntoView", async () => {
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      render(
+        <GoalsView
+          initialGoals={[
+            makeGoal({ id: "g1", title: "One" }),
+            makeGoal({ id: "g2", title: "Anchored Goal" }),
+          ]}
+          anchorGoalId="g2"
+        />,
+      );
+
+      const anchoredCard = screen.getByTestId("goal-card-g2");
+      expect(anchoredCard).toHaveAttribute("id", "goal-card-g2");
+      await waitFor(() => {
+        expect(anchoredCard.className).toContain("goals-card--anchored");
+      });
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+        configurable: true,
+        value: originalScrollIntoView,
+      });
+    }
+  });
+
   it("loads goals from API when initialGoals is not provided", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

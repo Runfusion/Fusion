@@ -379,6 +379,9 @@ function AppInner() {
       setMissionTargetId(undefined);
       setMilestoneSliceResumeSessionId(undefined);
     }
+    if (newView !== "goalsView") {
+      setGoalAnchorId(undefined);
+    }
     const previousView = taskView;
     handleChangeTaskView(newView);
     if (previousView !== newView) {
@@ -711,7 +714,14 @@ function AppInner() {
   const [retryingProjects, setRetryingProjects] = useState(false);
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
+  const [goalAnchorId, setGoalAnchorId] = useState<string | undefined>(undefined);
   const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (taskView !== "goalsView" && goalAnchorId !== undefined) {
+      setGoalAnchorId(undefined);
+    }
+  }, [goalAnchorId, taskView]);
   const [quickChatOpen, setQuickChatOpen] = useState(false);
   const [authTokenRecoveryOpen, setAuthTokenRecoveryOpen] = useState(false);
   const [dashboardHealth, setDashboardHealth] = useState<DashboardHealthResponse | null>(null);
@@ -1462,6 +1472,10 @@ function AppInner() {
             targetMissionId={missionTargetId}
             milestoneSliceResumeSessionId={milestoneSliceResumeSessionId}
             onMilestoneSliceResumeFetchError={() => setMilestoneSliceResumeSessionId(undefined)}
+            onNavigateToGoal={(goalId) => {
+              setGoalAnchorId(goalId);
+              handleChangeTaskView("goalsView");
+            }}
           />
         </PageErrorBoundary>
       );
@@ -1593,7 +1607,7 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
-            <GoalsView />
+            <GoalsView anchorGoalId={goalAnchorId} />
           </Suspense>
         </PageErrorBoundary>
       );

@@ -123,6 +123,8 @@ interface MissionManagerProps {
   milestoneSliceResumeSessionId?: string;
   /** Called when milestone/slice resume session fetch fails */
   onMilestoneSliceResumeFetchError?: () => void;
+  /** Navigate to the goals view anchored to a specific goal */
+  onNavigateToGoal?: (goalId: string) => void;
 }
 
 // Status badge colors — use CSS custom-property-compatible tokens
@@ -581,6 +583,7 @@ function normalizeMissionHierarchy(mission: MissionWithHierarchy): MissionWithHi
 
   return {
     ...mission,
+    linkedGoals: Array.isArray(mission.linkedGoals) ? mission.linkedGoals : [],
     milestones: mission.milestones.map((milestone) => {
       if (!Array.isArray(milestone.slices)) {
         throw new Error(`Malformed mission detail response: milestone ${milestone.id} is missing slices`);
@@ -603,7 +606,7 @@ function normalizeMissionHierarchy(mission: MissionWithHierarchy): MissionWithHi
   };
 }
 
-export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError }: MissionManagerProps) {
+export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError, onNavigateToGoal }: MissionManagerProps) {
   const isActive = isInline || isOpen;
   const cacheSuffix = projectId ?? "";
   const missionsCacheKey = `${SWR_CACHE_KEYS.MISSIONS_PREFIX}${cacheSuffix}`;
@@ -2527,6 +2530,32 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     {selectedMission.milestones.length} milestones
                   </span>
                 </div>
+
+                <section className="mission-detail__linked-goals" aria-label="Linked goals">
+                  <div className="mission-detail__linked-goals-header">
+                    <h4 className="mission-detail__linked-goals-title">Linked Goals</h4>
+                    <span className="mission-detail__meta-info">
+                      {selectedMission.linkedGoals?.length ?? 0} linked
+                    </span>
+                  </div>
+                  {(selectedMission.linkedGoals?.length ?? 0) > 0 ? (
+                    <div className="mission-detail__linked-goals-list">
+                      {(selectedMission.linkedGoals ?? []).map((goal) => (
+                        <button
+                          key={goal.id}
+                          type="button"
+                          className="btn mission-detail__linked-goal-chip"
+                          data-testid={`mission-linked-goal-chip-${goal.id}`}
+                          onClick={() => onNavigateToGoal?.(goal.id)}
+                        >
+                          {goal.title}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mission-detail__linked-goals-empty">No linked goals.</p>
+                  )}
+                </section>
 
                 <section className="mission-detail__run-settings" aria-label="Mission run settings">
                   <h4 className="mission-detail__run-settings-title">Mission run settings</h4>

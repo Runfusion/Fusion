@@ -9,6 +9,8 @@
  * The hierarchy: Mission → Milestone → Slice → Feature → (optional) Task
  */
 
+import type { Goal } from "./goal-types.js";
+
 // ── Status Enums ─────────────────────────────────────────────────────
 
 /** Status values for a Mission's lifecycle */
@@ -457,6 +459,8 @@ export interface SliceWithFeatures extends Slice {
  * Mission → Milestones → Slices → Features
  */
 export interface MissionWithHierarchy extends Mission {
+  /** Goals linked to this mission */
+  linkedGoals?: Goal[];
   /** Milestones belonging to this mission, each with their slices */
   milestones: Array<MilestoneWithSlices & {
     /** Slices with their features loaded */

@@ -14,6 +14,7 @@
 import { EventEmitter } from "node:events";
 import type { Database } from "./db.js";
 import { fromJson, toJson, toJsonNullable } from "./db.js";
+import type { Goal, GoalStatus } from "./goal-types.js";
 import type {
   Mission,
   MissionBranchStrategy,
@@ -261,6 +262,15 @@ interface MissionGoalRow {
   createdAt: string;
 }
 
+interface GoalRow {
+  id: string;
+  title: string;
+  description: string | null;
+  status: GoalStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Database row shape for the mission_contract_assertions table. */
 interface AssertionRow {
   id: string;
@@ -459,6 +469,17 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       missionId: row.missionId,
       goalId: row.goalId,
       createdAt: row.createdAt,
+    };
+  }
+
+  private rowToGoal(row: GoalRow): Goal {
+    return {
+      id: row.id,
+      title: row.title,
+      description: row.description ?? undefined,
+      status: row.status,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     };
   }
 
@@ -678,6 +699,13 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     const mission = this.getMission(id);
     if (!mission) return undefined;
 
+    const linkedGoals = this.listGoalIdsForMission(id)
+      .map((goalId) => this.db
+        .prepare("SELECT id, title, description, status, createdAt, updatedAt FROM goals WHERE id = ?")
+        .get(goalId) as GoalRow | undefined)
+      .filter((row): row is GoalRow => Boolean(row))
+      .map((row) => this.rowToGoal(row));
+
     const milestones = this.listMilestones(id);
     const milestonesWithSlices = milestones.map((milestone) => {
       const slices = this.listSlices(milestone.id);
@@ -693,6 +721,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     return {
       ...mission,
+      linkedGoals,
       milestones: milestonesWithSlices,
     };
   }

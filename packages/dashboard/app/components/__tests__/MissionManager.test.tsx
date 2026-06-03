@@ -121,6 +121,7 @@ const mockMissionDetail = {
   title: "Build Auth System",
   description: "Complete authentication flow",
   status: "planning",
+  linkedGoals: [] as Array<{ id: string; title: string; status: "active" | "archived"; createdAt: string; updatedAt: string; description?: string }>,
   milestones: [
     {
       id: "MS-001",
@@ -1681,6 +1682,50 @@ describe("MissionManager", () => {
       expect(screen.getByTestId("mission-back-btn")).toBeInTheDocument();
       expect(screen.getByText("API Redesign")).toBeDefined();
     });
+  });
+
+  it("renders linked goal chips and invokes navigation handler", async () => {
+    const onNavigateToGoal = vi.fn();
+    const missionDetailWithGoals = {
+      ...mockMissionDetail,
+      linkedGoals: [
+        {
+          id: "G-001",
+          title: "Grow extension ecosystem",
+          status: "active" as const,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    globalThis.fetch = createDetailFetchMockForMissionDetail(missionDetailWithGoals);
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} onNavigateToGoal={onNavigateToGoal} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    const chip = await screen.findByTestId("mission-linked-goal-chip-G-001");
+    expect(chip).toHaveTextContent("Grow extension ecosystem");
+
+    fireEvent.click(chip);
+    expect(onNavigateToGoal).toHaveBeenCalledWith("G-001");
+  });
+
+  it("renders linked goals empty state without chips", async () => {
+    globalThis.fetch = createDetailFetchMockForMissionDetail(mockMissionDetail);
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Build Auth System")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Build Auth System"));
+
+    expect(await screen.findByText("No linked goals.")).toBeInTheDocument();
+    expect(screen.queryByTestId(/mission-linked-goal-chip-/)).toBeNull();
   });
 
   it("calls onClose on Escape key press", async () => {

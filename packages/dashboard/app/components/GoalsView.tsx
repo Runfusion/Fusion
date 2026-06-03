@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Goal } from "@fusion/core";
 import { Plus, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -8,6 +8,7 @@ import "./GoalsView.css";
 
 export interface GoalsViewProps {
   initialGoals?: Goal[];
+  anchorGoalId?: string;
 }
 
 const MAX_ACTIVE_GOALS = 5;
@@ -20,8 +21,10 @@ function isCapError(payload: unknown): boolean {
   return Boolean(payload && typeof payload === "object" && "code" in payload && (payload as { code?: unknown }).code === "ACTIVE_GOAL_LIMIT_EXCEEDED");
 }
 
-export function GoalsView({ initialGoals }: GoalsViewProps) {
+export function GoalsView({ initialGoals, anchorGoalId }: GoalsViewProps) {
   const [goals, setGoals] = useState<Goal[]>(() => initialGoals ?? []);
+  const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
+  const anchorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState<boolean>(initialGoals === undefined);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -80,6 +83,38 @@ export function GoalsView({ initialGoals }: GoalsViewProps) {
 
   const activeCount = useMemo(() => goals.filter((goal) => goal.status === "active").length, [goals]);
   const showWarning = activeCount >= WARNING_THRESHOLD && activeCount <= MAX_ACTIVE_GOALS;
+
+  useEffect(() => {
+    if (!anchorGoalId) {
+      setHighlightedGoalId(null);
+      return;
+    }
+
+    const target = document.getElementById(`goal-card-${anchorGoalId}`);
+    if (!target) {
+      return;
+    }
+
+    setHighlightedGoalId(anchorGoalId);
+    if (typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    if (anchorTimeoutRef.current) {
+      clearTimeout(anchorTimeoutRef.current);
+    }
+    anchorTimeoutRef.current = setTimeout(() => {
+      setHighlightedGoalId((current) => (current === anchorGoalId ? null : current));
+      anchorTimeoutRef.current = null;
+    }, 1600);
+
+    return () => {
+      if (anchorTimeoutRef.current) {
+        clearTimeout(anchorTimeoutRef.current);
+        anchorTimeoutRef.current = null;
+      }
+    };
+  }, [anchorGoalId, goals]);
 
   function openAddForm() {
     setErrorMessage(null);
@@ -359,7 +394,8 @@ export function GoalsView({ initialGoals }: GoalsViewProps) {
           {goals.map((goal) => (
             <article
               key={goal.id}
-              className={`card goals-card ${goal.status === "archived" ? "goals-card-archived" : ""}`.trim()}
+              id={`goal-card-${goal.id}`}
+              className={`card goals-card ${goal.status === "archived" ? "goals-card-archived" : ""} ${highlightedGoalId === goal.id ? "goals-card--anchored" : ""}`.trim()}
               data-testid={`goal-card-${goal.id}`}
             >
               {editGoalId === goal.id ? (

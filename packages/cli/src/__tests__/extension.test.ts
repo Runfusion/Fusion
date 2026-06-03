@@ -1132,12 +1132,27 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
   });
 
   describe("fn_mission_show", () => {
-    it("returns mission with hierarchy", async () => {
-      // Create mission
+    it("returns mission with hierarchy and linked goals", async () => {
       const createTool = api.tools.get("fn_mission_create")!;
+      const goalTool = api.tools.get("fn_goal_create")!;
+      const linkTool = api.tools.get("fn_mission_link_goal")!;
       const created = await createTool.execute(
         "c1",
         { title: "Test Mission" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      const goal = await goalTool.execute(
+        "g1",
+        { title: "Connect mission work to goals" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      await linkTool.execute(
+        "link-1",
+        { missionId: created.details.missionId, goalId: goal.details.goalId },
         undefined,
         undefined,
         makeCtx(tmpDir),
@@ -1154,6 +1169,11 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
 
       expect(result.details.mission).toBeDefined();
       expect(result.content[0].text).toContain("Test Mission");
+      expect(result.content[0].text).toContain("Linked Goals:");
+      expect(result.content[0].text).toContain(`- ${goal.details.goalId}: Connect mission work to goals`);
+      expect(result.details.mission.linkedGoals).toEqual([
+        expect.objectContaining({ id: goal.details.goalId, title: "Connect mission work to goals" }),
+      ]);
     });
 
     it("renders acceptanceCriteria / verification for milestones, slices, and features", async () => {
@@ -1210,6 +1230,30 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
 
       expect(result.content[0].text).toContain("… (truncated,");
       expect(result.details.mission.milestones[0].acceptanceCriteria).toBe(longValue);
+    });
+
+    it("renders an empty linked goals state when no goals are linked", async () => {
+      const createTool = api.tools.get("fn_mission_create")!;
+      const created = await createTool.execute(
+        "c1",
+        { title: "Mission Without Goals" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      const showTool = api.tools.get("fn_mission_show")!;
+      const result = await showTool.execute(
+        "call-1",
+        { id: created.details.missionId },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.content[0].text).toContain("Linked Goals:");
+      expect(result.content[0].text).toContain("No linked goals.");
+      expect(result.details.mission.linkedGoals).toEqual([]);
     });
 
     it("returns error when mission not found", async () => {

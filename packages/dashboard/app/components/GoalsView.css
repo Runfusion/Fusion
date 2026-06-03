@@ -98,6 +98,12 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
+  scroll-margin-top: var(--space-xl);
+}
+
+.goals-card--anchored {
+  border-color: var(--color-warning);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .goals-card-archived {

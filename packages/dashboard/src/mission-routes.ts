@@ -979,7 +979,10 @@ export function createMissionRouter(
         throw notFound("Mission not found");
       }
 
-      res.json(mission);
+      res.json({
+        ...mission,
+        linkedGoals: mission.linkedGoals ?? [],
+      });
     })
   );
 

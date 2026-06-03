@@ -101,6 +101,7 @@ function createMockMissionStore(options?: {
 
       return {
         ...mission,
+        linkedGoals: [],
         milestones: missionMilestones.map((m) => ({
           ...m,
           slices: Array.from(slices.values())
@@ -1420,6 +1421,9 @@ describe("Mission API", () => {
       expect(res.body.title).toBe("Test Mission");
       expect(res.body).toHaveProperty("milestones");
       expect(Array.isArray(res.body.milestones)).toBe(true);
+      expect(res.body).toHaveProperty("linkedGoals");
+      expect(Array.isArray(res.body.linkedGoals)).toBe(true);
+      expect(res.body.linkedGoals).toEqual([]);
       expect(res.body.milestones).toHaveLength(1);
       expect(res.body.milestones[0]).toHaveProperty("slices");
       expect(Array.isArray(res.body.milestones[0].slices)).toBe(true);

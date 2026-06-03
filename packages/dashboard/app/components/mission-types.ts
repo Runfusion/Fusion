@@ -1,6 +1,7 @@
 // Mission types for MissionManager - local copy to avoid module resolution issues
 
 import type {
+  Goal,
   MissionEvent as CoreMissionEvent,
   MissionEventType as CoreMissionEventType,
   MissionHealth as CoreMissionHealth,
@@ -265,6 +266,7 @@ export interface MissionSummary {
 export type MissionWithSummary = Mission & { summary?: MissionSummary };
 
 export interface MissionWithHierarchy extends Mission {
+  linkedGoals?: Goal[];
   milestones: Milestone[];
 }
 

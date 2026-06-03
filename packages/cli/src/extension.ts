@@ -2644,6 +2644,16 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
       lines.push("");
 
+      lines.push("Linked Goals:");
+      if ((mission.linkedGoals?.length ?? 0) === 0) {
+        lines.push("No linked goals.");
+      } else {
+        for (const goal of mission.linkedGoals ?? []) {
+          lines.push(`- ${goal.id}: ${goal.title}`);
+        }
+      }
+      lines.push("");
+
       if (mission.milestones.length === 0) {
         lines.push("No milestones yet.");
       } else {
