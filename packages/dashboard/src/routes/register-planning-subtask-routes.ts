@@ -1464,6 +1464,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         }
       });
 
+      planningStreamManager.consumeInitialTurn(sessionId)?.();
+
       // Handle client disconnect
       req.on("close", () => {
         unsubscribe();

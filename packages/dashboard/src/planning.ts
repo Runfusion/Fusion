@@ -595,6 +595,7 @@ process.on("beforeExit", () => {
 export class PlanningStreamManager extends EventEmitter {
   private readonly sessions = new Map<string, Set<PlanningStreamCallback>>();
   private readonly buffers = new Map<string, SessionEventBuffer>();
+  private readonly pendingInitialTurns = new Map<string, () => void>();
 
   constructor(private readonly bufferSize = 100) {
     super();
@@ -662,6 +663,22 @@ export class PlanningStreamManager extends EventEmitter {
     return buffer.getEventsSince(sinceId);
   }
 
+  registerInitialTurn(sessionId: string, start: () => void): void {
+    if (this.pendingInitialTurns.has(sessionId)) {
+      throw new Error(`Initial planning turn already registered for session ${sessionId}`);
+    }
+    this.pendingInitialTurns.set(sessionId, start);
+  }
+
+  consumeInitialTurn(sessionId: string): (() => void) | undefined {
+    const start = this.pendingInitialTurns.get(sessionId);
+    if (!start) {
+      return undefined;
+    }
+    this.pendingInitialTurns.delete(sessionId);
+    return start;
+  }
+
   /**
    * Check if a session has active subscribers.
    */
@@ -683,6 +700,7 @@ export class PlanningStreamManager extends EventEmitter {
   cleanupSession(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.buffers.delete(sessionId);
+    this.pendingInitialTurns.delete(sessionId);
   }
 
   /**
@@ -691,6 +709,7 @@ export class PlanningStreamManager extends EventEmitter {
   reset(): void {
     this.sessions.clear();
     this.buffers.clear();
+    this.pendingInitialTurns.clear();
     this.removeAllListeners();
   }
 }
@@ -1194,7 +1213,16 @@ export async function startExistingSession(
   }
 
   persistSession(session, "generating");
-  await initializeAgent(session, rootDir, store, modelProvider, modelId, promptOverrides);
+  planningStreamManager.registerInitialTurn(sessionId, () => {
+    initializeAgent(session, rootDir, store, modelProvider, modelId, promptOverrides).catch((err) => {
+      diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
+      persistSession(session, "error", err.message || "Failed to initialize AI agent");
+      planningStreamManager.broadcast(sessionId, {
+        type: "error",
+        data: err.message || "Failed to initialize AI agent",
+      });
+    });
+  });
 }
 
 /**
@@ -1260,22 +1288,23 @@ export async function createSessionWithAgent(
   sessions.set(sessionId, session);
   persistSession(session, "generating");
 
-  // Initialize AI agent in background - it will stream via planningStreamManager
-  initializeAgent(
-    session,
-    rootDir,
-    store,
-    modelProvider,
-    modelId,
-    promptOverrides,
-    options?.planningDepth,
-    options?.customQuestionCount,
-  ).catch((err) => {
-    diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
-    persistSession(session, "error", err.message || "Failed to initialize AI agent");
-    planningStreamManager.broadcast(sessionId, {
-      type: "error",
-      data: err.message || "Failed to initialize AI agent",
+  planningStreamManager.registerInitialTurn(sessionId, () => {
+    initializeAgent(
+      session,
+      rootDir,
+      store,
+      modelProvider,
+      modelId,
+      promptOverrides,
+      options?.planningDepth,
+      options?.customQuestionCount,
+    ).catch((err) => {
+      diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
+      persistSession(session, "error", err.message || "Failed to initialize AI agent");
+      planningStreamManager.broadcast(sessionId, {
+        type: "error",
+        data: err.message || "Failed to initialize AI agent",
+      });
     });
   });
 

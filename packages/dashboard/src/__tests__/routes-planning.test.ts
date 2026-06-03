@@ -421,6 +421,14 @@ describe("Planning Mode Routes", () => {
       return app;
     }
 
+    async function connectPlanningStreamUntilComplete(sessionId: string): Promise<void> {
+      const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+      setTimeout(() => {
+        planningStreamManager.broadcast(sessionId, { type: "complete" });
+      }, 0);
+      await streamPromise;
+    }
+
     /** Mock agent for planning session tests */
     function setupPlanningMockAgent() {
       const questionResponses = [
@@ -685,6 +693,7 @@ describe("Planning Mode Routes", () => {
 
         expect(res.status).toBe(201);
         expect(res.body.sessionId).toBeDefined();
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
 
         await vi.waitFor(() => {
           expect(createFnAgentSpy).toHaveBeenCalledWith(
@@ -728,6 +737,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
         await vi.waitFor(() => {
           expect(createFnAgentSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -764,6 +774,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
         await vi.waitFor(() => {
           expect(createFnAgentSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -800,6 +811,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
         await vi.waitFor(() => {
           expect(createFnAgentSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -836,6 +848,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
         await vi.waitFor(() => {
           expect(createFnAgentSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -869,6 +882,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
         await vi.waitFor(() => {
           // No explicit defaultProvider/defaultModelId means automatic resolution
           expect(createFnAgentSpy).toHaveBeenCalledWith(
@@ -925,6 +939,7 @@ describe("Planning Mode Routes", () => {
         );
 
         expect(res.status).toBe(201);
+        await connectPlanningStreamUntilComplete(res.body.sessionId);
         // Partial project lane should be ignored, falls through to next tier
         await vi.waitFor(() => {
           // Should NOT use the partial provider
@@ -938,6 +953,41 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("GET /planning/:sessionId/stream", () => {
+      function setupStreamingPlanningAgent() {
+        const promptCalls: string[] = [];
+        const messages: Array<{ role: string; content: string }> = [];
+        const createFnAgentSpy = vi.fn(async (options?: { onThinking?: (delta: string) => void }) => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              promptCalls.push(message);
+              await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                  options?.onThinking?.("live first-turn reasoning");
+                  messages.push({ role: "user", content: message });
+                  messages.push({
+                    role: "assistant",
+                    content: JSON.stringify({
+                      type: "question",
+                      data: {
+                        id: "q-live-first-turn",
+                        type: "text",
+                        question: "What should the plan prioritize first?",
+                      },
+                    }),
+                  });
+                  resolve();
+                }, 1);
+              });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        __setCreateFnAgent(createFnAgentSpy as any);
+        return { createFnAgentSpy, promptCalls };
+      }
+
       it("replays buffered events when Last-Event-ID header is provided", async () => {
         const startRes = await REQUEST(
           buildApp(),
@@ -996,6 +1046,130 @@ describe("Planning Mode Routes", () => {
         expect(streamRes.body).toContain("id: 1\nevent: thinking");
         expect(streamRes.body).toContain("id: 2");
         expect(streamRes.body).toContain("event: complete");
+      });
+
+      it("defers the first streamed turn until SSE connect for new sessions", async () => {
+        vi.useFakeTimers();
+        try {
+          const { promptCalls } = setupStreamingPlanningAgent();
+
+          const startRes = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start-streaming",
+            JSON.stringify({ initialPlan: "Stream the first planning turn live" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(startRes.status).toBe(201);
+          const sessionId = startRes.body.sessionId as string;
+          expect(promptCalls).toHaveLength(0);
+          expect(
+            planningStreamManager.getBufferedEvents(sessionId, 0).filter((event) => event.event === "thinking"),
+          ).toHaveLength(0);
+
+          const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          await Promise.resolve();
+
+          await vi.advanceTimersByTimeAsync(1);
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          const streamRes = await streamPromise;
+          expect(streamRes.status).toBe(200);
+          expect(promptCalls).toHaveLength(1);
+          expect(streamRes.body).toContain("event: thinking");
+          expect(streamRes.body).toContain("live first-turn reasoning");
+          expect(streamRes.body).toContain("event: question");
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("defers the first streamed turn until SSE connect when starting an existing draft session", async () => {
+        vi.useFakeTimers();
+        try {
+          const { promptCalls } = setupStreamingPlanningAgent();
+
+          const draftRes = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/create-draft",
+            JSON.stringify({ initialPlan: "Draft that will be started later" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(draftRes.status).toBe(201);
+          const sessionId = draftRes.body.sessionId as string;
+
+          const startPromise = REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start-streaming",
+            JSON.stringify({
+              initialPlan: "Draft that will be started later",
+              existingSessionId: sessionId,
+            }),
+            { "Content-Type": "application/json" },
+          );
+
+          await vi.advanceTimersByTimeAsync(1);
+          const startRes = await startPromise;
+          expect(startRes.status).toBe(201);
+          expect(promptCalls).toHaveLength(0);
+          expect(
+            planningStreamManager.getBufferedEvents(sessionId, 0).filter((event) => event.event === "thinking"),
+          ).toHaveLength(0);
+
+          const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          await Promise.resolve();
+
+          await vi.advanceTimersByTimeAsync(1);
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          const streamRes = await streamPromise;
+          expect(streamRes.status).toBe(200);
+          expect(promptCalls).toHaveLength(1);
+          expect(streamRes.body).toContain("event: thinking");
+          expect(streamRes.body).toContain("live first-turn reasoning");
+          expect(streamRes.body).toContain("event: question");
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("starts the deferred first turn exactly once even with concurrent subscribers", async () => {
+        vi.useFakeTimers();
+        try {
+          const { promptCalls } = setupStreamingPlanningAgent();
+
+          const startRes = await REQUEST(
+            buildApp(),
+            "POST",
+            "/api/planning/start-streaming",
+            JSON.stringify({ initialPlan: "Only start the first turn once" }),
+            { "Content-Type": "application/json" },
+          );
+
+          expect(startRes.status).toBe(201);
+          const sessionId = startRes.body.sessionId as string;
+          expect(promptCalls).toHaveLength(0);
+
+          const firstStreamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          const secondStreamPromise = REQUEST(buildApp(), "GET", `/api/planning/${sessionId}/stream`);
+          await Promise.resolve();
+
+          await vi.advanceTimersByTimeAsync(1);
+          planningStreamManager.broadcast(sessionId, { type: "complete" });
+
+          const [firstStreamRes, secondStreamRes] = await Promise.all([firstStreamPromise, secondStreamPromise]);
+          expect(promptCalls).toHaveLength(1);
+          expect(firstStreamRes.status).toBe(200);
+          expect(secondStreamRes.status).toBe(200);
+          expect(firstStreamRes.body).toContain("live first-turn reasoning");
+          expect(secondStreamRes.body).toContain("live first-turn reasoning");
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it("treats invalid Last-Event-ID values as first connect", async () => {
@@ -3492,6 +3666,10 @@ describe("POST /planning/start-streaming with projectId scoping", () => {
     );
 
     expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
     expect(projectStoreResolver.getOrCreateProjectStore).toHaveBeenCalledWith(projectId);
     expect(scopedStore.getSettings).toHaveBeenCalled();
     expect(scopedStore.getRootDir()).toBe("/scoped/planning/project");
@@ -3541,6 +3719,10 @@ describe("POST /planning/start-streaming with projectId scoping", () => {
     );
 
     expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
     // Request body override takes precedence over scoped settings
     await vi.waitFor(() => {
       expect(createFnAgentSpy).toHaveBeenCalledWith(
@@ -3582,6 +3764,10 @@ describe("POST /planning/start-streaming with projectId scoping", () => {
     );
 
     expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
     // Scoped settings planning lane should be used
     await vi.waitFor(() => {
       expect(createFnAgentSpy).toHaveBeenCalledWith(
@@ -3626,6 +3812,10 @@ describe("POST /planning/start-streaming with projectId scoping", () => {
     );
 
     expect(res.status).toBe(201);
+    const streamPromise = REQUEST(buildApp(), "GET", `/api/planning/${res.body.sessionId}/stream`);
+    await Promise.resolve();
+    planningStreamManager.broadcast(res.body.sessionId, { type: "complete" });
+    await streamPromise;
     // Default store should be used (getOrCreateProjectStore should not be called)
     expect(projectStoreResolver.getOrCreateProjectStore).not.toHaveBeenCalled();
     await vi.waitFor(() => {
