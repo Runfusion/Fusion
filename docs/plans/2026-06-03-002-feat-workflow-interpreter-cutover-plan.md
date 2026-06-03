@@ -62,6 +62,13 @@ The existing scaffold already provides: graph walking with cycle detection, `suc
 **Approach:** execute → the executor's implementation-phase entry for an already-claimed task; review → `reviewStep` path with verdict mapped to `outcome:*`; merge → enqueue on the auto-merge queue and await terminal merge outcome. Each seam returns `WorkflowNodeResult` with `value` carrying verdict/outcome tokens for edge conditions.
 **Execution note:** characterization-first — capture the legacy call sequence for one task end-to-end before extracting accessors.
 
+**Characterization findings (2026-06-03):**
+- **Review seam is plug-and-play today.** `reviewStep(cwd, taskId, stepNumber, stepName, reviewType, promptContent, baseline?, options)` (`packages/engine/src/reviewer.ts:306`) is a standalone exported function returning `{verdict: APPROVE|REVISE|RETHINK|UNAVAILABLE, review, summary}`. Map verdict → `outcome:*` edge tokens.
+- **Merge seam is plug-and-play today.** `ProjectEngine.onMerge(taskId)` (`packages/engine/src/project-engine.ts:934`) returns `Promise<MergeResult>` (resolver-based, not polling); `MergeResult.merged` → success/failure. `aiMergeTask` (`merger.ts:7425`) is the lower-level direct call. `autoMerge:false` terminal-until-merged is honored by the queue itself.
+- **Execute seam needs surgery.** The implementation phase (agent session → `fn_task_done`) is embedded inside `TaskExecutor.execute` at `executor.ts:4243–4611`, intertwined with worktree/claim setup (3152–4242) and the post-completion workflow-steps/review-handoff block (4549+). Required: extract a narrow `runImplementationPhase(task, worktreePath, settings, env) → {taskDone, modifiedFiles, completionMarkup}` (or an `implementationPhaseOnly` mode flag on `execute`), stopping before `runWorkflowSteps`/`handoffTaskToReview`. **Do not compose the full legacy `execute()` as the execute seam — it already performs review handoff and triggers auto-merge, so the graph's review/merge seams would double-run.**
+- **Wiring point:** `in-process-runtime.ts:493` constructs `TaskExecutor`; ProjectEngine references the executor (not vice versa) — the runtime is where `createEngineSeams({executor, projectEngine, store, rootDir})` gets built.
+- **Test harness to mimic:** `packages/engine/src/__tests__/executor-worktree.test.ts` (mocked session via `executor-test-helpers.ts`).
+
 ### U4. Flag-gated entry point + fallback (M-C)
 **Goal:** Graph-selected tasks route through the runner from `TaskExecutor.execute`; interpreter errors fall back to legacy mid-flight where safe, else fail the task through existing recovery.
 **Files:** `packages/engine/src/executor.ts` (top-of-execute branch only), `packages/engine/src/__tests__/workflow-graph-entry.test.ts`.
