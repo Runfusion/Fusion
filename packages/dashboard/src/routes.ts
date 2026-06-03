@@ -22,6 +22,7 @@ import {
   MemoryBackendError,
   RoutineStore,
   discoverPiExtensions,
+  findVitestProcessIds,
   getFusionAgentDir,
   getLegacyPiAgentDir,
   isWebhookTrigger,
@@ -1496,22 +1497,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   };
 
   const getVitestProcessIds = async (): Promise<number[]> => {
-    // execFile (not execSync) so the dashboard's event loop stays responsive
-    // while pgrep walks the process table — that walk can take 100ms+ on a
-    // busy machine and previously froze every concurrent request.
-    const { execFile } = await import("node:child_process");
-
-    const stdout: string = await new Promise((resolve) => {
-      execFile("pgrep", ["-f", "vitest"], { encoding: "utf8" }, (err, out) => {
-        // pgrep exits non-zero when no matches — treat as empty result.
-        resolve(err ? "" : (typeof out === "string" ? out : ""));
-      });
-    });
-
-    return stdout
-      .split(/\r?\n/)
-      .map((line) => Number.parseInt(line.trim(), 10))
-      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+    // Async pgrep/ps via findVitestProcessIds so the dashboard's event loop
+    // stays responsive while the process table is walked. The helper filters
+    // matches to actual node processes — a bare `pgrep -f vitest` also matches
+    // wrapper shells, monitors, and editors whose command line merely mentions
+    // vitest, and SIGKILLing those took out unrelated process trees
+    // (2026-06-03 incident).
+    return findVitestProcessIds();
   };
 
   /**

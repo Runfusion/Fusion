@@ -556,6 +556,87 @@ describe("MissionExecutionLoop", () => {
     });
   });
 
+  describe("recoverActiveMissions stranded done features", () => {
+    function wireHierarchy(slice: Slice, features: MissionFeature[]) {
+      missionStore.getMissionWithHierarchy = vi.fn((id: string) => {
+        const mission = missionStore.getMission(id);
+        if (!mission) return undefined;
+        return {
+          ...mission,
+          milestones: [
+            {
+              ...createMockMilestone({ missionId: id }),
+              slices: [{ ...slice, features }],
+            },
+          ],
+        };
+      }) as any;
+    }
+
+    it("re-validates a done feature stranded in 'implementing' with no linked task", async () => {
+      // Regression: a feature marked "done" whose loopState never left
+      // "implementing" (and which was never validated and has no board task)
+      // can never validate on its own — the prior recovery loop only re-drove
+      // implementing features that still had a taskId. The slice-completion
+      // gate then refuses to count it, wedging the whole mission. Recovery
+      // must re-drive validation so the slice can eventually complete.
+      const mission = createMockMission({ id: "M-STRAND", status: "active" });
+      missionStore._setMission(mission);
+
+      const slice = createMockSlice({ id: "SL-STRAND", milestoneId: "MS-001", status: "active" });
+      const orphan = createMockFeature({
+        id: "F-STRAND",
+        sliceId: "SL-STRAND",
+        status: "done",
+        loopState: "implementing",
+        lastValidatorStatus: undefined,
+        taskId: undefined,
+      });
+      (missionStore as any)._addFeatureWithManagedAssertion(orphan);
+      wireHierarchy(slice, [missionStore.getFeature("F-STRAND") as MissionFeature]);
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      const result = await loop.recoverActiveMissions();
+
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-STRAND", "task_completion");
+      expect(result.recoveredCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("leaves an already-validated done feature untouched", async () => {
+      const mission = createMockMission({ id: "M-OK", status: "active" });
+      missionStore._setMission(mission);
+
+      const slice = createMockSlice({ id: "SL-OK", milestoneId: "MS-001", status: "active" });
+      const validated = createMockFeature({
+        id: "F-OK",
+        sliceId: "SL-OK",
+        status: "done",
+        loopState: "passed",
+        lastValidatorStatus: "passed",
+        taskId: undefined,
+      });
+      (missionStore as any)._addFeatureWithManagedAssertion(validated);
+      wireHierarchy(slice, [missionStore.getFeature("F-OK") as MissionFeature]);
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.recoverActiveMissions();
+
+      expect(missionStore.startValidatorRun).not.toHaveBeenCalled();
+    });
+  });
+
   describe("reapStaleValidatorRuns", () => {
     it("reaps stale runs across trigger types and records audit metadata", async () => {
       vi.useFakeTimers();

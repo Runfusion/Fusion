@@ -67,6 +67,34 @@ describe("TaskStore branch groups", () => {
     expect(second.autoMerge).toBe(true);
   });
 
+  it("reuses an existing open group with the same branchName across sources instead of throwing", () => {
+    // Regression: branch_groups.branchName is globally UNIQUE. When one mission
+    // already owns an open group for a shared base branch, a second source whose
+    // triage resolves to the same branch must reuse that group rather than crash
+    // on the UNIQUE constraint. (Mission triage discards the result and only needs
+    // it not to throw; a thrown error there silently strands "defined" features.)
+    const owner = store.createBranchGroup({ sourceType: "mission", sourceId: "M-OWNER", branchName: "main" });
+
+    let reusedByMission!: ReturnType<typeof store.ensureBranchGroupForSource>;
+    expect(() => {
+      reusedByMission = store.ensureBranchGroupForSource("mission", "M-OTHER", {
+        branchName: "main",
+        autoMerge: true,
+      });
+    }).not.toThrow();
+    expect(reusedByMission.id).toBe(owner.id);
+
+    // Invariant holds across the other source types that share this helper.
+    const reusedByNewTask = store.ensureBranchGroupForSource("new-task", "shared/main", { branchName: "main" });
+    expect(reusedByNewTask.id).toBe(owner.id);
+
+    const reusedByPlanning = store.ensureBranchGroupForSource("planning", "PS-main", { branchName: "main" });
+    expect(reusedByPlanning.id).toBe(owner.id);
+
+    // No duplicate rows were created for the shared branch.
+    expect(store.listBranchGroups().filter((g) => g.branchName === "main")).toHaveLength(1);
+  });
+
   it("supports new-task branch group sources and round-trips through lookups", () => {
     const group = store.ensureBranchGroupForSource("new-task", "shared/onboarding", {
       branchName: "shared/onboarding",

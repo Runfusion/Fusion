@@ -293,6 +293,42 @@ export class MissionExecutionLoop extends EventEmitter {
                   loopLog.error(`Recovery failed for implementing feature ${feature.id}:`, err);
                 }
               }
+
+              // Features marked "done" but stranded in "implementing" with no
+              // linked task can never validate on their own: the branches above
+              // only re-drive features that still carry a taskId. Meanwhile the
+              // slice-completion gate (MissionStore.computeSliceStatus) refuses
+              // to count an assertion-linked "done" feature until its validator
+              // passes — so the slice, milestone, and mission can never
+              // auto-progress. Re-drive validation directly so the gate can
+              // resolve. Validation is a read-only judge (no board task, no code
+              // changes); on pass the feature becomes legitimately complete, on
+              // fail the normal fix-feature flow takes over.
+              if (
+                feature.loopState === "implementing"
+                && !feature.taskId
+                && feature.status === "done"
+                && feature.lastValidatorStatus !== "passed"
+                && !this.activeValidations.has(feature.id)
+              ) {
+                const currentFeature = this.missionStore.getFeature(feature.id) ?? feature;
+                if (
+                  currentFeature.loopState === "passed"
+                  || currentFeature.lastValidatorStatus === "passed"
+                ) {
+                  continue;
+                }
+                try {
+                  loopLog.warn(
+                    `Recovery: re-validating stranded "done" feature ${feature.id} `
+                    + `(loopState=${feature.loopState}, no linked task) so its slice can complete`,
+                  );
+                  recoveredCount++;
+                  await this.runFeatureValidation(currentFeature);
+                } catch (err) {
+                  loopLog.error(`Recovery failed for stranded done feature ${feature.id}:`, err);
+                }
+              }
             }
           }
         }
@@ -354,43 +390,56 @@ export class MissionExecutionLoop extends EventEmitter {
         return;
       }
 
-      // Lazily guarantee a linked assertion before validation so every feature
-      // is evaluated by the validator even when legacy data is missing links.
-      let assertions = this.missionStore.listAssertionsForFeature(feature.id);
-      if (assertions.length === 0) {
-        loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
-        assertions = this.missionStore.ensureFeatureAssertionLinked(feature.id);
-      }
-
-      // Mark feature as being validated
-      this.activeValidations.add(feature.id);
-
-      try {
-        loopLog.log(`Running internal validation for feature ${feature.id} — no board task created (policy: docs/missions.md)`);
-
-        // Start the validator run (no board task per docs/missions.md)
-        const run = this.missionStore.startValidatorRun(feature.id, "task_completion");
-        loopLog.log(`Started validator run ${run.id} for feature ${feature.id}`);
-
-        // Run the validation
-        const result = await this.runValidation(feature, assertions, run);
-
-        // Handle the result
-        if (result.status === "pass") {
-          await this.handleValidationPass(feature.id, run.id, result.summary);
-        } else if (result.status === "fail") {
-          await this.handleValidationFail(feature.id, run.id, result);
-        } else if (result.status === "blocked") {
-          await this.handleValidationBlocked(feature.id, run.id, result.blockedReason);
-        } else if (result.status === "error") {
-          await this.handleValidationError(feature.id, run.id, result.summary);
-        }
-      } finally {
-        this.activeValidations.delete(feature.id);
-      }
+      await this.runFeatureValidation(feature);
     } catch (err) {
       loopLog.error(`Error processing task outcome for ${taskId}:`, err);
       // Don't crash the loop - log and continue
+    }
+  }
+
+  /**
+   * Run assertion validation for a feature and apply the outcome.
+   *
+   * Shared by processTaskOutcome (task-triggered) and recoverActiveMissions
+   * (self-healing for features stranded mid-loop with no board task). Callers
+   * are responsible for confirming the feature is eligible to validate; this
+   * method handles lazy assertion linkage, validator run bookkeeping, and
+   * dispatch of the validation result.
+   */
+  private async runFeatureValidation(feature: MissionFeature): Promise<void> {
+    // Lazily guarantee a linked assertion before validation so every feature
+    // is evaluated by the validator even when legacy data is missing links.
+    let assertions = this.missionStore.listAssertionsForFeature(feature.id);
+    if (assertions.length === 0) {
+      loopLog.log(`Feature ${feature.id} has no linked assertions; lazily ensuring store-managed assertion linkage`);
+      assertions = this.missionStore.ensureFeatureAssertionLinked(feature.id);
+    }
+
+    // Mark feature as being validated
+    this.activeValidations.add(feature.id);
+
+    try {
+      loopLog.log(`Running internal validation for feature ${feature.id} — no board task created (policy: docs/missions.md)`);
+
+      // Start the validator run (no board task per docs/missions.md)
+      const run = this.missionStore.startValidatorRun(feature.id, "task_completion");
+      loopLog.log(`Started validator run ${run.id} for feature ${feature.id}`);
+
+      // Run the validation
+      const result = await this.runValidation(feature, assertions, run);
+
+      // Handle the result
+      if (result.status === "pass") {
+        await this.handleValidationPass(feature.id, run.id, result.summary);
+      } else if (result.status === "fail") {
+        await this.handleValidationFail(feature.id, run.id, result);
+      } else if (result.status === "blocked") {
+        await this.handleValidationBlocked(feature.id, run.id, result.blockedReason);
+      } else if (result.status === "error") {
+        await this.handleValidationError(feature.id, run.id, result.summary);
+      }
+    } finally {
+      this.activeValidations.delete(feature.id);
     }
   }
 
