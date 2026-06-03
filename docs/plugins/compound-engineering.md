@@ -41,14 +41,18 @@ The orchestrator streams `thinking`/`text` turns, surfaces a structured
 `interrupted`. Interrupt/error auto-saves progress and emits an observable event;
 sessions resume/retry back to their current question.
 
-Transport is polling (`GET /sessions/:id`) — plugin routes have no native
-server-push and no raw `EventSource` is used.
+Updates are **pushed** over the shared `/api/events` SSE stream: the orchestrator
+emits via `ctx.emitEvent`, the host forwards them as project-scoped
+`plugin:custom` events, and the view subscribes through the host
+`subscribePluginEvents` capability (no raw `EventSource`). Polling
+`GET /sessions/:id` remains a fallback. The `projectId` from `start` is threaded
+through every answer/resume/poll so they resolve the session's owning store.
 
 HTTP endpoints (under `/api/plugins/fusion-plugin-compound-engineering/`):
 - `POST /sessions` → start a stage session
-- `POST /sessions/:id/answer` → answer the awaiting question
-- `POST /sessions/:id/resume` → resume an awaiting/interrupted session
-- `GET /sessions/:id` → current persisted session state (polling)
+- `POST /sessions/:id/answer` → answer the awaiting question (send `projectId`)
+- `POST /sessions/:id/resume` → resume an awaiting/interrupted session (send `projectId`)
+- `GET /sessions/:id` → current persisted session state (push + poll fallback)
 - `GET /sessions` → list sessions (filter by status/stage)
 - `GET /sessions/:id/links` → the work→board pipeline-link records for a session
 

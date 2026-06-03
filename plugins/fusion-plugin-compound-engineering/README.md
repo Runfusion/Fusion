@@ -61,12 +61,16 @@ question.
 
 ### Transport
 
-Plugin routes return `{ status, body }` with no native server-push and the loader
-`emitEvent` is a logging stub, so v1 uses **polling**: clients poll
-`GET /sessions/:id` for the current persisted state. No raw `EventSource` is used.
-The orchestrator still emits observable events via `ctx.emitEvent` for the
-no-silent-loss requirement; turning those into true client push needs a host
-event-publish seam (a documented carry-forward).
+Session updates are **pushed** over the shared `/api/events` SSE stream. The
+orchestrator emits observable events via `ctx.emitEvent` (turn / question /
+completed / error / interrupted); the host forwards them to connected clients as
+project-scoped `plugin:custom` events, and the view subscribes through the
+`subscribePluginEvents` context capability — refetching the session on each event
+(no raw `EventSource`; no deep dashboard import). Client **polling of
+`GET /sessions/:id` remains as a fallback** while a turn is mid-flight, so a
+missed event still converges. Session identity is project-scoped: the `projectId`
+used at `start` is threaded through every later answer/resume/poll so they
+resolve the same store and live handle.
 
 ## Work → board bridge
 
