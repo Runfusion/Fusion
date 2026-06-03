@@ -93,6 +93,7 @@ import type { PluginRunner } from "./plugin-runner.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { StepSessionExecutor } from "./step-session-executor.js";
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
+import { resolveCapturedBaseCommitSha } from "./base-commit-capture.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
 import {
   resolveAgentInstructions,
@@ -7559,24 +7560,11 @@ ${failureFeedback}
         }
       }
 
-      let baseCommitSha: string | undefined;
-      try {
-        const { stdout } = await execAsync(
-          "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main",
-          { cwd: worktreePath, encoding: "utf-8" },
-        );
-        baseCommitSha = stdout.trim() || undefined;
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        executorLog.warn(`${task.id}: merge-base failed, falling back to HEAD: ${errorMessage}`);
-      }
-
+      const baseCommitSha = await resolveCapturedBaseCommitSha(worktreePath, {
+        warn: (msg) => executorLog.warn(`${task.id}: ${msg}`),
+      });
       if (!baseCommitSha) {
-        const { stdout } = await execAsync("git rev-parse HEAD", {
-          cwd: worktreePath,
-          encoding: "utf-8",
-        });
-        baseCommitSha = stdout.trim();
+        throw new Error("could not resolve base commit SHA");
       }
 
       await this.store.updateTask(task.id, { baseCommitSha });
