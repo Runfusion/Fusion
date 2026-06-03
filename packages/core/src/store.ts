@@ -101,6 +101,7 @@ interface TaskRow {
   overlapBlockedBy: string | null;
   paused: number | null;
   userPaused: number | null;
+  pausedReason: string | null;
   baseBranch: string | null;
   executionStartBranch: string | null;
   branch: string | null;
@@ -1461,6 +1462,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       overlapBlockedBy: row.overlapBlockedBy || undefined,
       paused: row.paused ? true : undefined,
       userPaused: row.userPaused ? true : undefined,
+      pausedReason: row.pausedReason || undefined,
       baseBranch: row.baseBranch || undefined,
       executionStartBranch: row.executionStartBranch || undefined,
       branch: row.branch || undefined,
@@ -2091,6 +2093,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.overlapBlockedBy ?? null,
       task.paused ? 1 : 0,
       task.userPaused ? 1 : 0,
+      task.pausedReason ?? null,
       task.baseBranch ?? null,
       task.branch ?? null,
       task.autoMerge === undefined ? null : (task.autoMerge ? 1 : 0),
@@ -2206,7 +2209,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.db.prepare(`
       INSERT INTO tasks (
         id, lineageId, title, description, priority, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, overlapBlockedBy, paused, userPaused, baseBranch, branch, autoMerge, executionStartBranch, baseCommitSha, modelPresetId, modelProvider,
+        worktree, blockedBy, overlapBlockedBy, paused, userPaused, pausedReason, baseBranch, branch, autoMerge, executionStartBranch, baseCommitSha, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergeRetries,
         workflowStepRetries, stuckKillCount, resumeLimboCount, resumeLimboTipSha, resumeLimboStepSignature, postReviewFixCount, recoveryRetryCount, taskDoneRetryCount, worktreeSessionRetryCount, completionHandoffLimboRecoveryCount, verificationFailureCount, mergeConflictBounceCount, mergeAuditBounceCount, mergeTransientRetryCount, branchConflictRecoveryCount, reviewerContextRetryCount, reviewerFallbackRetryCount, nextRecoveryAt, error,
         summary, thinkingLevel, executionMode, tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
@@ -2233,7 +2236,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.db.prepare(`
       INSERT INTO tasks (
         id, lineageId, title, description, priority, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, overlapBlockedBy, paused, userPaused, baseBranch, branch, autoMerge, executionStartBranch, baseCommitSha, modelPresetId, modelProvider,
+        worktree, blockedBy, overlapBlockedBy, paused, userPaused, pausedReason, baseBranch, branch, autoMerge, executionStartBranch, baseCommitSha, modelPresetId, modelProvider,
         modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergeRetries,
         workflowStepRetries, stuckKillCount, resumeLimboCount, resumeLimboTipSha, resumeLimboStepSignature, postReviewFixCount, recoveryRetryCount, taskDoneRetryCount, worktreeSessionRetryCount, completionHandoffLimboRecoveryCount, verificationFailureCount, mergeConflictBounceCount, mergeAuditBounceCount, mergeTransientRetryCount, branchConflictRecoveryCount, reviewerContextRetryCount, reviewerFallbackRetryCount, nextRecoveryAt, error,
         summary, thinkingLevel, executionMode, tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
@@ -2259,6 +2262,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         overlapBlockedBy = excluded.overlapBlockedBy,
         paused = excluded.paused,
         userPaused = excluded.userPaused,
+        pausedReason = excluded.pausedReason,
         baseBranch = excluded.baseBranch,
         branch = excluded.branch,
         autoMerge = excluded.autoMerge,

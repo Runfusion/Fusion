@@ -169,7 +169,11 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       const task = await store.getTask(req.params.taskId);
       const reason = task.pausedReason ?? "";
       const match = /^workflow-cli-approval:[^:]+:\s*(.*)$/s.exec(reason);
-      const command = (req.body?.command as string | undefined) ?? (match ? match[1].trim() : "");
+      // Derive the approved command exclusively from the task's pausedReason.
+      // A caller-supplied body.command must never be trusted — accepting it
+      // would let any client approve an arbitrary command the task is not
+      // actually paused on, bypassing trust-on-first-use entirely.
+      const command = match ? match[1].trim() : "";
       if (!command) throw badRequest("No pending CLI command to approve for this task");
       await store.approveWorkflowCliCommand(command);
       await store.updateTask(req.params.taskId, { status: null, paused: false, pausedReason: null });

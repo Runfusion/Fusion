@@ -392,4 +392,41 @@ describe("TaskStore", () => {
       expect(listed?.nodeId).toBe("node-list");
     });
   });
+
+  describe("pausedReason persistence", () => {
+    it("round-trips pausedReason through updateTask + getTask", async () => {
+      const task = await harness.store().createTask({ description: "Pause me" });
+
+      await harness.store().updateTask(task.id, {
+        paused: true,
+        pausedReason: "workflow-cli-approval:build: npm run build",
+      });
+
+      const detail = await harness.store().getTask(task.id);
+      expect(detail.paused).toBe(true);
+      // Regression: pausedReason was written to the in-memory task and read by
+      // the SELECT clause, but omitted from the upsert columns/values and the
+      // row→Task mapping — so it never survived a getTask. The workflow CLI
+      // approval and await-input pause/resume cycles depend on it persisting.
+      expect(detail.pausedReason).toBe("workflow-cli-approval:build: npm run build");
+    });
+
+    it("clears pausedReason when set to null", async () => {
+      const task = await harness.store().createTask({ description: "Pause then clear" });
+      await harness.store().updateTask(task.id, { paused: true, pausedReason: "token_budget_exceeded" });
+      expect((await harness.store().getTask(task.id)).pausedReason).toBe("token_budget_exceeded");
+
+      await harness.store().updateTask(task.id, { paused: false, pausedReason: null });
+      expect((await harness.store().getTask(task.id)).pausedReason).toBeUndefined();
+    });
+
+    it("returns pausedReason from listTasks", async () => {
+      const paused = await harness.store().createTask({ description: "Paused in list" });
+      await harness.store().updateTask(paused.id, { paused: true, pausedReason: "worktrunk_operation_failed" });
+
+      const tasks = await harness.store().listTasks();
+      const listed = tasks.find((t) => t.id === paused.id);
+      expect(listed?.pausedReason).toBe("worktrunk_operation_failed");
+    });
+  });
 });
