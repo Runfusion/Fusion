@@ -287,6 +287,28 @@ describe("resolveAgentPrompt", () => {
     expect(coreBlock).toBe(engineBlock);
   });
 
+  it("built-in triage prompt requires surface enumeration for bug-fix specs", () => {
+    const triagePrompt = resolveAgentPrompt("triage");
+    expect(triagePrompt).toContain("## Surface Enumeration");
+    expect(triagePrompt).toContain("spec MUST include a `## Surface Enumeration` section");
+    expect(triagePrompt).toContain("blocking REVISE");
+  });
+
+  it("built-in reviewer prompts reject missing surface enumeration and repro-only bug-fix tests", () => {
+    const defaultReviewer = resolveAgentPrompt("reviewer");
+    const strictReviewer = resolveAgentPrompt("reviewer", {
+      roleAssignments: { reviewer: "strict-reviewer" },
+    });
+
+    for (const prompt of [defaultReviewer, strictReviewer]) {
+      expect(prompt).toContain("**Surface enumeration:**");
+      expect(prompt).toContain("Missing or incomplete coverage is a blocking REVISE");
+      expect(prompt).toContain("repro-only regression test");
+      expect(prompt).toContain("spanning the `## Surface Enumeration` checklist");
+      expect(prompt).toContain("FN-5797/FN-5875/FN-5919");
+    }
+  });
+
   it("default role prompts include explicit heartbeat run guidance", () => {
     expect(resolveAgentPrompt("executor")).toContain("## Heartbeat Run Behavior");
     expect(resolveAgentPrompt("triage")).toContain("## Heartbeat Run Behavior");

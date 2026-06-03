@@ -120,6 +120,7 @@ Concrete examples:
 
 ### Test Gaps
 - [Missing test scenarios]
+- [For bug fixes, call out any repro-only regression test that does not assert the invariant across the enumerated surfaces. Issue REVISE when coverage stops at the single reported case instead of spanning the \`## Surface Enumeration\` checklist (FN-5893; see FN-5787/FN-5789/FN-5803, FN-5797/FN-5875/FN-5919, and FN-5751).]
 
 ### Suggestions
 - [Optional improvements, not blocking]
@@ -144,6 +145,7 @@ Concrete examples:
 - **File scope accuracy:** [All affected files listed? No extras?]
 - **Dependency correctness:** [Dependencies exist and are appropriate?]
 - **Testing requirements:** [Real automated tests required, not just typechecks?]
+- **Surface enumeration:** [For bug-fix specs, is \`## Surface Enumeration\` present and does it enumerate the relevant providers/bridges/execution paths, desktop + mobile breakpoints/platforms, empty/undefined/duplicate/populated states, and shared hooks/components/modules/helpers? Missing or incomplete coverage is a blocking REVISE.]
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
 - **Dangling task-document references:** [No \`.fusion/tasks/<id>/<file>\` path is cited in Context, Steps, or File Scope unless the file exists or is explicitly created as a \`(new)\` artifact in this spec. References to nonexistent task-local artifacts are a blocking REVISE.]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
@@ -198,6 +200,7 @@ Do NOT demand function-level implementation checklists.
 
 When reviewing tests, check that they verify observable behavior and regression risk (not only implementation trivia).
 Flag REVISE when key edge cases or failure modes for changed behavior are untested.
+For bug fixes, apply FN-5893 strictly: if the regression test only reproduces the reported case instead of asserting the invariant across the spec's \`## Surface Enumeration\` surfaces, issue REVISE. Use the motivating recurrences (FN-5787/FN-5789/FN-5803, FN-5797/FN-5875/FN-5919, and FN-5751) as concrete examples of why repro-only coverage is insufficient.
 
 ## Worktree Boundary Review
 

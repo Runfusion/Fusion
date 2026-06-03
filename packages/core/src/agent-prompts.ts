@@ -233,6 +233,10 @@ Follow this structure exactly:
 
 {One paragraph: what you're building and why it matters}
 
+## Surface Enumeration
+
+{Required for bug-fix tasks: a checklist enumerating every surface the fixed invariant must hold across. Include every provider/bridge for streaming and agent paths; desktop AND mobile breakpoints; empty/undefined/duplicate/populated data states; and every hook/component/module that shares the affected logic. Use the canonical checklist in docs/testing.md as the starting point.}
+
 ## Dependencies
 
 - **None**
@@ -262,6 +266,12 @@ Follow this structure exactly:
 - [ ] {Specific, verifiable outcome}
 - [ ] {Specific, verifiable outcome}
 - [ ] Run targeted tests for changed files, asserting the invariant across all known surfaces (enumerate every provider/bridge, desktop + mobile breakpoints, and empty/undefined/populated data states)
+
+For bug-fix tasks, paste and fill in this checklist in the \`## Surface Enumeration\` section:
+- [ ] Providers / bridges / execution paths touched by the invariant
+- [ ] Desktop + mobile breakpoints / platforms that exercise the behavior
+- [ ] Empty / undefined / duplicate / populated data states
+- [ ] Shared hooks / components / modules / helpers reusing the logic
 
 **Artifacts:**
 - \`path/to/file\` (new | modified)
@@ -330,6 +340,8 @@ files with assertions that run via a test runner. Typechecks and builds are NOT
 tests. Manual verification is NOT a test.
 
 - Each implementation step should include writing tests for the code being changed
+- For bug fixes, the spec MUST include a \`## Surface Enumeration\` section. During self-review via \`fn_review_spec()\`, treat a missing section on a bug-fix spec as a blocking REVISE.
+- For bug fixes, populate \`## Surface Enumeration\` with this checklist from \`docs/testing.md\`: providers/bridges/execution paths; desktop + mobile breakpoints/platforms; empty/undefined/duplicate/populated data states; shared hooks/components/modules/helpers.
 - For bug fixes, regression tests must assert the invariant across all known surfaces — enumerate every provider/bridge, desktop + mobile breakpoints, and empty/undefined/populated data states — not just the reported repro (see FN-5787/FN-5789/FN-5803 and FN-5751)
 - The final Testing step runs lint, the FULL test suite, and project typecheck when the repo exposes one
 - Specs must instruct executors to fix lint failures and quality-gate failures directly, even when the required edits extend beyond the original File Scope
@@ -521,6 +533,7 @@ access to the codebase and can run commands to inspect code.
 
 ### Test Gaps
 - [Missing test scenarios]
+- [For bug fixes, call out any repro-only regression test that does not assert the invariant across the enumerated surfaces. Issue REVISE when coverage stops at the single reported case instead of spanning the \`## Surface Enumeration\` checklist (FN-5893; see FN-5787/FN-5789/FN-5803, FN-5797/FN-5875/FN-5919, and FN-5751).]
 
 ### Suggestions
 - [Optional improvements, not blocking]
@@ -545,6 +558,7 @@ access to the codebase and can run commands to inspect code.
 - **File scope accuracy:** [All affected files listed? No extras?]
 - **Dependency correctness:** [Dependencies exist and are appropriate?]
 - **Testing requirements:** [Real automated tests required, not just typechecks?]
+- **Surface enumeration:** [For bug-fix specs, is \`## Surface Enumeration\` present and does it enumerate the relevant providers/bridges/execution paths, desktop + mobile breakpoints/platforms, empty/undefined/duplicate/populated states, and shared hooks/components/modules/helpers? Missing or incomplete coverage is a blocking REVISE.]
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
 - **Subtask breakdown:** [Were complex tasks appropriately split into 2-5 child tasks? A task with 8+ implementation steps, affecting 3+ packages, should have been divided]
@@ -795,6 +809,7 @@ submissions to a high bar for correctness, security, and maintainability.
 
 ### Test Gaps
 - [Missing test scenarios including edge cases]
+- [For bug fixes, call out any repro-only regression test that does not assert the invariant across the enumerated surfaces. Issue REVISE when coverage stops at the single reported case instead of spanning the \`## Surface Enumeration\` checklist (FN-5893; see FN-5787/FN-5789/FN-5803, FN-5797/FN-5875/FN-5919, and FN-5751).]
 
 ### Backward Compatibility
 - [Any breaking changes or migration needs]
@@ -822,6 +837,7 @@ submissions to a high bar for correctness, security, and maintainability.
 - **File scope accuracy:** [All affected files listed? No extras?]
 - **Dependency correctness:** [Dependencies exist and are appropriate?]
 - **Testing requirements:** [Real automated tests required, not just typechecks?]
+- **Surface enumeration:** [For bug-fix specs, is \`## Surface Enumeration\` present and does it enumerate the relevant providers/bridges/execution paths, desktop + mobile breakpoints/platforms, empty/undefined/duplicate/populated states, and shared hooks/components/modules/helpers? Missing or incomplete coverage is a blocking REVISE.]
 - **Documentation completeness:** [Must Update / Check If Affected sections present?]
 - **Sizing & review level:** [Size and review level appropriate for the work?]
 - **Subtask breakdown:** [Were complex tasks appropriately split into 2-5 child tasks?]

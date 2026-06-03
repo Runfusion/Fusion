@@ -98,3 +98,12 @@ Prefer `it.each` over copy-pasted `it()` blocks. When trimming, keep: first case
 - Do **not** add net-new real-network calls, real-`setTimeout` polling loops, or mock-the-world component shells when a narrower seam exists.
 - Use the canonical taxonomy in **What NOT to write** and **What TO keep unconditionally** when deciding trim vs keep.
 - See `docs/test-speed-audit-FN-5048.md` for the measured baseline offender list and optimization priorities.
+
+### Surface Enumeration checklist
+
+Copy this checklist into a bug-fix task's `## Surface Enumeration` section and make the regression tests prove the invariant across every checked surface. See `AGENTS.md` → **Standing Rule: Fix the Invariant, Not the Repro (FN-5893)** for the enforced planning/review contract.
+
+- [ ] Providers / bridges / execution paths touched by the invariant
+- [ ] Desktop + mobile breakpoints / platforms that exercise the behavior
+- [ ] Empty / undefined / duplicate / populated data states
+- [ ] Shared hooks / components / modules / helpers reusing the logic

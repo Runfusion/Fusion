@@ -291,6 +291,23 @@ describe("reviewStep — spec review type", () => {
   });
 });
 
+describe("FN-5928 surface-enumeration review-gate wording", () => {
+  it("requires spec reviews to block missing or incomplete surface enumeration for bug-fix specs", () => {
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("**Surface enumeration:**");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("Missing or incomplete coverage is a blocking REVISE");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("desktop + mobile breakpoints/platforms");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("shared hooks/components/modules/helpers");
+  });
+
+  it("requires code reviews to reject repro-only regression tests for bug fixes", () => {
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("repro-only regression test");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("spanning the `## Surface Enumeration` checklist");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("FN-5787/FN-5789/FN-5803");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("FN-5797/FN-5875/FN-5919");
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("FN-5751");
+  });
+});
+
 describe("reviewStep — context-limit retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
