@@ -327,6 +327,10 @@ export {
   type MergeTargetResolverOptions,
 } from "./task-merge.js";
 export {
+  findVitestProcessIds,
+  type FindVitestProcessIdsOptions,
+} from "./vitest-processes.js";
+export {
   countRecentIdenticalStallEntries,
   getInReviewStallReason,
   IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX,

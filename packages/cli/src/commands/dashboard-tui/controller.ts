@@ -1,24 +1,39 @@
 import os from "node:os";
 import v8 from "node:v8";
-import { execFile } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { findVitestProcessIds } from "@fusion/core";
 
 // `os.freemem()` on macOS only counts truly-free pages and excludes the large
 // "inactive"/cached pool that the OS will reclaim on demand — so total-free
-// reads ~95%+ used on an otherwise-idle machine. `os.availableMemory()` (Node
-// 22+) reports memory the OS considers available, matching Activity Monitor's
-// notion of "used". Fall back to freemem on older runtimes.
-function getAvailableMemory(): number {
-  const fn = (os as unknown as { availableMemory?: () => number }).availableMemory;
-  if (typeof fn === "function") {
+// reads ~95%+ used on an otherwise-idle machine. `process.availableMemory()`
+// (Node 22+ — NOT `os.availableMemory`, which does not exist and silently
+// fell through to the freemem trap this function was written to avoid)
+// reports memory the OS considers available, matching Activity Monitor's
+// notion of "used". The freemem fallback is flagged unreliable so pressure-
+// triggered actions can refuse to fire on a garbage ratio: with freemem, an
+// idle 256GB Mac reads ~99% used and the vitest auto-kill fired every 30s
+// regardless of real pressure (2026-06-03 incident).
+interface AvailableMemoryReading {
+  bytes: number;
+  /** False when only `os.freemem()` was available — unusable as a pressure signal. */
+  reliable: boolean;
+}
+
+export function getAvailableMemoryInfo(): AvailableMemoryReading {
+  const processFn = (process as unknown as { availableMemory?: () => number }).availableMemory;
+  if (typeof processFn === "function") {
     try {
-      const v = fn.call(os);
-      if (Number.isFinite(v) && v >= 0) return v;
+      const v = processFn.call(process);
+      if (Number.isFinite(v) && v >= 0) return { bytes: v, reliable: true };
     } catch {
       // fall through
     }
   }
-  return os.freemem();
+  return { bytes: os.freemem(), reliable: false };
+}
+
+function getAvailableMemory(): number {
+  return getAvailableMemoryInfo().bytes;
 }
 
 const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
@@ -299,8 +314,10 @@ export class DashboardTUI {
 
     if (this.autoKillVitestOnPressure) {
       const total = os.totalmem();
-      const free = getAvailableMemory();
-      if (total > 0) {
+      const { bytes: free, reliable } = getAvailableMemoryInfo();
+      // Without a reliable availability reading the ratio is garbage (freemem
+      // on macOS ≈ always >90% used) — never SIGKILL on a garbage signal.
+      if (total > 0 && reliable) {
         const usedRatio = (total - free) / total;
         // 30s minimum gap between auto-kills — vitest restart and OS reclaim
         // both take a few seconds; firing every 2s would flap.
@@ -325,24 +342,13 @@ export class DashboardTUI {
    * gone by the time we send the signal).
    */
   async killVitestProcesses(): Promise<{ killed: number; pids: number[] }> {
-    // pgrep is POSIX-only; Windows path is a no-op above.
-    if (process.platform === "win32") {
-      return { killed: 0, pids: [] };
-    }
-    const selfPid = process.pid;
-    // execFile (not execSync) so the TUI render loop stays responsive while
-    // pgrep walks the process table — that walk can take 100ms+ on a busy
-    // machine and previously froze the UI on every memory-pressure check.
-    const stdout: string = await new Promise((resolve) => {
-      execFile("pgrep", ["-f", "vitest"], { encoding: "utf8" }, (err, out) => {
-        // pgrep exits non-zero when no matches — treat as empty result.
-        resolve(err ? "" : (typeof out === "string" ? out : ""));
-      });
-    });
-    const pids = stdout
-      .split("\n")
-      .map((s) => Number.parseInt(s.trim(), 10))
-      .filter((n) => Number.isFinite(n) && n > 0 && n !== selfPid);
+    // findVitestProcessIds is pgrep-based (POSIX-only; no-op on Windows) and
+    // uses async execFile so the TUI render loop stays responsive while the
+    // process table is walked. Crucially it filters matches to actual node
+    // processes: a bare `pgrep -f vitest` also matches wrapper shells whose
+    // command line mentions vitest, monitors, and editors — SIGKILLing those
+    // took out unrelated process trees (2026-06-03 incident).
+    const pids = await findVitestProcessIds();
 
     let killed = 0;
     for (const pid of pids) {
