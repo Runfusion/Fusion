@@ -1,10 +1,58 @@
 import "./CompoundEngineeringView.css";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import * as LucideIcons from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/types";
 import { useArtifacts } from "./hooks/useArtifacts.js";
 import { useViewportMode } from "./hooks/useViewportMode.js";
+import { useCeSession } from "./hooks/useCeSession.js";
 import { getArtifactPreviewUrl } from "./hooks/api.js";
+import { CeFlow } from "./CeFlow.js";
+import { listStages, type CeStageDefinition } from "../session/stage-registry.js";
 import type { CeArtifactEntry, CeArtifactGroup } from "../artifacts/discovery.js";
+
+/** Resolve a lucide icon name (from the registry) to a component, with fallback. */
+function resolveIcon(name: string): LucideIcon {
+  const icons = LucideIcons as unknown as Record<string, LucideIcon>;
+  return icons[name] ?? LucideIcons.Circle;
+}
+
+/** Launcher: lists exactly the registered stages (R4) and launches one. */
+function StageLauncher({
+  stages,
+  disabled,
+  onLaunch,
+}: {
+  stages: CeStageDefinition[];
+  disabled: boolean;
+  onLaunch: (stage: CeStageDefinition) => void;
+}) {
+  return (
+    <div className="ce-launcher card" data-testid="ce-launcher">
+      <h3>Start a stage</h3>
+      <ul className="ce-launcher-list">
+        {stages.map((stage) => {
+          const Icon = resolveIcon(stage.icon);
+          return (
+            <li key={stage.stageId}>
+              <button
+                type="button"
+                className="ce-launcher-tile btn"
+                data-testid="ce-launcher-stage"
+                data-stage={stage.stageId}
+                disabled={disabled}
+                onClick={() => onLaunch(stage)}
+              >
+                <Icon className="ce-launcher-icon" size={18} aria-hidden="true" />
+                <span className="ce-launcher-label">{stage.label}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
 
 interface CompoundEngineeringViewProps {
   context?: PluginDashboardViewContext;
@@ -126,6 +174,10 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   const { result, loading, error } = useArtifacts({ projectId, enabled });
   const [selectedId, setSelectedId] = useState<string | undefined>();
 
+  const stages = listStages();
+  const ceSession = useCeSession();
+  const [launcherOpen, setLauncherOpen] = useState(false);
+
   const totalArtifacts = result?.totalArtifacts ?? 0;
   const totalErrors = result?.totalErrors ?? 0;
   const hasAnything = totalArtifacts > 0 || totalErrors > 0;
@@ -134,12 +186,36 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   const emptyGroups = result?.groups.filter((g) => g.entries.length === 0).length ?? 0;
   const isPartial = populatedGroups > 0 && emptyGroups > 0;
 
-  const onStart = () => {
-    // Wiring to launch a stage session is U6. A placeholder affordance is fine
-    // here; it makes the first-run orientation actionable without coupling U3 to
-    // the session launcher.
-    props.context?.addToast?.("Stage launcher arrives with the CE flow renderer (U6).", "info");
-  };
+  const onStart = () => setLauncherOpen(true);
+
+  const onLaunch = useCallback(
+    (stage: CeStageDefinition) => {
+      setLauncherOpen(false);
+      void ceSession.start(stage.stageId, { message: `Start the ${stage.label} stage.`, projectId });
+    },
+    [ceSession, projectId],
+  );
+
+  const onCloseFlow = useCallback(() => ceSession.reset(), [ceSession]);
+
+  // Once a session exists, the flow renderer owns the surface until closed.
+  if (ceSession.session) {
+    return (
+      <div className="ce-view" data-testid="compound-engineering-view" data-mobile={mobile ? "true" : "false"}>
+        <div className="ce-view-header">
+          <h2>Compound Engineering</h2>
+        </div>
+        <CeFlow
+          session={ceSession.session}
+          busy={ceSession.busy}
+          error={ceSession.error}
+          onAnswer={ceSession.answer}
+          onResume={ceSession.resume}
+          onClose={onCloseFlow}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="ce-view" data-testid="compound-engineering-view" data-mobile={mobile ? "true" : "false"}>
@@ -152,7 +228,22 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
             {isPartial ? " · partial" : ""}
           </span>
         ) : null}
+        {hasAnything ? (
+          <button type="button" className="btn btn-primary ce-view-start" data-testid="ce-start-action-header" onClick={onStart}>
+            Start a stage
+          </button>
+        ) : null}
       </div>
+
+      {launcherOpen ? (
+        <StageLauncher stages={stages} disabled={ceSession.busy} onLaunch={onLaunch} />
+      ) : null}
+
+      {ceSession.error && !ceSession.session ? (
+        <div className="ce-view-error card" role="alert" data-testid="ce-session-error">
+          Failed to start session: {ceSession.error}
+        </div>
+      ) : null}
 
       {error ? (
         <div className="ce-view-error card" role="alert" data-testid="ce-fetch-error">

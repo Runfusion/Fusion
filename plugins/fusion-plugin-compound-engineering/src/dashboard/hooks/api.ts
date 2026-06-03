@@ -1,4 +1,5 @@
 import type { DiscoveryResult } from "../../artifacts/discovery.js";
+import type { CeSession } from "../../session/session-store.js";
 
 const BASE = "/api/plugins/fusion-plugin-compound-engineering";
 
@@ -42,4 +43,47 @@ export async function getArtifact(
 
 export function getArtifactPreviewUrl(id: string, projectId?: string): string {
   return `${BASE}/artifacts/${encodeURIComponent(id)}/preview.html${qp({ projectId })}`;
+}
+
+// --- Interactive CE session routes (polling transport, U5/U6) ---------------
+
+/** Start a stage session. Returns the freshly-created session (after one turn). */
+export async function startSession(
+  stage: string,
+  opts: { message?: string; projectId?: string } = {},
+): Promise<CeSession> {
+  const data = await request<{ session: CeSession }>(`/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage, message: opts.message ?? "", projectId: opts.projectId }),
+  });
+  return data.session;
+}
+
+/** Submit an answer to the awaiting question and advance the session. */
+export async function answerSession(
+  sessionId: string,
+  questionId: string,
+  response: unknown,
+): Promise<CeSession> {
+  const data = await request<{ session: CeSession }>(`/sessions/${encodeURIComponent(sessionId)}/answer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ questionId, response }),
+  });
+  return data.session;
+}
+
+/** Resume an interrupted/error/awaiting session back to its current question. */
+export async function resumeSession(sessionId: string): Promise<CeSession> {
+  const data = await request<{ session: CeSession }>(`/sessions/${encodeURIComponent(sessionId)}/resume`, {
+    method: "POST",
+  });
+  return data.session;
+}
+
+/** Poll the current persisted session state. */
+export async function getSession(sessionId: string): Promise<CeSession> {
+  const data = await request<{ session: CeSession }>(`/sessions/${encodeURIComponent(sessionId)}`);
+  return data.session;
 }

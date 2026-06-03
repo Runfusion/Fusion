@@ -56,7 +56,13 @@ describe("orchestrator happy path", () => {
 
   it("runs a SECOND stage through the SAME orchestrator with only a registry-data entry (no new route/store code)", async () => {
     // Adding a stage = data only.
-    registerStage({ stageId: "compound", skillId: "ce-compound", artifactLocation: "docs/solutions/" });
+    registerStage({
+      stageId: "compound",
+      skillId: "ce-compound",
+      artifactLocation: "docs/solutions/",
+      icon: "BookOpen",
+      label: "Compound",
+    });
     expect(getStage("compound")?.skillId).toBe("ce-compound");
 
     const orch = makeOrch([{ type: "complete", data: { artifact: "# Learning\n" } }]);
