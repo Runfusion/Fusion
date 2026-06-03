@@ -6,10 +6,12 @@ import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/t
 import { useArtifacts } from "./hooks/useArtifacts.js";
 import { useViewportMode } from "./hooks/useViewportMode.js";
 import { useCeSession, type CeSessionSubscribe } from "./hooks/useCeSession.js";
+import { useCeSessions, type CeSessionsSubscribe } from "./hooks/useCeSessions.js";
 import { getArtifactPreviewUrl } from "./hooks/api.js";
 import { CeFlow } from "./CeFlow.js";
-import { listStages, type CeStageDefinition } from "../session/stage-registry.js";
+import { getStage, listStages, type CeStageDefinition } from "../session/stage-registry.js";
 import type { CeArtifactEntry, CeArtifactGroup } from "../artifacts/discovery.js";
+import type { CeSession, CeSessionStatus } from "../session/session-store.js";
 
 const CE_PLUGIN_ID = "fusion-plugin-compound-engineering";
 
@@ -53,6 +55,82 @@ function StageLauncher({
         })}
       </ul>
     </div>
+  );
+}
+
+/** Statuses that are settled (no agent turn in flight). */
+const TERMINAL: ReadonlySet<CeSessionStatus> = new Set(["completed", "error", "interrupted"]);
+
+function statusLabel(status: CeSessionStatus): string {
+  return status.replace("_", " ");
+}
+
+/**
+ * Sessions panel: every CE session (each an independent pipeline run) with its
+ * stage, status, and last activity — open any to keep working on it, discard
+ * settled ones. Sessions keep running server-side while not open here.
+ */
+function SessionsPanel({
+  sessions,
+  activeSessionId,
+  disabled,
+  onOpen,
+  onDiscard,
+}: {
+  sessions: CeSession[];
+  activeSessionId?: string;
+  disabled: boolean;
+  onOpen: (session: CeSession) => void;
+  onDiscard: (session: CeSession) => void;
+}) {
+  if (sessions.length === 0) return null;
+  return (
+    <section className="ce-sessions card" data-testid="ce-sessions">
+      <header className="ce-group-header">
+        <h3>Sessions</h3>
+        <span className="ce-group-count">{sessions.length}</span>
+      </header>
+      <ul className="ce-sessions-list">
+        {sessions.map((s) => {
+          const stageLabel = getStage(s.stage)?.label ?? s.stage;
+          const awaiting = s.status === "awaiting_input";
+          return (
+            <li
+              key={s.id}
+              className={`ce-session-row${s.id === activeSessionId ? " is-active" : ""}`}
+              data-testid="ce-session-row"
+              data-session={s.id}
+              data-status={s.status}
+            >
+              <button
+                type="button"
+                className="ce-session-open"
+                data-testid="ce-session-open"
+                disabled={disabled}
+                onClick={() => onOpen(s)}
+              >
+                <span className="ce-session-stage">{stageLabel}</span>
+                <span className={`ce-session-status ce-session-status-${s.status}`} data-testid="ce-session-status">
+                  {awaiting ? "needs your input" : statusLabel(s.status)}
+                </span>
+                <span className="ce-session-updated">{new Date(s.updatedAt).toLocaleString()}</span>
+              </button>
+              {TERMINAL.has(s.status) ? (
+                <button
+                  type="button"
+                  className="btn ce-session-discard"
+                  data-testid="ce-session-discard"
+                  disabled={disabled}
+                  onClick={() => onDiscard(s)}
+                >
+                  Discard
+                </button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -193,6 +271,16 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
       });
   }, [subscribePluginEvents]);
   const ceSession = useCeSession(subscribe ? { subscribe } : {});
+  // Session list refresh: ANY CE push event means some session changed.
+  const subscribeList = useMemo<CeSessionsSubscribe | undefined>(() => {
+    if (!subscribePluginEvents) return undefined;
+    return (onAnyEvent) => subscribePluginEvents(CE_PLUGIN_ID, () => onAnyEvent());
+  }, [subscribePluginEvents]);
+  const ceSessions = useCeSessions({
+    projectId,
+    enabled,
+    ...(subscribeList ? { subscribe: subscribeList } : {}),
+  });
   const [launcherOpen, setLauncherOpen] = useState(false);
 
   const totalArtifacts = result?.totalArtifacts ?? 0;
@@ -208,20 +296,50 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   const onLaunch = useCallback(
     (stage: CeStageDefinition) => {
       setLauncherOpen(false);
-      void ceSession.start(stage.stageId, { message: `Start the ${stage.label} stage.`, projectId });
+      void ceSession
+        .start(stage.stageId, { message: `Start the ${stage.label} stage.`, projectId })
+        .then(() => ceSessions.refresh());
+    },
+    [ceSession, ceSessions, projectId],
+  );
+
+  const onOpenSession = useCallback(
+    (s: CeSession) => {
+      void ceSession.open(s.id, { projectId });
     },
     [ceSession, projectId],
   );
 
-  const onCloseFlow = useCallback(() => ceSession.reset(), [ceSession]);
+  const onDiscardSession = useCallback(
+    (s: CeSession) => {
+      void ceSessions.remove(s.id);
+    },
+    [ceSessions],
+  );
 
-  // Once a session exists, the flow renderer owns the surface until closed.
+  // Closing the flow returns to the overview WITHOUT stopping the session —
+  // it keeps running server-side and stays reachable from the sessions panel.
+  const onCloseFlow = useCallback(() => {
+    ceSession.reset();
+    void ceSessions.refresh();
+  }, [ceSession, ceSessions]);
+
+  // Once a session is active here, the flow renderer owns the surface until
+  // closed — but the sessions panel stays visible so other sessions remain
+  // one click away (switching does not stop the open one).
   if (ceSession.session) {
     return (
       <div className="ce-view" data-testid="compound-engineering-view" data-mobile={mobile ? "true" : "false"}>
         <div className="ce-view-header">
           <h2>Compound Engineering</h2>
         </div>
+        <SessionsPanel
+          sessions={ceSessions.sessions}
+          activeSessionId={ceSession.session.id}
+          disabled={ceSession.busy}
+          onOpen={onOpenSession}
+          onDiscard={onDiscardSession}
+        />
         <CeFlow
           session={ceSession.session}
           busy={ceSession.busy}
@@ -254,6 +372,19 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
 
       {launcherOpen ? (
         <StageLauncher stages={stages} disabled={ceSession.busy} onLaunch={onLaunch} />
+      ) : null}
+
+      <SessionsPanel
+        sessions={ceSessions.sessions}
+        disabled={ceSession.busy}
+        onOpen={onOpenSession}
+        onDiscard={onDiscardSession}
+      />
+
+      {ceSessions.error ? (
+        <div className="ce-view-error card" role="alert" data-testid="ce-sessions-error">
+          Failed to load sessions: {ceSessions.error}
+        </div>
       ) : null}
 
       {ceSession.error && !ceSession.session ? (

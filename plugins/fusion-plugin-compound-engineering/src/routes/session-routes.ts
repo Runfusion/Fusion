@@ -129,6 +129,20 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       },
     },
     {
+      method: "DELETE",
+      path: "/sessions/:id",
+      description: "Discard a CE session (disposes any live handle, deletes the row).",
+      handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
+        const id = (req as RouteRequest).params.id;
+        // Go through the orchestrator so an in-flight live handle is disposed,
+        // not just the row removed (a bare store.delete would leave the agent
+        // running unobserved in this process).
+        const removed = getOrchestrator(ctx).discard(id);
+        if (!removed) return { status: 404, body: { error: `Session ${id} not found` } };
+        return { status: 200, body: { deleted: true } };
+      },
+    },
+    {
       // U7 work bridge: observe the board tasks a CE pipeline (session) landed,
       // via their link records (the addressable back-reference, FN-5719). The
       // session id IS the pipeline id. Outbound-only in U7; U8 layers state.

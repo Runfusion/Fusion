@@ -32,6 +32,7 @@ function Harness({ transport }: { transport: CeSessionTransport }) {
       <span data-testid="busy">{s.busy ? "busy" : "idle"}</span>
       <span data-testid="err">{s.error ?? ""}</span>
       <button onClick={() => void s.start("brainstorm", { projectId: "p1" })}>start</button>
+      <button onClick={() => void s.open("s2", { projectId: "p2" })}>open</button>
       <button onClick={() => void s.answer("q1", "yes")}>answer</button>
       <button onClick={() => void s.resume()}>resume</button>
       <button onClick={() => s.reset()}>reset</button>
@@ -118,6 +119,28 @@ describe("useCeSession lifecycle", () => {
     });
     expect(get).toHaveBeenCalled();
     expect(screen.getByTestId("status")).toHaveTextContent("awaiting_input");
+  });
+
+  it("open() adopts an existing session and threads ITS projectId to later calls", async () => {
+    const transport: CeSessionTransport = {
+      start: vi.fn(),
+      answer: vi.fn(async () => mkSession({ id: "s2", status: "completed" })),
+      resume: vi.fn(),
+      get: vi.fn(async () => mkSession({ id: "s2", status: "awaiting_input", currentQuestion: Q })),
+    };
+    render(<Harness transport={transport} />);
+
+    await act(async () => {
+      screen.getByText("open").click();
+    });
+    expect(transport.get).toHaveBeenCalledWith("s2", "p2");
+    expect(screen.getByTestId("status")).toHaveTextContent("awaiting_input");
+
+    // Subsequent answer goes to the opened session with the opened projectId.
+    await act(async () => {
+      screen.getByText("answer").click();
+    });
+    expect(transport.answer).toHaveBeenCalledWith("s2", "q1", "yes", "p2");
   });
 
   it("surfaces a start error", async () => {

@@ -92,6 +92,24 @@ export async function resumeSession(sessionId: string, projectId?: string): Prom
   return data.session;
 }
 
+/** List CE sessions, newest-activity first (optionally filtered by status/stage). */
+export async function listSessions(
+  opts: { projectId?: string; status?: string; stage?: string } = {},
+): Promise<CeSession[]> {
+  const data = await request<{ sessions: CeSession[] }>(
+    `/sessions${qp({ projectId: opts.projectId, status: opts.status, stage: opts.stage })}`,
+  );
+  return data.sessions;
+}
+
+/** Discard a session (disposes any live handle, deletes the row). `projectId` must match start. */
+export async function deleteSession(sessionId: string, projectId?: string): Promise<void> {
+  await request<{ deleted: boolean }>(
+    `/sessions/${encodeURIComponent(sessionId)}${qp({ projectId })}`,
+    { method: "DELETE" },
+  );
+}
+
 /** Poll the current persisted session state. `projectId` must match start (see answerSession). */
 export async function getSession(sessionId: string, projectId?: string): Promise<CeSession> {
   const data = await request<{ session: CeSession }>(`/sessions/${encodeURIComponent(sessionId)}${qp({ projectId })}`);

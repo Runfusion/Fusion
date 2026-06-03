@@ -255,6 +255,12 @@ export class CeSessionStore {
     return next;
   }
 
+  /** Delete a session row. Returns true when a row was removed. */
+  delete(id: string): boolean {
+    const result = this.db.prepare(`DELETE FROM ce_sessions WHERE id = ?`).run(id);
+    return Number(result.changes ?? 0) > 0;
+  }
+
   /** Append a turn to the conversation history (no other field touched). */
   appendHistory(id: string, turn: CeConversationTurn): CeSession | undefined {
     const existing = this.get(id);

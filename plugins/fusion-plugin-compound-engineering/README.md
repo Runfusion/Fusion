@@ -59,6 +59,25 @@ progress and emits an observable event — never silent loss** — and an
 `interrupted`/`error` session can be resumed/retried back to its current
 question.
 
+### Multiple sessions
+
+Sessions are independent pipeline runs — the store, routes, and orchestrator
+all hold many at once (each with its own live agent handle). The dashboard's
+**Sessions panel** lists every session with its stage, status, and last
+activity; from there you can:
+
+- **open** any session and keep working on it (an `awaiting_input` session is
+  flagged "needs your input"),
+- **switch** between sessions — the panel stays visible while a flow is open,
+  and a session you switch away from keeps running server-side,
+- **resume** an `interrupted`/`error` session from where it stopped,
+- **discard** a settled (completed/error/interrupted) session via
+  `DELETE /sessions/:id`, which disposes any live handle before deleting the
+  row (pipeline-link rows are kept — board-task provenance survives).
+
+The list refreshes on any CE push event and falls back to polling
+`GET /sessions` while any session has a turn in flight.
+
 ### Transport
 
 Session updates are **pushed** over the shared `/api/events` SSE stream. The

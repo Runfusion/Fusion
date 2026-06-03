@@ -386,6 +386,17 @@ export class CeOrchestrator {
   }
 
   /**
+   * Discard a session: dispose any live in-process handle (so an in-flight
+   * agent doesn't keep running unobserved) and delete the persisted row.
+   * Returns false when the session doesn't exist. Pipeline-link rows are NOT
+   * touched — board tasks the session landed keep their provenance records.
+   */
+  discard(sessionId: string): boolean {
+    this.disposeLive(sessionId);
+    return this.store.delete(sessionId);
+  }
+
+  /**
    * Run one turn behind a timeout race, persist the resulting event, and on a
    * turn-level failure auto-save + emit. The `driver` performs the prompt/answer
    * against the live session; we then pull exactly one event.

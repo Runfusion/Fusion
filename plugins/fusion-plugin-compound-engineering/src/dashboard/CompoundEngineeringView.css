@@ -303,3 +303,68 @@
   margin: 0 0 0.4rem;
   padding-left: 1.1rem;
 }
+
+/* Sessions panel — manage/switch across multiple concurrent CE sessions. */
+.ce-sessions {
+  margin-bottom: 0.8rem;
+}
+.ce-sessions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.ce-session-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.ce-session-row.is-active .ce-session-open {
+  border-color: var(--color-accent, #36c);
+  background: color-mix(in srgb, var(--color-accent, #36c) 8%, transparent);
+}
+.ce-session-open {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border, #ddd);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.ce-session-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.ce-session-stage {
+  font-weight: 600;
+}
+.ce-session-status {
+  font-size: 0.74rem;
+  text-transform: capitalize;
+  opacity: 0.8;
+}
+.ce-session-status-awaiting_input {
+  color: var(--color-warning, #a60);
+  font-weight: 600;
+  opacity: 1;
+}
+.ce-session-status-error,
+.ce-session-status-interrupted {
+  color: var(--color-danger, #d23);
+  opacity: 1;
+}
+.ce-session-status-completed {
+  color: var(--color-success, #2a7);
+  opacity: 1;
+}
+.ce-session-updated {
+  margin-left: auto;
+  font-size: 0.72rem;
+  opacity: 0.6;
+}

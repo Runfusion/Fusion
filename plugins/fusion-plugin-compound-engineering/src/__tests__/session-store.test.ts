@@ -51,6 +51,23 @@ describe("CeSessionStore CRUD + JSON round-trip", () => {
   });
 });
 
+describe("multi-session independence + delete", () => {
+  it("holds many independent sessions; deleting one leaves the others untouched", () => {
+    const store = new CeSessionStore(h.db);
+    const a = store.create({ stage: "brainstorm", projectId: "p1" });
+    const b = store.create({ stage: "plan", projectId: "p1" });
+    const c = store.create({ stage: "work" });
+    expect(store.list()).toHaveLength(3);
+
+    expect(store.delete(b.id)).toBe(true);
+    expect(store.get(b.id)).toBeUndefined();
+    expect(store.get(a.id)).toBeDefined();
+    expect(store.get(c.id)).toBeDefined();
+    // Deleting a missing row reports false, no throw.
+    expect(store.delete(b.id)).toBe(false);
+  });
+});
+
 describe("interval-relative staleness (FN-4172 rubric)", () => {
   it("does NOT misclassify a healthy-but-slow session as stale", () => {
     const store = new CeSessionStore(h.db);

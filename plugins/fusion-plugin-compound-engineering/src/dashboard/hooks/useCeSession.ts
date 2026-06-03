@@ -62,6 +62,8 @@ export interface UseCeSessionResult {
   busy: boolean;
   error?: string;
   start(stage: string, opts?: { message?: string; projectId?: string }): Promise<void>;
+  /** Adopt an EXISTING session (e.g. from the session list) as the active one. */
+  open(sessionId: string, opts?: { projectId?: string }): Promise<void>;
   answer(questionId: string, response: unknown): Promise<void>;
   resume(): Promise<void>;
   reset(): void;
@@ -126,6 +128,18 @@ export function useCeSession(options: UseCeSessionOptions = {}): UseCeSessionRes
     (stage: string, opts: { message?: string; projectId?: string } = {}) => {
       projectIdRef.current = opts.projectId;
       return run(() => transport.start(stage, opts));
+    },
+    [run, transport],
+  );
+
+  // Adopt an existing session (started earlier, possibly in another view visit)
+  // as this hook's active session. Like start(), it pins the projectId used for
+  // every subsequent call — the session row lives in that project's store.
+  const open = useCallback(
+    (sessionId: string, opts: { projectId?: string } = {}) => {
+      projectIdRef.current = opts.projectId;
+      sessionIdRef.current = sessionId;
+      return run(() => transport.get(sessionId, opts.projectId));
     },
     [run, transport],
   );
@@ -198,5 +212,5 @@ export function useCeSession(options: UseCeSessionOptions = {}): UseCeSessionRes
     };
   }, [status, busy, transport, apply, pollIntervalMs]);
 
-  return { session, busy, error, start, answer, resume, reset };
+  return { session, busy, error, start, open, answer, resume, reset };
 }

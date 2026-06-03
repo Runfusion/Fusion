@@ -76,6 +76,61 @@ describe("orchestrator happy path", () => {
   });
 });
 
+describe("multiple concurrent sessions", () => {
+  it("drives two independent sessions through the SAME orchestrator without cross-talk", async () => {
+    // Two scripted live sessions; the factory hands them out in creation order.
+    const liveA = makeScriptedSession([
+      { type: "question", data: QUESTION },
+      { type: "complete", data: { artifact: "# A\n" } },
+    ]);
+    const liveB = makeScriptedSession([
+      { type: "question", data: { ...QUESTION, id: "q-b" } },
+      { type: "complete", data: { artifact: "# B\n" } },
+    ]);
+    const handles = [liveA, liveB];
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: handles.shift()! })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+
+    const a = await orch.start("brainstorm", { openingMessage: "topic A" });
+    const b = await orch.start("brainstorm", { openingMessage: "topic B" });
+    expect(a.session.id).not.toBe(b.session.id);
+    expect(a.session.status).toBe("awaiting_input");
+    expect(b.session.status).toBe("awaiting_input");
+
+    // Answer B first — A must stay awaiting, untouched.
+    const doneB = await orch.answer(b.session.id, "q-b", "bee");
+    expect(doneB.session.status).toBe("completed");
+    expect(orch.getState(a.session.id)?.status).toBe("awaiting_input");
+
+    // A is still answerable on ITS live handle (not B's).
+    const doneA = await orch.answer(a.session.id, "q1", "ay");
+    expect(doneA.session.status).toBe("completed");
+    expect(liveA.answer).toHaveBeenCalledTimes(1);
+    expect(liveB.answer).toHaveBeenCalledTimes(1);
+  });
+
+  it("discard disposes the live handle and deletes only that session", async () => {
+    const live = makeScriptedSession([{ type: "question", data: QUESTION }]);
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: vi.fn(async () => ({ session: live })),
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+    const started = await orch.start("brainstorm", { openingMessage: "topic" });
+
+    expect(orch.discard(started.session.id)).toBe(true);
+    expect(live.dispose).toHaveBeenCalled();
+    expect(orch.getState(started.session.id)).toBeUndefined();
+    // Idempotent-ish: a second discard reports false, no throw.
+    expect(orch.discard(started.session.id)).toBe(false);
+  });
+});
+
 describe("orchestrator error + retry", () => {
   it("agent error → status error, progress preserved, observable event; retry resumes to the question", async () => {
     const orch = makeOrch([

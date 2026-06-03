@@ -40,8 +40,36 @@ describe("session routes (polling transport)", () => {
         "POST /sessions/:id/resume",
         "GET /sessions/:id",
         "GET /sessions",
+        "DELETE /sessions/:id",
       ]),
     );
+  });
+
+  it("DELETE /sessions/:id discards a session (404 for unknown, gone afterwards, others kept)", async () => {
+    const { getCeSessionStore } = await import("../session/session-store.js");
+    const store = getCeSessionStore(h.ctx);
+    const keep = store.create({ stage: "brainstorm" });
+    const drop = store.create({ stage: "plan" });
+
+    const missing = await call("DELETE", "/sessions/:id", { params: { id: "nope" } }, h.ctx);
+    expect(missing.status).toBe(404);
+
+    const deleted = await call("DELETE", "/sessions/:id", { params: { id: drop.id } }, h.ctx);
+    expect(deleted.status).toBe(200);
+    expect(store.get(drop.id)).toBeUndefined();
+    expect(store.get(keep.id)).toBeDefined();
+  });
+
+  it("GET /sessions lists every session so a client can manage multiple concurrently", async () => {
+    const { getCeSessionStore } = await import("../session/session-store.js");
+    const store = getCeSessionStore(h.ctx);
+    store.create({ stage: "brainstorm" });
+    store.create({ stage: "plan" });
+
+    const res = await call("GET", "/sessions", { params: {}, query: {} }, h.ctx);
+    expect(res.status).toBe(200);
+    const sessions = (res.body as { sessions: Array<{ stage: string }> }).sessions;
+    expect(sessions.map((s) => s.stage).sort()).toEqual(["brainstorm", "plan"]);
   });
 
   it("POST /sessions requires a stage", async () => {
