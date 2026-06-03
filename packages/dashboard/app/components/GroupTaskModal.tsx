@@ -156,16 +156,18 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
                 </section>
               )}
 
-              {group.completion.complete && group.prState !== "merged" && group.prState !== "closed" && (
+              {(group.completion.complete || group.prState === "open") && group.prState !== "merged" && group.prState !== "closed" && (
                 <section className="card group-task-modal-actions">
-                  {group.autoMerge ? (
+                  {/* Promote stays gated on completion; Abandon below is reachable
+                      whenever the PR is open, even if completion later reverts. */}
+                  {group.completion.complete && (group.autoMerge ? (
                     <span className="badge">Auto-merge enabled</span>
                   ) : (
                     <button type="button" className="btn" onClick={() => void onPromote()} disabled={promoting}>
                       {promoting ? <Loader2 className="spin" /> : null}
                       {group.prState === "none" ? "Open PR" : "Merge group into main"}
                     </button>
-                  )}
+                  ))}
                   {group.prState === "open" && (
                     <button type="button" className="btn btn-danger" onClick={() => void onAbandon()} disabled={abandoning}>
                       {abandoning ? <Loader2 className="spin" /> : null}

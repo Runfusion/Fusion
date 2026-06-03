@@ -168,10 +168,12 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
     const group = store.getBranchGroup(id);
     if (!group) throw notFound("Branch group not found");
 
-    // Fix #2: a finalized or already-merged group is terminal and must not be
-    // flipped to abandoned/closed (mirrors the promote route's gate style).
-    if (group.status === "finalized" || group.prState === "merged") {
-      throw badRequest("Branch group is already finalized or merged and cannot be abandoned");
+    // Fix #2: a finalized, already-abandoned, or already-merged group is terminal
+    // and must not be flipped to abandoned/closed (mirrors the promote route's gate
+    // style). The CLI's runBranchGroupAbandon also guards the abandoned status, so
+    // re-abandoning a `prState: "none"` group can't silently persist `prState: "closed"`.
+    if (group.status === "abandoned" || group.status === "finalized" || group.prState === "merged") {
+      throw badRequest("Branch group is already abandoned, finalized, or merged and cannot be abandoned");
     }
 
     // The guard above already rejected `prState === "merged"`, so abandon always

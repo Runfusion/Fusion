@@ -6,6 +6,7 @@ import { type BranchGroup, type Task, type TaskStore } from "@fusion/core";
 import {
   evaluateBranchGroupCompletion,
   promoteBranchGroup,
+  reconcileBranchGroupPr,
   type CreateGroupPrFn,
   type CloseGroupPrFn,
   type SyncGroupPrFn,
@@ -241,9 +242,30 @@ describe("U8 end-to-end: single managed group PR (planning + mission)", () => {
         expect(git(rootDir, `git show ${group.branchName}:packages/engine/src/fnU8PlanC.ts`)).toContain("fnU8PlanC");
         expect(() => git(rootDir, "git show main:packages/engine/src/fnU8PlanC.ts")).toThrow();
 
-        // Terminal: group PR merged out-of-band → prState reconciles to merged.
-        store.updateBranchGroup(group.id, { status: "finalized", prState: "merged" });
+        // Terminal: group PR merged out-of-band → the REAL reconcile path flips
+        // prState to merged. We exercise reconcileBranchGroupPr (the exported
+        // primitive the GET /branch-groups/:id route wires up) with an injected
+        // syncGroupPr that reports the PR as merged, and assert the persisted
+        // state came from the reconcile path — not from a hand-written write.
+        const openGroup = store.getBranchGroup(group.id)!;
+        expect(openGroup.prState).toBe("open");
+        const reconcileSync: SyncGroupPrFn = vi.fn(async ({ group: g }) => ({
+          prNumber: g.prNumber!,
+          prUrl: g.prUrl!,
+          prState: "merged" as const,
+        }));
+        const reconciled = await reconcileBranchGroupPr({
+          store,
+          group: openGroup,
+          cwd: rootDir,
+          syncGroupPr: reconcileSync,
+        });
+        expect(reconcileSync).toHaveBeenCalledTimes(1);
+        expect(reconciled.reconciled).toBe(true);
+        expect(reconciled.prState).toBe("merged");
+        // The persisted row reflects the reconcile result.
         expect(store.getBranchGroup(group.id)?.prState).toBe("merged");
+        expect(store.getBranchGroup(group.id)?.prNumber).toBe(4242);
       } finally {
         await fixture.cleanup();
       }
@@ -306,6 +328,18 @@ describe("U8 end-to-end: single managed group PR (planning + mission)", () => {
         expect(store.getBranchGroup(group.id)?.prState).toBe("open");
 
         // Abandon mid-flight: close callback invoked, prState=closed (R7).
+        //
+        // Layering note: the real abandon entry points live in other packages —
+        // the dashboard route (POST /branch-groups/:id/abandon) and the CLI
+        // (runBranchGroupAbandon) — and can't be mounted cleanly from the engine
+        // package. Their genuine behavior (close-callback invocation, best-effort
+        // close-failure handling, no-PR path, and terminal-state guards) is
+        // covered there: packages/dashboard/src/__tests__/routes-branch-groups.test.ts
+        // ("branch group abandon (U6, R7)") and
+        // packages/cli/src/commands/__tests__/branch-group.test.ts
+        // ("branch-group CLI abandon"). Here we only assert the engine-level
+        // invariant those flows depend on: a mid-flight abandon closes the single
+        // managed PR exactly once and lands the row at abandoned/closed.
         const closeGroupPr: CloseGroupPrFn = vi.fn(async ({ group: g }) => ({
           prNumber: g.prNumber!,
           prUrl: g.prUrl!,

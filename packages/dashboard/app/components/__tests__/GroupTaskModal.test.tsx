@@ -124,6 +124,29 @@ describe("GroupTaskModal", () => {
     await waitFor(() => expect(mockedAbandon).toHaveBeenCalledWith("BG-1", undefined));
   });
 
+  it("keeps Abandon reachable but hides promote when completion reverts while PR is open", async () => {
+    // Regression: completion can flip back to false (a member moves
+    // in-progress → todo) while the group PR is still open. Abandon must remain
+    // available so the user can close the PR; promote stays gated on completion.
+    mockedGet.mockResolvedValue({
+      group: makeGroup({
+        completion: { landed: 1, total: 2, complete: false },
+        members: [
+          { taskId: "FN-1", title: "First", column: "done", landed: true },
+          { taskId: "FN-2", title: "Second", column: "in-progress", landed: false },
+        ],
+        prState: "open",
+        prNumber: 4,
+        prUrl: "https://github.com/org/repo/pull/4",
+      }),
+    } as Awaited<ReturnType<typeof apiGetBranchGroup>>);
+
+    render(<GroupTaskModal isOpen onClose={vi.fn()} groupId="BG-1" onOpenMemberTask={vi.fn()} />);
+
+    expect(await screen.findByRole("button", { name: /abandon group/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /open pr|merge group into main/i })).toBeNull();
+  });
+
   it("shows terminal state and hides controls when merged", async () => {
     mockedGet.mockResolvedValue({
       group: makeGroup({ completion: { landed: 2, total: 2, complete: true }, members: completeMembers, prState: "merged", prNumber: 3, prUrl: "https://github.com/org/repo/pull/3" }),

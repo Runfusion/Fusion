@@ -29,6 +29,22 @@ import { isBranchGroupComplete } from "../branch-group-completion.js";
  *
  * No network and no GitHub: PR creation is the engine-side concern; here we only
  * assert the membership identity the PR flow consumes.
+ *
+ * ## Surface Enumeration
+ * Surfaces this regression spec asserts the membership-identity invariant across:
+ * - Providers / execution paths: mission triage entry point (MissionStore →
+ *   TaskStore) stamping the real `BG-` group id into `branchContext.groupId`;
+ *   `listTasksByBranchGroup(group.id)` membership enumeration consumed by
+ *   completion gating and PR rollup. The dashboard planning-route entry point is
+ *   covered by the route-level planning tests; the engine land→PR→sync→abandon
+ *   half is covered by branch-group-single-pr-e2e.test.ts.
+ * - Data states: members that have/have not landed (drives
+ *   `isBranchGroupComplete`), and the empty-group case before triage.
+ * - Shared modules/helpers reusing the logic: `branchContext.groupId`
+ *   propagation, `filterTasksByBranchGroup` semantics behind
+ *   `listTasksByBranchGroup`, and per-task working-branch derivation (members
+ *   never adopt the shared branch as their own working branch).
+ * - Breakpoints/platforms: N/A — this is a core/persistence invariant with no UI.
  */
 
 function makeTmpDir(): string {

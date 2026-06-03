@@ -98,6 +98,19 @@ describe("TaskStore branch groups", () => {
     expect(store.createBranchGroup({ sourceType: "planning", sourceId: "PS-good", branchName: "feature/auth-shared" }).branchName).toBe("feature/auth-shared");
   });
 
+  it("rejects injection-shaped branch names on updateBranchGroup rename (Fix #11)", () => {
+    const group = store.createBranchGroup({ sourceType: "planning", sourceId: "PS-rename", branchName: "feature/safe" });
+    for (const bad of ["$(touch /tmp/x)", "`cmd`", "feature; rm -rf /", "has space", "a|b"]) {
+      expect(() => store.updateBranchGroup(group.id, { branchName: bad })).toThrow(
+        /Invalid branch group branch name/,
+      );
+    }
+    // The original branch name is left intact after a rejected rename.
+    expect(store.getBranchGroup(group.id)?.branchName).toBe("feature/safe");
+    // A legitimate rename still succeeds.
+    expect(store.updateBranchGroup(group.id, { branchName: "feature/renamed" }).branchName).toBe("feature/renamed");
+  });
+
   it("finds open branch groups by branch name and ignores closed groups", () => {
     expect(store.getBranchGroupByBranchName("fn/missing")).toBeNull();
 

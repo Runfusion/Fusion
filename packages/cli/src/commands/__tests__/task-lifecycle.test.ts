@@ -1363,7 +1363,7 @@ describe("syncGroupPrCallback (U6)", () => {
       updatePr: vi.fn(async () => ({ number: 42, url: "https://github.com/owner/repo/pull/42", status: "open", title: "T2", headBranch: "h", baseBranch: "main", commentCount: 0 })),
     };
     const sync = syncGroupPrCallback(github as never);
-    const result = await sync({ group: group as never, members });
+    const result = await sync({ cwd: "/tmp/project", group: group as never, members });
     expect(result).toEqual({ prNumber: 42, prUrl: "https://github.com/owner/repo/pull/42", prState: "open" });
     expect(github.updatePr).toHaveBeenCalledTimes(1);
     const body = (github.updatePr.mock.calls[0][0] as { body: string }).body;
@@ -1377,7 +1377,7 @@ describe("syncGroupPrCallback (U6)", () => {
       updatePr: vi.fn(),
     };
     const sync = syncGroupPrCallback(github as never);
-    const result = await sync({ group: group as never, members });
+    const result = await sync({ cwd: "/tmp/project", group: group as never, members });
     expect(result.prState).toBe("closed");
     expect(github.updatePr).not.toHaveBeenCalled();
   });
@@ -1385,7 +1385,7 @@ describe("syncGroupPrCallback (U6)", () => {
   it("throws when the group has no persisted prNumber", async () => {
     const github = { getPrStatus: vi.fn(), updatePr: vi.fn() };
     const sync = syncGroupPrCallback(github as never);
-    await expect(sync({ group: { ...group, prNumber: undefined } as never, members })).rejects.toThrow(/no persisted prNumber/);
+    await expect(sync({ cwd: "/tmp/project", group: { ...group, prNumber: undefined } as never, members })).rejects.toThrow(/no persisted prNumber/);
   });
 });
 

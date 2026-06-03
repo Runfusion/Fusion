@@ -88,6 +88,7 @@ describeIfGit("findAlreadyMergedTaskCommit ownership anchoring (real git)", () =
       repo,
       "git add src/unrelated.txt && git commit -m 'feat: unrelated change' -m 'This also touches things related to FN-AMD-2 in passing.'",
     );
+    const proseSha = git(repo, "git rev-parse HEAD");
 
     // The task's own branch landed by being merged into main, but its commits
     // carry NO trailer and NO conventional-subject anchor — only a generic
@@ -104,6 +105,13 @@ describeIfGit("findAlreadyMergedTaskCommit ownership anchoring (real git)", () =
       baseBranch: "main",
       taskBranch: "fusion/fn-amd-2",
     });
+
+    // Hard invariant: the prose-mention commit must NEVER be attributed,
+    // independent of which strategy (if any) the detector returns. Asserting
+    // this directly prevents the test passing vacuously when result is null or
+    // the regression surfaces via a non-ancestry strategy.
+    const returnedSha = result ? result.sha : null;
+    expect(returnedSha).not.toBe(proseSha);
 
     // It may legitimately attribute via patch-id/tree-equal to the REAL owned
     // content, but it must NEVER return the unrelated prose-mention commit.

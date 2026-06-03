@@ -30,10 +30,20 @@ export function isValidBranchGroupBranchName(name: string): boolean {
   if (name.startsWith("-")) return false;
   if (/\s/.test(name)) return false;
   // Shell / refspec metacharacters that could escape a single git arg.
-  if (/[$`;|&<>(){}\[\]"'\\!*?~^:]/.test(name)) return false;
+  if (/[$`;|&<>(){}[\]"'\\!*?~^:]/.test(name)) return false;
   if (name.includes("..")) return false;
   if (name.includes("@{")) return false;
-  if (name.startsWith("/") || name.endsWith("/") || name.endsWith(".") || name.endsWith(".lock")) return false;
+  if (name === "@") return false; // git check-ref-format rejects the lone `@`
+  if (name.startsWith("/") || name.endsWith("/")) return false;
+  if (name.endsWith(".") || name.endsWith(".lock")) return false;
+  if (name.includes("//")) return false; // empty path segments
+  // Per-segment git-ref rules: no segment may start with `.` or end with
+  // `.lock`, matching `git check-ref-format --branch`.
+  for (const segment of name.split("/")) {
+    if (segment.length === 0) return false;
+    if (segment.startsWith(".")) return false;
+    if (segment.endsWith(".lock")) return false;
+  }
   const reserved = ["HEAD", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD"];
   if (reserved.includes(name)) return false;
   return true;

@@ -199,14 +199,19 @@ function parseTaskBranchContextFromSourceMetadata(sourceMetadata: Record<string,
   const raw = sourceMetadata?.[TASK_BRANCH_CONTEXT_METADATA_KEY];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const candidate = raw as Record<string, unknown>;
-  if (typeof candidate.groupId !== "string" || !candidate.groupId.trim()) return undefined;
+  // groupId is optional: only shared-mode members carry one. A non-shared
+  // member persists source/assignmentMode without a groupId, so a missing or
+  // empty groupId must NOT discard the whole context.
+  const groupId = typeof candidate.groupId === "string" && candidate.groupId.trim()
+    ? candidate.groupId
+    : undefined;
   if (candidate.source !== "planning" && candidate.source !== "mission" && candidate.source !== "new-task") return undefined;
   if (candidate.assignmentMode !== "shared" && candidate.assignmentMode !== "per-task-derived") return undefined;
   const inheritedBaseBranch = typeof candidate.inheritedBaseBranch === "string" && candidate.inheritedBaseBranch.trim().length > 0
     ? candidate.inheritedBaseBranch.trim()
     : undefined;
   return {
-    groupId: candidate.groupId,
+    ...(groupId ? { groupId } : {}),
     source: candidate.source,
     assignmentMode: candidate.assignmentMode,
     inheritedBaseBranch,
@@ -221,7 +226,7 @@ function withTaskBranchContextInSourceMetadata(
   return {
     ...(sourceMetadata ?? {}),
     [TASK_BRANCH_CONTEXT_METADATA_KEY]: {
-      groupId: branchContext.groupId,
+      ...(branchContext.groupId ? { groupId: branchContext.groupId } : {}),
       source: branchContext.source,
       assignmentMode: branchContext.assignmentMode,
       ...(branchContext.inheritedBaseBranch ? { inheritedBaseBranch: branchContext.inheritedBaseBranch } : {}),
@@ -4407,6 +4412,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const current = this.getBranchGroup(id);
     if (!current) {
       throw new Error(`Branch group ${id} not found`);
+    }
+    // Fix #11: a rename must reject injection-shaped branch names at the same
+    // persistence boundary as createBranchGroup, otherwise a crafted ref could
+    // still reach the downstream git/PR flow via an update.
+    if (patch.branchName !== undefined) {
+      validateBranchGroupBranchName(patch.branchName);
     }
     const nextStatus = patch.status ?? current.status;
     const now = Date.now();

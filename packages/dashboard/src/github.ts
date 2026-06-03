@@ -3822,9 +3822,13 @@ export function parseGitHubBadgeUrl(url: string): { owner: string; repo: string 
   return { owner: parsed.owner, repo: parsed.repo };
 }
 
-/** Resolve the current repo, throwing if it can't be determined. */
-function getCurrentRepoOrThrow(): { owner: string; repo: string } {
-  const currentRepo = getCurrentRepo();
+/**
+ * Resolve the repo, throwing if it can't be determined. Pass the per-project
+ * `cwd` so multi-project servers resolve the right repo; without it the repo is
+ * resolved from the process cwd, which is wrong outside single-project flows.
+ */
+function getCurrentRepoOrThrow(cwd?: string): { owner: string; repo: string } {
+  const currentRepo = getCurrentRepo(cwd);
   if (!currentRepo) {
     throw new Error(
       "Could not determine repository. Run from a git repository with a GitHub remote.",
@@ -3858,12 +3862,17 @@ export interface CreateGroupPrResult {
 export async function reconcileGroupPullRequest(
   github: Pick<GitHubClient, "getPrStatus">,
   group: Pick<BranchGroup, "id" | "prNumber">,
+  /**
+   * Per-project working directory. Multi-project servers MUST pass this so the
+   * repo identity is resolved per-project rather than from the process cwd.
+   */
+  cwd?: string,
 ): Promise<CreateGroupPrResult> {
   const prNumber = group.prNumber;
   if (prNumber == null) {
     throw new Error(`reconcileGroupPullRequest: group ${group.id} has no persisted prNumber`);
   }
-  const { owner, repo } = getCurrentRepoOrThrow();
+  const { owner, repo } = getCurrentRepoOrThrow(cwd);
   const current = await github.getPrStatus(owner, repo, prNumber);
   return {
     prNumber: current.number,
@@ -3881,13 +3890,18 @@ export async function reconcileGroupPullRequest(
 export async function closeGroupPullRequest(
   github: Pick<GitHubClient, "getPrStatus" | "closePr">,
   group: Pick<BranchGroup, "id" | "prNumber">,
+  /**
+   * Per-project working directory. Multi-project servers MUST pass this so the
+   * repo identity is resolved per-project rather than from the process cwd.
+   */
+  cwd?: string,
 ): Promise<CreateGroupPrResult> {
   const prNumber = group.prNumber;
   if (prNumber == null) {
     throw new Error(`closeGroupPullRequest: group ${group.id} has no persisted prNumber`);
   }
 
-  const { owner, repo } = getCurrentRepoOrThrow();
+  const { owner, repo } = getCurrentRepoOrThrow(cwd);
   const current = await github.getPrStatus(owner, repo, prNumber);
   const currentState = prInfoToBranchGroupPrState(current);
 
@@ -3896,7 +3910,9 @@ export async function closeGroupPullRequest(
     return { prNumber: current.number, prUrl: current.url, prState: currentState };
   }
 
-  const closed = await github.closePr({ number: prNumber });
+  // Target the same per-project repo for the close call (closePr would
+  // otherwise re-resolve from the process cwd).
+  const closed = await github.closePr({ owner, repo, number: prNumber });
   return {
     prNumber: closed.number,
     prUrl: closed.url,

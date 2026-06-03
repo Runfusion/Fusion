@@ -160,7 +160,7 @@ export function BranchGroupCard({ groupId, projectId }: BranchGroupCardProps) {
         </div>
       )}
 
-      {!collapsed && complete && group.prState !== "merged" && group.prState !== "closed" && (
+      {!collapsed && (complete || group.prState === "open") && group.prState !== "merged" && group.prState !== "closed" && (
         <div className="branch-group-card-actions">
           {group.prUrl && (
             <a className="btn" href={group.prUrl} target="_blank" rel="noreferrer">
@@ -168,7 +168,10 @@ export function BranchGroupCard({ groupId, projectId }: BranchGroupCardProps) {
               <ExternalLink size={12} />
             </a>
           )}
-          {group.autoMerge ? (
+          {/* Promote (Open PR / Merge group) stays gated on completion: a group
+              can only be promoted once every member has landed. Abandon below is
+              reachable whenever the PR is open, even if completion later reverts. */}
+          {complete && (group.autoMerge ? (
             <span className="badge">Auto-merge enabled</span>
           ) : group.prState === "none" ? (
             <button type="button" className="btn" onClick={() => void onPromote()} disabled={promoting}>
@@ -180,7 +183,7 @@ export function BranchGroupCard({ groupId, projectId }: BranchGroupCardProps) {
               {promoting ? <Loader2 size={14} className="spin" /> : <GitPullRequest size={14} />}
               Merge group into main
             </button>
-          )}
+          ))}
           {group.prState === "open" && (
             <button type="button" className="btn btn-danger" onClick={() => void onAbandon()} disabled={abandoning}>
               {abandoning ? <Loader2 size={14} className="spin" /> : null}

@@ -11,7 +11,15 @@ import {
 
 describe("isValidBranchGroupBranchName (Fix #11)", () => {
   it("accepts legitimate branch names", () => {
-    for (const name of ["feature/auth-shared", "fusion/fn-123", "main", "release/v1.2.3", "fn/shared", "a"]) {
+    for (const name of [
+      "feature/auth-shared",
+      "fusion/fn-123",
+      "main",
+      "release/v1.2.3",
+      "release-1.2.3",
+      "fn/shared",
+      "a",
+    ]) {
       expect(isValidBranchGroupBranchName(name)).toBe(true);
     }
   });
@@ -37,6 +45,16 @@ describe("isValidBranchGroupBranchName (Fix #11)", () => {
       "",
       "   ",
       "tail.lock",
+      // git check-ref-format --branch parity (rejected by git):
+      "foo//bar", // consecutive slashes / empty segment
+      "foo/.tmp", // segment starting with '.'
+      ".hidden", // top-level segment starting with '.'
+      "foo.lock/bar", // segment ending in '.lock'
+      "@", // the lone '@'
+      "foo@{bar", // '@{' sequence
+      "foo/", // trailing slash
+      "foo.", // trailing dot
+      "foo..bar", // '..' anywhere
     ]) {
       expect(isValidBranchGroupBranchName(name)).toBe(false);
     }

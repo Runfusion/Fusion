@@ -1,4 +1,4 @@
-import { TaskStore, isBranchGroupComplete, isBranchGroupMemberLanded, type BranchGroup, type Settings } from "@fusion/core";
+import { TaskStore, isBranchGroupComplete, isBranchGroupMemberLanded, filterTasksByBranchGroup, type BranchGroup, type Settings, type Task } from "@fusion/core";
 import { promoteBranchGroup, resolveIntegrationBranch } from "@fusion/engine";
 import { GitHubClient, closeGroupPullRequest } from "@fusion/dashboard";
 import { resolveProject } from "../project-context.js";
@@ -43,8 +43,18 @@ async function getBranchGroupContext(projectName?: string): Promise<BranchGroupC
   return { store, projectPath: process.cwd() };
 }
 
-async function serializeCompletion(store: TaskStore, group: BranchGroup) {
-  const members = await store.listTasksByBranchGroup(group.id);
+/**
+ * Serialize a group's completion. Pass `allTasks` to filter membership in memory
+ * from a single up-front `listTasks` call (list command — avoids the N+1 scan,
+ * mirroring the dashboard list route Fix #8/#9); omit it to fall back to a
+ * per-group `listTasksByBranchGroup` scan (show, where one scan is fine).
+ */
+async function serializeCompletion(store: TaskStore, group: BranchGroup, allTasks?: Task[]) {
+  const members = allTasks
+    ? filterTasksByBranchGroup(allTasks, group, group.id).sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      )
+    : await store.listTasksByBranchGroup(group.id);
   const memberRows = members.map((task) => ({
     taskId: task.id,
     title: task.title ?? task.description,
@@ -69,9 +79,13 @@ export async function runBranchGroupList(projectName?: string) {
     return;
   }
 
+  // Fix #8/#9 parity with the dashboard list route: fetch tasks ONCE and filter
+  // per group in memory rather than one full scan per group (the old N+1).
+  const allTasks = await store.listTasks({ includeArchived: false, slim: true });
+
   console.log();
   for (const group of groups) {
-    const completion = await serializeCompletion(store, group);
+    const completion = await serializeCompletion(store, group, allTasks);
     const prState = group.prState === "none" ? "no PR" : `PR ${group.prState}`;
     const gate = completion.complete ? "complete" : `${completion.landed}/${completion.total}`;
     console.log(`  ${group.id}  ${group.branchName}  [${group.status}] (${gate}) ${prState}`);

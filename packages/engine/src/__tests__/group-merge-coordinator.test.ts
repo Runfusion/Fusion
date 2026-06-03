@@ -481,6 +481,36 @@ describe("promoteBranchGroup PR creation (U5)", () => {
     expect(group.prState).toBe("open");
   });
 
+  it("does NOT reuse a sibling row whose PR is merged/closed — creates a fresh PR instead", async () => {
+    const rootDir = makePrRepo();
+    let group = makeGroup();
+    let createCalls = 0;
+    // Sibling shares the head branch but its PR is already merged — it must not
+    // be relinked onto this group as if it were still open.
+    const sibling = makeGroup({ id: "BG-PR-OTHER", prNumber: 99, prUrl: "https://github.com/x/y/pull/99", prState: "merged" });
+    const result = await promoteBranchGroup({
+      rootDir,
+      groupId: group.id,
+      settings: prSettings,
+      store: makeStore(
+        () => group,
+        (g) => { group = g; },
+        [landedMember("FN-A", group.branchName)],
+        () => sibling,
+      ),
+      createGroupPr: async () => {
+        createCalls += 1;
+        return { prNumber: 7, prUrl: "https://github.com/x/y/pull/7", prState: "open" as const };
+      },
+    });
+
+    expect(result.reason).toBe("promoted");
+    expect(createCalls).toBe(1);
+    expect(group.prNumber).toBe(7);
+    expect(group.prUrl).toBe("https://github.com/x/y/pull/7");
+    expect(group.prState).toBe("open");
+  });
+
   it("does not create a PR for an incomplete group (gate blocks before creation)", async () => {
     const rootDir = makePrRepo();
     let group = makeGroup();
@@ -698,22 +728,40 @@ describe("promoteBranchGroup concurrency lock (Fix #10)", () => {
       },
     } as any;
 
-    // The injected creator yields (await a macrotask) so that, WITHOUT the lock,
-    // a second concurrent call would slip past the prState/status gate (which is
-    // read at the top, before the first call has persisted "open") and create a
-    // second PR. With the per-group lock the second call only begins after the
-    // first persisted its result and short-circuits as already-finalized.
+    // Deterministic overlap gate (no wall-clock sleeps): the injected creator
+    // blocks on a deferred the TEST controls. WITHOUT the lock, a second
+    // concurrent call would slip past the prState/status gate (read at the top,
+    // before the first call has persisted "open") and reach the creator while
+    // the first is still blocked — proving the overlap. With the per-group lock
+    // the second call only begins after the first persisted its result and
+    // short-circuits as already-finalized. We release the gate only after both
+    // promoteBranchGroup calls have been kicked off, so the two attempts are
+    // guaranteed to be in flight simultaneously.
+    let releaseCreator!: () => void;
+    const creatorGate = new Promise<void>((resolve) => {
+      releaseCreator = resolve;
+    });
     const createGroupPr = async () => {
       createCalls += 1;
       const n = createCalls;
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await creatorGate;
       return { prNumber: 40 + n, prUrl: `https://github.com/x/y/pull/${40 + n}`, prState: "open" as const };
     };
 
-    const [a, b] = await Promise.all([
+    const promotions = Promise.all([
       promoteBranchGroup({ rootDir, groupId: group.id, settings: prSettings, store, createGroupPr }),
       promoteBranchGroup({ rootDir, groupId: group.id, settings: prSettings, store, createGroupPr }),
     ]);
+
+    // Let both calls run up to (and block on) the gate, then release them.
+    // Two microtask flushes are enough for the synchronous top-of-function
+    // gate checks and the awaited git work preceding the creator to settle into
+    // the blocked-on-gate state for whichever call(s) reach it.
+    await Promise.resolve();
+    await Promise.resolve();
+    releaseCreator();
+
+    const [a, b] = await promotions;
 
     expect(createCalls).toBe(1);
     expect(group.prNumber).toBe(41);
@@ -880,6 +928,7 @@ describe("reconcileBranchGroupPr (Fix #3 engine primitive)", () => {
     const result = await reconcileBranchGroupPr({
       store,
       group,
+      cwd: "/tmp/proj",
       syncGroupPr: async () => ({
         prNumber: 12,
         prUrl: "https://github.com/x/y/pull/12",
@@ -908,6 +957,7 @@ describe("reconcileBranchGroupPr (Fix #3 engine primitive)", () => {
     const result = await reconcileBranchGroupPr({
       store,
       group,
+      cwd: "/tmp/proj",
       syncGroupPr: async () => ({
         prNumber: 12,
         prUrl: "https://github.com/x/y/pull/12",
@@ -933,6 +983,7 @@ describe("reconcileBranchGroupPr (Fix #3 engine primitive)", () => {
     const result = await reconcileBranchGroupPr({
       store,
       group,
+      cwd: "/tmp/proj",
       syncGroupPr: async () => {
         syncCalls += 1;
         return { prNumber: 0, prUrl: "", prState: "open" as const };
@@ -941,6 +992,39 @@ describe("reconcileBranchGroupPr (Fix #3 engine primitive)", () => {
 
     expect(result.reconciled).toBe(false);
     expect(syncCalls).toBe(0);
+  });
+
+  it("skips the listTasksByBranchGroup scan when fetchMembers is false (read-only reconcile)", async () => {
+    let group = makeGroup();
+    let memberScans = 0;
+    let receivedMembers: unknown[] | undefined;
+    const store = {
+      listTasksByBranchGroup: async () => {
+        memberScans += 1;
+        return [{ id: "FN-A" }];
+      },
+      updateBranchGroup: (_id: string, patch: Record<string, unknown>) => {
+        group = { ...group, ...patch };
+        return group;
+      },
+    } as any;
+
+    const result = await reconcileBranchGroupPr({
+      store,
+      group,
+      cwd: "/tmp/proj",
+      fetchMembers: false,
+      syncGroupPr: async ({ members }) => {
+        receivedMembers = members;
+        return { prNumber: 12, prUrl: "https://github.com/x/y/pull/12", prState: "merged" };
+      },
+    });
+
+    // No wasted task scan, callback still ran with an (empty) member list.
+    expect(memberScans).toBe(0);
+    expect(receivedMembers).toEqual([]);
+    expect(result.reconciled).toBe(true);
+    expect(result.prState).toBe("merged");
   });
 });
 

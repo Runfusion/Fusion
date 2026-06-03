@@ -2216,6 +2216,12 @@ describe("MissionStore", () => {
       const task = await ts.getTask(triaged.taskId!);
 
       expect(task?.branchContext?.assignmentMode).toBe("per-task-derived");
+      // Non-shared members must NOT carry a groupId: stamping a synthetic
+      // `mission:<id>` would let the legacy membership fallback sweep them into a
+      // shared group later created for the same mission.
+      expect(task?.branchContext?.groupId).toBeUndefined();
+      // And no branch group is ensured for a non-shared mission triage.
+      expect(ts.getBranchGroupBySource("mission", mission.id)).toBeNull();
     });
 
     it("uses mission branchStrategy existing branch when branch options are omitted", async () => {

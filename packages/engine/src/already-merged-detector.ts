@@ -84,7 +84,7 @@ export async function findAlreadyMergedTaskCommit(
 
   try {
     if (lineageId) {
-      const lineagePattern = `^Fusion-Task-Lineage: ${lineageId}$`;
+      const lineagePattern = `^Fusion-Task-Lineage: ${escapeRegex(lineageId)}$`;
       const lineageCommand = [
         "git log",
         `--grep=${shellQuote(lineagePattern)}`,
@@ -104,7 +104,7 @@ export async function findAlreadyMergedTaskCommit(
       }
     }
 
-    const trailerPattern = `^Fusion-Task-Id: ${taskId}$`;
+    const trailerPattern = `^Fusion-Task-Id: ${escapeRegex(taskId)}$`;
     const trailerCommand = [
       "git log",
       `--grep=${shellQuote(trailerPattern)}`,
@@ -147,8 +147,9 @@ export async function findAlreadyMergedTaskCommit(
     const ancestryCommand = [
       "git log",
       "--first-parent",
+      "-E",
       "--format=%H%x1f%s%x1f%b%x1e",
-      `--grep=${shellQuote(taskId)}`,
+      `--grep=${shellQuote(escapeRegex(taskId))}`,
       "--max-count=20",
       shellQuote(baseBranch),
     ].join(" ");

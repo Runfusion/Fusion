@@ -1,11 +1,14 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { BranchGroup, BranchGroupPrState, MergeTargetResolution, Settings, Task, TaskStore } from "@fusion/core";
 import { isBranchGroupMemberLanded, resolveEffectiveGroupAutoMerge, resolveTaskMergeTarget } from "@fusion/core";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 
-const execAsync = promisify(exec);
+// argv-based git invocation: arguments are passed as an array (no shell), so
+// branch names like `foo$(touch /tmp/x)` can never trigger command substitution.
+// Defense-in-depth alongside store-level validateBranchGroupBranchName.
+const execFileAsync = promisify(execFile);
 
 export interface BranchGroupMergeRouting {
   branchGroup: BranchGroup;
@@ -58,6 +61,13 @@ export interface GroupPrReconcileResult {
  * this when `prNumber` is set.
  */
 export type SyncGroupPrFn = (input: {
+  /**
+   * Project working directory — used to resolve the owner/repo identity for the
+   * GitHub call. In a multi-project daemon the PROCESS cwd is not the project
+   * dir, so the repo MUST be resolved from this `cwd` rather than `process.cwd()`.
+   * Mirrors {@link CreateGroupPrFn}'s `cwd`.
+   */
+  cwd: string;
   group: BranchGroup;
   members: Task[];
 }) => Promise<GroupPrReconcileResult>;
@@ -164,12 +174,11 @@ export function evaluateBranchGroupPromotion(input: {
 }
 
 async function ensureGroupBranchExists(rootDir: string, branchName: string, startPoint: string): Promise<void> {
-  const quotedBranch = JSON.stringify(`refs/heads/${branchName}`);
   try {
-    await execAsync(`git show-ref --verify --quiet ${quotedBranch}`, { cwd: rootDir });
+    await execFileAsync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], { cwd: rootDir });
     return;
   } catch {
-    await execAsync(`git branch ${JSON.stringify(branchName)} ${JSON.stringify(startPoint)}`, { cwd: rootDir });
+    await execFileAsync("git", ["branch", branchName, startPoint], { cwd: rootDir });
   }
 }
 
@@ -341,12 +350,14 @@ async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<
   const integrationBranch = await resolveIntegrationBranch(input.rootDir, input.settings);
   if (!needsPrRepair) {
     await ensureGroupBranchExists(input.rootDir, group.branchName, integrationBranch);
-    const currentBranch = (await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: input.rootDir })).stdout.trim();
+    const currentBranch = (
+      await execFileAsync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: input.rootDir })
+    ).stdout.trim();
     try {
-      await execAsync(`git checkout ${JSON.stringify(integrationBranch)}`, { cwd: input.rootDir });
-      await execAsync(`git merge --no-ff --no-edit ${JSON.stringify(group.branchName)}`, { cwd: input.rootDir });
+      await execFileAsync("git", ["checkout", integrationBranch], { cwd: input.rootDir });
+      await execFileAsync("git", ["merge", "--no-ff", "--no-edit", group.branchName], { cwd: input.rootDir });
     } finally {
-      await execAsync(`git checkout ${JSON.stringify(currentBranch)}`, { cwd: input.rootDir });
+      await execFileAsync("git", ["checkout", currentBranch], { cwd: input.rootDir });
     }
   }
 
@@ -362,8 +373,12 @@ async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<
     const persistedPr = group.prNumber
       ? { prNumber: group.prNumber, prUrl: group.prUrl }
       : (() => {
+          // Only reuse a sibling row's PR when that PR is still OPEN. A
+          // closed/merged sibling PR must NOT be relinked onto this group (doing
+          // so would persist a terminal PR as if it were live); fall through to
+          // creation instead.
           const existing = input.store.getBranchGroupByBranchName(group.branchName);
-          return existing && existing.id !== group.id && existing.prNumber
+          return existing && existing.id !== group.id && existing.prNumber && existing.prState === "open"
             ? { prNumber: existing.prNumber, prUrl: existing.prUrl }
             : null;
         })();
@@ -444,11 +459,30 @@ export interface ReconcileBranchGroupPrResult {
  * No-op (no write) when the group has no `prNumber`, is not "open", or GitHub still
  * reports it open. The dashboard route that calls this on a schedule/refresh is
  * wired in a separate batch; this is just the cleanly exported engine primitive.
+ *
+ * Members fetch is conditional: a body-rewriting {@link SyncGroupPrFn} needs the
+ * member list, but the dashboard reconcile callback (`reconcileGroupPullRequest`)
+ * only reads PR state via `getPrStatus` and discards `members`. To avoid a wasted
+ * full task scan on that read-only path, pass `fetchMembers: false` — the sync
+ * callback then receives an empty member list. Defaults to `true` so existing
+ * body-rewriting callers are unaffected.
  */
 export async function reconcileBranchGroupPr(input: {
   store: Pick<TaskStore, "listTasksByBranchGroup" | "updateBranchGroup">;
   group: BranchGroup;
+  /**
+   * Project working directory — forwarded to {@link SyncGroupPrFn} so the repo
+   * identity is resolved per-project (not from the process cwd). The caller (the
+   * dashboard route bridge) resolves this from the per-project engine.
+   */
+  cwd: string;
   syncGroupPr: SyncGroupPrFn;
+  /**
+   * When `false`, skip the `listTasksByBranchGroup` scan and invoke `syncGroupPr`
+   * with an empty member list. Safe only when the sync callback ignores members
+   * (read-only reconcile). Defaults to `true`.
+   */
+  fetchMembers?: boolean;
 }): Promise<ReconcileBranchGroupPrResult> {
   const { group } = input;
   if (group.prNumber == null || group.prState !== "open") {
@@ -460,8 +494,8 @@ export async function reconcileBranchGroupPr(input: {
     };
   }
 
-  const members = await input.store.listTasksByBranchGroup(group.id);
-  const reconciled = await input.syncGroupPr({ group, members });
+  const members = input.fetchMembers === false ? [] : await input.store.listTasksByBranchGroup(group.id);
+  const reconciled = await input.syncGroupPr({ cwd: input.cwd, group, members });
 
   if (reconciled.prState === group.prState) {
     return {
@@ -497,6 +531,9 @@ export async function resolveBranchGroupMergeRouting(input: {
   }
 
   const groupId = input.task.branchContext.groupId;
+  if (!groupId) {
+    return null;
+  }
   const branchGroup = input.store.getBranchGroup(groupId);
   if (!branchGroup) {
     return null;

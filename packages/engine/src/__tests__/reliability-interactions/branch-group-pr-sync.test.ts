@@ -71,9 +71,18 @@ describe("U6: group PR sync on member landing", () => {
         return { prNumber: g.prNumber!, prUrl: g.prUrl!, prState: "open" as const };
       });
 
+      // T14: the sync is fire-and-forget; capture the background promise so the
+      // assertions below observe it deterministically rather than racing it.
+      let syncSettled: Promise<void> = Promise.resolve();
       await stageMergeBranch(store, rootDir, second.id, "fnU6SyncB");
-      const merge = await aiMergeTask(store, rootDir, second.id, { syncGroupPr });
+      const merge = await aiMergeTask(store, rootDir, second.id, {
+        syncGroupPr,
+        onGroupPrSyncSettled: (settled) => {
+          syncSettled = settled;
+        },
+      });
       expect(merge.merged).toBe(true);
+      await syncSettled;
 
       // Sync callback fired with the persisted PR number and the group's members.
       expect(syncCalls.length).toBeGreaterThanOrEqual(1);
@@ -129,9 +138,16 @@ describe("U6: group PR sync on member landing", () => {
         throw new Error("github down");
       });
 
+      let syncSettled: Promise<void> = Promise.resolve();
       await stageMergeBranch(store, rootDir, task.id, "fnU6Fail");
-      const merge = await aiMergeTask(store, rootDir, task.id, { syncGroupPr });
+      const merge = await aiMergeTask(store, rootDir, task.id, {
+        syncGroupPr,
+        onGroupPrSyncSettled: (settled) => {
+          syncSettled = settled;
+        },
+      });
       expect(merge.merged).toBe(true);
+      await syncSettled;
       expect(syncGroupPr).toHaveBeenCalled();
       // prState/prNumber unchanged despite the sync failure (retryable next landing).
       expect(store.getBranchGroup(group.id)?.prState).toBe("open");
@@ -162,9 +178,16 @@ describe("U6: group PR sync on member landing", () => {
         prState: "merged" as const,
       }));
 
+      let syncSettled: Promise<void> = Promise.resolve();
       await stageMergeBranch(store, rootDir, task.id, "fnU6Oob");
-      const merge = await aiMergeTask(store, rootDir, task.id, { syncGroupPr });
+      const merge = await aiMergeTask(store, rootDir, task.id, {
+        syncGroupPr,
+        onGroupPrSyncSettled: (settled) => {
+          syncSettled = settled;
+        },
+      });
       expect(merge.merged).toBe(true);
+      await syncSettled;
       // The merger persists the reconciled prState rather than leaving stale "open".
       expect(store.getBranchGroup(group.id)?.prState).toBe("merged");
     } finally {

@@ -52,6 +52,9 @@ function makeStore(group: Record<string, unknown>, members: unknown[]) {
   return {
     getBranchGroup: vi.fn(() => group),
     listBranchGroups: vi.fn(() => [group]),
+    // The list command pre-fetches all tasks once and filters in memory (N+1 fix);
+    // show/abandon still go through the per-group scan.
+    listTasks: vi.fn(async () => members),
     listTasksByBranchGroup: vi.fn(async () => members),
     updateBranchGroup: vi.fn((_id: string, patch: Record<string, unknown>) => ({ ...group, ...patch })),
     getSettings: vi.fn(async () => ({
@@ -175,6 +178,21 @@ describe("branch-group CLI promote (agent-native parity)", () => {
     expect(out).toContain("BG-1");
     expect(out).toContain("feature/shared");
     expect(out).toContain("PR open");
+  });
+
+  it("fetches tasks once for the whole list instead of one scan per group (N+1 fix)", async () => {
+    const groupA = { ...BASE_GROUP, id: "BG-1" };
+    const groupB = { ...BASE_GROUP, id: "BG-2", branchName: "feature/other" };
+    const store = makeStore(groupA, [LANDED_TASK]);
+    store.listBranchGroups = vi.fn(() => [groupA, groupB]);
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "p", projectPath: "/tmp/p", projectName: "p", isRegistered: true, store: store as never,
+    });
+
+    await runBranchGroupList();
+
+    expect(store.listTasks).toHaveBeenCalledTimes(1);
+    expect(store.listTasksByBranchGroup).not.toHaveBeenCalled();
   });
 });
 

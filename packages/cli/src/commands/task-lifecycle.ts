@@ -73,9 +73,16 @@ function commandExitCode(err: unknown): number | undefined {
   return undefined;
 }
 
-async function gitCommandSucceeds(cwd: string, command: string, missingExitCode: number): Promise<boolean> {
+async function gitCommandSucceeds(
+  cwd: string,
+  file: string,
+  args: string[],
+  missingExitCode: number,
+): Promise<boolean> {
   try {
-    await execAsync(command, { cwd, timeout: 30_000 });
+    // No-shell invocation (Fix #11): pass git args as discrete argv entries so a
+    // crafted branch name (e.g. `$(...)`) can never trigger shell interpretation.
+    await execFileAsync(file, args, { cwd, timeout: 30_000 });
     return true;
   } catch (err: unknown) {
     if (commandExitCode(err) === missingExitCode) return false;
@@ -87,14 +94,16 @@ async function pushTaskBranchToOrigin(cwd: string, branch: string): Promise<void
   const localRef = `refs/heads/${branch}`;
   const localBranchExists = await gitCommandSucceeds(
     cwd,
-    `git show-ref --verify --quiet "${localRef}"`,
+    "git",
+    ["show-ref", "--verify", "--quiet", localRef],
     1,
   );
 
   if (!localBranchExists) {
     const remoteBranchExists = await gitCommandSucceeds(
       cwd,
-      `git ls-remote --exit-code --heads origin "${branch}"`,
+      "git",
+      ["ls-remote", "--exit-code", "--heads", "origin", branch],
       2,
     );
 
@@ -254,15 +263,21 @@ function buildGroupPrSyncBody(group: BranchGroup, members: Task[]): string {
  * Out-of-band reconciliation: reads the PR's current state first; if it is no
  * longer open (closed/merged on GitHub), returns the reconciled prState rather
  * than editing or re-opening it, so the caller can persist the corrected state.
+ *
+ * Repo identity is resolved from the per-project `cwd` passed in the callback
+ * input (not the process cwd), so multi-project daemons target the right repo.
  */
 export function syncGroupPrCallback(
   github: Pick<GitHubOperations, "getPrStatus" | "updatePr">,
 ): SyncGroupPrFn {
-  return async ({ group, members }) => {
+  return async ({ cwd, group, members }) => {
     if (group.prNumber == null) {
       throw new Error(`syncGroupPr: group ${group.id} has no persisted prNumber`);
     }
-    const repo = getCurrentRepo();
+    // T4: resolve the repo from the PROJECT cwd, not the process cwd. In a
+    // multi-project daemon the process cwd is not the project dir, so
+    // `getCurrentRepo()` (no arg) would resolve the wrong repository.
+    const repo = getCurrentRepo(cwd);
     if (!repo) {
       throw new Error("syncGroupPr: could not determine repository");
     }
@@ -431,9 +446,10 @@ export async function processPullRequestMergeTask(
   // FN-5782 contract: shared group members promote via branch_groups.branchName
   // integration branch, while non-shared tasks keep per-task PR behavior.
   const isSharedBranchGroupMember = task.branchContext?.assignmentMode === "shared";
+  const sharedGroupId = task.branchContext?.groupId;
   const branchGroup =
-    isSharedBranchGroupMember && task.branchContext
-      ? store.getBranchGroup(task.branchContext.groupId)
+    isSharedBranchGroupMember && sharedGroupId
+      ? store.getBranchGroup(sharedGroupId)
       : null;
 
   if (isSharedBranchGroupMember && branchGroup) {
@@ -460,7 +476,11 @@ export async function processPullRequestMergeTask(
         commentCount: 0,
       };
     } else {
-      groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "all" });
+      // RB#2: only relink an OPEN PR as the live group PR. A closed/merged
+      // terminal PR for this head branch must NOT be reattached (that reintroduces
+      // the terminal-PR reuse bug createGroupPrCallback fixed); treat it as
+      // not-found and fall through to push + createPr for a fresh open PR.
+      groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "open" });
       if (!groupPrInfo) {
         await pushTaskBranchToOrigin(cwd, branchGroup.branchName);
         try {

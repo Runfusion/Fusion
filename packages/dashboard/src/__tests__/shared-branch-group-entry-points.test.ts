@@ -248,6 +248,29 @@ async function REQUEST(app: express.Express, method: string, path: string, body?
   return { status: res.status, body: res.body };
 }
 
+/**
+ * ## Surface Enumeration
+ * Surfaces over which this regression spec proves the shared branch-group
+ * entry-point invariant (shared-mode tasks work on per-task-derived branches
+ * while the shared branch is only a merge target, and group membership identity
+ * is stamped consistently):
+ * - Providers / execution paths (dashboard entry points that create or assign
+ *   branch-group members): planning/subtasks streaming start, new-task creation
+ *   in shared mode, and the assignment paths exercised through
+ *   `store.createTask`, `ensureBranchGroupForSource`,
+ *   `getBranchGroupByBranchName`, `setTaskBranchGroup`, and `updateTask`.
+ * - Assignment modes / data states: shared, project-default, existing,
+ *   custom-new, auto-new, and per-task-derived sources.
+ * - Shared modules/helpers reusing the logic: the branch-name derivation and
+ *   `branchContext.groupId` membership-identity helpers shared with the core
+ *   entry-point spec, so the invariant cannot drift between dashboard and core.
+ * - Breakpoints/platforms: N/A — these are HTTP route/store invariants with no
+ *   UI rendering surface.
+ *
+ * NOTE: two per-task-derived-derivation cases in this file are known
+ * pre-existing failures tracked separately; this enumeration documents the
+ * intended surface coverage and does not alter those assertions.
+ */
 describe("shared branch-group entry-point invariants", () => {
   let store: TaskStore;
 

@@ -5949,6 +5949,13 @@ export interface MergerOptions {
    * the engine never imports the dashboard GitHub client.
    */
   syncGroupPr?: import("./group-merge-coordinator.js").SyncGroupPrFn;
+  /**
+   * Test seam (T14): the group-PR sync is fired-and-forgotten so a hung GitHub
+   * call can never stall merge completion. When provided, the merger hands the
+   * background sync promise here so deterministic tests can `await` it instead of
+   * racing the fire-and-forget. Production callers omit this.
+   */
+  onGroupPrSyncSettled?: (settled: Promise<void>) => void;
 }
 
 function quoteArg(value: string): string {
@@ -7524,29 +7531,39 @@ export async function aiMergeTask(
     // U6 (R6): keep the single managed group PR in sync as members land. Only
     // when the group already has a persisted open PR; the body always reflects
     // the full current member state, so each landing pushes the latest x/N
-    // (idempotent body rewrite — coalesces naturally, no queue). Failures are
-    // non-fatal and retryable on the next landing / explicit refresh.
+    // (idempotent body rewrite — coalesces naturally, no queue).
+    //
+    // T14: this is TRULY best-effort. A hung GitHub call must NOT stall merge
+    // completion, so we fire-and-forget the sync and route any failure to the
+    // existing non-fatal audit event via `.catch`. `cwd` is the project root so
+    // the callback resolves the repo identity per-project (not from process cwd)
+    // in multi-project daemons. The optional `onGroupPrSyncSettled` hands the
+    // background promise to tests so they can await it deterministically.
     if (options.syncGroupPr) {
-      try {
-        const latestGroup = store.getBranchGroup(groupRouting.branchGroup.id);
-        if (latestGroup && latestGroup.prNumber != null && latestGroup.prState === "open") {
-          const members = await store.listTasksByBranchGroup(latestGroup.id);
-          const reconciled = await options.syncGroupPr({
-            group: latestGroup,
-            members,
-          });
-          // Out-of-band reconciliation: if GitHub reports the PR is no longer
-          // open (closed/merged), persist the corrected prState rather than
-          // leaving a stale "open".
-          if (reconciled.prState !== latestGroup.prState) {
-            store.updateBranchGroup(latestGroup.id, {
-              prState: reconciled.prState,
-              prNumber: reconciled.prNumber,
-              prUrl: reconciled.prUrl,
-            });
-          }
+      const syncGroupPr = options.syncGroupPr;
+      const groupId = groupRouting.branchGroup.id;
+      const settled = (async () => {
+        const latestGroup = store.getBranchGroup(groupId);
+        if (!latestGroup || latestGroup.prNumber == null || latestGroup.prState !== "open") {
+          return;
         }
-      } catch (err) {
+        const members = await store.listTasksByBranchGroup(latestGroup.id);
+        const reconciled = await syncGroupPr({
+          cwd: projectRootDir,
+          group: latestGroup,
+          members,
+        });
+        // Out-of-band reconciliation: if GitHub reports the PR is no longer
+        // open (closed/merged), persist the corrected prState rather than
+        // leaving a stale "open".
+        if (reconciled.prState !== latestGroup.prState) {
+          store.updateBranchGroup(latestGroup.id, {
+            prState: reconciled.prState,
+            prNumber: reconciled.prNumber,
+            prUrl: reconciled.prUrl,
+          });
+        }
+      })().catch((err) => {
         // Non-fatal: never fail the merge/landing because PR sync failed.
         try {
           store.recordRunAuditEvent({
@@ -7557,14 +7574,15 @@ export async function aiMergeTask(
             mutationType: "merge:branch-group-pr-sync-failed",
             target: taskId,
             metadata: {
-              groupId: groupRouting.branchGroup.id,
+              groupId,
               error: err instanceof Error ? err.message : String(err),
             },
           });
         } catch {
           // best-effort audit
         }
-      }
+      });
+      options.onGroupPrSyncSettled?.(settled);
     }
   };
   if (groupRouting) {

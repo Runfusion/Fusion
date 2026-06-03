@@ -1901,14 +1901,18 @@ export class ProjectEngine {
             baseBranch: settings.baseBranch,
           };
           const attemptBranchGroupPromotion = async (taskForPromotion: Task | null): Promise<void> => {
-            if (!taskForPromotion || !isSharedBranchGroupMemberIntegration(taskForPromotion)) {
+            // groupId is optional on TaskBranchContext (non-shared members carry none);
+            // isSharedBranchGroupMemberIntegration guarantees it semantically, but capture
+            // it explicitly so TypeScript narrows.
+            const promotionGroupId = taskForPromotion?.branchContext?.groupId;
+            if (!taskForPromotion || !promotionGroupId || !isSharedBranchGroupMemberIntegration(taskForPromotion)) {
               return;
             }
             try {
               await promoteBranchGroup({
                 store,
                 rootDir: cwd,
-                groupId: taskForPromotion.branchContext!.groupId,
+                groupId: promotionGroupId,
                 settings: promotionSettings,
                 createGroupPr: this.options.createGroupPr,
                 recordAudit: async (event) => {
@@ -1938,9 +1942,9 @@ export class ProjectEngine {
                   runId: `merge-${taskId}`,
                   domain: "git",
                   mutationType: "merge:branch-group-promotion-failed",
-                  target: taskForPromotion.branchContext!.groupId,
+                  target: promotionGroupId,
                   metadata: {
-                    groupId: taskForPromotion.branchContext!.groupId,
+                    groupId: promotionGroupId,
                     taskId,
                     error: message,
                   },

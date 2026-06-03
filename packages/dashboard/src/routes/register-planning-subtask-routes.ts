@@ -211,8 +211,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         resolveBranchSelection(branchSelection, branch, baseBranch);
       const { mode: branchMode } = resolveBranchAssignmentContext(branchAssignment);
       // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
-      // resolves members. The group is only created in shared mode below.
-      let planningGroupId = `planning:${sessionId}`;
+      // resolves members. The group is only ensured (and the id set) in shared
+      // mode below. Non-shared members get NO groupId — stamping a synthetic
+      // `planning:<id>` would let the legacy membership fallback sweep them into
+      // a shared group later created for the same planning session.
+      let planningGroupId: string | undefined;
 
       if (branchMode === "shared") {
         const settings = await scopedStore.getSettings();
@@ -232,7 +235,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       const planningBranchContext = {
-        groupId: planningGroupId,
+        ...(planningGroupId ? { groupId: planningGroupId } : {}),
         source: "planning" as const,
         assignmentMode: branchMode,
         inheritedBaseBranch: resolvedBaseBranch,
@@ -1275,8 +1278,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         resolveBranchSelection(branchSelection, branch, baseBranch);
       const { mode: branchMode } = resolveBranchAssignmentContext(branchAssignment);
       // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
-      // resolves members. The group is only created in shared mode below.
-      let planningGroupId = `planning:${planningSessionId}`;
+      // resolves members. The group is only ensured (and the id set) in shared
+      // mode below. Non-shared members get NO groupId — stamping a synthetic
+      // `planning:<id>` would let the legacy membership fallback sweep them into
+      // a shared group later created for the same planning session.
+      let planningGroupId: string | undefined;
 
       if (branchMode === "shared") {
         const settings = await scopedStore.getSettings();
@@ -1296,7 +1302,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       const planningBranchContext = {
-        groupId: planningGroupId,
+        ...(planningGroupId ? { groupId: planningGroupId } : {}),
         source: "planning" as const,
         assignmentMode: branchMode,
         inheritedBaseBranch: resolvedBaseBranch,
