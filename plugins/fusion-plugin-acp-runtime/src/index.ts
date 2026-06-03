@@ -35,7 +35,8 @@ const plugin: FusionPlugin = definePlugin({
     onLoad: (ctx) => {
       const settings = resolveCliSettings(ctx.settings as Record<string, unknown>);
       ctx.logger.info(
-        `ACP Runtime Plugin loaded — binary=${settings.binaryPath} args=[${settings.args.join(" ")}] ` +
+        // Log the arg COUNT, not values — args can carry inline tokens/secrets.
+        `ACP Runtime Plugin loaded — binary=${settings.binaryPath} argCount=${settings.args.length} ` +
           `fsRead=${settings.fsRead} fsWrite=${settings.fsWrite}`,
       );
       // Risk S1: the ACP agent is an untrusted subprocess. Acknowledging the

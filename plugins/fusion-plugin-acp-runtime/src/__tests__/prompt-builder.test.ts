@@ -11,6 +11,10 @@ describe("buildPromptBlocks", () => {
     expect(buildPromptBlocks("")).toEqual([]);
   });
 
+  it("emits no text block for a whitespace-only string", () => {
+    expect(buildPromptBlocks("   \t\n ")).toEqual([]);
+  });
+
   it("appends image blocks after the text block", () => {
     const blocks = buildPromptBlocks("describe this", {
       images: [{ data: "AAAA", mimeType: "image/png", uri: "file:///a.png" }],

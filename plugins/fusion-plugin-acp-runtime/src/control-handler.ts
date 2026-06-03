@@ -191,18 +191,19 @@ export async function runApprovalForCategory(
       }
     }
 
+    // No way to block for a human decision → default-deny BEFORE creating a
+    // request, so we never orphan a perpetually-`pending` record in the store.
+    if (typeof gate.pauseForApproval !== "function") {
+      return "deny";
+    }
+
     const created = (await gate.createApprovalRequest(
       decisionPayload,
       req.args ?? {},
     )) as { id?: string } | undefined;
     const approvalRequestId = typeof created?.id === "string" ? created.id : dedupeKey;
 
-    if (typeof gate.pauseForApproval === "function") {
-      await gate.pauseForApproval({ approvalRequestId, decision: decisionPayload });
-    } else {
-      // No way to block for a human decision → default-deny.
-      return "deny";
-    }
+    await gate.pauseForApproval({ approvalRequestId, decision: decisionPayload });
 
     // Re-read the final status after the pause resolves.
     let finalStatus: ApprovalStatus | undefined;

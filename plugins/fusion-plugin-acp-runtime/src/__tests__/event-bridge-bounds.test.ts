@@ -115,7 +115,16 @@ describe("event bridge bounds: toolCall correlation map (Risk S5)", () => {
     expect(onToolStart).toHaveBeenCalledTimes(flood);
 
     // A terminal update for an EVICTED early id still resolves (orphan path),
-    // proving the map does not retain all ids. The newest ids remain tracked.
+    // but its `tool_call` metadata is gone, so the title falls back to the
+    // generic "tool" — proving the map did NOT retain the earliest ids.
+    bridge.handleSessionUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "flood-0",
+      status: "completed",
+    } as SessionUpdate);
+    expect(onToolEnd).toHaveBeenLastCalledWith("tool", false, undefined);
+
+    // The newest ids remain tracked, so their title is carried forward.
     const newest = flood - 1;
     bridge.handleSessionUpdate({
       sessionUpdate: "tool_call_update",
@@ -134,9 +143,13 @@ describe("event bridge bounds: toolCall correlation map (Risk S5)", () => {
       title: "Sneaky",
       kind: "other",
     } as SessionUpdate);
+    // The update uses a DIFFERENT raw id (backslashes) that normalizes to the
+    // SAME key as the start's forward-slash id. Raw-key storage would miss the
+    // correlation; only normalization makes start↔end line up — proving the
+    // bridge keys on the normalized form, not the raw string.
     bridge.handleSessionUpdate({
       sessionUpdate: "tool_call_update",
-      toolCallId: "../../evil/id",
+      toolCallId: "..\\..\\evil\\id",
       status: "completed",
     } as SessionUpdate);
     // Same normalized key correlates start↔end exactly once.

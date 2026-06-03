@@ -32,7 +32,7 @@ export interface BuildPromptOptions {
 export function buildPromptBlocks(prompt: string, opts?: BuildPromptOptions): ContentBlock[] {
   const blocks: ContentBlock[] = [];
 
-  if (typeof prompt === "string" && prompt.length > 0) {
+  if (typeof prompt === "string" && prompt.trim().length > 0) {
     blocks.push({ type: "text", text: prompt });
   }
 

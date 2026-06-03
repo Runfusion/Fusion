@@ -412,6 +412,12 @@ export async function cancelAcpSession(
  * advertised the `loadSession` capability; otherwise falls back to opening a
  * fresh `session/new`. There is no separate `resume` method in this SDK build —
  * `loadSession` IS the resume path.
+ *
+ * NOTE (v1): engine-driven resume wiring is intentionally deferred — the
+ * runtime adapter always opens a fresh session via `newAcpSession`. This helper
+ * exists (and is unit-tested for the id-sanitization invariant) so resume can be
+ * wired in by passing a `sessionId` through `AgentRuntimeOptions` later without
+ * building new resume machinery.
  */
 export async function loadAcpSession(
   connection: AcpConnection,

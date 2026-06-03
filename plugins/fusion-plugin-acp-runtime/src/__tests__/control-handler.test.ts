@@ -291,13 +291,17 @@ describe("resolvePermission — the security floor", () => {
       expect(selectedId(res)).toBe("reject_once_id");
     });
 
-    it("require-approval with createApprovalRequest but no pauseForApproval → default-deny", async () => {
+    it("require-approval with createApprovalRequest but no pauseForApproval → default-deny (no orphaned request)", async () => {
+      const createApprovalRequest = vi.fn(async () => ({ id: "a" }));
       const gate: PermissionGate = gateWithRules(
         { ...UNRESTRICTED, command_execution: "require-approval" },
-        { createApprovalRequest: vi.fn(async () => ({ id: "a" })) },
+        { createApprovalRequest },
       );
       const res = await resolvePermission(toolCall("execute"), ALL_OPTIONS, gate);
       expect(selectedId(res)).toBe("reject_once_id");
+      // Without a way to pause for a decision, no request is committed to the
+      // store — otherwise it would sit perpetually `pending`.
+      expect(createApprovalRequest).not.toHaveBeenCalled();
     });
   });
 

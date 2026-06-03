@@ -181,5 +181,13 @@ describe("sessionId untrusted-input bounding (U6 / Risk S7)", () => {
     });
     expect(sessionId).not.toContain("/");
     expect(sessionId).not.toContain("..");
+    // The normalized id must also be what is forwarded over the wire to
+    // loadSession() — not the raw traversal string.
+    const loadSessionMock = conn.conn.loadSession as unknown as ReturnType<typeof vi.fn>;
+    expect(loadSessionMock).toHaveBeenCalledTimes(1);
+    const sentId = loadSessionMock.mock.calls[0][0].sessionId as string;
+    expect(sentId).toBe(sessionId);
+    expect(sentId).not.toContain("/");
+    expect(sentId).not.toContain("..");
   });
 });
