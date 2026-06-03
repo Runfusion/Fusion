@@ -1,5 +1,7 @@
 # FN-5048 Test-Speed Audit
 
+> **Refreshed baseline (2026-06-03):** see `docs/test-speed-baseline-2026-06-03.md` for the U1 machine-readable per-file timing snapshot, refreshed top-10 offenders, and the cold-start/transform-cost probe feeding the U8 vitest-4 gate.
+
 ## Scope and method
 - Related baseline context:
   - `docs/test-audit-report.md` (prior workspace test audit baseline)

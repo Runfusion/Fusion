@@ -85,3 +85,17 @@ jobs:
 
       - name: Test (deterministic shard)
         run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4
+
+      # U1 (R4): each shard emits per-file vitest JSON timing reporter output
+      # under .timings/. Upload as an artifact so the timing snapshot can be
+      # refreshed locally/from the default branch via
+      # `node scripts/ci-test-shard.mjs --write-timings`. We do NOT commit the
+      # snapshot from PR branches — refresh is manual/scheduled only.
+      - name: Upload per-shard test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-timings-shard-${{ matrix.shard }}
+          path: .timings/timings-*.json
+          if-no-files-found: ignore
+          retention-days: 14

@@ -27,6 +27,7 @@ import {
   cleanupIsolatedHomePath,
   knownIsolatedHomeBasenames,
   __setCleanupRmSyncForTests,
+  emitModeDecision,
 } from "../test-changed.mjs";
 
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
@@ -825,4 +826,34 @@ test("createIsolatedHomeEnv: records raw/realpath basenames in allow-list set", 
   assert.ok(knownIsolatedHomeBasenames.size >= 1);
 
   cleanupIsolatedHomePath(isolatedHome);
+});
+
+// ---------------------------------------------------------------------------
+// R5: mode-decision telemetry
+// ---------------------------------------------------------------------------
+
+test("emitModeDecision: changed plan reports changed-packages reason + package count", () => {
+  const lines = [];
+  const line = emitModeDecision({ mode: "changed", packages: ["a", "b", "c"] }, (l) => lines.push(l));
+  assert.equal(line, "[test-changed] mode=changed reason=changed-packages packages=3");
+  assert.deepEqual(lines, [line]);
+});
+
+test("emitModeDecision: full plan surfaces the decideExecutionPlan reason, packages=0", () => {
+  assert.equal(
+    emitModeDecision({ mode: "full", reason: "missing-comparison-base" }, () => {}),
+    "[test-changed] mode=full reason=missing-comparison-base packages=0",
+  );
+  assert.equal(
+    emitModeDecision({ mode: "full", reason: "shared-infra-changed" }, () => {}),
+    "[test-changed] mode=full reason=shared-infra-changed packages=0",
+  );
+});
+
+test("emitModeDecision: distinct full reasons round-trip from decideExecutionPlan", () => {
+  const full = decideExecutionPlan({ forceFullSuite: false, comparisonBase: null });
+  assert.equal(emitModeDecision(full, () => {}), "[test-changed] mode=full reason=missing-comparison-base packages=0");
+
+  const forced = decideExecutionPlan({ forceFullSuite: true });
+  assert.equal(emitModeDecision(forced, () => {}), "[test-changed] mode=full reason=forced packages=0");
 });

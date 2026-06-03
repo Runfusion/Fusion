@@ -840,6 +840,25 @@ export function decideExecutionPlan({
   };
 }
 
+/**
+ * R5: Emit one structured line describing why the inner loop chose its mode.
+ * Shape: `[test-changed] mode=<changed|full> reason=<reason> packages=<n>`.
+ *
+ * For changed plans the reason is `changed-packages`; for full plans the
+ * reason mirrors decideExecutionPlan's reason field.
+ *
+ * @param {{ mode: string, reason?: string, packages?: string[] }} plan
+ * @param {(line: string) => void} [log]
+ * @returns {string} the emitted line (for testing)
+ */
+export function emitModeDecision(plan, log = console.log) {
+  const reason = plan.mode === "changed" ? (plan.reason ?? "changed-packages") : (plan.reason ?? "unknown");
+  const packageCount = plan.mode === "changed" ? (plan.packages?.length ?? 0) : 0;
+  const line = `[test-changed] mode=${plan.mode} reason=${reason} packages=${packageCount}`;
+  log(line);
+  return line;
+}
+
 export function normalizeForwardedArgs(argv) {
   const normalized = [];
 
@@ -863,6 +882,26 @@ export function main(argv = process.argv.slice(2)) {
     argv.includes("--no-cache");
 
   const forwardedArgs = normalizeForwardedArgs(argv);
+
+  // Dry mode-decision probe (R5): compute and print the mode/reason line without
+  // running tests. Used by `node scripts/test-changed.mjs --print-mode`.
+  if (argv.includes("--print-mode") || argv.includes("--help")) {
+    const baseBranch = getBaseBranch();
+    const comparisonBase = detectComparisonBase(baseBranch);
+    const changedFiles = comparisonBase ? changedFilesSince(comparisonBase) : null;
+    const workspacePackages = listWorkspacePackageInfos();
+    const packageNameByDir = listWorkspacePackages(workspacePackages);
+    const reverseDependencyMap = buildReverseDependencyMap(workspacePackages);
+    const plan = decideExecutionPlan({
+      forceFullSuite,
+      comparisonBase,
+      changedFiles,
+      packageNameByDir,
+      reverseDependencyMap,
+    });
+    emitModeDecision(plan);
+    return;
+  }
 
   run("pnpm", ["sync:fusion-skill:check"]);
   ensureTestArtifacts(rootDir);
@@ -890,6 +929,9 @@ export function main(argv = process.argv.slice(2)) {
     packageNameByDir,
     reverseDependencyMap,
   });
+
+  // R5: structured mode-decision telemetry so fast-path hit rate is observable.
+  emitModeDecision(plan);
 
   if (plan.mode === "full") {
     if (plan.reason === "missing-comparison-base") {
