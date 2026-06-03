@@ -78,18 +78,44 @@ activity; from there you can:
 The list refreshes on any CE push event and falls back to polling
 `GET /sessions` while any session has a turn in flight.
 
+### Live working output, steering, and the Q&A surface
+
+Turn execution is **detached**: `POST /sessions`, `/answer`, and `/resume`
+return as soon as the session row reflects the request, with the agent turn
+running in the background. While it runs:
+
+- The engine streams **live progress** through the seam's `onProgress` option
+  (thinking/text deltas + tool start/end markers — a host capability any
+  plugin can use). The orchestrator accumulates it per session and
+  `GET /sessions/:id` attaches it as `liveActivity`, so the flow renders a
+  live working pane (pulsing indicator, muted thinking, per-tool ✓/✗ lines).
+- The per-turn timeout is **inactivity-based**: a long but actively-working
+  turn is never killed; only a turn with no progress for `turnIntervalMs` is
+  interrupted (its working trace is preserved in the transcript).
+- On settle, the working trace is persisted into the conversation history as a
+  condensed collapsible "Agent work" block — the transcript keeps the full
+  story: opening message, every past question and answer (option ids rendered
+  as labels), steering turns, working traces, and completion.
+
+**Steering**: alongside any selectable question the user can type free-text
+guidance — attached to their answer as `{value, comment}`, or sent WITHOUT
+answering as `{feedback}`. The stage system prompt instructs the agent to
+treat both as first-class input (incorporate, adjust course, re-ask or
+proceed).
+
 ### Transport
 
 Session updates are **pushed** over the shared `/api/events` SSE stream. The
 orchestrator emits observable events via `ctx.emitEvent` (turn / question /
-completed / error / interrupted); the host forwards them to connected clients as
-project-scoped `plugin:custom` events, and the view subscribes through the
-`subscribePluginEvents` context capability — refetching the session on each event
-(no raw `EventSource`; no deep dashboard import). Client **polling of
-`GET /sessions/:id` remains as a fallback** while a turn is mid-flight, so a
-missed event still converges. Session identity is project-scoped: the `projectId`
-used at `start` is threaded through every later answer/resume/poll so they
-resolve the same store and live handle.
+completed / error / interrupted, plus throttled mid-turn progress); the host
+forwards them to connected clients as project-scoped `plugin:custom` events,
+and the view subscribes through the `subscribePluginEvents` context capability
+— refetching the session on each event (no raw `EventSource`; no deep
+dashboard import). Client **polling of `GET /sessions/:id` remains as a
+fallback** while a turn is mid-flight, so a missed event still converges.
+Session identity is project-scoped: the `projectId` used at `start` is
+threaded through every later answer/resume/poll so they resolve the same store
+and live handle.
 
 ## Work → board bridge
 

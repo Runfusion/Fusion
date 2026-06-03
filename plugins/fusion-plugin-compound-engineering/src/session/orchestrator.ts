@@ -4,6 +4,7 @@ import type {
   CreateInteractiveAiSessionFactory,
   InteractiveAiSession,
   InteractiveAiSessionEvent,
+  InteractiveAiSessionProgressEvent,
   PlanningQuestion,
   PluginContext,
 } from "@fusion/core";
@@ -11,7 +12,7 @@ import { resolveDefaultInstallTargetRoot } from "../skill-installation.js";
 import { getCePipelineStore, type CePipelineStore } from "../sync/pipeline-store.js";
 import { createCeTaskWithLink } from "../sync/ce-task.js";
 import { getDefaultModelId, getDefaultProvider, getEnabledStages } from "../settings.js";
-import type { CeSession, CeSessionStore } from "./session-store.js";
+import type { CeActivityTurn, CeSession, CeSessionStore } from "./session-store.js";
 import { getCeSessionStore } from "./session-store.js";
 import { getStage, type CeStageDefinition } from "./stage-registry.js";
 
@@ -46,8 +47,23 @@ export interface CeDerivedTaskSpec {
   column?: string;
 }
 
-/** Default per-turn timeout. A turn that exceeds this is treated as a stall. */
+/**
+ * Default per-turn INACTIVITY timeout. A turn is treated as stalled only after
+ * this long with NO live progress (thinking/text/tool activity) — a long but
+ * actively-working turn is never killed. Without an onProgress-capable factory
+ * (e.g. scripted test fakes), this degrades to a fixed per-turn timeout.
+ */
 const DEFAULT_TURN_TIMEOUT_MS = 120000;
+
+/** Throttle for progress-driven SSE emits + lastActivityAt bumps. */
+const PROGRESS_EMIT_INTERVAL_MS = 500;
+
+/** Caps so a runaway turn cannot grow the live buffer unbounded. */
+const MAX_ACTIVITY_TURNS = 200;
+const MAX_ACTIVITY_TURN_CHARS = 16000;
+/** Caps for the condensed activity trace persisted into history on settle. */
+const MAX_PERSISTED_ACTIVITY_TURNS = 50;
+const MAX_PERSISTED_ACTIVITY_TURN_CHARS = 4000;
 
 /**
  * Observable event names emitted via `ctx.emitEvent`. The no-silent-loss
@@ -64,15 +80,9 @@ export const CE_EVENTS = {
 
 export class CeTurnTimeoutError extends Error {
   constructor(ms: number) {
-    super(`CE session turn timed out after ${ms}ms`);
+    super(`CE session turn stalled: no agent activity for ${ms}ms`);
     this.name = "CeTurnTimeoutError";
   }
-}
-
-function timeoutAfter(ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    globalThis.setTimeout(() => reject(new CeTurnTimeoutError(ms)), ms).unref?.();
-  });
 }
 
 export interface OrchestratorDeps {
@@ -122,6 +132,12 @@ export function buildStageSystemPrompt(stage: CeStageDefinition): string {
     '  - To ask the user something: {"type":"question","data":{"id":"<unique>","type":"single_select|multi_select|text|confirm","question":"...","options":[{"id":"..","label":".."}]}}',
     '  - When the stage is finished: {"type":"complete","data":{"artifact":"<full markdown document>", ...}}',
     "No markdown fences, no prose outside the JSON object.",
+    "",
+    "The user's reply arrives as {\"type\":\"answer\",\"questionId\":\"...\",\"response\":...}. The response takes one of three shapes:",
+    "  - a direct answer to your question (an option id, array of option ids, text, or boolean),",
+    '  - {"value": <direct answer>, "comment": "<guidance>"} — apply the answer AND incorporate the guidance into how you proceed,',
+    '  - {"feedback": "<guidance only>"} — the user is steering rather than answering. Incorporate the feedback, adjust course, and either re-ask the question (possibly revised) or continue if the feedback resolves it.',
+    "Steering feedback is first-class input: never ignore it, and acknowledge course corrections in your next question or output.",
   ].join("\n");
 }
 
@@ -129,6 +145,12 @@ export interface StartStageOptions {
   /** Opening user message (the stage prompt / topic). */
   openingMessage: string;
   projectId?: string | null;
+  /**
+   * Return as soon as the session row exists, with the turn running in the
+   * background (the route posture — lets clients watch live working output
+   * via push/poll instead of blocking on the whole turn).
+   */
+  detach?: boolean;
 }
 
 /** Result of a single orchestrator step (start / answer / resume). */
@@ -156,6 +178,14 @@ export class CeOrchestrator {
   private readonly turnTimeoutMs: number;
   /** Live in-memory session handles keyed by ce_session id. */
   private readonly live = new Map<string, InteractiveAiSession>();
+  /** Mid-turn working output per session (transient; flushed to history on settle). */
+  private readonly activity = new Map<string, CeActivityTurn[]>();
+  /** Last progress timestamp per session (drives the inactivity watchdog). */
+  private readonly lastProgressAt = new Map<string, number>();
+  /** Last progress-driven emit per session (throttling). */
+  private readonly lastProgressEmitAt = new Map<string, number>();
+  /** Sessions currently REPLAYING history (rehydrate) — progress suppressed. */
+  private readonly replaying = new Set<string>();
 
   constructor(deps: OrchestratorDeps) {
     this.ctx = deps.ctx;
@@ -174,7 +204,10 @@ export class CeOrchestrator {
    * bundled skill (closing the U2/U5 skill-discovery carry-forward). Model
    * provider/model are setting-gated (U9); omitted keys let the host pick defaults.
    */
-  private buildSessionOptions(stage: CeStageDefinition): Parameters<CreateInteractiveAiSessionFactory>[0] {
+  private buildSessionOptions(
+    stage: CeStageDefinition,
+    sessionId: string,
+  ): Parameters<CreateInteractiveAiSessionFactory>[0] {
     const defaultProvider = getDefaultProvider(this.ctx.settings);
     const defaultModelId = getDefaultModelId(this.ctx.settings);
     return {
@@ -183,12 +216,128 @@ export class CeOrchestrator {
       tools: "coding",
       requestedSkillNames: [stage.skillId],
       additionalSkillPaths: resolveStageSkillPaths(),
+      onProgress: (event) => this.handleProgress(sessionId, event),
       ...(defaultProvider ? { defaultProvider } : {}),
       ...(defaultModelId ? { defaultModelId } : {}),
     };
   }
 
-  /** Start a fresh session for a registered stage and run the opening turn. */
+  /**
+   * Live mid-turn visibility. Accumulates streamed deltas into the session's
+   * activity buffer (consecutive deltas of one kind merge into one turn; tool
+   * markers are discrete), pokes the inactivity watchdog, and — throttled —
+   * bumps the persisted liveness anchor and emits an observable turn event so
+   * push clients refetch. Replay (rehydrate) progress is fully suppressed:
+   * it reconstructs context, it is not new work.
+   */
+  private handleProgress(sessionId: string, event: InteractiveAiSessionProgressEvent): void {
+    if (this.replaying.has(sessionId)) return;
+    this.lastProgressAt.set(sessionId, Date.now());
+
+    const turns = this.activity.get(sessionId) ?? [];
+    if (!this.activity.has(sessionId)) this.activity.set(sessionId, turns);
+    const now = new Date().toISOString();
+    if (event.type === "tool") {
+      if (event.phase === "start") {
+        turns.push({ kind: "tool", text: event.name, at: now, done: false });
+      } else {
+        // Mark the most recent still-open tool turn with this name as done.
+        for (let i = turns.length - 1; i >= 0; i--) {
+          const t = turns[i];
+          if (t.kind === "tool" && t.text === event.name && !t.done) {
+            t.done = true;
+            if (event.isError) t.isError = true;
+            break;
+          }
+        }
+      }
+    } else {
+      const last = turns[turns.length - 1];
+      if (last && last.kind === event.type) {
+        if (last.text.length < MAX_ACTIVITY_TURN_CHARS) {
+          last.text = (last.text + event.delta).slice(0, MAX_ACTIVITY_TURN_CHARS);
+        }
+      } else {
+        turns.push({ kind: event.type, text: event.delta.slice(0, MAX_ACTIVITY_TURN_CHARS), at: now });
+      }
+    }
+    // Cap the buffer; drop oldest (the tail is what the user is watching).
+    if (turns.length > MAX_ACTIVITY_TURNS) turns.splice(0, turns.length - MAX_ACTIVITY_TURNS);
+
+    const nowMs = Date.now();
+    if (nowMs - (this.lastProgressEmitAt.get(sessionId) ?? 0) >= PROGRESS_EMIT_INTERVAL_MS) {
+      this.lastProgressEmitAt.set(sessionId, nowMs);
+      // Bump lastActivityAt so the staleness rubric sees an actively-working
+      // turn as alive; emit so push clients refetch (GET attaches the buffer).
+      this.store.update(sessionId, {});
+      this.ctx.emitEvent(CE_EVENTS.turn, { sessionId, kind: "progress" });
+    }
+  }
+
+  /** Read the in-flight working output for a session (route accessor). */
+  getLiveActivity(sessionId: string): CeActivityTurn[] {
+    return this.activity.get(sessionId) ?? [];
+  }
+
+  /**
+   * Persist a condensed copy of the live activity buffer into history (so the
+   * transcript keeps the working trace after the turn settles), then clear it.
+   */
+  private flushActivity(sessionId: string): void {
+    const turns = this.activity.get(sessionId);
+    this.activity.delete(sessionId);
+    if (!turns || turns.length === 0) return;
+    const condensed = turns.slice(-MAX_PERSISTED_ACTIVITY_TURNS).map((t) => ({
+      ...t,
+      text: t.text.slice(0, MAX_PERSISTED_ACTIVITY_TURN_CHARS),
+    }));
+    this.store.appendHistory(sessionId, {
+      role: "agent",
+      text: JSON.stringify({ activity: { turns: condensed } }),
+      at: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Inactivity watchdog: rejects only after `turnTimeoutMs` with NO progress.
+   * Every progress event re-arms it, so a long actively-working turn survives;
+   * with a non-streaming factory it degrades to a fixed per-turn timeout.
+   */
+  private createWatchdog(sessionId: string): { promise: Promise<never>; cancel(): void } {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    this.lastProgressAt.set(sessionId, Date.now());
+    const promise = new Promise<never>((_, reject) => {
+      const check = () => {
+        if (cancelled) return;
+        const elapsed = Date.now() - (this.lastProgressAt.get(sessionId) ?? 0);
+        if (elapsed >= this.turnTimeoutMs) {
+          reject(new CeTurnTimeoutError(this.turnTimeoutMs));
+          return;
+        }
+        timer = globalThis.setTimeout(check, this.turnTimeoutMs - elapsed);
+        timer.unref?.();
+      };
+      check();
+    });
+    return {
+      promise,
+      cancel: () => {
+        cancelled = true;
+        if (timer) clearTimeout(timer);
+      },
+    };
+  }
+
+  /**
+   * Start a fresh session for a registered stage and run the opening turn.
+   *
+   * `detach: true` (the route posture) returns as soon as the session row
+   * exists with the turn running in the background — the client converges via
+   * push/poll and can watch the live working output. Errors during a detached
+   * turn surface through session state (failSession/interruptSession), never
+   * as an unhandled rejection. Validation errors still throw synchronously.
+   */
   async start(stageId: string, opts: StartStageOptions): Promise<CeStepResult> {
     const stage = getStage(stageId);
     if (!stage) throw new Error(`Unknown CE stage: ${stageId}`);
@@ -202,27 +351,46 @@ export class CeOrchestrator {
       );
     }
 
-    let session = this.store.create({
+    const session = this.store.create({
       stage: stageId,
       projectId: opts.projectId ?? null,
       turnIntervalMs: this.turnTimeoutMs,
     });
     this.store.appendHistory(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
 
-    let interactive;
-    try {
-      interactive = await this.factory(this.buildSessionOptions(stage));
-    } catch (err) {
-      return { session: this.failSession(session.id, err), event: undefined };
+    const turn = this.runOpeningTurn(session.id, stage, opts.openingMessage);
+    if (opts.detach) {
+      // runOpeningTurn never rejects (all failures persist into session state).
+      void turn;
+      return { session: this.requireSession(session.id) };
     }
-    this.live.set(session.id, interactive.session);
-    session = this.store.update(session.id, { status: "active" }) ?? session;
-
-    return this.runTurn(session.id, () => interactive.session.prompt(opts.openingMessage), interactive.session);
+    return turn;
   }
 
-  /** Answer the awaiting question and continue the loop. */
-  async answer(sessionId: string, questionId: string, response: unknown): Promise<CeStepResult> {
+  /** Create the live handle and run the opening turn. Never rejects. */
+  private async runOpeningTurn(
+    sessionId: string,
+    stage: CeStageDefinition,
+    openingMessage: string,
+  ): Promise<CeStepResult> {
+    let interactive;
+    try {
+      interactive = await this.factory!(this.buildSessionOptions(stage, sessionId));
+    } catch (err) {
+      return { session: this.failSession(sessionId, err), event: undefined };
+    }
+    this.live.set(sessionId, interactive.session);
+    this.store.update(sessionId, { status: "active" });
+    return this.runTurn(sessionId, () => interactive.session.prompt(openingMessage), interactive.session);
+  }
+
+  /** Answer the awaiting question and continue the loop (detachable like start). */
+  async answer(
+    sessionId: string,
+    questionId: string,
+    response: unknown,
+    opts: { detach?: boolean } = {},
+  ): Promise<CeStepResult> {
     const session = this.requireSession(sessionId);
     if (session.status !== "awaiting_input") {
       throw new Error(`Session ${sessionId} is not awaiting input (status=${session.status}).`);
@@ -247,7 +415,13 @@ export class CeOrchestrator {
       at: new Date().toISOString(),
     });
     this.store.update(sessionId, { status: "active", currentQuestion: null });
-    return this.runTurn(sessionId, () => live.answer(questionId, response), live);
+    const turn = this.runTurn(sessionId, () => live.answer(questionId, response), live);
+    if (opts.detach) {
+      // runTurn never rejects (all failures persist into session state).
+      void turn;
+      return { session: this.requireSession(sessionId) };
+    }
+    return turn;
   }
 
   /**
@@ -268,7 +442,7 @@ export class CeOrchestrator {
    * process), we DO NOT advertise a misleading answerable status: the session is
    * left `interrupted` with a clear error explaining it can't be continued here.
    */
-  async resume(sessionId: string): Promise<CeStepResult> {
+  async resume(sessionId: string, opts: { detach?: boolean } = {}): Promise<CeStepResult> {
     const session = this.requireSession(sessionId);
 
     // Terminal / already-answerable-with-a-live-handle cases need no rehydration.
@@ -305,17 +479,27 @@ export class CeOrchestrator {
       return { session: next };
     }
 
-    try {
-      await this.rehydrate(session);
-    } catch (err) {
-      // Rehydration failed — keep progress, surface the failure, do not advertise
-      // an answerable status we can't back.
-      const next = this.interruptSession(sessionId, err);
+    const rehydration = (async (): Promise<CeStepResult> => {
+      try {
+        await this.rehydrate(session);
+      } catch (err) {
+        // Rehydration failed — keep progress, surface the failure, do not
+        // advertise an answerable status we can't back.
+        return { session: this.interruptSession(sessionId, err) };
+      }
+      const next = this.store.update(sessionId, { status: "awaiting_input", error: null }) ?? session;
+      return { session: next };
+    })();
+
+    if (opts.detach) {
+      // Rehydration replays the conversation against the live model and can be
+      // slow; the route posture marks the session active and converges via
+      // push/poll. The IIFE never rejects (failures persist into state).
+      const next = this.store.update(sessionId, { status: "active", error: null }) ?? session;
+      void rehydration;
       return { session: next };
     }
-
-    const next = this.store.update(sessionId, { status: "awaiting_input", error: null }) ?? session;
-    return { session: next };
+    return rehydration;
   }
 
   /**
@@ -329,7 +513,18 @@ export class CeOrchestrator {
     const stage = getStage(session.stage);
     if (!stage) throw new Error(`Unknown CE stage: ${session.stage}`);
 
-    const interactive = await this.factory!(this.buildSessionOptions(stage));
+    // Replay is side-effect-suppressed — including live progress, which would
+    // otherwise re-stream the old turns' output as if it were new work.
+    this.replaying.add(session.id);
+    try {
+      await this.rehydrateReplay(session, stage);
+    } finally {
+      this.replaying.delete(session.id);
+    }
+  }
+
+  private async rehydrateReplay(session: CeSession, stage: CeStageDefinition): Promise<void> {
+    const interactive = await this.factory!(this.buildSessionOptions(stage, session.id));
     const live = interactive.session;
 
     // Walk the recorded user turns in order. The FIRST user turn is the opening
@@ -407,21 +602,24 @@ export class CeOrchestrator {
     live: InteractiveAiSession,
   ): Promise<CeStepResult> {
     let event: InteractiveAiSessionEvent;
+    const watchdog = this.createWatchdog(sessionId);
     try {
       event = await Promise.race([
         (async () => {
           await driver();
           return live.nextEvent();
         })(),
-        timeoutAfter(this.turnTimeoutMs),
+        watchdog.promise,
       ]);
     } catch (err) {
       // Timeout or driver throw → auto-save as interrupted (progress preserved)
       // and emit an observable event. Never silent loss.
+      watchdog.cancel();
       const session = this.interruptSession(sessionId, err);
       this.disposeLive(sessionId);
       return { session, event: { type: "error", data: { message: session.error ?? "interrupted", cause: err } } };
     }
+    watchdog.cancel();
 
     const session = this.applyEvent(sessionId, event);
     if (event.type === "complete" || event.type === "error") {
@@ -438,6 +636,11 @@ export class CeOrchestrator {
 
   /** Persist a seam event onto the session row + emit the matching observable event. */
   private applyEvent(sessionId: string, event: InteractiveAiSessionEvent): CeSession {
+    // The turn settled — persist its working trace into history (so the
+    // transcript keeps it) BEFORE the settling record, then clear the buffer.
+    if (event.type === "question" || event.type === "complete" || event.type === "error") {
+      this.flushActivity(sessionId);
+    }
     switch (event.type) {
       case "thinking":
       case "text": {
@@ -547,6 +750,9 @@ export class CeOrchestrator {
 
   /** Persist `interrupted` with progress preserved and emit. */
   private interruptSession(sessionId: string, cause: unknown): CeSession {
+    // Keep the working trace: an interrupted turn's output is exactly what the
+    // user needs to see to understand where it stopped.
+    this.flushActivity(sessionId);
     const message = cause instanceof Error ? cause.message : String(cause);
     const s =
       this.store.update(sessionId, { status: "interrupted", error: message }) ?? this.requireSession(sessionId);
@@ -606,5 +812,8 @@ export class CeOrchestrator {
       }
       this.live.delete(sessionId);
     }
+    this.activity.delete(sessionId);
+    this.lastProgressAt.delete(sessionId);
+    this.lastProgressEmitAt.delete(sessionId);
   }
 }

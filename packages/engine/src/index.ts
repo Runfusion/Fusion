@@ -161,6 +161,34 @@ const _createInteractiveAiSessionAdapter: CreateInteractiveAiSessionFactory = (
         // discovery dirs make those skills actually visible to the loader.
         ...(opts.requestedSkillNames?.length ? { skills: opts.requestedSkillNames } : {}),
         ...(opts.additionalSkillPaths?.length ? { additionalSkillPaths: opts.additionalSkillPaths } : {}),
+        // Live mid-turn visibility: stream thinking/text deltas and tool
+        // start/end markers to the caller's onProgress while the pull-based
+        // nextEvent() is still pending. Callback errors must never break the
+        // agent turn.
+        ...(opts.onProgress
+          ? {
+              onThinking: (delta: string) => {
+                try {
+                  opts.onProgress!({ type: "thinking", delta });
+                } catch { /* consumer error must not break the turn */ }
+              },
+              onText: (delta: string) => {
+                try {
+                  opts.onProgress!({ type: "text", delta });
+                } catch { /* consumer error must not break the turn */ }
+              },
+              onToolStart: (name: string) => {
+                try {
+                  opts.onProgress!({ type: "tool", name, phase: "start" });
+                } catch { /* consumer error must not break the turn */ }
+              },
+              onToolEnd: (name: string, isError: boolean) => {
+                try {
+                  opts.onProgress!({ type: "tool", name, phase: "end", isError });
+                } catch { /* consumer error must not break the turn */ }
+              },
+            }
+          : {}),
       }),
     options,
   );

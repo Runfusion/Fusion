@@ -33,12 +33,32 @@ export interface CeConversationTurn {
   at: string;
 }
 
+/**
+ * One line of live agent activity (mid-turn working output): an accumulated
+ * thinking/text block or a discrete tool execution marker.
+ */
+export interface CeActivityTurn {
+  kind: "thinking" | "text" | "tool";
+  text: string;
+  at: string;
+  /** Tool turns: execution finished. */
+  done?: boolean;
+  /** Tool turns: execution finished with an error. */
+  isError?: boolean;
+}
+
 export interface CeSession {
   id: string;
   stage: string;
   status: CeSessionStatus;
   currentQuestion: PlanningQuestion | null;
   conversationHistory: CeConversationTurn[];
+  /**
+   * TRANSIENT: in-flight working output for the current turn, attached by the
+   * GET-session route from the orchestrator's in-memory buffer. Never persisted
+   * to the row; absent when no turn is running (or in another process).
+   */
+  liveActivity?: CeActivityTurn[];
   projectId: string | null;
   artifactPath: string | null;
   error: string | null;

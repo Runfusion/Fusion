@@ -7,16 +7,12 @@ import { asString } from "./route-helpers.js";
 /**
  * Session routes (U5): start / answer / resume / get-session-state.
  *
- * STREAMING TRANSPORT — HONEST STATEMENT.
- * Plugin routes return `{status, body}` with no native server-push; the loader
- * `emitEvent` is a logging stub, so there is no real plugin→client push path
- * today. v1 therefore uses POLLING: clients poll `GET /sessions/:id` for the
- * current persisted state (status, currentQuestion, conversationHistory). This
- * keeps U5 plugin-local and shippable and uses NO raw EventSource. The
- * orchestrator still emits observable events via `ctx.emitEvent` (a no-silent-
- * loss requirement); turning those into true client push needs a host
- * event-publish seam (publish-to-`/api/events`) — that is a carry-forward for
- * U6/follow-up, not faked here as push.
+ * TRANSPORT. Turn execution is DETACHED: start/answer/resume return as soon
+ * as the session row reflects the request, with the agent turn running in the
+ * background. Clients converge via the `plugin:custom` SSE push (the
+ * orchestrator emits throttled progress events) with `GET /sessions/:id`
+ * polling as the fallback — that GET also attaches the in-flight working
+ * output (`liveActivity`) so the user can watch the agent work mid-turn.
  */
 
 interface RouteRequest {
@@ -62,8 +58,9 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
           const result = await orch.start(stageId, {
             openingMessage,
             projectId: asString(body?.projectId) ?? null,
+            detach: true,
           });
-          return { status: 201, body: { session: result.session, event: result.event } };
+          return { status: 201, body: { session: result.session } };
         } catch (err) {
           return { status: 400, body: { error: err instanceof Error ? err.message : String(err) } };
         }
@@ -83,8 +80,10 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
 
         const orch = getOrchestrator(ctx);
         try {
-          const result = await orch.answer(id, questionId, (body as Record<string, unknown>).response);
-          return { status: 200, body: { session: result.session, event: result.event } };
+          const result = await orch.answer(id, questionId, (body as Record<string, unknown>).response, {
+            detach: true,
+          });
+          return { status: 200, body: { session: result.session } };
         } catch (err) {
           return { status: 409, body: { error: err instanceof Error ? err.message : String(err) } };
         }
@@ -98,7 +97,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
         const id = (req as RouteRequest).params.id;
         const orch = getOrchestrator(ctx);
         try {
-          const result = await orch.resume(id);
+          const result = await orch.resume(id, { detach: true });
           return { status: 200, body: { session: result.session } };
         } catch (err) {
           return { status: 404, body: { error: err instanceof Error ? err.message : String(err) } };
@@ -108,12 +107,18 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
     {
       method: "GET",
       path: "/sessions/:id",
-      description: "Get current persisted session state (polling transport).",
+      description: "Get current session state, including in-flight working output (liveActivity).",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const id = (req as RouteRequest).params.id;
         const session = getCeSessionStore(ctx).get(id);
         if (!session) return { status: 404, body: { error: `Session ${id} not found` } };
-        return { status: 200, body: { session } };
+        // Attach the orchestrator's transient mid-turn buffer so a polling
+        // client can watch the agent work while the turn runs.
+        const liveActivity = getOrchestrator(ctx).getLiveActivity(id);
+        return {
+          status: 200,
+          body: { session: liveActivity.length > 0 ? { ...session, liveActivity } : session },
+        };
       },
     },
     {

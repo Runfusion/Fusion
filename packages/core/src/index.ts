@@ -528,6 +528,7 @@ export type {
   AiSessionResult,
   CreateAiSessionFactory,
   CreateInteractiveAiSessionOptions,
+  InteractiveAiSessionProgressEvent,
   InteractiveAiSessionEvent,
   InteractiveAiSession,
   CreateInteractiveAiSessionResult,

@@ -164,7 +164,28 @@ export interface CreateInteractiveAiSessionOptions {
    * `requestedSkillNames` are actually discoverable in the live session.
    */
   additionalSkillPaths?: string[];
+  /**
+   * Live progress callback, invoked WHILE a turn runs (the pull-based
+   * `nextEvent()` only resolves once the turn settles). Receives streaming
+   * thinking/text deltas and tool start/end markers so a caller can surface
+   * the agent's work in real time. Optional; ignored by factories that cannot
+   * stream. Must not throw — implementations should swallow callback errors.
+   */
+  onProgress?: (event: InteractiveAiSessionProgressEvent) => void;
 }
+
+/**
+ * A live progress event emitted mid-turn via
+ * {@link CreateInteractiveAiSessionOptions.onProgress}.
+ *
+ * - `thinking` / `text`: an incremental output DELTA (not a snapshot) — the
+ *   consumer accumulates.
+ * - `tool`: a discrete tool execution start/end marker.
+ */
+export type InteractiveAiSessionProgressEvent =
+  | { type: "thinking"; delta: string }
+  | { type: "text"; delta: string }
+  | { type: "tool"; name: string; phase: "start" | "end"; isError?: boolean };
 
 /**
  * A single event pulled from an interactive AI session.

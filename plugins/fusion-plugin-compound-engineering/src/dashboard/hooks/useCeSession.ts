@@ -70,14 +70,15 @@ export interface UseCeSessionResult {
 }
 
 /**
- * Drive a single CE stage session through its lifecycle over the polling
- * routes: start → (poll while a turn runs) → render question → submit answer →
+ * Drive a single CE stage session through its lifecycle: start → watch the
+ * live working output while the turn runs → render question → submit answer →
  * continue → completed/error; resume an interrupted/error session.
  *
- * The session routes already run one turn synchronously per request and return
- * the post-turn state, so the common path settles immediately. Polling is the
- * fallback for a session left `active`/`launching` (e.g. recovered from another
- * process), honoring U5's client-polling transport.
+ * Turn execution is DETACHED server-side: start/answer/resume return as soon
+ * as the session row reflects the request (status `active`), and the client
+ * converges via push (subscribe) with polling as the fallback. While a turn is
+ * mid-flight, GET attaches `liveActivity` — the agent's streaming working
+ * output — so each refetch updates the live pane.
  */
 export function useCeSession(options: UseCeSessionOptions = {}): UseCeSessionResult {
   const transport = options.transport ?? defaultTransport;

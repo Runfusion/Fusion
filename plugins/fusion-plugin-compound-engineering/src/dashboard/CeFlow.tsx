@@ -1,15 +1,24 @@
 import { useMemo, useState } from "react";
 import type { PlanningQuestion } from "@fusion/core";
-import type { CeConversationTurn, CeSession } from "../session/session-store.js";
+import type { CeActivityTurn, CeConversationTurn, CeSession } from "../session/session-store.js";
 import { canRenderRichly } from "./ce-question-support.js";
 
 /**
  * CeFlow — the interactive renderer (U6).
  *
  * Renders the four interaction types CeFlow expresses richly (`text`,
- * `single_select`, `multi_select`, `confirm`) plus streamed `thinking`/`text`
- * history. When a turn carries a question CeFlow CANNOT express, it degrades to
- * a plain chat view that is VISUALLY MARKED as degraded (R8/AE1) — the stage is
+ * `single_select`, `multi_select`, `confirm`), the FULL conversation so far —
+ * past questions and answers as proper chat bubbles, the agent's working
+ * traces (thinking / tool activity) as collapsible blocks — and, while a turn
+ * runs, a LIVE working pane streaming the agent's current output.
+ *
+ * Steering: alongside any selectable question the user can attach free-text
+ * guidance to their answer (`{value, comment}`) or send guidance WITHOUT
+ * answering (`{feedback}`) — the stage system prompt instructs the agent to
+ * treat both as first-class input.
+ *
+ * When a turn carries a question CeFlow CANNOT express, it degrades to a
+ * plain chat view that is VISUALLY MARKED as degraded (R8/AE1) — the stage is
  * still completable there via a free-text answer.
  *
  * It does NOT import `PlanningModeModal` or any dashboard internal (KTD3 scope
@@ -28,27 +37,180 @@ export interface CeFlowProps {
   onClose?: () => void;
 }
 
-/** Render the agent/user conversation so far (streamed thinking/text). */
+// ── Transcript parsing ───────────────────────────────────────────────────────
+
+type DisplayItem =
+  | { kind: "chat"; role: "user" | "agent"; text: string }
+  | { kind: "qa-question"; question: PlanningQuestion }
+  | { kind: "qa-answer"; question?: PlanningQuestion; response: unknown }
+  | { kind: "activity"; turns: CeActivityTurn[] }
+  | { kind: "complete" };
+
+function tryParseJson(text: string): Record<string, unknown> | undefined {
+  if (!text.startsWith("{")) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Turn the persisted history (chat turns + serialized control records) into
+ * renderable items. Control records are no longer hidden — questions, answers,
+ * and working traces are the conversation.
+ */
+function parseHistory(history: CeConversationTurn[]): DisplayItem[] {
+  const items: DisplayItem[] = [];
+  const questionsById = new Map<string, PlanningQuestion>();
+  for (const turn of history) {
+    const obj = tryParseJson(turn.text);
+    if (obj && turn.role === "agent") {
+      const q = obj.question as PlanningQuestion | undefined;
+      if (q && typeof q.id === "string" && typeof q.question === "string") {
+        questionsById.set(q.id, q);
+        items.push({ kind: "qa-question", question: q });
+        continue;
+      }
+      const activity = obj.activity as { turns?: CeActivityTurn[] } | undefined;
+      if (activity && Array.isArray(activity.turns)) {
+        items.push({ kind: "activity", turns: activity.turns });
+        continue;
+      }
+      if (obj.complete === true) {
+        items.push({ kind: "complete" });
+        continue;
+      }
+    }
+    if (obj && turn.role === "user" && "answer" in obj) {
+      items.push({
+        kind: "qa-answer",
+        question: typeof obj.questionId === "string" ? questionsById.get(obj.questionId) : undefined,
+        response: obj.answer,
+      });
+      continue;
+    }
+    items.push({ kind: "chat", role: turn.role, text: turn.text });
+  }
+  return items;
+}
+
+/** Human-readable rendering of an answer payload (option ids → labels). */
+function formatAnswer(
+  response: unknown,
+  question?: PlanningQuestion,
+): { main: string; comment?: string; feedbackOnly?: boolean } {
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    const r = response as Record<string, unknown>;
+    if (typeof r.feedback === "string") return { main: r.feedback, feedbackOnly: true };
+    if ("value" in r) {
+      const base = formatAnswer(r.value, question);
+      return {
+        main: base.main,
+        ...(typeof r.comment === "string" && r.comment ? { comment: r.comment } : {}),
+      };
+    }
+  }
+  const label = (id: unknown): string =>
+    question?.options?.find((o) => o.id === id)?.label ?? String(id);
+  if (Array.isArray(response)) return { main: response.map(label).join(", ") };
+  if (typeof response === "boolean") return { main: response ? "Yes" : "No" };
+  return { main: label(response) };
+}
+
+// ── Working-trace rendering ──────────────────────────────────────────────────
+
+/** Render thinking/text/tool activity turns (persisted trace or live pane). */
+function ActivityTrace({ turns, live }: { turns: CeActivityTurn[]; live?: boolean }) {
+  return (
+    <div
+      className={`ce-flow-activity${live ? " is-live" : ""}`}
+      data-testid={live ? "ce-flow-live-activity" : "ce-flow-activity-trace"}
+    >
+      {turns.map((t, i) =>
+        t.kind === "tool" ? (
+          <div
+            key={i}
+            className={`ce-activity-tool${t.isError ? " is-error" : t.done ? " is-done" : " is-running"}`}
+            data-testid="ce-activity-tool"
+          >
+            <span className="ce-activity-tool-marker">{t.isError ? "✗" : t.done ? "✓" : "▸"}</span> {t.text}
+          </div>
+        ) : (
+          <pre key={i} className={`ce-activity-block ce-activity-${t.kind}`} data-kind={t.kind}>
+            {t.text}
+          </pre>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** Render the full conversation: chat, Q&A bubbles, and working traces. */
 function Transcript({ history }: { history: CeConversationTurn[] }) {
-  const visible = history.filter((t) => {
-    // Hide serialized question/answer/complete markers from the readable
-    // transcript; they are control records, not chat.
-    if (t.role === "agent" && /^\{"(question|complete)"/.test(t.text)) return false;
-    if (t.role === "user" && /^\{"answer"/.test(t.text)) return false;
-    return true;
-  });
-  if (visible.length === 0) return null;
+  const items = useMemo(() => parseHistory(history), [history]);
+  if (items.length === 0) return null;
   return (
     <ol className="ce-flow-transcript" data-testid="ce-flow-transcript">
-      {visible.map((turn, i) => (
-        <li key={i} className={`ce-flow-turn ce-flow-turn-${turn.role}`} data-role={turn.role}>
-          <span className="ce-flow-turn-role">{turn.role === "agent" ? "Agent" : "You"}</span>
-          <span className="ce-flow-turn-text">{turn.text}</span>
-        </li>
-      ))}
+      {items.map((item, i) => {
+        switch (item.kind) {
+          case "chat":
+            return (
+              <li key={i} className={`ce-flow-turn ce-flow-turn-${item.role}`} data-role={item.role}>
+                <span className="ce-flow-turn-role">{item.role === "agent" ? "Agent" : "You"}</span>
+                <span className="ce-flow-turn-text">{item.text}</span>
+              </li>
+            );
+          case "qa-question":
+            return (
+              <li key={i} className="ce-flow-turn ce-flow-turn-agent ce-flow-turn-question" data-testid="ce-flow-past-question">
+                <span className="ce-flow-turn-role">Agent asked</span>
+                <span className="ce-flow-turn-text">{item.question.question}</span>
+              </li>
+            );
+          case "qa-answer": {
+            const a = formatAnswer(item.response, item.question);
+            return (
+              <li
+                key={i}
+                className={`ce-flow-turn ce-flow-turn-user ce-flow-turn-answer${a.feedbackOnly ? " is-steering" : ""}`}
+                data-testid="ce-flow-past-answer"
+              >
+                <span className="ce-flow-turn-role">{a.feedbackOnly ? "You steered" : "You answered"}</span>
+                <span className="ce-flow-turn-text">{a.main}</span>
+                {a.comment ? (
+                  <span className="ce-flow-turn-comment" data-testid="ce-flow-answer-comment">
+                    {a.comment}
+                  </span>
+                ) : null}
+              </li>
+            );
+          }
+          case "activity":
+            return (
+              <li key={i} className="ce-flow-turn ce-flow-turn-agent ce-flow-turn-activity">
+                <details className="ce-flow-activity-details" data-testid="ce-flow-activity">
+                  <summary>Agent work ({item.turns.length} step{item.turns.length === 1 ? "" : "s"})</summary>
+                  <ActivityTrace turns={item.turns} />
+                </details>
+              </li>
+            );
+          case "complete":
+            return (
+              <li key={i} className="ce-flow-turn ce-flow-turn-agent ce-flow-turn-done">
+                <span className="ce-flow-turn-text">✓ Stage complete</span>
+              </li>
+            );
+        }
+      })}
     </ol>
   );
 }
+
+// ── Question rendering ───────────────────────────────────────────────────────
 
 /** Rich renderer for a single supported question type. */
 function RichQuestion({
@@ -228,11 +390,85 @@ function DegradedQuestion({
   );
 }
 
+/**
+ * Question panel with steering. Wraps the rich/degraded renderer and adds the
+ * guidance channel for selectable questions:
+ * - guidance typed + an option clicked  → `{value, comment}` (answer + steer),
+ * - guidance typed + "Send guidance"    → `{feedback}` (steer without answering).
+ * Free-text questions skip the extra box — their answer field already takes
+ * the user's own words.
+ */
+function QuestionPanel({
+  question,
+  disabled,
+  onAnswer,
+}: {
+  question: PlanningQuestion;
+  disabled: boolean;
+  onAnswer: (questionId: string, response: unknown) => void;
+}) {
+  const [guidance, setGuidance] = useState("");
+  const rich = canRenderRichly(question);
+
+  const submitWithGuidance = (questionId: string, response: unknown) => {
+    const comment = guidance.trim();
+    onAnswer(questionId, comment ? { value: response, comment } : response);
+    setGuidance("");
+  };
+
+  const sendGuidanceOnly = () => {
+    const feedback = guidance.trim();
+    if (!feedback) return;
+    onAnswer(question.id, { feedback });
+    setGuidance("");
+  };
+
+  const showGuidance = rich && question.type !== "text";
+
+  return (
+    <div className="ce-flow-question-panel">
+      {rich ? (
+        <RichQuestion question={question} disabled={disabled} onAnswer={submitWithGuidance} />
+      ) : (
+        <DegradedQuestion question={question} disabled={disabled} onAnswer={onAnswer} />
+      )}
+      {showGuidance ? (
+        <div className="ce-flow-guidance" data-testid="ce-flow-guidance">
+          <label className="ce-flow-guidance-label" htmlFor="ce-flow-guidance-input">
+            Steer in your own words (optional — attached to your answer, or sent on its own)
+          </label>
+          <div className="ce-flow-guidance-row">
+            <textarea
+              id="ce-flow-guidance-input"
+              data-testid="ce-flow-guidance-input"
+              value={guidance}
+              disabled={disabled}
+              onChange={(e) => setGuidance(e.target.value)}
+              rows={2}
+              placeholder="e.g. focus on the mobile flow, skip auth for now…"
+            />
+            <button
+              type="button"
+              className="btn"
+              data-testid="ce-flow-guidance-send"
+              disabled={disabled || !guidance.trim()}
+              onClick={sendGuidanceOnly}
+            >
+              Send guidance
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Flow surface ─────────────────────────────────────────────────────────────
+
 export function CeFlow(props: CeFlowProps) {
   const { session, busy, error, onAnswer, onResume, onClose } = props;
 
   const question = session?.currentQuestion ?? undefined;
-  const rich = useMemo(() => (question ? canRenderRichly(question) : false), [question]);
 
   if (!session) {
     return (
@@ -250,6 +486,7 @@ export function CeFlow(props: CeFlowProps) {
   const status = session.status;
   const settledTerminal = status === "completed";
   const recoverable = status === "interrupted" || status === "error";
+  const working = status === "active" || status === "launching";
 
   return (
     <div className="ce-flow card" data-testid="ce-flow" data-status={status} data-stage={session.stage}>
@@ -267,10 +504,16 @@ export function CeFlow(props: CeFlowProps) {
 
       <Transcript history={session.conversationHistory} />
 
-      {busy && status !== "awaiting_input" ? (
-        <p className="ce-flow-thinking" data-testid="ce-flow-thinking">
-          Thinking…
-        </p>
+      {working || (busy && status !== "awaiting_input") ? (
+        <div className="ce-flow-working" data-testid="ce-flow-thinking">
+          <p className="ce-flow-working-label">
+            <span className="ce-flow-pulse" aria-hidden="true" />
+            Agent working…
+          </p>
+          {session.liveActivity && session.liveActivity.length > 0 ? (
+            <ActivityTrace turns={session.liveActivity} live />
+          ) : null}
+        </div>
       ) : null}
 
       {error ? (
@@ -280,11 +523,7 @@ export function CeFlow(props: CeFlowProps) {
       ) : null}
 
       {status === "awaiting_input" && question ? (
-        rich ? (
-          <RichQuestion question={question} disabled={Boolean(busy)} onAnswer={onAnswer} />
-        ) : (
-          <DegradedQuestion question={question} disabled={Boolean(busy)} onAnswer={onAnswer} />
-        )
+        <QuestionPanel question={question} disabled={Boolean(busy)} onAnswer={onAnswer} />
       ) : null}
 
       {recoverable ? (
