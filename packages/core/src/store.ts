@@ -4434,6 +4434,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return existing;
     }
 
+    // `branch_groups.branchName` is globally UNIQUE — a branch is represented by
+    // exactly one open group. If another source already owns an open group for
+    // this branch, reuse it rather than calling createBranchGroup and violating
+    // the UNIQUE constraint. Without this, two missions whose shared base resolves
+    // to the same branch (e.g. "main") collide: the throw escapes triageFeature
+    // and is swallowed by its callers, silently stranding "defined" features.
+    const existingByBranch = this.getBranchGroupByBranchName(init.branchName);
+    if (existingByBranch) {
+      return existingByBranch;
+    }
+
     return this.createBranchGroup({
       sourceType,
       sourceId,

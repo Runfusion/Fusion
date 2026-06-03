@@ -406,7 +406,13 @@ describe("GET /api/system-stats", () => {
     });
 
     mockExecFile.mockImplementation((...callArgs: unknown[]) => {
+      const [file] = callArgs as [string];
       const cb = callArgs[callArgs.length - 1] as (err: unknown, stdout?: string, stderr?: string) => void;
+      if (file === "ps") {
+        // comm filter pass: all candidates are real node processes.
+        cb(null, `  ${process.pid} node\n  111 /opt/homebrew/bin/node\n  222 node\n`, "");
+        return;
+      }
       cb(null, `${process.pid}\n111\n222\n`, "");
     });
 
@@ -584,10 +590,18 @@ describe("POST /api/kill-vitest", () => {
 
   it("kills all matched vitest pids except the current dashboard process", async () => {
     const store = createMockStore();
-    mockExecFile.mockImplementationOnce((...callArgs: unknown[]) => {
-      const cb = callArgs[callArgs.length - 1] as (err: unknown, stdout?: string, stderr?: string) => void;
-      cb(null, `${process.pid}\n1001\n1002\nnot-a-pid\n`, "");
-    });
+    mockExecFile
+      .mockImplementationOnce((...callArgs: unknown[]) => {
+        // pgrep -f vitest: matches the dashboard itself, two node processes,
+        // a wrapper shell whose command line mentions vitest, and garbage.
+        const cb = callArgs[callArgs.length - 1] as (err: unknown, stdout?: string, stderr?: string) => void;
+        cb(null, `${process.pid}\n1001\n1002\n1003\nnot-a-pid\n`, "");
+      })
+      .mockImplementationOnce((...callArgs: unknown[]) => {
+        // ps comm filter: 1003 is a zsh wrapper and must be spared.
+        const cb = callArgs[callArgs.length - 1] as (err: unknown, stdout?: string, stderr?: string) => void;
+        cb(null, `  ${process.pid} node\n  1001 /opt/homebrew/bin/node\n  1002 node\n  1003 zsh\n`, "");
+      });
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
 
     const res = await REQUEST(buildApp(store), "POST", "/api/kill-vitest");
