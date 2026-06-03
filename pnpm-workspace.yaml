@@ -1,3 +1,17 @@
+ignoredBuiltDependencies:
+  - '@google/genai'
+  - better-sqlite3
+  - cpu-features
+  - electron-winstaller
+  - keytar
+  - sharp
+  - ssh2
+onlyBuiltDependencies:
+  - '@homebridge/node-pty-prebuilt-multiarch'
+  - electron
+  - esbuild
+  - koffi
+  - protobufjs
 packages:
   - "packages/*"
   - "plugins/examples/*"

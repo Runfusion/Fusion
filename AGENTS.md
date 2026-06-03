@@ -93,6 +93,10 @@ pnpm verify:workspace
 - Motivating incidents: streamed-response spacing was fixed three times before the invariant was fully covered (FN-5787, FN-5789, FN-5803), the usage "Show hidden" button regressed three times before broader coverage stuck (FN-5797, FN-5875, FN-5919), and the auto-merge blank-dashboard fix re-opened after desktop-only coverage missed mobile Android (FN-5751).
 - If a regression test only proves the exact reported case, it is incomplete; extend it until the invariant holds across all known surfaces.
 
+### STANDING DIRECTIVE: Buttons Are Frozen
+
+- Buttons Are Frozen (2026-05-13): when touching dashboard button styling or behavior, preserve the existing sizing/layout contract unless the task explicitly changes it and the affected docs/tests are updated together.
+
 ### Port 4040 is Reserved
 
 Never kill processes on port 4040 and never start test servers on 4040. Use `--port 0` or another free port.
@@ -161,6 +165,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 - `./docs/architecture.md` — lifecycle invariants, self-healing rules, reliability interaction backstops, run-audit internals.
 - `./docs/testing.md` — full testing lanes, worker fanout guidance, test taxonomy, and file organization.
 - `./docs/dashboard-guide.md` — dashboard behavior and **Styling Guide** details. User-facing docs for Merge Advance Notice and Smart Pull live here.
+- `./docs/PLUGIN_AUTHORING.md` — plugin authoring guide, lifecycle hooks, routes, tools, and dashboard-extension surfaces.
 - `./docs/agents.md` — pi extension scope, coordination tools, checkout leasing, runtime config.
 - `./docs/settings-reference.md` — model-selection hierarchy, mock provider mode, token budget precedence, presets.
 - `./docs/storage.md` — hybrid storage model details.

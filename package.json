@@ -60,6 +60,15 @@
     "dist:desktop:win": "pnpm --filter @fusion/desktop build && pnpm --filter @fusion/desktop dist:win"
   },
   "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@google/genai",
+      "better-sqlite3",
+      "cpu-features",
+      "electron-winstaller",
+      "keytar",
+      "sharp",
+      "ssh2"
+    ],
     "onlyBuiltDependencies": [
       "@homebridge/node-pty-prebuilt-multiarch",
       "electron",

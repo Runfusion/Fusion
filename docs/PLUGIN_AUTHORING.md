@@ -5,7 +5,6 @@ A comprehensive guide to creating Fusion plugins that extend the task board with
 ## Table of Contents
 
 1. [Getting Started](#1-getting-started)
-   - [External authoring guide](./plugins/external-authoring.md)
 2. [Plugin Manifest Reference](#2-plugin-manifest-reference)
 3. [Plugin Settings Schema](#3-plugin-settings-schema)
 4. [Available Hooks and Signatures](#4-available-hooks-and-signatures)
@@ -25,6 +24,8 @@ A comprehensive guide to creating Fusion plugins that extend the task board with
 18. [Plugin Binary Setup Hooks](#18-plugin-binary-setup-hooks)
 
 ---
+
+See also: [External Plugin Authoring guide](./plugins/external-authoring.md)
 
 ## 1. Getting Started
 

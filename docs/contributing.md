@@ -19,6 +19,20 @@ Thanks for contributing to Fusion.
 pnpm install --frozen-lockfile
 ```
 
+### pnpm build-scripts approval policy
+
+pnpm v10 blocks dependency `preinstall`/`install`/`postinstall` scripts by default and reports any uncategorized packages in the install output.
+
+When a package is flagged:
+
+- Approve it only when this repo genuinely needs that dependency's build script for supported runtime/build paths.
+- Ignore it when prebuilt artifacts, optional-native fallbacks, or release-only tooling make the script unnecessary for normal workspace verification.
+- Record every reviewed package in exactly one bucket: `onlyBuiltDependencies` or `ignoredBuiltDependencies`.
+
+Fusion currently keeps the reviewed decision set documented in the root `package.json` `pnpm` block and mirrored in `pnpm-workspace.yaml`, which is the effective pnpm v10.33 install-time config read by `pnpm install`.
+
+The guard test `node --test scripts/__tests__/pnpm-build-scripts-config.test.mjs` (also covered by `pnpm test:scripts`) enforces that the reviewed dependencies stay categorized, deduped, and non-overlapping so the ignored-build-scripts warning cannot silently return.
+
 ### Build workspace packages
 
 ```bash
