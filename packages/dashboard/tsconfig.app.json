@@ -8,7 +8,11 @@
     "noEmit": true,
     "types": ["vitest/globals", "@testing-library/jest-dom", "node", "vite/client"],
     "paths": {
-      "node-pty": ["./src/types/node-pty/index.d.ts"]
+      "node-pty": ["./src/types/node-pty/index.d.ts"],
+      "@fusion/dashboard/app/components/TaskCard": ["./app/components/TaskCard.tsx"],
+      "@fusion/dashboard/app/plugins/types": ["./app/plugins/types.ts"],
+      "@fusion/dashboard/app/utils/projectStorage": ["./app/utils/projectStorage.ts"],
+      "@fusion/dashboard/app/utils/taskStuck": ["./app/utils/taskStuck.ts"]
     }
   },
   "include": ["app/**/*"],

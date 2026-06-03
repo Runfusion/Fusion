@@ -44,3 +44,9 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
 
   export function TaskCard(props: TaskCardProps): ReactElement;
 }
+
+declare module "@fusion/dashboard/app/utils/projectStorage" {
+  export function getScopedItem(baseKey: string, projectId?: string): string | null;
+  export function setScopedItem(baseKey: string, value: string, projectId?: string): void;
+  export function removeScopedItem(baseKey: string, projectId?: string): void;
+}

@@ -124,6 +124,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),
+      "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
+      "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
+      "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
+      "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),
       "@fusion-plugin-examples/dependency-graph/dashboard-view": resolve(
         __dirname,
         "../../plugins/fusion-plugin-dependency-graph/src/dashboard-view.tsx",

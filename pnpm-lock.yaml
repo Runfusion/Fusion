@@ -648,9 +648,6 @@ importers:
       '@fusion/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@fusion/dashboard':
-        specifier: workspace:*
-        version: link:../../packages/dashboard
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -719,9 +716,6 @@ importers:
       '@fusion/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@fusion/dashboard':
-        specifier: workspace:*
-        version: link:../../packages/dashboard
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
@@ -891,9 +885,6 @@ importers:
       '@fusion/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@fusion/dashboard':
-        specifier: workspace:*
-        version: link:../../packages/dashboard
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk

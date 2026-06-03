@@ -8,7 +8,8 @@
     "paths": {
       "@fusion/dashboard/app/components/TaskCard": ["./src/dashboard-interop.d.ts"],
       "@fusion/dashboard/app/utils/taskStuck": ["./src/dashboard-interop.d.ts"],
-      "@fusion/dashboard/app/plugins/types": ["./src/dashboard-interop.d.ts"]
+      "@fusion/dashboard/app/plugins/types": ["./src/dashboard-interop.d.ts"],
+      "@fusion/dashboard/app/utils/projectStorage": ["./src/dashboard-interop.d.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts"],

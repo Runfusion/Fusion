@@ -224,6 +224,10 @@ export default defineConfig({
       "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
       "@fusion/plugin-sdk": resolve(__dirname, "../plugin-sdk/src/index.ts"),
       "@fusion/test-utils": resolve(__dirname, "../core/src/__test-utils__/workspace.ts"),
+      "@fusion/dashboard/app/components/TaskCard": resolve(__dirname, "app/components/TaskCard.tsx"),
+      "@fusion/dashboard/app/plugins/types": resolve(__dirname, "app/plugins/types.ts"),
+      "@fusion/dashboard/app/utils/projectStorage": resolve(__dirname, "app/utils/projectStorage.ts"),
+      "@fusion/dashboard/app/utils/taskStuck": resolve(__dirname, "app/utils/taskStuck.ts"),
       "@fusion-plugin-examples/droid-runtime/probe": resolve(
         __dirname,
         "../../plugins/fusion-plugin-droid-runtime/src/probe.ts",

@@ -29,7 +29,6 @@
   },
   "dependencies": {
     "@fusion/core": "workspace:*",
-    "@fusion/dashboard": "workspace:*",
     "@fusion/plugin-sdk": "workspace:*",
     "express": "^5.1.0",
     "lucide-react": "^0.542.0",
