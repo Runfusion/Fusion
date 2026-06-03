@@ -26,6 +26,7 @@ import {
 import { spawnAgent, captureStderr, forceKill, unregisterProcess } from "./process-manager.js";
 import { createEventBridge } from "./event-bridge.js";
 import { resolvePermission } from "./control-handler.js";
+import { boundIdentifier } from "./sanitize.js";
 import type { AcpCallbacks, PermissionGate } from "./types.js";
 
 /** Default bound for the `initialize` handshake. */
@@ -317,7 +318,10 @@ export async function newAcpSession(
   opts: { cwd: string },
 ): Promise<NewAcpSessionResult> {
   const res = await connection.conn.newSession({ cwd: opts.cwd, mcpServers: [] });
-  return { sessionId: res.sessionId, modes: res.modes ?? undefined };
+  // `sessionId` is agent-supplied/untrusted (U6/Risk S7): bound its length and
+  // strip path separators / NUL bytes before it is stored on the session or
+  // could ever touch a resume-file path.
+  return { sessionId: boundIdentifier(res.sessionId), modes: res.modes ?? undefined };
 }
 
 /**
@@ -365,12 +369,15 @@ export async function loadAcpSession(
   opts: { sessionId: string; cwd: string },
 ): Promise<NewAcpSessionResult> {
   if (readsLoadSession(connection)) {
+    // Bound the (agent-originated) resume id before it is used as a protocol /
+    // potential path component (U6/Risk S7).
+    const safeId = boundIdentifier(opts.sessionId);
     const res = await connection.conn.loadSession({
-      sessionId: opts.sessionId,
+      sessionId: safeId,
       cwd: opts.cwd,
       mcpServers: [],
     });
-    return { sessionId: opts.sessionId, modes: res.modes ?? undefined };
+    return { sessionId: safeId, modes: res.modes ?? undefined };
   }
   return newAcpSession(connection, { cwd: opts.cwd });
 }

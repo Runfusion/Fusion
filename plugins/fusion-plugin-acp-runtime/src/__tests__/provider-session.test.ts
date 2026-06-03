@@ -140,3 +140,46 @@ describe("session driving helpers", () => {
     }
   });
 });
+
+describe("sessionId untrusted-input bounding (U6 / Risk S7)", () => {
+  // A fake connection that returns a malicious agent-supplied sessionId so we can
+  // assert the helper normalizes it before it is ever stored / path-joined —
+  // without spawning a real agent.
+  function fakeConn(sessionId: string, opts?: { loadSession?: boolean }): AcpConnection {
+    const conn = {
+      newSession: vi.fn(async () => ({ sessionId, modes: undefined })),
+      loadSession: vi.fn(async () => ({ modes: undefined })),
+    };
+    return {
+      conn: conn as unknown as AcpConnection["conn"],
+      child: {} as AcpConnection["child"],
+      agentCapabilities: { loadSession: opts?.loadSession === true },
+      authMethods: [],
+      stderr: () => "",
+      dispose: () => {},
+    };
+  }
+
+  it("normalizes a sessionId containing path separators from session/new", async () => {
+    const conn = fakeConn("../../etc/passwd");
+    const { sessionId } = await newAcpSession(conn, { cwd: process.cwd() });
+    expect(sessionId).not.toContain("/");
+    expect(sessionId).not.toContain("..");
+  });
+
+  it("bounds an absurdly long agent sessionId", async () => {
+    const conn = fakeConn("s".repeat(100_000));
+    const { sessionId } = await newAcpSession(conn, { cwd: process.cwd() });
+    expect(sessionId.length).toBeLessThanOrEqual(256);
+  });
+
+  it("normalizes the resume id passed to loadAcpSession", async () => {
+    const conn = fakeConn("ignored", { loadSession: true });
+    const { sessionId } = await loadAcpSession(conn, {
+      sessionId: "../../../root/.ssh/id_rsa",
+      cwd: process.cwd(),
+    });
+    expect(sessionId).not.toContain("/");
+    expect(sessionId).not.toContain("..");
+  });
+});

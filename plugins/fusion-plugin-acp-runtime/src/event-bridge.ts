@@ -24,6 +24,29 @@ import type {
 } from "@agentclientprotocol/sdk";
 import type { AcpCallbacks } from "./types.js";
 import { toolDisplayName, normalizeToolArgs } from "./tool-mapping.js";
+import { stripControlSequences, boundString, boundIdentifier } from "./sanitize.js";
+
+// --- U6 untrusted-input bounds (Risk S5) -----------------------------------
+//
+// The agent is untrusted input. The high inactivity ceiling (KTD4) does NOT
+// bound an *actively* flooding agent, so the bridge caps what it forwards.
+
+/**
+ * Per-turn cumulative cap (chars) on forwarded text+thinking. Once exceeded, the
+ * bridge stops forwarding further text/thinking and emits ONE truncation flag.
+ * Cleared by `reset()` at the start of each prompt turn. ~5M chars ≈ 5 MB.
+ */
+export const PER_TURN_OUTPUT_CAP_CHARS = 5_000_000;
+
+/** Per-chunk cap (chars) applied to a single content chunk before forwarding. */
+export const PER_CHUNK_CAP_CHARS = 64_000;
+
+/**
+ * Max number of distinct `toolCallId`s tracked in the correlation map. A flooding
+ * agent supplying unbounded unique ids must not grow the map without limit —
+ * oldest entries are evicted once the cap is exceeded (bounded memory).
+ */
+export const TOOL_CALL_MAP_CAP = 1000;
 
 /** Tracked metadata for an in-flight tool call, keyed by `toolCallId`. */
 interface TrackedToolCall {
@@ -69,60 +92,122 @@ function normalizeStreamingDelta(previousText: string, nextDelta: string): strin
 function formatPlan(entries: PlanEntry[]): string {
   const lines = entries.map((entry) => {
     const status = typeof entry.status === "string" ? entry.status : "pending";
-    const text = typeof entry.content === "string" ? entry.content : "";
-    return `- [${status}] ${text}`;
+    // Plan text is agent-supplied — sanitize control/ANSI before it reaches a
+    // log/UI line (Risk S7) and bound its length (Risk S5).
+    const rawText = typeof entry.content === "string" ? entry.content : "";
+    const text = boundString(stripControlSequences(rawText), PER_CHUNK_CAP_CHARS);
+    return `- [${stripControlSequences(status)}] ${text}`;
   });
   return `Plan:\n${lines.join("\n")}`;
 }
 
 export function createEventBridge(callbacks: AcpCallbacks): EventBridge {
-  // Start/end correlation across `tool_call` → `tool_call_update`.
+  // Start/end correlation across `tool_call` → `tool_call_update`. Insertion
+  // order is preserved by Map, so the oldest key is the first iterator entry —
+  // used for FIFO eviction once TOOL_CALL_MAP_CAP is exceeded (Risk S5).
   const toolCalls = new Map<string, TrackedToolCall>();
   // Running text/thinking accumulators for delta-space repair across chunks.
   let textSoFar = "";
   let thinkingSoFar = "";
+  // Cumulative chars forwarded (text+thinking) this turn (Risk S5).
+  let cumulativeOutputChars = 0;
+  // Whether the per-turn cap was hit and the single flag line already emitted.
+  let outputCapFlagged = false;
 
   function reset(): void {
     toolCalls.clear();
     textSoFar = "";
     thinkingSoFar = "";
+    cumulativeOutputChars = 0;
+    outputCapFlagged = false;
+  }
+
+  /**
+   * Track a bounded toolCallId for use as a Map key, evicting the oldest entry
+   * when the cap is exceeded so a flood of unique ids cannot grow memory without
+   * limit. Returns the normalized id, or `undefined` when the id is empty.
+   */
+  function setTracked(rawId: string, tracked: TrackedToolCall): string | undefined {
+    const id = boundIdentifier(rawId);
+    if (id === "") return undefined;
+    // Re-insert moves an existing key to the tail (refresh recency); for a new
+    // key, evict the oldest first so size stays bounded.
+    if (!toolCalls.has(id) && toolCalls.size >= TOOL_CALL_MAP_CAP) {
+      const oldest = toolCalls.keys().next().value;
+      if (oldest !== undefined) toolCalls.delete(oldest);
+    }
+    toolCalls.set(id, tracked);
+    return id;
+  }
+
+  /**
+   * Forward one sanitized + bounded delta through `emit`, honoring the per-turn
+   * cumulative cap. Once the cap is exceeded, forwarding stops and a single
+   * truncation flag line is emitted via `onThinking`.
+   */
+  function forwardBounded(
+    raw: string,
+    prior: string,
+    emit: (delta: string) => void,
+  ): string {
+    if (outputCapFlagged) return prior;
+    if (cumulativeOutputChars >= PER_TURN_OUTPUT_CAP_CHARS) {
+      outputCapFlagged = true;
+      callbacks.onThinking?.(
+        "[output truncated: per-turn limit reached — further agent output suppressed]",
+      );
+      return prior;
+    }
+    // Sanitize control/ANSI (Risk S7) and bound the single chunk (Risk S5).
+    const sanitized = boundString(stripControlSequences(raw), PER_CHUNK_CAP_CHARS);
+    if (sanitized === "") return prior;
+    const delta = normalizeStreamingDelta(prior, sanitized);
+    cumulativeOutputChars += delta.length;
+    emit(delta);
+    return prior + delta;
   }
 
   function emitText(content: ContentBlock | undefined): void {
     const raw = extractText(content);
     if (raw === undefined || raw === "") return;
-    const delta = normalizeStreamingDelta(textSoFar, raw);
-    textSoFar += delta;
-    callbacks.onText?.(delta);
+    textSoFar = forwardBounded(raw, textSoFar, (delta) => callbacks.onText?.(delta));
   }
 
   function emitThinking(content: ContentBlock | undefined): void {
     const raw = extractText(content);
     if (raw === undefined || raw === "") return;
-    const delta = normalizeStreamingDelta(thinkingSoFar, raw);
-    thinkingSoFar += delta;
-    callbacks.onThinking?.(delta);
+    thinkingSoFar = forwardBounded(raw, thinkingSoFar, (delta) =>
+      callbacks.onThinking?.(delta),
+    );
+  }
+
+  /** Sanitize an agent-supplied tool title before it reaches a callback/log (S7). */
+  function safeTitle(title: string | null | undefined): string | null | undefined {
+    if (typeof title !== "string") return title;
+    return boundString(stripControlSequences(title), PER_CHUNK_CAP_CHARS);
   }
 
   function handleToolCall(update: Extract<SessionUpdate, { sessionUpdate: "tool_call" }>): void {
-    const id = update.toolCallId;
-    if (typeof id !== "string" || id === "") return;
-    toolCalls.set(id, { title: update.title, kind: update.kind, ended: false });
-    const name = toolDisplayName({ title: update.title, kind: update.kind });
+    if (typeof update.toolCallId !== "string") return;
+    const title = safeTitle(update.title);
+    const id = setTracked(update.toolCallId, { title, kind: update.kind, ended: false });
+    if (id === undefined) return;
+    const name = toolDisplayName({ title, kind: update.kind });
     callbacks.onToolStart?.(name, normalizeToolArgs(update.rawInput));
   }
 
   function handleToolCallUpdate(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>,
   ): void {
-    const id = update.toolCallId;
-    if (typeof id !== "string" || id === "") return;
+    if (typeof update.toolCallId !== "string") return;
+    const id = boundIdentifier(update.toolCallId);
+    if (id === "") return;
     const tracked = toolCalls.get(id) ?? { ended: false };
     // Carry forward title/kind from the prior `tool_call` when this update omits
     // them (a partial update may only set status/output).
-    if (update.title != null) tracked.title = update.title;
+    if (update.title != null) tracked.title = safeTitle(update.title);
     if (update.kind != null) tracked.kind = update.kind;
-    toolCalls.set(id, tracked);
+    setTracked(update.toolCallId, tracked);
 
     const status = update.status;
     if (status !== "completed" && status !== "failed") {
