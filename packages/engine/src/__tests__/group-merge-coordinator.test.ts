@@ -11,6 +11,7 @@ import {
   promoteBranchGroup,
   resolveBranchGroupMergeRouting,
 } from "../group-merge-coordinator.js";
+import { ProjectEngine } from "../project-engine.js";
 
 const dirs: string[] = [];
 
@@ -333,6 +334,102 @@ describe("promoteBranchGroup", () => {
 
     expect(second.reason).toBe("already-finalized");
     expect(audits.filter((event) => event.mutationType === "merge:branch-group-promoted")).toHaveLength(1);
+  });
+});
+
+describe("ProjectEngine.promoteBranchGroup (U4 bridge method)", () => {
+  // The dashboard promote route calls engine.promoteBranchGroup AS A METHOD.
+  // These tests invoke the REAL method body bound to a minimal engine-shaped
+  // context, proving it resolves store/rootDir/settings and delegates to the
+  // standalone coordinator — without standing up a full ProjectEngine.
+  const realPromote = ProjectEngine.prototype.promoteBranchGroup;
+
+  function makeGroup(overrides?: Partial<any>) {
+    return {
+      id: "BG-1",
+      sourceType: "planning",
+      sourceId: "planning:x",
+      branchName: "fusion/groups/planning-x",
+      autoMerge: true,
+      prState: "none",
+      status: "open",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...overrides,
+    };
+  }
+
+  const landedMember = (id: string, branchName: string) => ({
+    id,
+    column: "done" as const,
+    mergeDetails: {
+      mergeConfirmed: true,
+      mergeTargetSource: "branch-group-integration",
+      mergeTargetBranch: branchName,
+    },
+  });
+
+  function makeEngineContext(rootDir: string, store: unknown, settings: Record<string, unknown>) {
+    const getSettingsCalls = { count: 0 };
+    const fullStore = {
+      ...(store as Record<string, unknown>),
+      getSettings: async () => {
+        getSettingsCalls.count += 1;
+        return settings;
+      },
+      recordRunAuditEvent: async () => {},
+    };
+    return {
+      context: {
+        runtime: { getTaskStore: () => fullStore },
+        config: { workingDirectory: rootDir },
+      },
+      getSettingsCalls,
+    };
+  }
+
+  it("resolves settings via the store and delegates to the coordinator (promotes a complete group)", async () => {
+    const rootDir = makeRepo();
+    execSync("git checkout -b fusion/groups/planning-x", { cwd: rootDir });
+    execSync("echo promoted > group.txt", { cwd: rootDir, shell: "/bin/bash" });
+    execSync("git add group.txt && git commit -m group", { cwd: rootDir, shell: "/bin/bash" });
+    execSync("git checkout main", { cwd: rootDir });
+
+    let group = makeGroup();
+    const { context, getSettingsCalls } = makeEngineContext(rootDir, {
+      getBranchGroup: () => group,
+      listTasksByBranchGroup: async () => [landedMember("FN-A", group.branchName)],
+      updateBranchGroup: (_id: string, patch: Partial<typeof group>) => {
+        group = { ...group, ...patch };
+        return group;
+      },
+    }, { autoMerge: true, globalPause: false, enginePaused: false, mergeStrategy: "direct", baseBranch: "main" });
+
+    const result = await realPromote.call(context as any, "BG-1");
+
+    expect(getSettingsCalls.count).toBe(1);
+    expect(result.promoted).toBe(true);
+    expect(result.reason).toBe("promoted");
+    expect(group.status).toBe("finalized");
+    expect(execSync("git show main:group.txt", { cwd: rootDir, encoding: "utf8" })).toContain("promoted");
+  });
+
+  it("rejects an incomplete group at the coordinator completion gate", async () => {
+    const rootDir = makeRepo();
+    const group = makeGroup();
+    const { context } = makeEngineContext(rootDir, {
+      getBranchGroup: () => group,
+      listTasksByBranchGroup: async () => [{ id: "FN-A", column: "todo" }],
+      updateBranchGroup: () => {
+        throw new Error("should not update an incomplete group");
+      },
+    }, { autoMerge: true, globalPause: false, enginePaused: false, mergeStrategy: "direct", baseBranch: "main" });
+
+    const result = await realPromote.call(context as any, "BG-1");
+
+    expect(result.reason).toBe("incomplete");
+    expect(result.promoted).toBe(false);
+    expect(() => execSync("git show main:group.txt", { cwd: rootDir })).toThrow();
   });
 });
 

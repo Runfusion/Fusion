@@ -27,7 +27,7 @@ import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
 import { aiMergeTask, sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge } from "./merger-ai.js";
-import { promoteBranchGroup } from "./group-merge-coordinator.js";
+import { promoteBranchGroup, type BranchGroupPromotionResult } from "./group-merge-coordinator.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
 import { runtimeLog } from "./logger.js";
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
@@ -922,6 +922,45 @@ export class ProjectEngine {
    */
   enqueueMerge(taskId: string): boolean {
     return this.internalEnqueueMerge(taskId);
+  }
+
+  /**
+   * Promote a shared branch group: merge the group branch into the integration
+   * branch and reconcile `prState` (completion-gated, idempotent).
+   *
+   * This is the single engine bridge method (KTD5) that the dashboard promote
+   * route reaches via the `promoteBranchGroup` option callback in
+   * `register-integrated-routers.ts`. It resolves the same store / rootDir /
+   * settings context the internal auto-promotion path (`attemptBranchGroupPromotion`)
+   * uses and delegates to the standalone coordinator function — no logic is
+   * duplicated here.
+   */
+  async promoteBranchGroup(groupId: string): Promise<BranchGroupPromotionResult> {
+    const store = this.runtime.getTaskStore();
+    const cwd = this.config.workingDirectory;
+    const settings = await store.getSettings();
+    const promotionSettings = {
+      autoMerge: settings.autoMerge,
+      globalPause: settings.globalPause,
+      enginePaused: settings.enginePaused,
+      mergeStrategy: settings.mergeStrategy,
+      integrationBranch: settings.integrationBranch,
+      baseBranch: settings.baseBranch,
+    };
+    return await promoteBranchGroup({
+      store,
+      rootDir: cwd,
+      groupId,
+      settings: promotionSettings,
+      recordAudit: async (event) => {
+        await store.recordRunAuditEvent({
+          domain: event.domain as any,
+          mutationType: event.mutationType,
+          target: event.target,
+          metadata: event.metadata,
+        } as any);
+      },
+    });
   }
 
   /**

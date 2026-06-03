@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { BranchGroup, Task, TaskStore } from "@fusion/core";
-import { evaluateBranchGroupCompletion } from "@fusion/engine";
+import { evaluateBranchGroupCompletion, ProjectEngine } from "@fusion/engine";
 import { createApiRoutes } from "../routes.js";
 import { request as REQUEST } from "../test-request.js";
 
@@ -96,18 +96,72 @@ describe("branch group routes", () => {
     expect((store.setTaskBranchGroup as unknown as ReturnType<typeof vi.fn>)).toHaveBeenLastCalledWith("FN-1", null);
   });
 
-  it("promotes completed groups and rejects incomplete groups", async () => {
-    const promoteBranchGroup = vi.fn(async () => ({ prNumber: 202, prUrl: "https://example/pr/202", prState: "open", status: "open" }));
-    const completeTasks = [buildTask("FN-1", group.id, true), buildTask("FN-2", group.id, true)];
-    let app = buildApp(createStore(group, completeTasks), promoteBranchGroup);
-    let res = await REQUEST(app, "POST", "/api/branch-groups/BG-1/promote", JSON.stringify({}), { "content-type": "application/json" });
-    expect(res.status).toBe(200);
-    expect(promoteBranchGroup).toHaveBeenCalledWith("BG-1");
-    expect(res.body.prNumber).toBe(202);
+  it("exposes a real, callable promoteBranchGroup method on the engine class (regression guard)", () => {
+    // U4: the dashboard promote route reaches engine.promoteBranchGroup AS A
+    // METHOD. If that method ever goes missing from ProjectEngine, this fails
+    // instead of being silently masked by a route-level vi.fn mock.
+    expect(typeof (ProjectEngine.prototype as { promoteBranchGroup?: unknown }).promoteBranchGroup).toBe("function");
+  });
 
-    app = buildApp(createStore(group, tasks), promoteBranchGroup);
-    res = await REQUEST(app, "POST", "/api/branch-groups/BG-1/promote", JSON.stringify({}), { "content-type": "application/json" });
+  it("promotes a completed group by reaching the real engine method (not a hand-rolled mock)", async () => {
+    // Drive the route through the ACTUAL ProjectEngine.promoteBranchGroup body
+    // bound to a stub context, so the wiring proves it reaches a real, callable
+    // method that delegates to the coordinator — not a fabricated vi.fn.
+    const completeTasks = [buildTask("FN-1", group.id, true), buildTask("FN-2", group.id, true)];
+
+    const finalizedGroup: BranchGroup = { ...group, status: "finalized", prState: "merged" };
+    const engineStore = {
+      getSettings: vi.fn(async () => ({
+        autoMerge: false,
+        globalPause: false,
+        enginePaused: false,
+        mergeStrategy: "pull-request",
+      })),
+      getBranchGroup: vi.fn(() => finalizedGroup),
+      listTasksByBranchGroup: vi.fn(async () => completeTasks),
+      updateBranchGroup: vi.fn(() => finalizedGroup),
+      recordRunAuditEvent: vi.fn(async () => {}),
+    };
+    // Minimal ProjectEngine-shaped context the real method body reads.
+    const engineContext = {
+      runtime: { getTaskStore: () => engineStore },
+      config: { workingDirectory: "/tmp/project" },
+    };
+    // Bind the REAL method (the same one the dashboard route invokes).
+    const realPromote = (ProjectEngine.prototype as unknown as {
+      promoteBranchGroup: (this: unknown, groupId: string) => Promise<Record<string, unknown>>;
+    }).promoteBranchGroup;
+    const boundPromote = ((groupId: string) =>
+      realPromote.call(engineContext, groupId)) as unknown as ReturnType<typeof vi.fn>;
+
+    const app = buildApp(createStore(group, completeTasks), boundPromote);
+    const res = await REQUEST(app, "POST", "/api/branch-groups/BG-1/promote", JSON.stringify({}), { "content-type": "application/json" });
+    // already-finalized group → method short-circuits before any git work and
+    // returns the persisted state; what matters is the route reached the method.
+    expect(res.status).toBe(200);
+    expect(res.body.groupId).toBe("BG-1");
+    expect(res.body.reason).toBe("already-finalized");
+    expect(engineStore.getBranchGroup).toHaveBeenCalledWith("BG-1");
+  });
+
+  it("rejects promotion of an incomplete group at the completion gate (no engine call)", async () => {
+    const realPromote = (ProjectEngine.prototype as unknown as {
+      promoteBranchGroup: (this: unknown, groupId: string) => Promise<Record<string, unknown>>;
+    }).promoteBranchGroup;
+    const promoteSpy = vi.fn((groupId: string) => realPromote.call({}, groupId));
+    const app = buildApp(createStore(group, tasks), promoteSpy as unknown as ReturnType<typeof vi.fn>);
+    const res = await REQUEST(app, "POST", "/api/branch-groups/BG-1/promote", JSON.stringify({}), { "content-type": "application/json" });
     expect(res.status).toBe(400);
+    expect(promoteSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the error path when the engine lacks a promoteBranchGroup method", async () => {
+    // If the bridge method is missing from the resolved engine, the route's
+    // option callback throws "promoteBranchGroup is not available on engine".
+    const completeTasks = [buildTask("FN-1", group.id, true), buildTask("FN-2", group.id, true)];
+    const app = buildApp(createStore(group, completeTasks), undefined);
+    const res = await REQUEST(app, "POST", "/api/branch-groups/BG-1/promote", JSON.stringify({}), { "content-type": "application/json" });
+    expect(res.status).toBeGreaterThanOrEqual(400);
   });
 
   it("route serialization and coordinator agree on landed/complete for the same fixture", async () => {
