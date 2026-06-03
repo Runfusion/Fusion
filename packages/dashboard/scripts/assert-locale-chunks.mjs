@@ -1,3 +1,4 @@
+/* global console, process */
 // KTD3a regression guard: after a client build, assert that each locale's
 // catalogs are emitted as their own async chunks and are NOT folded into the
 // main entry chunk. If the app-relative dynamic import ever stops being

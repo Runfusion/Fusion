@@ -1,3 +1,4 @@
+/* global console */
 // Copies the authored @fusion/i18n catalogs into the dashboard tree so Vite can
 // code-split them per locale via a plainly app-relative dynamic import. The
 // generated app/locales/ dir is gitignored — @fusion/i18n/locales is the

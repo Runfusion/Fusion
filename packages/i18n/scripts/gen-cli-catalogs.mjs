@@ -1,3 +1,4 @@
+/* global console */
 // Generates src/cli-catalogs.ts: a static import map of the CLI-relevant
 // catalogs for every locale present under locales/. The terminal UI bundles
 // catalogs statically (tsup, no lazy loading), so it needs an explicit import

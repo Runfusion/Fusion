@@ -1,7 +1,7 @@
 ---
 title: "feat: Add UI localization (i18n) across dashboard and terminal UI"
 type: feat
-status: active
+status: completed
 date: 2026-06-03
 deepened: 2026-06-03
 ---
