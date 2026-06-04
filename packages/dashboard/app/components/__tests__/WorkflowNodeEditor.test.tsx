@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import type { WorkflowDefinition } from "@fusion/core";
-import { irToFlow, flowToIr, emptyWorkflowIr, emptyWorkflowLayout } from "../workflow-flow-mapping";
+import { irToFlow, flowToIr, emptyWorkflowIr, emptyWorkflowLayout, foreachChildFlowId } from "../workflow-flow-mapping";
+import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "@fusion/core";
 
 vi.mock("../../api", () => ({
   fetchWorkflows: vi.fn(),
@@ -471,5 +472,112 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     const timeout = screen.getByText("Timeout (ms)").parentElement!.querySelector("input")! as HTMLInputElement;
     fireEvent.change(timeout, { target: { value: "12000" } });
     expect(timeout.value).toBe("12000");
+  });
+});
+
+// ── Regression: selecting the real stepwise built-in renders the foreach group
+//    node (group type, NOT a plain default node) with its template children
+//    expanded (parentId set), and duplicating it preserves the template. ───────
+
+/** The on-disk built-in stepwise workflow as the server serves it (the IR is the
+ *  source of truth; the dashboard wraps it in a WorkflowDefinition). */
+function builtinStepwiseDef(): WorkflowDefinition {
+  return {
+    id: "builtin:stepwise-coding",
+    name: "Stepwise coding (built-in)",
+    description: "",
+    ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
+    layout: {},
+    createdAt: "2026-06-04T00:00:00.000Z",
+    updatedAt: "2026-06-04T00:00:00.000Z",
+  };
+}
+
+describe("WorkflowNodeEditor — built-in stepwise selection render path", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("renders the steps foreach as a group node (not a plain default) with its template children expanded", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinStepwiseDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    // The built-in selection banner replaces the editing toolbar.
+    await screen.findByTestId("wf-readonly-banner");
+
+    // The `steps` foreach renders via the registered group component
+    // (ForeachGroupNode → data-testid wf-node-foreach), NOT React Flow's default
+    // node fallback. A default node would expose no wf-node-foreach testid.
+    const foreachGroup = await screen.findByTestId("wf-node-foreach");
+    expect(foreachGroup).toBeInTheDocument();
+
+    // parse-steps likewise renders via its registered component.
+    expect(await screen.findByTestId("wf-node-parse-steps")).toBeInTheDocument();
+
+    // The foreach template children (parentId-partitioned) are present in the
+    // canvas: the step-execute prompt and the per-step review node.
+    const flowNodeIds = [...document.querySelectorAll(".react-flow__node")].map((n) =>
+      n.getAttribute("data-id"),
+    );
+    expect(flowNodeIds).toContain(foreachChildFlowId("steps", "step-execute"));
+    expect(flowNodeIds).toContain(foreachChildFlowId("steps", "step-review"));
+    expect(flowNodeIds).toContain(foreachChildFlowId("steps", "step-done"));
+  });
+
+  it("irToFlow on the built-in stepwise IR yields a foreach group + rework-styled template edge (editor load path)", () => {
+    // Mirrors exactly what the editor's load effect feeds React Flow:
+    //   const flow = irToFlow(activeWorkflow)
+    const { nodes, edges } = irToFlow(builtinStepwiseDef());
+    const group = nodes.find((n) => n.id === "steps");
+    expect(group?.type).toBe("foreach");
+    const children = nodes.filter((n) => n.parentId === "steps");
+    expect(children.map((c) => c.id).sort()).toEqual(
+      [
+        foreachChildFlowId("steps", "step-execute"),
+        foreachChildFlowId("steps", "step-review"),
+        foreachChildFlowId("steps", "step-done"),
+      ].sort(),
+    );
+    // The intra-template rework edge (step-review → step-execute) renders with
+    // its rework styling so the editor shows the bounded loop-back.
+    const reworkEdges = edges.filter((e) => e.data?.kind === "rework");
+    expect(reworkEdges.length).toBeGreaterThan(0);
+    expect(reworkEdges.every((e) => e.animated === true && e.className === "wf-edge-rework")).toBe(true);
+    expect(reworkEdges.some((e) => e.source === foreachChildFlowId("steps", "step-review"))).toBe(true);
+  });
+
+  it("Duplicate-to-customize preserves the foreach template through the editor's save path", () => {
+    // "Duplicate to customize" copies the built-in IR verbatim into a new
+    // editable workflow; the user then saves, which round-trips through the
+    // editor's flowToIr on the exact nodes/edges irToFlow produced. Assert the
+    // template (incl. the rework edge) survives that round-trip.
+    const def = builtinStepwiseDef();
+    const { nodes, edges } = irToFlow(def);
+    const columns = def.ir.version === "v2" ? def.ir.columns : [];
+    const { ir: out } = flowToIr(def.name, nodes, edges, columns);
+    if (out.version !== "v2") throw new Error("expected v2");
+    const steps = out.nodes.find((n) => n.id === "steps");
+    expect(steps?.kind).toBe("foreach");
+    const template = steps!.config!.template as {
+      nodes: { id: string }[];
+      edges: { from: string; to: string; condition?: string; kind?: string }[];
+    };
+    expect(template.nodes.map((n) => n.id).sort()).toEqual(
+      ["step-done", "step-execute", "step-review"].sort(),
+    );
+    // The two rework edges (revise/rethink → step-execute) survive with kind+condition.
+    const reworks = template.edges.filter((e) => e.kind === "rework");
+    expect(reworks.map((e) => e.condition).sort()).toEqual(
+      ["outcome:revise", "outcome:rethink"].sort(),
+    );
+    expect(reworks.every((e) => e.from === "step-review" && e.to === "step-execute")).toBe(true);
+    // The approve edge routes to the template exit and is NOT a rework edge.
+    const approve = template.edges.find((e) => e.condition === "outcome:approve");
+    expect(approve).toMatchObject({ from: "step-review", to: "step-done" });
+    expect(approve?.kind).toBeUndefined();
   });
 });
