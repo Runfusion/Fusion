@@ -113,7 +113,7 @@
 }
 
 .spin {
-  animation: custom-provider-spin calc(var(--transition-slow) * 4) linear infinite;
+  animation: custom-provider-spin calc(var(--duration-slow) * 4) linear infinite;
 }
 
 @media (max-width: 768px) {

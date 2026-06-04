@@ -81,7 +81,7 @@
   border: calc(var(--space-xs) / 2) solid var(--border);
   border-top-color: var(--text-muted);
   border-radius: 50%;
-  animation: spin var(--transition-slow) linear infinite;
+  animation: spin var(--duration-slow) linear infinite;
 }
 
 @media (max-width: 768px) {

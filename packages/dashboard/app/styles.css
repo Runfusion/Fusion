@@ -89,7 +89,7 @@ html {
 
 .status-dot--connecting {
   background: var(--color-warning);
-  animation: status-dot-pulse var(--transition-slow) ease-in-out infinite;
+  animation: status-dot-pulse var(--duration-slow) ease-in-out infinite;
 }
 
 .status-dot--pending {
@@ -160,11 +160,21 @@ html {
   --focus-ring: 0 0 0 2px rgba(88, 166, 255, 0.15);
   --focus-ring-strong: 0 0 0 2px rgba(88, 166, 255, 0.3);
 
-  /* Animation tokens */
-  --transition-instant: 0.1s ease;
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.2s ease;
-  --transition-slow: 0.3s ease;
+  /* Animation tokens.
+     --duration-* are bare durations, safe anywhere (animation shorthands,
+     animation-duration, calc()). --transition-* bundle duration + easing and
+     are ONLY valid in `transition` shorthands: substituting "0.3s ease" into
+     an `animation` shorthand that names its own easing (or into calc())
+     invalidates the whole declaration at computed-value time, silently
+     freezing the animation. Enforced by animation-duration-tokens.css.test.ts. */
+  --duration-instant: 0.1s;
+  --duration-fast: 0.15s;
+  --duration-normal: 0.2s;
+  --duration-slow: 0.3s;
+  --transition-instant: var(--duration-instant) ease;
+  --transition-fast: var(--duration-fast) ease;
+  --transition-normal: var(--duration-normal) ease;
+  --transition-slow: var(--duration-slow) ease;
 
   /* Backward-compatible aliases */
   --radius: var(--radius-md);

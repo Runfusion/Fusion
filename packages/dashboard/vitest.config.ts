@@ -24,6 +24,7 @@ const qualityAppFoundationUiTests = [
   "app/__tests__/activity-log-mobile-layout.test.ts",
   "app/__tests__/agent-css-classes.test.ts",
   "app/__tests__/agent-runs-ui.test.ts",
+  "app/__tests__/animation-duration-tokens.css.test.ts",
   "app/__tests__/auth.test.ts",
   "app/__tests__/board-mobile-corner-rendering.test.ts",
   "app/__tests__/board-tablet-overflow.test.ts",

@@ -48,7 +48,7 @@
 }
 
 .system-stats-modal__refresh--spinning {
-  animation: system-stats-modal-refresh-spin var(--transition-slow) linear infinite;
+  animation: system-stats-modal-refresh-spin var(--duration-slow) linear infinite;
 }
 
 @keyframes system-stats-modal-refresh-spin {

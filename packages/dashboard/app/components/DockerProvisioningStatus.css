@@ -20,7 +20,7 @@
   height: var(--space-sm);
   border-radius: 50%;
   background-color: var(--todo);
-  animation: provisioning-pulse var(--transition-normal) ease-in-out infinite;
+  animation: provisioning-pulse var(--duration-normal) ease-in-out infinite;
 }
 
 .provisioning-status__dot:nth-child(2) {

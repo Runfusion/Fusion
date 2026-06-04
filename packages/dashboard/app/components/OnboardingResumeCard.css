@@ -8,7 +8,7 @@
   padding: var(--space-sm) var(--space-lg);
   border-bottom: var(--btn-border-width) solid var(--border);
   background: var(--surface);
-  animation: onboarding-resume-card-enter var(--transition-normal) ease-out;
+  animation: onboarding-resume-card-enter var(--duration-normal) ease-out;
 }
 
 @keyframes onboarding-resume-card-enter {

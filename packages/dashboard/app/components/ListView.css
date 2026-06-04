@@ -815,7 +815,7 @@
 }
 
 .list-section-header ~ tr {
-  animation: section-expand var(--transition-normal) ease-out;
+  animation: section-expand var(--duration-normal) ease-out;
 }
 
 /* Empty section row */

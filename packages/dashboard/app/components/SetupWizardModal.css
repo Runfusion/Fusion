@@ -39,7 +39,7 @@
   /* vh fallback first for browsers without dvh support; dvh upgrade follows. */
   max-height: min(720px, calc(100vh - var(--overlay-padding-top, 10vh) - var(--space-lg)));
   max-height: min(720px, calc(100dvh - var(--overlay-padding-top, 10vh) - var(--space-lg)));
-  animation: slideUp var(--transition-normal) ease-out;
+  animation: slideUp var(--duration-normal) ease-out;
   overflow: hidden;
   /* Prevent flex parents from squeezing this below its content's needs. */
   flex-shrink: 0;

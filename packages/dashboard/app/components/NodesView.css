@@ -14,8 +14,8 @@
 }
 
 .nodes-view {
-  --nodes-view-spin-duration: calc(var(--transition-slow) * 4);
-  --nodes-view-pulse-duration: calc(var(--transition-slow) * 5);
+  --nodes-view-spin-duration: calc(var(--duration-slow) * 4);
+  --nodes-view-pulse-duration: calc(var(--duration-slow) * 5);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);

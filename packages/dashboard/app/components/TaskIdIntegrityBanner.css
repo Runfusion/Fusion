@@ -74,7 +74,7 @@
 }
 
 .task-id-integrity-banner__refresh-icon--spinning {
-  animation: status-dot-pulse var(--transition-slow) ease-in-out infinite;
+  animation: status-dot-pulse var(--duration-slow) ease-in-out infinite;
 }
 
 .task-id-integrity-banner__error {

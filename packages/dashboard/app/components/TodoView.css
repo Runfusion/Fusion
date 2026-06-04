@@ -353,7 +353,7 @@
 }
 
 .todo-loading-icon {
-  animation: spin calc(var(--transition-slow) * 4) linear infinite;
+  animation: spin calc(var(--duration-slow) * 4) linear infinite;
 }
 
 @keyframes spin {

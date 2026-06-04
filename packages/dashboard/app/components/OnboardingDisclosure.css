@@ -45,7 +45,7 @@
   color: var(--text-muted);
   font-size: var(--font-size-sm, 12px);
   line-height: 1.5;
-  animation: onboarding-disclosure-enter var(--transition-fast) ease-out;
+  animation: onboarding-disclosure-enter var(--duration-fast) ease-out;
 }
 
 @keyframes onboarding-disclosure-enter {
