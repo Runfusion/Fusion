@@ -305,7 +305,7 @@ function InnerEditor({
   const overlayProps = useOverlayDismiss(onClose);
 
   return (
-    <div className="modal-overlay wf-editor-overlay" {...overlayProps}>
+    <div className="modal-overlay open wf-editor-overlay" {...overlayProps}>
       <div className="modal wf-editor-modal" ref={modalRef} onClick={(e) => e.stopPropagation()}>
         <header className="wf-editor-header">
           <h2>Workflows</h2>

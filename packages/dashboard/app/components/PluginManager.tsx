@@ -169,6 +169,20 @@ const BUILTIN_PLUGINS: BuiltinPlugin[] = [
     path: "./plugins/fusion-plugin-cli-printing-press",
   },
   {
+    id: "fusion-plugin-compound-engineering",
+    name: "Compound Engineering",
+    description: "A dedicated dashboard surface for compound-engineering artifacts and interactive ce-* sessions.",
+    category: "integration",
+    path: "./plugins/fusion-plugin-compound-engineering",
+  },
+  {
+    id: "fusion-plugin-roadmap",
+    name: "Roadmaps",
+    description: "Standalone roadmap planning plugin.",
+    category: "integration",
+    path: "./plugins/fusion-plugin-roadmap",
+  },
+  {
     id: BUILTIN_AGENT_BROWSER_PLUGIN_ID,
     name: "Agent Browser",
     description: "Built-in integration metadata. Package install support lands in FN-3101.",
