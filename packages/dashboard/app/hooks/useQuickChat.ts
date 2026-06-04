@@ -656,17 +656,44 @@ export function useQuickChat(
     pendingMessageRef.current = restoredPendingMessage;
     setPendingMessage(restoredPendingMessage);
 
-    queueMicrotask(() => {
-      if (
-        activeSessionRef.current?.id === sessionId &&
-        pendingMessageRef.current.trim().length > 0 &&
-        !isStreamingRef.current &&
-        !streamRef.current
-      ) {
-        void flushPendingMessage();
-      }
-    });
-  }, [activeSession?.id, flushPendingMessage]);
+    // Flush only once the server confirms no generation is in flight. The
+    // local session snapshot can hold a stale falsy `isGenerating` (it is a
+    // route-level enrichment that the chat:session:updated SSE payload
+    // lacks), so flushing from local state alone fires a send that aborts a
+    // live generation server-side and can lose the queued message (FN-5852).
+    let cancelled = false;
+    void Promise.resolve(fetchChatSession(sessionId, projectId))
+      .then(({ session: refreshedSession }) => {
+        if (
+          cancelled ||
+          activeSessionRef.current?.id !== sessionId ||
+          pendingMessageRef.current.trim().length === 0
+        ) {
+          return;
+        }
+
+        if (refreshedSession.isGenerating) {
+          // Still generating: attach (if not already) and let the stream's
+          // onDone/onError flush the queued message.
+          if (!streamRef.current) {
+            attachIfGenerating(sessionId, refreshedSession.inFlightGeneration);
+          }
+          return;
+        }
+
+        if (!isStreamingRef.current && !streamRef.current) {
+          void flushPendingMessage();
+        }
+      })
+      .catch(() => {
+        // Keep the restored bubble; another flush trigger (stream
+        // completion, visibility resume, manual send) will deliver it.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSession?.id, attachIfGenerating, flushPendingMessage, projectId]);
 
   const startModelChat = useCallback(
     async (modelProvider: string, modelId: string) => {

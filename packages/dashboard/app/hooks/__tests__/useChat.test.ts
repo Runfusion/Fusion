@@ -2088,6 +2088,70 @@ describe("useChat", () => {
     });
   });
 
+  it("does not flush a restored queued message while the server still reports an in-flight generation", async () => {
+    // Reproduces FN-5852 back-navigation loss: the sessions-list entry has a
+    // stale falsy isGenerating (it is a route-level enrichment that the
+    // chat:session:updated SSE payload lacks), while the server is actually
+    // still generating. The restored queued message must NOT be flushed from
+    // local state alone — doing so aborts the live generation server-side.
+    const sessionA = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValue({ sessions: [sessionA] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockFetchChatSession.mockResolvedValue({
+      session: {
+        ...sessionA,
+        isGenerating: true,
+        inFlightGeneration: {
+          streamingText: "partial",
+          streamingThinking: "",
+          toolCalls: [],
+        },
+      },
+    });
+
+    const attachHandlers: Array<Parameters<typeof mockAttachChatStream>[1]> = [];
+    mockAttachChatStream.mockImplementation((_sessionId, nextHandlers) => {
+      attachHandlers.push(nextHandlers);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    localStorage.setItem(getChatPendingMessageKey("session-001")!, "Queued follow-up");
+
+    const { result } = renderHook(() => useChat("proj-123"));
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    // The queued message is restored and the authoritative session fetch
+    // reveals the in-flight generation, so the hook attaches instead of
+    // flushing.
+    await waitFor(() => {
+      expect(result.current.pendingMessage).toBe("Queued follow-up");
+      expect(result.current.isStreaming).toBe(true);
+    });
+
+    expect(mockStreamChatResponse).not.toHaveBeenCalled();
+    expect(localStorage.getItem(getChatPendingMessageKey("session-001"))).toBe("Queued follow-up");
+
+    // Once the attached generation completes, the queued message flushes.
+    act(() => {
+      attachHandlers[0]?.onDone?.({ messageId: "msg-001" });
+    });
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+      expect(mockStreamChatResponse.mock.calls[0]?.[0]).toBe("session-001");
+      expect(mockStreamChatResponse.mock.calls[0]?.[1]).toBe("Queued follow-up");
+      expect(result.current.pendingMessage).toBe("");
+      expect(localStorage.getItem(getChatPendingMessageKey("session-001"))).toBeNull();
+    });
+  });
+
   it("preserves queued messages across session switches and rehydrates them when returning", async () => {
     const sessionA = {
       ...makeSession({ id: "session-001", agentId: "agent-001" }),
