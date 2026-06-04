@@ -157,3 +157,50 @@ per-process count and the heavy-test tail that currently dominate.
 | dashboard-app-quality-foundation-hooks-utils | `--no-isolate` | run1 crash; run2 33 fails (cross-file contamination) | revert |
 
 Root cause: `packages/core/src/__test-utils__/vitest-setup.ts` mutates `fs`/`child_process`/cwd/HOME at module level per worker; non-isolated files share that state. Isolation is load-bearing for this repo — do not re-trial without restructuring the setup file. happy-dom and deps.optimizer trials dropped (lowest value; happy-dom not installed, optimizer not cleanly canary-able under `projects`). Deprecation audit: zero `poolMatchGlobs`/`environmentMatchGlobs`/workspace-file usages across all 28 configs — vitest 4 migration delta for these is already zero.
+
+## U7 slow-test triage (2026-06-03): top offenders characterized
+
+Characterization-first triage of the top-N offenders against `scripts/test-timings.json`.
+The dominant finding: **every top-time offender is real-SQLite / real-git /
+spawned-process integration that the FN-5048 "keep unconditionally" rule protects** —
+the slowness *is* the test's subject, not incidental mechanics. The one actionable
+defect was a flaky race (not a slow test), fixed deterministically. Honest result over
+forced wins.
+
+### Files changed
+
+| File | Change | Before | After (3×) |
+|---|---|---|---|
+| `packages/dashboard/src/__tests__/routes-planning-tracking.test.ts` | Replaced `vi.waitFor` polling on background github-tracking dispatch with deterministic call-signaled awaits (`signalOnCall`) | flaky in-shard (failed once, passed isolated) | 6/6 pass, ~2.7–3.7s, 5× + 3× stable |
+
+**Flaky fix mechanics.** The routes return 201 immediately, then dispatch
+`GitHubClient.createIssue` / `logger.warn` on a fire-and-forget promise chain several
+`await`s deep (`getSettings → maybeCreateTrackingIssue → createIssue`). The old test
+polled with `vi.waitFor(() => expect(spy).toHaveBeenCalled())`, whose default 1000ms
+real-timer timeout raced that microtask chain under shard CPU contention. Fix: the spied
+function itself resolves a deferred on each invocation (`signalOnCall.calledTimes(n)` /
+`.calledMatching(predicate)`), so the test awaits *exactly* until the background work
+reaches the observable point — no timer, no timeout, no poll. **Assertions unchanged and
+still bite**: mutate-to-prove disabled the dispatch (`if (false && hook …)`) and all 6
+tests failed deterministically (8s test-level timeout) rather than passing vacuously;
+restored after.
+
+### Keep-as-is (integration-by-design; FN-5048 keep-unconditionally)
+
+| File / suite | Σ time | Reason kept |
+|---|---:|---|
+| `core/agent-store.test.ts` | 11.6s | ~204 isolated tests, each building the full SQLite schema (≈30ms DDL, measured) + real CRUD/event assertions on a fresh in-memory DB. Schema build is irreducible per-DB (FTS5 is only ~2ms of it); mkdtemp+rm is ~43ms/204 total. Sharing one DB across tests breaks the documented per-test isolation (event-emission/count assertions from a clean slate). |
+| `core/mission-store.test.ts` | 10.7s | ~248 isolated real-SQLite tests. A handful of 5–10ms `setTimeout` waits ensure distinct `createdAt` timestamps for ordering tests; ≈40ms total — fake timers would touch the very `new Date()` ordering under test for no meaningful gain. |
+| `core/db.test.ts` | 10.1s | Spawns real child Node processes holding SQLite WAL write-locks (`BEGIN IMMEDIATE`, `busy_timeout`) to test cross-process lock contention. `holdMs:150` waits are intrinsic to the lock-timeout behavior and cannot be faked across process boundaries. Spawned-process + real-SQLite. |
+| `engine/reliability-interactions/*` (shared-branch-group-lifecycle 13.9s, automerge-precedence 9.0s, merge-routing 8.4s, promotion-gate 8.4s, …) | ~50s | Real `git init`+commits+branches+squash-merges through the merge-coordinator + real in-memory TaskStore per test. Integration-by-design (task constraint). Demotion to `*.slow.test.ts` was evaluated and **rejected**: it reparents the file from project `engine-reliability` to `engine-slow`, and inventory testIds are project-qualified, so every test would show as remove+add and trip the U2 inventory superset guard. |
+| `engine/merger-ai.test.ts` | 8.7s | 17 of 23 tests do real `git init` + real squash-merge per test (the merge IS the subject); 6 are fast pure-function/prompt tests already. Spawned-process integration. |
+| `dashboard/routes-git.test.ts` | 9.4s | Already shares one git repo via `getSharedGitTestRepo` (beforeAll); per-test cost is real git subprocess calls exercising the git routes. Integration-by-design. |
+| `dashboard/routes-agents.test.ts` | 11.2s | ~200 express route tests; store is mocked (`createMockStore`) in `beforeAll`. ~14 blocks use **disk-backed** `AgentStore` deliberately — they seed an agent with one store instance and read it back through the route's *own* store instance from the same `.fusion` dir, so disk persistence is load-bearing (in-memory would break the cross-instance handoff). |
+
+### Timings snapshot
+
+No `scripts/test-timings.json` refresh was needed for this unit: the only mechanics
+change is to `routes-planning-tracking.test.ts`, which is not a top-time file (its slow
+sibling `routes-planning.test.ts` is a different file) and whose post-fix duration is
+unchanged. A later full refresh via `node scripts/ci-test-shard.mjs --write-timings`
+remains the canonical mechanism.
