@@ -337,14 +337,20 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByText("Small"));
       fireEvent.click(screen.getByText("Continue"));
 
-      await waitFor(() => {
-        expect(mockRespondToPlanning).toHaveBeenCalledWith(
-          "session-123",
-          { "q-scope": "small" },
-          undefined,
-          "tab-self",
-        );
-      });
+      await waitFor(
+        () => {
+          expect(mockRespondToPlanning).toHaveBeenCalledWith(
+            "session-123",
+            { "q-scope": "small" },
+            undefined,
+            "tab-self",
+          );
+        },
+        // waitFor's private 1s default (independent of vitest testTimeout) has
+        // flaked under loaded CI shards; the click->respond chain crosses
+        // several state-update hops. Generous bound, still fails fast locally.
+        { timeout: 5000 },
+      );
     });
 
     it("shows stop action in loading and stops generation", async () => {
