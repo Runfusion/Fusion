@@ -235,6 +235,16 @@ export function createEventBridge(callbacks: AcpCallbacks): EventBridge {
     // agent-controlled — without the cap below, one plan event with thousands
     // of entries bypasses the per-turn ceiling entirely.
     if (outputCapFlagged) return;
+    // Enforce the ceiling on the plan path too: without this check a plan-ONLY
+    // stream (no text/thinking ever entering forwardBounded) would keep
+    // emitting forever after crossing the budget.
+    if (cumulativeOutputChars >= PER_TURN_OUTPUT_CAP_CHARS) {
+      outputCapFlagged = true;
+      callbacks.onThinking?.(
+        "[output truncated: per-turn limit reached — further agent output suppressed]",
+      );
+      return;
+    }
     const list = Array.isArray(entries) ? entries : [];
     const capped = list.slice(0, MAX_PLAN_ENTRIES);
     let line = formatPlan(capped);

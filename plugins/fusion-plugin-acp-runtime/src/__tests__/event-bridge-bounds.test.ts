@@ -202,3 +202,29 @@ describe("plan output bounds (S5)", () => {
     expect(thinking.length).toBe(before);
   });
 });
+
+  it("a plan-ONLY stream stops emitting once the per-turn cap is crossed", async () => {
+    const { createEventBridge, PER_CHUNK_CAP_CHARS, PER_TURN_OUTPUT_CAP_CHARS, MAX_PLAN_ENTRIES } =
+      await import("../event-bridge.js");
+    const thinking: string[] = [];
+    const bridge = createEventBridge({ onThinking: (t) => thinking.push(t) });
+    // Each plan line is bounded by PER_CHUNK_CAP_CHARS; flood plan events only.
+    const bigEntry = "p".repeat(PER_CHUNK_CAP_CHARS);
+    const entries = Array.from({ length: MAX_PLAN_ENTRIES }, () => ({
+      content: bigEntry,
+      priority: "low",
+      status: "pending",
+    }));
+    const floods = Math.ceil(PER_TURN_OUTPUT_CAP_CHARS / PER_CHUNK_CAP_CHARS) + 3;
+    for (let i = 0; i < floods; i += 1) {
+      bridge.handleSessionUpdate({ sessionUpdate: "plan", entries } as never);
+    }
+    // The flag line is emitted exactly once, then nothing further.
+    const flagged = thinking.filter((t) => t.includes("output truncated"));
+    expect(flagged).toHaveLength(1);
+    const after = thinking.length;
+    bridge.handleSessionUpdate({ sessionUpdate: "plan", entries } as never);
+    expect(thinking.length).toBe(after);
+    // And the total emitted is bounded near the cap, not floods * cap.
+    expect(thinking.length).toBeLessThan(floods);
+  });

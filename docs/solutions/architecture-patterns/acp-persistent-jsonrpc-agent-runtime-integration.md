@@ -1,4 +1,5 @@
 ---
+category: architecture-patterns
 module: fusion-plugin-acp-runtime
 date: 2026-06-03
 problem_type: architecture_pattern
