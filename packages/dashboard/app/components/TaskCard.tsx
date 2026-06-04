@@ -1930,19 +1930,22 @@ function TaskCardComponent({
           )}
           {task.branchContext?.groupId && (() => {
             const { branchContext } = task;
-            if (!branchContext?.groupId) return null;
+            // Capture into a const: narrowing on the optional groupId does not
+            // survive into the onClick closure below.
+            const groupId = branchContext?.groupId;
+            if (!branchContext || !groupId) return null;
             return (
               <span
                 className="card-branch-chip"
                 title={
                   branchContext.assignmentMode === "shared" && branchMetadata.branch
-                    ? `${branchContext.groupId} · ${branchMetadata.branch}`
-                    : branchContext.groupId
+                    ? `${groupId} · ${branchMetadata.branch}`
+                    : groupId
                 }
                 onClick={(event) => {
                   if (!onOpenGroupModal) return;
                   event.stopPropagation();
-                  onOpenGroupModal(branchContext.groupId);
+                  onOpenGroupModal(groupId);
                 }}
               >
                 <span className="card-branch-label">
@@ -1951,7 +1954,7 @@ function TaskCardComponent({
                 <span className="card-branch-value">
                   {branchContext.assignmentMode === "shared" && branchMetadata.branch
                     ? branchMetadata.branch
-                    : branchContext.groupId}
+                    : groupId}
                 </span>
               </span>
             );

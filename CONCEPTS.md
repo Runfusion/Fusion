@@ -59,9 +59,35 @@ The merge-request state for a Task whose merge needs an explicit human go-ahead 
 ### Self-healing sweep
 A recurring background scan that detects and repairs stuck Task states — stalled In-review Tasks, confirmed merges never finalized, ghost or limbo states, exhausted retries. Sweeps respect the same Auto-merge eligibility as the Merge queue: they may inspect any Task but mutate only those eligible for auto-merge processing.
 
-### Shared branch group
-A set of Tasks integrating into a common shared branch instead of each merging straight to the project's default branch. Member integration (task branch → shared branch) is a soft pre-integration step exempt from the global auto-merge gate; promotion (shared branch → default branch) is gated separately.
+Sweeps must honor the same merge-target rules as the normal path — a Shared branch group member is always evaluated against its group branch, never the project default — and attribution of already-merged work must be anchored to commit ownership markers, not free-text matches.
 
+### Shared branch group
+A cohort of Tasks integrating into a common shared branch instead of each merging straight to the project's default branch. The group — not its member Tasks — owns the shared branch name, the managed PR identity, and the group lifecycle (open, finalized, abandoned); members reference their group by the group's stored id, never by a derivable string. Member integration (task branch → shared branch) is a soft pre-integration step exempt from the global auto-merge gate; Group promotion (shared branch → default branch) is gated separately.
+
+The group's shared branch is only ever a merge *target*; it is never any member Task's working branch. Each member works on its own per-task branch and lands onto the group branch.
+
+### Branch assignment mode
+The strategy by which a Task acquires its working branch and merge target. Shared mode gives the Task a per-task working branch derived from the group's shared branch and sets the shared branch as merge target; per-task-derived mode gives a derived working branch with no shared target; the remaining modes (project default, existing, custom new) bind the Task directly to a named branch. Only shared mode creates Shared branch group membership.
+
+### Landed
+The status of a Shared branch group member whose work is merge-confirmed onto *its own group's* shared branch via the branch-group integration path. A member merged onto any other branch — a sibling task branch, the project default — is not Landed, regardless of its column. A group is complete when it has at least one member and every member is Landed; completeness gates Group promotion.
+
+### Group promotion
+The completion-gated, idempotent act of carrying a complete Shared branch group forward: merging the group branch toward the project's integration branch and, in pull-request mode, creating-or-reusing the group's single managed PR. Re-running a promotion never creates a second PR. Under disabled auto-merge, promotion is an explicit user action; member-to-group landing may still proceed without triggering it.
+
+## Branching & diff attribution
+
+### Integration branch
+The local branch (by default the project's default branch) where the merger lands Task branches and from whose tip new Task worktrees fork. Because the merger lands commits locally before pushing, the Integration branch can be ahead of its origin counterpart by merged-but-unpushed commits — any fork-point or merge-base computation must measure against the local branch first, with the origin ref only as a fallback.
+
+### Fork point
+The commit on the Integration branch from which a Task's branch was created — the exclusive lower bound of the Task's owned changes. Every "files changed" computation diffs fork point to branch tip, so a recorded base older than the true Fork point permanently attributes predecessors' files to the Task.
+
+### Rebase-and-push
+The post-merge step that rebases locally-landed merge commits onto the upstream branch before pushing, rewriting their SHAs. The original commits become orphaned — no longer reachable from the Integration branch — while still present in the history of any Task branch forked before the push, which is why a too-old recorded Fork point cannot be recovered after this step.
+
+### Contamination
+Foreign commits — work attributed to other Tasks — appearing on a Task's branch beyond its recorded Fork point. Contamination checks must compute their reference base fresh from the Integration branch rather than reuse the Task's stored base, since a stale stored base makes every legitimately merged commit look foreign.
 ## Compound Engineering sessions
 
 ### CE Stage

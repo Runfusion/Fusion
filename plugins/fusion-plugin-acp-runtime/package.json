@@ -1,0 +1,41 @@
+{
+  "name": "@fusion-plugin-examples/acp-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ACP (Agent Client Protocol) runtime plugin for Fusion — drives any ACP-compatible agent over JSON-RPC/stdio",
+  "keywords": [
+    "fusion-plugin",
+    "acp",
+    "agent-client-protocol",
+    "runtime"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./probe": {
+      "types": "./src/probe.ts",
+      "import": "./src/probe.ts"
+    }
+  },
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --silent=passed-only --reporter=dot",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.24.0",
+    "@fusion/plugin-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}

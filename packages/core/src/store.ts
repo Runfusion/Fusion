@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, MergeRequestRecord, MergeRequestState, CompletionHandoffMarker } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, CompletionHandoffMarker } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
@@ -28,6 +28,7 @@ import {
 const WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX = "workflow:";
 import { resolveWorktrunkSettings, validateWorktrunkSettings } from "./worktrunk-settings.js";
 import { normalizeTaskPriority } from "./task-priority.js";
+import { validateBranchGroupBranchName, filterTasksByBranchGroup } from "./branch-assignment.js";
 import { allowsAutoMergeProcessing } from "./task-merge.js";
 import { canAgentTakeImplementationTaskForExplicitRouting } from "./agent-role-policy.js";
 import { GlobalSettingsStore } from "./global-settings.js";
@@ -219,14 +220,19 @@ function parseTaskBranchContextFromSourceMetadata(sourceMetadata: Record<string,
   const raw = sourceMetadata?.[TASK_BRANCH_CONTEXT_METADATA_KEY];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const candidate = raw as Record<string, unknown>;
-  if (typeof candidate.groupId !== "string" || !candidate.groupId.trim()) return undefined;
+  // groupId is optional: only shared-mode members carry one. A non-shared
+  // member persists source/assignmentMode without a groupId, so a missing or
+  // empty groupId must NOT discard the whole context.
+  const groupId = typeof candidate.groupId === "string"
+    ? candidate.groupId.trim() || undefined
+    : undefined;
   if (candidate.source !== "planning" && candidate.source !== "mission" && candidate.source !== "new-task") return undefined;
   if (candidate.assignmentMode !== "shared" && candidate.assignmentMode !== "per-task-derived") return undefined;
   const inheritedBaseBranch = typeof candidate.inheritedBaseBranch === "string" && candidate.inheritedBaseBranch.trim().length > 0
     ? candidate.inheritedBaseBranch.trim()
     : undefined;
   return {
-    groupId: candidate.groupId,
+    ...(groupId ? { groupId } : {}),
     source: candidate.source,
     assignmentMode: candidate.assignmentMode,
     inheritedBaseBranch,
@@ -241,7 +247,9 @@ function withTaskBranchContextInSourceMetadata(
   return {
     ...(sourceMetadata ?? {}),
     [TASK_BRANCH_CONTEXT_METADATA_KEY]: {
-      groupId: branchContext.groupId,
+      ...(branchContext.groupId?.trim()
+        ? { groupId: branchContext.groupId.trim() }
+        : {}),
       source: branchContext.source,
       assignmentMode: branchContext.assignmentMode,
       ...(branchContext.inheritedBaseBranch ? { inheritedBaseBranch: branchContext.inheritedBaseBranch } : {}),
@@ -4470,6 +4478,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   createBranchGroup(input: BranchGroupCreateInput): BranchGroup {
+    // Fix #11: reject injection-shaped branch names at the persistence boundary
+    // so they can never reach a downstream git/shell sink (coordinator, merger).
+    validateBranchGroupBranchName(input.branchName);
     const now = Date.now();
     const id = this.generateBranchGroupId();
     this.db.prepare(`
@@ -4549,6 +4560,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!current) {
       throw new Error(`Branch group ${id} not found`);
     }
+    // Fix #11: a rename must reject injection-shaped branch names at the same
+    // persistence boundary as createBranchGroup, otherwise a crafted ref could
+    // still reach the downstream git/PR flow via an update.
+    if (patch.branchName !== undefined) {
+      validateBranchGroupBranchName(patch.branchName);
+    }
     const nextStatus = patch.status ?? current.status;
     const now = Date.now();
     const nextClosedAt = patch.closedAt === null
@@ -4576,7 +4593,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return this.getBranchGroup(id)!;
   }
 
-  async setTaskBranchGroup(taskId: string, branchGroupId: string | null): Promise<void> {
+  async setTaskBranchGroup(
+    taskId: string,
+    branchGroupId: string | null,
+    options?: { assignmentMode?: TaskBranchAssignmentMode },
+  ): Promise<void> {
     await this.withTaskLock(taskId, async () => {
       const dir = this.taskDir(taskId);
       const task = await this.readTaskJson(dir);
@@ -4587,10 +4608,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         if (!group) {
           throw new Error(`Branch group ${branchGroupId} not found`);
         }
+        // Carry the group's actual assignment intent. The BranchGroup row does not
+        // persist an assignment mode, so prefer an explicit caller-provided mode,
+        // then preserve any existing branchContext.assignmentMode, and only fall
+        // back to "shared" when nothing else is known.
         branchContext = {
           groupId: group.id,
           source: group.sourceType,
-          assignmentMode: "shared",
+          assignmentMode: options?.assignmentMode ?? task.branchContext?.assignmentMode ?? "shared",
         };
       }
 
@@ -4611,9 +4636,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async listTasksByBranchGroup(groupId: string): Promise<Task[]> {
     const tasks = await this.listTasks({ includeArchived: false, slim: true });
-    return tasks
-      .filter((task) => task.branchContext?.groupId === groupId)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    // Membership filter (incl. legacy synthetic-groupId fallback) is shared with
+    // the dashboard list route via `filterTasksByBranchGroup` so semantics can't
+    // drift between the two call sites (Fix #8/#9).
+    const group = this.getBranchGroup(groupId);
+    return filterTasksByBranchGroup(tasks, group, groupId).sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    );
   }
 
   recordBranchGroupMemberLanded(

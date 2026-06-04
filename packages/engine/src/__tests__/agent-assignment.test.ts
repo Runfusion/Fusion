@@ -1,6 +1,6 @@
 import type { Agent, Task } from "@fusion/core";
 import { describe, expect, it } from "vitest";
-import { selectPermanentAgentForTask } from "../agent-assignment.js";
+import { listEligibleExecutorAgents, selectPermanentAgentForTask } from "../agent-assignment.js";
 
 function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id">): Agent {
   return {
@@ -134,5 +134,32 @@ describe("selectPermanentAgentForTask", () => {
 
     expect(["agent-b", "agent-c"]).toContain(selected?.id);
     expect(selected?.id).toBe("agent-b");
+  });
+});
+
+describe("listEligibleExecutorAgents", () => {
+  it("returns empty when only custom-role (catalog-imported) agents exist", async () => {
+    const eligible = await listEligibleExecutorAgents({
+      listAgents: async () => [
+        makeAgent({ id: "gstack-1", role: "custom" }),
+        makeAgent({ id: "gstack-2", role: "custom" }),
+      ],
+    } as never);
+
+    expect(eligible).toEqual([]);
+  });
+
+  it("excludes ephemeral, disabled, and errored executors but keeps healthy ones", async () => {
+    const eligible = await listEligibleExecutorAgents({
+      listAgents: async () => [
+        makeAgent({ id: "ephemeral", metadata: { agentKind: "task-worker" } }),
+        makeAgent({ id: "disabled", runtimeConfig: { enabled: false } }),
+        makeAgent({ id: "errored", state: "error" }),
+        makeAgent({ id: "reviewer", role: "reviewer" }),
+        makeAgent({ id: "ok" }),
+      ],
+    } as never);
+
+    expect(eligible.map((agent) => agent.id)).toEqual(["ok"]);
   });
 });

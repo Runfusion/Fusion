@@ -260,6 +260,23 @@ describe("CLI bundle output", () => {
     expect(manifest.name?.length).toBeGreaterThan(0);
   });
 
+  it("dist/plugins/fusion-plugin-acp-runtime/ is staged with the acp runtime manifest", () => {
+    const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-acp-runtime");
+    const manifestPath = join(stagedRoot, "manifest.json");
+
+    expect(existsSync(manifestPath)).toBe(true);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+      id?: string;
+      runtime?: { runtimeId?: string };
+    };
+    expect(manifest.id).toBe("fusion-plugin-acp-runtime");
+    // The runtime is selected by runtimeId; assert it is "acp".
+    expect(manifest.runtime?.runtimeId).toBe("acp");
+    expect(existsSync(join(stagedRoot, "bundled.js"))).toBe(true);
+    // v1 ships no mcp-schema-server.cjs (MCP forwarding deferred, KTD5).
+    expect(existsSync(join(stagedRoot, "mcp-schema-server.cjs"))).toBe(false);
+  });
+
   it("pi-claude-cli source imports child process helpers from node:child_process", () => {
     const processManagerSource = readFileSync(join(cliRoot, "dist", "pi-claude-cli", "src", "process-manager.ts"), "utf-8");
 

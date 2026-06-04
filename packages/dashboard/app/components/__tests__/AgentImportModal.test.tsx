@@ -110,6 +110,36 @@ describe("AgentImportModal", () => {
     });
   });
 
+  it("surfaces dry-run warnings in the preview step, before import (issue #1261)", async () => {
+    vi.mocked(globalThis.fetch).mockImplementationOnce(() => mockFetchResponse({
+      ok: true,
+      status: 200,
+      body: {
+        dryRun: true,
+        companyName: "Acme Co",
+        agents: [{ name: "CEO", role: "custom" }],
+        created: ["CEO"],
+        skipped: [],
+        errors: [],
+        warnings: [
+          "1 imported agent(s) have role \"custom\" and won't be auto-assigned mission or queue work.",
+        ],
+      },
+    }));
+
+    render(<AgentImportModal isOpen={true} onClose={onClose} onImported={onImported} />);
+
+    fireEvent.change(screen.getByLabelText("Manifest content"), {
+      target: { value: "---\nname: CEO\n---\nLead" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/won't be auto-assigned mission or queue work/)).toBeTruthy();
+    });
+  });
+
   it("imports agents from preview step and shows result summary", async () => {
     vi.mocked(globalThis.fetch)
       .mockImplementationOnce(() => mockFetchResponse({

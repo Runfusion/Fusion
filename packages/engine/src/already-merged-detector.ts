@@ -34,6 +34,49 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Ownership anchor shared with self-healing's `commitOwnedByTask`.
+ *
+ * The 2026-05-23 lost-work incident (bug #2) was a `git log --grep=<taskId>`
+ * first-hit attribution: a commit whose body merely *mentioned* a task ID in
+ * prose was accepted as that task's landed commit, stranding/mis-attributing
+ * the real work. The trailer strategies above are already anchored; the
+ * ancestry strategy below uses a loose `--grep=<taskId>`, so its candidate must
+ * be ownership-verified here before it is accepted.
+ *
+ * Accept when ANY of:
+ *  - `Fusion-Task-Lineage: <lineageId>` is a complete trailer line in the body
+ *  - `Fusion-Task-Id: <taskId>` is a complete trailer line in the body
+ *  - the subject is anchored on the task ID in conventional-commit form:
+ *      `<type>(<taskId>...): …` or `<taskId>: …`
+ */
+function commitOwnedByTask(
+  taskId: string,
+  lineageId: string | undefined,
+  subject: string,
+  body: string,
+): boolean {
+  if (lineageId && new RegExp(`(?:^|\\n)Fusion-Task-Lineage: ${escapeRegex(lineageId)}\\s*(?:\\n|$)`).test(body)) {
+    return true;
+  }
+  if (new RegExp(`(?:^|\\n)Fusion-Task-Id: ${escapeRegex(taskId)}\\s*(?:\\n|$)`).test(body)) {
+    return true;
+  }
+  // Subject anchor MUST mention the task ID — either inside a conventional
+  // scope (`<type>(<…taskId…>): …`) or as a leading `<taskId>: …`. The scope
+  // group is intentionally NOT optional here: a bare `feat: …` with no task ID
+  // is NOT ownership evidence (a prose commit such as `feat: unrelated change`
+  // whose body merely mentions the task must be rejected — incident bug #2).
+  const subjectAnchor = new RegExp(
+    `^(?:[A-Za-z]+\\([^)]*\\b${escapeRegex(taskId)}\\b[^)]*\\):|${escapeRegex(taskId)}:)`,
+  );
+  return subjectAnchor.test(subject);
+}
+
 export async function findAlreadyMergedTaskCommit(
   input: AlreadyMergedLookupInput,
 ): Promise<AlreadyMergedLookupResult | null> {
@@ -41,7 +84,7 @@ export async function findAlreadyMergedTaskCommit(
 
   try {
     if (lineageId) {
-      const lineagePattern = `^Fusion-Task-Lineage: ${lineageId}$`;
+      const lineagePattern = `^Fusion-Task-Lineage: ${escapeRegex(lineageId)}$`;
       const lineageCommand = [
         "git log",
         `--grep=${shellQuote(lineagePattern)}`,
@@ -61,7 +104,7 @@ export async function findAlreadyMergedTaskCommit(
       }
     }
 
-    const trailerPattern = `^Fusion-Task-Id: ${taskId}$`;
+    const trailerPattern = `^Fusion-Task-Id: ${escapeRegex(taskId)}$`;
     const trailerCommand = [
       "git log",
       `--grep=${shellQuote(trailerPattern)}`,
@@ -97,22 +140,34 @@ export async function findAlreadyMergedTaskCommit(
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    // FN-5441/5446 (2026-05-23 lost-work bug #2): `--grep=<taskId>` is a loose
+    // match that also hits commits merely mentioning the task ID in prose.
+    // Gather candidates (bounded) and accept only the first whose subject/body
+    // is OWNERSHIP-anchored on the task — never the first raw grep hit.
     const ancestryCommand = [
       "git log",
       "--first-parent",
-      "--format=%H",
-      `--grep=${shellQuote(taskId)}`,
-      "--max-count=1",
+      "-E",
+      "--format=%H%x1f%s%x1f%b%x1e",
+      `--grep=${shellQuote(escapeRegex(taskId))}`,
+      "--max-count=20",
       shellQuote(baseBranch),
     ].join(" ");
     const { stdout } = await execAsync(ancestryCommand, {
       cwd: repoDir,
       timeout: 30_000,
-      maxBuffer: 1024 * 1024,
+      maxBuffer: 4 * 1024 * 1024,
     });
-    const sha = stdout.trim();
-    if (sha) {
-      return { sha, strategy: "ancestry" };
+    const records = stdout
+      .split("\x1e")
+      .map((record) => record.trim())
+      .filter((record) => record.length > 0);
+    for (const record of records) {
+      const [candidateSha, candidateSubject = "", candidateBody = ""] = record.split("\x1f");
+      const sha = candidateSha?.trim();
+      if (sha && commitOwnedByTask(taskId, lineageId, candidateSubject, candidateBody)) {
+        return { sha, strategy: "ancestry" };
+      }
     }
   } catch {
     // Fall through to patch-id checks.

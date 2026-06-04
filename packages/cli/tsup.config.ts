@@ -14,6 +14,7 @@ const RUNTIME_PLUGIN_IDS = [
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
   "fusion-plugin-droid-runtime",
+  "fusion-plugin-acp-runtime",
 ] as const;
 
 const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([

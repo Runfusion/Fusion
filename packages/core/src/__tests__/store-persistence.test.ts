@@ -315,6 +315,27 @@ describe("TaskStore", () => {
       });
     });
 
+    it("canonicalizes (trims) a padded groupId when persisting branch context", async () => {
+      const task = await harness.store().createTask({
+        description: "Padded groupId canonicalization",
+        branchContext: {
+          groupId: "  BG-123  ",
+          source: "planning",
+          assignmentMode: "shared",
+        },
+      });
+
+      // The persisted branch-context metadata must carry the trimmed groupId so
+      // it matches exact group-id comparisons later (a padded "  BG-123  " would
+      // look valid here but fail equality checks downstream). The reloaded task
+      // re-parses from that metadata, so its groupId is canonical too.
+      const detail = await harness.store().getTask(task.id);
+      expect(detail.branchContext?.groupId).toBe("BG-123");
+      expect(detail.sourceMetadata).toMatchObject({
+        fusionBranchContext: { groupId: "BG-123" },
+      });
+    });
+
     it("round-trips branch fields through listTasks and reload", async () => {
       harness.store().close();
       await harness.reopenDiskBackedStore();

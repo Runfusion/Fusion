@@ -30,6 +30,7 @@ import type {
 } from "@fusion/core";
 import { autopilotLog } from "./logger.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
+import { isOperatorActionableAgentError } from "./transient-error-detector.js";
 
 /** Maximum retry attempts for slice activation failures. */
 const MAX_RETRY_ATTEMPTS = 3;
@@ -309,6 +310,25 @@ export class MissionAutopilot {
 
       const missionId = milestone.missionId;
       if (!this.isWatching(missionId)) {
+        return;
+      }
+
+      // Operator-actionable failures (e.g. a model/provider that rejects the
+      // "developer" system role, or auth/quota errors) will fail identically on
+      // every retry. Retrying them just re-runs the same cryptic error N times —
+      // the "stuck in a loop" symptom from issue #1261. Stop immediately: block
+      // the feature and surface a clear operator-action event instead of burning
+      // the retry budget.
+      const failedTask = await this.taskStore.getTask(taskId).catch(() => null);
+      if (failedTask?.error && isOperatorActionableAgentError(failedTask.error)) {
+        this.missionStore.updateFeatureStatus(feature.id, "blocked");
+        await this.taskStore.updateTask(taskId, { status: "failed", paused: true });
+        this.logMissionEventSafe(
+          missionId,
+          "error",
+          `Feature ${feature.id} blocked: task ${taskId} hit an operator-actionable error that will not resolve on retry. ${failedTask.error}`,
+          { taskId, featureId: feature.id, operatorActionable: true },
+        );
         return;
       }
 

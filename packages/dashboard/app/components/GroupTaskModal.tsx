@@ -1,7 +1,7 @@
 import "./GroupTaskModal.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, CircleDashed, ExternalLink, Loader2, X } from "lucide-react";
-import { apiGetBranchGroup, apiPromoteBranchGroup, type BranchGroupSummary } from "../api";
+import { apiAbandonBranchGroup, apiGetBranchGroup, apiPromoteBranchGroup, type BranchGroupSummary } from "../api";
 import { subscribeSse } from "../sse-bus";
 
 interface GroupTaskModalProps {
@@ -16,6 +16,7 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
   const [group, setGroup] = useState<BranchGroupSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [promoting, setPromoting] = useState(false);
+  const [abandoning, setAbandoning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadGroup = useCallback(async () => {
@@ -81,6 +82,17 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
     }
   }, [groupId, loadGroup, projectId]);
 
+  const onAbandon = useCallback(async () => {
+    if (!groupId) return;
+    setAbandoning(true);
+    try {
+      await apiAbandonBranchGroup(groupId, projectId);
+      await loadGroup();
+    } finally {
+      setAbandoning(false);
+    }
+  }, [groupId, loadGroup, projectId]);
+
   if (!isOpen || !groupId) return null;
 
   return (
@@ -138,14 +150,28 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
                 </section>
               )}
 
-              {group.completion.complete && (
+              {(group.prState === "merged" || group.prState === "closed") && (
                 <section className="card group-task-modal-actions">
-                  {group.autoMerge ? (
+                  <span className="badge">{group.prState === "merged" ? "Group PR merged" : "Group PR closed"}</span>
+                </section>
+              )}
+
+              {(group.completion.complete || group.prState === "open") && group.prState !== "merged" && group.prState !== "closed" && (
+                <section className="card group-task-modal-actions">
+                  {/* Promote stays gated on completion; Abandon below is reachable
+                      whenever the PR is open, even if completion later reverts. */}
+                  {group.completion.complete && (group.autoMerge ? (
                     <span className="badge">Auto-merge enabled</span>
                   ) : (
                     <button type="button" className="btn" onClick={() => void onPromote()} disabled={promoting}>
                       {promoting ? <Loader2 className="spin" /> : null}
                       {group.prState === "none" ? "Open PR" : "Merge group into main"}
+                    </button>
+                  ))}
+                  {group.prState === "open" && (
+                    <button type="button" className="btn btn-danger" onClick={() => void onAbandon()} disabled={abandoning}>
+                      {abandoning ? <Loader2 className="spin" /> : null}
+                      Abandon group
                     </button>
                   )}
                 </section>

@@ -14,13 +14,20 @@
  */
 
 import { exec } from "node:child_process";
+import * as childProcess from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
+// `execFile` is resolved lazily through the namespace import so test mocks that
+// only stub `exec`/`execSync` (the repo's established node:child_process mock
+// convention) can still load this module; `execFile` is only required when a
+// code path actually shells out.
+const execFileAsync: (file: string, args: string[], opts?: import("node:child_process").ExecFileOptions) => Promise<{ stdout: string; stderr: string }> = (file, args, opts) =>
+  (promisify(childProcess.execFile) as (f: string, a: string[], o?: object) => Promise<{ stdout: string; stderr: string }>)(file, args, opts);
 import type { TaskStore } from "@fusion/core";
-import { resolveTaskMergeTarget } from "@fusion/core";
+import { resolveTaskMergeTarget, getCurrentRepo, isBranchGroupMemberLanded } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
 import { activeSessionRegistry, resolveIntegrationBranch } from "@fusion/engine";
-import type { WorktreePool } from "@fusion/engine";
+import type { CreateGroupPrFn, SyncGroupPrFn, WorktreePool } from "@fusion/engine";
 
 /**
  * Minimal interface for GitHub operations needed by the PR merge workflow.
@@ -37,6 +44,9 @@ interface GitHubOperations {
     blockingReasons: string[];
   }>;
   mergePr(params: { number: number; method?: "merge" | "squash" | "rebase" }): Promise<PrInfo>;
+  getPrStatus(owner: string, repo: string, number: number): Promise<PrInfo>;
+  updatePr(params: { owner?: string; repo?: string; number: number; title?: string; body?: string }): Promise<PrInfo>;
+  closePr(params: { number: number }): Promise<PrInfo>;
 }
 
 /**
@@ -69,9 +79,16 @@ function commandExitCode(err: unknown): number | undefined {
   return undefined;
 }
 
-async function gitCommandSucceeds(cwd: string, command: string, missingExitCode: number): Promise<boolean> {
+async function gitCommandSucceeds(
+  cwd: string,
+  file: string,
+  args: string[],
+  missingExitCode: number,
+): Promise<boolean> {
   try {
-    await execAsync(command, { cwd, timeout: 30_000 });
+    // No-shell invocation (Fix #11): pass git args as discrete argv entries so a
+    // crafted branch name (e.g. `$(...)`) can never trigger shell interpretation.
+    await execFileAsync(file, args, { cwd, timeout: 30_000 });
     return true;
   } catch (err: unknown) {
     if (commandExitCode(err) === missingExitCode) return false;
@@ -83,14 +100,16 @@ async function pushTaskBranchToOrigin(cwd: string, branch: string): Promise<void
   const localRef = `refs/heads/${branch}`;
   const localBranchExists = await gitCommandSucceeds(
     cwd,
-    `git show-ref --verify --quiet "${localRef}"`,
+    "git",
+    ["show-ref", "--verify", "--quiet", localRef],
     1,
   );
 
   if (!localBranchExists) {
     const remoteBranchExists = await gitCommandSucceeds(
       cwd,
-      `git ls-remote --exit-code --heads origin "${branch}"`,
+      "git",
+      ["ls-remote", "--exit-code", "--heads", "origin", branch],
       2,
     );
 
@@ -104,7 +123,9 @@ async function pushTaskBranchToOrigin(cwd: string, branch: string): Promise<void
   }
 
   try {
-    await execAsync(`git push -u origin "${branch}"`, {
+    // No-shell invocation (Fix #11): pass the branch as a discrete argv entry so a
+    // crafted branch name (e.g. `$(...)`) cannot be interpreted by a shell.
+    await execFileAsync("git", ["push", "-u", "origin", branch], {
       cwd,
       timeout: 60_000,
     });
@@ -141,15 +162,37 @@ function buildGroupPullRequestTitle(group: Pick<BranchGroup, "id" | "sourceType"
   return `${group.id}: ${group.sourceType}/${group.sourceId} (${members.length} tasks)`;
 }
 
+/**
+ * Build the body for a single managed group PR. With `checklist: true` (sync
+ * path, U6/R6) each member line gets an [x]/[ ] landed marker and an x/N
+ * "Completion" summary line is added; without it (initial create path) members
+ * are listed as plain bullets. Both variants share the same header/skeleton.
+ */
 function buildGroupPullRequestBody(
   group: Pick<BranchGroup, "id" | "branchName" | "sourceType" | "sourceId">,
   members: Array<Pick<Task, "id" | "title"> & { branchName: string }>,
+  options?: { checklist?: boolean; landed?: (member: Pick<Task, "id" | "title"> & { branchName: string }) => boolean },
 ): string {
-  const lines = members.map((member) => `- ${member.id}: ${member.title || "(untitled)"} — \`${member.branchName}\``);
-  return [
+  const checklist = options?.checklist ?? false;
+  const isLanded = options?.landed ?? (() => false);
+  const lines = members.map((member) => {
+    const title = member.title || "(untitled)";
+    if (checklist) {
+      return `- [${isLanded(member) ? "x" : " "}] ${member.id}: ${title} — \`${member.branchName}\``;
+    }
+    return `- ${member.id}: ${title} — \`${member.branchName}\``;
+  });
+  const header = [
     `Automated group PR for ${group.id}.`,
     `Source: ${group.sourceType}/${group.sourceId}`,
     `Integration branch: \`${group.branchName}\``,
+  ];
+  if (checklist) {
+    const landedCount = members.filter((member) => isLanded(member)).length;
+    header.push(`Completion: ${landedCount}/${members.length} landed`);
+  }
+  return [
+    ...header,
     "",
     "Included tasks:",
     ...(lines.length > 0 ? lines : ["- (none)"]),
@@ -161,6 +204,103 @@ function toBranchGroupPrState(prInfo: PrInfo | null): BranchGroupPrState {
   if (prInfo.status === "merged") return "merged";
   if (prInfo.status === "closed") return "closed";
   return "open";
+}
+
+/**
+ * Build the `createGroupPr` engine callback (KTD7) used by the branch-group
+ * promotion coordinator. Closes over a GitHub client so the engine never imports
+ * the dashboard client directly. Pushes the group integration branch to origin
+ * (so `gh pr create --head` / the REST API can find it), then creates or reuses
+ * the single managed PR for the group.
+ *
+ * Idempotency: reuses an existing PR for the group head branch on GitHub. The
+ * coordinator additionally skips this call when a `prNumber` is already persisted,
+ * so a re-promotion never opens a second PR.
+ */
+export function createGroupPrCallback(
+  github: Pick<GitHubOperations, "findPrForBranch" | "createPr">,
+): CreateGroupPrFn {
+  return async ({ cwd, group, members, headBranch, baseBranch }) => {
+    const existing = await github.findPrForBranch({ head: headBranch, state: "open" });
+    if (existing) {
+      return { prNumber: existing.number, prUrl: existing.url, prState: toBranchGroupPrState(existing) };
+    }
+
+    await pushTaskBranchToOrigin(cwd, headBranch);
+    const membersWithBranch = members.map((member) => ({
+      id: member.id,
+      title: member.title,
+      branchName: getTaskBranchName(member.id),
+    }));
+    const created = await github.createPr({
+      title: buildGroupPullRequestTitle(group, members),
+      body: buildGroupPullRequestBody(group, membersWithBranch),
+      head: headBranch,
+      base: baseBranch,
+    });
+    return { prNumber: created.number, prUrl: created.url, prState: toBranchGroupPrState(created) };
+  };
+}
+
+/**
+ * Build a completion-aware group PR body: a member checklist marking each task
+ * landed/unlanded, plus an x/N completion summary (U6, R6). Rewritten in full on
+ * every sync, so repeated pushes are idempotent and coalesce naturally.
+ */
+function buildGroupPrSyncBody(group: BranchGroup, members: Task[]): string {
+  const membersWithBranch = members.map((member) => ({
+    id: member.id,
+    title: member.title,
+    branchName: getTaskBranchName(member.id),
+  }));
+  const landedById = new Map(members.map((member) => [member.id, isBranchGroupMemberLanded(member, group)]));
+  return buildGroupPullRequestBody(group, membersWithBranch, {
+    checklist: true,
+    landed: (member) => landedById.get(member.id) ?? false,
+  });
+}
+
+/**
+ * Build the `syncGroupPr` engine callback (KTD7, U6). Pushes an updated body
+ * (member checklist + x/N completion) onto the single managed group PR as
+ * members land. Closes over a GitHub client so the engine never imports the
+ * dashboard client.
+ *
+ * Out-of-band reconciliation: reads the PR's current state first; if it is no
+ * longer open (closed/merged on GitHub), returns the reconciled prState rather
+ * than editing or re-opening it, so the caller can persist the corrected state.
+ *
+ * Repo identity is resolved from the per-project `cwd` passed in the callback
+ * input (not the process cwd), so multi-project daemons target the right repo.
+ */
+export function syncGroupPrCallback(
+  github: Pick<GitHubOperations, "getPrStatus" | "updatePr">,
+): SyncGroupPrFn {
+  return async ({ cwd, group, members }) => {
+    if (group.prNumber == null) {
+      throw new Error(`syncGroupPr: group ${group.id} has no persisted prNumber`);
+    }
+    // T4: resolve the repo from the PROJECT cwd, not the process cwd. In a
+    // multi-project daemon the process cwd is not the project dir, so
+    // `getCurrentRepo()` (no arg) would resolve the wrong repository.
+    const repo = getCurrentRepo(cwd);
+    if (!repo) {
+      throw new Error("syncGroupPr: could not determine repository");
+    }
+    const current = await github.getPrStatus(repo.owner, repo.repo, group.prNumber);
+    const currentState = toBranchGroupPrState(current);
+    if (currentState !== "open") {
+      return { prNumber: current.number, prUrl: current.url, prState: currentState };
+    }
+    const updated = await github.updatePr({
+      owner: repo.owner,
+      repo: repo.repo,
+      number: group.prNumber,
+      title: buildGroupPullRequestTitle(group, members),
+      body: buildGroupPrSyncBody(group, members),
+    });
+    return { prNumber: updated.number, prUrl: updated.url, prState: toBranchGroupPrState(updated) };
+  };
 }
 
 async function hasCommitsRelativeToBranch(cwd: string, branch: string, baseBranch: string): Promise<boolean> {
@@ -314,9 +454,10 @@ export async function processPullRequestMergeTask(
   // FN-5782 contract: shared group members promote via branch_groups.branchName
   // integration branch, while non-shared tasks keep per-task PR behavior.
   const isSharedBranchGroupMember = task.branchContext?.assignmentMode === "shared";
+  const sharedGroupId = task.branchContext?.groupId;
   const branchGroup =
-    isSharedBranchGroupMember && task.branchContext
-      ? store.getBranchGroup(task.branchContext.groupId)
+    isSharedBranchGroupMember && sharedGroupId
+      ? store.getBranchGroup(sharedGroupId)
       : null;
 
   if (isSharedBranchGroupMember && branchGroup) {
@@ -343,7 +484,11 @@ export async function processPullRequestMergeTask(
         commentCount: 0,
       };
     } else {
-      groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "all" });
+      // RB#2: only relink an OPEN PR as the live group PR. A closed/merged
+      // terminal PR for this head branch must NOT be reattached (that reintroduces
+      // the terminal-PR reuse bug createGroupPrCallback fixed); treat it as
+      // not-found and fall through to push + createPr for a fresh open PR.
+      groupPrInfo = await github.findPrForBranch({ head: branchGroup.branchName, state: "open" });
       if (!groupPrInfo) {
         await pushTaskBranchToOrigin(cwd, branchGroup.branchName);
         try {

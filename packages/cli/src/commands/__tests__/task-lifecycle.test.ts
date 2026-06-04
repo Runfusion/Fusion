@@ -4,6 +4,10 @@ import { EventEmitter } from "node:events";
 // Mock child_process so we can intercept the `git push -u origin <branch>`
 // call that processPullRequestMergeTask issues before createPr.
 const execMock = vi.hoisted(() => vi.fn());
+// Records raw (file, args[]) tuples for execFile so tests can assert a no-shell
+// invocation (Fix #11) — i.e. the branch is a discrete argv entry, not shell-
+// interpolated.
+const execFileCalls = vi.hoisted(() => [] as Array<{ file: string; args: string[] }>);
 vi.mock("node:child_process", () => ({
   exec: (cmd: string, opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     try {
@@ -15,6 +19,7 @@ vi.mock("node:child_process", () => ({
   },
   execFile: (file: string, args: string[] | undefined, opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     try {
+      execFileCalls.push({ file, args: args ?? [] });
       const result = execMock(`${file} ${(args ?? []).join(" ")}`.trim(), opts);
       cb(null, typeof result === "string" ? result : "", "");
     } catch (err) {
@@ -23,11 +28,21 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+  return {
+    ...actual,
+    getCurrentRepo: vi.fn(() => ({ owner: "owner", repo: "repo" })),
+  };
+});
+
 import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
+  createGroupPrCallback,
   processPullRequestMergeTask,
   getTaskBranchName,
+  syncGroupPrCallback,
 } from "../task-lifecycle.js";
 
 interface MockTask {
@@ -104,6 +119,7 @@ function makeStatefulStore(task: MockTask, settings: Record<string, unknown> = {
 describe("processPullRequestMergeTask", () => {
   beforeEach(() => {
     execMock.mockReset();
+    execFileCalls.length = 0;
   });
 
   it("pushes the per-task branch to origin before creating a new PR", async () => {
@@ -159,12 +175,21 @@ describe("processPullRequestMergeTask", () => {
     expect(github.findPrForBranch).toHaveBeenCalled();
 
     // The git push must happen after findPrForBranch and before createPr.
-    const pushIdx = callOrder.findIndex((c) => c === `exec:git push -u origin "${branch}"`);
+    // No-shell invocation (Fix #11): the branch is now a discrete execFile arg, so
+    // there are no surrounding quotes in the recorded command string.
+    const pushIdx = callOrder.findIndex((c) => c === `exec:git push -u origin ${branch}`);
     const findIdx = callOrder.indexOf("findPrForBranch");
     const createIdx = callOrder.indexOf("createPr");
     expect(pushIdx).toBeGreaterThan(-1);
     expect(pushIdx).toBeGreaterThan(findIdx);
     expect(pushIdx).toBeLessThan(createIdx);
+
+    // The push goes through execFile with the branch as a separate argv entry —
+    // never interpolated into a shell command — so a crafted branch name can't
+    // execute a subshell.
+    const pushCall = execFileCalls.find((c) => c.file === "git" && c.args[0] === "push");
+    expect(pushCall).toBeDefined();
+    expect(pushCall!.args).toEqual(["push", "-u", "origin", branch]);
   });
 
   it("creates shared-group PR from integration branch into default branch", async () => {
@@ -1312,3 +1337,133 @@ describe("cleanupMergedTaskArtifacts FN-5455", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("syncGroupPrCallback (U6)", () => {
+  const group = {
+    id: "BG-1",
+    branchName: "fusion/groups/x",
+    sourceType: "planning" as const,
+    sourceId: "PS-1",
+    prNumber: 42,
+    prUrl: "https://github.com/owner/repo/pull/42",
+    prState: "open" as const,
+    status: "open" as const,
+    autoMerge: false,
+    createdAt: 0,
+    updatedAt: 0,
+  };
+  const members = [
+    { id: "FN-A", title: "Alpha" },
+    { id: "FN-B", title: "Beta" },
+  ] as never[];
+
+  it("edits the PR body when the PR is open and returns the persisted shape", async () => {
+    const github = {
+      getPrStatus: vi.fn(async () => ({ number: 42, url: "https://github.com/owner/repo/pull/42", status: "open", title: "T", headBranch: "h", baseBranch: "main", commentCount: 0 })),
+      updatePr: vi.fn(async () => ({ number: 42, url: "https://github.com/owner/repo/pull/42", status: "open", title: "T2", headBranch: "h", baseBranch: "main", commentCount: 0 })),
+    };
+    const sync = syncGroupPrCallback(github as never);
+    const result = await sync({ cwd: "/tmp/project", group: group as never, members });
+    expect(result).toEqual({ prNumber: 42, prUrl: "https://github.com/owner/repo/pull/42", prState: "open" });
+    expect(github.updatePr).toHaveBeenCalledTimes(1);
+    // T4: owner/repo must be forwarded so multi-project daemons target the
+    // resolved per-project repo, not process.cwd().
+    expect(github.updatePr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "owner", repo: "repo", number: 42 }),
+    );
+    const body = (github.updatePr.mock.calls[0][0] as { body: string }).body;
+    expect(body).toContain("Completion: 0/2 landed");
+    expect(body).toContain("FN-A: Alpha");
+  });
+
+  it("reconciles (does not edit) when the PR is closed out-of-band", async () => {
+    const github = {
+      getPrStatus: vi.fn(async () => ({ number: 42, url: "https://github.com/owner/repo/pull/42", status: "closed", title: "T", headBranch: "h", baseBranch: "main", commentCount: 0 })),
+      updatePr: vi.fn(),
+    };
+    const sync = syncGroupPrCallback(github as never);
+    const result = await sync({ cwd: "/tmp/project", group: group as never, members });
+    expect(result.prState).toBe("closed");
+    expect(github.updatePr).not.toHaveBeenCalled();
+  });
+
+  it("throws when the group has no persisted prNumber", async () => {
+    const github = { getPrStatus: vi.fn(), updatePr: vi.fn() };
+    const sync = syncGroupPrCallback(github as never);
+    await expect(sync({ cwd: "/tmp/project", group: { ...group, prNumber: undefined } as never, members })).rejects.toThrow(/no persisted prNumber/);
+  });
+});
+
+describe("createGroupPrCallback", () => {
+  beforeEach(() => {
+    execMock.mockReset();
+    execMock.mockImplementation(() => "");
+  });
+
+  const group = {
+    id: "BG-1",
+    sourceType: "planning" as const,
+    sourceId: "P-1",
+    branchName: "fusion/groups/p-1",
+    autoMerge: false,
+    prState: "none" as const,
+    status: "open" as const,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const members = [{ id: "FN-A", title: "Alpha", description: "a", column: "in-review" } as never];
+
+  it("queries only OPEN PRs for the head branch (does not reuse terminal PRs)", async () => {
+    const github = {
+      findPrForBranch: vi.fn(async () => null),
+      createPr: vi.fn(async () => ({
+        number: 99,
+        url: "https://github.com/owner/repo/pull/99",
+        status: "open" as const,
+      })),
+    };
+
+    const callback = createGroupPrCallback(github as never);
+    await callback({
+      cwd: "/repo",
+      group: group as never,
+      members,
+      headBranch: group.branchName,
+      baseBranch: "main",
+    });
+
+    expect(github.findPrForBranch).toHaveBeenCalledWith({ head: group.branchName, state: "open" });
+  });
+
+  it("does not reuse a closed PR from a prior group — creates a fresh one", async () => {
+    // With state:"open", findPrForBranch returns null for a head whose only PR
+    // is closed/merged, so the create path runs instead of resurrecting the
+    // terminal PR (which would poison the newly promoted group's prState).
+    const github = {
+      findPrForBranch: vi.fn(async () => null),
+      createPr: vi.fn(async () => ({
+        number: 123,
+        url: "https://github.com/owner/repo/pull/123",
+        status: "open" as const,
+      })),
+    };
+
+    const callback = createGroupPrCallback(github as never);
+    const result = await callback({
+      cwd: "/repo",
+      group: group as never,
+      members,
+      headBranch: group.branchName,
+      baseBranch: "main",
+    });
+
+    expect(github.findPrForBranch).toHaveBeenCalledWith({ head: group.branchName, state: "open" });
+    expect(github.createPr).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      prNumber: 123,
+      prUrl: "https://github.com/owner/repo/pull/123",
+      prState: "open",
+    });
+  });
+});
+

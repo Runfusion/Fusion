@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline as streamPipeline } from "node:stream/promises";
+import { listEligibleExecutorAgents } from "@fusion/engine";
 import { ApiError, badRequest, notFound, rateLimited } from "../api-error.js";
 import { createSessionDiagnostics } from "../ai-session-diagnostics.js";
 import { writeSSEEvent } from "../sse-buffer.js";
@@ -732,6 +733,24 @@ async function persistImportedSkills(
         throw badRequest("No agents or skills found in manifest");
       }
 
+      // Warn when the imported agents can't actually be assigned mission/queue
+      // work: catalog ("company") agents land with role "custom", which is never
+      // auto-assigned. If none of the imported agents are executors and no
+      // executor already exists, missions run by these agents would stall or
+      // fail invisibly (issue #1261). Surface this up front, not after the fact.
+      const importWarnings: string[] = [];
+      const customRoleCount = importItems.filter((item) => item.input.role === "custom").length;
+      const importsAnExecutor = importItems.some((item) => item.input.role === "executor");
+      if (customRoleCount > 0 && !importsAnExecutor) {
+        const existingExecutors = await listEligibleExecutorAgents(agentStore).catch(() => []);
+        if (existingExecutors.length === 0) {
+          importWarnings.push(
+            `${customRoleCount} imported agent(s) have role "custom" and won't be auto-assigned mission or queue work. `
+              + `Assign at least one agent the "executor" role, or keep ephemeral agents enabled, before starting a mission.`,
+          );
+        }
+      }
+
       if (dryRun) {
         const agentPreview = importItems.map((item) => ({
           name: item.input.name,
@@ -766,6 +785,7 @@ async function persistImportedSkills(
           created: result.created,
           skipped: result.skipped,
           errors: result.errors,
+          ...(importWarnings.length > 0 ? { warnings: importWarnings } : {}),
         });
         return;
       }
@@ -834,6 +854,7 @@ async function persistImportedSkills(
         errors,
         skillsCount: (pkg.skills ?? []).length,
         skills: skillImportResult,
+        ...(importWarnings.length > 0 ? { warnings: importWarnings } : {}),
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

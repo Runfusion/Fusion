@@ -14,8 +14,9 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TaskStore, resolvePlanningSettingsModel } from "@fusion/core";
+import { TaskStore, resolvePlanningSettingsModel, AgentStore } from "@fusion/core";
 import type { Goal } from "@fusion/core";
+import { listEligibleExecutorAgents } from "@fusion/engine";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import type {
   Mission,
@@ -2996,6 +2997,29 @@ export function createMissionRouter(
       const nextSlice = missionStore.findNextPendingSlice(missionId);
       if (!nextSlice) {
         throw badRequest("No pending slices found");
+      }
+
+      // Preflight: when ephemeral agents are disabled, mission tasks can only be
+      // run by a permanent executor agent. Catalog-imported "company" agents land
+      // with role "custom" and are never auto-assigned, so without an executor the
+      // mission's tasks silently queue forever with no error surfaced (issue #1261).
+      // Block the start with an actionable message instead of stalling invisibly.
+      // Mirrors the scheduler's dispatch gate (ephemeralAgentsEnabled===false +
+      // selectPermanentAgentForTask returns null → task queued); both go through
+      // listEligibleExecutorAgents so the preflight can't drift from dispatch.
+      const scopedStore = getScopedStore();
+      const startSettings = await scopedStore.getSettings();
+      if (startSettings.ephemeralAgentsEnabled === false) {
+        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+        await agentStore.init();
+        const executors = await listEligibleExecutorAgents(agentStore);
+        if (executors.length === 0) {
+          throw badRequest(
+            "Cannot start mission: ephemeral agents are disabled and no executor agent is available to run its tasks. "
+              + "Imported catalog (\"company\") agents have role \"custom\" and are not auto-assigned mission work. "
+              + "Assign at least one agent the \"executor\" role, or re-enable ephemeral agents in settings.",
+          );
+        }
       }
 
       // Enable autopilot (and autoAdvance for backward compat) so the mission

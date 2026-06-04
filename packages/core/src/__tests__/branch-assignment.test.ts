@@ -4,7 +4,91 @@ import {
   derivePerTaskBranchName,
   resolveEntryPointBranchAssignment,
   sanitizeBranchSegment,
+  isValidBranchGroupBranchName,
+  validateBranchGroupBranchName,
+  filterTasksByBranchGroup,
 } from "../branch-assignment.js";
+
+describe("isValidBranchGroupBranchName (Fix #11)", () => {
+  it("accepts legitimate branch names", () => {
+    for (const name of [
+      "feature/auth-shared",
+      "fusion/fn-123",
+      "main",
+      "release/v1.2.3",
+      "release-1.2.3",
+      "fn/shared",
+      "a",
+    ]) {
+      expect(isValidBranchGroupBranchName(name)).toBe(true);
+    }
+  });
+
+  it("rejects injection-shaped and unsafe names", () => {
+    for (const name of [
+      "$(touch /tmp/x)",
+      "`whoami`",
+      "feature; rm -rf /",
+      "a|b",
+      "a&b",
+      "branch with spaces",
+      "-leading-dash",
+      'has"quote',
+      "has'quote",
+      "back\\slash",
+      "a..b",
+      "a~b",
+      "a^b",
+      "a:b",
+      "trailing/",
+      "/leading",
+      "",
+      "   ",
+      "tail.lock",
+      // git check-ref-format --branch parity (rejected by git):
+      "foo//bar", // consecutive slashes / empty segment
+      "foo/.tmp", // segment starting with '.'
+      ".hidden", // top-level segment starting with '.'
+      "foo.lock/bar", // segment ending in '.lock'
+      "@", // the lone '@'
+      "foo@{bar", // '@{' sequence
+      "foo/", // trailing slash
+      "foo.", // trailing dot
+      "foo..bar", // '..' anywhere
+    ]) {
+      expect(isValidBranchGroupBranchName(name)).toBe(false);
+    }
+  });
+
+  it("validateBranchGroupBranchName throws on invalid and returns valid", () => {
+    expect(validateBranchGroupBranchName("feature/ok")).toBe("feature/ok");
+    expect(() => validateBranchGroupBranchName("$(touch /tmp/x)")).toThrow(/Invalid branch group branch name/);
+  });
+});
+
+describe("filterTasksByBranchGroup (Fix #8/#9)", () => {
+  const tasks = [
+    { id: "T1", branchContext: { groupId: "BG-1" } },
+    { id: "T2", branchContext: { groupId: "planning:PS-1" } },
+    { id: "T3", branchContext: { groupId: "BG-2" } },
+    { id: "T4", branchContext: undefined },
+  ];
+
+  it("matches the real BG id", () => {
+    const group = { id: "BG-2", sourceType: "planning", sourceId: "PS-2" };
+    expect(filterTasksByBranchGroup(tasks, group, "BG-2").map((t) => t.id)).toEqual(["T3"]);
+  });
+
+  it("also matches the legacy synthetic groupId for planning/mission groups", () => {
+    const group = { id: "BG-1", sourceType: "planning", sourceId: "PS-1" };
+    expect(filterTasksByBranchGroup(tasks, group, "BG-1").map((t) => t.id).sort()).toEqual(["T1", "T2"]);
+  });
+
+  it("does not apply the legacy fallback for non-planning/mission sources", () => {
+    const group = { id: "BG-1", sourceType: "task", sourceId: "PS-1" };
+    expect(filterTasksByBranchGroup(tasks, group, "BG-1").map((t) => t.id)).toEqual(["T1"]);
+  });
+});
 
 describe("branch-assignment", () => {
   it("sanitizes branch segments", () => {

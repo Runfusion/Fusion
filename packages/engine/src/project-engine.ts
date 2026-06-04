@@ -27,7 +27,7 @@ import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
 import { aiMergeTask, sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge } from "./merger-ai.js";
-import { promoteBranchGroup } from "./group-merge-coordinator.js";
+import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
 import { runtimeLog } from "./logger.js";
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
@@ -205,6 +205,21 @@ export interface ProjectEngineOptions {
    * can be "pull-request". Injected from CLI layer.
    */
   processPullRequestMerge?: ProcessPullRequestMergeFn;
+  /**
+   * Creates (or reuses) the single managed GitHub PR for a branch group during
+   * promotion (KTD7). Injected from the CLI layer because it depends on the
+   * dashboard `GitHubClient`; the engine must not statically import it. Mirrors
+   * the `processPullRequestMerge` seam. When absent, PR-mode promotion flips
+   * `prState` to "open" without creating a real PR (legacy behaviour).
+   */
+  createGroupPr?: CreateGroupPrFn;
+  /**
+   * Pushes an updated body onto the single managed group PR as members land
+   * (KTD7, U6). Injected from the CLI layer alongside `createGroupPr`; closes
+   * over the dashboard `GitHubClient`. When absent, member landings do not sync
+   * the PR body.
+   */
+  syncGroupPr?: SyncGroupPrFn;
   /**
    * Returns the merge blocker reason for a task, or null/undefined if
    * the task is eligible for merge. Imported from @fusion/core.
@@ -958,6 +973,46 @@ export class ProjectEngine {
    */
   enqueueMerge(taskId: string): boolean {
     return this.internalEnqueueMerge(taskId);
+  }
+
+  /**
+   * Promote a shared branch group: merge the group branch into the integration
+   * branch and reconcile `prState` (completion-gated, idempotent).
+   *
+   * This is the single engine bridge method (KTD5) that the dashboard promote
+   * route reaches via the `promoteBranchGroup` option callback in
+   * `register-integrated-routers.ts`. It resolves the same store / rootDir /
+   * settings context the internal auto-promotion path (`attemptBranchGroupPromotion`)
+   * uses and delegates to the standalone coordinator function — no logic is
+   * duplicated here.
+   */
+  async promoteBranchGroup(groupId: string): Promise<BranchGroupPromotionResult> {
+    const store = this.runtime.getTaskStore();
+    const cwd = this.config.workingDirectory;
+    const settings = await store.getSettings();
+    const promotionSettings = {
+      autoMerge: settings.autoMerge,
+      globalPause: settings.globalPause,
+      enginePaused: settings.enginePaused,
+      mergeStrategy: settings.mergeStrategy,
+      integrationBranch: settings.integrationBranch,
+      baseBranch: settings.baseBranch,
+    };
+    return await promoteBranchGroup({
+      store,
+      rootDir: cwd,
+      groupId,
+      settings: promotionSettings,
+      createGroupPr: this.options.createGroupPr,
+      recordAudit: async (event) => {
+        await store.recordRunAuditEvent({
+          domain: event.domain as any,
+          mutationType: event.mutationType,
+          target: event.target,
+          metadata: event.metadata,
+        } as any);
+      },
+    });
   }
 
   /**
@@ -1915,15 +1970,20 @@ export class ProjectEngine {
             baseBranch: settings.baseBranch,
           };
           const attemptBranchGroupPromotion = async (taskForPromotion: Task | null): Promise<void> => {
-            if (!taskForPromotion || !isSharedBranchGroupMemberIntegration(taskForPromotion)) {
+            // groupId is optional on TaskBranchContext (non-shared members carry none);
+            // isSharedBranchGroupMemberIntegration guarantees it semantically, but capture
+            // it explicitly so TypeScript narrows.
+            const promotionGroupId = taskForPromotion?.branchContext?.groupId;
+            if (!taskForPromotion || !promotionGroupId || !isSharedBranchGroupMemberIntegration(taskForPromotion)) {
               return;
             }
             try {
               await promoteBranchGroup({
                 store,
                 rootDir: cwd,
-                groupId: taskForPromotion.branchContext!.groupId,
+                groupId: promotionGroupId,
                 settings: promotionSettings,
+                createGroupPr: this.options.createGroupPr,
                 recordAudit: async (event) => {
                   await store.recordRunAuditEvent({
                     domain: event.domain as any,
@@ -1934,9 +1994,33 @@ export class ProjectEngine {
                 },
               });
             } catch (promotionError) {
+              const message =
+                promotionError instanceof Error ? promotionError.message : String(promotionError);
               runtimeLog.warn(
-                `Branch-group promotion evaluation failed for ${taskId}: ${promotionError instanceof Error ? promotionError.message : String(promotionError)}`,
+                `Branch-group promotion evaluation failed for ${taskId}: ${message}`,
               );
+              // Fix #4 (1): a promotion failure here (e.g. createGroupPr throwing
+              // after the local integration merge) must NOT be swallowed silently —
+              // the group stays active/prState:none and is only recoverable via an
+              // explicit re-promote. Record an audit event so the failure is
+              // observable and operators/the dashboard can drive recovery.
+              try {
+                await store.recordRunAuditEvent({
+                  taskId,
+                  agentId: "merger",
+                  runId: `merge-${taskId}`,
+                  domain: "git",
+                  mutationType: "merge:branch-group-promotion-failed",
+                  target: promotionGroupId,
+                  metadata: {
+                    groupId: promotionGroupId,
+                    taskId,
+                    error: message,
+                  },
+                });
+              } catch {
+                // best-effort audit
+              }
             }
           };
 
@@ -2001,6 +2085,7 @@ export class ProjectEngine {
                 usageLimitPauser,
                 agentStore,
                 signal: this.mergeAbortController.signal,
+                syncGroupPr: this.options.syncGroupPr,
                 onSession: (session: { dispose: () => void }) => {
                   this.activeMergeSession = session;
                 },

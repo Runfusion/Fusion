@@ -1686,7 +1686,14 @@ export type TaskBranchGroupSource = "planning" | "mission" | "new-task";
 export type TaskBranchAssignmentMode = "shared" | "per-task-derived";
 
 export interface TaskBranchContext {
-  groupId: string;
+  /**
+   * The owning BranchGroup id (`BG-…`). Only set for shared-mode members that
+   * were actually assigned to an ensured branch group. Non-shared members
+   * (per-task-derived) carry branch context (source/assignmentMode) without a
+   * groupId so they are never swept into a shared group by the legacy
+   * synthetic-groupId membership fallback (see filterTasksByBranchGroup).
+   */
+  groupId?: string;
   source: TaskBranchGroupSource;
   assignmentMode: TaskBranchAssignmentMode;
   inheritedBaseBranch?: string;

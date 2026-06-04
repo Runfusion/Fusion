@@ -58,6 +58,14 @@ export const BUILTIN_PLUGINS: BuiltinPluginCatalogEntry[] = [
     experimental: true,
   },
   {
+    id: "fusion-plugin-acp-runtime",
+    name: "ACP Runtime",
+    description: "Runtime provider that drives any external Agent Client Protocol agent over JSON-RPC/stdio.",
+    category: "runtime",
+    path: "./plugins/fusion-plugin-acp-runtime",
+    experimental: true,
+  },
+  {
     id: "fusion-plugin-dependency-graph",
     name: "Dependency Graph",
     description: "Dashboard plugin for task dependency graph visualization.",

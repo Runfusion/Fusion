@@ -3855,6 +3855,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         linkedTaskId = guard.existing.id;
       } else {
         let sharedBranchBaseForMission: string | undefined;
+        // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
+        // resolves members. The group is only ensured (and the id set) in shared
+        // mode below. Non-shared members get NO groupId — stamping a synthetic
+        // `mission:<id>` here would let the legacy membership fallback sweep them
+        // into a shared group later created for the same mission.
+        let missionGroupId: string | undefined;
         if (missionId && resolvedAssignmentMode === "shared") {
           const settings = await this.taskStore.getSettings();
           const settingsDefaultBranch =
@@ -3863,10 +3869,11 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
               : "main";
           const settingsAutoMerge = typeof settings.autoMerge === "boolean" ? settings.autoMerge : false;
           sharedBranchBaseForMission = resolvedBranch ?? resolvedBaseBranch ?? settingsDefaultBranch;
-          this.taskStore.ensureBranchGroupForSource("mission", missionId, {
+          const group = this.taskStore.ensureBranchGroupForSource("mission", missionId, {
             branchName: sharedBranchBaseForMission,
             autoMerge: mission?.autoMerge ?? settingsAutoMerge,
           });
+          missionGroupId = group.id;
         }
 
         const taskSegment = feature.id;
@@ -3884,7 +3891,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
           ...(missionId
             ? {
                 branchContext: {
-                  groupId: `mission:${missionId}`,
+                  ...(missionGroupId ? { groupId: missionGroupId } : {}),
                   source: "mission" as const,
                   assignmentMode: resolvedAssignmentMode,
                   inheritedBaseBranch: resolvedBaseBranch,

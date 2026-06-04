@@ -42,6 +42,8 @@ import {
 import {
   getMergeStrategy,
   processPullRequestMergeTask,
+  createGroupPrCallback,
+  syncGroupPrCallback,
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
 import { createReadOnlyProviderSettingsView } from "./provider-settings.js";
@@ -360,6 +362,8 @@ export async function runServe(
     getMergeStrategy,
     processPullRequestMerge: (s, wd, taskId, pool) =>
       processPullRequestMergeTask(s, wd, taskId, githubClient, getTaskMergeBlocker, pool),
+    createGroupPr: createGroupPrCallback(githubClient),
+    syncGroupPr: syncGroupPrCallback(githubClient),
     getTaskMergeBlocker,
     onInsightRunProcessed: (s: unknown, r: unknown) => onMemoryInsightRunProcessed(s as ScheduledTask, r as AutomationRunResult),
   });

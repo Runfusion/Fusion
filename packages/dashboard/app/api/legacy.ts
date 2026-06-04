@@ -618,6 +618,13 @@ export function apiPromoteBranchGroup(id: string, projectId?: string): Promise<P
   });
 }
 
+export function apiAbandonBranchGroup(id: string, projectId?: string): Promise<{ groupId: string; group: BranchGroupSummary }> {
+  return api<{ groupId: string; group: BranchGroupSummary }>(withProjectId(`/branch-groups/${id}/abandon`, projectId), {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export type RecoverBranchBindingOutcome =
   | { taskId: string; result: "applied"; branch: string; aheadCount: number; integrationBase: string; previousBranch: string | null }
   | { taskId: string; result: "skipped"; reason: "binding-intact" | "no-live-branch" | "ambiguous-candidates" | "no-unique-work"; candidates?: Array<{ branch: string; aheadCount: number }> };

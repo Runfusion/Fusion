@@ -13,6 +13,27 @@ function isAgentEnabled(agent: Agent): boolean {
   return (agent.runtimeConfig?.enabled as boolean | undefined) !== false;
 }
 
+/**
+ * Permanent, enabled, non-errored executor agents — the pool the scheduler can
+ * auto-assign mission/queue tasks to when ephemeral agents are disabled.
+ *
+ * Catalog-imported "company" agents land with role "custom" (see
+ * mapRoleToCapability) and are therefore NOT in this pool, which is why a
+ * mission can silently stall when ephemeral agents are off and the only agents
+ * present came from an import. Callers use this to preflight that situation.
+ */
+export async function listEligibleExecutorAgents(
+  agentStore: Pick<AgentStore, "listAgents">,
+): Promise<Agent[]> {
+  const agents = await agentStore.listAgents({ role: "executor", includeEphemeral: true });
+  return agents.filter(
+    (agent) => agent.role === "executor"
+      && !isEphemeralAgent(agent)
+      && agent.state !== "error"
+      && isAgentEnabled(agent),
+  );
+}
+
 function taskLinksToScope(task: Pick<Task, "id" | "missionId" | "sliceId">, scopeTask: Pick<Task, "id" | "missionId" | "sliceId">): boolean {
   if (task.id === scopeTask.id) return false;
   if (scopeTask.sliceId && task.sliceId === scopeTask.sliceId) return true;
@@ -21,13 +42,7 @@ function taskLinksToScope(task: Pick<Task, "id" | "missionId" | "sliceId">, scop
 }
 
 export async function selectPermanentAgentForTask({ task, agentStore, taskStore }: SelectPermanentAgentForTaskOptions): Promise<Agent | null> {
-  const allAgents = await agentStore.listAgents({ role: "executor", includeEphemeral: true });
-  const eligibleAgents = allAgents.filter(
-    (agent) => agent.role === "executor"
-      && !isEphemeralAgent(agent)
-      && agent.state !== "error"
-      && isAgentEnabled(agent),
-  );
+  const eligibleAgents = await listEligibleExecutorAgents(agentStore);
 
   if (eligibleAgents.length === 0) {
     return null;

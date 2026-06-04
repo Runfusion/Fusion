@@ -36,7 +36,21 @@ vi.mock("node:child_process", async () => {
         }
       });
     });
-  return { execSync: execSyncFn, exec: execFn };
+  // execFile mirrors exec: join argv into the command string so tests keep
+  // programming outputs via execSyncFn(cmd) regardless of which API the
+  // production code uses (the coordinator moved to argv-based execFile).
+   
+  const execFileFn: any = vi.fn((file: string, args: any, opts: any, cb: any) => {
+    const argv = Array.isArray(args) ? args : [];
+    const cmd = [file, ...argv].join(" ");
+    const optsArg = Array.isArray(args) ? opts : args;
+    const cbArg = Array.isArray(args) ? cb : opts;
+    return execFn(cmd, optsArg, cbArg);
+  });
+   
+  execFileFn[utilPromisify.custom] = (file: string, args?: any, opts?: any) =>
+    (execFn[utilPromisify.custom] as any)([file, ...(Array.isArray(args) ? args : [])].join(" "), opts);
+  return { execSync: execSyncFn, exec: execFn, execFile: execFileFn };
 });
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -2772,6 +2786,12 @@ describe("SelfHealingManager", () => {
           if (cmd.includes("Fusion-Task-Id: FN-2900")) {
             return "trailerSha123feat: ship something opaque\n" as any;
           }
+          // Ownership-verification body fetch (FN-5441/5446): the real commit
+          // located via trailer grep carries the anchored trailer in its body,
+          // so commitOwnedByTask accepts it though the subject lacks the task ID.
+          if (cmd.includes("--format=%b") && cmd.includes("trailerSha123")) {
+            return "Fusion-Task-Id: FN-2900\n" as any;
+          }
           if (cmd.includes("--fixed-strings")) return "" as any;
         }
         if (cmd.includes("git show --shortstat")) {
@@ -2828,6 +2848,11 @@ describe("SelfHealingManager", () => {
         const cmd = String(command);
         if (cmd.includes("git log") && cmd.includes("Fusion-Task-Id: FN-2901")) {
           return "rangeSha901\u001ffeat: ship something opaque\n" as any;
+        }
+        // Ownership-verification body fetch (FN-5441/5446): real trailer-grep
+        // hit carries the anchored trailer in its body.
+        if (cmd.includes("git log") && cmd.includes("--format=%b") && cmd.includes("rangeSha901")) {
+          return "Fusion-Task-Id: FN-2901\n" as any;
         }
         if (cmd.includes("git diff --shortstat") && cmd.includes("rebasebase901..rangeSha901")) {
           return " 4 files changed, 104 insertions(+), 1 deletion(-)\n" as any;

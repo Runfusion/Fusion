@@ -399,6 +399,27 @@ describe("MissionAutopilot", () => {
       expect(missionStore.updateFeatureStatus).not.toHaveBeenCalled();
     });
 
+    it("blocks immediately without retrying on an operator-actionable error", async () => {
+      const { feature } = wireMissionTask();
+      autopilot.watchMission("M-TEST1");
+      taskStore.getTask.mockResolvedValue({
+        id: "FN-001",
+        column: "in-review",
+        error:
+          "developer is not one of ['system', 'assistant', 'user', 'tool', 'function'] - 'messages.[0].role'",
+      });
+
+      await autopilot.handleTaskFailure("FN-001");
+
+      expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith(feature.id, "blocked");
+      expect(taskStore.updateTask).toHaveBeenCalledWith(
+        "FN-001",
+        expect.objectContaining({ status: "failed", paused: true }),
+      );
+      // No retry: the task must not be requeued to todo.
+      expect(taskStore.moveTask).not.toHaveBeenCalled();
+    });
+
     it("marks feature blocked after max retries and does not retry again", async () => {
       const { feature } = wireMissionTask();
       autopilot.watchMission("M-TEST1");

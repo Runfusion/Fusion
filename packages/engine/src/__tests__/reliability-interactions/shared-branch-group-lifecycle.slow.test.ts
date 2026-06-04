@@ -215,7 +215,7 @@ describe("FN-5820 reliability interactions: shared branch group lifecycle", () =
           updateBranchGroup: (...args: any[]) => (store as any).updateBranchGroup(...args),
           listTasksByBranchGroup: async () => {
             const members = [await store.getTask(task.id), await store.getTask(second.id)].filter(Boolean) as any[];
-            expect(evaluateBranchGroupCompletion({ members: members as any }).complete).toBe(true);
+            expect(evaluateBranchGroupCompletion({ members: members as any, group }).complete).toBe(true);
             return members as any;
           },
         } as any,

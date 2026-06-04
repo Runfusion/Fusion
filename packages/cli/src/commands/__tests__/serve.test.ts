@@ -694,6 +694,8 @@ vi.mock("../port-prompt.js", () => ({
 vi.mock("../task-lifecycle.js", () => ({
   getMergeStrategy: vi.fn((settings: { mergeStrategy?: "direct" | "pull-request" }) => settings.mergeStrategy ?? "direct"),
   processPullRequestMergeTask: vi.fn().mockResolvedValue("waiting"),
+  createGroupPrCallback: vi.fn(() => vi.fn()),
+  syncGroupPrCallback: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("../project-context.js", () => ({

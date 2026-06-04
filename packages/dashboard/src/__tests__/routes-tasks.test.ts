@@ -2308,8 +2308,10 @@ describe("POST /subtasks/*", () => {
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       branch: "feature/planning/first",
       baseBranch: "main",
+      // groupId is stamped only when a real branch group was ensured; this
+      // mock store has no ensureBranchGroupForSource, so no group exists and
+      // the synthetic `planning:<sessionId>` string is no longer used.
       branchContext: {
-        groupId: `planning:${start.body.sessionId}`,
         source: "planning",
         assignmentMode: "shared",
         inheritedBaseBranch: "main",
@@ -2349,20 +2351,26 @@ describe("POST /subtasks/*", () => {
     expect(createRes.status).toBe(201);
     expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
       branch: "feature/planning/first-task",
+      // Non-shared members carry NO groupId — a synthetic planning:<id> would
+      // let the legacy membership fallback sweep them into a shared group.
       branchContext: expect.objectContaining({
-        groupId: `planning:${start.body.sessionId}`,
         source: "planning",
         assignmentMode: "per-task-derived",
       }),
     }));
+    expect(
+      (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0].branchContext.groupId,
+    ).toBeUndefined();
     expect(store.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
       branch: "feature/planning/second-task",
       branchContext: expect.objectContaining({
-        groupId: `planning:${start.body.sessionId}`,
         source: "planning",
         assignmentMode: "per-task-derived",
       }),
     }));
+    expect(
+      (store.createTask as ReturnType<typeof vi.fn>).mock.calls[1][0].branchContext.groupId,
+    ).toBeUndefined();
   });
 
   it("returns 404 for invalid subtask session during batch creation", async () => {

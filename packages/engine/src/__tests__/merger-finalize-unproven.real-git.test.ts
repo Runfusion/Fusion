@@ -3,8 +3,8 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Settings, Task, TaskStore } from "@fusion/core";
-import { DEFAULT_SETTINGS } from "@fusion/core";
+import type { BranchGroup, Settings, Task, TaskStore } from "@fusion/core";
+import { DEFAULT_SETTINGS, isBranchGroupMemberLanded } from "@fusion/core";
 
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(async () => ({ session: { prompt: vi.fn(async () => undefined), dispose: vi.fn() } })),
@@ -28,7 +28,11 @@ function git(repo: string, command: string): string {
   return execSync(command, { cwd: repo, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
 }
 
-function createStore(task: Task, settings: Partial<Settings> = {}): TaskStore {
+function createStore(
+  task: Task,
+  settings: Partial<Settings> = {},
+  branchGroup?: BranchGroup,
+): TaskStore {
   let currentTask = { ...task };
   const mergedSettings: Settings = {
     ...DEFAULT_SETTINGS,
@@ -69,6 +73,9 @@ function createStore(task: Task, settings: Partial<Settings> = {}): TaskStore {
     getVerificationCacheHit: vi.fn(() => null),
     recordVerificationCachePass: vi.fn(() => undefined),
     upsertTaskCommitAssociation: vi.fn(async () => undefined),
+    getBranchGroup: vi.fn(() => branchGroup ?? null),
+    recordBranchGroupMemberLanded: vi.fn(async () => undefined),
+    recordRunAuditEvent: vi.fn(async () => undefined),
   } as unknown as TaskStore;
 }
 
@@ -250,5 +257,78 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(result.error).toContain("finalize-unproven");
     expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
     expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "todo")).toBe(true);
+  }, 20_000);
+
+  // FN-5345/FN-5377 + branch-group completion regression: a shared-group member
+  // landing via the early empty-own-diff fast-path MUST stamp
+  // mergeTargetSource === "branch-group-integration" on the persisted
+  // mergeDetails (mirroring the standard landing paths), otherwise
+  // isBranchGroupMemberLanded can never match and group promotion is
+  // permanently blocked.
+  it("stamps mergeTargetSource on early no-op fast-path so a shared-group member counts as landed", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-group-noop-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+
+    // Shared group integration branch (NOT a fusion/fn-* sibling) that the
+    // member's own commits net to zero against → early fast-path territory.
+    const groupBranch = "group/shared-integration";
+    git(repo, `git checkout -b ${groupBranch}`);
+    git(repo, "git checkout main");
+
+    const memberBranch = "fusion/fn-grp-member";
+    git(repo, `git checkout -b ${memberBranch} ${groupBranch}`);
+    // 1 own commit with zero net tree change vs the group merge-base.
+    git(repo, "git commit --allow-empty -m 'test(FN-GRP): handoff'");
+    expect(git(repo, "git rev-parse HEAD")).not.toBe(baseSha); // aheadCount >= 1
+    git(repo, "git checkout main");
+
+    const group: BranchGroup = {
+      id: "grp-1",
+      sourceType: "planning" as BranchGroup["sourceType"],
+      sourceId: "src-1",
+      branchName: groupBranch,
+      autoMerge: true,
+      prState: "none" as BranchGroup["prState"],
+      status: "open" as BranchGroup["status"],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const task = {
+      id: "FN-GRP",
+      title: "FN-GRP",
+      description: "FN-GRP",
+      column: "in-review",
+      branch: memberBranch,
+      branchContext: { assignmentMode: "shared", groupId: group.id } as Task["branchContext"],
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-GRP",
+    } as unknown as Task;
+
+    const store = createStore(task, {}, group);
+    const result = await aiMergeTask(store, repo, "FN-GRP");
+
+    // Early no-op fast-path fired and finalized as a branch-group landing.
+    expect(result.noOp).toBe(true);
+    expect(result.merged).toBe(true);
+    expect(result.mergeTargetBranch).toBe(groupBranch);
+    expect(result.mergeTargetSource).toBe("branch-group-integration");
+
+    // Persisted mergeDetails carry the source so the completion predicate matches.
+    const persisted = await store.getTask("FN-GRP");
+    expect(persisted.mergeDetails?.mergeConfirmed).toBe(true);
+    expect(persisted.mergeDetails?.mergeTargetBranch).toBe(groupBranch);
+    expect(persisted.mergeDetails?.mergeTargetSource).toBe("branch-group-integration");
+    expect(isBranchGroupMemberLanded(persisted, group)).toBe(true);
   }, 20_000);
 });

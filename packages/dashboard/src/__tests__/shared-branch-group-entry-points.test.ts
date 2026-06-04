@@ -248,6 +248,29 @@ async function REQUEST(app: express.Express, method: string, path: string, body?
   return { status: res.status, body: res.body };
 }
 
+/**
+ * ## Surface Enumeration
+ * Surfaces over which this regression spec proves the shared branch-group
+ * entry-point invariant (shared-mode tasks work on per-task-derived branches
+ * while the shared branch is only a merge target, and group membership identity
+ * is stamped consistently):
+ * - Providers / execution paths (dashboard entry points that create or assign
+ *   branch-group members): planning/subtasks streaming start, new-task creation
+ *   in shared mode, and the assignment paths exercised through
+ *   `store.createTask`, `ensureBranchGroupForSource`,
+ *   `getBranchGroupByBranchName`, `setTaskBranchGroup`, and `updateTask`.
+ * - Assignment modes / data states: shared, project-default, existing,
+ *   custom-new, auto-new, and per-task-derived sources.
+ * - Shared modules/helpers reusing the logic: the branch-name derivation and
+ *   `branchContext.groupId` membership-identity helpers shared with the core
+ *   entry-point spec, so the invariant cannot drift between dashboard and core.
+ * - Breakpoints/platforms: N/A — these are HTTP route/store invariants with no
+ *   UI rendering surface.
+ *
+ * NOTE: two per-task-derived-derivation cases in this file are known
+ * pre-existing failures tracked separately; this enumeration documents the
+ * intended surface coverage and does not alter those assertions.
+ */
 describe("shared branch-group entry-point invariants", () => {
   let store: TaskStore;
 
@@ -288,10 +311,13 @@ describe("shared branch-group entry-point invariants", () => {
     expect(firstPlanning.branch).not.toBe("feature/auth-shared");
     expect(secondPlanning.branch).not.toBe("feature/auth-shared");
     expect(firstPlanning.branch).not.toBe(secondPlanning.branch);
-    const planningGroup = (store.getBranchGroupBySource as ReturnType<typeof vi.fn>).mock.results.at(-1)?.value as BranchGroup;
-    expect(firstPlanning.branchContext).toMatchObject({ groupId: `planning:${sessionId}`, source: "planning", assignmentMode: "shared" });
-    expect(secondPlanning.branchContext).toMatchObject({ groupId: `planning:${sessionId}`, source: "planning", assignmentMode: "shared" });
-    expect(planningGroup.branchName).toBe("feature/auth-shared");
+    // U1: the real BG- id is stamped into branchContext.groupId so listTasksByBranchGroup(group.id) resolves members.
+    const ensuredPlanningGroup = (store.ensureBranchGroupForSource as ReturnType<typeof vi.fn>).mock.results.at(-1)?.value as BranchGroup;
+    expect(ensuredPlanningGroup.id).toBe(`BG-planning-${sessionId}`);
+    expect(ensuredPlanningGroup.branchName).toBe("feature/auth-shared");
+    expect(firstPlanning.branchContext).toMatchObject({ groupId: ensuredPlanningGroup.id, source: "planning", assignmentMode: "shared" });
+    expect(secondPlanning.branchContext).toMatchObject({ groupId: ensuredPlanningGroup.id, source: "planning", assignmentMode: "shared" });
+    expect(firstPlanning.branchContext?.groupId).not.toBe(`planning:${sessionId}`);
 
     const newTask = await REQUEST(app, "POST", "/api/tasks", {
       title: "Shared entry-point task",

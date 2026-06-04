@@ -1782,6 +1782,73 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
+  it("records an audit event (not silent) when auto-promotion of a branch-group member fails (Fix #4)", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    // The dequeued + merged task is a shared branch-group member, so the engine
+    // attempts branch-group promotion after the PR merges.
+    const mergedMember = {
+      id: "FN-bgfail",
+      column: "done",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+      branch: "fusion/fn-bgfail",
+      branchContext: { groupId: "BG-FAIL-1", source: "planning", assignmentMode: "shared" },
+      mergeDetails: { mergeConfirmed: true, mergedAt: "2026-06-03T00:00:00.000Z", mergeTargetBranch: "fusion/groups/x" },
+    };
+    mockStore.store.getTask
+      .mockResolvedValueOnce({
+        id: "FN-bgfail",
+        column: "in-review",
+        paused: false,
+        mergeRetries: 0,
+        status: null,
+        branch: "fusion/fn-bgfail",
+        branchContext: { groupId: "BG-FAIL-1", source: "planning", assignmentMode: "shared" },
+      })
+      .mockResolvedValue(mergedMember);
+
+    const recordRunAuditEvent = vi.fn(async () => undefined);
+    // Drive promoteBranchGroup into throwing: getBranchGroup returns a complete-
+    // looking group, but listTasksByBranchGroup rejects, so promotion throws and
+    // the engine's catch must record the failure audit instead of swallowing it.
+    (mockStore.store as any).getBranchGroup = vi.fn(() => ({
+      id: "BG-FAIL-1",
+      sourceType: "planning",
+      sourceId: "planning:x",
+      branchName: "fusion/groups/x",
+      autoMerge: true,
+      prState: "none",
+      status: "open",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }));
+    (mockStore.store as any).getBranchGroupByBranchName = vi.fn(() => null);
+    (mockStore.store as any).listTasksByBranchGroup = vi.fn(async () => {
+      throw new Error("boom: store unavailable");
+    });
+    (mockStore.store as any).updateBranchGroup = vi.fn();
+    (mockStore.store as any).recordRunAuditEvent = recordRunAuditEvent;
+    mocks.currentStore = mockStore.store;
+
+    const processPullRequestMerge = vi.fn(async () => "merged" as const);
+    const engine = createEngine({ processPullRequestMerge, getMergeStrategy: () => "pull-request" });
+    await engine.start();
+    engine.enqueueMerge("FN-bgfail");
+
+    await vi.waitFor(() => {
+      expect(recordRunAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mutationType: "merge:branch-group-promotion-failed",
+          target: "BG-FAIL-1",
+          metadata: expect.objectContaining({ groupId: "BG-FAIL-1", taskId: "FN-bgfail" }),
+        }),
+      );
+    });
+
+    await engine.stop();
+  });
+
   it("logs and skips paused tasks dequeued for auto-merge", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mockStore.store.getTask.mockResolvedValueOnce({

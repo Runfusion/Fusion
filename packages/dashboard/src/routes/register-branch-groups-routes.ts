@@ -1,9 +1,33 @@
 import { Router, type Request } from "express";
 import type { BranchGroup, Task, TaskStore } from "@fusion/core";
+import { isBranchGroupComplete, isBranchGroupMemberLanded, filterTasksByBranchGroup } from "@fusion/core";
 import { badRequest, notFound } from "../api-error.js";
 
 export interface BranchGroupsRouterOptions {
   promoteBranchGroup?: (input: { groupId: string; projectId?: string }) => Promise<Record<string, unknown>>;
+  /**
+   * Terminal reconciliation when a group is abandoned (U6, R7): best-effort
+   * close the single managed GitHub PR. Returns the reconciled prState so the
+   * route can persist it. Injected so the router does not hard-depend on a
+   * GitHub client being available; when omitted, abandon still marks the row
+   * `abandoned`/`closed` without touching GitHub.
+   */
+  closeGroupPr?: (input: {
+    group: BranchGroup;
+    projectId?: string;
+  }) => Promise<{ prNumber: number; prUrl: string; prState: BranchGroup["prState"] } | null>;
+  /**
+   * Out-of-band PR reconciliation on single-group read (Fix #3): when a group has
+   * an open managed PR, this is invoked best-effort before serialization so a PR
+   * merged/closed directly on GitHub flips `prState` accordingly. Wired over the
+   * engine's `reconcileBranchGroupPr` + a GitHub-backed `SyncGroupPrFn`. Omitted
+   * (or throwing) leaves the persisted state untouched. Only the single-group
+   * GET path calls this — the list stays cheap.
+   */
+  reconcileGroupPr?: (input: {
+    group: BranchGroup;
+    projectId?: string;
+  }) => Promise<BranchGroup>;
 }
 
 function parseProjectId(req: Request): string | undefined {
@@ -11,19 +35,23 @@ function parseProjectId(req: Request): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function isMemberLanded(task: Task, group: BranchGroup): boolean {
-  return task.mergeDetails?.mergeConfirmed === true
-    && task.mergeDetails?.mergeTargetSource === "branch-group-integration"
-    && task.mergeDetails?.mergeTargetBranch === group.branchName;
-}
-
-async function serializeGroup(store: TaskStore, group: BranchGroup) {
-  const members = await store.listTasksByBranchGroup(group.id);
+/**
+ * Serialize a single group. Pass `allTasks` to filter membership in memory from a
+ * single up-front `listTasks` call (list route, Fix #8/#9 — avoids the N+1 scan);
+ * omit it to fall back to a per-group `listTasksByBranchGroup` scan (single-group
+ * read / abandon, where one scan is fine).
+ */
+async function serializeGroup(store: TaskStore, group: BranchGroup, allTasks?: Task[]) {
+  const members = allTasks
+    ? filterTasksByBranchGroup(allTasks, group, group.id).sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      )
+    : await store.listTasksByBranchGroup(group.id);
   const memberRows = members.map((task) => ({
     taskId: task.id,
     title: task.title ?? task.description,
     column: task.column,
-    landed: isMemberLanded(task, group),
+    landed: isBranchGroupMemberLanded(task, group),
   }));
   const landedCount = memberRows.filter((member) => member.landed).length;
   return {
@@ -32,7 +60,7 @@ async function serializeGroup(store: TaskStore, group: BranchGroup) {
     completion: {
       landed: landedCount,
       total: memberRows.length,
-      complete: memberRows.length > 0 && landedCount === memberRows.length,
+      complete: isBranchGroupComplete(members, group),
     },
   };
 }
@@ -48,15 +76,31 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
     }
 
     const groups = store.listBranchGroups(status ? { status: status as BranchGroup["status"] } : undefined);
-    const data = await Promise.all(groups.map((group) => serializeGroup(store, group)));
+    // Fix #8/#9: fetch tasks ONCE and filter per group in memory rather than one
+    // full scan per group (the old N+1). Membership semantics (incl. legacy
+    // synthetic-groupId fallback) come from the shared `filterTasksByBranchGroup`.
+    const allTasks = await store.listTasks({ includeArchived: false, slim: true });
+    const data = await Promise.all(groups.map((group) => serializeGroup(store, group, allTasks)));
     res.json({ groups: data });
   });
 
   router.get("/:id", async (req, res) => {
     const id = String(req.params.id ?? "").trim();
     if (!id) throw badRequest("id is required");
-    const group = store.getBranchGroup(id);
+    let group = store.getBranchGroup(id);
     if (!group) throw notFound("Branch group not found");
+
+    // Fix #3: reconcile an out-of-band merged/closed PR before serializing so the
+    // response reflects the real GitHub state. Best-effort — a reconcile failure
+    // must not break the read; we serialize the (possibly stale) persisted state.
+    if (group.prNumber != null && group.prState === "open" && options?.reconcileGroupPr) {
+      try {
+        group = await options.reconcileGroupPr({ group, projectId: parseProjectId(req) });
+      } catch {
+        group = store.getBranchGroup(id) ?? group;
+      }
+    }
+
     res.json({ group: await serializeGroup(store, group) });
   });
 
@@ -100,8 +144,7 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
     if (!group) throw notFound("Branch group not found");
 
     const members = await store.listTasksByBranchGroup(group.id);
-    const landed = members.filter((member) => isMemberLanded(member, group)).length;
-    if (members.length === 0 || landed !== members.length) {
+    if (!isBranchGroupComplete(members, group)) {
       throw badRequest("Branch group completion gate not satisfied");
     }
 
@@ -112,6 +155,55 @@ export function createBranchGroupsRouter(store: TaskStore, options?: BranchGroup
 
     const result = await promote({ groupId: id, projectId: parseProjectId(req) });
     res.json({ groupId: id, ...result });
+  });
+
+  // Terminal reconciliation: abandon a group. Best-effort closes the single
+  // managed GitHub PR (U6, R7), then marks the row `abandoned` with prState
+  // `closed`. The PR close is best-effort: if it fails or no closeGroupPr is
+  // wired, the row is still marked abandoned/closed (the GitHub PR is left for
+  // out-of-band reconciliation on the next read/sync).
+  router.post("/:id/abandon", async (req, res) => {
+    const id = String(req.params.id ?? "").trim();
+    if (!id) throw badRequest("id is required");
+    const group = store.getBranchGroup(id);
+    if (!group) throw notFound("Branch group not found");
+
+    // Fix #2: a finalized, already-abandoned, or already-merged group is terminal
+    // and must not be flipped to abandoned/closed (mirrors the promote route's gate
+    // style). The CLI's runBranchGroupAbandon also guards the abandoned status, so
+    // re-abandoning a `prState: "none"` group can't silently persist `prState: "closed"`.
+    if (group.status === "abandoned" || group.status === "finalized" || group.prState === "merged") {
+      throw badRequest("Branch group is already abandoned, finalized, or merged and cannot be abandoned");
+    }
+
+    // The guard above already rejected `prState === "merged"`. A group with a PR
+    // abandons to "closed" (unless the GitHub reconcile below reports otherwise);
+    // a group that never had a PR keeps its existing prState — "closed" would
+    // falsely imply a PR existed and was closed when none ever did.
+    let prState: BranchGroup["prState"] = group.prNumber != null ? "closed" : group.prState;
+    let prNumber = group.prNumber;
+    let prUrl = group.prUrl;
+
+    if (group.prNumber != null && group.prState === "open" && options?.closeGroupPr) {
+      try {
+        const reconciled = await options.closeGroupPr({ group, projectId: parseProjectId(req) });
+        if (reconciled) {
+          prState = reconciled.prState;
+          prNumber = reconciled.prNumber;
+          prUrl = reconciled.prUrl;
+        }
+      } catch {
+        // Best-effort: leave the GitHub PR for out-of-band reconciliation.
+      }
+    }
+
+    const updated = store.updateBranchGroup(id, {
+      status: "abandoned",
+      prState,
+      prNumber: prNumber ?? null,
+      prUrl: prUrl ?? null,
+    });
+    res.json({ groupId: id, group: await serializeGroup(store, updated) });
   });
 
   return router;

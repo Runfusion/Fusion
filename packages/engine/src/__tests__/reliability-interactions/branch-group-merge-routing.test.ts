@@ -74,6 +74,61 @@ describe("FN-5782 reliability interactions: branch group merge routing", () => {
     }
   }, 30_000);
 
+  it.skipIf(!hasGit)("routes a shared member to the group branch even when it inherited a sibling fusion/fn-* baseBranch (lost-work regression)", async () => {
+    const fixture = await makeReliabilityFixture({ taskId: "FN-5782-RI-SIBLING", settings: { testMode: true } as any });
+
+    try {
+      const { rootDir, store, task } = fixture;
+      await stageMergeBranch(store, rootDir, task.id, "fn5782SiblingInherit");
+
+      const group = store.createBranchGroup({
+        sourceType: "planning",
+        sourceId: "PS-FN5782-SIBLING",
+        branchName: "fusion/groups/fn-5782-sibling",
+      });
+      await store.setTaskBranchGroup(task.id, group.id);
+
+      // 2026-05-23 lost-work shape: a shared member inherited a sibling
+      // `fusion/fn-*` branch as its base/inherited base (propagated from a
+      // sibling-dispatched parent). The resolver MUST still land it on the
+      // group branch, never on the sibling, and never on main.
+      await store.updateTask(task.id, {
+        baseBranch: "fusion/fn-9999-sibling-parent",
+        branchContext: {
+          groupId: group.id,
+          source: "planning",
+          assignmentMode: "shared",
+          inheritedBaseBranch: "fusion/fn-9999-sibling-parent",
+        },
+      } as any);
+
+      const auditSpy = vi.spyOn(store as any, "recordRunAuditEvent");
+      const result = await aiMergeTask(store, rootDir, task.id);
+      expect(result.merged).toBe(true);
+
+      // Landed on the group branch; NOT on the sibling, NOT on main.
+      expect(git(rootDir, `git show ${group.branchName}:packages/engine/src/fn5782SiblingInherit.ts`)).toContain("fn5782SiblingInherit");
+      expect(() => git(rootDir, "git show main:packages/engine/src/fn5782SiblingInherit.ts")).toThrow();
+      expect(() => git(rootDir, "git show fusion/fn-9999-sibling-parent:packages/engine/src/fn5782SiblingInherit.ts")).toThrow();
+
+      const recovered = await store.getTask(task.id);
+      expect(recovered?.mergeDetails?.mergeTargetSource).toBe("branch-group-integration");
+      expect(recovered?.mergeDetails?.mergeTargetBranch).toBe(group.branchName);
+
+      expect(auditSpy).toHaveBeenCalledWith(expect.objectContaining({
+        domain: "git",
+        mutationType: "merge:branch-group-routed",
+        target: task.id,
+        metadata: expect.objectContaining({
+          mergeTargetBranch: group.branchName,
+          mergeTargetSource: "branch-group-integration",
+        }),
+      }));
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 45_000);
+
   it.skipIf(!hasGit)("records shared-member landing even when autoMerge is false", async () => {
     const fixture = await makeReliabilityFixture({
       taskId: "FN-5819-RI-AUTO-OFF",

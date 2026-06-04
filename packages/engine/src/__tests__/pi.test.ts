@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, promptWithFallback, type AgentOptions } from "../pi.js";
+import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
 import { createAgentSession, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
@@ -908,5 +908,26 @@ describe("piLog structured diagnostics", () => {
     expect(logSpy).toHaveBeenCalledWith("promptWithFallback: prompt completed");
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("isRetryableModelSelectionError", () => {
+  it("treats an unsupported message-role rejection as model-selection retryable so the fallback model is tried (issue #1261)", () => {
+    expect(
+      isRetryableModelSelectionError(
+        "developer is not one of ['system', 'assistant', 'user', 'tool', 'function'] - 'messages.[0].role'",
+      ),
+    ).toBe(true);
+  });
+
+  it("still matches the existing auth/rate-limit/capacity signals", () => {
+    expect(isRetryableModelSelectionError("invalid api key")).toBe(true);
+    expect(isRetryableModelSelectionError("HTTP 429 too many requests")).toBe(true);
+    expect(isRetryableModelSelectionError("model is overloaded")).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isRetryableModelSelectionError("ENOENT: no such file or directory")).toBe(false);
+    expect(isRetryableModelSelectionError("syntax error near unexpected token")).toBe(false);
   });
 });

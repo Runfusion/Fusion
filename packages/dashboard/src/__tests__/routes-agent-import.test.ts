@@ -72,6 +72,8 @@ vi.mock("@fusion/core", () => {
     parseSingleAgentManifest: (...args: unknown[]) => mockParseSingleAgentManifest(...args),
     prepareAgentCompaniesImport: (...args: unknown[]) => mockPrepareAgentCompaniesImport(...args),
     AgentCompaniesParseError: MockAgentCompaniesParseError,
+    isEphemeralAgent: (agent: { metadata?: Record<string, unknown> }) =>
+      agent?.metadata?.agentKind === "task-worker",
     deterministicGuardLocks: new Map(),
   };
 });
@@ -365,6 +367,53 @@ describe("POST /api/agents/import", () => {
     ]);
     expect(body.skills).toEqual([]);
     expect(mockCreateAgent).not.toHaveBeenCalled();
+  });
+
+  it("warns when imported agents are all role custom and no executor exists (issue #1261)", async () => {
+    mockListAgents.mockResolvedValue([]);
+
+    const response = await postImport(app, {
+      manifest: "---\nname: YAML Agent\n---\nInstructions",
+      dryRun: true,
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as any;
+    expect(Array.isArray(body.warnings)).toBe(true);
+    expect(body.warnings[0]).toContain("custom");
+    expect(body.warnings[0]).toContain("executor");
+  });
+
+  it("includes the custom-role warning on a live (non-dry-run) import too (issue #1261)", async () => {
+    mockListAgents.mockResolvedValue([]);
+
+    const response = await postImport(app, {
+      manifest: "---\nname: YAML Agent\n---\nInstructions",
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as any;
+    // Live import actually persists the agent...
+    expect(body.created).toHaveLength(1);
+    // ...and still surfaces the warning (the path the dry-run test can't cover).
+    expect(Array.isArray(body.warnings)).toBe(true);
+    expect(body.warnings[0]).toContain("custom");
+    expect(body.warnings[0]).toContain("executor");
+  });
+
+  it("does not warn when an eligible executor agent already exists", async () => {
+    mockListAgents.mockResolvedValue([
+      { id: "exec-1", name: "Executor", role: "executor", state: "idle", metadata: {} },
+    ]);
+
+    const response = await postImport(app, {
+      manifest: "---\nname: YAML Agent\n---\nInstructions",
+      dryRun: true,
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as any;
+    expect(body.warnings).toBeUndefined();
   });
 
   it("includes manifest memory in dry-run preview", async () => {

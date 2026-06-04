@@ -2741,11 +2741,12 @@ describe("Planning Mode Routes", () => {
         const firstCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
         const secondCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[1]?.[0];
 
+        // U1: branchContext.groupId carries the real BranchGroup id, not the synthetic `planning:<id>` string.
         expect(firstCreateCall).toMatchObject({
           branch: "feature/auth-slice/auth-backend",
           baseBranch: "main",
           branchContext: {
-            groupId: `planning:${planningSessionId}`,
+            groupId: `BG-planning-${planningSessionId}`,
             source: "planning",
             assignmentMode: "shared",
             inheritedBaseBranch: "main",
@@ -2755,7 +2756,7 @@ describe("Planning Mode Routes", () => {
           branch: "feature/auth-slice/auth-ui",
           baseBranch: "main",
           branchContext: {
-            groupId: `planning:${planningSessionId}`,
+            groupId: `BG-planning-${planningSessionId}`,
             source: "planning",
             assignmentMode: "shared",
             inheritedBaseBranch: "main",
@@ -2825,13 +2826,14 @@ describe("Planning Mode Routes", () => {
         expect(firstCreateCall?.branch).not.toBe("feature/auth-breakdown");
         expect(secondCreateCall?.branch).not.toBe("feature/auth-breakdown");
         expect(firstCreateCall?.branch).not.toBe(secondCreateCall?.branch);
+        // U1: branchContext.groupId carries the real BranchGroup id, not the synthetic `planning:<id>` string.
         expect(firstCreateCall?.branchContext).toMatchObject({
-          groupId: `planning:${sessionId}`,
+          groupId: `BG-planning-${sessionId}`,
           source: "planning",
           assignmentMode: "shared",
         });
         expect(secondCreateCall?.branchContext).toMatchObject({
-          groupId: `planning:${sessionId}`,
+          groupId: `BG-planning-${sessionId}`,
           source: "planning",
           assignmentMode: "shared",
         });

@@ -633,6 +633,31 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.2)(jiti@2.7.0)(jsdom@29.0.1)(tsx@4.21.0)(yaml@2.9.0)
 
+  plugins/fusion-plugin-acp-runtime:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 0.24.0
+        version: 0.24.0(zod@4.3.6)
+      '@earendil-works/pi-ai':
+        specifier: '*'
+        version: 0.78.0(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@earendil-works/pi-coding-agent':
+        specifier: '*'
+        version: 0.78.0(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@fusion/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.2)(jiti@2.7.0)(jsdom@29.0.1)(tsx@4.21.0)(yaml@2.9.0)
+
   plugins/fusion-plugin-agent-browser:
     dependencies:
       '@fusion/plugin-sdk':
@@ -1007,6 +1032,11 @@ packages:
 
   '@adobe/css-tools@4.4.4':
     resolution: {integrity: sha512-Elp+iwUx5rN5+Y8xLt5/GRoG20WGoDCQ/1Fb+1LiGtvwbDavuSk0jhD/eZdckHAuzcDzccnkv+rEjyWfRx18gg==}
+
+  '@agentclientprotocol/sdk@0.24.0':
+    resolution: {integrity: sha512-vvu9appvGvfYstBj19C6NCepV6SvUhY5VRv60KUZ4XzhTah/olOYul5Zo4C+x2enyshMSvgB2mm/OEmrsHaSmA==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@alcalzone/ansi-tokenize@0.2.5':
     resolution: {integrity: sha512-3NX/MpTdroi0aKz134A6RC2Gb2iXVECN4QaAXnvCIxxIm3C3AVB1mkUe8NaaiyvOpDfsrqWhYtj+Q6a62RrTsw==}
@@ -6570,6 +6600,10 @@ snapshots:
   '@adiwajshing/keyed-db@0.2.4': {}
 
   '@adobe/css-tools@4.4.4': {}
+
+  '@agentclientprotocol/sdk@0.24.0(zod@4.3.6)':
+    dependencies:
+      zod: 4.3.6
 
   '@alcalzone/ansi-tokenize@0.2.5':
     dependencies:

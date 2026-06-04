@@ -6,6 +6,10 @@ vi.mock("node:child_process", () => ({
     cb?.(null, "", "");
   }),
   execSync: vi.fn(),
+  execFile: vi.fn((_file: string, _args: unknown, optsOrCb: unknown, cbMaybe?: (err: unknown, stdout: string, stderr: string) => void) => {
+    const cb = typeof optsOrCb === "function" ? optsOrCb : cbMaybe;
+    cb?.(null, "", "");
+  }),
 }));
 import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";

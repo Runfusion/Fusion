@@ -493,9 +493,13 @@ function commitOwnedByTask(taskId: string, lineageId: string | undefined, subjec
   if (new RegExp(`(?:^|\\n)Fusion-Task-Id: ${escapeRegex(taskId)}\\s*(?:\\n|$)`).test(body)) {
     return true;
   }
-  // Subject anchor: `<scope>(<taskId>...): …` or `<taskId>: …` at start.
+  // Subject anchor: `<type>(<…taskId…>): …` or `<taskId>: …` at start.
+  // The conventional scope group is intentionally NOT optional: a bare
+  // `<type>: …` (e.g. `feat: unrelated change`) carries no task ID and is NOT
+  // ownership evidence, even if the body mentions the task in prose (incident
+  // bug #2 — a prose-mention must never claim a task).
   const subjectAnchor = new RegExp(
-    `^(?:[A-Za-z]+(?:\\([^)]*\\b${escapeRegex(taskId)}\\b[^)]*\\))?:|${escapeRegex(taskId)}:)`,
+    `^(?:[A-Za-z]+\\([^)]*\\b${escapeRegex(taskId)}\\b[^)]*\\):|${escapeRegex(taskId)}:)`,
   );
   return subjectAnchor.test(subject);
 }

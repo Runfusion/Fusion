@@ -1027,7 +1027,17 @@ function resolveConfiguredModel(
   );
 }
 
-function isRetryableModelSelectionError(message: string): boolean {
+export function isRetryableModelSelectionError(message: string): boolean {
+  // An unsupported message-role rejection (e.g. a reasoning model sending the
+  // "developer" system role to a provider that only accepts
+  // system/user/assistant/tool) is fundamentally a model+provider
+  // compatibility problem. Treat it as a model-selection error so a configured
+  // fallback model is tried once before the task is marked failed. The
+  // `usingFallback` guard upstream keeps this to a single swap, so an
+  // incompatible fallback fails terminally rather than looping.
+  if (isUnsupportedMessageRoleError(message)) {
+    return true;
+  }
   const normalized = message.toLowerCase();
   return normalized.includes("rate limit")
     || normalized.includes("too many requests")

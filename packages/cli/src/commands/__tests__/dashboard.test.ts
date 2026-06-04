@@ -275,10 +275,21 @@ const {
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
+  // execFile mirrors exec's success-callback contract: the new argv-based git
+  // probes (pushTaskBranchToOrigin / gitCommandSucceeds) must hit the mock, not
+  // spawn real git against this test's fake cwds.
+  const mockExecFile = ((_file: string, _args?: unknown, optsOrCb?: unknown, cbMaybe?: unknown) => {
+    const callback = [optsOrCb, cbMaybe, _args].find((v) => typeof v === "function") as
+      | ((err: null, stdout: string, stderr: string) => void)
+      | undefined;
+    if (callback) callback(null, "", "");
+    return { pid: 12346, stdout: null, stderr: null, on: vi.fn(), once: vi.fn(), kill: vi.fn() };
+  }) as unknown as typeof original.execFile;
   return {
     ...original,
     exec: mockExec,
     execSync: mockExecSync,
+    execFile: mockExecFile,
   };
 });
 
