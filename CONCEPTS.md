@@ -134,6 +134,14 @@ The user's mid-stage feedback channel: free-text guidance attached to an answer,
 ### Rehydration
 Re-establishing a live agent handle for a paused CE Session by replaying its recorded conversation against the model. Replay is side-effect-suppressed: it reconstructs the agent's context without re-emitting events, re-streaming Live activity, or re-writing artifacts.
 
+## Plugins
+
+### Bundled Plugin
+A plugin that ships inside the Fusion distribution itself rather than being installed from a user-supplied path — it appears under Settings → Built-in Plugins and can be auto-installed at startup.
+*Avoid:* built-in plugin (as a distinct concept; the Settings label uses "Built-in" for the same thing)
+
+A Bundled Plugin must be registered in several independently maintained surfaces — the Settings catalog, the dashboard server's bundled-id fallback set, the CLI's startup auto-install list, and the build step that stages a loadable copy into the distribution. The surfaces do not cross-check each other: a plugin registered in some but not all appears installable yet fails to install or load, so adding one means mirroring an existing bundled plugin across every surface.
+
 ## Flagged ambiguities
 
 - "Merging" a shared-branch-group Task had been used for both member integration and group promotion — these are distinct steps with independent gating and must not be conflated.
