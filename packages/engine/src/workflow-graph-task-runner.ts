@@ -14,7 +14,7 @@ import type {
   WorkflowBranchProgress,
   WorkflowBranchSemaphore,
 } from "./workflow-graph-branches.js";
-import type { WorkflowStepInstancePersistence } from "./workflow-graph-foreach.js";
+import type { ForeachEnvironment, WorkflowStepInstancePersistence } from "./workflow-graph-foreach.js";
 // (Both types are also used as values in the side-effect tracking wrappers below.)
 
 /**
@@ -69,6 +69,14 @@ export interface WorkflowGraphTaskRunnerDeps {
   /** Step-inversion (U14, KTD-15): `code` node runner. Additive; a workflow with
    *  no code node never invokes it. */
   runCode?: CodeNodeRunner;
+  /** Step-inversion (KTD-11, U10): worktree-isolation + parallel-scheduling deps.
+   *  Additive; a shared-isolation foreach never invokes them. */
+  allocateInstanceWorktree?: ForeachEnvironment["allocateInstanceWorktree"];
+  resolveIntegrationBase?: ForeachEnvironment["resolveIntegrationBase"];
+  integrationGitOps?: ForeachEnvironment["integrationGitOps"];
+  integrationProjection?: ForeachEnvironment["integrationProjection"];
+  semaphoreAvailability?: ForeachEnvironment["semaphoreAvailability"];
+  resumeReconcile?: ForeachEnvironment["resumeReconcile"];
 }
 
 /**
@@ -174,6 +182,13 @@ export class WorkflowGraphTaskRunner {
         onReworkReset: this.deps.onReworkReset,
         parseStepsDeps: this.deps.parseStepsDeps,
         runCode: this.deps.runCode,
+        // Step-inversion (KTD-11, U10): worktree isolation + parallel scheduling.
+        allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
+        resolveIntegrationBase: this.deps.resolveIntegrationBase,
+        integrationGitOps: this.deps.integrationGitOps,
+        integrationProjection: this.deps.integrationProjection,
+        semaphoreAvailability: this.deps.semaphoreAvailability,
+        resumeReconcile: this.deps.resumeReconcile,
         runId: `${task.id}:${definition.id}`,
         onBranchProgress: (progress) => {
           this.branchProgress.set(progress.branchId, progress);

@@ -45,14 +45,14 @@ import {
   resolveAgentMemoryInclusionMode,
   type RunCommandResult,
 } from "@fusion/core";
-import { findWorktreeUser } from "./merger.js";
+import { findWorktreeUser, getConflictedFiles } from "./merger.js";
 import {
   runVerificationCommand,
   summarizeVerificationOutput,
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
 } from "./verification-utils.js";
-import { generateWorktreeName, resolveTaskWorkingBranch } from "./worktree-names.js";
+import { canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
@@ -3306,6 +3306,11 @@ export class TaskExecutor {
         // Step-inversion (KTD-15, U14): code node runner — esbuild compile +
         // child-process execution with the harness contract.
         runCode: this.buildCodeNodeRunner(),
+        // Step-inversion (KTD-11, U10): worktree isolation + ordered integration +
+        // parallel scheduling. Per-instance worktrees branched off the task's main
+        // branch tip; integration rebases each branch in step order; the projection
+        // flips done-iff-integrated. Shared isolation never invokes these.
+        ...this.buildForeachWorktreeDeps(task),
       });
       let result: WorkflowGraphTaskRunResult;
       try {
@@ -3500,6 +3505,216 @@ export class TaskExecutor {
   }
 
   /**
+   * Build the worktree-isolation + ordered-integration + parallel-scheduling deps
+   * for a graph-owned foreach (KTD-11, U10). Returns the additive set the
+   * WorkflowGraphTaskRunner forwards to the foreach sub-walk:
+   *
+   *   - `allocateInstanceWorktree(i, base)` — a per-instance worktree on a
+   *     canonical `fusion/<task>-step-<i>` branch off `base` (the main tip),
+   *     created via the existing `createWorktree` path (the file-scope guard the
+   *     session machinery installs applies unchanged to anything the instance
+   *     session commits in this worktree — we do NOT bypass it);
+   *   - `resolveIntegrationBase()` — the task's main branch tip, re-read before each
+   *     (re)allocation so a rework lands on the UPDATED base;
+   *   - `integrationGitOps` — rebase the instance branch onto the main branch in
+   *     the task's MAIN worktree, fast-forward main on success; on conflict reuse
+   *     merger.ts `getConflictedFiles` (NOT reimplemented) and abort the rebase so
+   *     the next instance can integrate; `discardBranch` deletes the branch + frees
+   *     the instance worktree (pool hygiene);
+   *   - `integrationProjection` — projection-first ordering (KTD-7): `markStepDone`
+   *     flips the step `done` via `updateStep(source:"graph")` (the dependency-order
+   *     guard admits it), THEN `markInstanceIntegrated` flips the persisted row;
+   *   - `semaphoreAvailability` — the live free-slot count so parallel scheduling
+   *     clamps without hold-and-wait.
+   *
+   * Best-effort throughout: a git failure routes the foreach to a clean failure
+   * (parked for human review) rather than crashing the run.
+   */
+  private buildForeachWorktreeDeps(task: Task): {
+    allocateInstanceWorktree: (
+      stepIndex: number,
+      base: string | undefined,
+    ) => Promise<{ worktreePath: string; branchName: string }>;
+    resolveIntegrationBase: () => Promise<string | undefined>;
+    integrationGitOps: import("./step-integration.js").IntegrationGitOps;
+    integrationProjection: import("./step-integration.js").IntegrationProjection;
+    semaphoreAvailability: () => number;
+    resumeReconcile: (
+      pinned: number,
+    ) => Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>>;
+  } {
+    const taskId = task.id;
+    // Per-instance worktree paths, so discard can free them.
+    const instancePaths = new Map<number, string>();
+
+    const mainWorktree = async (): Promise<string> => {
+      try {
+        return (await this.store.getTask(taskId)).worktree || this.rootDir;
+      } catch {
+        return this.rootDir;
+      }
+    };
+    const mainBranch = async (): Promise<string> => {
+      try {
+        const detail = await this.store.getTask(taskId);
+        return resolveTaskWorkingBranch(detail);
+      } catch {
+        return resolveTaskWorkingBranch(task);
+      }
+    };
+
+    return {
+      resolveIntegrationBase: async (): Promise<string | undefined> => {
+        // The main branch tip (HEAD of the task's working branch in its worktree).
+        try {
+          const { stdout } = await execAsync("git rev-parse HEAD", { cwd: await mainWorktree() });
+          const sha = stdout.trim();
+          return sha.length > 0 ? sha : await mainBranch();
+        } catch {
+          return await mainBranch();
+        }
+      },
+      allocateInstanceWorktree: async (stepIndex, base): Promise<{ worktreePath: string; branchName: string }> => {
+        const branchName = canonicalStepInstanceBranchName(taskId, stepIndex);
+        const worktreePath = resolveTaskWorktreePath(
+          this.rootDir,
+          undefined,
+          `${taskId.toLowerCase()}-step-${stepIndex}`,
+        );
+        // createWorktree installs the file-scope guard (session machinery,
+        // unchanged) and branches off `base` (the integration base / updated tip).
+        const created = await this.createWorktree(branchName, worktreePath, taskId, base);
+        instancePaths.set(stepIndex, created.path);
+        return { worktreePath: created.path, branchName: created.branch };
+      },
+      integrationGitOps: {
+        integrate: async (branchName, stepIndex): Promise<import("./step-integration.js").IntegrationAttemptResult> => {
+          const cwd = await mainWorktree();
+          const target = await mainBranch();
+          try {
+            // Rebase the instance branch onto the current main tip, then ff main.
+            await execAsync(`git rebase ${target} ${branchName}`, { cwd });
+            await execAsync(`git checkout ${target}`, { cwd });
+            await execAsync(`git merge --ff-only ${branchName}`, { cwd });
+            return { kind: "integrated", integratedAt: new Date().toISOString() };
+          } catch (err) {
+            // Conflict (or other rebase failure): classify via merger helper, abort.
+            const conflictedFiles = await getConflictedFiles(cwd);
+            try {
+              await execAsync("git rebase --abort", { cwd });
+            } catch {
+              // best-effort; leave the worktree recoverable.
+            }
+            // Restore main checkout so the next instance integrates cleanly.
+            try {
+              await execAsync(`git checkout ${target}`, { cwd });
+            } catch {
+              // best-effort.
+            }
+            executorLog.warn(
+              `[step-integration] ${taskId} step ${stepIndex} branch ${branchName} conflict: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return { kind: "conflict", conflictedFiles };
+          }
+        },
+        discardBranch: async (branchName, stepIndex): Promise<void> => {
+          const cwd = await mainWorktree();
+          const path = instancePaths.get(stepIndex);
+          if (path) {
+            // Remove the instance worktree (pool hygiene). Best-effort; force so a
+            // dirty/conflicting tree is still cleaned up.
+            try {
+              await execAsync(`git worktree remove --force "${path}"`, { cwd: this.rootDir });
+            } catch {
+              // best-effort cleanup.
+            }
+            instancePaths.delete(stepIndex);
+          }
+          // Delete the (now-merged or conflicting) branch.
+          try {
+            await execAsync(`git branch -D ${branchName}`, { cwd });
+          } catch {
+            // best-effort — the branch may already be gone.
+          }
+        },
+      },
+      integrationProjection: {
+        markStepDone: async (stepIndex): Promise<void> => {
+          // Projection-first (KTD-7): graph-source write relaxes the guard to
+          // dependency order; predecessors are integrated (done) by construction.
+          await this.store.updateStep(taskId, stepIndex, "done", { source: "graph" });
+        },
+        markInstanceIntegrated: async (stepIndex, integratedAt): Promise<void> => {
+          const store = this.store as unknown as {
+            saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
+          };
+          if (typeof store.saveWorkflowRunStepInstance !== "function") return;
+          try {
+            store.saveWorkflowRunStepInstance({
+              taskId,
+              runId: `${taskId}:run`,
+              foreachNodeId: "",
+              stepIndex,
+              pinnedStepCount: 0,
+              currentNodeId: "",
+              status: "completed",
+              reworkCount: 0,
+              branchName: canonicalStepInstanceBranchName(taskId, stepIndex),
+              integratedAt,
+            } as WorkflowStepInstanceState);
+          } catch {
+            // Persistence is additive bookkeeping — never fail the integration.
+          }
+        },
+      },
+      semaphoreAvailability: (): number => this.options.semaphore?.availableCount ?? 1,
+      resumeReconcile: async (
+        pinned,
+      ): Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>> => {
+        // Crash-resume reconciliation (KTD-11): reconcile each persisted instance
+        // row against branch existence. integrated → done; branch exists not
+        // integrated → re-enter the integration queue; branch missing → re-run.
+        // NOTE (handoff): this is the per-run resume seeding only; the full
+        // self-healing sweep across stale runs (recoverStaleTransitionPending
+        // analogue) is out of scope for U10.
+        const store = this.store as unknown as {
+          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+        };
+        if (typeof store.loadWorkflowRunStepInstances !== "function") return [];
+        let rows: WorkflowStepInstanceState[] = [];
+        try {
+          rows = store.loadWorkflowRunStepInstances(taskId, `${taskId}:run`) ?? [];
+        } catch {
+          return [];
+        }
+        const cwd = await mainWorktree();
+        const out: Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }> = [];
+        for (const row of rows) {
+          if (row.stepIndex < 0 || row.stepIndex >= pinned) continue;
+          if (row.status === "completed" || row.integratedAt) {
+            out.push({ stepIndex: row.stepIndex, disposition: "integrated" });
+            continue;
+          }
+          const branchName = row.branchName || canonicalStepInstanceBranchName(taskId, row.stepIndex);
+          let branchExists = false;
+          try {
+            await execAsync(`git rev-parse --verify --quiet ${branchName}`, { cwd });
+            branchExists = true;
+          } catch {
+            branchExists = false;
+          }
+          if (branchExists && row.status === "awaiting-integration") {
+            out.push({ stepIndex: row.stepIndex, disposition: "reintegrate", branchName });
+          } else {
+            out.push({ stepIndex: row.stepIndex, disposition: "rerun" });
+          }
+        }
+        return out;
+      },
+    };
+  }
+
+  /**
    * RETHINK reset-on-rework (KTD-4, U5): reset the active foreach instance's step
    * to its per-step baseline before the rework edge re-enters step-execute. Drives
    * the single extracted `resetStepToBaseline` (step-runner.ts) with the
@@ -3509,11 +3724,18 @@ export class TaskExecutor {
    * the documented KTD-2 semantics; the git reset + step→pending are authoritative.
    */
   private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
-    let worktreePath = this.rootDir;
-    try {
-      worktreePath = (await this.store.getTask(taskId)).worktree || this.rootDir;
-    } catch {
-      // Best-effort worktree resolution; fall back to rootDir.
+    // Worktree isolation (KTD-11): reset the instance's OWN branch/worktree only —
+    // sibling instances and the integration base are untouched, so the blast-radius
+    // guard is STRUCTURAL (skipped) in this mode. Shared isolation resets the task's
+    // main worktree and keeps the KTD-2 ancestry guard as written.
+    const branchScoped = typeof active.worktreePath === "string" && active.worktreePath.length > 0;
+    let worktreePath = active.worktreePath ?? this.rootDir;
+    if (!branchScoped) {
+      try {
+        worktreePath = (await this.store.getTask(taskId)).worktree || this.rootDir;
+      } catch {
+        // Best-effort worktree resolution; fall back to rootDir.
+      }
     }
     const liveSteps = await this.store.getTask(taskId).then((t) => t.steps).catch(() => []);
     await resetStepToBaseline(
@@ -3524,11 +3746,16 @@ export class TaskExecutor {
         // when checkpointId resolves but no session is current (KTD-2 partial path).
         sessionRef: { current: null },
         reviewType: "code",
-        blastRadiusGuard: makeAncestryBlastRadiusGuard({
-          worktreePath,
-          task: { id: taskId, steps: liveSteps },
-          stepIndex: active.stepIndex,
-        }),
+        // Branch-scoped RETHINK under worktree isolation makes the guard structural
+        // (the reset can only touch the instance's own branch); shared isolation
+        // keeps the defensive ancestry guard (KTD-2/KTD-11).
+        blastRadiusGuard: branchScoped
+          ? undefined
+          : makeAncestryBlastRadiusGuard({
+              worktreePath,
+              task: { id: taskId, steps: liveSteps },
+              stepIndex: active.stepIndex,
+            }),
       },
       { id: taskId, steps: liveSteps },
       active.stepIndex,
@@ -3815,7 +4042,11 @@ export class TaskExecutor {
           return { outcome: "failure", value: "no-active-step-instance" };
         }
         const live = await this.store.getTask(seamTask.id);
-        const worktreePath = live.worktree || this.rootDir;
+        // Worktree isolation (KTD-11, U10): run the instance's session in ITS OWN
+        // worktree when the foreach allocated one; otherwise the task's main
+        // worktree (shared isolation — unchanged). The file-scope guard the session
+        // machinery installs applies to either worktree unchanged (not bypassed).
+        const worktreePath = active.worktreePath || live.worktree || this.rootDir;
         const result = await runTaskStep(
           {
             store: this.store,
@@ -3864,7 +4095,8 @@ export class TaskExecutor {
         }
         const stepIndex = active.stepIndex;
         const detail = await this.store.getTask(seamTask.id);
-        const worktreePath = detail.worktree || this.rootDir;
+        // Worktree isolation (KTD-11): review the instance's OWN worktree when set.
+        const worktreePath = active.worktreePath || detail.worktree || this.rootDir;
         const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex + 1}`;
         const promptContent = detail.prompt ?? "";
         const settings = await this.store.getSettings();

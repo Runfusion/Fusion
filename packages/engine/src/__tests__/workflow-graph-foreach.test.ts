@@ -386,7 +386,10 @@ describe("WorkflowGraphExecutor foreach (U3)", () => {
     expect(result.outcome).toBe("failure");
   });
 
-  it("parallel mode is guarded with a clear not-yet-wired failure (U10 replaces it)", async () => {
+  it("parallel mode (now worktree isolation, U10) fails cleanly without isolation wiring", async () => {
+    // U10: parallel mode defaults to worktree isolation. Without the worktree /
+    // integration deps wired, the foreach fails with a routable value rather than
+    // running shared-mode physics (which would be an unguardable concurrent-write race).
     const seams = baseSeams({
       stepExecute: async () => ({ outcome: "success", value: "step-done" }),
     });
@@ -397,7 +400,7 @@ describe("WorkflowGraphExecutor foreach (U3)", () => {
       foreachIr(singleExecuteTemplate(), { config: { mode: "parallel", concurrency: 2 } }),
     );
     expect(result.outcome).toBe("failure");
-    expect(result.context["node:fe:value"]).toBe("parallel-not-wired");
+    expect(result.context["node:fe:value"]).toBe("worktree-isolation-unwired");
   });
 
   it("getTaskSteps dep is used to read a fresh count when injected", async () => {

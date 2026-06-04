@@ -6,6 +6,11 @@ import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
 } from "./workflow-node-handlers.js";
+import {
+  IntegrationQueue,
+  type IntegrationGitOps,
+  type IntegrationProjection,
+} from "./step-integration.js";
 import { schedulerLog } from "./logger.js";
 
 /**
@@ -41,6 +46,10 @@ import { schedulerLog } from "./logger.js";
 const DEFAULT_MAX_REWORK_CYCLES = 3;
 /** Defensive cap mirroring core's validation clamp (KTD-5). */
 const MAX_REWORK_CYCLES_CAP = 10;
+/** Default parallel concurrency (KTD-3). */
+const DEFAULT_CONCURRENCY = 2;
+/** Hard cap on parallel concurrency (KTD-3). */
+const CONCURRENCY_CAP = 8;
 
 /** The foreach node's config shape this module reads (subset of WorkflowForeachConfig). */
 interface ForeachConfig {
@@ -72,12 +81,18 @@ export interface WorkflowStepInstanceState {
   pinnedStepCount: number;
   /** Template node id (NOT the materialized instance id) the instance is at. */
   currentNodeId: string;
-  status: "in-progress" | "completed" | "failed";
+  status: "in-progress" | "awaiting-integration" | "completed" | "failed";
   baselineSha?: string;
   checkpointId?: string;
   reworkCount: number;
   /** Latest authoritative step-review verdict (KTD-4/KTD-6, U5). */
   verdict?: "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE";
+  /** Worktree-isolation (KTD-11, U10): the instance's own branch name; null/absent
+   *  under shared isolation. */
+  branchName?: string;
+  /** Worktree-isolation (KTD-11, U10): ISO timestamp the branch integrated; absent
+   *  until the ordered integration stage lands it. */
+  integratedAt?: string;
 }
 
 export interface WorkflowStepInstancePersistence {
@@ -121,12 +136,19 @@ export interface ForeachEnvironment {
   /**
    * Runs one template node through the executor's executeNodeWithRetries (so
    * per-node maxRetries still applies inside the sub-walk). The node passed is
-   * the ORIGINAL template node; the executor reads/writes the shared context,
-   * which already carries `foreach:active` for the current instance.
+   * the ORIGINAL template node; the executor reads/writes the supplied context,
+   * which carries `foreach:active` for the current instance.
+   *
+   * `contextOverride` lets a worktree-isolated instance run on its OWN context
+   * object (KTD-11): under parallel scheduling concurrent instances must NOT share
+   * the single `foreach:active` slot, so each gets an isolated context clone. When
+   * omitted the shared `env.context` is used (shared-isolation sequential path —
+   * unchanged behavior).
    */
   runTemplateNode: (
     node: WorkflowIrNode,
     signal?: AbortSignal,
+    contextOverride?: Record<string, unknown>,
   ) => Promise<WorkflowNodeResult>;
   shouldTraverseEdge: (edge: WorkflowIrEdge, source: WorkflowNodeResult) => boolean;
   persistence?: WorkflowStepInstancePersistence;
@@ -145,6 +167,63 @@ export interface ForeachEnvironment {
   ) => void | Promise<void>;
   /** Honored between nodes (existing posture). */
   signal?: AbortSignal;
+
+  // ── Worktree isolation + parallel scheduling (KTD-11, U10) ────────────────
+  /**
+   * Allocate the instance's OWN worktree + branch off the current integration
+   * base (the task's main branch tip at instance start). Production wires this to
+   * the worktree pool / `createWorktree` with a canonical
+   * `fusion/<task>-step-<i>` branch name; tests inject a fake. Required when
+   * `isolation: "worktree"`; absent under shared isolation. The integration base
+   * is the SAME for sibling instances scheduled together (they branch from the
+   * common tip), and is the UPDATED main tip when an instance re-runs after an
+   * integration-conflict rework.
+   */
+  allocateInstanceWorktree?: (
+    stepIndex: number,
+    integrationBase: string | undefined,
+  ) => Promise<{ worktreePath: string; branchName: string }>;
+  /** Resolve the current integration base (main branch tip). Re-read before each
+   *  (re)allocation so a rework lands on the UPDATED base (KTD-11). Optional —
+   *  defaults to undefined (the allocator's own default base). */
+  resolveIntegrationBase?: () => Promise<string | undefined>;
+  /** Ordered-integration git mechanics (KTD-11). Required when `isolation:
+   *  "worktree"`; the queue uses it to land branches in step order. */
+  integrationGitOps?: IntegrationGitOps;
+  /**
+   * Projection + instance-row writes the integration stage performs on a clean
+   * integration (KTD-7 projection-first ordering). `markStepDone` flips the step
+   * `done` via `updateStep(source:"graph")`; `markInstanceIntegrated` flips the
+   * row to `completed`/`integratedAt`. Required when `isolation: "worktree"`.
+   */
+  integrationProjection?: IntegrationProjection;
+  /**
+   * Non-blocking semaphore availability accessor for parallel scheduling (KTD-11):
+   * how many slots are free for IMMEDIATE acquisition right now. The scheduler
+   * runs up to `min(concurrency, availability)` instances concurrently and
+   * degrades to fewer/sequential under contention — it NEVER hold-and-waits on
+   * slots while blocking integration (each instance acquires its own lease inside
+   * the step-execute seam like a normal session). Defaults to "unbounded" (the
+   * concurrency cap governs) when absent. A returned value ≤ 0 degrades to 1
+   * (always make forward progress; never deadlock).
+   */
+  semaphoreAvailability?: () => number;
+  /**
+   * Crash-resume reconciliation hook (KTD-11, U10). Before scheduling, the
+   * worktree scheduler reconciles each step instance against git/persistence truth:
+   *   - integrated (row `completed`/`integratedAt`)        → mark INTEGRATED (skip);
+   *   - branch exists but not integrated (`awaiting-integration`) → RE-ENTER the
+   *     integration queue (the branch is already built);
+   *   - branch missing                                     → RE-RUN the instance.
+   * Returns a per-step disposition; absent → all instances run fresh (cold start).
+   * The full self-healing sweep across runs is out of scope (handoff). `pinned` is
+   * the count this expansion pinned so the hook can reject a `pin-mismatch`.
+   */
+  resumeReconcile?: (
+    pinned: number,
+  ) =>
+    | Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>>
+    | Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>;
 }
 
 export interface ForeachRunResult {
@@ -168,6 +247,8 @@ function resolveForeachConfig(node: WorkflowIrNode): {
   template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] };
   maxReworkCycles: number;
   mode: "sequential" | "parallel";
+  isolation: "shared" | "worktree";
+  concurrency: number;
 } {
   const cfg = (node.config ?? {}) as ForeachConfig;
   const template = cfg.template;
@@ -177,7 +258,57 @@ function resolveForeachConfig(node: WorkflowIrNode): {
   const raw = typeof cfg.maxReworkCycles === "number" ? cfg.maxReworkCycles : DEFAULT_MAX_REWORK_CYCLES;
   const maxReworkCycles = Math.max(1, Math.min(MAX_REWORK_CYCLES_CAP, Math.floor(raw)));
   const mode = cfg.mode === "parallel" ? "parallel" : "sequential";
-  return { template, maxReworkCycles, mode };
+  // Default isolation: worktree for parallel mode, shared for sequential (KTD-3).
+  // (Core validation rejects parallel+shared; this default mirrors that intent.)
+  const isolation: "shared" | "worktree" =
+    cfg.isolation === "worktree"
+      ? "worktree"
+      : cfg.isolation === "shared"
+      ? "shared"
+      : mode === "parallel"
+      ? "worktree"
+      : "shared";
+  const rawConc =
+    typeof cfg.concurrency === "number" && Number.isFinite(cfg.concurrency)
+      ? Math.floor(cfg.concurrency)
+      : DEFAULT_CONCURRENCY;
+  // Concurrency only meaningful in parallel mode; sequential pins to 1 (KTD-3).
+  const concurrency = mode === "parallel" ? Math.max(1, Math.min(CONCURRENCY_CAP, rawConc)) : 1;
+  return { template, maxReworkCycles, mode, isolation, concurrency };
+}
+
+/** The 0-indexed predecessor step indices instance `stepIndex` depends on. A step
+ *  with no annotation implicitly depends on the previous step (KTD-3), so an
+ *  unannotated plan is fully sequential regardless of mode. */
+function resolveDependsOn(steps: TaskStep[], stepIndex: number): number[] {
+  const deps = steps[stepIndex]?.dependsOn;
+  if (Array.isArray(deps) && deps.length > 0) return deps;
+  return stepIndex > 0 ? [stepIndex - 1] : [];
+}
+
+/**
+ * Validate the dependency DAG at expansion (KTD-3): every dependsOn index must be
+ * in range and strictly earlier (a step may only depend on lower indices), and
+ * the graph must be acyclic. Returns a refusal reason on violation, else null.
+ * Because dependsOn entries reference lower indices only, a forward-reference or
+ * self-reference is the cycle signature we reject.
+ */
+function validateDependencyDag(steps: TaskStep[]): string | null {
+  for (let i = 0; i < steps.length; i++) {
+    const deps = steps[i]?.dependsOn;
+    if (!Array.isArray(deps)) continue;
+    for (const d of deps) {
+      if (!Number.isInteger(d) || d < 0 || d >= steps.length) {
+        return `step ${i} depends on out-of-range step ${d}`;
+      }
+      if (d >= i) {
+        // A dependency on an equal/later index is the only way to form a cycle
+        // when edges always point to lower indices; reject it as an audited cycle.
+        return `dependency cycle: step ${i} depends on step ${d} (>= itself)`;
+      }
+    }
+  }
+  return null;
 }
 
 /** Find the single template entry node (no non-rework incoming edge). */
@@ -200,33 +331,21 @@ function findTemplateEntry(
   return entries[0];
 }
 
-/**
- * Expand a foreach node and run its instances sequentially in step order.
- * Returns the foreach node's aggregate outcome (KTD-3).
- */
-export async function runForeach(
+/** Compiled template state shared across instances (built once per expansion). */
+interface TemplatePlan {
+  templateById: Map<string, WorkflowIrNode>;
+  templateOutgoing: Map<string, WorkflowIrEdge[]>;
+  entry: WorkflowIrNode;
+  /** Whether the template routes an explicit `outcome:integration-conflict` edge
+   *  from any node (overrides the default rework routing — KTD-11). */
+  hasExplicitIntegrationConflictEdge: boolean;
+  templateHasStepReview: boolean;
+}
+
+function compileTemplate(
   foreachNode: WorkflowIrNode,
-  env: ForeachEnvironment,
-): Promise<ForeachRunResult> {
-  const { template, maxReworkCycles, mode } = resolveForeachConfig(foreachNode);
-
-  // U3 scope guard: parallel mode is U10. Fail cleanly with a routable outcome
-  // rather than silently running it as sequential.
-  if (mode === "parallel") {
-    return {
-      outcome: "failure",
-      value: "parallel-not-wired",
-      visitedNodeIds: [],
-    };
-  }
-
-  // Pin the count at expansion (KTD-3). Zero steps → success edge (no instances).
-  const pinnedStepCount = env.steps.length;
-  const visitedNodeIds: string[] = [];
-  if (pinnedStepCount === 0) {
-    return { outcome: "success", visitedNodeIds };
-  }
-
+  template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] },
+): TemplatePlan {
   const templateById = new Map(template.nodes.map((n) => [n.id, n]));
   const templateOutgoing = new Map<string, WorkflowIrEdge[]>();
   for (const edge of template.edges) {
@@ -235,14 +354,52 @@ export async function runForeach(
     templateOutgoing.set(edge.from, list);
   }
   const entry = findTemplateEntry(template.nodes, template.edges, foreachNode.id);
-
-  // Single-authority done-marking (U6/KTD-4): when the template contains a
-  // step-review node, step-execute SUCCESS must leave the step in-progress and the
-  // review's APPROVE marks it done. Computed once and threaded into each instance.
+  const hasExplicitIntegrationConflictEdge = template.edges.some(
+    (e) => e.condition === "outcome:integration-conflict",
+  );
   const templateHasStepReview = template.nodes.some((n) => n.kind === "step-review");
+  return { templateById, templateOutgoing, entry, hasExplicitIntegrationConflictEdge, templateHasStepReview };
+}
 
-  // Sequential + shared: a runnable-set loop with concurrency 1 (U10 extends this
-  // to parallel/worktree). Instances run strictly in step order.
+/**
+ * Expand a foreach node and run its instances. Returns the foreach node's
+ * aggregate outcome (KTD-3). Dispatches on the two orthogonal axes (KTD-11):
+ *   - shared isolation (default sequential): the unchanged step-order loop —
+ *     work lands in the task's main worktree, done at step completion;
+ *   - worktree isolation (sequential OR parallel): per-instance branches off the
+ *     integration base, dependency-aware scheduling up to `min(concurrency, free
+ *     semaphore slots)`, ordered integration in step order, integration-conflict
+ *     routed as rework on the updated base.
+ */
+export async function runForeach(
+  foreachNode: WorkflowIrNode,
+  env: ForeachEnvironment,
+): Promise<ForeachRunResult> {
+  const config = resolveForeachConfig(foreachNode);
+
+  // Pin the count at expansion (KTD-3). Zero steps → success edge (no instances).
+  const pinnedStepCount = env.steps.length;
+  const visitedNodeIds: string[] = [];
+  if (pinnedStepCount === 0) {
+    return { outcome: "success", visitedNodeIds };
+  }
+
+  // Dependency-cycle / out-of-range rejection at expansion (KTD-3, audited).
+  const dagViolation = validateDependencyDag(env.steps);
+  if (dagViolation) {
+    schedulerLog.warn(
+      `foreach ${foreachNode.id} for task ${env.task.id}: ${dagViolation} — failing expansion (dependency-cycle)`,
+    );
+    return { outcome: "failure", value: "dependency-cycle", visitedNodeIds };
+  }
+
+  const plan = compileTemplate(foreachNode, config.template);
+
+  if (config.isolation === "worktree") {
+    return runForeachWorktree(foreachNode, env, config, plan, pinnedStepCount, visitedNodeIds);
+  }
+
+  // ── shared isolation (default sequential) — UNCHANGED U3 behavior ──────────
   for (let stepIndex = 0; stepIndex < pinnedStepCount; stepIndex++) {
     if (env.signal?.aborted) {
       return { outcome: "failure", value: "aborted", visitedNodeIds };
@@ -252,13 +409,13 @@ export async function runForeach(
       foreachNode,
       stepIndex,
       pinnedStepCount,
-      entry,
-      templateById,
-      templateOutgoing,
-      maxReworkCycles,
+      plan.entry,
+      plan.templateById,
+      plan.templateOutgoing,
+      config.maxReworkCycles,
       env,
       visitedNodeIds,
-      templateHasStepReview,
+      plan.templateHasStepReview,
     );
 
     if (instanceResult.outcome === "failure") {
@@ -273,6 +430,335 @@ export async function runForeach(
 
   // All instances completed → foreach success edge (KTD-3).
   return { outcome: "success", visitedNodeIds };
+}
+
+// ── Worktree isolation + dependency scheduler + ordered integration (KTD-11) ──
+
+type InstanceState = "pending" | "running" | "awaiting-integration" | "integrated" | "failed";
+
+interface WorktreeInstance {
+  stepIndex: number;
+  state: InstanceState;
+  /** Per-instance rework budget — survives integration-conflict re-executions. */
+  reworkBudget: number;
+  reworkCount: number;
+  /** The instance's allocated branch (set on each run). */
+  branchName?: string;
+  worktreePath?: string;
+  baselineSha?: string;
+  checkpointId?: string;
+  verdict?: ForeachActiveContext["verdict"];
+}
+
+/**
+ * Worktree-isolation foreach (KTD-11, U10): per-instance branches off the
+ * integration base, dependency-aware scheduling up to `min(concurrency, free
+ * semaphore slots)`, ordered integration in step order, integration-conflict
+ * routed as rework on the updated base.
+ *
+ * Scheduling: an instance is runnable when all of its `dependsOn` steps are
+ * INTEGRATED (not merely completed). The runnable set runs concurrently up to the
+ * clamped slot count; each instance acquires its own semaphore lease inside the
+ * step-execute seam (we only READ availability non-blockingly to decide how many
+ * to launch — never hold-and-wait, so a starved semaphore degrades to sequential
+ * without deadlock). Completion enqueues the branch as `awaiting-integration`;
+ * after each batch the integration queue drains in step order.
+ */
+async function runForeachWorktree(
+  foreachNode: WorkflowIrNode,
+  env: ForeachEnvironment,
+  config: ReturnType<typeof resolveForeachConfig>,
+  plan: TemplatePlan,
+  pinnedStepCount: number,
+  visitedNodeIds: string[],
+): Promise<ForeachRunResult> {
+  if (!env.allocateInstanceWorktree || !env.integrationGitOps || !env.integrationProjection) {
+    // Worktree isolation requires the full wiring; fail cleanly (routable) rather
+    // than silently running shared-mode physics.
+    return { outcome: "failure", value: "worktree-isolation-unwired", visitedNodeIds };
+  }
+
+  const instances: WorktreeInstance[] = Array.from({ length: pinnedStepCount }, (_, i) => ({
+    stepIndex: i,
+    state: "pending",
+    reworkBudget: config.maxReworkCycles,
+    reworkCount: 0,
+  }));
+
+  const queue = new IntegrationQueue(
+    env.integrationGitOps,
+    env.integrationProjection,
+    pinnedStepCount,
+  );
+
+  // Crash-resume reconciliation (KTD-11): integrated → skip; branch-exists → re-enter
+  // the integration queue; branch-missing → re-run. Cold start (no hook) runs fresh.
+  if (env.resumeReconcile) {
+    try {
+      const dispositions = await env.resumeReconcile(pinnedStepCount);
+      for (const d of dispositions) {
+        const inst = instances[d.stepIndex];
+        if (!inst) continue;
+        if (d.disposition === "integrated") {
+          inst.state = "integrated";
+        } else if (d.disposition === "reintegrate" && d.branchName) {
+          // Branch already built — enqueue for ordered integration without re-running.
+          inst.state = "awaiting-integration";
+          inst.branchName = d.branchName;
+          queue.enqueue(d.stepIndex, d.branchName);
+        }
+        // "rerun" leaves the instance pending (default).
+      }
+    } catch (err) {
+      schedulerLog.warn(
+        `foreach ${foreachNode.id} for task ${env.task.id}: resume reconcile failed, running cold: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const isIntegrated = (i: number): boolean => instances[i].state === "integrated";
+  const depsIntegrated = (i: number): boolean =>
+    resolveDependsOn(env.steps, i).every((d) => isIntegrated(d));
+
+  // Run one instance's sub-walk in an isolated context + freshly-allocated
+  // worktree off the CURRENT integration base. Returns awaiting-integration (with
+  // the branch) on a clean sub-walk, or a failure outcome (rework-exhausted etc.).
+  const runOneInstance = async (inst: WorktreeInstance): Promise<{ outcome: WorkflowNodeOutcome; value?: string }> => {
+    const integrationBase = env.resolveIntegrationBase
+      ? await env.resolveIntegrationBase().catch(() => undefined)
+      : undefined;
+    let allocation: { worktreePath: string; branchName: string };
+    try {
+      allocation = await env.allocateInstanceWorktree!(inst.stepIndex, integrationBase);
+    } catch (err) {
+      schedulerLog.warn(
+        `foreach ${foreachNode.id} step ${inst.stepIndex}: worktree allocation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { outcome: "failure", value: "worktree-alloc-failed" };
+    }
+    inst.branchName = allocation.branchName;
+    inst.worktreePath = allocation.worktreePath;
+
+    return runWorktreeInstanceSubWalk(foreachNode, env, plan, pinnedStepCount, visitedNodeIds, inst);
+  };
+
+  // Schedule + integrate loop.
+  for (;;) {
+    if (env.signal?.aborted) {
+      await queue.discardAllPending();
+      return { outcome: "failure", value: "aborted", visitedNodeIds };
+    }
+
+    // Runnable = pending instances whose deps are all integrated.
+    const runnable = instances.filter((i) => i.state === "pending" && depsIntegrated(i.stepIndex));
+    const running = instances.filter((i) => i.state === "running").length;
+
+    if (runnable.length > 0) {
+      // Clamp concurrency by free semaphore slots (non-blocking, KTD-11). Degrade
+      // to at least 1 so we never deadlock waiting for slots we don't hold: a
+      // starved semaphore (availability ≤ 0) still launches one at a time.
+      const rawAvail = env.semaphoreAvailability ? env.semaphoreAvailability() : config.concurrency;
+      const avail = Math.max(1, rawAvail);
+      let slots = Math.min(config.concurrency, avail) - running;
+      // Force forward progress when nothing is running (never block on slots held).
+      if (slots <= 0 && running === 0) slots = 1;
+      const toLaunch = slots > 0 ? runnable.slice(0, slots) : [];
+
+      if (toLaunch.length > 0) {
+        for (const inst of toLaunch) inst.state = "running";
+        await Promise.all(
+          toLaunch.map(async (inst) => {
+            const result = await runOneInstance(inst);
+            if (result.outcome === "success") {
+              inst.state = "awaiting-integration";
+              queue.enqueue(inst.stepIndex, inst.branchName!);
+            } else {
+              inst.state = "failed";
+              // A failed instance is skipped in the ordered queue so the cursor can
+              // advance past it; the foreach reports the failure value below.
+              queue.skip(inst.stepIndex);
+              (inst as WorktreeInstance & { failValue?: string }).failValue = result.value;
+            }
+          }),
+        );
+        continue; // re-evaluate runnable set + drain after the batch.
+      }
+    }
+
+    // Drain the integration queue in step order; route conflicts to rework.
+    const outcomes = await queue.drain();
+    const progressed = outcomes.length > 0;
+    for (const outcome of outcomes) {
+      const inst = instances[outcome.stepIndex];
+      if (outcome.status === "integrated") {
+        inst.state = "integrated";
+      } else {
+        // integration-conflict: route as rework on the UPDATED base (KTD-11). The
+        // explicit `outcome:integration-conflict` edge (if authored) is honored by
+        // the sub-walk; the DEFAULT here is the rework path (re-execute on the
+        // updated base, budget-counted). Either way we re-run the instance.
+        if (inst.reworkBudget <= 0) {
+          inst.state = "failed";
+          queue.skip(inst.stepIndex);
+          (inst as WorktreeInstance & { failValue?: string }).failValue = "rework-exhausted";
+        } else {
+          inst.reworkBudget -= 1;
+          inst.reworkCount += 1;
+          inst.state = "pending"; // re-enter scheduling; re-allocates off updated base.
+          // Default routing IS the rework path (re-execute the step on the updated
+          // base, budget-counted — KTD-11). When the template authors an explicit
+          // `outcome:integration-conflict` edge, the re-run surfaces the conflict
+          // signal in the instance context so the author's node can branch on it
+          // (the edge overrides the implicit "from entry" rework).
+          (inst as WorktreeInstance & { lastIntegrationConflict?: boolean }).lastIntegrationConflict =
+            plan.hasExplicitIntegrationConflictEdge;
+          schedulerLog.log(
+            `foreach ${foreachNode.id} step ${inst.stepIndex}: integration-conflict — reworking on updated base (budget left ${inst.reworkBudget})`,
+          );
+        }
+      }
+    }
+
+    // Terminal conditions.
+    const failed = instances.find((i) => i.state === "failed");
+    if (failed) {
+      await queue.discardAllPending();
+      const value = (failed as WorktreeInstance & { failValue?: string }).failValue ?? "instance-failed";
+      return { outcome: "failure", value, visitedNodeIds };
+    }
+    if (instances.every((i) => i.state === "integrated")) {
+      return { outcome: "success", visitedNodeIds };
+    }
+
+    // No progress and nothing runnable/running → stuck (shouldn't happen with a
+    // valid DAG, but guard against a livelock).
+    const anyActive = instances.some((i) => i.state === "running" || i.state === "awaiting-integration");
+    const anyRunnable = instances.some((i) => i.state === "pending" && depsIntegrated(i.stepIndex));
+    if (!progressed && !anyActive && !anyRunnable) {
+      await queue.discardAllPending();
+      return { outcome: "failure", value: "scheduler-stuck", visitedNodeIds };
+    }
+  }
+}
+
+/**
+ * Run one worktree-isolated instance's iterative sub-walk in an ISOLATED context
+ * (its own `foreach:active` slot — required for concurrency), against the
+ * instance's own worktree/branch. Returns success (sub-walk reached the exit;
+ * the caller enqueues the branch for ordered integration — does NOT mark done
+ * here, KTD-11) or failure (rework-exhausted / aborted / node failure).
+ *
+ * RETHINK under worktree isolation is branch-scoped (KTD-11): `onReworkReset`
+ * resets the instance's OWN branch (the executor wires it to resetStepToBaseline
+ * against this instance's worktree), so the blast-radius guard is structural.
+ */
+async function runWorktreeInstanceSubWalk(
+  foreachNode: WorkflowIrNode,
+  env: ForeachEnvironment,
+  plan: TemplatePlan,
+  pinnedStepCount: number,
+  visitedNodeIds: string[],
+  inst: WorktreeInstance,
+): Promise<{ outcome: WorkflowNodeOutcome; value?: string }> {
+  const stepIndex = inst.stepIndex;
+  // Isolated per-instance context (NOT the shared env.context) so concurrent
+  // instances never collide on the `foreach:active` slot. Seeded from the shared
+  // context so handlers still see prior walk context (read-only-ish).
+  const instanceContext: Record<string, unknown> = { ...env.context };
+  const active: ForeachActiveContext = {
+    foreachNodeId: foreachNode.id,
+    stepIndex,
+    instanceId: `${foreachNode.id}#${stepIndex}`,
+    deferDoneToReview: plan.templateHasStepReview,
+    worktreePath: inst.worktreePath,
+    branchName: inst.branchName,
+    baselineSha: inst.baselineSha,
+    checkpointId: inst.checkpointId,
+    verdict: inst.verdict,
+  };
+  instanceContext[FOREACH_ACTIVE_CONTEXT_KEY] = active;
+  // Surface a prior integration-conflict to the author's nodes when the template
+  // authored an explicit `outcome:integration-conflict` edge (KTD-11 override).
+  const lastConflict = (inst as WorktreeInstance & { lastIntegrationConflict?: boolean }).lastIntegrationConflict;
+  if (lastConflict) instanceContext["integration:conflict"] = true;
+
+  const persist = (status: WorkflowStepInstanceState["status"], currentNodeId: string): Promise<void> =>
+    persistInstanceState(env.persistence, {
+      taskId: env.task.id,
+      runId: env.runId,
+      foreachNodeId: foreachNode.id,
+      stepIndex,
+      pinnedStepCount,
+      currentNodeId,
+      status,
+      baselineSha: active.baselineSha,
+      checkpointId: active.checkpointId,
+      reworkCount: inst.reworkCount,
+      verdict: active.verdict,
+      branchName: inst.branchName,
+    });
+
+  await persist("in-progress", plan.entry.id);
+
+  let currentId = plan.entry.id;
+  let lastResult: WorkflowNodeResult = { outcome: "success" };
+
+  for (;;) {
+    if (env.signal?.aborted) {
+      await persist("failed", currentId);
+      return { outcome: "failure", value: "aborted" };
+    }
+
+    const node = plan.templateById.get(currentId);
+    if (!node) throw new WorkflowIrError(`Unknown foreach template node: ${currentId}`);
+
+    visitedNodeIds.push(instanceNodeId(foreachNode.id, stepIndex, currentId));
+
+    lastResult = await env.runTemplateNode(node, env.signal, instanceContext);
+    syncActiveFromContext(instanceContext, active);
+    // Persist captured baseline/checkpoint back onto the instance (survives rework).
+    inst.baselineSha = active.baselineSha;
+    inst.checkpointId = active.checkpointId;
+    inst.verdict = active.verdict;
+
+    if (lastResult.outcome === "failure") {
+      await persist("failed", currentId);
+      return { outcome: "failure", value: lastResult.value };
+    }
+
+    const next = chooseNextEdge(currentId, plan.templateOutgoing, lastResult, env.shouldTraverseEdge);
+    if (!next) {
+      // Sub-walk exit — work complete on the branch; AWAIT INTEGRATION (not done).
+      await persist("awaiting-integration", currentId);
+      return { outcome: "success" };
+    }
+
+    if (next.kind === "rework") {
+      if (inst.reworkBudget <= 0) {
+        await persist("failed", currentId);
+        return { outcome: "failure", value: "rework-exhausted" };
+      }
+      inst.reworkBudget -= 1;
+      inst.reworkCount += 1;
+
+      if (lastResult.value === "rethink" && env.onReworkReset) {
+        try {
+          // Branch-scoped RETHINK: resets THIS instance's branch only (KTD-11).
+          await env.onReworkReset(active, "rethink");
+          syncActiveFromContext(instanceContext, active);
+          inst.baselineSha = active.baselineSha;
+          inst.checkpointId = active.checkpointId;
+        } catch (err) {
+          schedulerLog.warn(
+            `onReworkReset failed for task ${env.task.id} foreach ${foreachNode.id} step ${stepIndex}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      await persist("in-progress", next.to);
+    }
+
+    currentId = next.to;
+  }
 }
 
 interface InstanceResult {

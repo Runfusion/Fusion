@@ -21,6 +21,7 @@ import {
 } from "./workflow-graph-branches.js";
 import {
   runForeach,
+  type ForeachEnvironment,
   type WorkflowStepInstancePersistence,
 } from "./workflow-graph-foreach.js";
 
@@ -97,6 +98,24 @@ export interface WorkflowGraphExecutorDeps {
    * runs (zero behavior change for non-foreach graphs).
    */
   signal?: AbortSignal;
+  /** Step-inversion (KTD-11, U10): per-instance worktree/branch allocation off the
+   *  integration base, for `isolation: "worktree"`. Absent → worktree isolation
+   *  fails cleanly (shared isolation is unaffected). */
+  allocateInstanceWorktree?: ForeachEnvironment["allocateInstanceWorktree"];
+  /** Step-inversion (KTD-11, U10): resolve the current integration base (main tip)
+   *  so reworks land on the updated base. */
+  resolveIntegrationBase?: ForeachEnvironment["resolveIntegrationBase"];
+  /** Step-inversion (KTD-11, U10): ordered-integration git mechanics (rebase /
+   *  cherry-pick + conflict detection via merger helpers). */
+  integrationGitOps?: ForeachEnvironment["integrationGitOps"];
+  /** Step-inversion (KTD-11, U10): projection-first integration writes
+   *  (updateStep done, then instance row). */
+  integrationProjection?: ForeachEnvironment["integrationProjection"];
+  /** Step-inversion (KTD-11, U10): non-blocking free-semaphore-slot accessor for
+   *  parallel scheduling (clamps concurrency without hold-and-wait). */
+  semaphoreAvailability?: ForeachEnvironment["semaphoreAvailability"];
+  /** Step-inversion (KTD-11, U10): crash-resume reconciliation hook. */
+  resumeReconcile?: ForeachEnvironment["resumeReconcile"];
 }
 
 export interface WorkflowGraphExecutorResult {
@@ -248,12 +267,19 @@ export class WorkflowGraphExecutor {
             runId,
             steps,
             context,
-            runTemplateNode: (tNode, sig) =>
-              this.executeNodeWithRetries(tNode, task, settings, context, sig),
+            runTemplateNode: (tNode, sig, contextOverride) =>
+              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, sig),
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             persistence: this.deps.stepInstancePersistence,
             onReworkReset: this.deps.onReworkReset,
             signal: this.deps.signal,
+            // Worktree isolation + parallel scheduling (KTD-11, U10).
+            allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
+            resolveIntegrationBase: this.deps.resolveIntegrationBase,
+            integrationGitOps: this.deps.integrationGitOps,
+            integrationProjection: this.deps.integrationProjection,
+            semaphoreAvailability: this.deps.semaphoreAvailability,
+            resumeReconcile: this.deps.resumeReconcile,
           });
           visitedNodeIds.push(...foreachResult.visitedNodeIds);
           const result: WorkflowNodeResult = {

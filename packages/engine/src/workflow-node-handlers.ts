@@ -99,6 +99,20 @@ export interface ForeachActiveContext {
    * foreach sub-walk sets this at instance entry; the step-execute seam reads it.
    */
   deferDoneToReview?: boolean;
+  /**
+   * Worktree-isolation (KTD-11, U10): the instance's OWN worktree path, branched
+   * off the integration base. Set by the foreach sub-walk at instance entry under
+   * `isolation: "worktree"`; the step-execute / step-review / RETHINK seams run
+   * against THIS path instead of the task's main worktree. Absent under
+   * `isolation: "shared"` (work lands directly in the main worktree). The file-scope
+   * guard still fires for anything the instance session commits in this worktree
+   * (the session machinery is unchanged — see executor stepExecute seam).
+   */
+  worktreePath?: string;
+  /** Worktree-isolation (KTD-11, U10): the instance's OWN branch name (e.g.
+   *  `fusion/<task>-step-<i>`). Set with {@link worktreePath}; the ordered
+   *  integration stage lands this branch onto the task's main branch. */
+  branchName?: string;
 }
 
 /**
