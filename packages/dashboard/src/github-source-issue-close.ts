@@ -3,8 +3,6 @@ import { resolveGithubTrackingAuth } from "./github-auth.js";
 import { GitHubClient } from "./github.js";
 import { delay, isTransientGitHubError } from "./github-tracking-state.js";
 
-type Column = "triage" | "todo" | "in-progress" | "in-review" | "done" | "archived";
-
 interface TaskMovedEvent {
   task: {
     id: string;
@@ -14,8 +12,10 @@ interface TaskMovedEvent {
       issueNumber?: number;
     };
   };
-  from: Column;
-  to: Column;
+  // #1403: store's `task:moved` carries `ColumnId`; this handler only
+  // literal-compares legacy ids, so the widened string field is safe.
+  from: string;
+  to: string;
 }
 
 export class GitHubSourceIssueCloseService {

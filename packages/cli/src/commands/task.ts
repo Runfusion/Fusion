@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { aiMergeTask } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -18,6 +18,12 @@ import { resolveProject, type ProjectContext } from "../project-context.js";
 import { findNodeByNameOrId } from "./node.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
+
+/** #1403: display a column's label, falling back to the raw id for
+ *  workflow-defined custom columns that have no legacy label. */
+function columnLabel(column: ColumnId): string {
+  return (COLUMN_LABELS as Record<string, string>)[column] ?? column;
+}
 
 // Register GitHub tracking hook so CLI task creation paths (add, duplicate,
 // refine, import, delegate) trigger tracking issue creation.
@@ -806,7 +812,7 @@ export async function runTaskShow(id: string, projectName?: string) {
 
   console.log();
   console.log(`  ${task.id}: ${task.title || task.description}`);
-  console.log(`  Column: ${COLUMN_LABELS[task.column]}${task.size ? ` · Size: ${task.size}` : ""}${task.reviewLevel !== undefined ? ` · Review: ${task.reviewLevel}` : ""}`);
+  console.log(`  Column: ${columnLabel(task.column)}${task.size ? ` · Size: ${task.size}` : ""}${task.reviewLevel !== undefined ? ` · Review: ${task.reviewLevel}` : ""}`);
   if (task.dependencies.length) {
     console.log(`  Dependencies: ${task.dependencies.join(", ")}`);
   }
@@ -959,7 +965,7 @@ export async function runTaskMove(id: string, column: string, projectName?: stri
   const task = await store.moveTask(id, column as Column);
 
   console.log();
-  console.log(`  ✓ Moved ${task.id} → ${COLUMN_LABELS[task.column as Column]}`);
+  console.log(`  ✓ Moved ${task.id} → ${columnLabel(task.column)}`);
   console.log();
 }
 
@@ -1010,7 +1016,7 @@ export async function runTaskArchive(id: string, projectName?: string) {
   const task = await store.archiveTask(id);
 
   console.log();
-  console.log(`  ✓ Archived ${task.id} → ${COLUMN_LABELS[task.column]}`);
+  console.log(`  ✓ Archived ${task.id} → ${columnLabel(task.column)}`);
   console.log();
 }
 
@@ -1019,7 +1025,7 @@ export async function runTaskUnarchive(id: string, projectName?: string) {
   const task = await store.unarchiveTask(id);
 
   console.log();
-  console.log(`  ✓ Unarchived ${task.id} → ${COLUMN_LABELS[task.column]}`);
+  console.log(`  ✓ Unarchived ${task.id} → ${columnLabel(task.column)}`);
   console.log();
 }
 

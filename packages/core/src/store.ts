@@ -7,7 +7,7 @@ import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, 
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, COLUMNS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
-import { parseWorkflowIr, serializeWorkflowIr } from "./workflow-ir.js";
+import { parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure } from "./workflow-ir.js";
 import { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
 import { resolveAllowedColumns, workflowHasColumn } from "./workflow-transitions.js";
 import {
@@ -691,7 +691,7 @@ function deepMergeWithNullDelete(
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
-  "task:moved": [data: { task: Task; from: Column; to: Column; source: "user" | "engine" | "scheduler" }];
+  "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler" }];
   "task:updated": [task: Task];
   "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
   "task:merged": [result: MergeResult];
@@ -1081,7 +1081,7 @@ export class InvalidMergeQueueLeaseDurationError extends Error {
 export class HandoffInvariantViolationError extends Error {
   constructor(
     public readonly taskId: string,
-    public readonly fromColumn: Column,
+    public readonly fromColumn: ColumnId,
     message: string,
   ) {
     super(message);
@@ -4406,7 +4406,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
             id: candidate.id,
             title: candidate.title ?? "",
             description: candidate.description,
-            column: "todo" as Column,
+            column: "todo",
             createdAt: Date.parse(candidate.createdAt),
             sourceAgentId: candidate.sourceAgentId,
             sourceParentTaskId: null,
@@ -4891,8 +4891,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
      *  from each row to make list responses cheap for board-style consumers. Detail fields default
      *  to empty arrays in the returned Task objects; use `getTask(id)` to load full data. */
     slim?: boolean;
-    /** Restrict to a single column (e.g. 'in-review' for the auto-merge sweep). */
-    column?: Column;
+    /** Restrict to a single column (e.g. 'in-review' for the auto-merge sweep).
+     *  Widened to {@link ColumnId} (#1403) so custom-column filters are accepted. */
+    column?: ColumnId;
     /** Opt-in startup-only memo for repeated slim reads during boot choreography. */
     startupMemo?: boolean;
   }): Promise<Task[]> {
@@ -5830,7 +5831,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     // ColumnId admits workflow-defined custom column ids (KTD-1). Both paths
     // runtime-validate: flag-ON against the task's resolved workflow, flag-OFF
     // via the VALID_TRANSITIONS lookup (non-legacy ids reject as before).
-    return this.withTaskLock(id, () => this.moveTaskInternal(id, toColumn as Column, options, { fromHandoff: false }));
+    return this.withTaskLock(id, () => this.moveTaskInternal(id, toColumn, options, { fromHandoff: false }));
   }
 
   async handoffToReview(taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
@@ -5885,7 +5886,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   private async moveTaskInternal(
     id: string,
-    toColumn: Column,
+    toColumn: ColumnId,
     options: MoveTaskOptions | undefined,
     internal: MoveTaskInternalOptions,
     currentTask?: Task,
@@ -6096,8 +6097,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         !sourceIsLegacy &&
         (COLUMNS as readonly string[]).includes(toColumn);
       if (!isEvacuation) {
+        // Legacy flag-OFF branch (useWorkflow === false): both columns are
+        // guaranteed legacy ids here — a non-legacy `toColumn` returns `?? []`
+        // and rejects below, and flag-OFF tasks never hold custom column ids.
+        // The `as Column` is provably safe within this branch (#1403).
         const validTargets = VALID_TRANSITIONS[task.column as Column] ?? [];
-        if (!validTargets.includes(toColumn)) {
+        if (!validTargets.includes(toColumn as Column)) {
           throw new Error(
             `Invalid transition: '${task.column}' → '${toColumn}'. ` +
               `Valid targets: ${validTargets.join(", ") || "none"}`,
@@ -8242,7 +8247,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
 
-  private dequeueMergeQueueOnColumnExit(taskId: string, previousColumn: Column, nextColumn: Column, now: string): void {
+  private dequeueMergeQueueOnColumnExit(taskId: string, previousColumn: ColumnId, nextColumn: ColumnId, now: string): void {
     if (previousColumn !== "in-review" || nextColumn === "in-review") {
       return;
     }
@@ -11984,6 +11989,9 @@ ${stepsSection}`;
   async createWorkflowDefinition(
     input: WorkflowDefinitionInput,
   ): Promise<WorkflowDefinition> {
+    // Rollback compat (#1405): with the flag OFF, persist a pure-v1-equivalent
+    // graph in the v1 shape so a binary downgrade can still load the row.
+    const flagOnForCreate = await this.workflowColumnsFlagOn();
     return this.withConfigLock(async () => {
       const name = input.name?.trim();
       if (!name) throw new Error("Workflow name is required");
@@ -12014,7 +12022,9 @@ ${stepsSection}`;
           definition.id,
           definition.name,
           definition.description,
-          serializeWorkflowIr(definition.ir),
+          serializeWorkflowIr(
+            flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir),
+          ),
           JSON.stringify(definition.layout),
           definition.createdAt,
           definition.updatedAt,
@@ -12127,7 +12137,8 @@ ${stepsSection}`;
         .run(
           next.name,
           next.description,
-          serializeWorkflowIr(next.ir),
+          // Rollback compat (#1405): persist v1 shape when pure and flag OFF.
+          serializeWorkflowIr(flagOn ? next.ir : downgradeIrToV1IfPure(next.ir)),
           JSON.stringify(next.layout),
           next.updatedAt,
           id,
@@ -12309,7 +12320,7 @@ ${stepsSection}`;
       // Recovery-class move: engine source + bypassGuards (KTD-9). preserveProgress
       // keeps the task's fields intact (R20 delete semantics). Capacity (KTD-10) is
       // NOT bypassed — a full target column rejects, which we audit and skip.
-      await this.moveTask(taskId, targetColumn as Column, {
+      await this.moveTask(taskId, targetColumn, {
         moveSource: "engine",
         bypassGuards: true,
         recoveryRehome: true,

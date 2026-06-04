@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseWorkflowIr,
   serializeWorkflowIr,
+  downgradeIrToV1IfPure,
   WorkflowIrError,
   DEFAULT_WORKFLOW_COLUMN_IDS,
 } from "../workflow-ir.js";
@@ -127,6 +128,107 @@ describe("parseWorkflowIr — v1 upgrade", () => {
       edges: [{ from: "start", to: "end" }],
     };
     expect(() => parseWorkflowIr(minimal)).not.toThrow();
+  });
+});
+
+describe("downgradeIrToV1IfPure — rollback compat (#1405)", () => {
+  const pureV1: WorkflowIrV1 = {
+    version: "v1",
+    name: "legacy",
+    nodes: [
+      { id: "start", kind: "start" },
+      { id: "execute", kind: "prompt", config: { seam: "execute" } },
+      { id: "review", kind: "prompt", config: { seam: "review" } },
+      { id: "end", kind: "end" },
+    ],
+    edges: [
+      { from: "start", to: "execute" },
+      { from: "execute", to: "review", condition: "success" },
+      { from: "review", to: "end", condition: "success" },
+    ],
+  };
+
+  it("downgrades an upgraded pure-v1 graph back to the v1 shape", () => {
+    const upgraded = parseWorkflowIr(pureV1);
+    expect(upgraded.version).toBe("v2");
+    const down = downgradeIrToV1IfPure(upgraded);
+    expect(down.version).toBe("v1");
+    // No synthesized `column` fields leak into the v1 shape.
+    expect(down.nodes.every((n) => n.column === undefined)).toBe(true);
+    // Lossless: a v2 binary re-upgrades it to the identical v2 graph.
+    expect(parseWorkflowIr(serializeWorkflowIr(down))).toEqual(upgraded);
+  });
+
+  it("pre-v2 binaries (version-only guard) accept the downgraded shape", () => {
+    const down = downgradeIrToV1IfPure(parseWorkflowIr(pureV1));
+    expect(down.version).toBe("v1");
+    // Simulate the pre-v2 hard reject of version !== 'v1'.
+    expect(() => {
+      if (down.version !== "v1") throw new WorkflowIrError("unsupported version");
+    }).not.toThrow();
+  });
+
+  it("keeps v2 when a v2-only node kind is present", () => {
+    const ir = v2(
+      DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id, traits: [] })),
+      [
+        { id: "start", kind: "start", column: "todo" },
+        { id: "wait", kind: "hold", column: "todo", config: { release: "manual" } },
+        { id: "end", kind: "end", column: "todo" },
+      ],
+      [
+        { from: "start", to: "wait" },
+        { from: "wait", to: "end" },
+      ],
+    );
+    expect(downgradeIrToV1IfPure(parseWorkflowIr(ir)).version).toBe("v2");
+  });
+
+  it("keeps v2 when columns are customized (rename / extra / applied trait)", () => {
+    const customName = v2(
+      DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id === "todo" ? "Backlog" : id, traits: [] })),
+      [
+        { id: "start", kind: "start", column: "todo" },
+        { id: "end", kind: "end", column: "todo" },
+      ],
+      [{ from: "start", to: "end" }],
+    );
+    expect(downgradeIrToV1IfPure(parseWorkflowIr(customName)).version).toBe("v2");
+
+    const withTrait = v2(
+      DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({
+        id,
+        name: id,
+        traits: id === "todo" ? [{ trait: "intake" }] : [],
+      })),
+      [
+        { id: "start", kind: "start", column: "todo" },
+        { id: "end", kind: "end", column: "todo" },
+      ],
+      [{ from: "start", to: "end" }],
+    );
+    expect(downgradeIrToV1IfPure(parseWorkflowIr(withTrait)).version).toBe("v2");
+  });
+
+  it("keeps v2 when a node is placed off its default seam column", () => {
+    const custom = v2(
+      DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id, traits: [] })),
+      [
+        { id: "start", kind: "start", column: "todo" },
+        // execute seam defaults to in-progress; place it in done instead.
+        { id: "exec", kind: "prompt", column: "done", config: { seam: "execute" } },
+        { id: "end", kind: "end", column: "todo" },
+      ],
+      [
+        { from: "start", to: "exec" },
+        { from: "exec", to: "end" },
+      ],
+    );
+    expect(downgradeIrToV1IfPure(parseWorkflowIr(custom)).version).toBe("v2");
+  });
+
+  it("returns a v1 input unchanged", () => {
+    expect(downgradeIrToV1IfPure(pureV1)).toBe(pureV1);
   });
 });
 

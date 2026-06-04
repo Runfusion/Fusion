@@ -1809,7 +1809,9 @@ export interface Task {
    * tasks are hydrated from persistence.
    */
   priority?: TaskPriority;
-  column: Column;
+  /** The task's current column id. Widened to {@link ColumnId} so workflow-defined
+   *  custom columns are representable; flag-OFF paths only ever store legacy ids. */
+  column: ColumnId;
   dependencies: string[];
   /** User-requested hint for triage: prefer splitting into child tasks when appropriate. */
   breakIntoSubtasks?: boolean;
@@ -2206,7 +2208,9 @@ export interface TaskCreateInput {
    * Optional task importance level. Omitted values default to `normal`.
    */
   priority?: TaskPriority;
-  column?: Column;
+  /** Initial column id. Widened to {@link ColumnId} (#1403) so a custom-column
+   *  task can be replicated/created; flag-OFF creation only ever uses legacy ids. */
+  column?: ColumnId;
   dependencies?: string[];
   breakIntoSubtasks?: boolean;
   /** When true, this task is expected to complete without creating git commits. */

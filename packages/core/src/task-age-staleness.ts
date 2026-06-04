@@ -50,6 +50,10 @@ export function getTaskAgeStalenessSignal(
   if (task.column !== "in-progress" && task.column !== "in-review") {
     return undefined;
   }
+  // The guard above proves `column` is one of these two legacy ids; the
+  // `ColumnId` union's `string & {}` member can't be excluded by literal `!==`
+  // narrowing, so the cast is provably safe here (#1403).
+  const activeColumn = task.column as "in-progress" | "in-review";
   if (task.mergeDetails?.mergeConfirmed === true) {
     return undefined;
   }
@@ -105,7 +109,7 @@ export function getTaskAgeStalenessSignal(
     ageMs,
     warningThresholdMs: warningThresholdMs ?? 0,
     criticalThresholdMs: criticalThresholdMs ?? 0,
-    column: task.column,
+    column: activeColumn,
     paused: task.paused === true,
   };
 }

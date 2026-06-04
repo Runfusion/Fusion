@@ -2746,7 +2746,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       // Check if task can transition to triage
-      const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
+      // #1403: task.column is ColumnId; VALID_TRANSITIONS is keyed by the legacy
+      // closed union. A non-legacy custom column id has no legacy transition row,
+      // so it correctly resolves to "cannot transition" here.
+      const canTransition =
+        isColumn(task.column) && VALID_TRANSITIONS[task.column].includes("triage");
       if (!canTransition) {
         throw badRequest(
           `Cannot request spec revision for tasks in '${task.column}' column. Move task to 'todo' or 'in-progress' first.`,
@@ -2812,7 +2816,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       // Check if task can transition to triage
-      const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
+      // #1403: task.column is ColumnId; VALID_TRANSITIONS is keyed by the legacy
+      // closed union. A non-legacy custom column id has no legacy transition row,
+      // so it correctly resolves to "cannot transition" here.
+      const canTransition =
+        isColumn(task.column) && VALID_TRANSITIONS[task.column].includes("triage");
       if (!canTransition) {
         throw badRequest(`Cannot rebuild spec for tasks in '${task.column}' column. Move task to a valid column first.`);
       }

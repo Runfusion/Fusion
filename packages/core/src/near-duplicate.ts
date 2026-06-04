@@ -1,5 +1,5 @@
 import { STOPWORDS, tokenize } from "./duplicate-detection.js";
-import type { Column } from "./types.js";
+import type { ColumnId } from "./types.js";
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_LIMIT = 5;
@@ -34,7 +34,7 @@ export interface NearDuplicateCandidate {
   id: string;
   title: string;
   description: string;
-  column: Column;
+  column: ColumnId;
   fileScope?: string[];
   createdAt?: number;
 }

@@ -9,6 +9,7 @@ import {
   buildManualRetryResetPatch,
   validateNodeOverrideChange,
   type Task,
+  type ColumnId,
   type InsightCategory,
   type TaskPriority,
   type InsightStatus,
@@ -56,6 +57,12 @@ import { existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+/** #1403: display a column's label, falling back to the raw id for
+ *  workflow-defined custom columns that have no legacy label. */
+function columnLabel(column: ColumnId): string {
+  return (COLUMN_LABELS as Record<string, string>)[column] ?? column;
+}
 
 const MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -782,7 +789,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const lines: string[] = [];
       lines.push(`${task.id}: ${task.title || task.description}`);
       lines.push(
-        `Column: ${COLUMN_LABELS[task.column]}` +
+        `Column: ${columnLabel(task.column)}` +
           (task.size ? ` · Size: ${task.size}` : "") +
           (task.reviewLevel !== undefined ? ` · Review: ${task.reviewLevel}` : ""),
       );
@@ -1145,7 +1152,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const task = await store.archiveTask(params.id);
 
       return {
-        content: [{ type: "text", text: `Archived ${task.id} → ${COLUMN_LABELS[task.column]}` }],
+        content: [{ type: "text", text: `Archived ${task.id} → ${columnLabel(task.column)}` }],
         details: { taskId: task.id, column: task.column },
       };
     },
@@ -1173,7 +1180,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const task = await store.unarchiveTask(params.id);
 
       return {
-        content: [{ type: "text", text: `Unarchived ${task.id} → ${COLUMN_LABELS[task.column]}` }],
+        content: [{ type: "text", text: `Unarchived ${task.id} → ${columnLabel(task.column)}` }],
         details: { taskId: task.id, column: task.column },
       };
     },

@@ -1,5 +1,5 @@
 import { findDuplicateMatches } from "./duplicate-detection.js";
-import type { Column } from "./types.js";
+import type { ColumnId } from "./types.js";
 import type { TaskStore } from "./store.js";
 
 export interface SameAgentDuplicateInput {
@@ -17,7 +17,7 @@ export interface SameAgentDuplicateCandidate {
   id: string;
   title: string;
   description: string;
-  column: Column;
+  column: ColumnId;
   createdAt: number;
   sourceAgentId: string | null;
   sourceParentTaskId?: string | null;

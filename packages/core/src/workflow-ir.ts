@@ -3,6 +3,7 @@ import type {
   WorkflowIrColumn,
   WorkflowIrEdge,
   WorkflowIrNode,
+  WorkflowIrNodeKind,
   WorkflowIrV1,
   WorkflowIrV2,
   WorkflowHoldRelease,
@@ -250,6 +251,62 @@ export function parseWorkflowIr(input: string | WorkflowIr): WorkflowIr {
 
   validateV2(ir);
   return ir;
+}
+
+/** v1 node kinds (FN-5769). A pure-v1 graph uses only these; the v2-only kinds
+ *  (hold/split/join) force v2 persistence. */
+const V1_NODE_KINDS: ReadonlySet<WorkflowIrNodeKind> = new Set([
+  "start",
+  "prompt",
+  "script",
+  "gate",
+  "end",
+]);
+
+/**
+ * Rollback compat (FN issue #1405): if `ir` is a v2 graph that is byte-for-byte
+ * equivalent to an upgraded-v1 graph — only v1 node kinds, no hold/split/join,
+ * and exactly the synthesized default columns at their seam-derived placement —
+ * downgrade it back to the v1 shape so pre-v2 binaries (which hard-reject
+ * version !== 'v1') can still load the row. Returns the original `ir` unchanged
+ * when any v2-only feature is present (custom columns, non-default placement,
+ * v2-only node kinds), since those genuinely require v2.
+ */
+export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
+  if (ir.version !== "v2") return ir;
+
+  // Any v2-only node kind means the graph cannot be represented in v1.
+  for (const node of ir.nodes) {
+    if (!V1_NODE_KINDS.has(node.kind)) return ir;
+  }
+
+  // Columns must be exactly the synthesized default set, same ids, same order,
+  // with the minimal (placement-only) empty trait set. Any custom column, rename,
+  // reorder, or applied trait forces v2.
+  if (ir.columns.length !== DEFAULT_WORKFLOW_COLUMN_IDS.length) return ir;
+  for (let i = 0; i < ir.columns.length; i++) {
+    const col = ir.columns[i];
+    const expectedId = DEFAULT_WORKFLOW_COLUMN_IDS[i];
+    if (col.id !== expectedId || col.name !== expectedId || col.traits.length !== 0) {
+      return ir;
+    }
+  }
+
+  // Every node must sit in its default seam-derived column. A node placed
+  // elsewhere is a v2 feature (custom placement) and must stay v2.
+  for (const node of ir.nodes) {
+    if (node.column !== defaultColumnForNode(node)) return ir;
+  }
+
+  // Pure v1: emit the v1 shape, dropping the synthesized `column` fields so the
+  // result round-trips through a pre-v2 binary. (Re-reading it on a v2 binary
+  // re-upgrades it to the identical v2 graph via upgradeV1ToV2.)
+  return {
+    version: "v1",
+    name: ir.name,
+    nodes: ir.nodes.map(({ column: _column, ...rest }) => rest),
+    edges: ir.edges,
+  };
 }
 
 export function serializeWorkflowIr(ir: WorkflowIr): string {

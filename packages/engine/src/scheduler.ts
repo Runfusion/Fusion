@@ -1981,7 +1981,7 @@ export class Scheduler {
    * lifecycle, including review/merge transitions and older tasks whose task
    * row has mission/slice metadata but whose feature row lacks taskId.
    */
-  private async handleMissionTaskMove(taskId: string, toColumn: import("@fusion/core").Column): Promise<void> {
+  private async handleMissionTaskMove(taskId: string, toColumn: import("@fusion/core").ColumnId): Promise<void> {
     if (!this.options.missionStore) return;
 
     const missionStore = this.options.missionStore;

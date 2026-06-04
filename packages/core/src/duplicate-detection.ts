@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 
-import type { Column } from "./types.js";
+import type { Column, ColumnId } from "./types.js";
 
 export interface DuplicateMatch {
   id: string;
   title: string;
   description: string;
-  column: Column;
+  column: ColumnId;
   score: number;
 }
 
@@ -19,7 +19,7 @@ export interface DuplicateCandidate {
   id: string;
   title: string;
   description: string;
-  column: Column;
+  column: ColumnId;
 }
 
 export interface ContentFingerprintInput {
@@ -138,7 +138,7 @@ export function findDuplicateMatches(
 
   const threshold = opts?.threshold ?? DEFAULT_THRESHOLD;
   const limit = opts?.limit ?? DEFAULT_LIMIT;
-  const excludedColumns = new Set(opts?.excludeColumns ?? DEFAULT_EXCLUDE_COLUMNS);
+  const excludedColumns = new Set<ColumnId>(opts?.excludeColumns ?? DEFAULT_EXCLUDE_COLUMNS);
   const sourceText = `${input.title ?? ""} ${description}`.trim();
   const sourceTokens = new Set(tokenize(sourceText));
   const sourceTitle = input.title ?? "";

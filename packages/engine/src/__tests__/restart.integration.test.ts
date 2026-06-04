@@ -256,7 +256,7 @@ import { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees } from "../wo
 import { createFnAgent } from "../pi.js";
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import type { Task, TaskDetail, TaskStep, Column, Settings, StepStatus } from "@fusion/core";
+import type { Task, TaskDetail, TaskStep, Column, ColumnId, Settings, StepStatus } from "@fusion/core";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedExecSync = vi.mocked(execSync);
@@ -320,7 +320,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
   return store;
 }
 
-function makeTask(id: string, column: Column, overrides: Partial<Task> = {}): Task {
+function makeTask(id: string, column: ColumnId, overrides: Partial<Task> = {}): Task {
   return {
     id,
     title: `Task ${id}`,
@@ -336,7 +336,7 @@ function makeTask(id: string, column: Column, overrides: Partial<Task> = {}): Ta
   };
 }
 
-function makeTaskDetail(id: string, column: Column, overrides: Partial<TaskDetail> = {}): TaskDetail {
+function makeTaskDetail(id: string, column: ColumnId, overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     ...makeTask(id, column, overrides),
     prompt: overrides.prompt ?? "# test\n## Steps\n### Step 0: Preflight\n- [ ] check\n## Review Level: 0",
