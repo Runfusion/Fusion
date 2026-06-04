@@ -62,6 +62,19 @@ A recurring background scan that detects and repairs stuck Task states — stall
 ### Shared branch group
 A set of Tasks integrating into a common shared branch instead of each merging straight to the project's default branch. Member integration (task branch → shared branch) is a soft pre-integration step exempt from the global auto-merge gate; promotion (shared branch → default branch) is gated separately.
 
+## Branching & diff attribution
+
+### Integration branch
+The local branch (by default the project's default branch) where the merger lands Task branches and from whose tip new Task worktrees fork. Because the merger lands commits locally before pushing, the Integration branch can be ahead of its origin counterpart by merged-but-unpushed commits — any fork-point or merge-base computation must measure against the local branch first, with the origin ref only as a fallback.
+
+### Fork point
+The commit on the Integration branch from which a Task's branch was created — the exclusive lower bound of the Task's owned changes. Every "files changed" computation diffs fork point to branch tip, so a recorded base older than the true Fork point permanently attributes predecessors' files to the Task.
+
+### Rebase-and-push
+The post-merge step that rebases locally-landed merge commits onto the upstream branch before pushing, rewriting their SHAs. The original commits become orphaned — no longer reachable from the Integration branch — while still present in the history of any Task branch forked before the push, which is why a too-old recorded Fork point cannot be recovered after this step.
+
+### Contamination
+Foreign commits — work attributed to other Tasks — appearing on a Task's branch beyond its recorded Fork point. Contamination checks must compute their reference base fresh from the Integration branch rather than reuse the Task's stored base, since a stale stored base makes every legitimately merged commit look foreign.
 ## Compound Engineering sessions
 
 ### CE Stage
