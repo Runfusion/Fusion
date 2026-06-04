@@ -32,6 +32,7 @@ import { DbCorruptionBanner } from "./components/DbCorruptionBanner";
 import { UpdateAvailableBanner } from "./components/UpdateAvailableBanner";
 import MergeAdvanceNotice from "./components/MergeAdvanceNotice";
 import { ApprovalNotificationBanner } from "./components/ApprovalNotificationBanner";
+import { GitHubStarPrompt } from "./components/GitHubStarPrompt";
 import { OnboardingResumeCard } from "./components/OnboardingResumeCard";
 import { PostOnboardingRecommendations } from "./components/PostOnboardingRecommendations";
 import {
@@ -44,6 +45,7 @@ import { MobileNavBar } from "./components/MobileNavBar";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
+import { useGitHubStarPromptShown, markGitHubStarPromptShown } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
@@ -165,6 +167,10 @@ interface ApprovalBannerCandidate {
 
 export function didEnterAwaitingApproval(nextStatus: string | undefined, previousStatus: string | undefined): boolean {
   return nextStatus === "awaiting-approval" && previousStatus !== "awaiting-approval";
+}
+
+export function didEnterDone(nextStatus: string | undefined, previousStatus: string | undefined): boolean {
+  return nextStatus === "done" && previousStatus !== undefined && previousStatus !== "done";
 }
 
 function parseDateMs(value: string | undefined): number {
@@ -533,9 +539,11 @@ function AppInner() {
   const [chatHasUnreadResponse, setChatHasUnreadResponse] = useState(false);
   const [stashOrphanCount, setStashOrphanCount] = useState(0);
   const [approvalBannerCandidate, setApprovalBannerCandidate] = useState<ApprovalBannerCandidate | null>(null);
+  const [showGitHubStarPrompt, setShowGitHubStarPrompt] = useState(false);
   const taskStatusByIdRef = useRef<Map<string, string | undefined>>(new Map());
   const seenApprovalKeysRef = useRef<Set<string>>(new Set());
   const approvalDismissalsRef = useRef<Map<string, number>>(loadApprovalBannerDismissals());
+  const gitHubStarPromptShown = useGitHubStarPromptShown();
 
   const refreshMailboxUnreadCount = useCallback(() => {
     fetchUnreadCount(currentProject?.id)
@@ -614,6 +622,9 @@ function AppInner() {
             const dedupeKey = `task:${payload.id}`;
             const previousStatus = taskStatusByIdRef.current.get(payload.id);
             taskStatusByIdRef.current.set(payload.id, payload.status);
+            if (!gitHubStarPromptShown && didEnterDone(payload.status, previousStatus)) {
+              setShowGitHubStarPrompt(true);
+            }
             if (payload.status !== "awaiting-approval") {
               seenApprovalKeysRef.current.delete(dedupeKey);
               approvalDismissalsRef.current.delete(dedupeKey);
@@ -637,7 +648,7 @@ function AppInner() {
         },
       },
     });
-  }, [currentProject?.id, refreshMailboxUnreadCount]);
+  }, [currentProject?.id, gitHubStarPromptShown, refreshMailboxUnreadCount]);
 
   useEffect(() => {
     if (taskView === "chat") {
@@ -1946,6 +1957,14 @@ function AppInner() {
             );
             persistApprovalBannerDismissals(approvalDismissalsRef.current);
             setApprovalBannerCandidate(null);
+          }}
+        />
+      )}
+      {viewMode === "project" && currentProject && showGitHubStarPrompt && !gitHubStarPromptShown && (
+        <GitHubStarPrompt
+          onDismiss={() => {
+            markGitHubStarPromptShown();
+            setShowGitHubStarPrompt(false);
           }}
         />
       )}

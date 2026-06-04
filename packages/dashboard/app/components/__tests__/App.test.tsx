@@ -593,7 +593,7 @@ vi.mock("../../hooks/useMobileScrollLock", () => ({
   _resetLockState: vi.fn(),
 }));
 
-import { App, didEnterAwaitingApproval } from "../../App";
+import { App, didEnterAwaitingApproval, didEnterDone } from "../../App";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews } from "../../api";
 import { __resetShellHostContextForTests } from "../../shell-host";
@@ -920,6 +920,16 @@ describe("didEnterAwaitingApproval", () => {
     expect(didEnterAwaitingApproval("awaiting-approval", "in-progress")).toBe(true);
     expect(didEnterAwaitingApproval("awaiting-approval", "awaiting-approval")).toBe(false);
     expect(didEnterAwaitingApproval("done", "in-progress")).toBe(false);
+  });
+});
+
+describe("didEnterDone", () => {
+  it("returns true only when status newly enters done", () => {
+    expect(didEnterDone("done", "in-progress")).toBe(true);
+    expect(didEnterDone("done", "todo")).toBe(true);
+    expect(didEnterDone("done", "done")).toBe(false);
+    expect(didEnterDone("in-progress", "todo")).toBe(false);
+    expect(didEnterDone("in-progress", undefined)).toBe(false);
   });
 });
 

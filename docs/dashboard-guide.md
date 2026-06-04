@@ -214,6 +214,7 @@ Mailbox view shows inbox/outbox communication threads and unread state.
 - mailbox entry points now show unread/pending indicators: the desktop Header mailbox toggle shows a pending-approval dot first or an unread dot when unread mail exists without pending approvals, while Header overflow + Mobile mailbox entry points continue to surface mailbox badges/dots
 - approval lifecycle SSE events (`approval:requested`, `approval:updated`, `approval:decided`) trigger mailbox approvals refresh without manual reload
 - when a task newly enters `awaiting-approval`, the app shows a persistent approval banner above project content with an **Open Mailbox** CTA; dismissals are remembered per approval item until that item advances or a different one arrives
+- when a task first transitions into `done`, the dashboard shows a one-time **Enjoying Fusion?** GitHub star prompt in the project view; clicking **Star on GitHub** or dismissing the card marks it shown in browser `localStorage`, so it does not reappear on reload or later task completions
 - Visible message history/threading is driven by explicit `message.metadata.replyTo.messageId` links
 - Separate top-level messages from the same sender remain independent in the inbox and detail pane
 
@@ -1097,6 +1098,8 @@ Reuse existing primitives from `styles.css`:
 - **Utility**: `.touch-target` (44px min), `.visually-hidden`.
 
 Don't create parallel button/form variants — add states (`:hover`, `:focus-visible`, `:active`) to the existing primitives.
+
+Small fixed notification cards (for example the first-task GitHub star prompt) should reuse `.card`, `.btn`, and `.btn-icon`, anchor themselves with tokenized `position: fixed` offsets, and include a mobile `@media (max-width: 768px)` override so they clear the mobile nav/FAB region.
 
 ### Mobile responsive
 
