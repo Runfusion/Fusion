@@ -9,8 +9,8 @@ import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "n
 import { existsSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode } from "@fusion/core";
-import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask } from "@fusion/core";
-import type { TaskStep, WorkflowIr, WorkflowFieldDefinition } from "@fusion/core";
+import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent } from "@fusion/core";
+import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent } from "@fusion/core";
 import {
   buildWorkflowObservationFromTask,
   buildWorkflowObservation,
@@ -3320,11 +3320,27 @@ export class TaskExecutor {
         // Definition load failure — leave undefined; deps/runner use fallbacks.
       }
 
+      // Column-agent binding (plan U3): the IR is NOT in scope inside
+      // runGraphCustomNode, so resolve it here (the seam wiring) where the
+      // selection is known, and thread a per-node binding lookup into the custom
+      // node callback. Resolve the IR ONCE per run (never an uncached per-node
+      // fetch — mirrors the hold-release.ts irCache posture); best-effort, so a
+      // resolution failure simply yields no bindings (R8 graceful degradation).
+      let columnAgentIr: WorkflowIr | undefined;
+      try {
+        columnAgentIr = await resolveWorkflowIrForTask(this.store, task.id);
+      } catch {
+        columnAgentIr = undefined;
+      }
+      const resolveBindingForNode = (nodeId: string): WorkflowColumnAgent | undefined =>
+        columnAgentIr ? resolveColumnAgentBinding(columnAgentIr, nodeId) : undefined;
+
       const runner = new WorkflowGraphTaskRunner({
         store: this.store,
         runId: resolvedRunId,
         seams: this.createGraphSeams(settings),
-        runCustomNode: (node, nodeTask) => this.runGraphCustomNode(node, nodeTask, settings),
+        runCustomNode: (node, nodeTask) =>
+          this.runGraphCustomNode(node, nodeTask, settings, resolveBindingForNode(node.id)),
         onEvent: (event) => executorLog.log(`[workflow-graph] ${event.type} ${event.taskId}: ${event.detail}`),
         // Wire SQLite-backed per-branch persistence in production (#1407): the
         // executor writes each branch's currentNodeId/status to
@@ -4495,11 +4511,77 @@ export class TaskExecutor {
     }
   }
 
-  /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery. */
+  /** Build the persona prefix for an agent from its TYPED identity fields (KTD-6).
+   *  Reads `soul` and `instructionsText` — the fields the `Agent` type actually
+   *  exposes (`packages/core/src/types.ts`) — and joins them. The custom-node
+   *  `"agent"` branch historically read a non-existent `customInstructions`
+   *  field (silently undefined); this is the single consistent source used by
+   *  both the node-agent and column-agent paths. */
+  private buildAgentPersona(agent: Agent): string | undefined {
+    const parts = [agent.soul, agent.instructionsText]
+      .map((p) => (typeof p === "string" ? p.trim() : ""))
+      .filter((p) => p.length > 0);
+    return parts.length > 0 ? parts.join("\n\n") : undefined;
+  }
+
+  /** Fetch the column agent and surface its model + persona for adoption by a
+   *  custom node (plan U3). Best-effort, mirroring the node-agent posture at the
+   *  `"agent"` branch: on null/throw, log and return undefined so the caller
+   *  falls back to the node's own/default resolution (R8). Emits a logEntry
+   *  naming the substitution and mode so the audit trail explains who ran. */
+  private async adoptColumnAgentForNode(
+    node: WorkflowIrNode,
+    live: TaskDetail,
+    columnAgentId: string,
+    mode: WorkflowColumnAgent["mode"] | undefined,
+  ): Promise<{ modelProvider?: string; modelId?: string; persona?: string } | undefined> {
+    try {
+      const agent = await this.options.agentStore?.getAgent(columnAgentId);
+      if (!agent) {
+        await this.store.logEntry(
+          live.id,
+          `Workflow node '${node.id}': column agent '${columnAgentId}' not found — falling back to node/default resolution`,
+          undefined,
+          this.getRunContextFor(live.id),
+        );
+        return undefined;
+      }
+      const rc = (agent.runtimeConfig ?? {}) as { executorProvider?: string; executorModelId?: string };
+      await this.store.logEntry(
+        live.id,
+        `Workflow node '${node.id}': running as column agent '${columnAgentId}' (${mode})`,
+        undefined,
+        this.getRunContextFor(live.id),
+      );
+      return {
+        modelProvider: rc.executorProvider,
+        modelId: rc.executorModelId,
+        persona: this.buildAgentPersona(agent),
+      };
+    } catch {
+      // Agent lookup is best-effort; fall back to node/default resolution (R8).
+      await this.store.logEntry(
+        live.id,
+        `Workflow node '${node.id}': column agent '${columnAgentId}' lookup failed — falling back to node/default resolution`,
+        undefined,
+        this.getRunContextFor(live.id),
+      );
+      return undefined;
+    }
+  }
+
+  /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery.
+   *
+   *  `columnBinding` (plan U3) is the agent binding governing this node's
+   *  declared column, resolved by the seam wiring in maybeExecuteWorkflowGraph
+   *  (the IR is not in scope here). When present, the core resolver decides
+   *  whether the column agent supersedes (override) or defers to the node's own
+   *  `cfg.agentId`/model pair — never a reimplemented precedence. */
   private async runGraphCustomNode(
     node: WorkflowIrNode,
     nodeTask: TaskDetail,
     settings: Settings,
+    columnBinding?: WorkflowColumnAgent,
   ): Promise<WorkflowNodeResult> {
     const cfg = node.config ?? {};
     const live = await this.store.getTask(nodeTask.id);
@@ -4536,6 +4618,51 @@ export class TaskExecutor {
     let modelProvider = typeof cfg.modelProvider === "string" && cfg.modelProvider.trim() ? cfg.modelProvider : undefined;
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
 
+    // ── Column-agent binding (plan U3, KTD-2/KTD-3) ──────────────────────────
+    // When the node's declared column names an agent, the CORE resolver decides
+    // whether the column agent supersedes (override) or defers to the node's own
+    // settings — we never reimplement precedence. The node's own `cfg.agentId`
+    // and complete model pair feed the resolver as "own settings" (KTD-5).
+    const ownModelComplete = Boolean(modelProvider && modelId);
+    const effective = resolveEffectiveAgent({
+      binding: columnBinding,
+      ownAgentId: typeof cfg.agentId === "string" && cfg.agentId.trim() ? cfg.agentId.trim() : undefined,
+      ownModelProvider: ownModelComplete ? modelProvider : undefined,
+      ownModelId: ownModelComplete ? modelId : undefined,
+    });
+    // The effective executor identity: a column agent supersedes the node's own
+    // `executor: "agent"` adoption wholesale (identity + model + persona). When
+    // the resolver yields the column agent, we run the column-agent adoption
+    // path below INSTEAD of the node's own agent branch.
+    const columnAgentId = effective.source === "column-agent" ? effective.agentId : undefined;
+    const columnAgentMode = columnBinding?.mode;
+
+    if (columnAgentId) {
+      // CLI executor with a raw command runs no session — the column agent
+      // cannot contribute a model/persona to raw process execution, so it is a
+      // no-op here. Log the skip so the audit trail explains why the column
+      // agent did not apply (plan U3). Skill / model / script-via-session nodes
+      // DO adopt the column agent below.
+      if (executorKind === "cli" && rawCliCommand) {
+        await this.store.logEntry(
+          live.id,
+          `Workflow node '${node.id}': column agent '${columnAgentId}' (${columnAgentMode}) not applied — raw CLI execution runs no session`,
+          undefined,
+          this.getRunContextFor(live.id),
+        );
+      } else {
+        const adopted = await this.adoptColumnAgentForNode(node, live, columnAgentId, columnAgentMode);
+        if (adopted) {
+          modelProvider = adopted.modelProvider ?? modelProvider;
+          modelId = adopted.modelId ?? modelId;
+          if (adopted.persona) prompt = `${adopted.persona}\n\n${prompt}`;
+        }
+        // Whether or not the agent resolved, the column agent SUPERSEDES the
+        // node's own `executor: "agent"` adoption — skip that branch so we never
+        // blend the column agent's model with the node agent's persona.
+      }
+    }
+
     // Executor kinds for prompt nodes:
     // - "model"  (default): run the prompt on the configured/override model.
     // - "agent": run as a named agent — adopt its model and persona prompt.
@@ -4543,14 +4670,18 @@ export class TaskExecutor {
     // - "cli":   run a named project script with the prompt passed via env
     //            (FUSION_NODE_PROMPT). Named scripts only — raw commands are
     //            never accepted from node config.
-    if (executorKind === "agent" && typeof cfg.agentId === "string" && cfg.agentId.trim()) {
+    if (!columnAgentId && executorKind === "agent" && typeof cfg.agentId === "string" && cfg.agentId.trim()) {
       try {
         const agent = await this.options.agentStore?.getAgent(cfg.agentId);
         if (agent) {
           const rc = (agent.runtimeConfig ?? {}) as { executorProvider?: string; executorModelId?: string };
           modelProvider = rc.executorProvider ?? modelProvider;
           modelId = rc.executorModelId ?? modelId;
-          const persona = (agent as { customInstructions?: string }).customInstructions;
+          // KTD-6: read the TYPED persona fields (soul / instructionsText), not
+          // the non-existent `customInstructions` (which was silently undefined,
+          // so node-agent persona injection never actually fired). Same fields
+          // the column-agent path uses — one consistent persona source.
+          const persona = this.buildAgentPersona(agent);
           if (persona) prompt = `${persona}\n\n${prompt}`;
         } else {
           await this.store.logEntry(live.id, `Workflow node '${node.id}': agent '${cfg.agentId}' not found — using default model`, undefined, this.getRunContextFor(live.id));
