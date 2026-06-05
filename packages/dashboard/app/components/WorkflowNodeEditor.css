@@ -918,14 +918,14 @@
   gap: var(--space-xs);
   max-height: 220px;
   overflow-y: auto;
-  padding: var(--space-2xs);
+  padding: var(--space-xs);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
 }
 
 .wf-template-section {
-  margin: var(--space-xs) 0 var(--space-2xs);
+  margin: var(--space-xs) 0 var(--space-xs);
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -936,7 +936,7 @@
 .wf-template-option {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
   padding: var(--space-xs) var(--space-sm);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -1084,7 +1084,7 @@
   align-items: center;
   gap: var(--space-xs);
   align-self: flex-start;
-  padding: var(--space-2xs) var(--space-xs);
+  padding: var(--space-xs) var(--space-xs);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -1132,7 +1132,7 @@
 
 .wf-ai-panel {
   position: absolute;
-  top: calc(100% + var(--space-2xs));
+  top: calc(100% + var(--space-xs));
   right: 0;
   z-index: 20;
   width: 320px;
@@ -1143,5 +1143,5 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
-  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.2));
+  box-shadow: var(--shadow-md);
 }
