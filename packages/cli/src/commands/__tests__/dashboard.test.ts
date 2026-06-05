@@ -495,6 +495,10 @@ vi.mock("@fusion/engine", async (importOriginal) => {
       return { stop: vi.fn() };
     }
 
+    getCliAgentRuntime(): undefined {
+      return undefined;
+    }
+
     async onMerge(taskId: string): Promise<unknown> {
       return aiMergeTask(this.store, this.cwd, taskId, {
         pool: this.pool,
