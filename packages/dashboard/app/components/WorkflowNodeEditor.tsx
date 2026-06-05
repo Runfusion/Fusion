@@ -34,6 +34,7 @@ import type { DiscoveredSkill } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useAppSettings } from "../hooks/useAppSettings";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import {
   irToFlow,
@@ -146,6 +147,14 @@ function InnerEditor({
 
   const activeWorkflow = useMemo(() => workflows.find((w) => w.id === activeId), [workflows, activeId]);
   const isBuiltin = !!activeWorkflow && isBuiltinWorkflowId(activeWorkflow.id);
+
+  // Column-agent authoring requires BOTH flags (R10). When either is off, the
+  // picker is disabled (not hidden) and bound columns are inert at execution
+  // time; config still round-trips (flags gate execution, not storage).
+  const { experimentalFeatures } = useAppSettings(projectId);
+  const columnAgentsEnabled =
+    experimentalFeatures?.workflowColumns === true &&
+    experimentalFeatures?.workflowGraphExecutor === true;
 
   // Trait catalog (for client-side composition validation; the panel fetches its
   // own copy for the picker, but the editor needs the flags to validate).
@@ -554,6 +563,25 @@ function InnerEditor({
 
   const currentExecutor = (selectedNode?.data.config?.executor as ExecutorKind | undefined) ?? "model";
 
+  // The override binding governing the selected node, if any: its declared
+  // column carries an `agent` in `override` mode. Drives the "overridden by
+  // column agent" note so authors don't diagnose override as a bug (R11). Keyed
+  // on the column id + binding, not array identity.
+  const overrideColumnBinding = useMemo(() => {
+    const columnId = selectedNode?.data.column;
+    if (!columnId) return undefined;
+    const col = columns.find((c) => c.id === columnId);
+    if (!col?.agent || col.agent.mode !== "override") return undefined;
+    return col.agent;
+  }, [selectedNode?.data.column, columns]);
+
+  // Resolve the override agent's display name from the loaded registry; when the
+  // id is stale (not in the list) fall back to the not-found treatment.
+  const overrideAgent = useMemo(
+    () => (overrideColumnBinding ? agents.find((a) => a.id === overrideColumnBinding.agentId) : undefined),
+    [overrideColumnBinding, agents],
+  );
+
   useEffect(() => {
     // step-review offers an optional review model picker (KTD-4).
     if (selectedNode?.data.kind === "step-review" && models.length === 0) {
@@ -586,6 +614,22 @@ function InnerEditor({
     agents.length,
     skills.length,
   ]);
+
+  // When the selected node sits in an override column, eagerly load the agent
+  // registry so the "overridden by column agent <name>" note can resolve the
+  // name even if this node's own executor isn't "agent".
+  useEffect(() => {
+    if (!overrideColumnBinding || agents.length > 0) return;
+    let cancelled = false;
+    Promise.resolve(fetchAgents()).then((list) => {
+      if (!cancelled) setAgents(list ?? []);
+    }).catch((err) => {
+      if (!cancelled) addToast(getErrorMessage(err) || "Failed to load agents", "error");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [overrideColumnBinding, agents.length, addToast]);
 
   const overlayProps = useOverlayDismiss(onClose);
 
@@ -722,6 +766,7 @@ function InnerEditor({
               readOnly={isBuiltin}
               projectId={projectId}
               addToast={addToast}
+              columnAgentsEnabled={columnAgentsEnabled}
             />
           )}
 
@@ -777,6 +822,19 @@ function InnerEditor({
                     </select>
                   </label>
 
+                  {overrideColumnBinding && (
+                    <p className="wf-inspector-note wf-inspector-note--warn" data-testid="wf-node-overridden-by-column-agent">
+                      {t(
+                        "workflowColumns.overriddenByColumnAgent",
+                        "Overridden by column agent {{name}} — this node's executor settings are superseded.",
+                        {
+                          name: overrideAgent?.name
+                            ?? t("workflowColumns.agentNotFound", "Agent not found — {{id}}", { id: overrideColumnBinding.agentId }),
+                        },
+                      )}
+                    </p>
+                  )}
+
                   {currentExecutor === "model" && (
                     <label className="wf-field">
                       <span>Model</span>
@@ -795,20 +853,37 @@ function InnerEditor({
                     </label>
                   )}
 
-                  {currentExecutor === "agent" && (
-                    <label className="wf-field">
-                      <span>Agent</span>
-                      <select
-                        value={String(selectedNode.data.config?.agentId ?? "")}
-                        onChange={(e) => updateSelectedData({ config: { agentId: e.target.value || undefined } })}
-                      >
-                        <option value="">— select agent —</option>
-                        {agents.map((a) => (
-                          <option key={a.id} value={a.id}>{a.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                  {currentExecutor === "agent" && (() => {
+                    const nodeAgentId = String(selectedNode.data.config?.agentId ?? "");
+                    // A stored id absent from the loaded registry would render the
+                    // select blank; instead surface a not-found option that
+                    // preserves the IR value until the author clears/replaces it.
+                    const nodeAgentStale = nodeAgentId !== "" && !agents.some((a) => a.id === nodeAgentId);
+                    return (
+                      <label className="wf-field">
+                        <span>Agent</span>
+                        <select
+                          value={nodeAgentId}
+                          onChange={(e) => updateSelectedData({ config: { agentId: e.target.value || undefined } })}
+                        >
+                          <option value="">— select agent —</option>
+                          {nodeAgentStale && (
+                            <option value={nodeAgentId}>
+                              {t("workflowColumns.agentNotFound", "Agent not found — {{id}}", { id: nodeAgentId })}
+                            </option>
+                          )}
+                          {agents.map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                        {nodeAgentStale && (
+                          <p className="wf-inspector-note wf-inspector-note--warn" data-testid="wf-node-agent-stale">
+                            {t("workflowColumns.agentNotFound", "Agent not found — {{id}}", { id: nodeAgentId })}
+                          </p>
+                        )}
+                      </label>
+                    );
+                  })()}
 
                   {currentExecutor === "skill" && (
                     <label className="wf-field">

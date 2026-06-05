@@ -1,9 +1,57 @@
-import type { WorkflowIr, WorkflowIrNode } from "@fusion/core";
-import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowCompileError, WorkflowIrError, compileWorkflowToSteps, listTraits, listStepParsers } from "@fusion/core";
+import type {
+  WorkflowIr,
+  WorkflowIrNode,
+  WorkflowIrColumn,
+  TaskStore,
+  AgentPermissionPolicy,
+  AgentPermissionPolicyDisposition,
+} from "@fusion/core";
+import {
+  ColumnTraitValidationError,
+  OccupiedColumnsError,
+  InvalidRehomeTargetError,
+  WorkflowCompileError,
+  WorkflowIrError,
+  compileWorkflowToSteps,
+  listTraits,
+  listStepParsers,
+  AgentStore,
+  AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
+  resolveEffectiveAgentPermissionPolicy,
+} from "@fusion/core";
 import { validateCodeNodeSources } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import { emitWorkflowSseEvent } from "../sse.js";
 import type { ApiRoutesContext } from "./types.js";
+
+/**
+ * Disposition strictness rank for column-agent policy-escalation comparison
+ * (R13). A LOWER rank is *broader* (more privileged): `allow` lets an action
+ * through unconditionally, `require-approval` gates it, `block` denies it. An
+ * agent whose policy is broader than the project default on ANY action category
+ * is an escalation that must be explicitly confirmed at save time. Kept local
+ * and minimal per the plan — no preset ordering helper exists in
+ * agent-permission-policy.ts, so we compare resolved per-category dispositions.
+ */
+const DISPOSITION_BREADTH_RANK: Record<AgentPermissionPolicyDisposition, number> = {
+  allow: 0,
+  "require-approval": 1,
+  block: 2,
+};
+
+/** True when `agent`'s effective policy is broader (more privileged) than the
+ *  project `defaultPolicy` on at least one action category. */
+function isPolicyBroaderThanDefault(
+  agentPolicy: AgentPermissionPolicy,
+  defaultPolicy: AgentPermissionPolicy,
+): boolean {
+  for (const category of AGENT_PERMISSION_POLICY_ACTION_CATEGORIES) {
+    const agentRank = DISPOSITION_BREADTH_RANK[agentPolicy.rules[category]];
+    const defaultRank = DISPOSITION_BREADTH_RANK[defaultPolicy.rules[category]];
+    if (agentRank < defaultRank) return true;
+  }
+  return false;
+}
 
 /**
  * Routes for named workflow definitions, IR compilation preview, per-task
@@ -38,6 +86,68 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         `Workflow has ${failures.length} code node(s) that failed to compile`,
         { codeNodeErrors: failures },
       );
+    }
+  }
+
+  /**
+   * Write-time column-agent validation (U6, R11/R13). Mirrors the
+   * `assertCodeNodesCompile` shape: inspects the IR's columns BEFORE persisting,
+   * throws a typed 400 naming the offending column, and never mutates the IR.
+   *
+   * Two checks per bound column:
+   *  1. Existence — every `column.agent.agentId` must resolve in the agent
+   *     registry; an unknown id is a 400 naming the column (so the binding can't
+   *     be saved and silently fall back at execution time).
+   *  2. Policy escalation (R13) — if the bound agent's effective permission
+   *     policy is broader (more privileged) than the project default on any
+   *     action category, the save requires an explicit `confirmPolicyEscalation`
+   *     flag in the request body, else a 400 naming the policy gap. Override must
+   *     never silently re-key action gates to a more-privileged agent.
+   *
+   * Config is data: bindings are accepted regardless of feature flags — flags
+   * gate execution, not storage. A null/non-object IR or columns array is left
+   * to the store's own validator (this only inspects shapes it can read).
+   */
+  async function assertColumnAgentsExist(
+    ir: unknown,
+    store: TaskStore,
+    confirmPolicyEscalation: boolean,
+  ): Promise<void> {
+    const columns = (ir as { columns?: unknown })?.columns;
+    if (!Array.isArray(columns)) return;
+    const bound = (columns as WorkflowIrColumn[]).filter(
+      (col) => col && typeof col === "object" && col.agent && typeof col.agent.agentId === "string",
+    );
+    if (bound.length === 0) return;
+
+    const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+    await agentStore.init();
+
+    const settings = await store.getSettings();
+    const defaultPolicy = resolveEffectiveAgentPermissionPolicy(
+      undefined,
+      settings.defaultAgentPermissionPolicy,
+    );
+
+    for (const col of bound) {
+      const agentId = col.agent!.agentId;
+      const agent = await agentStore.getAgent(agentId);
+      if (!agent) {
+        throw badRequest(
+          `Column '${col.id}' binds unknown agent '${agentId}'`,
+          { columnId: col.id, agentId },
+        );
+      }
+      const agentPolicy = resolveEffectiveAgentPermissionPolicy(
+        agent.permissionPolicy,
+        settings.defaultAgentPermissionPolicy,
+      );
+      if (isPolicyBroaderThanDefault(agentPolicy, defaultPolicy) && !confirmPolicyEscalation) {
+        throw badRequest(
+          `Column '${col.id}' binds agent '${agentId}' whose permission policy is broader than the project default; set confirmPolicyEscalation: true to confirm`,
+          { columnId: col.id, agentId, policyEscalation: true },
+        );
+      }
     }
   }
 
@@ -100,12 +210,13 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
   router.post("/workflows", async (req, res) => {
     try {
       const { store, projectId } = await getProjectContext(req);
-      const { name, description, layout } = req.body ?? {};
+      const { name, description, layout, confirmPolicyEscalation } = req.body ?? {};
       if (!name || typeof name !== "string" || !name.trim()) {
         throw badRequest("name is required");
       }
       const ir = requireIr(req.body);
       await assertCodeNodesCompile(ir);
+      await assertColumnAgentsExist(ir, store, confirmPolicyEscalation === true);
       const created = await store.createWorkflowDefinition({ name, description, ir, layout });
       emitWorkflowSseEvent("workflow:created", created, projectId);
       res.status(201).json(created);
@@ -138,7 +249,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
   router.patch("/workflows/:id", async (req, res) => {
     try {
       const { store, projectId } = await getProjectContext(req);
-      const { name, description, ir, layout, rehomeTo } = req.body ?? {};
+      const { name, description, ir, layout, rehomeTo, confirmPolicyEscalation } = req.body ?? {};
       if (name !== undefined && (typeof name !== "string" || !name.trim())) {
         throw badRequest("name must be a non-empty string");
       }
@@ -150,6 +261,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       }
       if (ir !== undefined) {
         await assertCodeNodesCompile(ir);
+        await assertColumnAgentsExist(ir, store, confirmPolicyEscalation === true);
       }
       const updated = await store.updateWorkflowDefinition(req.params.id, {
         name,

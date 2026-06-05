@@ -446,3 +446,139 @@ describe("workflow routes (U4)", () => {
     });
   });
 });
+
+// ── U6: write-time column-agent validation (existence + policy escalation) ────
+
+describe("workflow routes — column agents (U6)", () => {
+  let store: TaskStore;
+  let rootDir: string;
+  let globalDir: string;
+  let app: express.Express;
+
+  /** A v2 workflow whose `triage` column optionally binds an agent. */
+  function boundIr(agent?: { agentId: string; mode: "defer" | "override" }): WorkflowIr {
+    return {
+      version: "v2",
+      name: "bound",
+      columns: [
+        { id: "triage", name: "Triage", traits: [{ trait: "intake" }], ...(agent ? { agent } : {}) },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "triage" },
+        { id: "work", kind: "prompt", column: "triage", config: { prompt: "do" } },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "work", condition: "success" },
+        { from: "work", to: "end", condition: "success" },
+      ],
+    } as WorkflowIr;
+  }
+
+  async function makeAgent(input: { permissionPolicy?: { presetId: "unrestricted" | "approval-required" | "locked-down" | "custom"; rules?: Record<string, string> } }): Promise<string> {
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+    await agentStore.init();
+    const agent = await agentStore.createAgent({
+      name: `Agent ${Math.random().toString(36).slice(2, 8)}`,
+      role: "executor",
+      permissionPolicy: input.permissionPolicy as never,
+    });
+    return agent.id;
+  }
+
+  beforeEach(async () => {
+    rootDir = mkdtempSync(join(tmpdir(), "wf-ca-root-"));
+    globalDir = mkdtempSync(join(tmpdir(), "wf-ca-global-"));
+    store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+    await store.init();
+
+    app = express();
+    app.use(express.json());
+    const router = express.Router();
+    registerWorkflowRoutes({
+      router,
+      getProjectContext: async () => ({ store, engine: undefined, projectId: undefined }),
+      rethrowAsApiError: (err: unknown) => {
+        throw err instanceof ApiError ? err : new ApiError(500, err instanceof Error ? err.message : String(err));
+      },
+    } as unknown as Parameters<typeof registerWorkflowRoutes>[0]);
+    app.use("/api", router);
+    app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      if (err instanceof ApiError) sendErrorResponse(res, err.statusCode, err.message, { details: err.details });
+      else sendErrorResponse(res, 500, err instanceof Error ? err.message : String(err));
+    });
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(rootDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true });
+  });
+
+  const post = (path: string, body: unknown) =>
+    request(app, "POST", path, JSON.stringify(body), { "content-type": "application/json" });
+  const patch = (path: string, body: unknown) =>
+    request(app, "PATCH", path, JSON.stringify(body), { "content-type": "application/json" });
+  const get = (path: string) => request(app, "GET", path);
+
+  it("persists a valid agent binding and round-trips it through GET", async () => {
+    const agentId = await makeAgent({});
+    const res = await post("/api/workflows", { name: "Bound", ir: boundIr({ agentId, mode: "defer" }) });
+    expect(res.status).toBe(201);
+    const id = (res.body as { id: string }).id;
+
+    const fetched = await get(`/api/workflows/${id}`);
+    expect(fetched.status).toBe(200);
+    const ir = (fetched.body as { ir: { columns: Array<{ id: string; agent?: { agentId: string; mode: string } }> } }).ir;
+    const triage = ir.columns.find((c) => c.id === "triage");
+    expect(triage?.agent).toEqual({ agentId, mode: "defer" });
+  });
+
+  it("rejects an unknown agentId with a 400 naming the column; definition is unchanged", async () => {
+    const res = await post("/api/workflows", { name: "Ghost", ir: boundIr({ agentId: "agent-ghost", mode: "defer" }) });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/triage/);
+    expect(res.body.error).toMatch(/agent-ghost/);
+    // Nothing persisted (no custom "Ghost" workflow created; built-ins remain).
+    const list = await get("/api/workflows");
+    expect((list.body as Array<{ name: string }>).some((w) => w.name === "Ghost")).toBe(false);
+  });
+
+  it("rejects a more-privileged agent without confirmPolicyEscalation, then persists with the flag", async () => {
+    // Project default is restrictive; the bound agent is unrestricted (broader).
+    await store.updateSettings({ defaultAgentPermissionPolicy: { rules: { file_write_delete: "block" } } as never });
+    const agentId = await makeAgent({ permissionPolicy: { presetId: "unrestricted" } });
+
+    const denied = await post("/api/workflows", { name: "Esc", ir: boundIr({ agentId, mode: "override" }) });
+    expect(denied.status).toBe(400);
+    expect(denied.body.error).toMatch(/broader/i);
+    expect((denied.body as { details?: { policyEscalation?: boolean } }).details?.policyEscalation).toBe(true);
+
+    const ok = await post("/api/workflows", {
+      name: "Esc2",
+      ir: boundIr({ agentId, mode: "override" }),
+      confirmPolicyEscalation: true,
+    });
+    expect(ok.status).toBe(201);
+  });
+
+  it("stores no agent key when the binding is absent (omission, R9)", async () => {
+    const res = await post("/api/workflows", { name: "Plain", ir: boundIr() });
+    expect(res.status).toBe(201);
+    const id = (res.body as { id: string }).id;
+    const fetched = await get(`/api/workflows/${id}`);
+    const ir = (fetched.body as { ir: { columns: Array<{ id: string; agent?: unknown }> } }).ir;
+    const triage = ir.columns.find((c) => c.id === "triage")!;
+    expect("agent" in triage).toBe(false);
+  });
+
+  it("PATCH validates an unknown agentId the same way as POST", async () => {
+    const created = await post("/api/workflows", { name: "Editable", ir: boundIr() });
+    const id = (created.body as { id: string }).id;
+    const res = await patch(`/api/workflows/${id}`, { ir: boundIr({ agentId: "agent-ghost", mode: "override" }) });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/triage/);
+  });
+});

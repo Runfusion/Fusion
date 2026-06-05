@@ -360,7 +360,18 @@ export function flowToIr(
     const ir: WorkflowIrV2 = {
       version: "v2",
       name,
-      columns: hasColumns ? columns!.map((c) => ({ id: c.id, name: c.name, traits: c.traits })) : [],
+      // Preserve the optional column-agent binding through the editor round-trip
+      // (column-agent plan U6). Omit the `agent` key entirely when unset so
+      // legacy/default workflows stay byte-identical (R9) — never emit
+      // `agent: undefined`/`agent: null`.
+      columns: hasColumns
+        ? columns!.map((c) => ({
+            id: c.id,
+            name: c.name,
+            traits: c.traits,
+            ...(c.agent ? { agent: c.agent } : {}),
+          }))
+        : [],
       nodes: irNodes,
       edges: irEdges,
     };
