@@ -80,10 +80,74 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  width: 220px;
+  width: 300px;
   padding: var(--space-sm);
   border-right: 1px solid var(--border);
   overflow-y: auto;
+}
+
+/* U12: columns + fields authoring sections moved into the left sidebar, below
+   the workflow list. Each is a collapsible disclosure whose toggle button is the
+   section header; the panels' own internal <h3> is suppressed to avoid a double
+   header. */
+.wf-sidebar-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.wf-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.wf-sidebar-section-toggle:hover {
+  background: var(--bg-secondary);
+}
+
+/* When nested in the sidebar disclosure, the panels are stacked full-width
+   blocks rather than side columns: drop the dedicated width/border and let them
+   flow inside the sidebar's own scroll. */
+.wf-sidebar-section .wf-column-panel,
+.wf-sidebar-section .wf-fields-panel {
+  width: auto;
+  min-width: 0;
+  padding: 0 var(--space-xs) var(--space-xs);
+  border-left: none;
+  overflow-y: visible;
+}
+
+/* The disclosure toggle is the visible section header; hide the panels' own
+   title heading to avoid a duplicate. The Add button (also in the header) stays. */
+.wf-sidebar-section .wf-column-panel-header h3,
+.wf-sidebar-section .wf-fields-panel-header h3 {
+  display: none;
+}
+
+.wf-sidebar-section .wf-column-panel-header,
+.wf-sidebar-section .wf-fields-panel-header {
+  justify-content: flex-end;
 }
 
 .wf-editor-new {

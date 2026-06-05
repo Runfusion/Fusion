@@ -668,6 +668,40 @@ function InnerEditor({
   });
   const [templateFilter, setTemplateFilter] = useState("");
   const [templateConflict, setTemplateConflict] = useState<string | null>(null);
+
+  // U12: the columns/fields authoring panels live in the left sidebar (below the
+  // workflow list) as collapsible disclosure sections. Each section's collapsed
+  // state persists in localStorage; default expanded.
+  const columnsCollapsedStorageKey = "fusion:wf-sidebar-columns-collapsed";
+  const fieldsCollapsedStorageKey = "fusion:wf-sidebar-fields-collapsed";
+  const [columnsCollapsed, setColumnsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(columnsCollapsedStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [fieldsCollapsed, setFieldsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(fieldsCollapsedStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(columnsCollapsedStorageKey, columnsCollapsed ? "1" : "0");
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [columnsCollapsed]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(fieldsCollapsedStorageKey, fieldsCollapsed ? "1" : "0");
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [fieldsCollapsed]);
   // Wrapper around <ReactFlow> so keyboard deletion can return focus to the
   // canvas container (R6) instead of leaving it on a now-removed node.
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1873,6 +1907,59 @@ function InnerEditor({
                 ))}
               </ul>
             )}
+
+            {/* U12: columns + fields authoring panels, below the workflow list,
+                each as a collapsible disclosure section. Only shown when a
+                workflow is active (read-only gating preserved via isBuiltin). The
+                disclosure button serves as the section header; the panels' own
+                internal <h3> is suppressed via CSS to avoid a double header. */}
+            {activeWorkflow && (
+              <div className="wf-sidebar-panels">
+                <section className="wf-sidebar-section" data-testid="wf-sidebar-columns-section">
+                  <button
+                    type="button"
+                    className="wf-sidebar-section-toggle"
+                    aria-expanded={!columnsCollapsed}
+                    data-testid="wf-sidebar-columns-toggle"
+                    onClick={() => setColumnsCollapsed((c) => !c)}
+                  >
+                    {columnsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                    <span>{t("workflowColumns.title", "Columns")}</span>
+                  </button>
+                  {!columnsCollapsed && (
+                    <WorkflowColumnPanel
+                      columns={columns}
+                      onChange={setColumns}
+                      violations={columnViolations}
+                      readOnly={isBuiltin}
+                      projectId={projectId}
+                      addToast={addToast}
+                    />
+                  )}
+                </section>
+
+                <section className="wf-sidebar-section" data-testid="wf-sidebar-fields-section">
+                  <button
+                    type="button"
+                    className="wf-sidebar-section-toggle"
+                    aria-expanded={!fieldsCollapsed}
+                    data-testid="wf-sidebar-fields-toggle"
+                    onClick={() => setFieldsCollapsed((c) => !c)}
+                  >
+                    {fieldsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                    <span>{t("workflowFields.title", "Fields")}</span>
+                  </button>
+                  {!fieldsCollapsed && (
+                    <WorkflowFieldsPanel
+                      fields={fields}
+                      onChange={setFields}
+                      readOnly={isBuiltin}
+                      addToast={addToast}
+                    />
+                  )}
+                </section>
+              </div>
+            )}
           </aside>
 
           <section className="wf-editor-canvas-wrap">
@@ -2335,26 +2422,6 @@ function InnerEditor({
               </div>
             )}
           </section>
-
-          {activeWorkflow && (
-            <WorkflowColumnPanel
-              columns={columns}
-              onChange={setColumns}
-              violations={columnViolations}
-              readOnly={isBuiltin}
-              projectId={projectId}
-              addToast={addToast}
-            />
-          )}
-
-          {activeWorkflow && (
-            <WorkflowFieldsPanel
-              fields={fields}
-              onChange={setFields}
-              readOnly={isBuiltin}
-              addToast={addToast}
-            />
-          )}
 
           {selectedNode && selectedNode.data.kind !== "start" && selectedNode.data.kind !== "end" && (
             <aside className="wf-editor-inspector">
