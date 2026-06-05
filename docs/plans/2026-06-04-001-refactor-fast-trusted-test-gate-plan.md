@@ -2,7 +2,7 @@
 
 title: "refactor: Shrink PR merge gate to a fast trusted set with a deletion ratchet"
 type: refactor
-status: active
+status: completed
 date: 2026-06-04
 origin: docs/brainstorms/2026-06-04-fast-trusted-test-gate-requirements.md
 
