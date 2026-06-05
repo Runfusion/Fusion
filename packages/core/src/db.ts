@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 109;
+const SCHEMA_VERSION = 110;
 
 export { SCHEMA_VERSION };
 
@@ -1232,6 +1232,7 @@ export const MIGRATION_ONLY_TABLE_SCHEMAS: Record<string, Record<string, string>
     updatedAt: "TEXT NOT NULL",
     cliSessionFile: "TEXT",
     inFlightGeneration: "TEXT",
+    cliExecutorAdapterId: "TEXT",
   },
   cli_sessions: {
     id: "TEXT PRIMARY KEY",

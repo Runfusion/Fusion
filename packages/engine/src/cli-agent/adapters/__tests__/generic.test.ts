@@ -32,6 +32,20 @@ describe("GenericCliAdapter capabilities", () => {
     const asInterface: CliAgentAdapter = adapter;
     expect(asInterface.buildResume).toBeUndefined();
   });
+
+  it("formatInjection only appends CR and never wraps bracketed paste (no double-wrap)", () => {
+    // Bracketed-paste wrapping is the session manager's responsibility; the
+    // adapter must not also wrap, otherwise the payload double-wraps.
+    expect(adapter.formatInjection("hello", { bracketedPasteActive: false })).toEqual({
+      payload: "hello\r",
+    });
+    expect(adapter.formatInjection("hello", { bracketedPasteActive: true })).toEqual({
+      payload: "hello\r",
+    });
+    const wrapped = adapter.formatInjection("multi\nline", { bracketedPasteActive: true });
+    expect(wrapped.payload).not.toContain("\x1b[200~");
+    expect(wrapped.payload).not.toContain("\x1b[201~");
+  });
 });
 
 // ── buildLaunch / env ────────────────────────────────────────────────────────

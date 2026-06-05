@@ -388,14 +388,12 @@ export class GenericCliAdapter implements CliAgentAdapter {
     return new GenericReadinessDetector();
   }
 
-  formatInjection(text: string, opts: { bracketedPasteActive: boolean }): CliInjectionFormat {
-    // Submit with a carriage return. Bracketed-paste wrapping is handled by the
-    // session manager's security path; the generic adapter only decides submit
-    // semantics. When the child negotiated bracketed paste, wrap so multi-line
-    // text is delivered atomically before the submit CR.
-    if (opts.bracketedPasteActive) {
-      return { payload: `\x1b[200~${text}\x1b[201~\r` };
-    }
+  formatInjection(text: string, _opts: { bracketedPasteActive: boolean }): CliInjectionFormat {
+    // Submit with a carriage return only. Bracketed-paste wrapping is handled
+    // exclusively by the session manager's security path; if we also wrapped
+    // here when bracketedPasteActive, the payload would be double-wrapped with
+    // \x1b[200~...\x1b[201~. Like every native adapter, generic ignores the
+    // bracketedPasteActive hint and only appends \r.
     return { payload: `${text}\r` };
   }
 

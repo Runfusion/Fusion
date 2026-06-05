@@ -220,10 +220,19 @@ export function neutralizeTerminalOutput(chunk: string, carry = ""): NeutralizeR
   }
 
   let newCarry = input.slice(i);
-  // Bound the carry: if a "sequence" never terminates, don't buffer forever —
-  // flush it as literal output (it isn't a recognized hazard if it's this long).
+  // Bound the carry: if a "sequence" never terminates, don't buffer forever.
   if (newCarry.length > MAX_CARRY_LENGTH) {
-    out += newCarry;
+    // If the overflowing carry begins with a recognized dangerous introducer
+    // (OSC `ESC ]` or DCS `ESC P`), do NOT flush it as literal — emitting the
+    // raw `ESC ]52;…` prefix would let it recombine with a terminator that
+    // arrives in a later chunk and reconstruct the hazardous sequence at the
+    // client. Drop the introducer (and everything held with it) so it can never
+    // be reassembled. Harmless overflow (anything else) is flushed as before.
+    if (newCarry.startsWith(`${ESC}]`) || newCarry.startsWith(`${ESC}P`)) {
+      // Strip the dangerous prefix entirely.
+    } else {
+      out += newCarry;
+    }
     newCarry = "";
   } else if (newCarry.length > 0 && !isIncompleteSequence(newCarry)) {
     // The residual isn't actually a growing prefix — emit it.

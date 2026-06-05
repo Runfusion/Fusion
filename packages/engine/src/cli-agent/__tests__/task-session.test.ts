@@ -316,6 +316,20 @@ describe("CliTaskSession (U7)", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(pty().written.length).toBeGreaterThan(writesBefore);
     expect(pty().written.some((w) => w.includes("follow-up"))).toBe(true);
+
+    // The follow-up drove the machine done→busy, so the re-armed result promise
+    // must resolve on the NEXT positive done (it would hang forever if the
+    // machine were left parked in `done`, since signalDone-from-done is a no-op).
+    let resolved = false;
+    const next = session.result().then((o) => {
+      resolved = true;
+      return o;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toBe(false);
+    hub.ingest(session.sessionId, { kind: "done" });
+    const outcome = await next;
+    expect(outcome.kind).toBe("success");
   });
 
   it("follow-up returns false when the adapter does not support resume (caller launches fresh)", async () => {

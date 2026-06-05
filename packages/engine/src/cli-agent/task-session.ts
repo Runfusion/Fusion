@@ -397,6 +397,22 @@ export class CliTaskSession {
     // Re-arm the result promise so the next done resolves it again.
     if (this.settled) this.rearm();
     this.subscribe();
+    // Drive the authoritative state machine done→busy BEFORE injecting. If we
+    // leave it parked in `done`, the next native done is idempotent (no state
+    // change emitted), so onMachineState("done") never fires and the re-armed
+    // result promise never resolves. The hub swallows signalBusy-from-done, so
+    // we transition via the machine's followUp()/injectPrompt directly.
+    const machine = this.hub.getStateMachine(this.sessionId);
+    if (machine) {
+      try {
+        if (machine.getState() === "done") machine.followUp();
+        else if (machine.getState() === "ready" || machine.getState() === "resuming") {
+          machine.injectPrompt();
+        }
+      } catch {
+        // best-effort transition
+      }
+    }
     await this.manager.inject(this.sessionId, prompt);
     this.log(`cli-task-session ${this.sessionId}: follow-up injected (live resume)`);
     return true;

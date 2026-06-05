@@ -472,6 +472,51 @@ describe("cli-session WS attach", () => {
     ws.close();
   });
 
+  it("does not leak an OSC 52 split across the scrollback→live seam", async () => {
+    const ESC = "\x1b";
+    const BEL = "\x07";
+    // The OSC 52 introducer lands at the very TAIL of scrollback (unterminated);
+    // its terminator arrives in the first LIVE chunk. The carry must thread
+    // across the seam so the neutralizer sees the full sequence and strips it —
+    // the scrollback frame must NOT flush the held introducer verbatim.
+    h = await startHarness();
+    h.manager.scrollbackById.set("cli-1", `prior-output${ESC}]52;c;ZXZ`);
+    const t = await mintTicket("cli-1");
+    const ws = connect(h.port, { sessionId: "cli-1", ticket: t });
+
+    const scrollback = await nextMessage(ws, (m) => m.type === "scrollback");
+    const scrollText = decode(scrollback.data);
+    // Normal scrollback still renders; the unterminated tail is withheld (carry).
+    expect(scrollText).toContain("prior-output");
+    expect(scrollText).not.toContain("52;");
+    expect(scrollText).not.toContain(`${ESC}]`);
+
+    // Deliver the terminator in the first live chunk.
+    h.manager.broadcast("cli-1", `pbA==${BEL}after`);
+    let collected = scrollText;
+    await vi.waitFor(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const onMsg = (raw: Buffer) => {
+            const m = JSON.parse(raw.toString());
+            if (m.type === "data") collected += decode(m.data);
+            if (collected.includes("after")) {
+              ws.off("message", onMsg);
+              resolve();
+            }
+          };
+          ws.on("message", onMsg);
+          setTimeout(() => reject(new Error("timeout")), 1000);
+        }),
+    );
+    // The full sequence, reassembled across the seam, was neutralized.
+    expect(collected).not.toContain("52;");
+    expect(collected).not.toContain(`${ESC}]52`);
+    expect(collected).toContain("prior-output");
+    expect(collected).toContain("after");
+    ws.close();
+  });
+
   it("read-only session rejects input with an error frame (server-side)", async () => {
     h = await startHarness({
       sessions: [makeSession({ id: "cli-ro", purpose: "validator" })],

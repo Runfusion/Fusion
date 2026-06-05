@@ -208,13 +208,20 @@ export function setupCliSessionWebSocket(
     {
       const scrollText = Buffer.from(attachment.scrollback).toString("utf8");
       const result = neutralizeTerminalOutput(scrollText, "");
-      // Flush carry into the scrollback frame (replay is a complete snapshot).
-      const full = result.output + flushTerminalOutput(result.carry);
+      // Thread the carry across the scrollback→live seam. Do NOT flush the
+      // scrollback carry verbatim: if a dangerous sequence (e.g. OSC 52) is
+      // split so its introducer lands at the tail of scrollback and its
+      // terminator arrives in the first live chunk, flushing the held prefix
+      // here would let it recombine at the client and reconstruct the hazard.
+      // Instead we hand the unterminated tail to the live `sendData` carry so
+      // the neutralizer sees the full sequence and strips it. Only the safe,
+      // fully-neutralized prefix is sent in the scrollback frame.
+      carry = result.carry;
       try {
         ws.send(
           JSON.stringify({
             type: "scrollback",
-            data: Buffer.from(full, "utf8").toString("base64"),
+            data: Buffer.from(result.output, "utf8").toString("base64"),
           }),
         );
       } catch {
@@ -234,6 +241,25 @@ export function setupCliSessionWebSocket(
         }
       } catch {
         /* stream error — close below */
+      }
+      // Flush any residual carry at true stream end. The held bytes are an
+      // unterminated tail; no further chunk can arrive to recombine with them,
+      // so emitting them as literal is safe and avoids losing trailing output.
+      if (!streamClosed && ws.readyState === ws.OPEN && carry.length > 0) {
+        const tail = flushTerminalOutput(carry);
+        carry = "";
+        if (tail.length > 0) {
+          try {
+            ws.send(
+              JSON.stringify({
+                type: "data",
+                data: Buffer.from(tail, "utf8").toString("base64"),
+              }),
+            );
+          } catch {
+            /* ignore */
+          }
+        }
       }
       if (!streamClosed && ws.readyState === ws.OPEN) {
         try {

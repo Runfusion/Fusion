@@ -116,6 +116,23 @@ describe("neutralizeTerminalOutput", () => {
     expect(r.carry.length).toBeLessThanOrEqual(MAX_CARRY_LENGTH);
   });
 
+  it("drops (not flushes) an overflowing OSC 52 prefix so it cannot reconstruct across chunks", () => {
+    // An unterminated OSC 52 grows past MAX_CARRY. The dangerous introducer must
+    // NOT be emitted as literal — otherwise a terminator in the next chunk would
+    // recombine at the client into a working OSC 52 clipboard write.
+    const huge = `${ESC}]52;c;` + "A".repeat(MAX_CARRY_LENGTH + 100);
+    const r1 = neutralizeTerminalOutput(huge, "");
+    // Nothing reconstructable was emitted, and the carry was dropped.
+    expect(r1.output).not.toContain(`${ESC}]`);
+    expect(r1.output).not.toContain("52;");
+    expect(r1.carry).toBe("");
+    // The terminator arriving next has no held introducer to recombine with.
+    const r2 = neutralizeTerminalOutput(`${BEL}visible`, r1.carry);
+    const combined = r1.output + r2.output;
+    expect(combined).not.toContain(`${ESC}]52;`);
+    expect(r2.output).toContain("visible");
+  });
+
   it("neutralizes a stream with OSC 52, OSC 8 js link, and a DSR query together", () => {
     const stream =
       `start${ESC}]52;c;ZXZpbA==${BEL}` +
