@@ -4,18 +4,26 @@
 
 This guide consolidates the detailed testing guidance moved from `AGENTS.md`.
 
-## Required workspace gates
+## The merge gate
 
-Tests are required. Typechecks and manual verification are not substitutes for assertions.
+CI blocks PRs on exactly four checks (`.github/workflows/pr-checks.yml`): **Lint, Typecheck, Build, Gate**. The Gate job runs the boot smoke (`scripts/boot-smoke.mjs`: CLI `--help` + a real `fn serve` answering `GET /api/health`) and `pnpm test:gate` (the curated `engine-core` vitest project + the CI-shape test). Everything else — the 4-way shards, the engine slow tier, the dashboard inventory guard — runs NON-BLOCKING in `.github/workflows/full-suite.yml` on push to main.
+
+Gate membership is the explicit allow-list in `packages/engine/vitest.config.ts` (`engine-core` project). Admission requires evidence of value (the test catches real regressions); tests never graduate in by default. A flaky gate test is evicted by deleting its allow-list line — the eviction PR does not need the flaky test to pass. The whole `engine-core` project must stay under ~60s wall-clock.
+
+**The gate's blind spot, stated honestly:** typecheck + build + boot smoke + curated suite does not run the union suite a merge creates. Logic regressions outside the curated set land non-blocking by design — that is the accepted trade: the old broad gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage.
+
+## Required workspace gates
 
 Use the narrowest command that exercises the behavior you changed, then broaden before reporting completion.
 
 ```bash
-pnpm test              # changed-only workspace tests; falls back to full gate in safety contexts
-pnpm test:full         # full workspace quality gate
+pnpm test              # gate suite + changed-only affected tests (bounded; never full-suite)
+pnpm test:gate         # the merge gate: curated engine-core suite + CI-shape test
+pnpm smoke:boot        # boot smoke: CLI --help + real serve /api/health
+pnpm test:full         # full workspace suite — explicit opt-in only
 pnpm lint              # lint all packages
 pnpm build             # build workspace packages (excludes desktop/mobile)
-pnpm verify:workspace  # canonical pre-merge gate: lint -> test:full -> build
+pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (NOT the merge gate)
 ```
 
 `pnpm test:full` runs each package's default test script with capped worker fanout (`FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=2 pnpm -r --workspace-concurrency=2 test`). Do not casually raise worker counts; dashboard/jsdom and integration-heavy packages destabilize when oversubscribed. Use `VITEST_MAX_WORKERS=<n>` only for targeted package-level investigation.
@@ -50,7 +58,7 @@ list only when you want it in a specific fast lane rather than the backfill catc
 The dashboard quality gate is a chain of curated lanes plus two backfill lanes.
 Together they must execute **every** `*.test.{ts,tsx}` under `packages/dashboard/app`
 and `packages/dashboard/src`, or the file must be on the reviewed skip-list. This is
-enforced by a guard (CI job `Dashboard curated-gate guard` in `pr-checks.yml`):
+enforced by a guard (CI job `Dashboard curated-gate guard` in `full-suite.yml`, non-blocking):
 
 ```bash
 node scripts/check-test-inventory.mjs --dashboard-curated
@@ -88,19 +96,39 @@ The capture spec (which packages/projects to enumerate) lives in
 a renamed file shows up as a remove (old path) + add (new path), so the rename is
 reviewable. New test ids never fail the diff.
 
-## Engine slow tier (CI gate)
+## Engine slow tier (non-blocking CI)
 
 The `engine-slow` vitest project (`packages/engine/src/**/*.slow.test.ts`) holds the
 long real-git suites. It runs locally via `pnpm --filter @fusion/engine test:slow` and
-in CI via the `Engine slow tier` job in `pr-checks.yml`, which uses
+in CI via the `Engine slow tier` job in `full-suite.yml` (non-blocking, push to main), which uses
 `scripts/assert-engine-slow-nonempty.mjs` to **fail if zero tests executed** (so a glob
-or config drift that silently empties the tier breaks CI instead of passing vacuously).
+or config drift that silently empties the tier breaks the run instead of passing vacuously).
 The CI job uses `fetch-depth: 0` because these tests run real git operations.
+
+## Quarantine ledger and the deletion ratchet
+
+Flaky tests are quarantined ON SIGHT and deleted on a 2-week clock. This is written policy with minimal mechanics — deliberately no loader module, no automation (see the AGENTS.md standing rule "Flaky Tests Are Quarantined on Sight").
+
+**To quarantine a test** (a test that failed without a corresponding real bug in the change), in one commit:
+
+1. Add an entry to `scripts/lib/test-quarantine.json`:
+   `{ "file": "<repo-relative test path>", "reason": "<why + link to the failing run>", "quarantinedAt": "YYYY-MM-DD" }`
+2. Add a matching one-line `exclude` entry to that package's vitest config.
+
+**The clock:** an entry expires 14 days after `quarantinedAt`. Whoever touches the suite and finds an expired entry deletes the test file, its ledger entry, and its config exclude (git history is the archive). `scripts/check-test-inventory.mjs --diff` stays deliberately unwired in CI because it would fail on exactly these deletions.
+
+**Rescue** (before the clock runs out) requires both: evidence the test catches real regressions, and a root-cause fix for the flake. Stabilization passes — widened timeouts, retries, loosened assertions — are appeasement, not rescue, and are banned (for agents especially).
+
+**Gate eviction:** a flake inside the merge gate cannot block all merges while red — it is evicted by removing its line from the `engine-core` allow-list (no quarantine entry needed unless it should also leave the non-blocking tier).
+
+**Gate admission:** the mirror operation — add the test's path to the `engine-core` `include` array in `packages/engine/vitest.config.ts`, citing the evidence of value (a real regression it caught) in the PR. Keep the project under its ~60s wall-clock budget.
+
+**Product-race escalation:** a second quarantine in the same subsystem is a smell that the flake is a real product race, not test noise — look at the product code before deleting (a dashboard flake was "stabilized" three times before being found to be a real race; see `docs/solutions/ui-bugs/skill-autocomplete-highlight-reset-on-swr-revalidation.md`).
 
 ## CI shard balancing (duration-weighted)
 
 `scripts/ci-test-shard.mjs` packs the 4 CI shards (`pnpm test:ci:shard --shard N --total 4`,
-called from `pr-checks.yml`) by **measured duration**, not test-file count, using the
+called from `full-suite.yml`, non-blocking) by **measured duration**, not test-file count, using the
 committed `scripts/test-timings.json` snapshot (U1/R4). A package's weight is the sum of
 its files' recorded durations; files (or whole packages) absent from the snapshot fall
 back to the snapshot's **median per-file duration** so untimed packages weigh
