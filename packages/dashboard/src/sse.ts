@@ -282,6 +282,72 @@ export function emitPluginCustomSseEvent(
 }
 
 /**
+ * CLI agent session state transitions (CLI Agent Executor, U10). The engine
+ * state machine's `onStateChange` (throttled ~500ms in the engine) is bridged
+ * into this seam by `setupCliSessionTransport`; every open SSE stream forwards
+ * a matching (project-scoped) `cli:session:state` event so cards / banners
+ * update without touching the byte stream.
+ *
+ * Events are also appended to a small module-level ring buffer with monotonic
+ * ids so a client reconnecting with `Last-Event-ID` replays the transitions it
+ * missed (the byte stream is on a separate WS channel; this is state only).
+ */
+export interface CliSessionStateSsePayload {
+  sessionId: string;
+  taskId: string | null;
+  chatSessionId: string | null;
+  /** Machine state (may be the transient "resuming"). */
+  state: string;
+  terminationReason?: string | null;
+  /** Bounded (~200 chars), ANSI-stripped, redacted preview of recent output. */
+  lastOutputPreview?: string;
+  at: string;
+}
+
+type CliSessionStateSseListener = (
+  id: number,
+  payload: CliSessionStateSsePayload,
+  projectId?: string,
+) => void;
+
+const cliSessionStateSseListeners = new Set<CliSessionStateSseListener>();
+
+/** Module-level ring buffer of cli-session-state events for lastEventId replay. */
+const cliSessionStateBuffer: { id: number; payload: CliSessionStateSsePayload; projectId?: string }[] =
+  [];
+let cliSessionStateNextId = 1;
+const CLI_SESSION_STATE_BUFFER_CAP = 200;
+
+export function emitCliSessionStateSseEvent(
+  payload: CliSessionStateSsePayload,
+  projectId?: string,
+): number {
+  const id = cliSessionStateNextId++;
+  cliSessionStateBuffer.push({ id, payload, projectId });
+  if (cliSessionStateBuffer.length > CLI_SESSION_STATE_BUFFER_CAP) {
+    cliSessionStateBuffer.splice(0, cliSessionStateBuffer.length - CLI_SESSION_STATE_BUFFER_CAP);
+  }
+  for (const listener of cliSessionStateSseListeners) {
+    listener(id, payload, projectId);
+  }
+  return id;
+}
+
+/** Buffered cli-session-state events with id > lastEventId (for reconnect replay). */
+export function getCliSessionStateEventsSince(
+  lastEventId: number,
+): { id: number; payload: CliSessionStateSsePayload; projectId?: string }[] {
+  if (!Number.isFinite(lastEventId)) return [...cliSessionStateBuffer];
+  return cliSessionStateBuffer.filter((entry) => entry.id > lastEventId);
+}
+
+/** Test seam: reset the cli-session-state buffer between tests. */
+export function resetCliSessionStateBufferForTests(): void {
+  cliSessionStateBuffer.length = 0;
+  cliSessionStateNextId = 1;
+}
+
+/**
  * Normalized plugin lifecycle payload emitted via SSE.
  * This is the stable contract the UI can reconcile.
  */
@@ -650,6 +716,11 @@ export function createSSE(
       send(`event: plugin:custom\ndata: ${JSON.stringify({ pluginId, event, payload })}\n\n`);
     };
 
+    const onCliSessionStateEvent: CliSessionStateSseListener = (id, payload, eventProjectId) => {
+      if (projectId && eventProjectId && eventProjectId !== projectId) return;
+      send(`id: ${id}\nevent: cli:session:state\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
     // --- Chat store event handlers ---
     const onChatSessionCreated = (session: unknown) => {
       send(`event: chat:session:created\ndata: ${JSON.stringify(session)}\n\n`);
@@ -801,6 +872,7 @@ export function createSSE(
       approvalSseListeners.delete(onApprovalEvent);
       workflowSseListeners.delete(onWorkflowEvent);
       pluginCustomSseListeners.delete(onPluginCustomEvent);
+      cliSessionStateSseListeners.delete(onCliSessionStateEvent);
       if (chatStore) {
         chatStore.off("chat:session:created", onChatSessionCreated);
         chatStore.off("chat:session:updated", onChatSessionUpdated);
@@ -949,6 +1021,30 @@ export function createSSE(
     approvalSseListeners.add(onApprovalEvent);
     workflowSseListeners.add(onWorkflowEvent);
     pluginCustomSseListeners.add(onPluginCustomEvent);
+    cliSessionStateSseListeners.add(onCliSessionStateEvent);
+
+    // Replay any cli-session-state transitions missed since the client's
+    // Last-Event-ID (reconnect recovery — the byte stream is on a separate WS
+    // channel, so only state events are replayed here).
+    {
+      const headerVal = _req.headers?.["last-event-id"];
+      const lastEventIdRaw =
+        (typeof headerVal === "string"
+          ? headerVal
+          : Array.isArray(headerVal)
+            ? headerVal[0]
+            : undefined) ??
+        (typeof _req.query?.lastEventId === "string" ? _req.query.lastEventId : undefined);
+      const lastEventId = lastEventIdRaw !== undefined ? Number(lastEventIdRaw) : NaN;
+      if (Number.isFinite(lastEventId)) {
+        for (const entry of getCliSessionStateEventsSince(lastEventId)) {
+          if (projectId && entry.projectId && entry.projectId !== projectId) continue;
+          send(
+            `id: ${entry.id}\nevent: cli:session:state\ndata: ${JSON.stringify(entry.payload)}\n\n`,
+          );
+        }
+      }
+    }
 
     registerManagedConnection({
       id: connectionId,

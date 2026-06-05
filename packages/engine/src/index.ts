@@ -623,3 +623,33 @@ export {
   getNativePrebuildName,
   resetPtyModuleCacheForTests,
 } from "./pty-native.js";
+// CLI agent executor (U2/U3) — transport surfaces (U10) consume these.
+export {
+  CliSessionManager,
+  CliConcurrencyLimitError,
+  UnknownCliSessionError,
+  neutralizeInjection,
+  DEFAULT_SCROLLBACK_BYTES,
+  DEFAULT_CONCURRENCY_CEILING,
+  type CliSessionAttachment,
+  type CliSessionManagerOptions,
+  type SpawnCliSessionOptions,
+} from "./cli-agent/session-manager.js";
+export {
+  TelemetryHub,
+  stripAnsiControl,
+  type TelemetryHubOptions,
+  type TelemetryEvent,
+  type TelemetryEventKind,
+  type SanitizedTelemetryEvent,
+} from "./cli-agent/telemetry-hub.js";
+export {
+  CliSessionStateMachine,
+  classifyTermination,
+  isResumeEligible,
+  toPersistedState,
+  type CliMachineState,
+  type CliStateChange,
+  type CliStateChangeListener,
+  type CliStateMachineOptions,
+} from "./cli-agent/state-machine.js";

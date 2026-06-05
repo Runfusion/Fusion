@@ -59,6 +59,8 @@ import { ChatManager } from "./chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
+import { setupCliSessionWebSocket } from "./cli-session-ws.js";
+import { createCliSessionsRouter } from "./routes/cli-sessions.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
 import {
@@ -223,6 +225,19 @@ export interface ServerOptions {
   };
   /** Optional AiSessionStore — if not provided, one is created from the default store's database */
   aiSessionStore?: AiSessionStore;
+  /**
+   * Optional CLI agent session transport dependencies (CLI Agent Executor, U10).
+   * When provided, the server mounts the cli-sessions REST routes and the
+   * distinct `/api/cli-sessions/ws` attach handler. Wiring the engine-owned
+   * CliSessionManager/store into this dep happens in a later unit; until then
+   * the transport is inert unless explicitly supplied (e.g. in tests).
+   */
+  cliSessionTransport?: import("./cli-session-transport.js").CliSessionTransportDeps & {
+    ticketStore: import("./cli-session-transport.js").AttachTicketStore;
+    attributionLog: import("./cli-session-transport.js").CliInputAttributionLog;
+    confirmAdvance: import("./cli-session-transport.js").CliConfirmAdvanceRegistry;
+    extraAllowedOrigins?: string[];
+  };
   /** Optional MissionAutopilot for autonomous mission progression */
   missionAutopilot?: {
     watchMission(missionId: string): void;
@@ -1435,6 +1450,21 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   });
   app.use("/api", apiRouter);
 
+  // CLI agent session REST routes (U10). Daemon-token gated by the app-level
+  // auth middleware. Mounted only when transport deps are supplied.
+  if (options?.cliSessionTransport) {
+    app.use(
+      "/api/cli-sessions",
+      createCliSessionsRouter({
+        manager: options.cliSessionTransport.manager,
+        store: options.cliSessionTransport.store,
+        ticketStore: options.cliSessionTransport.ticketStore,
+        attributionLog: options.cliSessionTransport.attributionLog,
+        confirmAdvance: options.cliSessionTransport.confirmAdvance,
+      }),
+    );
+  }
+
   // API 404 Handler - Return JSON for unmatched API routes (instead of falling through to SPA)
   app.use("/api", (_req: express.Request, res: express.Response) => {
     sendErrorResponse(res, 404, "Not found");
@@ -1548,6 +1578,20 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       const websocketOptions = { ...options, runtimeLogger };
       setupTerminalWebSocket(dashboardApp, server as HttpServer, store, websocketOptions);
       setupBadgeWebSocket(dashboardApp, server as HttpServer, store, websocketOptions);
+      // CLI agent session attach WS (U10) — distinct handler, shares only the
+      // upgrade-gate shape with the terminal WS. Mounted only when transport
+      // deps are supplied (engine wiring lands in a later unit).
+      if (options?.cliSessionTransport) {
+        setupCliSessionWebSocket(server as HttpServer, {
+          manager: options.cliSessionTransport.manager,
+          store: options.cliSessionTransport.store,
+          ticketStore: options.cliSessionTransport.ticketStore,
+          attributionLog: options.cliSessionTransport.attributionLog,
+          daemonToken: getDaemonToken(options),
+          noAuth: options?.noAuth,
+          extraAllowedOrigins: options.cliSessionTransport.extraAllowedOrigins,
+        });
+      }
     }
 
     return server as HttpServer;
