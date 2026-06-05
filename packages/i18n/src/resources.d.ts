@@ -6759,6 +6759,7 @@ export default interface Resources {
     },
     "workflowNodes": {
       "advisory": "Advisory",
+      "autoLayout": "Auto-layout",
       "codeNote": "Runs sandboxed TypeScript. Syntax is validated at save.",
       "codeSource": "Source (TypeScript)",
       "codeTimeout": "Timeout (ms)",

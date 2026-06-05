@@ -329,6 +329,47 @@ describe("WorkflowNodeEditor — U3 deletion", () => {
   });
 });
 
+describe("WorkflowNodeEditor — U5 auto-layout", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+  afterEach(() => cleanup());
+
+  it("shows the Auto-layout button for an editable workflow", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-node-start");
+    expect(screen.getByTestId("wf-auto-layout")).toBeInTheDocument();
+  });
+
+  it("does not show the Auto-layout button for a built-in workflow", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-readonly-banner");
+    expect(screen.queryByTestId("wf-auto-layout")).not.toBeInTheDocument();
+  });
+
+  it("repositions nodes on click (a node's transform changes)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    const { container } = render(
+      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />,
+    );
+    await screen.findByTestId("wf-node-start");
+    // React Flow positions step nodes via a translate transform on their wrapper.
+    const wrapperFor = (id: string) =>
+      container.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`);
+    const before = wrapperFor("step")?.style.transform ?? "";
+    fireEvent.click(screen.getByTestId("wf-auto-layout"));
+    await waitFor(() => {
+      const after = wrapperFor("step")?.style.transform ?? "";
+      expect(after).not.toBe("");
+      expect(after).not.toBe(before);
+    });
+  });
+});
+
 // ── U8: step-inversion authoring (foreach/step-review/parse-steps/code) ──────
 
 /** A custom v2 workflow with a foreach (one step-execute child + a step-review)
@@ -415,7 +456,9 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     // Adding a foreach renders a group node with an empty inspector hint absent
     // (it has a child) and an inspector for the foreach.
     fireEvent.click(screen.getByText("For-each step").closest("button")!);
-    await waitFor(() => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument());
+    // 3s timeout: React Flow group-node mount can exceed the 1s default under
+    // cold-transform shard load (observed intermittently in CI-like runs).
+    await waitFor(() => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument(), { timeout: 3000 });
     // The foreach inspector shows the Mode select (KTD-3).
     expect(screen.getByText("Mode")).toBeInTheDocument();
     // No empty-state hint because the palette seeded a step-execute child.
@@ -854,7 +897,11 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
   it("cancels an inline rename on Escape (value reverts)", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
-    fireEvent.click(await screen.findByTestId("wf-workflow-name"));
+    // Wait for the editor to fully stabilize (column panel rendered) before
+    // interacting — clicking mid-load races the initial render cycle.
+    await screen.findByText("Save");
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId("wf-workflow-name"));
     const input = (await screen.findByTestId("wf-workflow-name-input")) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "Throwaway" } });
     fireEvent.keyDown(input, { key: "Escape" });

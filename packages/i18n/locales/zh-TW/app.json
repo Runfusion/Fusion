@@ -6757,6 +6757,7 @@
   },
   "workflowNodes": {
     "advisory": "",
+    "autoLayout": "",
     "codeNote": "在沙箱中執行 TypeScript。語法會在儲存時驗證。",
     "codeSource": "原始碼（TypeScript）",
     "codeTimeout": "逾時（毫秒）",

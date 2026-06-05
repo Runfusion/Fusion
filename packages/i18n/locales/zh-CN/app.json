@@ -6757,6 +6757,7 @@
   },
   "workflowNodes": {
     "advisory": "",
+    "autoLayout": "",
     "codeNote": "在沙箱中运行 TypeScript。语法在保存时校验。",
     "codeSource": "源代码（TypeScript）",
     "codeTimeout": "超时（毫秒）",

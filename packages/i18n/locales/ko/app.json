@@ -6757,6 +6757,7 @@
   },
   "workflowNodes": {
     "advisory": "",
+    "autoLayout": "",
     "codeNote": "샌드박스에서 TypeScript를 실행합니다. 구문은 저장 시 검증됩니다.",
     "codeSource": "소스(TypeScript)",
     "codeTimeout": "제한 시간(ms)",

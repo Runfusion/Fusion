@@ -6757,6 +6757,7 @@
   },
   "workflowNodes": {
     "advisory": "",
+    "autoLayout": "",
     "codeNote": "Ejecuta TypeScript en un entorno aislado. La sintaxis se valida al guardar.",
     "codeSource": "Origen (TypeScript)",
     "codeTimeout": "Tiempo de espera (ms)",

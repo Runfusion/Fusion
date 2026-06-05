@@ -6757,6 +6757,7 @@
   },
   "workflowNodes": {
     "advisory": "",
+    "autoLayout": "",
     "codeNote": "Exécute du TypeScript en bac à sable. La syntaxe est validée à l’enregistrement.",
     "codeSource": "Source (TypeScript)",
     "codeTimeout": "Délai d’expiration (ms)",

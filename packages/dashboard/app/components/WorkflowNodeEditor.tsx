@@ -14,7 +14,7 @@ import {
   type Edge as FlowEdge,
 } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2 } from "lucide-react";
+import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2, LayoutGrid } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -61,6 +61,7 @@ import {
   FOREACH_CHILD_X,
   FOREACH_CHILD_Y,
 } from "./workflow-flow-mapping";
+import { autoLayout, applyAutoLayout } from "./workflow-auto-layout";
 import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
 import { WorkflowColumnPanel } from "./WorkflowColumnPanel";
 import { WorkflowFieldsPanel } from "./WorkflowFieldsPanel";
@@ -541,6 +542,13 @@ function InnerEditor({
     },
     [setNodes, t],
   );
+
+  // Auto-layout: one-click left-to-right tidy (U5, R8). Recomputes positions
+  // only; bands and foreach template children are left in place. Marks the
+  // editor dirty automatically via the layout serialization in isDirty.
+  const handleAutoLayout = useCallback(() => {
+    setNodes((ns) => applyAutoLayout(ns, autoLayout(ns, edges, columns)));
+  }, [setNodes, edges, columns]);
 
   const updateSelectedData = useCallback(
     (
@@ -1175,6 +1183,13 @@ function InnerEditor({
                       ))}
                     </div>
                     <div className="wf-editor-actions">
+                      <button
+                        className="wf-editor-action"
+                        onClick={handleAutoLayout}
+                        data-testid="wf-auto-layout"
+                      >
+                        <LayoutGrid size={13} /> {t("workflowNodes.autoLayout", "Auto-layout")}
+                      </button>
                       <button className="wf-editor-delete" onClick={handleDeleteWorkflow}>
                         <Trash2 size={13} /> {t("common.delete", "Delete")}
                       </button>
