@@ -1,10 +1,10 @@
-import type { Task, Column } from "@fusion/core";
+import type { Task, ColumnId } from "@fusion/core";
 import type { NotificationEvent, Snapshot } from "./types.js";
 
 export function diffSnapshots(
   prev: Snapshot,
   next: ReadonlyArray<Task>,
-  opts: { notifyOnColumns: ReadonlySet<Column>; alsoNotifyOnDone?: boolean },
+  opts: { notifyOnColumns: ReadonlySet<ColumnId>; alsoNotifyOnDone?: boolean },
 ): NotificationEvent[] {
   const events: NotificationEvent[] = [];
 

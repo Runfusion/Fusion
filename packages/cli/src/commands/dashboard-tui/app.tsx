@@ -70,6 +70,14 @@ import type { LogEntry } from "./log-ring-buffer.js";
 import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE, FUSION_URL, FUSION_VERSION } from "./logo.js";
 import { useProjects, useTasks } from "./hooks/use-projects.js";
 import { copyToClipboard } from "./utils.js";
+import {
+  TUI_BUCKETS,
+  OTHER_BUCKET,
+  isOtherBucket,
+  groupTasksByBucket,
+  otherBucketSecondaryLabel,
+  type TuiBucket,
+} from "./bucket-mapping.js";
 
 // ── Format helpers ────────────────────────────────────────────────────────────
 
@@ -1133,17 +1141,23 @@ function MainHeader({ state }: { state: DashboardState }) {
 
 // ── Kanban board ──────────────────────────────────────────────────────────────
 
-const KANBAN_COLUMNS = ["todo", "in-progress", "in-review", "done"] as const;
-type KanbanColumn = typeof KANBAN_COLUMNS[number];
+// U11 (R18): the TUI renders five buckets — its four legacy kanban columns plus
+// a read-only "Other (custom)" catch-all wedged between in-review and done for
+// workflow columns it can't express. `KANBAN_COLUMNS` is the bucket render
+// order; see ./bucket-mapping.ts for how tasks land in each.
+const KANBAN_COLUMNS = TUI_BUCKETS;
+type KanbanColumn = TuiBucket;
 
-const COLUMN_COLORS: Record<string, "yellow" | "cyanBright" | "cyan" | "green"> = {
+const COLUMN_COLORS: Record<string, "yellow" | "cyanBright" | "cyan" | "green" | "magenta"> = {
   todo: "yellow",
   "in-progress": "cyanBright",
   "in-review": "cyan",
+  [OTHER_BUCKET]: "magenta",
   done: "green",
 };
 
 function columnLabel(col: string): string {
+  if (col === OTHER_BUCKET) return "Other (custom)";
   return col.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 }
 
@@ -1151,10 +1165,14 @@ function TaskCard({
   task,
   selected,
   width,
+  secondaryLabel,
 }: {
   task: TaskItem;
   selected: boolean;
   width: number;
+  // U11: real column name shown under cards in the read-only "other" bucket so
+  // the user keeps the true position despite the TUI not modeling that column.
+  secondaryLabel?: string;
 }) {
   const { t } = useTranslation("cli");
   const accent = COLUMN_COLORS[task.column] ?? "white";
@@ -1180,6 +1198,9 @@ function TaskCard({
       <Text bold={selected} color={titleColor} wrap="wrap">
         {title}
       </Text>
+      {secondaryLabel && (
+        <Text dimColor wrap="truncate-end">↳ {secondaryLabel}</Text>
+      )}
     </Box>
   );
 }
@@ -1201,6 +1222,7 @@ function KanbanColumnView({
 }) {
   const accent = COLUMN_COLORS[column];
   const headerColor = isFocused ? "whiteBright" : accent;
+  const isOther = isOtherBucket(column);
   const cardWidth = Math.max(16, width - 2);
   const innerHeaderWidth = Math.max(8, width - 2);
   const label = `${columnLabel(column).toUpperCase()} (${tasks.length})`;
@@ -1250,6 +1272,7 @@ function KanbanColumnView({
               task={task}
               selected={isFocused && (windowStart + i) === selectedIndex}
               width={cardWidth}
+              secondaryLabel={isOther ? otherBucketSecondaryLabel(task) : undefined}
             />
           ))}
           {hiddenBelow > 0 && (
@@ -1590,6 +1613,15 @@ function TaskDetailScreen({
             </Box>
           )}
 
+          {/* Card-placed custom fields (U13/KTD-14): read-only bracketed labels. */}
+          {detail.customFields && detail.customFields.length > 0 && (
+            <Box flexDirection="row" gap={1} flexWrap="wrap" flexShrink={0}>
+              {detail.customFields.map((f) => (
+                <Text key={f.label} color="magenta">[{f.label}: {f.value}]</Text>
+              ))}
+            </Box>
+          )}
+
           <Box height={1} flexShrink={0} />
 
           {/* Steps section */}
@@ -1695,21 +1727,10 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
-function groupTasksByColumn(tasks: TaskItem[]): Record<KanbanColumn, TaskItem[]> {
-  const out: Record<KanbanColumn, TaskItem[]> = {
-    todo: [],
-    "in-progress": [],
-    "in-review": [],
-    done: [],
-  };
-  for (const task of tasks) {
-    const col = (KANBAN_COLUMNS as readonly string[]).includes(task.column)
-      ? (task.column as KanbanColumn)
-      : "todo";
-    out[col].push(task);
-  }
-  return out;
-}
+// U11 (R18): bucket tasks into the five TUI buckets via trait-flag mapping so
+// cards in workflow columns the TUI can't express land in a legacy bucket or
+// the read-only "other" bucket — never dropped. Delegates to the shared helper.
+const groupTasksByColumn = groupTasksByBucket;
 
 function BoardView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
   const { t } = useTranslation("cli");
@@ -1734,6 +1755,7 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
     todo: 0,
     "in-progress": 0,
     "in-review": 0,
+    [OTHER_BUCKET]: 0,
     done: 0,
   });
   const [pickerOriginal, setPickerOriginal] = useState(0);
@@ -1859,13 +1881,22 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
   const narrowColumnIndicator = isNarrow
     ? ` · ${colIndex + 1}/${KANBAN_COLUMNS.length} ${columnLabel(focusedColumn).toUpperCase()} (${focusedTasks.length})`
     : "";
+  // U11 (R18): the "other" bucket is a read-only view of custom workflow
+  // columns the TUI can't model — moving cards into/out of it from here would
+  // mean expressing a column the TUI has no name for, so it's disabled with a
+  // hint. (The TUI has no in-place move action yet; this keeps the affordance
+  // honest for when one lands.)
+  const focusedIsReadOnly = isOtherBucket(focusedColumn);
+  const boardHint = focusedIsReadOnly
+    ? `←→ column · ↑↓ task · Enter open · ${t("tui.boardOtherReadOnlyHint", "custom column — move disabled here")}`
+    : `←→ column · ↑↓ task · Enter open · n new · p project`;
   const hintText = subView === "picker"
     ? "↑↓ pick · Enter confirm · Esc cancel"
     : subView === "detail"
     ? "Esc back · q quit"
     : subView === "create"
     ? "type a task title · Enter create · Esc cancel"
-    : `←→ column · ↑↓ task · Enter open · n new · p project${narrowColumnIndicator}`;
+    : `${boardHint}${narrowColumnIndicator}`;
 
   const submitNewTask = async () => {
     const title = newTaskTitle.trim();

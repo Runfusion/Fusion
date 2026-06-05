@@ -112,6 +112,22 @@ export class AgentSemaphore {
   }
 
   /**
+   * Synchronously reserve a slot if one is immediately available, without
+   * queuing. Returns true (and bumps `activeCount`) when a slot was taken,
+   * false when the semaphore is full. Used by the U6 hold/release sweep's
+   * reservation-first ordering (KTD-10): reserve worktree + semaphore BEFORE
+   * issuing a release move, and {@link release} the reservation if the move
+   * rejects on capacity. Unlike {@link acquire} it never enqueues a waiter.
+   */
+  tryAcquire(): boolean {
+    if (this._active < this.limit) {
+      this._active++;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Release a previously acquired slot and unblock the next waiting caller
    * (if any).
    */

@@ -36,12 +36,15 @@ import {
   findNearDuplicates,
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
+  isWorkflowColumnsEnabled,
+  TransitionRejectionError,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
-import { planTaskWorktreePath } from "@fusion/engine";
+import { planTaskWorktreePath, promoteHeldTask } from "@fusion/engine";
+import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import type { RunAuditEventInput } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -773,7 +776,53 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         const listOptions = { limit, offset, slim: true, includeArchived, ...(column ? { column } : {}) };
         tasks = await scopedStore.listTasks(listOptions);
       }
+
+      // Residual B (U9/U13): additively populate `branchProgress` when the
+      // workflowColumns flag is ON and the fan-out branch table has rows for
+      // any of these tasks. One batched query (cheap; short-circuits when the
+      // table is empty). The payload is otherwise byte-identical.
+      try {
+        const settings = await scopedStore.getSettingsFast();
+        if (isWorkflowColumnsEnabled(settings) && tasks.length > 0) {
+          const byTask = scopedStore.getBranchProgressByTask(tasks.map((t) => t.id));
+          if (byTask.size > 0) {
+            tasks = tasks.map((task) => {
+              const branchProgress = byTask.get(task.id);
+              return branchProgress && branchProgress.length > 0
+                ? { ...task, branchProgress }
+                : task;
+            });
+          }
+        }
+      } catch {
+        // Branch-progress enrichment is best-effort and must never fail the
+        // board load — fall through with the un-enriched task list.
+      }
       res.json(tasks);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  // Multi-lane board metadata (U9, R16). Additive sibling to GET /tasks — the
+  // task list payload stays byte-identical. Flag-OFF returns
+  // { flagEnabled: false } and the client renders the legacy single-lane board.
+  router.get("/tasks/board-workflows", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettingsFast();
+      if (!isWorkflowColumnsEnabled(settings)) {
+        res.json({ flagEnabled: false, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} });
+        return;
+      }
+      // Resolve over the same (non-archived) board list the client renders.
+      const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
+      const taskIds = tasks.map((t) => t.id);
+      const payload = await buildBoardWorkflowsPayload(scopedStore, taskIds, settings);
+      res.json(payload);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -1344,8 +1393,67 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (err instanceof ApiError) {
         throw err;
       }
+      // Flag-ON typed rejections surface as a structured 409 so the board can
+      // resolve the i18n messageKey and decide snap-back vs no-move (U9/R17).
+      // Flag-OFF legacy errors are unchanged (the legacy strings below).
+      if (err instanceof TransitionRejectionError) {
+        throw new ApiError(409, err.message, {
+          code: err.rejection.code,
+          messageKey: err.rejection.messageKey,
+          retryable: err.rejection.retryable,
+        });
+      }
       const status = (err instanceof Error ? err.message : String(err)).includes("Invalid transition") ? 400 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  // Manually promote a held card out of its hold column (U9). Releases via the
+  // same authority as the hold/release sweep; the in-txn capacity check still
+  // arbitrates, so a promote into a full column rejects with capacity-exhausted.
+  router.post("/tasks/:id/promote", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettingsFast();
+      if (!isWorkflowColumnsEnabled(settings)) {
+        throw badRequest("Workflow columns are not enabled");
+      }
+      const existing = await scopedStore.getTask(req.params.id);
+      const rootDir = scopedStore.getRootDir();
+      const allocateWorktree = existing
+        ? (task: Task, reservedNames: Set<string>) =>
+            planTaskWorktreePath(task, rootDir, settings.worktreeNaming, reservedNames, settings)
+        : undefined;
+
+      const result = await promoteHeldTask(scopedStore, req.params.id, { allocateWorktree });
+      if (!result.released) {
+        if (result.rejection === "capacity-exhausted-or-no-slot") {
+          throw new ApiError(409, "Downstream column is at capacity", {
+            code: "capacity-exhausted",
+            messageKey: "board.rejection.capacityExhausted",
+            retryable: true,
+          });
+        }
+        throw new ApiError(409, result.rejection ?? "Promote rejected", {
+          code: "guard-rejected",
+          messageKey: "board.rejection.promoteRejected",
+          retryable: false,
+        });
+      }
+      const task = await scopedStore.getTask(req.params.id);
+      res.json(task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof TransitionRejectionError) {
+        throw new ApiError(409, err.message, {
+          code: err.rejection.code,
+          messageKey: err.rejection.messageKey,
+          retryable: err.rejection.retryable,
+        });
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2638,7 +2746,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       // Check if task can transition to triage
-      const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
+      // #1403: task.column is ColumnId; VALID_TRANSITIONS is keyed by the legacy
+      // closed union. A non-legacy custom column id has no legacy transition row,
+      // so it correctly resolves to "cannot transition" here.
+      const canTransition =
+        isColumn(task.column) && VALID_TRANSITIONS[task.column].includes("triage");
       if (!canTransition) {
         throw badRequest(
           `Cannot request spec revision for tasks in '${task.column}' column. Move task to 'todo' or 'in-progress' first.`,
@@ -2704,7 +2816,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       // Check if task can transition to triage
-      const canTransition = VALID_TRANSITIONS[task.column]?.includes("triage");
+      // #1403: task.column is ColumnId; VALID_TRANSITIONS is keyed by the legacy
+      // closed union. A non-legacy custom column id has no legacy transition row,
+      // so it correctly resolves to "cannot transition" here.
+      const canTransition =
+        isColumn(task.column) && VALID_TRANSITIONS[task.column].includes("triage");
       if (!canTransition) {
         throw badRequest(`Cannot rebuild spec for tasks in '${task.column}' column. Move task to a valid column first.`);
       }
@@ -3098,6 +3214,53 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       } else {
         rethrowAsApiError(err);
       }
+    }
+  });
+
+  // Patch a task's custom field values (U13/KTD-14). Delegates to the single
+  // store write authority (`updateTaskCustomFields`), which validates the patch
+  // against the task's workflow field schema. A typed rejection surfaces as a
+  // 400 carrying `{ fieldId, code, detail }` so the dashboard can render an
+  // inline per-field error. `null`/`undefined` values delete the field.
+  router.patch("/tasks/:id/custom-fields", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const body = req.body as { customFields?: unknown };
+      const patch = body?.customFields;
+      if (patch === undefined || patch === null || typeof patch !== "object" || Array.isArray(patch)) {
+        throw badRequest("customFields must be an object");
+      }
+
+      const storeWithFields = scopedStore as TaskStore & {
+        updateTaskCustomFields?: (
+          taskId: string,
+          patch: Record<string, unknown>,
+        ) => Promise<{ ok: true; task: Task } | { ok: false; rejection: { code: string; fieldId: string; detail: string } }>;
+      };
+      if (typeof storeWithFields.updateTaskCustomFields !== "function") {
+        throw notFound("custom fields unavailable");
+      }
+
+      const result = await storeWithFields.updateTaskCustomFields(
+        req.params.id,
+        patch as Record<string, unknown>,
+      );
+      if (!result.ok) {
+        throw new ApiError(400, result.rejection.detail, {
+          fieldId: result.rejection.fieldId,
+          code: result.rejection.code,
+          detail: result.rejection.detail,
+        });
+      }
+      res.json(result.task);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" || (err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      }
+      rethrowAsApiError(err);
     }
   });
 

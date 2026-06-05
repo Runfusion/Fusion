@@ -66,6 +66,60 @@ describe("TaskStore workflow definitions (U1)", () => {
     ).rejects.toThrow(/name is required/i);
   });
 
+  describe("rollback compat — v1/v2 persistence (#1405)", () => {
+    function rawIr(id: string): { version: string } {
+      const row = (store as any).db
+        .prepare("SELECT ir FROM workflows WHERE id = ?")
+        .get(id) as { ir: string };
+      return JSON.parse(row.ir);
+    }
+
+    // A pure-v1 graph: only v1 node kinds, default columns at default placement.
+    const pureV1 = (): WorkflowIr => makeIr();
+
+    // A v2 graph using a custom column (a genuine v2 feature).
+    const v2Custom = (): WorkflowIr =>
+      ({
+        version: "v2",
+        name: "v2-feature",
+        columns: [
+          { id: "triage", name: "triage", traits: [] },
+          { id: "todo", name: "todo", traits: [] },
+          { id: "in-progress", name: "in-progress", traits: [] },
+          { id: "in-review", name: "in-review", traits: [] },
+          { id: "done", name: "done", traits: [] },
+          { id: "archived", name: "archived", traits: [] },
+          { id: "review-queue", name: "Review Queue", traits: [] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          { id: "end", kind: "end", column: "todo" },
+        ],
+        edges: [{ from: "start", to: "end" }],
+      }) as unknown as WorkflowIr;
+
+    it("flag OFF: a pure-v1 workflow persists in the v1 shape on create and update", async () => {
+      const created = await store.createWorkflowDefinition({ name: "Pure", ir: pureV1() });
+      expect(rawIr(created.id).version).toBe("v1");
+      await store.updateWorkflowDefinition(created.id, { description: "edit", ir: pureV1() });
+      expect(rawIr(created.id).version).toBe("v1");
+      // Read-path still resolves it as the upgraded v2 in-memory shape.
+      const reloaded = await store.getWorkflowDefinition(created.id);
+      expect(reloaded?.ir.version).toBe("v2");
+    });
+
+    it("flag OFF: a v2-feature workflow persists as v2 regardless", async () => {
+      const created = await store.createWorkflowDefinition({ name: "Feat", ir: v2Custom() });
+      expect(rawIr(created.id).version).toBe("v2");
+    });
+
+    it("flag ON: a pure-v1 workflow persists as v2", async () => {
+      await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
+      const created = await store.createWorkflowDefinition({ name: "OnFlag", ir: pureV1() });
+      expect(rawIr(created.id).version).toBe("v2");
+    });
+  });
+
   it("updates name, description, IR, and layout and advances updatedAt", async () => {
     const created = await store.createWorkflowDefinition({ name: "V1", ir: makeIr() });
     await new Promise((r) => setTimeout(r, 2));

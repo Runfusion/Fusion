@@ -307,6 +307,73 @@
   border-style: dashed;
 }
 
+/* ── Step-inversion nodes (KTD-3/4/12/15, U8) ── */
+
+.wf-node-step-execute {
+  border-color: var(--accent, var(--ws-info));
+}
+
+.wf-node-step-review {
+  border-color: var(--ws-info);
+}
+
+.wf-node-parse-steps {
+  border-color: var(--ws-info);
+}
+
+.wf-node-code {
+  border-color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+/* A foreach renders as a React Flow group node containing its template
+ *  subgraph. Children are positioned inside the group's box. */
+.wf-foreach-group {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px dashed var(--accent, var(--ws-info));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent, var(--ws-info)) 6%, transparent);
+  padding: var(--space-xs);
+}
+
+.wf-foreach-group.wf-node--error {
+  border-color: var(--ws-error);
+}
+
+.wf-foreach-header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.wf-foreach-empty {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Rework edges (KTD-5): dashed accent stroke with a loop affordance. */
+.wf-edge-rework .react-flow__edge-path {
+  stroke: var(--accent, var(--ws-info));
+  stroke-dasharray: 5 4;
+  stroke-width: 2;
+}
+
+.wf-code-source {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  white-space: pre;
+  overflow-x: auto;
+}
+
 .wf-node-icon {
   display: inline-flex;
   color: var(--text-muted);
@@ -332,4 +399,131 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ── U10: swimlane bands, column panel, error badges, read-only banner ── */
+
+.wf-column-band {
+  border: 1px dashed var(--border);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  pointer-events: none;
+}
+
+.wf-node--error {
+  border-color: var(--ws-error);
+}
+
+.wf-node-error-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.65rem;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--ws-error);
+  color: var(--bg);
+}
+
+.wf-editor-readonly-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-editor-duplicate-primary {
+  font-weight: 600;
+}
+
+.wf-editor-banner--warn {
+  background: var(--ws-warning);
+  color: var(--bg);
+}
+
+.wf-column-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 280px;
+  min-width: 260px;
+  padding: var(--space-md);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.wf-column-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wf-column-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-column-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-column-item--error {
+  border-color: var(--ws-error);
+}
+
+.wf-column-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-column-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-column-item-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.wf-column-violation {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.7rem;
+  color: var(--ws-error);
+  margin: 0;
+}
+
+.wf-column-trait-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-column-trait {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.wf-column-traits-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
 }

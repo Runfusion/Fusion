@@ -643,6 +643,89 @@ describe("Board view", () => {
   });
 });
 
+describe("Board view — U11 custom-column graceful degradation (R18)", () => {
+  function renderBoardWithTasks(tasks: TaskItem[], cols = 200, rows = 50) {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setInteractiveData(makeInteractiveData({
+      projects: [{ id: "p1", name: "my-project", path: "/tmp/p" }],
+      tasks,
+    }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("board");
+    const rendered = render(renderDashboardAppNode(controller));
+    setTerminalSize(rendered, cols, rows);
+    rendered.rerender(renderDashboardAppNode(controller));
+    return rendered;
+  }
+
+  it("renders an 'Other (custom)' bucket between in-review and done", async () => {
+    const { lastFrame, unmount } = renderBoardWithTasks([
+      { id: "t1", title: "Legacy", description: "", column: "todo" },
+    ]);
+    await waitForFrameContains(lastFrame, "OTHER (CUSTOM)");
+    const frame = lastFrame() ?? "";
+    const headerLine = frame.split("\n").find((l) => l.includes("OTHER (CUSTOM)")) ?? "";
+    // Column headers share a row; verify in-review precedes other precedes done.
+    expect(headerLine.indexOf("IN REVIEW")).toBeLessThan(headerLine.indexOf("OTHER (CUSTOM)"));
+    expect(headerLine.indexOf("OTHER (CUSTOM)")).toBeLessThan(headerLine.indexOf("DONE"));
+    unmount();
+  });
+
+  it("never drops a card: a task in an unknown column with no flags surfaces in 'Other (custom)' with its column name", async () => {
+    const { lastFrame, unmount } = renderBoardWithTasks([
+      { id: "drop1", title: "Should Not Vanish", description: "", column: "staging", columnName: "Staging" },
+    ]);
+    await waitForFrameContains(lastFrame, "Should Not Vanish");
+    const frame = lastFrame() ?? "";
+    // The card is visible AND shows its real column name as a secondary label.
+    expect(frame).toContain("Should Not Vanish");
+    expect(frame).toContain("Staging");
+    // Other bucket header count reflects the card.
+    expect(frame).toContain("OTHER (CUSTOM) (1)");
+    unmount();
+  });
+
+  it("maps trait-flagged custom columns into legacy buckets (intake→todo, mergeBlocker→in-review, complete→done, wip→in-progress)", async () => {
+    const { lastFrame, unmount } = renderBoardWithTasks([
+      { id: "i", title: "IntakeCard", description: "", column: "triage", columnName: "Triage", columnFlags: { intake: true } },
+      { id: "r", title: "ReviewCard", description: "", column: "gate", columnName: "Gate", columnFlags: { mergeBlocker: true } },
+      { id: "d", title: "DoneCard", description: "", column: "shipped", columnName: "Shipped", columnFlags: { complete: true } },
+      { id: "w", title: "WipCard", description: "", column: "building", columnName: "Building", columnFlags: { countsTowardWip: true } },
+    ]);
+    await waitForFrameContains(lastFrame, "IntakeCard");
+    const frame = lastFrame() ?? "";
+    // All four mapped to legacy buckets; none in the "other" bucket.
+    expect(frame).toContain("TODO (1)");
+    expect(frame).toContain("IN PROGRESS (1)");
+    expect(frame).toContain("IN REVIEW (1)");
+    expect(frame).toContain("DONE (1)");
+    expect(frame).toContain("OTHER (CUSTOM) (0)");
+    expect(frame).toContain("IntakeCard");
+    expect(frame).toContain("ReviewCard");
+    expect(frame).toContain("DoneCard");
+    expect(frame).toContain("WipCard");
+    unmount();
+  });
+
+  it("shows a read-only move-disabled hint when the focused column is the 'other' bucket", async () => {
+    const { lastFrame, stdin, unmount } = renderBoardWithTasks([
+      { id: "o1", title: "CustomCard", description: "", column: "staging", columnName: "Staging" },
+    ]);
+    await waitForFrameContains(lastFrame, "CustomCard");
+    // Buckets render left→right: todo, in-progress, in-review, other, done.
+    // Move focus right 3 times to land on the "other" bucket.
+    stdin.write("[C");
+    await waitForFrameUpdateAfterInput();
+    stdin.write("[C");
+    await waitForFrameUpdateAfterInput();
+    stdin.write("[C");
+    await waitForFrameUpdateAfterInput();
+    await waitForFrameContains(lastFrame, "move disabled here");
+    unmount();
+  });
+});
+
 describe("LogsPanel indicator", () => {
   it("renders the selection arrow on the highlighted log row", async () => {
     const controller = newController();

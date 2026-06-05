@@ -78,6 +78,9 @@ export type {
   PluginLogger,
   PluginSkillContribution,
   PluginWorkflowStepContribution,
+  PluginTraitContribution,
+  PluginTraitHookDescriptor,
+  PluginTraitFlags,
   PluginPromptSurface,
   PluginPromptContribution,
   PluginPromptContributions,
@@ -93,7 +96,57 @@ export type {
   PluginInstallation,
 } from "@fusion/core";
 
+// ── Step-inversion IR types (type-only) ──────────────────────────────────────
+// TYPE-ONLY re-exports of the workflow-modelable step constructs (KTD-3/12/13/15)
+// so plugin authors can author/validate workflow IR and step parsers against the
+// canonical shapes. These are erased at build time, so the standalone plugin-sdk
+// artifact carries no @fusion runtime specifiers (see cli plugin-sdk-export test).
+export type {
+  // Graph IR primitives.
+  WorkflowIr,
+  WorkflowIrV1,
+  WorkflowIrV2,
+  WorkflowIrNode,
+  WorkflowIrEdge,
+  WorkflowIrNodeKind,
+  // Foreach / artifacts / custom fields (step inversion).
+  WorkflowForeachConfig,
+  WorkflowIrArtifact,
+  WorkflowFieldDefinition,
+  WorkflowFieldType,
+  WorkflowFieldOption,
+  WorkflowFieldRender,
+  // Step-parser contract.
+  StepParser,
+  StepParseResult,
+  ParsedStep,
+} from "@fusion/core";
+
+import type { StepParseResult } from "@fusion/core";
+
+/**
+ * A plugin's step-parser contribution (KTD-12). A plugin's runtime loader returns
+ * these from its `getPluginStepParsers` getter; the engine wraps each fail-closed
+ * and registers it under `plugin:<pluginId>:<parserId>`. `parse` is SYNCHRONOUS
+ * (project-local trust tier) and may throw on malformed input — a throw maps to a
+ * routable `outcome:parse-error`.
+ *
+ * Structurally identical to the engine-side `PluginStepParserContribution` the
+ * plugin runner consumes; defined here so plugin authors do not depend on the
+ * engine package (the SDK depends on @fusion/core only).
+ */
+export interface PluginStepParserContribution {
+  parserId: string;
+  parse: (content: string) => StepParseResult;
+}
+
 import type { FusionPlugin } from "@fusion/core";
+
+// NOTE (U8): trait-contribution VALIDATION lives in @fusion/core
+// (validatePluginTraitContribution) and runs engine-side at registration.
+// It is deliberately NOT re-exported here — plugin-sdk's built artifact must
+// carry no @fusion runtime specifiers (see cli plugin-sdk-export test); only
+// type-level re-exports are allowed from @fusion/core.
 
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

@@ -9,7 +9,8 @@ import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "n
 import { existsSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode } from "@fusion/core";
-import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled } from "@fusion/core";
+import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask } from "@fusion/core";
+import type { TaskStep, WorkflowIr, WorkflowFieldDefinition } from "@fusion/core";
 import {
   buildWorkflowObservationFromTask,
   buildWorkflowObservation,
@@ -17,8 +18,19 @@ import {
   type WorkflowRunObservation,
 } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult } from "./workflow-graph-task-runner.js";
+import { createCodeNodeRunner } from "./code-node-runner.js";
+import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflow-node-handlers.js";
+import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflow-graph-branches.js";
+import type {
+  WorkflowStepInstancePersistence,
+  WorkflowStepInstanceState,
+} from "./workflow-graph-foreach.js";
 import { observeWorkflowParity, WORKFLOW_INTERPRETER_DUAL_OBSERVE_FLAG } from "./workflow-parity-observer.js";
-import type { WorkflowLegacySeams } from "./workflow-node-handlers.js";
+import {
+  FOREACH_ACTIVE_CONTEXT_KEY,
+  type ForeachActiveContext,
+  type WorkflowLegacySeams,
+} from "./workflow-node-handlers.js";
 import type { WorkflowNodeResult } from "./workflow-graph-executor.js";
 import {
   ApprovalRequestStore,
@@ -33,14 +45,14 @@ import {
   resolveAgentMemoryInclusionMode,
   type RunCommandResult,
 } from "@fusion/core";
-import { findWorktreeUser } from "./merger.js";
+import { findWorktreeUser, getConflictedFiles } from "./merger.js";
 import {
   runVerificationCommand,
   summarizeVerificationOutput,
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
 } from "./verification-utils.js";
-import { generateWorktreeName, resolveTaskWorkingBranch } from "./worktree-names.js";
+import { canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
@@ -102,6 +114,7 @@ import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js
 import type { PluginRunner } from "./plugin-runner.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { StepSessionExecutor } from "./step-session-executor.js";
+import { makeAncestryBlastRadiusGuard, resetStepToBaseline, runTaskStep } from "./step-runner.js";
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { resolveCapturedBaseCommitSha } from "./base-commit-capture.js";
 import { installTaskWorktreeIdentityGuard } from "./worktree-hooks.js";
@@ -144,7 +157,13 @@ import {
   createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool,
   createTaskLogTool as sharedCreateTaskLogTool,
   createWorkflowListTool as sharedCreateWorkflowListTool,
+  createWorkflowGetTool as sharedCreateWorkflowGetTool,
   createWorkflowSelectTool as sharedCreateWorkflowSelectTool,
+  createTaskPromoteTool as sharedCreateTaskPromoteTool,
+  createWorkflowCreateTool as sharedCreateWorkflowCreateTool,
+  createWorkflowUpdateTool as sharedCreateWorkflowUpdateTool,
+  createWorkflowDeleteTool as sharedCreateWorkflowDeleteTool,
+  createTraitListTool as sharedCreateTraitListTool,
 } from "./agent-tools.js";
 import { getTaskCompletionBlockerForStore } from "./task-completion.js";
 import { createStreamingDeltaNormalizer } from "./streaming-delta.js";
@@ -699,13 +718,20 @@ export async function __runConfiguredCommandForTests(
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
 
 const taskUpdateParams = Type.Object({
-  step: Type.Number({ description: "Step number (1-indexed)" }),
-  status: Type.Union(
+  step: Type.Optional(Type.Number({ description: "Step number (1-indexed). Omit when updating only custom_fields/dependencies." })),
+  status: Type.Optional(Type.Union(
     STEP_STATUSES.map((s) => Type.Literal(s)),
-    { description: "New status: pending, in-progress, done, or skipped" },
-  ),
+    { description: "New status: pending, in-progress, done, or skipped. Required when step is set." },
+  )),
   dependencies: Type.Optional(Type.Array(Type.String(), {
     description: "Optional task dependency array. Replaces existing dependencies. Pass ['FN-001', 'FN-002'] to set dependencies. Pass [] to clear all dependencies. Omit parameter to preserve existing dependencies.",
+  })),
+  custom_fields: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
+    description:
+      "Optional patch of workflow-defined custom field values, keyed by field id. " +
+      "Values are validated against the task's workflow field schema (type/enum membership); " +
+      "pass null for a field to clear it. Rejected writes return the offending field id and reason. " +
+      "Only fields declared by the task's workflow may be written.",
   })),
 });
 
@@ -3204,6 +3230,35 @@ export class TaskExecutor {
    *  Doubles as the re-entrancy guard for graph routing. */
   private graphCompletionInterceptors = new Map<string, (info: { modifiedFiles: string[] }) => void>();
 
+  /** Step-inversion (KTD-2/KTD-8, U6/U8): tasks whose graph-owned step-execute
+   *  driver has pinned step-session physics for the run. Forces the step-session
+   *  path in execute() regardless of the `runStepsInNewSessions` setting, so the
+   *  graph/step-sessions flag matrix cannot select an unsupported physics combo.
+   *  Cleared when the graph run ends (maybeExecuteWorkflowGraph finally). */
+  private graphStepSessionPinned = new Set<string>();
+
+  /** Step-inversion (U6/U8): caches the per-run implementation-phase result for a
+   *  graph-owned task so the foreach sub-walk's per-step `runTaskStep` driver runs
+   *  the (step-session) implementation exactly once per run and lets later step
+   *  instances observe the projection rather than re-running execute() per step.
+   *  Keyed by task id; cleared alongside the pin. */
+  private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[] }>>();
+
+  /** Step-inversion (KTD-4): the foreach instance the step-execute seam is
+   *  currently driving for a graph-owned task, so `runGraphTaskStep` can honor
+   *  `deferDoneToReview` when deciding whether a non-terminal step is a success
+   *  (review will author done) or a failure (implementation left it incomplete).
+   *  Stamped by the stepExecute seam around the runTaskStep call; cleared with the
+   *  per-run pins. Keyed by `${task.id}:${instanceId}` so parallel foreach
+   *  instances of the same task cannot clobber each other's active context
+   *  (the read path threads the same instanceId through `runGraphTaskStep`). */
+  private graphStepActiveContext = new Map<string, ForeachActiveContext>();
+
+  /** Composite key for {@link graphStepActiveContext}: per-instance, not per-task. */
+  private graphActiveContextKey(taskId: string, instanceId: string): string {
+    return `${taskId}:${instanceId}`;
+  }
+
   /** Tasks currently being orchestrated by the graph runner. Process-wide for
    *  the same reason as executingTaskLock (FN-4811): duplicate execute()
    *  invocations can arrive from different TaskExecutor instances in one
@@ -3249,11 +3304,61 @@ export class TaskExecutor {
       }
       if (!selection) return false;
 
+      // Resolve the production run id ONCE, here, so it is the single source of
+      // truth shared by the runner AND the executor-side persistence deps
+      // (parse-steps pin probe, foreach instance-row flips, resume reconcile). The
+      // runner derives `${task.id}:${definition.id}`; we mirror that derivation
+      // from the resolved definition and thread it everywhere. Best-effort: if the
+      // definition cannot be resolved (older store), the runner falls back to its
+      // own derivation and the deps fall back to the legacy `:run` literal — the
+      // prior behavior — so this never strands a task.
+      let resolvedRunId: string | undefined;
+      try {
+        const definition = await this.store.getWorkflowDefinition?.(selection.workflowId);
+        if (definition) resolvedRunId = `${task.id}:${definition.id}`;
+      } catch {
+        // Definition load failure — leave undefined; deps/runner use fallbacks.
+      }
+
       const runner = new WorkflowGraphTaskRunner({
         store: this.store,
+        runId: resolvedRunId,
         seams: this.createGraphSeams(settings),
         runCustomNode: (node, nodeTask) => this.runGraphCustomNode(node, nodeTask, settings),
         onEvent: (event) => executorLog.log(`[workflow-graph] ${event.type} ${event.taskId}: ${event.detail}`),
+        // Wire SQLite-backed per-branch persistence in production (#1407): the
+        // executor writes each branch's currentNodeId/status to
+        // workflow_run_branches so fan-out crash-resume and the U9 badges have
+        // real data, and prunes stale runs (#1412). Adapter degrades to no-op
+        // when the store predates these methods (additive guard).
+        branchPersistence: this.buildBranchPersistence(),
+        // Step-inversion (KTD-6, U3/U4): per-instance run-state persistence.
+        stepInstancePersistence: this.buildStepInstancePersistence(),
+        // Step-inversion (KTD-4, U5): RETHINK reset-on-rework — when the foreach
+        // sub-walk traverses a rework edge triggered by `outcome:rethink`, reset
+        // the active instance's step to its persisted per-step baseline (git reset
+        // + session rewind + step→pending) before re-entering step-execute.
+        onReworkReset: (active) => this.applyGraphRethinkReset(task.id, active),
+        // Step-inversion (KTD-12, U12): parse-steps node handler deps — artifact
+        // read (through task-documents with PROMPT.md fallback), step-list write
+        // (graph-source projection), pin-protection probe, and audit.
+        parseStepsDeps: this.buildParseStepsDeps(resolvedRunId),
+        // Step-inversion (KTD-15, U14): code node runner — esbuild compile +
+        // child-process execution with the harness contract.
+        runCode: this.buildCodeNodeRunner(),
+        // Step-inversion (KTD-11, U10): worktree isolation + ordered integration +
+        // parallel scheduling. Per-instance worktrees branched off the task's main
+        // branch tip; integration rebases each branch in step order; the projection
+        // flips done-iff-integrated. Shared isolation never invokes these.
+        ...this.buildForeachWorktreeDeps(task, resolvedRunId),
+        // FIX 4 (context gap): task-level log sink so an integration-conflict
+        // rework writes a visible "reworking on updated base (files: ...)" entry
+        // the re-running agent can read. Best-effort; logging failures swallowed.
+        logTaskEntry: (summary: string, detail?: string) => {
+          void this.store
+            .logEntry(task.id, summary, detail, this.getRunContextFor(task.id))
+            .catch(() => {});
+        },
       });
       let result: WorkflowGraphTaskRunResult;
       try {
@@ -3277,7 +3382,512 @@ export class TaskExecutor {
       return true;
     } finally {
       this.graphRouting.delete(task.id);
+      // Clear per-run step-inversion pins (KTD-8: pinned only for the run's life).
+      this.graphStepSessionPinned.delete(task.id);
+      this.graphStepRunOnce.delete(task.id);
+      // Per-instance keys: clear every instance slot owned by this task.
+      const ctxPrefix = `${task.id}:`;
+      for (const key of this.graphStepActiveContext.keys()) {
+        if (key.startsWith(ctxPrefix)) this.graphStepActiveContext.delete(key);
+      }
     }
+  }
+
+  /**
+   * Build the store-backed WorkflowBranchPersistence wired into production
+   * fan-out runs (#1407/#1412). Returns undefined when the store predates the
+   * persistence methods (older embedded DBs) so the runner stays fully
+   * in-memory — purely additive. Each adapter method is itself guarded so a
+   * mixed/partial store never throws into the run.
+   */
+  private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
+    const store = this.store as unknown as {
+      saveWorkflowRunBranch?: (state: WorkflowBranchRunState) => void;
+      loadWorkflowRunBranches?: (taskId: string, runId: string) => WorkflowBranchRunState[];
+      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void;
+    };
+    if (typeof store.saveWorkflowRunBranch !== "function") return undefined;
+    return {
+      saveBranchState: (state) => store.saveWorkflowRunBranch?.(state),
+      loadBranchStates: (taskId, runId) => store.loadWorkflowRunBranches?.(taskId, runId) ?? [],
+      clearStaleBranchStates: (taskId, keepRunId) => store.clearWorkflowRunBranches?.(taskId, keepRunId),
+    };
+  }
+
+  /**
+   * Build the store-backed WorkflowStepInstancePersistence for graph-owned
+   * foreach runs (KTD-6, U3/U4 seam). Returns undefined when the store predates
+   * the instance CRUD methods (the SQLite migration is U4) so the sub-walk stays
+   * fully in-memory — purely additive, same posture as buildBranchPersistence.
+   */
+  private buildStepInstancePersistence(): WorkflowStepInstancePersistence | undefined {
+    const store = this.store as unknown as {
+      saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
+      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+      clearWorkflowRunStepInstances?: (taskId: string, keepRunId: string) => void;
+    };
+    if (typeof store.saveWorkflowRunStepInstance !== "function") return undefined;
+    return {
+      saveInstanceState: (state) => store.saveWorkflowRunStepInstance?.(state),
+      loadInstanceStates: (taskId, runId) => store.loadWorkflowRunStepInstances?.(taskId, runId) ?? [],
+      clearStaleInstanceStates: (taskId, keepRunId) => store.clearWorkflowRunStepInstances?.(taskId, keepRunId),
+    };
+  }
+
+  /**
+   * Resolve which artifact/parser governs a graph-owned task's step list from its
+   * workflow's `parse-steps` declaration (KTD-12). Returns undefined for legacy
+   * tasks (no parse-steps node) so reconcile/resume keep their unchanged behavior.
+   * Used by reconcile read-through to know which artifact backs the step source.
+   */
+  private resolveTaskStepSource(ir: WorkflowIr | undefined): { artifact: string; parser: string } | undefined {
+    if (!ir) return undefined;
+    for (const node of ir.nodes) {
+      if (node.kind !== "parse-steps") continue;
+      const cfg = (node.config ?? {}) as { artifact?: unknown; parser?: unknown };
+      const parser = typeof cfg.parser === "string" ? cfg.parser : undefined;
+      if (!parser) continue;
+      const artifact = typeof cfg.artifact === "string" && cfg.artifact.trim() !== "" ? cfg.artifact : "PROMPT.md";
+      return { artifact, parser };
+    }
+    return undefined;
+  }
+
+  /**
+   * Resolve the custom field definitions declared by a task's selected workflow
+   * (KTD-13) so the executor prompt can surface the schema and current values to
+   * the agent. Pure read; degrades to undefined on any resolution failure (no
+   * selection, missing/corrupt definition, older store) so prompt-building never
+   * throws and legacy tasks see no custom-fields section.
+   */
+  private async resolveTaskCustomFieldDefs(taskId: string): Promise<WorkflowFieldDefinition[] | undefined> {
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, taskId);
+      const fields = ir.version === "v2" ? ir.fields : undefined;
+      return fields && fields.length > 0 ? fields : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Build the parse-steps node handler deps (KTD-12, U12): artifact read through
+   * the task-documents machinery (PROMPT.md falls back to the task's own PROMPT
+   * content the way step-init does), step-list write through the graph-source
+   * projection (`updateTask({ steps })`), pin-protection probe (persisted instance
+   * rows exist → re-parse illegal, KTD-3), and a logEntry-backed audit sink.
+   */
+  /**
+   * Read a task artifact by key through the task-documents layer, falling back to
+   * the task's own PROMPT content for the default `PROMPT.md` step-source artifact
+   * (the same source the legacy step-init reads). Shared by the parse-steps and
+   * code-node deps (FIX 7: one source of truth for the fallback).
+   */
+  private async readTaskArtifact(taskId: string, key: string): Promise<string | undefined> {
+    // Declared artifacts ride the task-documents layer.
+    try {
+      const doc = await this.store.getTaskDocument(taskId, key);
+      if (doc) return doc.content;
+    } catch {
+      // Fall through to the PROMPT fallback below.
+    }
+    if (key === "PROMPT.md") {
+      try {
+        const detail = await this.store.getTask(taskId);
+        if (typeof detail.prompt === "string") return detail.prompt;
+      } catch {
+        // No PROMPT available.
+      }
+    }
+    return undefined;
+  }
+
+  private buildParseStepsDeps(runId?: string): ParseStepsHandlerDeps {
+    return {
+      readArtifact: (task, key): Promise<string | undefined> => this.readTaskArtifact(task.id, key),
+      writeSteps: async (task, steps: TaskStep[]): Promise<void> => {
+        await this.store.updateTask(task.id, { steps });
+      },
+      hasExpandedForeach: async (task): Promise<boolean> => {
+        const store = this.store as unknown as {
+          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+        };
+        if (typeof store.loadWorkflowRunStepInstances !== "function") return false;
+        try {
+          // Any persisted instance row for THIS run means a foreach has expanded —
+          // re-parsing would desynchronize the pinned instance set (KTD-3). Probe
+          // under the REAL run id (threaded from maybeExecuteWorkflowGraph) so the
+          // pin protection actually fires; fall back to the legacy literal only when
+          // the run id was not threaded (older store / no definition).
+          const rows = store.loadWorkflowRunStepInstances(task.id, runId ?? `${task.id}:run`);
+          return Array.isArray(rows) && rows.length > 0;
+        } catch {
+          return false;
+        }
+      },
+      audit: (reason, detail) => {
+        // The detail string carries the task id (handler convention); emit on the
+        // engine log so the routable failure is auditable without a taskId arg.
+        executorLog.warn(`[parse-steps] ${reason}: ${detail}`);
+      },
+    };
+  }
+
+  /**
+   * Build the code node runner (KTD-15, U14): worktree cwd resolution, pre-read of
+   * declared artifacts into the harness ctx, and customFields writes through the
+   * U11 validation authority. Drives the esbuild-compile + child-process runner
+   * in code-node-runner.ts.
+   */
+  private buildCodeNodeRunner(): CodeNodeRunner {
+    return createCodeNodeRunner({
+      resolveCwd: async (task): Promise<string> => {
+        try {
+          return (await this.store.getTask(task.id)).worktree || this.rootDir;
+        } catch {
+          return this.rootDir;
+        }
+      },
+      readArtifacts: async (task): Promise<Record<string, string>> => {
+        const out: Record<string, string> = {};
+        try {
+          const docs = await this.store.getTaskDocuments(task.id);
+          for (const doc of docs) out[doc.key] = doc.content;
+        } catch {
+          // No documents — pass an empty artifact map.
+        }
+        // Surface PROMPT.md from the task prompt when not already a document
+        // (shared artifact-read fallback — FIX 7).
+        if (out["PROMPT.md"] === undefined) {
+          const prompt = await this.readTaskArtifact(task.id, "PROMPT.md");
+          if (typeof prompt === "string") out["PROMPT.md"] = prompt;
+        }
+        return out;
+      },
+      writeCustomFields: async (task, patch) => {
+        if (typeof this.store.updateTaskCustomFields !== "function") {
+          return {
+            ok: false as const,
+            rejection: { code: "no-fields-defined" as const, fieldId: "", detail: "custom fields unsupported by store" },
+          };
+        }
+        const result = await this.store.updateTaskCustomFields(task.id, patch);
+        return result.ok ? { ok: true as const } : { ok: false as const, rejection: result.rejection };
+      },
+      audit: (reason, detail) => {
+        executorLog.warn(`[code-node] ${reason}: ${detail}`);
+      },
+    });
+  }
+
+  /**
+   * Build the worktree-isolation + ordered-integration + parallel-scheduling deps
+   * for a graph-owned foreach (KTD-11, U10). Returns the additive set the
+   * WorkflowGraphTaskRunner forwards to the foreach sub-walk:
+   *
+   *   - `allocateInstanceWorktree(i, base)` — a per-instance worktree on a
+   *     canonical `fusion/<task>-step-<i>` branch off `base` (the main tip),
+   *     created via the existing `createWorktree` path (the file-scope guard the
+   *     session machinery installs applies unchanged to anything the instance
+   *     session commits in this worktree — we do NOT bypass it);
+   *   - `resolveIntegrationBase()` — the task's main branch tip, re-read before each
+   *     (re)allocation so a rework lands on the UPDATED base;
+   *   - `integrationGitOps` — rebase the instance branch onto the main branch in
+   *     the task's MAIN worktree, fast-forward main on success; on conflict reuse
+   *     merger.ts `getConflictedFiles` (NOT reimplemented) and abort the rebase so
+   *     the next instance can integrate; `discardBranch` deletes the branch + frees
+   *     the instance worktree (pool hygiene);
+   *   - `integrationProjection` — projection-first ordering (KTD-7): `markStepDone`
+   *     flips the step `done` via `updateStep(source:"graph")` (the dependency-order
+   *     guard admits it), THEN `markInstanceIntegrated` flips the persisted row;
+   *   - `semaphoreAvailability` — the live free-slot count so parallel scheduling
+   *     clamps without hold-and-wait.
+   *
+   * Best-effort throughout: a git failure routes the foreach to a clean failure
+   * (parked for human review) rather than crashing the run.
+   */
+  private buildForeachWorktreeDeps(task: Task, runId?: string): {
+    allocateInstanceWorktree: (
+      stepIndex: number,
+      base: string | undefined,
+    ) => Promise<{ worktreePath: string; branchName: string }>;
+    resolveIntegrationBase: () => Promise<string | undefined>;
+    integrationGitOps: import("./step-integration.js").IntegrationGitOps;
+    integrationProjection: import("./step-integration.js").IntegrationProjection;
+    semaphoreAvailability: () => number;
+    resumeReconcile: (
+      pinned: number,
+    ) => Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>>;
+  } {
+    const taskId = task.id;
+    // Per-instance worktree paths, so discard can free them.
+    const instancePaths = new Map<number, string>();
+
+    const mainWorktree = async (): Promise<string> => {
+      try {
+        return (await this.store.getTask(taskId)).worktree || this.rootDir;
+      } catch {
+        return this.rootDir;
+      }
+    };
+    const mainBranch = async (): Promise<string> => {
+      try {
+        const detail = await this.store.getTask(taskId);
+        return resolveTaskWorkingBranch(detail);
+      } catch {
+        return resolveTaskWorkingBranch(task);
+      }
+    };
+
+    return {
+      resolveIntegrationBase: async (): Promise<string | undefined> => {
+        // The main branch tip (HEAD of the task's working branch in its worktree).
+        try {
+          const { stdout } = await execAsync("git rev-parse HEAD", { cwd: await mainWorktree() });
+          const sha = stdout.trim();
+          return sha.length > 0 ? sha : await mainBranch();
+        } catch {
+          return await mainBranch();
+        }
+      },
+      allocateInstanceWorktree: async (stepIndex, base): Promise<{ worktreePath: string; branchName: string }> => {
+        const branchName = canonicalStepInstanceBranchName(taskId, stepIndex);
+        const worktreePath = resolveTaskWorktreePath(
+          this.rootDir,
+          undefined,
+          `${taskId.toLowerCase()}-step-${stepIndex}`,
+        );
+        // createWorktree installs the file-scope guard (session machinery,
+        // unchanged) and branches off `base` (the integration base / updated tip).
+        const created = await this.createWorktree(branchName, worktreePath, taskId, base);
+        instancePaths.set(stepIndex, created.path);
+        return { worktreePath: created.path, branchName: created.branch };
+      },
+      integrationGitOps: {
+        integrate: async (branchName, stepIndex): Promise<import("./step-integration.js").IntegrationAttemptResult> => {
+          const cwd = await mainWorktree();
+          const target = await mainBranch();
+          // The instance branch is checked out in its OWN worktree, so the rebase
+          // (which checks out `branchName`) must run THERE — running it from the
+          // main worktree fails with "branch is already checked out in another
+          // worktree". The final fast-forward merge still runs from the main
+          // worktree (it only advances `target`, which is checked out there).
+          const instanceCwd = instancePaths.get(stepIndex) ?? cwd;
+          try {
+            // Rebase the instance branch onto the current main tip (in its own
+            // worktree), then ff main from the main worktree.
+            await execAsync(`git rebase ${target} ${branchName}`, { cwd: instanceCwd });
+            await execAsync(`git checkout ${target}`, { cwd });
+            await execAsync(`git merge --ff-only ${branchName}`, { cwd });
+            return { kind: "integrated", integratedAt: new Date().toISOString() };
+          } catch (err) {
+            // Conflict (or other rebase failure): classify via merger helper, abort.
+            // The rebase ran in the instance worktree, so conflicts live there and
+            // the abort must target that same cwd.
+            const conflictedFiles = await getConflictedFiles(instanceCwd);
+            try {
+              await execAsync("git rebase --abort", { cwd: instanceCwd });
+            } catch {
+              // best-effort; leave the worktree recoverable.
+            }
+            // Restore main checkout so the next instance integrates cleanly.
+            try {
+              await execAsync(`git checkout ${target}`, { cwd });
+            } catch {
+              // best-effort.
+            }
+            executorLog.warn(
+              `[step-integration] ${taskId} step ${stepIndex} branch ${branchName} conflict: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return { kind: "conflict", conflictedFiles };
+          }
+        },
+        discardBranch: async (branchName, stepIndex): Promise<void> => {
+          const cwd = await mainWorktree();
+          const path = instancePaths.get(stepIndex);
+          if (path) {
+            // Remove the instance worktree (pool hygiene). Best-effort; force so a
+            // dirty/conflicting tree is still cleaned up.
+            try {
+              await execAsync(`git worktree remove --force "${path}"`, { cwd: this.rootDir });
+            } catch {
+              // best-effort cleanup.
+            }
+            instancePaths.delete(stepIndex);
+          }
+          // Delete the (now-merged or conflicting) branch.
+          try {
+            await execAsync(`git branch -D ${branchName}`, { cwd });
+          } catch {
+            // best-effort — the branch may already be gone.
+          }
+        },
+      },
+      integrationProjection: {
+        markStepDone: async (stepIndex): Promise<void> => {
+          // Projection-first (KTD-7): graph-source write relaxes the guard to
+          // dependency order; predecessors are integrated (done) by construction.
+          await this.store.updateStep(taskId, stepIndex, "done", { source: "graph" });
+        },
+        markInstanceIntegrated: async (stepIndex, integratedAt, identity): Promise<void> => {
+          const store = this.store as unknown as {
+            saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
+            loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+          };
+          if (typeof store.saveWorkflowRunStepInstance !== "function") return;
+          // The upsert is keyed by (taskId, runId, foreachNodeId, stepIndex). The
+          // queue passes the REAL identity (the same runId + foreachNodeId the
+          // foreach sub-walk persisted the row under) so this FLIPS the existing
+          // row to completed/integratedAt instead of writing an orphan (FIX 1).
+          // Load the current row to preserve its fields (currentNodeId, baseline,
+          // reworkCount) we don't otherwise carry on the identity.
+          let existing: WorkflowStepInstanceState | undefined;
+          try {
+            const rows = store.loadWorkflowRunStepInstances?.(taskId, identity.runId) ?? [];
+            existing = rows.find(
+              (r) => r.foreachNodeId === identity.foreachNodeId && r.stepIndex === stepIndex,
+            );
+          } catch {
+            // Best-effort read; fall back to a minimal flip below.
+          }
+          try {
+            store.saveWorkflowRunStepInstance({
+              ...(existing ?? {}),
+              taskId,
+              runId: identity.runId,
+              foreachNodeId: identity.foreachNodeId,
+              stepIndex,
+              pinnedStepCount: identity.pinnedStepCount,
+              currentNodeId: existing?.currentNodeId ?? "",
+              status: "completed",
+              reworkCount: existing?.reworkCount ?? 0,
+              branchName: identity.branchName || canonicalStepInstanceBranchName(taskId, stepIndex),
+              integratedAt,
+            } as WorkflowStepInstanceState);
+          } catch {
+            // Persistence is additive bookkeeping — never fail the integration.
+          }
+        },
+      },
+      semaphoreAvailability: (): number => this.options.semaphore?.availableCount ?? 1,
+      resumeReconcile: async (
+        pinned,
+      ): Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>> => {
+        // Crash-resume reconciliation (KTD-11): reconcile each persisted instance
+        // row against branch existence. integrated → done; branch exists not
+        // integrated → re-enter the integration queue; branch missing → re-run.
+        // NOTE (handoff): this is the per-run resume seeding only; the full
+        // self-healing sweep across stale runs (recoverStaleTransitionPending
+        // analogue) is out of scope for U10.
+        const store = this.store as unknown as {
+          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
+        };
+        if (typeof store.loadWorkflowRunStepInstances !== "function") return [];
+        let rows: WorkflowStepInstanceState[] = [];
+        try {
+          // Load under the REAL run id (threaded) so resume actually sees the rows
+          // the sub-walk persisted; the legacy literal is the unthreaded fallback.
+          rows = store.loadWorkflowRunStepInstances(taskId, runId ?? `${taskId}:run`) ?? [];
+        } catch {
+          return [];
+        }
+        const cwd = await mainWorktree();
+        const out: Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }> = [];
+        for (const row of rows) {
+          if (row.stepIndex < 0 || row.stepIndex >= pinned) continue;
+          if (row.status === "completed" || row.integratedAt) {
+            out.push({ stepIndex: row.stepIndex, disposition: "integrated" });
+            continue;
+          }
+          const branchName = row.branchName || canonicalStepInstanceBranchName(taskId, row.stepIndex);
+          let branchExists = false;
+          try {
+            await execAsync(`git rev-parse --verify --quiet ${branchName}`, { cwd });
+            branchExists = true;
+          } catch {
+            branchExists = false;
+          }
+          if (branchExists && row.status === "awaiting-integration") {
+            out.push({ stepIndex: row.stepIndex, disposition: "reintegrate", branchName });
+          } else {
+            out.push({ stepIndex: row.stepIndex, disposition: "rerun" });
+          }
+        }
+        return out;
+      },
+    };
+  }
+
+  /**
+   * RETHINK reset-on-rework (KTD-4, U5): reset the active foreach instance's step
+   * to its per-step baseline before the rework edge re-enters step-execute. Drives
+   * the single extracted `resetStepToBaseline` (step-runner.ts) with the
+   * instance's persisted `baselineSha`/`checkpointId`. Session rewind is best-effort
+   * for graph-owned runs (the per-step session lives inside StepSessionExecutor and
+   * is not exposed as a single ref here) — missing-checkpoint partial recovery is
+   * the documented KTD-2 semantics; the git reset + step→pending are authoritative.
+   */
+  private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
+    // Clear the memoized implementation pass so the next `runGraphTaskStep`
+    // re-executes (T9): the per-run pass is memoized in `graphStepRunOnce` keyed
+    // by task id and is normally only cleared on REJECTION. A RETHINK fires AFTER
+    // a SUCCESSFUL pass (a review verdict resets git/step state via this reset),
+    // so without clearing the memo the rework re-awaits the already-resolved
+    // promise and implementation never re-runs — leaving the instance permanently
+    // pending or falsely successful under `deferDoneToReview`. Mirrors the
+    // rejection-clear guard: only delete the memo when the stored promise is the
+    // SETTLED pass (a fresh in-flight attempt another caller installed is left
+    // untouched). At rethink time the pass under review has already resolved, so
+    // checking settled-ness avoids clobbering a concurrent re-dispatch.
+    const memo = this.graphStepRunOnce.get(taskId);
+    if (memo) {
+      let settled = false;
+      await Promise.race([memo.then(
+        () => { settled = true; },
+        () => { settled = true; },
+      ), Promise.resolve()]);
+      if (settled && this.graphStepRunOnce.get(taskId) === memo) {
+        this.graphStepRunOnce.delete(taskId);
+      }
+    }
+    // Worktree isolation (KTD-11): reset the instance's OWN branch/worktree only —
+    // sibling instances and the integration base are untouched, so the blast-radius
+    // guard is STRUCTURAL (skipped) in this mode. Shared isolation resets the task's
+    // main worktree and keeps the KTD-2 ancestry guard as written.
+    const branchScoped = typeof active.worktreePath === "string" && active.worktreePath.length > 0;
+    let worktreePath = active.worktreePath ?? this.rootDir;
+    if (!branchScoped) {
+      try {
+        worktreePath = (await this.store.getTask(taskId)).worktree || this.rootDir;
+      } catch {
+        // Best-effort worktree resolution; fall back to rootDir.
+      }
+    }
+    const liveSteps = await this.store.getTask(taskId).then((t) => t.steps).catch(() => []);
+    await resetStepToBaseline(
+      {
+        store: this.store,
+        worktreePath,
+        // No single session ref for graph-owned step-sessions — rewind is skipped
+        // when checkpointId resolves but no session is current (KTD-2 partial path).
+        sessionRef: { current: null },
+        reviewType: "code",
+        // Branch-scoped RETHINK under worktree isolation makes the guard structural
+        // (the reset can only touch the instance's own branch); shared isolation
+        // keeps the defensive ancestry guard (KTD-2/KTD-11).
+        blastRadiusGuard: branchScoped
+          ? undefined
+          : makeAncestryBlastRadiusGuard({
+              worktreePath,
+              task: { id: taskId, steps: liveSteps },
+              stepIndex: active.stepIndex,
+            }),
+      },
+      { id: taskId, steps: liveSteps },
+      active.stepIndex,
+      active.baselineSha,
+      active.checkpointId,
+    );
   }
 
   /**
@@ -3421,6 +4031,109 @@ export class TaskExecutor {
     return captured;
   }
 
+  /**
+   * Step-inversion per-step driver (KTD-2/KTD-8, closes the U3 interim gap).
+   *
+   * The U3 stand-in ran `runImplementationPhase` once per foreach instance, which
+   * re-ran the whole implementation for every step. The real driver:
+   *
+   *   1. PINS step-session physics for the run (graph-owned runs force
+   *      StepSessionExecutor regardless of `runStepsInNewSessions`, KTD-2/KTD-8) —
+   *      the only path with a discrete per-step boundary (`onStepStart`/
+   *      `onStepComplete`); the monolithic single-session path has no "run one
+   *      step and return control" seam.
+   *   2. Drives the (step-session) implementation phase exactly ONCE per run,
+   *      memoized by task id. StepSessionExecutor itself walks every step in step
+   *      order inside that single pass and writes the projection per step via its
+   *      `onStepStart`/`onStepComplete` callbacks (executor.ts step-session path).
+   *      Each foreach instance's `runTaskStep` therefore observes the projection
+   *      truth for its step rather than re-running the agent per step.
+   *
+   * Worktree/taskEnv/agent/semaphore state is threaded exactly the way
+   * `runImplementationPhase` gets it — by re-entering `execute()` under a
+   * completion interceptor — because that state is assembled inside `execute()`
+   * and is not available standalone at createGraphSeams time (the plan's
+   * documented threading approach for full step-session wiring).
+   *
+   * Returns whether the targeted step ended up `done`/`skipped` in the projection.
+   */
+  private async runGraphTaskStep(
+    task: Task,
+    stepIndex: number,
+    instanceId?: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    // Pin step-session physics for the run before the implementation pass.
+    this.graphStepSessionPinned.add(task.id);
+
+    // Single-flight per attempt (KTD-2/KTD-8): the implementation phase runs once
+    // per run, memoized by task id, so each foreach instance's `runStep` observes
+    // the projection rather than re-running the agent. A REJECTED phase must NOT
+    // poison later attempts: a rework cycle re-enters `runStep` and would otherwise
+    // re-await the same stored rejection forever, so the implementation is never
+    // retried. On rejection we therefore clear the memo entry so the NEXT call
+    // (the rework re-run) re-invokes the implementation phase. Concurrent
+    // in-flight callers within a single attempt still share the one promise.
+    let phase = this.graphStepRunOnce.get(task.id);
+    if (!phase) {
+      phase = this.runImplementationPhase(task);
+      this.graphStepRunOnce.set(task.id, phase);
+    }
+    try {
+      await phase;
+    } catch (err) {
+      // Clear the poisoned memo so a rework cycle can retry the implementation
+      // (only if it is still the same rejected promise — do not clobber a fresh
+      // attempt another caller may have already installed).
+      if (this.graphStepRunOnce.get(task.id) === phase) {
+        this.graphStepRunOnce.delete(task.id);
+      }
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+
+    // Consult the projection (the single source of truth, KTD-7) for this step's
+    // terminal state. The step-session pass marks each step done/skipped as it
+    // completes; a step-review node (when present) decides done-ness instead.
+    try {
+      const live = await this.store.getTask(task.id);
+      const active = this.foreachActiveForTask(task.id, instanceId);
+      const status = live.steps[stepIndex]?.status;
+      if (status === "done" || status === "skipped") return { success: true };
+      // Step not terminal after the pass: when a review will author done-ness
+      // (deferDoneToReview), the pass having RUN is the success signal — the review
+      // gates the projection write. Otherwise the implementation pass failed to
+      // complete this step, so report failure rather than masking it (FIX 3: the
+      // prior code returned success on both branches, hiding step-session failures).
+      if (active?.deferDoneToReview === true) return { success: true };
+      return {
+        success: false,
+        error: `step ${stepIndex} not completed by implementation pass (status: ${status ?? "unknown"})`,
+      };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Read the active foreach instance context for a graph-owned task (if any) so
+   *  the step driver can honor `deferDoneToReview`. The active context is threaded
+   *  through the foreach sub-walk; we surface it via a per-task slot the
+   *  step-execute seam stamps. Returns undefined outside a foreach instance. */
+  private foreachActiveForTask(taskId: string, instanceId?: string): ForeachActiveContext | undefined {
+    if (typeof instanceId === "string") {
+      const byInstance = this.graphStepActiveContext.get(this.graphActiveContextKey(taskId, instanceId));
+      if (byInstance) return byInstance;
+    }
+    // Fallback (single-instance / no instanceId threaded): return the sole slot
+    // owned by this task if exactly one exists.
+    const prefix = `${taskId}:`;
+    let only: ForeachActiveContext | undefined;
+    for (const [key, value] of this.graphStepActiveContext) {
+      if (!key.startsWith(prefix)) continue;
+      if (only) return undefined; // ambiguous: more than one instance active
+      only = value;
+    }
+    return only;
+  }
+
   /** Seam implementations delegating to the legacy engine (KTD-1: delegate, never reimplement). */
   private createGraphSeams(_settings: Settings): WorkflowLegacySeams {
     return {
@@ -3485,7 +4198,185 @@ export class TaskExecutor {
         }
       },
       schedule: async () => ({ outcome: "success" }),
+      // Step-inversion (KTD-2/KTD-4, U3): run exactly the foreach-active step.
+      // The foreach sub-walk has set `foreach:active` with the step index; here
+      // we drive runTaskStep (step-runner.ts) over the task's worktree, then
+      // capture the per-step baselineSha/checkpointId back INTO the active
+      // context object so a later RETHINK (U5) can reset the step. The full
+      // single-step session physics (a StepSessionExecutor scoped to one step)
+      // is U5/U7 territory; U3 wires the seam and the context capture, using the
+      // existing implementation phase as the single-pass step driver.
+      stepExecute: async (seamTask, context) => {
+        const active = context[FOREACH_ACTIVE_CONTEXT_KEY] as ForeachActiveContext | undefined;
+        if (!active || typeof active.stepIndex !== "number") {
+          return { outcome: "failure", value: "no-active-step-instance" };
+        }
+        const live = await this.store.getTask(seamTask.id);
+        // Worktree isolation (KTD-11, U10): run the instance's session in ITS OWN
+        // worktree when the foreach allocated one; otherwise the task's main
+        // worktree (shared isolation — unchanged). The file-scope guard the session
+        // machinery installs applies to either worktree unchanged (not bypassed).
+        const worktreePath = active.worktreePath || live.worktree || this.rootDir;
+        // Stamp the active instance so `runGraphTaskStep` can honor
+        // `deferDoneToReview` when judging a non-terminal step (FIX 3).
+        this.graphStepActiveContext.set(this.graphActiveContextKey(seamTask.id, active.instanceId), active);
+        const result = await runTaskStep(
+          {
+            store: this.store,
+            worktreePath,
+            // U6/U8: per-step session physics — graph-owned runs force
+            // step-session mode for the run (KTD-2/KTD-8) regardless of the
+            // runStepsInNewSessions setting. The agent authors the step's commit;
+            // this driver only observes (KTD-2). Thread the instanceId so the
+            // active-context read is per-instance (parallel-foreach safe).
+            runStep: (stepIndex) => this.runGraphTaskStep(seamTask, stepIndex, active.instanceId),
+          },
+          { id: seamTask.id, steps: live.steps },
+          active.stepIndex,
+          {
+            // Single-authority done-marking (U6/KTD-4): when the foreach template
+            // has a step-review node, leave the step in-progress so the review's
+            // APPROVE marks it done (the review is the single done authority).
+            markDoneOnSuccess: active.deferDoneToReview !== true,
+          },
+        );
+        // Capture baseline/checkpoint back into the reserved active context so the
+        // foreach sub-walk threads them to later template nodes (step-review/reset).
+        active.baselineSha = result.baselineSha;
+        active.checkpointId = result.checkpointId;
+        return {
+          outcome: result.outcome,
+          value: result.outcome === "success" ? "step-done" : "step-failed",
+          contextPatch: {
+            [FOREACH_ACTIVE_CONTEXT_KEY]: active,
+          },
+        };
+      },
+      // Step-inversion (KTD-4, U5): review the foreach-active step. Mirrors the
+      // in-session fn_review_step call (executor.ts createReviewStepTool): run
+      // reviewStep under semaphore.runNested against the instance's step number/
+      // name and the task's PROMPT content. On an authoritative (non-advisory)
+      // APPROVE, mark the step done through the projection (updateStep, KTD-7) —
+      // the step-execute seam left it in-progress (markDoneOnSuccess:false) so the
+      // review is the single done authority. The handler maps the returned verdict
+      // to outcome edges and applies the UNAVAILABLE bounded-retry limiter.
+      stepReview: async (seamTask, context, config) => {
+        const active = context[FOREACH_ACTIVE_CONTEXT_KEY] as ForeachActiveContext | undefined;
+        if (!active || typeof active.stepIndex !== "number") {
+          // No active instance — surface UNAVAILABLE so the handler routes it
+          // rather than fabricating an authoritative verdict.
+          return { verdict: "UNAVAILABLE", review: "no active step instance" };
+        }
+        const stepIndex = active.stepIndex;
+        const detail = await this.store.getTask(seamTask.id);
+        // Worktree isolation (KTD-11): review the instance's OWN worktree when set.
+        const worktreePath = active.worktreePath || detail.worktree || this.rootDir;
+        const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex + 1}`;
+        const promptContent = detail.prompt ?? "";
+        const settings = await this.store.getSettings();
+
+        const sem = this.options.semaphore;
+        const invokeReviewer = () =>
+          reviewStep(
+            worktreePath,
+            seamTask.id,
+            stepIndex + 1, // reviewStep is 1-indexed (matches fn_review_step)
+            stepName,
+            config.type,
+            promptContent,
+            // Code reviews diff against the per-step baseline captured at
+            // step-execute; plan reviews pass no baseline (advisory).
+            config.type === "code" ? active.baselineSha : undefined,
+            {
+              defaultProvider: settings.defaultProvider,
+              defaultModelId: settings.defaultModelId,
+              fallbackProvider: settings.fallbackProvider,
+              fallbackModelId: settings.fallbackModelId,
+              defaultThinkingLevel: detail.thinkingLevel ?? settings.defaultThinkingLevel,
+              taskValidatorProvider: detail.validatorModelProvider,
+              taskValidatorModelId: detail.validatorModelId,
+              projectValidatorProvider: settings.validatorProvider,
+              projectValidatorModelId: settings.validatorModelId,
+              projectValidatorFallbackProvider: settings.validatorFallbackProvider,
+              projectValidatorFallbackModelId: settings.validatorFallbackModelId,
+              globalValidatorProvider: settings.validatorGlobalProvider,
+              globalValidatorModelId: settings.validatorGlobalModelId,
+              projectDefaultOverrideProvider: settings.defaultProviderOverride,
+              projectDefaultOverrideModelId: settings.defaultModelIdOverride,
+              store: this.store,
+              taskId: seamTask.id,
+              task: detail,
+              agentPrompts: settings.agentPrompts,
+              agentStore: this.options.agentStore,
+              rootDir: this.rootDir,
+              settings,
+              onSessionCreated: (s) => this.registerSubagentSession(seamTask.id, s),
+              onSessionEnded: (s) => this.unregisterSubagentSession(seamTask.id, s),
+            },
+          );
+
+        let review: { verdict: ReviewVerdict; review: string; summary: string };
+        try {
+          review = sem ? await sem.runNested(invokeReviewer) : await invokeReviewer();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          reviewerLog.error(`${seamTask.id}: step-review failed: ${message}`);
+          return { verdict: "UNAVAILABLE", review: `reviewer error: ${message}` };
+        }
+
+        await this.store.logEntry(
+          seamTask.id,
+          `${config.type} step-review Step ${stepIndex + 1}: ${review.verdict}${config.advisory ? " (advisory)" : ""}`,
+          review.summary,
+        );
+
+        // Single-writer rule (KTD-4): advisory (split-branch) reviews never write
+        // the projection — they are fan-out checks that cannot clobber the
+        // authoritative verdict. Only an on-path APPROVE marks the step done.
+        if (review.verdict === "APPROVE" && !config.advisory) {
+          try {
+            const cur = await this.store.getTask(seamTask.id);
+            const status = cur.steps[stepIndex]?.status;
+            if (stepIndex >= 0 && stepIndex < cur.steps.length && status !== "done" && status !== "skipped") {
+              await this.updateStepGraph(seamTask.id, stepIndex, "done");
+              await this.store.logEntry(
+                seamTask.id,
+                `Step ${stepIndex + 1} (${stepName}) marked done by step-review APPROVE (graph)`,
+              );
+            }
+          } catch (err) {
+            reviewerLog.warn(
+              `${seamTask.id}: failed to mark Step ${stepIndex + 1} done after APPROVE: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        return { verdict: review.verdict, review: review.review, summary: review.summary };
+      },
     };
+  }
+
+  /**
+   * Graph-source projection write (U6/KTD-7): a thin wrapper over
+   * `store.updateStep` that tags the write with `source: "graph"` when the store
+   * supports it (additive) so the out-of-order-done guard relaxes to dependency
+   * order and a suppressed write audits loudly instead of silently. Falls back to
+   * the legacy single-arg call on older stores.
+   */
+  private async updateStepGraph(
+    taskId: string,
+    stepIndex: number,
+    status: import("@fusion/core").StepStatus,
+  ): Promise<void> {
+    const store = this.store as unknown as {
+      updateStep: (
+        id: string,
+        idx: number,
+        status: import("@fusion/core").StepStatus,
+        opts?: { source?: "graph" },
+      ) => Promise<unknown>;
+    };
+    await store.updateStep(taskId, stepIndex, status, { source: "graph" });
   }
 
   /**
@@ -4255,9 +5146,14 @@ export class TaskExecutor {
         pluginRunner: this.options.pluginRunner,
       });
 
-      if (settings.runStepsInNewSessions) {
+      // Graph-owned stepwise runs force step-session physics for the run (KTD-2/
+      // KTD-8): the discrete per-step boundary the foreach driver needs exists only
+      // in StepSessionExecutor. Pinned per run so a mid-flight setting toggle never
+      // selects the unsupported (graph ON × step-sessions OFF) combination.
+      const forceStepSession = this.graphStepSessionPinned.has(task.id);
+      if (settings.runStepsInNewSessions || forceStepSession) {
         // ── Step-Session Path ──────────────────────────────────────────
-        executorLog.log(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2})`);
+        executorLog.log(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2}${forceStepSession ? ", graph-pinned" : ""})`);
 
         const stepSessionAgent = detail.assignedAgentId && this.options.agentStore
           ? await this.options.agentStore.getAgent(detail.assignedAgentId).catch(() => null)
@@ -4789,7 +5685,13 @@ export class TaskExecutor {
         this.createTaskDocumentWriteTool(task.id),
         this.createTaskDocumentReadTool(task.id),
         this.createWorkflowListTool(),
+        this.createWorkflowGetTool(),
         this.createWorkflowSelectTool(task.id),
+        this.createTaskPromoteTool(task.id),
+        this.createWorkflowCreateTool(),
+        this.createWorkflowUpdateTool(),
+        this.createWorkflowDeleteTool(),
+        this.createTraitListTool(),
         ...(isResearchToolSurfaceEnabled(settings)
           ? createResearchTools({
             store: this.store,
@@ -5042,12 +5944,14 @@ export class TaskExecutor {
               "Review the current state of your worktree and proceed with the next pending step.",
             ].join("\n"));
           } else {
+            const customFieldDefs = await this.resolveTaskCustomFieldDefs(task.id);
             const agentPrompt = buildExecutionPrompt(
               detail,
               this.rootDir,
               settings,
               worktreePath,
               this.options.pluginRunner,
+              customFieldDefs,
             );
             await promptWithFallback(session, agentPrompt);
           }
@@ -5405,6 +6309,7 @@ export class TaskExecutor {
                 }, worktreePath);
                 stuckDetector?.trackTask(task.id, retrySession);
 
+                const retryCustomFieldDefs = await this.resolveTaskCustomFieldDefs(task.id);
                 let retryPrompt: string;
                 if (pseudoPause.kind !== "none") {
                   const shortMatch = (pseudoPause.matched ?? "").slice(0, 120);
@@ -5424,7 +6329,7 @@ export class TaskExecutor {
                     "Do NOT ask for permission. Do NOT write a summary. Just call a tool and keep working.",
                     "",
                     "Original task:",
-                    buildExecutionPrompt(detail, this.rootDir, settings, worktreePath, this.options.pluginRunner),
+                    buildExecutionPrompt(detail, this.rootDir, settings, worktreePath, this.options.pluginRunner, retryCustomFieldDefs),
                   ].join("\n");
                 } else {
                   retryPrompt = [
@@ -5434,7 +6339,7 @@ export class TaskExecutor {
                     "2. If there is remaining work, finish it and then call fn_task_done.",
                     "",
                     "Original task:",
-                    buildExecutionPrompt(detail, this.rootDir, settings, worktreePath, this.options.pluginRunner),
+                    buildExecutionPrompt(detail, this.rootDir, settings, worktreePath, this.options.pluginRunner, retryCustomFieldDefs),
                   ].join("\n");
                 }
 
@@ -6361,10 +7266,79 @@ export class TaskExecutor {
         "Update a step's status. Call before starting a step (in-progress), " +
         "after completing it (done), or to skip it (skipped). " +
         "Optionally update task dependencies by passing a dependencies array. " +
+        "Optionally set workflow-defined custom field values by passing a custom_fields patch " +
+        "(keyed by field id; validated against the workflow's field schema; pass null to clear a field). " +
+        "step/status may be omitted to update only custom_fields or dependencies. " +
         "The board updates in real-time.",
       parameters: taskUpdateParams,
       execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
-        const { step, status, dependencies } = params;
+        const { step, status, dependencies, custom_fields } = params;
+
+        // Bare-call guard (P1 api-contract): a call with none of
+        // step/status/dependencies/custom_fields silently no-op'd, which the
+        // agent cannot observe. Reject it up front so the failure is visible and
+        // self-describing. The legacy no-op text is preserved as the detail.
+        if (step === undefined && status === undefined && dependencies === undefined && custom_fields === undefined) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: "ERROR: fn_task_update requires at least one of: step+status (report step progress), " +
+                "dependencies (array of task ids), or custom_fields (workflow-defined field patch). " +
+                "No-op: provide a step+status, dependencies, or custom_fields to update.",
+            }],
+            details: {},
+            isError: true,
+          };
+        }
+
+        // Custom-field patch (KTD-13): routed through the store's single write
+        // authority, which validates each value against the task's workflow field
+        // schema. A typed rejection surfaces the offending field id + reason as a
+        // tool error so the agent can correct it. Applied first so a field-only
+        // call (step omitted) returns here.
+        if (custom_fields !== undefined) {
+          const res = await store.updateTaskCustomFields(taskId, custom_fields);
+          if (!res.ok) {
+            const r = res.rejection;
+            // Self-correcting rejection text: append the valid field ids (and,
+            // for an enum violation, the valid values for the offending field)
+            // resolved from the task's workflow field schema so a failed write
+            // carries everything the agent needs to retry. Best-effort: a
+            // resolution failure just omits the hint (the base reason still ships).
+            let hint = "";
+            try {
+              const defs = await this.resolveTaskCustomFieldDefs(taskId);
+              if (defs && defs.length > 0) {
+                if (r.code === "unknown-field" || r.code === "no-fields-defined") {
+                  hint = ` Valid field ids: ${defs.map((f) => f.id).join(", ")}.`;
+                } else if (r.code === "enum-violation") {
+                  const field = defs.find((f) => f.id === r.fieldId);
+                  const opts = field?.options?.map((o) => o.value) ?? [];
+                  if (opts.length > 0) hint = ` Valid values for '${r.fieldId}': ${opts.join(", ")}.`;
+                }
+              }
+            } catch { /* hint is best-effort */ }
+            return {
+              content: [{
+                type: "text" as const,
+                text: `ERROR: custom field '${r.fieldId}' rejected (${r.code}): ${r.detail}${hint}`,
+              }],
+              details: { fieldId: r.fieldId, code: r.code, detail: r.detail },
+              isError: true,
+            };
+          }
+          // A custom-fields-only update (no step) succeeds here.
+          if (step === undefined && status === undefined && dependencies === undefined) {
+            const updatedKeys = Object.keys(custom_fields);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Updated custom field(s): ${updatedKeys.join(", ")}.`,
+              }],
+              details: { updatedFields: updatedKeys },
+            };
+          }
+        }
 
         // Record step progress for stuck task detection.
         // Step transitions (in-progress, done, skipped) indicate real progress
@@ -6372,6 +7346,44 @@ export class TaskExecutor {
         // tool calls) is tracked separately via recordActivity in AgentLogger.
         if (status === "in-progress" || status === "done" || status === "skipped") {
           stuckDetector?.recordProgress(taskId);
+        }
+
+        // Dependencies-only update (no step) is permitted; handle deps then return.
+        if (step === undefined) {
+          if (dependencies !== undefined) {
+            if (dependencies.includes(taskId)) {
+              return {
+                content: [{ type: "text" as const, text: `Cannot add self-dependency: ${taskId} cannot depend on itself.` }],
+                details: {},
+              };
+            }
+            const invalidIds: string[] = [];
+            for (const depId of dependencies) {
+              try { await store.getTask(depId); } catch { invalidIds.push(depId); }
+            }
+            if (invalidIds.length > 0) {
+              return {
+                content: [{ type: "text" as const, text: `Cannot set dependencies — the following task(s) do not exist: ${invalidIds.join(", ")}` }],
+                details: {},
+              };
+            }
+            await store.updateTask(taskId, { dependencies });
+            return {
+              content: [{ type: "text" as const, text: `Dependencies updated.` }],
+              details: {},
+            };
+          }
+          return {
+            content: [{ type: "text" as const, text: `No-op: provide a step+status, dependencies, or custom_fields to update.` }],
+            details: {},
+          };
+        }
+
+        if (status === undefined) {
+          return {
+            content: [{ type: "text" as const, text: `Step ${step} provided without a status. Pass status (pending/in-progress/done/skipped).` }],
+            details: {},
+          };
         }
 
         if (!Number.isInteger(step) || step < 1) {
@@ -6545,8 +7557,32 @@ export class TaskExecutor {
     return sharedCreateWorkflowListTool(this.store);
   }
 
+  private createWorkflowGetTool(): ToolDefinition {
+    return sharedCreateWorkflowGetTool(this.store);
+  }
+
   private createWorkflowSelectTool(taskId: string): ToolDefinition {
     return sharedCreateWorkflowSelectTool(this.store, taskId);
+  }
+
+  private createTaskPromoteTool(taskId: string): ToolDefinition {
+    return sharedCreateTaskPromoteTool(this.store, taskId);
+  }
+
+  private createWorkflowCreateTool(): ToolDefinition {
+    return sharedCreateWorkflowCreateTool(this.store);
+  }
+
+  private createWorkflowUpdateTool(): ToolDefinition {
+    return sharedCreateWorkflowUpdateTool(this.store);
+  }
+
+  private createWorkflowDeleteTool(): ToolDefinition {
+    return sharedCreateWorkflowDeleteTool(this.store);
+  }
+
+  private createTraitListTool(): ToolDefinition {
+    return sharedCreateTraitListTool();
   }
 
   private createTaskAddDepTool(taskId: string): ToolDefinition {
@@ -7395,61 +8431,31 @@ export class TaskExecutor {
               }
               break;
             case "RETHINK": {
-              // For code reviews: git reset to baseline to revert file changes
-              // For plan reviews: skip git reset (no code has been written yet)
-              if (reviewType === "code" && baseline) {
-                try {
-                  await execAsync(`git reset --hard ${baseline}`, { cwd: worktreePath });
-                  executorLog.log(`${taskId}: RETHINK — git reset --hard ${baseline}`);
-                } catch (gitErr: unknown) {
-                  const gitErrMessage = gitErr instanceof Error ? gitErr.message : String(gitErr);
-                  executorLog.error(`${taskId}: RETHINK git reset failed: ${gitErrMessage}`);
-                }
-              } else if (reviewType === "code") {
-                executorLog.log(`${taskId}: RETHINK — no baseline SHA, skipping git reset`);
-              }
-
-              // Rewind conversation to pre-step checkpoint
+              // RETHINK mechanics (git reset to baseline + session rewind +
+              // step→pending + RETHINK log entry) are the U2 substrate seam.
+              // The legacy in-session path delegates to the single extracted
+              // implementation in step-runner.ts so there is exactly one copy.
+              // No blast-radius guard here: this path is intra-session with an
+              // agent-supplied baseline (KTD-2 — the guard is for graph-owned
+              // shared-isolation resets), so behavior stays byte-identical.
               const checkpointId = stepCheckpoints.get(stepIndex);
-              if (checkpointId && sessionRef.current) {
-                try {
-                  await sessionRef.current.navigateTree(checkpointId, { summarize: false });
-                  executorLog.log(`${taskId}: RETHINK — session rewound to checkpoint ${checkpointId}`);
-                } catch (rewindErr: unknown) {
-                  const msg = rewindErr instanceof Error ? rewindErr.message : String(rewindErr);
-                  executorLog.warn(`${taskId}: RETHINK navigateTree rewind failed, falling back to branchWithSummary: ${msg}`);
-                  // Fallback to branchWithSummary
-                  try {
-                    sessionRef.current.sessionManager.branchWithSummary(
-                      checkpointId,
-                      `RETHINK: ${result.summary || "Approach rejected by reviewer"}`,
-                    );
-                    executorLog.log(`${taskId}: RETHINK — branched from checkpoint ${checkpointId}`);
-                  } catch (branchErr: unknown) {
-                    const branchErrMessage = branchErr instanceof Error ? branchErr.message : String(branchErr);
-                    executorLog.error(`${taskId}: RETHINK session rewind failed: ${branchErrMessage}`);
-                  }
-                }
-              } else {
-                executorLog.log(`${taskId}: RETHINK — no session checkpoint for step ${step}, skipping rewind`);
-              }
-
-              // Reset step status to pending
-              await store.updateStep(taskId, stepIndex, "pending");
+              await resetStepToBaseline(
+                {
+                  store,
+                  worktreePath,
+                  sessionRef,
+                  reviewType: reviewType === "plan" ? "plan" : "code",
+                  summary: result.summary,
+                },
+                { id: taskId, steps: taskSteps },
+                stepIndex,
+                reviewType === "code" ? baseline : undefined,
+                checkpointId,
+              );
 
               if (reviewType === "plan") {
-                await store.logEntry(
-                  taskId,
-                  `RETHINK: Step ${step} plan rewound — session checkpoint ${checkpointId || "N/A"}`,
-                  result.summary,
-                );
                 text = `RETHINK\n\nYour plan was rejected. Here is why:\n\n${result.review}\n\nTake a different approach to planning this step. Do NOT repeat the rejected strategy.`;
               } else {
-                await store.logEntry(
-                  taskId,
-                  `RETHINK: Step ${step} rewound — git reset to ${baseline || "N/A"}, session checkpoint ${checkpointId || "N/A"}`,
-                  result.summary,
-                );
                 text = `RETHINK\n\nYour previous approach was rejected. Here is why:\n\n${result.review}\n\nTake a different approach. Do NOT repeat the rejected strategy. Re-read the step requirements and find an alternative solution.`;
               }
               break;
@@ -11010,6 +12016,26 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
     const baseCommitSha = detail.baseCommitSha;
     if (!baseCommitSha) return;
 
+    // Step-inversion read-through (KTD-12, U12): for graph-owned tasks, resolve
+    // which artifact/parser governs the step list from the workflow's parse-steps
+    // declaration so reconcile knows the step source. The `complete step N`
+    // commit convention is parser-agnostic (every parser yields the same step
+    // ordering the agent commits against), so the git-history reconcile below is
+    // unchanged — this read-through records the governing source for diagnostics
+    // and is the seam a future parser-specific reconcile would consult. Legacy
+    // tasks (no parse-steps node) resolve to undefined and are untouched.
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, taskId);
+      const stepSource = this.resolveTaskStepSource(ir);
+      if (stepSource) {
+        executorLog.log(
+          `${taskId}: reconcile step source governed by parse-steps(artifact=${stepSource.artifact}, parser=${stepSource.parser})`,
+        );
+      }
+    } catch {
+      // Read-through is diagnostic only; never block reconcile on it.
+    }
+
     const pendingOrInProgressSteps = detail.steps.filter(
       (s, i) => (s.status === "pending" || s.status === "in-progress") && i > 0,
     );
@@ -11604,6 +12630,7 @@ export function buildExecutionPrompt(
   settings?: Settings,
   worktreePath?: string,
   pluginRunner?: PluginRunner,
+  customFieldDefs?: WorkflowFieldDefinition[],
 ): string {
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
@@ -11702,6 +12729,35 @@ git log --oneline
     steeringSection = lines.join("\n");
   }
 
+  // Build custom fields section (KTD-13): when the task's workflow declares
+  // custom fields, the executor agent can write them via fn_task_update
+  // (custom_fields) — but without the schema it is writing blind. List each
+  // field's id/name/type, enum options, required flag, and current value so
+  // the write is informed and self-correcting. Compact: one line per field.
+  let customFieldsSection = "";
+  if (customFieldDefs && customFieldDefs.length > 0) {
+    const current = task.customFields ?? {};
+    const lines = [
+      "",
+      "## Custom fields",
+      "",
+      "This task's workflow declares custom fields. Set them with `fn_task_update(custom_fields={...})` keyed by field id (pass null to clear).",
+      "",
+    ];
+    for (const f of customFieldDefs) {
+      const parts = [`- \`${f.id}\` (${f.name}) — type: ${f.type}`];
+      if ((f.type === "enum" || f.type === "multi-enum") && f.options && f.options.length > 0) {
+        const opts = f.options.map((o) => (o.label && o.label !== o.value ? `${o.value} (${o.label})` : o.value)).join(", ");
+        parts.push(`options: [${opts}]`);
+      }
+      if (f.required) parts.push("required");
+      const hasValue = Object.prototype.hasOwnProperty.call(current, f.id) && current[f.id] !== null && current[f.id] !== undefined;
+      parts.push(`current: ${hasValue ? JSON.stringify(current[f.id]) : "unset"}`);
+      lines.push(parts.join("; "));
+    }
+    customFieldsSection = lines.join("\n") + "\n";
+  }
+
   const taskPromptContributions = pluginRunner?.getPromptContributionsForSurface("executor-task") ?? [];
   if (taskPromptContributions.length > 0) {
     executorLog.log(`${task.id}: applied ${taskPromptContributions.length} plugin prompt contributions for executor-task surface`);
@@ -11717,7 +12773,7 @@ ${task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}`
 ## PROMPT.md
 
 ${prompt}
-${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}
+${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}${customFieldsSection}
 ## Review level: ${reviewLevel}
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}

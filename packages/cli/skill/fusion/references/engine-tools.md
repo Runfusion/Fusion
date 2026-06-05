@@ -16,7 +16,13 @@ These tools are **not** part of the user-invokable extension surface. They are i
 | `fn_task_document_write` | triage, executor, heartbeat | Save/update a named task document revision | `key` (string), `content` (string), `author?` (string) |
 | `fn_task_document_read` | triage, executor, heartbeat | Read one task document or list all | `key?` (string) |
 | `fn_workflow_list` | executor | List the project's custom workflows (read-only built-ins plus user definitions) | none |
+| `fn_workflow_get` | executor | Fetch one workflow definition by id — name, description, builtin flag, and the full IR (nodes/edges/columns/artifacts/fields) as JSON | `workflow_id` (string) |
 | `fn_workflow_select` | executor | Assign a custom workflow to a task (defaults to the current task) | `workflow_id` (string), `task_id?` (string) |
+| `fn_workflow_create` | executor | Create a custom workflow definition from a graph IR (validated server-side). v2 IR supports step-inversion constructs: `parse-steps`, `foreach` (mode/isolation/concurrency/maxReworkCycles), `step-execute`, `step-review`, `code` nodes, `rework` edges, plus `artifacts` and custom `fields` declarations | `name` (string), `description?` (string), `ir` (object), `layout?` (object) |
+| `fn_workflow_update` | executor | Update a custom workflow definition's name/description/ir/layout (built-ins cannot be edited; same step-inversion IR constructs as create; editing `fields` orphans rather than destroys existing task values) | `workflow_id` (string), `name?` (string), `description?` (string), `ir?` (object), `layout?` (object), `rehome_to?` (string) |
+| `fn_workflow_delete` | executor | Delete a custom workflow definition (built-ins cannot be deleted); selecting tasks are re-homed to the default workflow's entry column | `workflow_id` (string) |
+| `fn_task_promote` | executor | Promote a held task out of a manual-release hold column (defaults to the current task) | `task_id?` (string) |
+| `fn_trait_list` | executor | List the registered column trait catalog (built-in and plugin traits) | none |
 | `fn_memory_search` | triage, executor, heartbeat | Search project memory plus per-agent layered memory snippets | `query` (string), `limit?` (number) |
 | `fn_memory_get` | triage, executor, heartbeat | Read a bounded memory file window (including bounded per-agent layered paths) | `path` (string), `startLine?` (number), `lineCount?` (number) |
 | `fn_memory_append` | executor, heartbeat (when writable backend enabled) | Append memory notes with explicit scope: `scope="agent"` for private operating context, `scope="project"` for workspace-wide durable knowledge | `scope?` (`project` \| `agent`), `layer` (`long-term` \| `daily`), `content` (string) |
@@ -53,7 +59,7 @@ Note: step-session execution (`step-session-executor.ts`) reuses executor coordi
 
 | Tool | Purpose | Parameters |
 |---|---|---|
-| `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`) | `step` (number), `status` (enum) |
+| `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`), task dependencies, and/or workflow-defined custom field values | `step?` (number, 1-indexed), `status?` (enum), `dependencies?` (string[]), `custom_fields?` (object keyed by field id; validated against the workflow field schema, `null` clears a field) |
 | `fn_task_add_dep` | Add a dependency to current task (confirmation-gated) | `task_id` (string), `confirm?` (boolean) |
 | `fn_task_done` | Mark task complete and optionally store summary | `summary?` (string) |
 | `fn_review_step` | Spawn step plan/code reviewer | `step` (number), `type` (`plan` \| `code`), `step_name` (string), `baseline?` (string) |

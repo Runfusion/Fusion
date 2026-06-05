@@ -4,8 +4,6 @@ import { resolveGithubTrackingAuth } from "./github-auth.js";
 
 const TRANSIENT_RETRY_DELAY_MS = 25;
 
-type Column = "triage" | "todo" | "in-progress" | "in-review" | "done" | "archived";
-
 interface TaskMovedEvent {
   task: {
     id: string;
@@ -21,13 +19,16 @@ interface TaskMovedEvent {
       };
     };
   };
-  from: Column;
-  to: Column;
+  // #1403: the store's `task:moved` event now carries `ColumnId` (custom column
+  // ids admitted). These handlers only literal-compare against legacy ids, so a
+  // string-widened field is safe.
+  from: string;
+  to: string;
 }
 
 export function decideIssueAction(
-  from: Column,
-  to: Column,
+  from: string,
+  to: string,
 ): { action: "close" | "reopen"; stateReason: "completed" | "not_planned" | "reopened" } | null {
   if (to === "done" && from !== "done") {
     return { action: "close", stateReason: "completed" };

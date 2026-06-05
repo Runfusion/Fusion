@@ -24,7 +24,8 @@ const dockerClientServiceMock = {
   getContainerInfo: vi.fn(),
 };
 
-vi.mock("@fusion/core", () => ({
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
   DockerProvisioningService: vi.fn().mockImplementation(() => ({
     provision: provisionMock,
     deprovision: deprovisionMock,

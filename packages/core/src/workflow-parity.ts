@@ -1,4 +1,7 @@
-import type { RunAuditEvent } from "./types.js";
+import type { Column, RunAuditEvent } from "./types.js";
+import { VALID_TRANSITIONS } from "./types.js";
+import type { WorkflowIr } from "./workflow-ir-types.js";
+import { resolveAllowedColumns, workflowHasColumn } from "./workflow-transitions.js";
 
 export const WORKFLOW_PARITY_OBSERVED_MUTATION = "workflow:parity-observed" as const;
 export const WORKFLOW_PARITY_DRIFT_MUTATION = "workflow:parity-drift" as const;
@@ -313,5 +316,170 @@ export function buildWorkflowObservation(parts: WorkflowObservationParts): Workf
     reviewVerdict: parts.reviewVerdict ?? null,
     mergeOutcome: parts.mergeOutcome ?? null,
     invariants: { ...DEFAULT_WORKFLOW_INVARIANTS, ...parts.invariants },
+  };
+}
+
+// ── Transition parity (U12) ──────────────────────────────────────────────────
+//
+// The transition-parity suite (U4) proves, as a unit test, that the default
+// workflow's resolved column adjacency equals the legacy VALID_TRANSITIONS
+// graph. U12 surfaces the SAME comparison as a runtime check so the graduation
+// gate can re-evaluate it against whatever IR is actually resolved for the
+// default workflow in the field (not just the static fixture), catching a
+// deliberately or accidentally drifted default-workflow adjacency.
+
+/** One adjacency disagreement between the legacy graph and the resolved IR. */
+export interface TransitionParityDiff {
+  /** The `from` column whose allowed-set diverged. */
+  from: string;
+  /** Allowed targets per the legacy VALID_TRANSITIONS graph. */
+  legacyAllowed: string[];
+  /** Allowed targets per the resolved workflow IR column graph. */
+  resolvedAllowed: string[];
+}
+
+export interface TransitionParityReport {
+  /** True when every legacy column's allowed-set matches the resolved IR's. */
+  agree: boolean;
+  /** Per-column adjacency disagreements (empty when `agree`). */
+  diffs: TransitionParityDiff[];
+}
+
+const LEGACY_COLUMNS = Object.keys(VALID_TRANSITIONS) as Column[];
+
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+/**
+ * Compare the default-workflow IR's resolved column adjacency against the legacy
+ * VALID_TRANSITIONS graph (R12 transition parity, machine-checked). For every
+ * legacy column, the resolved allowed-set must equal the legacy allowed-set
+ * exactly (allowed AND rejected). The IR must also recognize every legacy
+ * column. Any divergence is a graduation blocker.
+ */
+export function checkTransitionParity(ir: WorkflowIr): TransitionParityReport {
+  const diffs: TransitionParityDiff[] = [];
+  for (const from of LEGACY_COLUMNS) {
+    const legacyAllowed = sortedUnique(VALID_TRANSITIONS[from]);
+    // A column the resolved IR doesn't even define diverges by construction.
+    const resolvedAllowed = workflowHasColumn(ir, from)
+      ? sortedUnique(resolveAllowedColumns(ir, from))
+      : [];
+    const equal =
+      legacyAllowed.length === resolvedAllowed.length &&
+      legacyAllowed.every((value, index) => value === resolvedAllowed[index]);
+    if (!equal) diffs.push({ from, legacyAllowed, resolvedAllowed });
+  }
+  return { agree: diffs.length === 0, diffs };
+}
+
+// ── Dual-accept disagreement counter (U12) ───────────────────────────────────
+//
+// U6 logs `merge:dependency-parity-diff` audits whenever the explicit handoff
+// marker and the complete-flag column disagree during the FN-5719 dual-accept
+// window. The window CLOSES at graduation, so any disagreement above zero over
+// the observation period blocks the flip. This surfaces the count (and the
+// lease-parity counterpart) from the audit trail as a graduation signal.
+
+export const DUAL_ACCEPT_PARITY_MUTATIONS = [
+  "merge:dependency-parity-diff",
+  "merge:lease-parity-diff",
+] as const;
+
+const DUAL_ACCEPT_PARITY_MUTATION_SET = new Set<string>(DUAL_ACCEPT_PARITY_MUTATIONS);
+
+export interface DualAcceptDisagreementReport {
+  /** Total dual-accept disagreement audit events in scope. */
+  total: number;
+  /** Count per mutation type (dependency vs lease parity diff). */
+  byMutationType: Record<string, number>;
+}
+
+/**
+ * Count the dual-accept marker/column disagreement audits (U6) in scope. Pure
+ * over the supplied events so the store can feed it whatever audit window the
+ * graduation report observes.
+ */
+export function countDualAcceptDisagreements(
+  events: readonly RunAuditEvent[],
+): DualAcceptDisagreementReport {
+  const byMutationType: Record<string, number> = {};
+  let total = 0;
+  for (const event of events) {
+    const type = String(event.mutationType);
+    if (event.domain !== "database" || !DUAL_ACCEPT_PARITY_MUTATION_SET.has(type)) continue;
+    byMutationType[type] = (byMutationType[type] ?? 0) + 1;
+    total += 1;
+  }
+  return { total, byMutationType };
+}
+
+// ── Graduation report (U12) ──────────────────────────────────────────────────
+//
+// The flag default-flip criteria, aggregated into one report (KTD-8). The flip
+// is a FIELD decision — this report is the GATE, not the trigger. `ready` is
+// true only when ALL of:
+//   - the five-invariant dual-observe parity shows zero drift (drift === 0) over
+//     a non-empty observation window;
+//   - the default workflow's transition parity holds (no adjacency drift);
+//   - zero dual-accept marker/column disagreements over the window.
+
+export interface WorkflowColumnsGraduationReport {
+  /** Five-invariant dual-observe parity (from the audit trail). */
+  parity: WorkflowParitySummary;
+  /** Default-workflow transition-graph parity vs VALID_TRANSITIONS. */
+  transitionParity: TransitionParityReport;
+  /** Dual-accept marker/column disagreement count (U6). */
+  dualAccept: DualAcceptDisagreementReport;
+  /** True only when every gate passes — the flag is eligible to default on. */
+  ready: boolean;
+  /** Human-readable blockers when not ready (empty when ready). */
+  blockers: string[];
+}
+
+export interface GraduationReportInputs {
+  /** Dual-observe parity summary (e.g. `store.getWorkflowParitySummary()`). */
+  parity: WorkflowParitySummary;
+  /** The resolved default-workflow IR to transition-parity-check. */
+  defaultWorkflowIr: WorkflowIr;
+  /** Audit events in the observation window for dual-accept counting. */
+  dualAcceptEvents: readonly RunAuditEvent[];
+}
+
+/**
+ * Aggregate the flag default-flip criteria into a single graduation report
+ * (U12, absorbing plan 002's M-D). Pure: the caller assembles the inputs from
+ * the store's audit trail and resolved default workflow, and decides whether to
+ * flip the flag — this function only computes the gate.
+ */
+export function computeWorkflowColumnsGraduationReport(
+  inputs: GraduationReportInputs,
+): WorkflowColumnsGraduationReport {
+  const { parity, defaultWorkflowIr, dualAcceptEvents } = inputs;
+  const transitionParity = checkTransitionParity(defaultWorkflowIr);
+  const dualAccept = countDualAcceptDisagreements(dualAcceptEvents);
+
+  const blockers: string[] = [];
+  if (parity.observed === 0) {
+    blockers.push("no parity observations recorded yet (observation window empty)");
+  }
+  if (parity.drift > 0) {
+    blockers.push(`five-invariant parity drift observed (${parity.drift} drift events)`);
+  }
+  if (!transitionParity.agree) {
+    const cols = transitionParity.diffs.map((d) => d.from).join(", ");
+    blockers.push(`default-workflow transition parity drifted (columns: ${cols})`);
+  }
+  if (dualAccept.total > 0) {
+    blockers.push(`dual-accept marker/column disagreements above zero (${dualAccept.total})`);
+  }
+
+  return {
+    parity,
+    transitionParity,
+    dualAccept,
+    ready: blockers.length === 0,
+    blockers,
   };
 }

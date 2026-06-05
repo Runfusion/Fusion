@@ -43,6 +43,7 @@
     "@earendil-works/pi-ai": "^0.78.0",
     "@earendil-works/pi-coding-agent": "^0.78.0",
     "cron-parser": "^5.5.0",
+    "esbuild": "^0.25.12",
     "proper-lockfile": "^4.1.2",
     "typebox": "^1.0.0"
   },

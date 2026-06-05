@@ -715,7 +715,7 @@ describe("schema migration", () => {
 
     const row = db.prepare("SELECT deletedAt FROM tasks WHERE id = 'FN-legacy'").get() as { deletedAt: string | null };
     expect(row.deletedAt).toBeNull();
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
 
     db.close();
   });
@@ -748,7 +748,7 @@ describe("schema migration", () => {
       { id: "WS-001", mode: "prompt", gateMode: "advisory" },
       { id: "WS-002", mode: "script", gateMode: "advisory" },
     ]);
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
 
     db.close();
   });
@@ -798,7 +798,7 @@ describe("schema migration", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
     });
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
 
     db.close();
   });
@@ -827,7 +827,7 @@ describe("schema migration", () => {
 
     const columns = db.prepare("PRAGMA table_info(milestones)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain("acceptanceCriteria");
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
 
     db.close();
   });
@@ -868,7 +868,7 @@ describe("schema migration", () => {
     const missionColumns = db.prepare("PRAGMA table_info(missions)").all() as Array<{ name: string }>;
     expect(missionColumns.map((column) => column.name)).toContain("autoMerge");
 
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
     db.close();
   });
 
@@ -902,7 +902,7 @@ describe("schema migration", () => {
       { id: "WS-002", mode: "script", enabled: 1, gateMode: "advisory" },
       { id: "WS-003", mode: "prompt", enabled: 0, gateMode: "advisory" },
     ]);
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
 
     db.close();
   });
@@ -939,8 +939,68 @@ describe("schema migration", () => {
 
     const indexes = db.prepare("PRAGMA index_list(mission_goals)").all() as Array<{ name: string }>;
     expect(indexes.some((index) => index.name === "idxMissionGoalsGoalId")).toBe(true);
-    expect(db.getSchemaVersion()).toBe(105);
+    expect(db.getSchemaVersion()).toBe(108);
 
+    db.close();
+  });
+
+  it("adds workflow_run_step_instances table + tasks.customFields when migrating from schema version 107", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '107')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+
+    db.init();
+
+    // The new per-step-instance run-state table exists with its index.
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+    expect(tables.map((row) => row.name)).toContain("workflow_run_step_instances");
+
+    const stepInstanceColumns = db
+      .prepare("PRAGMA table_info(workflow_run_step_instances)")
+      .all() as Array<{ name: string }>;
+    expect(stepInstanceColumns.map((column) => column.name)).toEqual([
+      "taskId",
+      "runId",
+      "foreachNodeId",
+      "stepIndex",
+      "pinnedStepCount",
+      "currentNodeId",
+      "status",
+      "baselineSha",
+      "checkpointId",
+      "reworkCount",
+      "branchName",
+      "integratedAt",
+      "updatedAt",
+    ]);
+
+    const stepInstanceIndexes = db
+      .prepare("PRAGMA index_list(workflow_run_step_instances)")
+      .all() as Array<{ name: string }>;
+    expect(
+      stepInstanceIndexes.some((index) => index.name === "idx_workflow_run_step_instances_task_run"),
+    ).toBe(true);
+
+    // tasks.customFields column is added with a default-'{}' definition.
+    const taskColumns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{
+      name: string;
+      dflt_value: string | null;
+    }>;
+    const customFieldsColumn = taskColumns.find((column) => column.name === "customFields");
+    expect(customFieldsColumn).toBeDefined();
+    expect(customFieldsColumn?.dflt_value).toBe("'{}'");
+
+    expect(db.getSchemaVersion()).toBe(108);
     db.close();
   });
 });

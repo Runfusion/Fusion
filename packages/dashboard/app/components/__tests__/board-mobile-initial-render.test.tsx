@@ -5,6 +5,7 @@ import { Board } from "../Board";
 import { loadAllAppCss } from "../../test/cssFixture";
 
 vi.mock("../../api", () => ({
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
 }));
 
@@ -108,7 +109,7 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     board.scrollLeft = 500;
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expect(board.scrollLeft).toBe(0);
     expect(raf).toHaveBeenCalled();
@@ -129,7 +130,7 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
 
     const board = document.querySelector("main.board") as HTMLElement;
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expect(board.scrollLeft).toBe(0);
 
@@ -139,7 +140,7 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     window.dispatchEvent(pageShow);
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expect(board.scrollLeft).toBe(0);
 
@@ -189,7 +190,7 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     window.dispatchEvent(pageShow);
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expect(board.scrollLeft).toBe(500);
     expect(addEventListenerSpy).not.toHaveBeenCalledWith("pageshow", expect.any(Function));

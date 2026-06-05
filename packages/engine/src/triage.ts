@@ -139,6 +139,12 @@ Follow this structure exactly:
 
 ## Steps
 
+> Optional: a step heading may carry a \`(depends: N,M)\` annotation listing the 1-indexed
+> step numbers it depends on — e.g. \`### Step 3 (depends: 1): Title\`. Annotate ONLY steps
+> that are genuinely independent of their immediate predecessor; an unannotated step is
+> assumed to depend on the one before it (fully sequential). Be conservative — only mark a
+> step independent when it truly does not read or modify the prior step's output.
+
 ### Step 0: Preflight
 
 - [ ] Required files and paths exist
@@ -436,6 +442,12 @@ Follow this structure exactly:
 - \`path/to/directory/*\`
 
 ## Steps
+
+> Optional: a step heading may carry a \`(depends: N,M)\` annotation listing the 1-indexed
+> step numbers it depends on — e.g. \`### Step 3 (depends: 1): Title\`. Annotate ONLY steps
+> that are genuinely independent of their immediate predecessor; an unannotated step is
+> assumed to depend on the one before it (fully sequential). Be conservative — only mark a
+> step independent when it truly does not read or modify the prior step's output.
 
 ### Step 0: Preflight
 

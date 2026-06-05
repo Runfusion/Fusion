@@ -10,6 +10,12 @@ vi.mock("@earendil-works/pi-ai", () => ({
     Array: (schema: unknown, opts?: unknown) => ({ type: "array", items: schema, ...((opts as object) ?? {}) }),
     Union: (schemas: unknown[], opts?: unknown) => ({ anyOf: schemas, ...((opts as object) ?? {}) }),
     Literal: (value: unknown) => ({ const: value }),
+    Unknown: (opts?: unknown) => ({ ...((opts as object) ?? {}) }),
+    Record: (_key: unknown, value: unknown, opts?: unknown) => ({
+      type: "object",
+      additionalProperties: value,
+      ...((opts as object) ?? {}),
+    }),
   },
 }));
 

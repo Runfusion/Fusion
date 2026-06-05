@@ -1447,3 +1447,53 @@
     flex-wrap: wrap;
   }
 }
+
+/* Card-placed custom field badges (U13 / KTD-14). */
+.card-field-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+
+.card-field-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border: 1px solid var(--border-color, #2a2d34);
+  border-radius: 999px;
+  background: var(--chip-bg, #1c1f26);
+  color: var(--text-muted, #b4b8c0);
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-field-badge--boolean {
+  background: var(--accent, #4f7cff);
+  border-color: var(--accent, #4f7cff);
+  color: #fff;
+}
+
+.card-field-badge--multi {
+  gap: 3px;
+  max-width: none;
+}
+
+.card-field-badge-token {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #2a2d34);
+  background: var(--chip-bg, #1c1f26);
+}
+
+.card-field-badge--overflow {
+  font-weight: 600;
+}

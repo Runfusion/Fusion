@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import * as projectMemory from "../project-memory.js";
 import { AgentStore } from "../agent-store.js";
 import { CentralDatabase } from "../central-db.js";
-import { InvalidFileScopeError, isValidFileScopeEntry, TaskStore, TaskHasDependentsError } from "../store.js";
+import { InvalidFileScopeError, isValidFileScopeEntry, parseStepHeadings, TaskStore, TaskHasDependentsError } from "../store.js";
 import { buildResearchDocumentKey, type Task } from "../types.js";
 import { createTaskStoreTestHarness, makeTmpDir } from "./store-test-helpers.js";
 
@@ -40,6 +40,104 @@ describe("TaskStore", () => {
 
       const steps = await store.parseStepsFromPrompt(task.id);
       expect(steps).toEqual([]);
+    });
+
+    it("parses depends annotations from PROMPT.md (1-indexed → 0-indexed)", async () => {
+      const task = await store.createTask({ description: "Task with depends" });
+      const dir = join(rootDir, ".fusion", "tasks", task.id);
+      await writeFile(
+        join(dir, "PROMPT.md"),
+        `# ${task.id}: Task
+
+## Steps
+
+### Step 1: First
+
+### Step 2 (depends: 1): Second
+
+### Step 3 (depends: 1,2): Third
+`,
+      );
+      const steps = await store.parseStepsFromPrompt(task.id);
+      expect(steps).toEqual([
+        { name: "First", status: "pending" },
+        { name: "Second", status: "pending", dependsOn: [0] },
+        { name: "Third", status: "pending", dependsOn: [0, 1] },
+      ]);
+    });
+  });
+
+  describe("parseStepHeadings (step-inversion U1)", () => {
+    it("parses unannotated headings byte-identically to the legacy regex", () => {
+      const content = `## Steps
+
+### Step 0: Preflight
+
+- [ ] x
+
+### Step 1: Implementation
+
+### Step 2: Testing
+`;
+      // The legacy behavior: name = text after the first colon, trimmed; no dependsOn.
+      expect(parseStepHeadings(content)).toEqual([
+        { name: "Preflight", status: "pending" },
+        { name: "Implementation", status: "pending" },
+        { name: "Testing", status: "pending" },
+      ]);
+    });
+
+    it("matches the legacy regex output exactly for varied unannotated headings", () => {
+      const content = [
+        "### Step 0: A",
+        "### Step 12: Multi word title",
+        "### Step 3 — dash but no annotation: Real Name",
+        "### Step 4: trailing spaces here   ",
+        "### Step 5 no colon at all",
+        "not a step heading: ignored",
+      ].join("\n");
+      // Reference: the original regex.
+      const legacy: { name: string; status: "pending" }[] = [];
+      const re = /^###\s+Step\s+\d+[^:]*:\s*(.+)$/gm;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content)) !== null) {
+        legacy.push({ name: m[1].trim(), status: "pending" });
+      }
+      expect(parseStepHeadings(content)).toEqual(legacy);
+    });
+
+    it("parses (depends: 1,2) into 0-indexed dependsOn", () => {
+      expect(parseStepHeadings("### Step 3 (depends: 1,2): Title")).toEqual([
+        { name: "Title", status: "pending", dependsOn: [0, 1] },
+      ]);
+    });
+
+    it("dedupes and sorts depends values", () => {
+      expect(parseStepHeadings("### Step 5 (depends: 3,1,3,2): T")).toEqual([
+        { name: "T", status: "pending", dependsOn: [0, 1, 2] },
+      ]);
+    });
+
+    it("empty depends list yields no dependsOn", () => {
+      expect(parseStepHeadings("### Step 2 (depends: ): T")).toEqual([
+        { name: "T", status: "pending" },
+      ]);
+    });
+
+    it("falls back deterministically on a malformed depends annotation (name after colon following the paren)", () => {
+      // 'bad' is not a positive integer → fallback: name starts after the colon
+      // following the closing paren.
+      expect(parseStepHeadings("### Step 1 (depends: bad): Real Title")).toEqual([
+        { name: "Real Title", status: "pending" },
+      ]);
+    });
+
+    it("falls back deterministically when the annotation has no closing paren", () => {
+      // No closing paren → name starts after the FIRST colon (inside `depends:`),
+      // per the documented deterministic fallback.
+      expect(parseStepHeadings("### Step 1 (depends: 1,2 oops: Title")).toEqual([
+        { name: "1,2 oops: Title", status: "pending" },
+      ]);
     });
   });
 

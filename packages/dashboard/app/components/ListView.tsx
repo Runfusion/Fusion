@@ -3,7 +3,7 @@ import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "rea
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, Archive } from "lucide-react";
-import type { Task, TaskDetail, Column, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
 import { COLUMNS, DEFAULT_COLUMN, getErrorMessage, isColumn } from "@fusion/core";
 import { useColumnLabel } from "../i18n/labels";
 import { sortTasksForDisplayColumn } from "./taskSorting";
@@ -29,6 +29,12 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
   done: "var(--done)",
   archived: "var(--text-dim)",
 };
+
+/** #1403: resolve a column color by id; workflow-defined custom columns that
+ *  have no legacy color fall back to the neutral accent rather than `undefined`. */
+function columnColor(column: ColumnId): string {
+  return (COLUMN_COLOR_MAP as Record<string, string>)[column] ?? "var(--accent)";
+}
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 
@@ -1811,7 +1817,7 @@ export function ListView({
                                           className="list-progress-fill"
                                           style={{
                                             width: `${taskProgress.percent}%`,
-                                            backgroundColor: COLUMN_COLOR_MAP[task.column],
+                                            backgroundColor: columnColor(task.column),
                                           }}
                                         />
                                       </div>
@@ -2009,8 +2015,8 @@ export function ListView({
                                     <span
                                       className="list-column-badge"
                                       style={{
-                                        background: `color-mix(in srgb, ${COLUMN_COLOR_MAP[task.column]} 12%, transparent)`,
-                                        color: COLUMN_COLOR_MAP[task.column],
+                                        background: `color-mix(in srgb, ${columnColor(task.column)} 12%, transparent)`,
+                                        color: columnColor(task.column),
                                       }}
                                     >
                                       {columnLabel(task.column)}
@@ -2043,7 +2049,7 @@ export function ListView({
                                               className="list-progress-fill"
                                               style={{
                                                 width: `${taskProgress.percent}%`,
-                                                backgroundColor: COLUMN_COLOR_MAP[task.column],
+                                                backgroundColor: columnColor(task.column),
                                               }}
                                             />
                                           </div>

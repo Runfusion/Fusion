@@ -34,8 +34,10 @@ const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
 const mockAgentStoreGetAgent = vi.fn().mockResolvedValue(null);
 
-vi.mock("@fusion/core", () => {
+vi.mock("@fusion/core", async (importOriginal) => {
+  const __actual = await importOriginal<typeof import("@fusion/core")>();
   return {
+    ...__actual,
     CentralCore: class MockCentralCore {
       init = mockInit;
       close = mockClose;

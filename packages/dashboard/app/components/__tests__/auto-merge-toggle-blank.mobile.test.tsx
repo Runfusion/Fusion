@@ -6,6 +6,7 @@ import { PageErrorBoundary } from "../ErrorBoundary";
 import type { Task } from "@fusion/core";
 
 vi.mock("../../api", () => ({
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
 }));
 
@@ -208,13 +209,13 @@ describe("auto-merge toggle mobile blank regression", () => {
     expectBoardVisible();
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
 
     board.scrollLeft = 240;
     act(() => {
       visualViewport.dispatchResize();
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expect(board.scrollLeft).toBe(0);
 
@@ -226,7 +227,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     board.scrollLeft = 240;
     act(() => {
       visualViewport.dispatchResize();
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
 
     expectBoardVisible();
@@ -247,7 +248,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     const board = document.querySelector("main.board") as HTMLElement;
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
 
     const toggle = screen.getByRole("checkbox", { name: "Auto-merge" });
@@ -259,7 +260,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     board.scrollLeft = 180;
     act(() => {
       visualViewport.dispatchResize();
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expectBoardVisible();
     expect(board.scrollLeft).toBe(0);
@@ -269,7 +270,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     board.scrollLeft = 180;
     act(() => {
       visualViewport.dispatchResize();
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
     expectBoardVisible();
     expect(board.scrollLeft).toBe(0);
@@ -295,7 +296,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     );
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
 
     expect(screen.getByTestId("task-card-FN-5936")).toHaveTextContent("true");
@@ -321,7 +322,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     const board = document.querySelector("main.board") as HTMLElement;
 
     act(() => {
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Auto-merge" }));
@@ -331,7 +332,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     Object.defineProperty(pageShow, "persisted", { configurable: true, value: true });
     act(() => {
       window.dispatchEvent(pageShow);
-      vi.runAllTimers();
+      vi.runOnlyPendingTimers();
     });
 
     expectBoardVisible();

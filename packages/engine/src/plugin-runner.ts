@@ -21,6 +21,8 @@ import type {
   PluginContext,
   PluginSkillContribution,
   PluginWorkflowStepContribution,
+  PluginTraitContribution,
+  WorkflowIr,
   PluginPromptContribution,
   PluginPromptContributions,
   PluginPromptSurface,
@@ -32,7 +34,26 @@ import type {
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { isAbsolute } from "node:path";
+import {
+  getTraitRegistry,
+  resolveWorkflowIrForTask,
+} from "@fusion/core";
 import { createLogger, executorLog } from "./logger.js";
+import type { WorkflowCustomNodeRunner } from "./workflow-node-handlers.js";
+import {
+  registerPluginTraits,
+  degradePluginTraits,
+  unregisterPluginTraits,
+  findLivePluginTraitDependents,
+  pluginTraitRegistryId,
+  PluginTraitHasDependentsError,
+  type PluginTraitDependent,
+} from "./plugin-trait-adapter.js";
+import {
+  registerPluginStepParsers,
+  unregisterPluginStepParsers,
+  type PluginStepParserContribution,
+} from "./plugin-parser-adapter.js";
 
 // Type for the task store's event data
 interface TaskMovedEvent {
@@ -106,6 +127,11 @@ interface CachedWorkflowStepTemplates {
   version: number;
 }
 
+interface CachedTraits {
+  traits: Array<{ pluginId: string; trait: PluginTraitContribution }>;
+  version: number;
+}
+
 interface CachedPromptContributions {
   contributions: Array<{
     pluginId: string;
@@ -133,6 +159,7 @@ export class PluginRunner {
   private cachedSkills: CachedSkills | null = null;
   private cachedWorkflowSteps: CachedWorkflowSteps | null = null;
   private cachedWorkflowStepTemplates: CachedWorkflowStepTemplates | null = null;
+  private cachedTraits: CachedTraits | null = null;
   private cachedPromptContributions: CachedPromptContributions | null = null;
   private cachedSetupInfo: CachedSetupInfo | null = null;
   private toolsCacheVersion = 0;
@@ -144,7 +171,16 @@ export class PluginRunner {
   private skillsCacheVersion = 0;
   private workflowStepsCacheVersion = 0;
   private workflowStepTemplatesCacheVersion = 0;
+  private traitsCacheVersion = 0;
   private promptContributionsCacheVersion = 0;
+  /** Map of pluginId → the registry trait ids it currently has registered. */
+  private registeredPluginTraitIds = new Map<string, string[]>();
+  /** Map of pluginId → the step-parser registry ids it currently has registered
+   *  (U12, KTD-12; mirrors registeredPluginTraitIds). */
+  private registeredPluginParserIds = new Map<string, string[]>();
+  /** The custom-node runner used to execute plugin trait hooks (set via
+   *  setTraitHookRunner; mirrors how the executor wires runGraphCustomNode). */
+  private traitHookRunner: WorkflowCustomNodeRunner | undefined;
   private setupCacheVersion = 0;
   private hookTimeoutMs: number;
 
@@ -221,6 +257,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
   }
@@ -357,6 +394,205 @@ export class PluginRunner {
       };
     }
     return this.cachedWorkflowSteps.steps;
+  }
+
+  /**
+   * Get all plugin trait contributions with their plugin ids (U8). Aggregated /
+   * cached / invalidated exactly like workflow steps.
+   */
+  getPluginTraits(): Array<{ pluginId: string; trait: PluginTraitContribution }> {
+    if (!this.cachedTraits || this.cachedTraits.version !== this.traitsCacheVersion) {
+      // Older loaders (and some test fakes) predate the traits API — degrade to
+      // an empty contribution set rather than crashing the runner.
+      const getter = this.options.pluginLoader.getPluginTraits;
+      this.cachedTraits = {
+        traits: typeof getter === "function" ? getter.call(this.options.pluginLoader) : [],
+        version: this.traitsCacheVersion,
+      };
+    }
+    return this.cachedTraits.traits;
+  }
+
+  /**
+   * Wire the custom-node runner that executes plugin trait hooks (gate / onEnter
+   * / onExit / releaseCondition) through the prompt-session/script machinery.
+   * The executor sets this the way it wires its own runGraphCustomNode. Must be
+   * set before traits are synced for hooks to actually run (otherwise the
+   * registry resolves declared hooks to the degraded no-op + audit path).
+   */
+  setTraitHookRunner(runner: WorkflowCustomNodeRunner): void {
+    this.traitHookRunner = runner;
+    // Re-sync so already-loaded plugin traits pick up the runner.
+    this.syncPluginTraits();
+  }
+
+  /**
+   * Register all currently-loaded plugins' trait contributions into the core
+   * TraitRegistry (plugin-namespaced ids). Re-runs on cache invalidation. Traits
+   * for plugins no longer present are dropped from the registry (degraded path
+   * is the force-disable route; a clean unload removes them).
+   */
+  syncPluginTraits(): void {
+    const registry = getTraitRegistry();
+    const runner = this.traitHookRunner;
+    const current = this.getPluginTraits();
+
+    // Group contributions by plugin id.
+    const byPlugin = new Map<string, PluginTraitContribution[]>();
+    for (const { pluginId, trait } of current) {
+      const list = byPlugin.get(pluginId) ?? [];
+      list.push(trait);
+      byPlugin.set(pluginId, list);
+    }
+
+    // Drop traits for plugins no longer present.
+    for (const [pluginId, ids] of [...this.registeredPluginTraitIds.entries()]) {
+      if (!byPlugin.has(pluginId)) {
+        unregisterPluginTraits(registry, ids);
+        this.registeredPluginTraitIds.delete(pluginId);
+      }
+    }
+
+    if (!runner) {
+      // No runner yet: don't register hooks (they'd degrade to no-ops anyway).
+      // Definitions still register so the catalog/validation see them.
+      for (const [pluginId, contributions] of byPlugin) {
+        const ids = registerPluginTraits({
+          registry,
+          pluginId,
+          contributions,
+          runCustomNode: async () => ({ outcome: "success" as const }),
+        });
+        this.registeredPluginTraitIds.set(pluginId, ids);
+      }
+      return;
+    }
+
+    for (const [pluginId, contributions] of byPlugin) {
+      try {
+        const ids = registerPluginTraits({ registry, pluginId, contributions, runCustomNode: runner });
+        this.registeredPluginTraitIds.set(pluginId, ids);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`Failed to register traits for plugin '${pluginId}': ${msg}`);
+      }
+    }
+  }
+
+  /**
+   * Register all currently-loaded plugins' step-parser contributions into the
+   * core StepParserRegistry (plugin-namespaced ids, U12/KTD-12). Mirrors
+   * {@link syncPluginTraits}. Parsers for plugins no longer present are dropped.
+   * Reads contributions via the loader's optional `getPluginStepParsers` getter
+   * (graceful absence — a loader that predates parser contributions yields none).
+   * Fail-closed at registration is the adapter's concern; a registration error
+   * for one plugin is logged and never aborts the others.
+   */
+  syncPluginStepParsers(): void {
+    const loader = this.options.pluginLoader as unknown as {
+      getPluginStepParsers?: () => Array<{ pluginId: string; parser: PluginStepParserContribution }>;
+    };
+    const current = typeof loader.getPluginStepParsers === "function" ? loader.getPluginStepParsers() : [];
+
+    const byPlugin = new Map<string, PluginStepParserContribution[]>();
+    for (const { pluginId, parser } of current) {
+      const list = byPlugin.get(pluginId) ?? [];
+      list.push(parser);
+      byPlugin.set(pluginId, list);
+    }
+
+    // Drop parsers for plugins no longer present.
+    for (const [pluginId, ids] of [...this.registeredPluginParserIds.entries()]) {
+      if (!byPlugin.has(pluginId)) {
+        const parserIds = ids.map((id) => id.split(":")[2]).filter(Boolean);
+        unregisterPluginStepParsers(pluginId, parserIds);
+        this.registeredPluginParserIds.delete(pluginId);
+      }
+    }
+
+    for (const [pluginId, contributions] of byPlugin) {
+      try {
+        const ids = registerPluginStepParsers({ pluginId, contributions });
+        this.registeredPluginParserIds.set(pluginId, ids);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.log.warn(`Failed to register step parsers for plugin '${pluginId}': ${msg}`);
+      }
+    }
+  }
+
+  /**
+   * The live-dependents guard (KTD-7). Returns the tasks currently sitting in a
+   * column that uses one of the plugin's traits. A non-force disable/unregister
+   * with a non-empty result must be blocked; the force path degrades instead.
+   */
+  async findPluginTraitDependents(pluginId: string): Promise<PluginTraitDependent[]> {
+    const ids = this.collectPluginTraitRegistryIds(pluginId);
+    if (ids.length === 0) return [];
+    return findLivePluginTraitDependents({
+      store: this.options.taskStore,
+      resolveTaskWorkflowIr: (taskId) => this.resolveTaskWorkflowIr(taskId),
+      pluginTraitIds: ids,
+    });
+  }
+
+  /**
+   * Disable a plugin's traits. With live dependents and `force !== true`, throws
+   * `PluginTraitHasDependentsError`. With `force`, degrades the columns to
+   * passive (hooks become no-ops + audit warning) and emits one audit event;
+   * cards remain movable.
+   */
+  async disablePluginTraits(pluginId: string, opts?: { force?: boolean }): Promise<{
+    degraded: string[];
+    dependents: PluginTraitDependent[];
+  }> {
+    const registry = getTraitRegistry();
+    const ids = this.collectPluginTraitRegistryIds(pluginId);
+    const dependents = await this.findPluginTraitDependents(pluginId);
+    if (dependents.length > 0 && !opts?.force) {
+      throw new PluginTraitHasDependentsError(pluginId, dependents);
+    }
+    const degraded = degradePluginTraits(registry, ids);
+    if (degraded.length > 0) {
+      try {
+        this.options.taskStore.recordRunAuditEvent({
+          agentId: "system",
+          runId: `plugin-trait-degrade-${pluginId}-${Date.now()}`,
+          domain: "database",
+          mutationType: "plugin:trait-degraded",
+          target: pluginId,
+          metadata: {
+            pluginId,
+            degradedTraitIds: degraded,
+            affectedTasks: dependents.map((d) => d.taskId),
+            note: "hooks now resolve to no-ops; cards remain movable",
+          },
+        });
+      } catch {
+        // Audit is best-effort; degradation already applied.
+      }
+    }
+    return { degraded, dependents };
+  }
+
+  /** Collect the registry trait ids for a plugin (from the registration map, or
+   *  derived from current contributions as a fallback). */
+  private collectPluginTraitRegistryIds(pluginId: string): string[] {
+    const tracked = this.registeredPluginTraitIds.get(pluginId);
+    if (tracked && tracked.length > 0) return tracked;
+    return this.getPluginTraits()
+      .filter((t) => t.pluginId === pluginId)
+      .map((t) => pluginTraitRegistryId(pluginId, t.trait.traitId));
+  }
+
+  /**
+   * Resolve a task's workflow IR through the shared @fusion/core resolver
+   * (selection → builtin/custom → default fallback) on the public store surface
+   * — the adapter never reaches into store internals (GitHub #1402; previously a
+   * divergent raw-SQL copy via getDatabase()).
+   */
+  private resolveTaskWorkflowIr(taskId: string): Promise<WorkflowIr> {
+    return resolveWorkflowIrForTask(this.options.taskStore, taskId);
   }
 
   getPluginWorkflowStepTemplates(): Array<{ pluginId: string; template: WorkflowStepTemplate }> {
@@ -572,6 +808,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
     executorLog.log(`Plugin ${pluginId} reloaded`);
@@ -593,6 +830,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
 
@@ -619,6 +857,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
 
@@ -645,6 +884,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
 
@@ -670,6 +910,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
   }
@@ -687,6 +928,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
   }
@@ -704,6 +946,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
   }
@@ -721,6 +964,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
   }
@@ -738,6 +982,7 @@ export class PluginRunner {
     this.invalidateSkillsCache();
     this.invalidateWorkflowStepsCache();
     this.invalidateWorkflowStepTemplatesCache();
+    this.invalidateTraitsCache();
     this.invalidatePromptContributionsCache();
     this.invalidateSetupCache();
   }
@@ -968,6 +1213,16 @@ export class PluginRunner {
   private invalidateWorkflowStepTemplatesCache(): void {
     this.workflowStepTemplatesCacheVersion++;
     this.log.log(`Workflow step templates cache invalidated (version: ${this.workflowStepTemplatesCacheVersion})`);
+  }
+
+  private invalidateTraitsCache(): void {
+    this.traitsCacheVersion++;
+    this.log.log(`Plugin traits cache invalidated (version: ${this.traitsCacheVersion})`);
+    // Re-register/deregister plugin traits in the core registry to match the
+    // newly-loaded/unloaded set (mirrors the workflow-step contribution flow).
+    this.syncPluginTraits();
+    // Step parsers (U12, KTD-12) ride the same plugin lifecycle as traits.
+    this.syncPluginStepParsers();
   }
 
   private invalidatePromptContributionsCache(): void {

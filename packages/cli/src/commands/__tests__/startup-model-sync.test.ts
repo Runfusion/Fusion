@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
 }));
 
-import { parseOpencodeModelsOutput, refreshOpencodeGoModels, syncStartupModels } from "../startup-model-sync.js";
+import { normalizeOpencodeGoModel, parseOpencodeModelsOutput, refreshOpencodeGoModels, syncStartupModels } from "../startup-model-sync.js";
 
 type MockProcess = EventEmitter & {
   stdout: EventEmitter;
@@ -75,8 +75,8 @@ describe("startup-model-sync", () => {
     expect(registerProvider).toHaveBeenCalledWith("openrouter", expect.objectContaining({ models: expect.any(Array) }));
     expect(registerProvider).toHaveBeenCalledWith("opencode-go", expect.objectContaining({
       models: expect.arrayContaining([
-        expect.objectContaining({ id: "opencode-go/gpt-5" }),
-        expect.objectContaining({ id: "opencode-go/custom" }),
+        expect.objectContaining({ id: "gpt-5" }),
+        expect.objectContaining({ id: "custom" }),
       ]),
     }));
     expect(log).toHaveBeenCalledWith("openrouter", expect.stringContaining("Synced"));
@@ -257,7 +257,7 @@ describe("startup-model-sync", () => {
 
     expect(result).toEqual({ registeredCount: 1 });
     expect(registerProvider).toHaveBeenCalledWith("opencode-go", expect.objectContaining({
-      models: [expect.objectContaining({ id: "opencode-go/gpt-5" })],
+      models: [expect.objectContaining({ id: "gpt-5" })],
     }));
   });
 
@@ -318,5 +318,53 @@ describe("startup-model-sync", () => {
       "opencode/gpt-5",
       "opencode-go/custom",
     ]);
+  });
+
+  it("deduplicates models when CLI emits both prefix forms", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = createSpawnProcess();
+      queueMicrotask(() => {
+        proc.stdout.emit("data", Buffer.from("opencode/foo\nopencode-go/foo\nopencode/bar\n"));
+        proc.emit("exit", 0);
+      });
+      return proc;
+    });
+
+    const registerProvider = vi.fn();
+    await refreshOpencodeGoModels({ modelRegistry: { registerProvider }, log: vi.fn() });
+
+    expect(registerProvider).toHaveBeenCalledWith("opencode-go", expect.objectContaining({
+      models: [
+        expect.objectContaining({ id: "foo" }),
+        expect.objectContaining({ id: "bar" }),
+      ],
+    }));
+  });
+
+  it("throws on empty model ID after prefix stripping", () => {
+    expect(() => normalizeOpencodeGoModel("opencode/")).toThrow("no model name");
+    expect(() => normalizeOpencodeGoModel("opencode-go/")).toThrow("no model name");
+  });
+
+  it("accepts apiKey and passes it as env var to spawn", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = createSpawnProcess();
+      queueMicrotask(() => {
+        proc.stdout.emit("data", Buffer.from("opencode/foo\n"));
+        proc.emit("exit", 0);
+      });
+      return proc;
+    });
+
+    const registerProvider = vi.fn();
+    await refreshOpencodeGoModels({ modelRegistry: { registerProvider }, log: vi.fn(), apiKey: "test-key" });
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "opencode",
+      ["models", "opencode", "--refresh"],
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENCODE_API_KEY: "test-key" }),
+      }),
+    );
   });
 });

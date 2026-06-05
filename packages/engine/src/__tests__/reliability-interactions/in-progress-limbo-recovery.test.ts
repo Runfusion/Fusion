@@ -82,7 +82,7 @@ describe("FN-5219 reliability interactions: in-progress limbo recovery", () => {
 
     expect(first).toBe(1);
     expect(second).toBe(0);
-    expect(mockStore.moveTask).toHaveBeenCalledWith("FN-5149", "todo", { preserveProgress: true });
+    expect(mockStore.moveTask).toHaveBeenCalledWith("FN-5149", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
     expect(mockStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:auto-recover-in-progress-limbo",
       target: "FN-5149",

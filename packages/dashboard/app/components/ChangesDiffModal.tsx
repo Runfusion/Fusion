@@ -11,7 +11,7 @@ import {
   RefreshCw,
   GitCommit,
 } from "lucide-react";
-import type { MergeDetails, Column } from "@fusion/core";
+import type { MergeDetails, ColumnId } from "@fusion/core";
 import { highlightDiff } from "../utils/highlightDiff";
 import "./TaskDiffShared.css";
 import "./ChangesDiffModal.css";
@@ -31,7 +31,7 @@ interface ChangesDiffModalProps {
   files: NormalizedFile[];
   stats: { filesChanged: number; additions: number; deletions: number };
   mergeDetails?: MergeDetails;
-  column?: Column;
+  column?: ColumnId;
   onClose: () => void;
   onRefresh?: () => void;
 }

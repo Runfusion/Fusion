@@ -96,6 +96,127 @@ describe("workflow routes (U4)", () => {
     expect(bad.status).toBe(400);
   });
 
+  it("Residual A: POST /workflows rejects a server-side trait composition conflict with 400 + violations", async () => {
+    // A v2 column carrying BOTH `complete` and `wip` (countsTowardWip) — a
+    // terminal column cannot also hold a capacity slot. parseWorkflowIr accepts
+    // the shape; the save-mode composition validator must reject it.
+    const conflictIr: WorkflowIr = {
+      version: "v2",
+      name: "conflict",
+      columns: [
+        { id: "intake-col", name: "Intake", traits: [{ trait: "intake" }] },
+        { id: "bad-col", name: "Bad", traits: [{ trait: "complete" }, { trait: "wip", config: { limit: 1 } }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "intake-col" },
+        { id: "end", kind: "end", column: "bad-col" },
+      ],
+      edges: [{ from: "start", to: "end" }],
+    } as WorkflowIr;
+    const res = await post("/api/workflows", { name: "Conflict", ir: conflictIr });
+    expect(res.status).toBe(400);
+    const details = (res.body as { details?: { violations?: unknown[] } }).details;
+    expect(Array.isArray(details?.violations)).toBe(true);
+    expect((details?.violations?.length ?? 0)).toBeGreaterThan(0);
+  });
+
+  it("Residual A: PATCH /workflows/:id rejects a trait composition conflict server-side", async () => {
+    const created = await post("/api/workflows", {
+      name: "Editable",
+      ir: {
+        version: "v2",
+        name: "editable",
+        columns: [
+          { id: "intake-col", name: "Intake", traits: [{ trait: "intake" }] },
+          { id: "work-col", name: "Work", traits: [] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "intake-col" },
+          { id: "end", kind: "end", column: "work-col" },
+        ],
+        edges: [{ from: "start", to: "end" }],
+      },
+    });
+    expect(created.status).toBe(201);
+    const id = (created.body as { id: string }).id;
+    const conflictIr: WorkflowIr = {
+      version: "v2",
+      name: "editable",
+      columns: [
+        { id: "intake-col", name: "Intake", traits: [{ trait: "intake" }] },
+        { id: "work-col", name: "Work", traits: [{ trait: "complete" }, { trait: "wip", config: { limit: 2 } }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "intake-col" },
+        { id: "end", kind: "end", column: "work-col" },
+      ],
+      edges: [{ from: "start", to: "end" }],
+    } as WorkflowIr;
+    const res = await request(app, "PATCH", `/api/workflows/${id}`, JSON.stringify({ ir: conflictIr }), {
+      "content-type": "application/json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  // ── Handoff (KTD-15): save-time code-node compile validation ────────────────
+  /** A v2 IR with a single `code` node whose `source` core accepts (non-empty,
+   *  under the size cap) but which esbuild may or may not compile. */
+  function codeNodeIr(source: string): WorkflowIr {
+    return {
+      version: "v2",
+      name: "code-wf",
+      columns: [{ id: "intake-col", name: "Intake", traits: [{ trait: "intake" }] }],
+      nodes: [
+        { id: "start", kind: "start", column: "intake-col" },
+        { id: "calc", kind: "code", column: "intake-col", config: { source } },
+        { id: "end", kind: "end", column: "intake-col" },
+      ],
+      edges: [
+        { from: "start", to: "calc", condition: "success" },
+        { from: "calc", to: "end", condition: "success" },
+      ],
+    } as WorkflowIr;
+  }
+
+  it("POST /workflows rejects an uncompilable code node with 400 + per-node errors", async () => {
+    // Valid TS (compiles) is accepted.
+    const ok = await post("/api/workflows", {
+      name: "GoodCode",
+      ir: codeNodeIr("export default async (ctx) => ({ outcome: 'success' });"),
+    });
+    expect(ok.status).toBe(201);
+
+    // A syntax error passes core's non-empty source check but fails esbuild.
+    const bad = await post("/api/workflows", {
+      name: "BadCode",
+      ir: codeNodeIr("export default async (ctx) => { return ((( }"),
+    });
+    expect(bad.status).toBe(400);
+    const details = (bad.body as { details?: { codeNodeErrors?: Array<{ nodeId: string; error: string }> } }).details;
+    expect(Array.isArray(details?.codeNodeErrors)).toBe(true);
+    expect(details?.codeNodeErrors?.some((e) => e.nodeId === "calc")).toBe(true);
+  });
+
+  it("PATCH /workflows/:id rejects an uncompilable code node with 400", async () => {
+    const created = await post("/api/workflows", {
+      name: "EditableCode",
+      ir: codeNodeIr("export default async (ctx) => ({});"),
+    });
+    expect(created.status).toBe(201);
+    const id = (created.body as { id: string }).id;
+
+    const res = await request(
+      app,
+      "PATCH",
+      `/api/workflows/${id}`,
+      JSON.stringify({ ir: codeNodeIr("export default async (ctx) => { return ((( }") }),
+      { "content-type": "application/json" },
+    );
+    expect(res.status).toBe(400);
+    const details = (res.body as { details?: { codeNodeErrors?: unknown[] } }).details;
+    expect((details?.codeNodeErrors?.length ?? 0)).toBeGreaterThan(0);
+  });
+
   it("GET /workflows lists created workflows (ahead of read-only built-ins)", async () => {
     await post("/api/workflows", { name: "A", ir: linearIr() });
     const res = await get("/api/workflows");
@@ -105,6 +226,23 @@ describe("workflow routes (U4)", () => {
     const userWorkflows = list.filter((w) => !isBuiltinWorkflowId(w.id));
     expect(userWorkflows.length).toBe(1);
     expect(list.some((w) => isBuiltinWorkflowId(w.id))).toBe(true);
+  });
+
+  it("GET /traits returns the registry trait catalog (built-ins, with flags + schema)", async () => {
+    const res = await get("/api/traits");
+    expect(res.status).toBe(200);
+    const { traits } = res.body as {
+      traits: Array<{ id: string; name: string; builtin: boolean; flags: Record<string, boolean>; configSchema?: unknown }>;
+    };
+    // The 14 built-in traits are registered on import.
+    expect(traits.length).toBeGreaterThanOrEqual(14);
+    const intake = traits.find((t) => t.id === "intake");
+    expect(intake?.builtin).toBe(true);
+    expect(intake?.flags.intake).toBe(true);
+    const wip = traits.find((t) => t.id === "wip");
+    expect(wip?.configSchema).toBeTruthy();
+    const complete = traits.find((t) => t.id === "complete");
+    expect(complete?.flags.complete).toBe(true);
   });
 
   it("POST /workflows/:id/compile returns steps for linear and 422 for branching", async () => {
@@ -229,5 +367,82 @@ describe("workflow routes (U4)", () => {
     // The route deliberately leaves pausedReason intact; the await-input node
     // consumes the marker itself on re-run.
     expect(detail.pausedReason).toBe("workflow-await-input:ask: please confirm");
+  });
+
+  // ── U5: lifecycle reconciliation surfaced through the routes (flag ON) ───────
+  describe("U5 reconciliation (workflowColumns flag ON)", () => {
+    /** A v2 custom workflow with controlled column ids; linear so it compiles. */
+    function customV2(name: string, cols: string[]): WorkflowIr {
+      const entry = cols[0];
+      return {
+        version: "v2",
+        name,
+        columns: cols.map((id) => ({ id, name: id, traits: id === entry ? [{ trait: "intake" }] : [] })),
+        nodes: [
+          { id: "start", kind: "start", column: entry },
+          { id: "work", kind: "prompt", column: cols[1] ?? entry, config: { prompt: "do" } },
+          { id: "end", kind: "end", column: cols[cols.length - 1] },
+        ],
+        edges: [
+          { from: "start", to: "work", condition: "success" },
+          { from: "work", to: "end", condition: "success" },
+        ],
+      };
+    }
+
+    beforeEach(async () => {
+      await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
+    });
+
+    it("PATCH removing an occupied column 409s with per-column occupant counts", async () => {
+      const wf = await post("/api/workflows", { name: "edit", ir: customV2("edit", ["intake", "build", "done"]) });
+      const wfId = (wf.body as { id: string }).id;
+      const t = await store.createTask({ description: "occ" });
+      await store.selectTaskWorkflowAndReconcile(t.id, wfId);
+      await store.moveTask(t.id, "build", { moveSource: "user" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/workflows/${wfId}`,
+        JSON.stringify({ ir: customV2("edit", ["intake", "done"]) }),
+        { "content-type": "application/json" },
+      );
+      expect(res.status).toBe(409);
+      const details = (res.body as { details?: { occupancies?: Array<{ columnId: string; count: number }> } }).details;
+      expect(details?.occupancies).toEqual([{ columnId: "build", count: 1 }]);
+    });
+
+    it("PATCH with rehomeTo saves and re-homes occupants", async () => {
+      const wf = await post("/api/workflows", { name: "rehome", ir: customV2("rehome", ["intake", "build", "done"]) });
+      const wfId = (wf.body as { id: string }).id;
+      const t = await store.createTask({ description: "occ" });
+      await store.selectTaskWorkflowAndReconcile(t.id, wfId);
+      await store.moveTask(t.id, "build", { moveSource: "user" });
+
+      const res = await request(
+        app,
+        "PATCH",
+        `/api/workflows/${wfId}`,
+        JSON.stringify({ ir: customV2("rehome", ["intake", "done"]), rehomeTo: "intake" }),
+        { "content-type": "application/json" },
+      );
+      expect(res.status).toBe(200);
+      expect((await store.getTask(t.id)).column).toBe("intake");
+    });
+
+    it("PUT selection re-homes the card and returns the reconciliation outcome", async () => {
+      const wf = await post("/api/workflows", { name: "sw", ir: customV2("sw", ["intake", "doing", "done"]) });
+      const wfId = (wf.body as { id: string }).id;
+      const t = await store.createTask({ description: "switcher" });
+      await store.moveTask(t.id, "todo", { moveSource: "user" });
+
+      const res = await put(`/api/tasks/${t.id}/workflow`, { workflowId: wfId });
+      expect(res.status).toBe(200);
+      const recon = (res.body as { reconciliation?: { preserved: boolean; toColumn: string } }).reconciliation;
+      expect(recon?.preserved).toBe(false);
+      expect(recon?.toColumn).toBe("intake");
+      expect((await store.getTask(t.id)).column).toBe("intake");
+    });
   });
 });

@@ -1,0 +1,98 @@
+/* Multi-lane board lane (U9). Each lane is a full-width vertical row whose
+ * columns scroll horizontally inside the lane. Tokens mirror .board/.column in
+ * app/styles.css; no monolith CSS is touched. */
+
+.board-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--column-gap, 12px);
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--board-padding, 12px);
+  box-sizing: border-box;
+}
+
+.lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--surface-muted, var(--surface));
+}
+
+.lane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lane-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.lane-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--text-muted, var(--text));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 0 6px;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.lane-columns {
+  display: flex;
+  gap: var(--column-gap, 12px);
+  padding: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+  min-height: 0;
+}
+
+.lane-columns > .column {
+  flex: 0 0 clamp(280px, 28vw, 340px);
+  /* Repo convention (mobile-scroll-snap test): snap-align must be `center`. */
+  scroll-snap-align: center;
+}
+
+.lane-columns::-webkit-scrollbar {
+  height: 6px;
+}
+.lane-columns::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm, 6px);
+}
+
+/* Inline column feedback (capacity-exhausted promote, deterministic drag
+ * rejection) — rendered in-column, not a toast (R17 / promote spec). */
+.column-inline-feedback {
+  margin: 4px 12px 0;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  color: var(--danger, #d9534f);
+  background: color-mix(in srgb, var(--danger, #d9534f) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger, #d9534f) 35%, transparent);
+  border-radius: var(--radius-sm, 6px);
+}
+
+.column-promote-btn {
+  margin-top: 4px;
+  width: 100%;
+}
+
+.column-hold-card {
+  display: flex;
+  flex-direction: column;
+}

@@ -92,6 +92,12 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/test/project"),
     getTasksDir: vi.fn().mockReturnValue("/test/project/.fusion/tasks"),
+    // U6: the hold/release sweep consults workflow selection + completion markers
+    // when the workflowColumns flag is ON; default mocks keep flag-OFF behavior
+    // (sweep early-returns before touching these).
+    getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined),
+    getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
+    getCompletionHandoffAcceptedMarker: vi.fn().mockReturnValue(null),
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,
@@ -527,6 +533,50 @@ describe("Scheduler", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("U6 hold/release sweep integration (flag-gated)", () => {
+    function setupTodoStore(workflowColumns: boolean) {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+      const todo = createMockTask({ id: "FN-1", column: "todo", dependencies: [] });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([todo]),
+        getTask: vi.fn().mockResolvedValue(todo),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          experimentalFeatures: { workflowColumns },
+        }),
+      });
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      return { store, scheduler };
+    }
+
+    it("flag-ON default-workflow pickup matches flag-OFF: same todo→in-progress dispatch", async () => {
+      // Flag-OFF baseline: the legacy pull-from-todo loop dispatches the card.
+      const off = setupTodoStore(false);
+      await off.scheduler.schedule();
+      const offMoves = vi.mocked(off.store.moveTask).mock.calls.map((c) => [c[0], c[1]]);
+      expect(offMoves).toContainEqual(["FN-1", "in-progress"]);
+
+      // Flag-ON: the sweep runs first (default-workflow todo is a capacity hold),
+      // then the legacy loop; the net dispatch is the SAME todo→in-progress move.
+      const on = setupTodoStore(true);
+      await on.scheduler.schedule();
+      const onMoves = vi.mocked(on.store.moveTask).mock.calls.map((c) => [c[0], c[1]]);
+      expect(onMoves).toContainEqual(["FN-1", "in-progress"]);
+    });
+
+    it("flag-OFF: the sweep never issues a scheduler-sourced move (legacy path byte-identical)", async () => {
+      const off = setupTodoStore(false);
+      await off.scheduler.schedule();
+      const schedulerSourcedMoves = vi
+        .mocked(off.store.moveTask)
+        .mock.calls.filter((c) => (c[2] as { moveSource?: string } | undefined)?.moveSource === "scheduler");
+      expect(schedulerSourcedMoves.length).toBe(0);
     });
   });
 

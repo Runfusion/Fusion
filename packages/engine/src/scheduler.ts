@@ -32,6 +32,8 @@ import type { AutoClaimSnapshotManager } from "./auto-claim-snapshot.js";
 import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID } from "@fusion/core";
+import { runHoldReleaseSweep, type SlotReservation } from "./hold-release.js";
 
 /**
  * Check whether two sets of file scope paths overlap.
@@ -278,6 +280,20 @@ interface ConcurrencyGateSnapshot {
   slack: number;
 }
 
+/**
+ * U6 (KTD-10): a per-(workflow, column) capacity gate, the generalization of the
+ * three legacy gates to workflow-defined WIP columns. Additive — the three-gate
+ * report shape (maxConcurrent/maxWorktrees/semaphore) is preserved verbatim; this
+ * is an optional extra field populated only when the workflowColumns flag is ON.
+ */
+interface PerColumnCapacityGate {
+  workflowId: string;
+  columnId: string;
+  used: number;
+  limit: number;
+  slack: number;
+}
+
 interface ConcurrencyGateDiagnostic {
   available: number;
   bindingGates: ConcurrencyGateName[];
@@ -289,6 +305,9 @@ interface ConcurrencyGateDiagnostic {
     maxWorktrees: string[];
     semaphore?: string[];
   };
+  /** U6: additive per-column capacity gates (flag-ON only; omitted otherwise so
+   *  the legacy three-gate report shape is byte-identical when the flag is OFF). */
+  perColumnGates?: PerColumnCapacityGate[];
 }
 
 function computeConcurrencyGateDiagnostic(params: {
@@ -299,6 +318,9 @@ function computeConcurrencyGateDiagnostic(params: {
   semaphore?: AgentSemaphore;
   inProgressTaskIds: string[];
   available: number;
+  /** U6: additive per-column capacity gates (flag-ON only). Omitted → the legacy
+   *  three-gate report is byte-identical. */
+  perColumnGates?: PerColumnCapacityGate[];
 }): ConcurrencyGateDiagnostic {
   const maxConcurrentGate: ConcurrencyGateSnapshot = {
     used: params.agentSlots,
@@ -334,6 +356,8 @@ function computeConcurrencyGateDiagnostic(params: {
       maxWorktrees: [...params.inProgressTaskIds],
       semaphore: semaphoreGate ? [...params.inProgressTaskIds] : undefined,
     },
+    // U6: additive only — present when flag-ON, omitted otherwise.
+    ...(params.perColumnGates ? { perColumnGates: params.perColumnGates } : {}),
   };
 }
 
@@ -938,6 +962,8 @@ export class Scheduler {
           semaphore: diagnostic.semaphoreGate,
           holders: diagnostic.holders,
           available: diagnostic.available,
+          // U6: additive per-column capacity gates (present only flag-ON).
+          ...(diagnostic.perColumnGates ? { perColumnGates: diagnostic.perColumnGates } : {}),
         },
       });
     } catch (error) {
@@ -1171,6 +1197,18 @@ export class Scheduler {
       }
       this.wasEnginePaused = false;
 
+      // ── U6: hold/release sweep (flag-ON only) ──────────────────────────────
+      // Flag OFF: this is skipped entirely — the legacy pull-from-todo loop
+      // below is byte-identical. Flag ON: the sweep evaluates hold-column
+      // release conditions (manual/timer/capacity/dependency/external-event) and
+      // releases eligible cards via moveSource:"scheduler", serializing through
+      // the in-txn capacity check. For the DEFAULT workflow the legacy loop below
+      // still drives todo→in-progress pickup (parity); the sweep adds custom-
+      // workflow hold handling and the generalized capacity-release path.
+      if (isWorkflowColumnsEnabled(settings)) {
+        await this.runHoldReleaseSweepPass();
+      }
+
       // Count only in-progress tasks toward the worktree limit.
       // In-review tasks with worktrees are idle (waiting to merge) and
       // should not block new tasks from starting.
@@ -1207,6 +1245,19 @@ export class Scheduler {
         semaphoreAvailable,
       );
       const inProgressTaskIds = inProgress.map((task) => task.id);
+      // U6 (KTD-10): when the workflowColumns flag is ON, report the default
+      // workflow's in-progress capacity as a per-column gate — the generalization
+      // of the legacy maxConcurrent gate (which reads through to the same value).
+      // Additive: omitted flag-OFF so the three-gate report shape is unchanged.
+      const perColumnGates = isWorkflowColumnsEnabled(settings)
+        ? [{
+          workflowId: DEFAULT_WORKFLOW_POOL_ID,
+          columnId: "in-progress",
+          used: agentSlots,
+          limit: maxConcurrent,
+          slack: maxConcurrent - agentSlots,
+        }]
+        : undefined;
       const concurrencyGateDiagnostic = computeConcurrencyGateDiagnostic({
         agentSlots,
         maxConcurrent,
@@ -1215,6 +1266,7 @@ export class Scheduler {
         semaphore: this.options.semaphore,
         inProgressTaskIds,
         available,
+        perColumnGates,
       });
       if (available <= 0) return;
 
@@ -1893,12 +1945,43 @@ export class Scheduler {
   }
 
   /**
+   * U6: run one hold/release sweep pass, wiring the scheduler's semaphore +
+   * worktree allocation into the reservation-first ordering (KTD-10). Failures
+   * are isolated so a sweep error never breaks the scheduling pass.
+   */
+  private async runHoldReleaseSweepPass(): Promise<void> {
+    try {
+      await runHoldReleaseSweep(this.store, {
+        now: () => Date.now(),
+        reserveSlot: this.options.semaphore
+          ? (): SlotReservation | null => {
+            const sem = this.options.semaphore!;
+            if (!sem.tryAcquire()) return null;
+            let released = false;
+            return {
+              release: () => {
+                if (released) return;
+                released = true;
+                sem.release();
+              },
+            };
+          }
+          : undefined,
+        allocateWorktree: (task, reservedNames) =>
+          planTaskWorktreePath(task, this.store.getRootDir(), undefined, reservedNames, {}),
+      });
+    } catch (error) {
+      schedulerLog.error("Hold/release sweep failed:", error);
+    }
+  }
+
+  /**
    * Handle a mission-linked task column move.
    * Keeps feature state synchronized with task columns across the full task
    * lifecycle, including review/merge transitions and older tasks whose task
    * row has mission/slice metadata but whose feature row lacks taskId.
    */
-  private async handleMissionTaskMove(taskId: string, toColumn: import("@fusion/core").Column): Promise<void> {
+  private async handleMissionTaskMove(taskId: string, toColumn: import("@fusion/core").ColumnId): Promise<void> {
     if (!this.options.missionStore) return;
 
     const missionStore = this.options.missionStore;

@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Board } from "../Board";
 import { COLUMNS } from "@fusion/core";
 
@@ -17,10 +17,35 @@ vi.mock("../../hooks/useBatchBadgeFetch", () => ({
   })),
 }));
 
+const fetchBoardWorkflowsMock = vi.fn().mockResolvedValue({
+  flagEnabled: false,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [],
+  taskWorkflowIds: {},
+});
+const promoteTaskMock = vi.fn().mockResolvedValue({});
+
 vi.mock("../../api", () => ({
   fetchWorkflowSteps: vi.fn().mockResolvedValue([
     { id: "WS-003", name: "Accessibility Audit", enabled: true },
   ]),
+  fetchBoardWorkflows: (...args: unknown[]) => fetchBoardWorkflowsMock(...args),
+  promoteTask: (...args: unknown[]) => promoteTaskMock(...args),
+}));
+
+// Capture SSE event handlers registered via subscribeSse so tests can simulate
+// server-pushed `workflow:*` events without a real EventSource.
+const sseHandlers: Record<string, (event?: unknown) => void> = {};
+const subscribeSseMock = vi.fn(
+  (_url: string, opts: { events?: Record<string, (event?: unknown) => void> }) => {
+    for (const [name, handler] of Object.entries(opts.events ?? {})) {
+      sseHandlers[name] = handler;
+    }
+    return () => {};
+  },
+);
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (...args: unknown[]) => (subscribeSseMock as (...a: unknown[]) => () => void)(...args),
 }));
 
 const columnRenderCounts: Record<string, number> = {};
@@ -37,11 +62,53 @@ vi.mock("../Column", () => ({
   }),
 }));
 
+// Mock Lane so the multi-lane Board tests assert grouping/ordering without
+// pulling in the full Column tree.
+vi.mock("../Lane", () => ({
+  Lane: ({ workflow, tasks, collapsed }: { workflow: { id: string; name: string }; tasks: Task[]; collapsed: boolean }) => (
+    <section
+      data-testid={`lane-${workflow.id}`}
+      data-lane-name={workflow.name}
+      data-lane-count={String(tasks.length)}
+      data-lane-collapsed={collapsed ? "true" : "false"}
+      data-lane-task-ids={JSON.stringify(tasks.map((t) => t.id))}
+    />
+  ),
+}));
+
+const DEFAULT_WORKFLOW = {
+  id: "builtin:coding",
+  name: "Coding (built-in)",
+  columns: [
+    { id: "triage", name: "Triage", flags: { intake: true } },
+    { id: "todo", name: "Todo", flags: { hold: true } },
+    { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+    { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
+    { id: "done", name: "Done", flags: { complete: true } },
+    { id: "archived", name: "Archived", flags: { archived: true } },
+  ],
+};
+
 const noop = () => {};
 const noopAsync = () => Promise.resolve({} as any);
 
 beforeEach(() => {
   fetchBatchMock.mockReset();
+  promoteTaskMock.mockClear();
+  subscribeSseMock.mockClear();
+  for (const key of Object.keys(sseHandlers)) delete sseHandlers[key];
+  fetchBoardWorkflowsMock.mockReset();
+  fetchBoardWorkflowsMock.mockResolvedValue({
+    flagEnabled: false,
+    defaultWorkflowId: "builtin:coding",
+    workflows: [],
+    taskWorkflowIds: {},
+  });
+  try {
+    window.localStorage.clear();
+  } catch {
+    /* jsdom localStorage */
+  }
   for (const key of Object.keys(columnRenderCounts)) {
     delete columnRenderCounts[key];
   }
@@ -823,6 +890,139 @@ describe("Board", () => {
         expect(columnEl.getAttribute("data-has-toggle-favorite")).toBe("no");
         expect(columnEl.getAttribute("data-has-toggle-model-favorite")).toBe("no");
       }
+    });
+  });
+
+  describe("multi-lane board (U9, flag ON)", () => {
+    const mkTask = (overrides: Partial<Task> & { id: string }): Task => ({
+      title: overrides.id,
+      description: "d",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+      ...overrides,
+    });
+
+    const CUSTOM_WORKFLOW = {
+      id: "wf-custom",
+      name: "Custom Flow",
+      columns: [
+        { id: "intake", name: "Intake", flags: { intake: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+      ],
+    };
+
+    function enableFlag(taskWorkflowIds: Record<string, string>, workflows = [DEFAULT_WORKFLOW]) {
+      fetchBoardWorkflowsMock.mockResolvedValue({
+        flagEnabled: true,
+        defaultWorkflowId: "builtin:coding",
+        workflows,
+        taskWorkflowIds,
+      });
+    }
+
+    it("flag OFF renders the legacy single-lane board byte-identically", async () => {
+      // Default mock: flagEnabled false.
+      renderBoard({ tasks: [mkTask({ id: "FN-1" })] });
+      // Let the board-workflows fetch resolve (flagEnabled:false) so the async
+      // state settle is wrapped and the legacy board stays the rendered output.
+      await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalled());
+      const board = screen.getByRole("main");
+      expect(board.className).toBe("board");
+      // All 6 legacy columns present; no lanes.
+      for (const col of COLUMNS) {
+        expect(screen.getByTestId(`column-${col}`)).toBeDefined();
+      }
+      expect(screen.queryByTestId(/^lane-/)).toBeNull();
+    });
+
+    it("tasks with no selection render in the default lane (R16)", async () => {
+      enableFlag({ "FN-1": "builtin:coding", "FN-2": "builtin:coding" });
+      renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "in-progress" })] });
+      await waitFor(() => expect(screen.getByTestId("lane-builtin:coding")).toBeDefined());
+      const lane = screen.getByTestId("lane-builtin:coding");
+      expect(JSON.parse(lane.getAttribute("data-lane-task-ids") || "[]").sort()).toEqual(["FN-1", "FN-2"]);
+      expect(lane.getAttribute("data-lane-count")).toBe("2");
+    });
+
+    it("each card appears in exactly one lane over a mixed fixture", async () => {
+      enableFlag(
+        { "FN-1": "builtin:coding", "FN-2": "wf-custom", "FN-3": "wf-custom" },
+        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+      );
+      renderBoard({
+        tasks: [
+          mkTask({ id: "FN-1" }),
+          mkTask({ id: "FN-2", column: "intake" }),
+          mkTask({ id: "FN-3", column: "intake" }),
+        ],
+      });
+      await waitFor(() => expect(screen.getByTestId("lane-wf-custom")).toBeDefined());
+      const defaultLaneIds = JSON.parse(screen.getByTestId("lane-builtin:coding").getAttribute("data-lane-task-ids") || "[]");
+      const customLaneIds = JSON.parse(screen.getByTestId("lane-wf-custom").getAttribute("data-lane-task-ids") || "[]");
+      const all = [...defaultLaneIds, ...customLaneIds].sort();
+      expect(all).toEqual(["FN-1", "FN-2", "FN-3"]);
+      // No id appears twice.
+      expect(new Set(all).size).toBe(all.length);
+    });
+
+    it("hides zero-card lanes and puts the default lane first", async () => {
+      enableFlag(
+        { "FN-2": "wf-custom" },
+        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+      );
+      // Only the custom workflow has a card; the default lane has none → hidden.
+      renderBoard({ tasks: [mkTask({ id: "FN-2", column: "intake" })] });
+      await waitFor(() => expect(screen.getByTestId("lane-wf-custom")).toBeDefined());
+      expect(screen.queryByTestId("lane-builtin:coding")).toBeNull();
+    });
+
+    it("orders the default lane first when both have cards", async () => {
+      enableFlag(
+        { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
+        [CUSTOM_WORKFLOW, DEFAULT_WORKFLOW],
+      );
+      renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "intake" })] });
+      await waitFor(() => expect(screen.getByTestId("lane-builtin:coding")).toBeDefined());
+      const lanes = screen.getAllByTestId(/^lane-/);
+      expect(lanes[0].getAttribute("data-testid")).toBe("lane-builtin:coding");
+    });
+
+    it("excludes archived cards from lanes", async () => {
+      enableFlag({ "FN-1": "builtin:coding", "FN-9": "builtin:coding" });
+      renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-9", column: "archived" })] });
+      await waitFor(() => expect(screen.getByTestId("lane-builtin:coding")).toBeDefined());
+      const ids = JSON.parse(screen.getByTestId("lane-builtin:coding").getAttribute("data-lane-task-ids") || "[]");
+      expect(ids).toEqual(["FN-1"]);
+    });
+
+    it("persists lane collapse state to localStorage", async () => {
+      window.localStorage.setItem("kb-dashboard-lane-collapsed", JSON.stringify(["builtin:coding"]));
+      enableFlag({ "FN-1": "builtin:coding" });
+      renderBoard({ tasks: [mkTask({ id: "FN-1" })] });
+      await waitFor(() => expect(screen.getByTestId("lane-builtin:coding")).toBeDefined());
+      expect(screen.getByTestId("lane-builtin:coding").getAttribute("data-lane-collapsed")).toBe("true");
+    });
+  });
+
+  describe("workflow:updated SSE invalidation (#1406)", () => {
+    it("re-fetches board-workflows when a workflow:updated SSE event arrives", async () => {
+      renderBoard({ projectId: "proj-1" });
+      // Initial mount fetch.
+      await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledTimes(1));
+      // Board subscribed for workflow lifecycle events.
+      expect(subscribeSseMock).toHaveBeenCalled();
+      expect(typeof sseHandlers["workflow:updated"]).toBe("function");
+
+      // Simulate a server-pushed workflow:updated event → invalidate + re-fetch.
+      await act(async () => {
+        sseHandlers["workflow:updated"]?.();
+      });
+      await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledTimes(2));
     });
   });
 });

@@ -28,6 +28,7 @@ vi.mock("@fusion/core", () => ({
   summarizeTitle: vi.fn(),
   AgentStore: vi.fn(),
   ChatStore: vi.fn(),
+  registerTraitHookImpl: vi.fn(),
 }));
 
 describe("resolveFileReferences", () => {

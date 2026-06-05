@@ -46,6 +46,10 @@ interface WorkflowResultsTabProps {
   onWorkflowStepsChange?: (steps: string[]) => void;
   taskStatus?: string;
   taskPausedReason?: string;
+  /** U5 (R20): called after a workflow switch re-homed the card to a new column
+   *  (reconciliation present and not preserved) so the board can refresh before
+   *  the SSE catch-up arrives. */
+  onWorkflowReconciled?: () => void;
 }
 
 /** Extract the user-facing question from a workflow-input paused reason.
@@ -227,6 +231,7 @@ export function WorkflowResultsTab({
   onWorkflowStepsChange,
   taskStatus,
   taskPausedReason,
+  onWorkflowReconciled,
 }: WorkflowResultsTabProps) {
   const { t } = useTranslation("app");
   const [expandedOutputs, setExpandedOutputs] = useState<Record<string, boolean>>({});
@@ -270,8 +275,13 @@ export function WorkflowResultsTab({
       const res = await selectTaskWorkflow(taskId, workflowId, projectId);
       setSelectedWorkflowId(res.workflowId);
       onWorkflowStepsChange?.(res.enabledWorkflowSteps);
+      // U5 (R20): the switch re-homed the card to a new column — refresh the
+      // board now rather than waiting for the SSE catch-up.
+      if (res.reconciliation && !res.reconciliation.preserved) {
+        onWorkflowReconciled?.();
+      }
     },
-    [taskId, projectId, onWorkflowStepsChange],
+    [taskId, projectId, onWorkflowStepsChange, onWorkflowReconciled],
   );
 
   // Check if any result has pending status

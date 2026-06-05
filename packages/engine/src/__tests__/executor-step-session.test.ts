@@ -3583,3 +3583,133 @@ describe("TaskExecutor loop recovery", () => {
 
 // ── Context limit error recovery tests ────────────────────────────────
 
+// ── U2 RETHINK delegation characterization (plan 2026-06-04-001, KTD-2) ──
+//
+// The legacy in-session fn_review_step RETHINK case now DELEGATES to
+// step-runner.ts's resetStepToBaseline. These tests pin that the observable
+// side effects are byte-identical to the pre-extraction block: git reset to
+// the agent-supplied baseline, session rewind via navigateTree, step→pending,
+// and the RETHINK log entry — all reached through the real executor session.
+describe("U2: fn_review_step RETHINK delegates to resetStepToBaseline (characterization)", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+  });
+
+  function runRethinkScenario(reviewType: "code" | "plan", navigateTree: any) {
+    const store = createMockStore();
+    const baseTask = {
+      id: "FN-RT-1",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "in-progress" }],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockResolvedValue(baseTask as any);
+    // updateStep returns the task with the step persisted in-progress so the
+    // executor's checkpoint-capture path (executor.ts ~6517) populates the
+    // stepCheckpoints map that RETHINK rewinds to.
+    store.updateStep.mockResolvedValue({
+      ...baseTask,
+      steps: [{ name: "Implement", status: "in-progress" }],
+    } as any);
+
+    mockedReviewStep.mockResolvedValue({
+      verdict: "RETHINK",
+      review: "wrong approach",
+      summary: "rejected approach",
+    } as any);
+
+    let reviewToolError: unknown;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      const tools = opts.customTools || [];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            // First, flip the step to in-progress via fn_task_update so the
+            // checkpoint map is populated (mirrors the real session lifecycle).
+            const updateTool = tools.find((t: any) => t.name === "fn_task_update");
+            if (updateTool) {
+              try {
+                await updateTool.execute("tool-update", { step: 1, status: "in-progress" });
+              } catch { /* tool param shape varies; ignore */ }
+            }
+            const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
+            if (reviewTool) {
+              try {
+                await reviewTool.execute("tool-review", {
+                  step: 1,
+                  type: reviewType,
+                  step_name: "Implement",
+                  baseline: reviewType === "code" ? "agentBaselineSHA" : undefined,
+                });
+              } catch (e) {
+                reviewToolError = e;
+              }
+            }
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          navigateTree,
+          sessionManager: {
+            getLeafId: vi.fn().mockReturnValue("leaf-pre-step"),
+            branchWithSummary: vi.fn(),
+          },
+          state: {},
+        },
+      };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    return { store, baseTask, executor, getReviewToolError: () => reviewToolError };
+  }
+
+  it("code RETHINK: git reset to baseline, navigateTree rewind, step→pending, RETHINK log", async () => {
+    const navigateTree = vi.fn().mockResolvedValue(undefined);
+    const { store, baseTask, executor } = runRethinkScenario("code", navigateTree);
+
+    await executor.execute(baseTask as any);
+
+    // git reset --hard <baseline> issued in the worktree (via the mocked exec).
+    const resetIssued = mockedExecSync.mock.calls.some(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("git reset --hard agentBaselineSHA"),
+    );
+    expect(resetIssued).toBe(true);
+    // Session rewound to the captured pre-step checkpoint.
+    expect(navigateTree).toHaveBeenCalledWith("leaf-pre-step", { summarize: false });
+    // Step reset to pending through the projection sink.
+    expect(store.updateStep).toHaveBeenCalledWith("FN-RT-1", 0, "pending");
+    // RETHINK log entry (code-review variant references the git reset).
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-RT-1",
+      expect.stringContaining("git reset to agentBaselineSHA"),
+      "rejected approach",
+    );
+  });
+
+  it("plan RETHINK: no git reset, navigateTree rewind, step→pending, plan-rewound log", async () => {
+    const navigateTree = vi.fn().mockResolvedValue(undefined);
+    const { store, baseTask, executor } = runRethinkScenario("plan", navigateTree);
+
+    await executor.execute(baseTask as any);
+
+    const resetIssued = mockedExecSync.mock.calls.some(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("git reset --hard"),
+    );
+    expect(resetIssued).toBe(false);
+    expect(navigateTree).toHaveBeenCalledWith("leaf-pre-step", { summarize: false });
+    expect(store.updateStep).toHaveBeenCalledWith("FN-RT-1", 0, "pending");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-RT-1",
+      expect.stringContaining("Step 1 plan rewound"),
+      "rejected approach",
+    );
+  });
+});
+

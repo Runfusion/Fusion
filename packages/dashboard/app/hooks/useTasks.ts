@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Task, Column, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
+import type { Task, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
 import { normalizeColumn } from "@fusion/core";
 import * as api from "../api";
 import { subscribeSse } from "../sse-bus";
@@ -359,14 +359,18 @@ export function useTasks(options?: UseTasksOptions) {
         void refreshTasksRef.current({ searchQueryOverride: searchQueryRef.current });
         return;
       }
-      const { task, to }: { task: Task; from: Column; to: Column } = JSON.parse(e.data);
+      // #1403: the move event carries `ColumnId` (custom column ids admitted).
+      const { task, to }: { task: Task; from: ColumnId; to: ColumnId } = JSON.parse(e.data);
       const normalizedTask = normalizeTask(task);
       if (isSoftDeleted(normalizedTask)) {
         setTasks((prev) => prev.filter((candidate) => candidate.id !== normalizedTask.id));
         pushTrace("useTasks", "soft-deleted-task-suppressed", { event: "task:moved", id: normalizedTask.id });
         return;
       }
-      const movedTask = { ...normalizedTask, column: normalizeColumn(to, normalizedTask.column) };
+      // Preserve a custom (non-legacy) target id verbatim; only coerce empty/garbage
+      // back to the task's current column. normalizeColumn alone would drop custom ids.
+      const nextColumn: ColumnId = typeof to === "string" && to ? to : normalizedTask.column;
+      const movedTask = { ...normalizedTask, column: nextColumn };
       setTasks((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === movedTask.id);
         if (existingIndex === -1) {

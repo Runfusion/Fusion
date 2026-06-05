@@ -1,0 +1,195 @@
+/* WorkflowFieldsPanel (U13 / KTD-14) — sibling of the column panel; mirrors
+ * .wf-column-panel layout so the two read-side-by-side in the editor. */
+
+.wf-fields-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 300px;
+  min-width: 280px;
+  padding: var(--space-md);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.wf-fields-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wf-fields-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wf-fields-panel-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.wf-fields-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-field-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-field-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-field-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-field-id-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-field-id-static {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.wf-field-id-edit {
+  font-size: 0.65rem;
+  background: none;
+  border: none;
+  color: var(--accent, #4f7cff);
+  cursor: pointer;
+  padding: 0;
+}
+
+.wf-field-id-warn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  font-size: 0.65rem;
+  color: var(--ws-warning, #f59e0b);
+}
+
+.wf-field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+}
+
+.wf-field-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.wf-field-sub > span {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.wf-field--checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.wf-field-required {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.wf-field-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px dashed var(--border);
+}
+
+.wf-field-options-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.wf-field-option-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wf-field-option-value,
+.wf-field-option-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-field-option-colors {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.wf-field-color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+}
+
+.wf-field-color-swatch.is-active {
+  outline: 2px solid var(--text-primary, #fff);
+  outline-offset: 1px;
+}
+
+.wf-field-option-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  font-size: 0.7rem;
+}
+
+.wf-field-render {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px dashed var(--border);
+}
+
+.wf-field-preview {
+  padding-top: var(--space-xs);
+}

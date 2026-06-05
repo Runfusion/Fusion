@@ -458,6 +458,8 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
+        moveSource: "engine",
+        recoveryRehome: true,
       });
       expect(store.updateTask).toHaveBeenLastCalledWith("FN-001", expect.objectContaining({
         stuckKillCount: 7,
@@ -494,6 +496,8 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
+        moveSource: "engine",
+        recoveryRehome: true,
       });
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
         paused: false,
@@ -530,6 +534,8 @@ describe("SelfHealingManager", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
+        moveSource: "engine",
+        recoveryRehome: true,
       });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
@@ -1364,7 +1370,7 @@ describe("SelfHealingManager", () => {
         "FN-1473",
         expect.stringContaining("no-progress no-task_done failure"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-1473", "todo");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-1473", "todo", { moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -2233,7 +2239,7 @@ describe("SelfHealingManager", () => {
         "FN-3900",
         expect.stringContaining("session-start unusable-worktree assertion"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-3900", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-3900", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -2277,7 +2283,7 @@ describe("SelfHealingManager", () => {
         "FN-4559",
         expect.stringContaining("session-start unusable-worktree assertion"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4559", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4559", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -2309,7 +2315,7 @@ describe("SelfHealingManager", () => {
         "FN-4560",
         expect.stringContaining("session-start unusable-worktree assertion"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4560", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4560", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -2349,7 +2355,7 @@ describe("SelfHealingManager", () => {
         "FN-4651",
         expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-4651", "todo");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-4651", "todo", { moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -2574,7 +2580,7 @@ describe("SelfHealingManager", () => {
         "FN-2164",
         expect.stringContaining("Auto-retry 1/3"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-2164", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -3912,7 +3918,7 @@ describe("SelfHealingManager", () => {
         "FN-1572",
         expect.stringContaining("in-review task still had incomplete steps"),
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-1572", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-1572", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -3971,7 +3977,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -3999,7 +4005,7 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
 
       expect(result).toBe(1);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });
@@ -5808,7 +5814,7 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(store.updateTask).not.toHaveBeenCalled();
-      expect(store.moveTask).toHaveBeenCalledWith("FN-9003", "todo", { preserveProgress: true });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-9003", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
 
       managerWithRecovery.stop();
     });

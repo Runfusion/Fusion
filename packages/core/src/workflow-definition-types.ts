@@ -40,4 +40,22 @@ export interface WorkflowDefinitionUpdate {
   description?: string;
   ir?: WorkflowIr;
   layout?: Record<string, WorkflowNodeLayout>;
+  /**
+   * U5 (R20): when an IR update removes a column that still holds cards, the
+   * update is blocked with a typed {@link import("./workflow-reconciliation.js").OccupiedColumnsError}
+   * unless `rehomeTo` is supplied — an explicit "save and re-home occupants to
+   * column X" target. The target must survive in the new IR. Only consulted when
+   * the `workflowColumns` flag is ON.
+   */
+  rehomeTo?: string;
+  /**
+   * U11/KTD-13: when an IR update changes a custom field's type incompatibly for
+   * tasks that already hold a value under that field, the update is blocked with
+   * a typed {@link import("./workflow-reconciliation.js").IncompatibleFieldChangeError}
+   * unless `coerce` is supplied. `"drop"` discards the now-incompatible stored
+   * values; `"keep-orphaned"` retains them as orphans (rendered under the
+   * orphaned-fields disclosure). Removing a field outright always orphans (never
+   * blocks). Mirrors the `rehomeTo` conflict-resolution posture for columns.
+   */
+  coerce?: "drop" | "keep-orphaned";
 }

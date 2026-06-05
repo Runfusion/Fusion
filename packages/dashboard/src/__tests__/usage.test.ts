@@ -5,7 +5,8 @@ const coreInteropMocks = vi.hoisted(() => ({
   readStoredCredentialsFromAuthFile: vi.fn(),
 }));
 
-vi.mock("@fusion/core", () => ({
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
   choosePreferredStoredCredential: coreInteropMocks.choosePreferredStoredCredential,
   readStoredCredentialsFromAuthFile: coreInteropMocks.readStoredCredentialsFromAuthFile,
 }));

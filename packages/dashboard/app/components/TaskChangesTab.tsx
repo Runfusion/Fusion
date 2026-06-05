@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit, WrapText, Maximize2 } from "lucide-react";
-import type { MergeDetails, Column } from "@fusion/core";
+import type { MergeDetails, ColumnId } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
   fetchTaskDiff,
@@ -16,7 +16,7 @@ interface TaskChangesTabProps {
   taskId: string;
   worktree?: string;
   projectId?: string;
-  column?: Column;
+  column?: ColumnId;
   mergeDetails?: MergeDetails;
   /**
    * Files modified by the task during execution, captured from the worktree.

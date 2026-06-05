@@ -28,7 +28,7 @@ import { promisify } from "node:util";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
@@ -110,7 +110,9 @@ export async function archiveAsGhostBug(
       findings: decision.findings.slice(0, 10),
     },
   });
-  await store.moveTask(taskId, "archived");
+  // #1411: recovery/terminal move — recoveryRehome skips order-derived adjacency
+  // so a custom-workflow card can always reach the terminal column.
+  await store.moveTask(taskId, "archived", { moveSource: "engine", recoveryRehome: true });
 }
 
 async function classifyOwnedLandedEvidenceForSelfHealing(rootDir: string, task: Task, mergeTargetBranch: string): Promise<OwnedLandedClassification> {
@@ -437,9 +439,10 @@ export async function autoRecoverWorktreeSessionStartFailure(
         : `Auto-recovered: retry/verification session targeted unusable worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo (attempt ${nextCount}/${MAX_WORKTREE_SESSION_RETRIES}, failure: ${failureExcerpt})`,
   );
   if (noProgress) {
-    await store.moveTask(task.id, "todo");
+    // #1411: backward recovery move — recoveryRehome skips order-derived adjacency.
+    await store.moveTask(task.id, "todo", { moveSource: "engine", recoveryRehome: true });
   } else {
-    await store.moveTask(task.id, "todo", { preserveProgress: true });
+    await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
   }
   return { outcome: "requeue-todo", retries: nextCount, classification };
 }
@@ -1112,6 +1115,9 @@ export class SelfHealingManager {
             await this.store.moveTask(taskId, "todo", {
               preserveProgress: true,
               preserveStatus: true,
+              // #1411: backward recovery — skip order-derived adjacency.
+              moveSource: "engine",
+              recoveryRehome: true,
             });
           } catch (moveErr: unknown) {
             const moveErrMessage = moveErr instanceof Error ? moveErr.message : String(moveErr);
@@ -1768,6 +1774,10 @@ export class SelfHealingManager {
           { name: "auto-archive-meta-resolved", fn: () => this.autoArchiveResolvedMetaTasks() },
           { name: "auto-archive-meta-stalled", fn: () => this.autoArchiveStalledMetaTasks() },
           { name: "board-stall-auto-recovery", fn: () => this.runBoardStallAutoRecoverySweep() },
+          // #1401: periodically recover transitionPending markers stranded by a
+          // crash between the in-txn write and the post-commit clear (flag-ON
+          // only; a no-op when there are no markers).
+          { name: "recover-stale-transition-pending", fn: () => this.runStaleTransitionPendingSweep() },
           { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies() },
           { name: "reconcile-dependency-cycles", fn: () => this.reconcileDependencyCycles().then(() => undefined) },
           { name: "reclaim-pr-conflicts", fn: () => this.reclaimPrConflicts() },
@@ -2200,6 +2210,8 @@ export class SelfHealingManager {
           });
           await this.store.moveTask(task.id, "todo", {
             moveSource: "engine",
+            // #1411: backward recovery — skip order-derived adjacency.
+            recoveryRehome: true,
             preserveWorktree: true,
             preserveProgress: true,
             preserveResumeState: true,
@@ -2467,6 +2479,8 @@ export class SelfHealingManager {
                 } else {
                   await this.store.moveTask(task.id, "todo", {
                     moveSource: "engine",
+                    // #1411: backward recovery — skip order-derived adjacency.
+                    recoveryRehome: true,
                     preserveProgress: true,
                     preserveResumeState: true,
                   });
@@ -2570,6 +2584,8 @@ export class SelfHealingManager {
                   } else {
                     await this.store.moveTask(task.id, "todo", {
                       moveSource: "engine",
+                      // #1411: backward recovery — skip order-derived adjacency.
+                      recoveryRehome: true,
                       preserveProgress: true,
                       preserveResumeState: true,
                     });
@@ -2637,6 +2653,8 @@ export class SelfHealingManager {
             const idleMs = Number.isFinite(idleAnchorMs) ? Math.max(0, Date.now() - idleAnchorMs) : null;
             await this.store.moveTask(task.id, "todo", {
               moveSource: "engine",
+              // #1411: backward recovery — skip order-derived adjacency.
+              recoveryRehome: true,
               preserveWorktree: true,
               preserveProgress: true,
               preserveResumeState: true,
@@ -2703,6 +2721,8 @@ export class SelfHealingManager {
             } else {
               await this.store.moveTask(task.id, "todo", {
                 moveSource: "engine",
+                // #1411: backward recovery — skip order-derived adjacency.
+                recoveryRehome: true,
                 preserveWorktree: true,
                 preserveProgress: true,
                 preserveResumeState: true,
@@ -3621,6 +3641,8 @@ export class SelfHealingManager {
         preserveWorktree: true,
         preserveResumeState: true,
         moveSource: "engine",
+        // #1411: backward recovery — skip order-derived adjacency.
+        recoveryRehome: true,
       });
       await this.store.logEntry(
         task.id,
@@ -3884,6 +3906,19 @@ export class SelfHealingManager {
       }
     }
     return archived;
+  }
+
+  /**
+   * #1401: periodic transitionPending recovery sweep. Flag-ON only — when
+   * `workflowColumns` is OFF the legacy path never writes markers, so there is
+   * nothing to recover. Delegates to the store's idempotent recovery method
+   * (a no-op when no stale markers exist), keeping capacity counts honest after
+   * a crash between the in-txn marker write and the post-commit clear.
+   */
+  async runStaleTransitionPendingSweep(): Promise<void> {
+    const settings = await this.store.getSettings();
+    if (!isWorkflowColumnsEnabled(settings)) return;
+    await this.store.recoverStaleTransitionPending();
   }
 
   async runBoardStallAutoRecoverySweep(): Promise<{ holders: string[]; recovered: number; unrecovered: boolean }> {
@@ -4616,7 +4651,8 @@ export class SelfHealingManager {
             await this.emitBackwardMoveNoAction(task, "finalize-no-op-review", "task:finalize-no-op-review-no-action", proof);
             continue;
           }
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" });
+          // #1411: backward recovery — skip order-derived adjacency.
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
           continue;
         }
 
@@ -4666,7 +4702,8 @@ export class SelfHealingManager {
               classification: "proven-no-op",
               baseRef: classification.baseRef,
             });
-            await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" });
+            // #1411: backward recovery — skip order-derived adjacency.
+            await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
             recovered++;
             continue;
           }
@@ -5102,7 +5139,8 @@ export class SelfHealingManager {
             task.id,
             "Auto-recovered: in-review task still had incomplete steps — moved back to todo for retry",
           );
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          // #1411: backward recovery — skip order-derived adjacency.
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
           log.log(`Recovered stale incomplete review task ${task.id}: moved back to todo`);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
@@ -5506,7 +5544,8 @@ export class SelfHealingManager {
             task.id,
             "Auto-recovered: in-review task idle past stuck-task timeout — kicked back to todo",
           );
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          // #1411: backward recovery — skip order-derived adjacency.
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
           log.log(`Kicked ghost review task ${task.id} back to todo`);
           recovered++;
         } catch (err: unknown) {
@@ -7248,7 +7287,8 @@ export class SelfHealingManager {
               stepStatuses,
             },
           });
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          // #1411: backward recovery — skip order-derived adjacency.
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
@@ -7785,7 +7825,8 @@ export class SelfHealingManager {
             task.id,
             "Auto-recovered no-progress no-task_done failure — clean worktree, moved back to todo",
           );
-          await this.store.moveTask(task.id, "todo");
+          // #1411: backward recovery — skip order-derived adjacency.
+          await this.store.moveTask(task.id, "todo", { moveSource: "engine", recoveryRehome: true });
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`Failed to recover no-progress no-task_done failure ${task.id}: ${errorMessage}`);
@@ -7952,7 +7993,8 @@ export class SelfHealingManager {
             task.id,
             `Auto-retry ${nextCount}/${MAX_TASK_DONE_RETRIES}: agent finished without fn_task_done — requeuing to todo to resume partial work`,
           );
-          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          // #1411: backward recovery — skip order-derived adjacency.
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);

@@ -1,0 +1,552 @@
+/**
+ * Hold/release sweep — the generalized scheduler (U6, KTD-10, R3 behavior half).
+ *
+ * Flag-ON, the scheduler's poll becomes a *hold/release sweep*: for each
+ * workflow in use by live tasks, it finds cards resting at `hold`-trait columns
+ * and evaluates their release condition:
+ *
+ *   - `manual`         — released ONLY by an explicit {@link promoteHeldTask}
+ *                        call (U9's promote endpoint / CLI). The sweep never
+ *                        auto-releases a manual hold.
+ *   - `external-event` — released ONLY by {@link releaseHeldTaskByEvent} (a
+ *                        webhook/API release, same shape as manual + an event
+ *                        tag).
+ *   - `timer`          — released when the injected clock passes the hold's
+ *                        deadline (`columnMovedAt + durationMs`, or an explicit
+ *                        `deadlineAt`). Fake-timer friendly (FN-5048): the clock
+ *                        is injected, never `Date.now()` baked in.
+ *   - `capacity`       — released when a downstream capacity (`wip`) column has a
+ *                        free slot (same counting rules as the in-txn check).
+ *   - `dependency`     — released when the card's dependencies are satisfied
+ *                        (KTD-5: dependency task's column has the `complete`
+ *                        trait flag in ITS resolved workflow; FN-5719 dual-accept
+ *                        also honors the legacy completion signal, logging an
+ *                        audit-diff when the two disagree).
+ *
+ * Eligible cards move via `store.moveTask(..., { moveSource: "scheduler" })`.
+ * A scheduler move bypasses trait guards (it is substrate-driven) but the in-txn
+ * capacity check is NOT a guard — it still runs (KTD-10), so two holds racing
+ * into one slot serialize: exactly one commits, the other rejects with
+ * `capacity-exhausted` and retries next sweep.
+ *
+ * Reservation ordering (KTD-10): for releases into a processing (capacity)
+ * column, the sweep reserves worktree + semaphore slots BEFORE issuing the move
+ * and releases the reservation if the move rejects on capacity — a card is never
+ * moved into a column it cannot actually start in, and a semaphore-exhausted
+ * interleaving leaves the card held with no commit.
+ */
+
+import {
+  isWorkflowColumnsEnabled,
+  resolveColumnCapacity,
+  resolveColumnFlags,
+  resolveColumnAdjacency,
+  DEFAULT_WORKFLOW_POOL_ID,
+  TransitionRejectionError,
+  resolveWorkflowIrForTask,
+  type TaskStore,
+  type Task,
+  type WorkflowIr,
+  type WorkflowIrV2,
+  type WorkflowIrColumn,
+} from "@fusion/core";
+import { schedulerLog } from "./logger.js";
+
+/** A reservation handle returned by {@link HoldReleaseDeps.reserveSlot}. The
+ *  sweep calls `release()` if the subsequent move rejects on capacity. */
+export interface SlotReservation {
+  release(): void;
+}
+
+/** Injected dependencies so the sweep stays unit-testable with fake timers and
+ *  without real worktree/session allocation. */
+export interface HoldReleaseDeps {
+  /** Monotonic clock (ms). Inject a fake-timer-driven clock in tests; production
+   *  passes `() => Date.now()`. */
+  now: () => number;
+  /**
+   * Reserve a worktree + semaphore slot for a card about to be released into a
+   * processing column (KTD-10 reservation-first). Returns `null` when no slot
+   * could be reserved (e.g. semaphore exhausted) — the sweep then leaves the
+   * card held without issuing a move. Returns a {@link SlotReservation} whose
+   * `release()` the sweep calls if the move rejects on capacity.
+   *
+   * Optional: when absent, releases into processing columns proceed without a
+   * reservation (the in-txn capacity check still arbitrates), which is the
+   * default-workflow legacy parity path where the scheduler dispatch loop owns
+   * worktree allocation via `allocateWorktree`.
+   */
+  reserveSlot?: (task: Task, targetColumn: string) => SlotReservation | null;
+  /** Allocate a worktree path for a release into a processing column (passed
+   *  through to `moveTask`'s `allocateWorktree`). */
+  allocateWorktree?: (task: Task, reservedNames: Set<string>) => string | null;
+}
+
+/** Outcome of one sweep pass (for tests + observability). */
+export interface HoldReleaseResult {
+  released: string[];
+  /** taskId → reason it stayed held this pass. */
+  held: Array<{ taskId: string; reason: string }>;
+}
+
+// ── Workflow IR resolution (read-only) ────────────────────────────────────────
+// The selection → builtin/custom → default rule lives in @fusion/core's
+// resolveWorkflowIrForTask (GitHub #1402); the optional per-sweep irCache Map is
+// threaded straight through.
+
+function effectiveWorkflowId(store: TaskStore, taskId: string): string {
+  try {
+    return store.getTaskWorkflowSelection(taskId)?.workflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+  } catch {
+    return DEFAULT_WORKFLOW_POOL_ID;
+  }
+}
+
+function findColumn(ir: WorkflowIr, columnId: string): WorkflowIrColumn | undefined {
+  if (ir.version !== "v2") return undefined;
+  return (ir as WorkflowIrV2).columns.find((c) => c.id === columnId);
+}
+
+/** The hold trait config on a column, if any. */
+function resolveHoldConfig(column: WorkflowIrColumn): Record<string, unknown> | undefined {
+  const flags = resolveColumnFlags(column);
+  if (!flags.hold) return undefined;
+  const ct = column.traits.find((t) => t.trait === "hold");
+  return ct?.config ?? {};
+}
+
+/** True when the card currently rests at a hold column. */
+function isHeldTask(ir: WorkflowIr, task: Task): boolean {
+  const column = findColumn(ir, task.column);
+  if (!column) return false;
+  return resolveColumnFlags(column).hold === true;
+}
+
+/**
+ * Resolve the release target column for a held card.
+ *
+ * For `capacity` holds, the target is the nearest downstream column (by the
+ * workflow's column adjacency, breadth-first from the hold column) that carries
+ * a capacity (`wip`) trait — for the default workflow this is `in-progress`.
+ * For other release kinds the target is the first adjacency neighbor that is not
+ * the hold column itself (the forward step out of the hold).
+ */
+function resolveReleaseTarget(ir: WorkflowIr, fromColumn: string, preferCapacity: boolean): string | undefined {
+  const v2 = ir as WorkflowIrV2;
+  const orderedIds = Array.isArray(v2.columns) ? v2.columns.map((c) => c.id) : [];
+  const fromIdx = orderedIds.indexOf(fromColumn);
+  const adjacency = resolveColumnAdjacency(ir);
+  const neighbors = adjacency.get(fromColumn) ?? [];
+
+  if (preferCapacity) {
+    // Walk FORWARD in declared order for the nearest capacity-bearing column;
+    // the hold releases downstream, never backward.
+    for (let i = fromIdx + 1; i < orderedIds.length; i++) {
+      const col = findColumn(ir, orderedIds[i]);
+      if (col && resolveColumnFlags(col).countsTowardWip && neighbors.includes(orderedIds[i])) {
+        return orderedIds[i];
+      }
+    }
+    // No directly-adjacent capacity column: fall back to the nearest forward
+    // capacity column reachable via adjacency BFS.
+    const seen = new Set<string>([fromColumn]);
+    const queue = [...neighbors];
+    while (queue.length > 0) {
+      const candidate = queue.shift()!;
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      const col = findColumn(ir, candidate);
+      if (col && resolveColumnFlags(col).countsTowardWip) return candidate;
+      for (const next of adjacency.get(candidate) ?? []) {
+        if (!seen.has(next)) queue.push(next);
+      }
+    }
+  }
+
+  // Forward neighbor (declared-order next) if it is adjacent; else any neighbor
+  // that is forward in declared order; else the first neighbor.
+  const forwardId = fromIdx >= 0 ? orderedIds[fromIdx + 1] : undefined;
+  if (forwardId && neighbors.includes(forwardId)) return forwardId;
+  const forwardNeighbor = neighbors.find((n) => orderedIds.indexOf(n) > fromIdx);
+  if (forwardNeighbor) return forwardNeighbor;
+  return neighbors.find((n) => n !== fromColumn);
+}
+
+// ── Dependency satisfaction (KTD-5 + FN-5719 dual-accept) ─────────────────────
+
+/** Legacy completion signal: dependency's column is a terminal/handoff column. */
+function legacyDependencySatisfied(dep: Task): boolean {
+  return dep.column === "done" || dep.column === "in-review" || dep.column === "archived";
+}
+
+/**
+ * KTD-5 dependency satisfaction: the dependency task's current column has the
+ * `complete` trait flag in ITS resolved workflow. Dual-accept (FN-5719): the
+ * legacy completion signal (done/in-review/archived column, or an accepted
+ * completion-handoff marker) is also honored; when the two disagree an
+ * audit-diff event is logged.
+ */
+async function dependencySatisfied(store: TaskStore, dep: Task): Promise<boolean> {
+  const ir = await resolveWorkflowIrForTask(store, dep.id);
+  const column = findColumn(ir, dep.column);
+  const completeFlag = column ? resolveColumnFlags(column).complete === true : false;
+
+  let markerAccepted = false;
+  try {
+    markerAccepted = store.getCompletionHandoffAcceptedMarker(dep.id) !== null;
+  } catch {
+    markerAccepted = false;
+  }
+  const legacy = legacyDependencySatisfied(dep) || markerAccepted;
+
+  if (completeFlag !== legacy) {
+    try {
+      void store.recordRunAuditEvent?.({
+        taskId: dep.id,
+        agentId: "scheduler",
+        runId: `hold-release:${dep.id}`,
+        domain: "database",
+        mutationType: "merge:dependency-parity-diff",
+        target: dep.id,
+        metadata: {
+          depId: dep.id,
+          completeFlagResult: completeFlag,
+          legacyResult: legacy,
+          source: "hold-release.dependency",
+        },
+      });
+    } catch {
+      // Audit is best-effort.
+    }
+  }
+  // Dual-accept: satisfied if EITHER signal says so (the dual-accept window
+  // closes at graduation per U12; until then both are accepted).
+  return completeFlag || legacy;
+}
+
+async function allDependenciesSatisfied(store: TaskStore, task: Task, allTasks: Task[]): Promise<boolean> {
+  for (const depId of task.dependencies ?? []) {
+    const dep = allTasks.find((t) => t.id === depId);
+    if (!dep) continue; // missing dep does not block (matches scheduler posture)
+    if (!(await dependencySatisfied(store, dep))) return false;
+  }
+  return true;
+}
+
+// ── Timer release ─────────────────────────────────────────────────────────────
+
+/** Resolve the timer deadline (ms epoch) for a timer hold, or `undefined` if not
+ *  resolvable. Supports an explicit `deadlineAt` (ISO or ms) or a relative
+ *  `durationMs`/`timerMs` measured from `columnMovedAt`. */
+function resolveTimerDeadline(holdConfig: Record<string, unknown>, task: Task): number | undefined {
+  const deadlineAt = holdConfig.deadlineAt;
+  if (typeof deadlineAt === "number" && Number.isFinite(deadlineAt)) return deadlineAt;
+  if (typeof deadlineAt === "string") {
+    const parsed = Date.parse(deadlineAt);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  const duration =
+    (typeof holdConfig.durationMs === "number" ? holdConfig.durationMs : undefined) ??
+    (typeof holdConfig.timerMs === "number" ? holdConfig.timerMs : undefined);
+  if (typeof duration === "number" && Number.isFinite(duration)) {
+    const base = Date.parse(task.columnMovedAt ?? task.createdAt);
+    if (Number.isFinite(base)) return base + duration;
+  }
+  return undefined;
+}
+
+// ── Capacity availability (same counting rule as the in-txn check) ────────────
+
+/**
+ * Count cards occupying the (workflow, column) capacity slot from a task
+ * snapshot, mirroring the store's in-txn count: cards in the column now, plus
+ * (when countPending) cards mid-`transitionPending` targeting it, scoped to the
+ * SAME effective workflow. This is the sweep's *pre-check* — the authoritative
+ * arbitration is still the in-txn check, which rejects a losing racer.
+ */
+function countCapacitySlot(
+  allTasks: Task[],
+  // Pre-built taskId → effective workflowId map (one pass per sweep) so this
+  // counting loop avoids a per-task `effectiveWorkflowId` DB call.
+  effectiveWorkflowIdByTask: Map<string, string>,
+  targetColumn: string,
+  workflowId: string,
+  countPending: boolean,
+): number {
+  let count = 0;
+  for (const t of allTasks) {
+    if ((effectiveWorkflowIdByTask.get(t.id) ?? DEFAULT_WORKFLOW_POOL_ID) !== workflowId) continue;
+    if (t.column === targetColumn) {
+      count += 1;
+      continue;
+    }
+    if (!countPending) continue;
+    const tp = (t as Task & { transitionPending?: { toColumn?: string } | null }).transitionPending;
+    if (tp && typeof tp === "object" && tp.toColumn === targetColumn) count += 1;
+  }
+  return count;
+}
+
+// ── The sweep ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run one hold/release sweep pass. No-op (returns empty) when the workflowColumns
+ * flag is OFF — flag-OFF scheduler behavior is byte-identical (the legacy
+ * pull-from-todo loop is untouched).
+ */
+export async function runHoldReleaseSweep(
+  store: TaskStore,
+  deps: HoldReleaseDeps,
+): Promise<HoldReleaseResult> {
+  const result: HoldReleaseResult = { released: [], held: [] };
+
+  const settings = await store.getSettings();
+  if (!isWorkflowColumnsEnabled(settings)) return result;
+
+  const allTasks = await store.listTasks({ includeArchived: false });
+
+  // Per-sweep caches. `allTasks` is a snapshot-stable read within a sweep, so we
+  // resolve each workflow's IR at most once (irCache) and pre-build the
+  // taskId → effective-workflowId map a single time rather than per-task DB
+  // calls inside the capacity counting loop. The authoritative in-txn capacity
+  // check is unaffected — this only trims the sweep pre-check cost.
+  const irCache = new Map<string, WorkflowIr>();
+  const effectiveWorkflowIdByTask = new Map<string, string>();
+  for (const t of allTasks) {
+    effectiveWorkflowIdByTask.set(t.id, effectiveWorkflowId(store, t.id));
+  }
+
+  for (const task of allTasks) {
+    // Skip paused / recovery-backoff tasks exactly as the legacy scheduler does.
+    if (task.paused || task.userPaused) {
+      continue;
+    }
+    if (task.nextRecoveryAt && Date.parse(task.nextRecoveryAt) > deps.now()) {
+      continue;
+    }
+
+    const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+    if (!isHeldTask(ir, task)) continue;
+
+    const column = findColumn(ir, task.column);
+    const holdConfig = column ? resolveHoldConfig(column) : undefined;
+    if (!column || !holdConfig) continue;
+    const release = typeof holdConfig.release === "string" ? holdConfig.release : "manual";
+
+    // manual / external-event are NEVER auto-released by the sweep.
+    if (release === "manual" || release === "external-event") {
+      result.held.push({ taskId: task.id, reason: `${release}-only` });
+      continue;
+    }
+
+    let shouldRelease = false;
+    if (release === "timer") {
+      const deadline = resolveTimerDeadline(holdConfig, task);
+      shouldRelease = deadline !== undefined && deps.now() >= deadline;
+      if (!shouldRelease) {
+        result.held.push({ taskId: task.id, reason: "timer-not-elapsed" });
+        continue;
+      }
+    } else if (release === "dependency") {
+      shouldRelease = await allDependenciesSatisfied(store, task, allTasks);
+      if (!shouldRelease) {
+        result.held.push({ taskId: task.id, reason: "deps-unsatisfied" });
+        continue;
+      }
+    } else if (release === "capacity") {
+      // Capacity holds release into the nearest downstream capacity column when a
+      // slot is free (pre-check); the in-txn check is the authority.
+      const target = resolveReleaseTarget(ir, task.column, true);
+      if (!target) {
+        result.held.push({ taskId: task.id, reason: "no-downstream-capacity-column" });
+        continue;
+      }
+      const capacity = resolveColumnCapacity(ir, target, settings);
+      if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
+        const workflowId = effectiveWorkflowIdByTask.get(task.id) ?? DEFAULT_WORKFLOW_POOL_ID;
+        const occupants = countCapacitySlot(allTasks, effectiveWorkflowIdByTask, target, workflowId, capacity.countPending);
+        if (occupants >= capacity.limit) {
+          result.held.push({ taskId: task.id, reason: "downstream-full" });
+          continue;
+        }
+      }
+      shouldRelease = true;
+    }
+
+    if (!shouldRelease) continue;
+
+    const target = resolveReleaseTarget(ir, task.column, release === "capacity");
+    if (!target) {
+      result.held.push({ taskId: task.id, reason: "no-release-target" });
+      continue;
+    }
+
+    const released = await issueRelease(store, deps, task, target, ir);
+    if (released) {
+      result.released.push(task.id);
+    } else {
+      result.held.push({ taskId: task.id, reason: "move-rejected-or-no-slot" });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Issue a single release move (`moveSource: "scheduler"`). For releases into a
+ * processing (capacity) column the reservation-first ordering (KTD-10) reserves
+ * worktree + semaphore before the move and releases the reservation if the move
+ * rejects on capacity. Returns true on a committed move, false otherwise (the
+ * card stays held).
+ */
+async function issueRelease(
+  store: TaskStore,
+  deps: HoldReleaseDeps,
+  task: Task,
+  target: string,
+  ir: WorkflowIr,
+): Promise<boolean> {
+  const targetColumn = findColumn(ir, target);
+  const targetIsProcessing = targetColumn ? resolveColumnFlags(targetColumn).countsTowardWip === true : false;
+
+  let reservation: SlotReservation | null = null;
+  if (targetIsProcessing && deps.reserveSlot) {
+    reservation = deps.reserveSlot(task, target);
+    if (!reservation) {
+      // Semaphore/worktree exhausted — reservation-first means no move at all.
+      schedulerLog.log(`Hold release for ${task.id} deferred — no reservable slot for ${target}`);
+      return false;
+    }
+  }
+
+  // A concurrent sweep (or explicit promote) can win the move for this same card
+  // while we hold a reservation. The store serializes the move under a per-task
+  // lock and resolves a redundant same-column move to a silent no-op: it returns
+  // the card already at the target WITHOUT re-allocating a slot or emitting a
+  // `task:moved`. A snapshot/pre-read can't tell winner from loser (both reads
+  // race ahead of either commit on the per-task lock). Instead we attribute the
+  // transition by OBJECT IDENTITY: a real move emits `task:moved` with the very
+  // Task object it then returns, whereas a no-op returns a freshly-read object
+  // and emits nothing. So the call whose `moveTask` result IS the emitted task is
+  // the real mover; any other call that reserved performed a redundant no-op and
+  // must release the slot it grabbed (FN-1415).
+  const movedTaskObjects = new Set<object>();
+  const onMoved = (data: { task: object; to: string }): void => {
+    if (data.to === target) movedTaskObjects.add(data.task);
+  };
+  store.on("task:moved", onMoved);
+
+  try {
+    const result = await store.moveTask(task.id, target, {
+      moveSource: "scheduler",
+      allocateWorktree:
+        targetIsProcessing && deps.allocateWorktree
+          ? (reservedNames) => deps.allocateWorktree!(task, reservedNames)
+          : undefined,
+    });
+    if (reservation && !movedTaskObjects.has(result)) {
+      // Same-column no-op: a racing sweep already moved this card to the target.
+      reservation.release();
+      schedulerLog.log(`Hold release for ${task.id} skipped — already at ${target} (racing sweep won)`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
+      // Lost the in-txn race for the slot — release the reservation, stay held.
+      reservation?.release();
+      schedulerLog.log(`Hold release for ${task.id} rejected on capacity for ${target} — staying held`);
+      return false;
+    }
+    // Any other failure: release the reservation and let the card stay held.
+    reservation?.release();
+    schedulerLog.warn(
+      `Hold release for ${task.id} into ${target} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  } finally {
+    store.off("task:moved", onMoved);
+  }
+}
+
+// ── Explicit (manual / external-event) releases ───────────────────────────────
+
+/**
+ * Manually promote a held card out of its hold column (U9's promote endpoint /
+ * CLI calls this). Releases regardless of the hold's release kind — a manual
+ * promote is the explicit operator action the `manual` release kind waits for,
+ * and it is also accepted for other kinds as an operator override. The move
+ * still serializes through the in-txn capacity check (KTD-10): a promote into a
+ * full column rejects with `capacity-exhausted`, surfaced to the caller.
+ */
+export async function promoteHeldTask(
+  store: TaskStore,
+  taskId: string,
+  deps: Pick<HoldReleaseDeps, "reserveSlot" | "allocateWorktree"> = {},
+): Promise<{ released: boolean; toColumn?: string; rejection?: string }> {
+  const task = await store.getTask(taskId);
+  if (!task) return { released: false, rejection: "task-not-found" };
+
+  const ir = await resolveWorkflowIrForTask(store, taskId);
+  if (!isHeldTask(ir, task)) {
+    return { released: false, rejection: "not-held" };
+  }
+  const target = resolveReleaseTarget(ir, task.column, true);
+  if (!target) return { released: false, rejection: "no-release-target" };
+
+  const released = await issueRelease(
+    store,
+    { now: () => Date.now(), reserveSlot: deps.reserveSlot, allocateWorktree: deps.allocateWorktree },
+    task,
+    target,
+    ir,
+  );
+  return released ? { released: true, toColumn: target } : { released: false, rejection: "capacity-exhausted-or-no-slot" };
+}
+
+/**
+ * Release a held card on an external event (webhook/API). Same shape as
+ * {@link promoteHeldTask} plus an `eventTag` recorded in the audit; only acts on
+ * `external-event` holds (a no-op otherwise so a stray webhook can't release a
+ * manual/timer/capacity hold).
+ */
+export async function releaseHeldTaskByEvent(
+  store: TaskStore,
+  taskId: string,
+  eventTag: string,
+  deps: Pick<HoldReleaseDeps, "reserveSlot" | "allocateWorktree"> = {},
+): Promise<{ released: boolean; toColumn?: string; rejection?: string }> {
+  const task = await store.getTask(taskId);
+  if (!task) return { released: false, rejection: "task-not-found" };
+
+  const ir = await resolveWorkflowIrForTask(store, taskId);
+  const column = findColumn(ir, task.column);
+  const holdConfig = column ? resolveHoldConfig(column) : undefined;
+  if (!column || !holdConfig || holdConfig.release !== "external-event") {
+    return { released: false, rejection: "not-external-event-hold" };
+  }
+  try {
+    void store.recordRunAuditEvent?.({
+      taskId,
+      agentId: "scheduler",
+      runId: `hold-release:event:${taskId}`,
+      domain: "database",
+      mutationType: "task:hold-release-event",
+      target: taskId,
+      metadata: { eventTag, fromColumn: task.column },
+    });
+  } catch {
+    // best-effort
+  }
+  const target = resolveReleaseTarget(ir, task.column, true);
+  if (!target) return { released: false, rejection: "no-release-target" };
+
+  const released = await issueRelease(
+    store,
+    { now: () => Date.now(), reserveSlot: deps.reserveSlot, allocateWorktree: deps.allocateWorktree },
+    task,
+    target,
+    ir,
+  );
+  return released ? { released: true, toColumn: target } : { released: false, rejection: "capacity-exhausted-or-no-slot" };
+}

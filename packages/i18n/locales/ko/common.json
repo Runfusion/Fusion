@@ -4,8 +4,65 @@
     "close": "닫기",
     "save": "저장"
   },
+  "agents": {
+    "ratings": {
+      "trendDeclining": "",
+      "trendImproving": "",
+      "trendInsufficient": "",
+      "trendStable": ""
+    },
+    "reflections": {
+      "triggerManual": "",
+      "triggerPeriodic": "",
+      "triggerPostTask": "",
+      "triggerUserRequested": ""
+    },
+    "time": {
+      "daysAgo_one": "",
+      "daysAgo_other": "",
+      "hoursAgo_one": "",
+      "hoursAgo_other": "",
+      "inAMoment": "",
+      "inDays_one": "",
+      "inDays_other": "",
+      "inHours_one": "",
+      "inHours_other": "",
+      "inMinutes_one": "",
+      "inMinutes_other": "",
+      "justNow": "",
+      "minutesAgo_one": "",
+      "minutesAgo_other": ""
+    }
+  },
   "archive": "보관",
+  "board": {
+    "rejection": {
+      "capacityExhausted": "",
+      "guardRejected": "",
+      "mergeBlocked": "",
+      "unknownColumn": "",
+      "workflowMismatch": ""
+    }
+  },
   "cancel": "취소",
+  "chat": {
+    "failedToGetResponse": "",
+    "failureReferenceId": "",
+    "failureReferenceKind": "",
+    "failureReferenceLabel": "",
+    "failureReferenceMetaLabel": "",
+    "openMailboxMessage": "",
+    "toolCallArgsPrefix": "",
+    "toolCallResultPrefix": "",
+    "toolCallStatusCompleted": "",
+    "toolCallStatusError": "",
+    "toolCallStatusErrors": "",
+    "toolCallStatusRunning": "",
+    "toolCallsCount_one": "",
+    "toolCallsCount_other": "",
+    "toolCallsHeader": "",
+    "viewFailureDetails": ""
+  },
   "close": "닫기",
   "columns": {
     "archived": "보관됨",
@@ -16,8 +73,162 @@
     "triage": "계획"
   },
   "delete": "삭제",
+  "health": {
+    "anomaly": {
+      "duplicateActiveId": "",
+      "idInBothStorages": "",
+      "sequenceOverlap": "",
+      "unknownPrefix": ""
+    }
+  },
+  "inline": {
+    "connecting": "",
+    "error": "",
+    "offline": "",
+    "online": ""
+  },
+  "merge": {
+    "unknown": ""
+  },
+  "missions": {
+    "autopilotStateActivating": "",
+    "autopilotStateCompleting": "",
+    "autopilotStateInactive": "",
+    "autopilotStateUnknown": "",
+    "autopilotStateWatching": "",
+    "interviewStatusAwaitingInput": "",
+    "interviewStatusComplete": "",
+    "interviewStatusError": "",
+    "interviewStatusGenerating": "",
+    "runHelperActive": "",
+    "runHelperBlocked": "",
+    "runHelperPlanning": ""
+  },
+  "models": {
+    "messages": {
+      "modelSetTo": "",
+      "modelSetToDefault": ""
+    }
+  },
+  "nodeStatus": {
+    "connecting": "",
+    "error": "",
+    "offline": "",
+    "online": "",
+    "unknown": ""
+  },
+  "nodes": {
+    "auth": {
+      "differ": "",
+      "differProviders": "",
+      "match": "",
+      "notSynced": ""
+    },
+    "status": {
+      "connecting": "",
+      "creating": "",
+      "deleting": "",
+      "error": "",
+      "exited": "",
+      "offline": "",
+      "online": "",
+      "recreating": "",
+      "running": "",
+      "stopped": ""
+    }
+  },
   "refresh": "새로고침",
+  "research": {
+    "providerGitHub": "",
+    "providerLlmSynthesis": "",
+    "providerLocalDocs": "",
+    "providerPageFetch": "",
+    "providerWebSearch": ""
+  },
   "retry": "재시도",
+  "routing": {
+    "policyLabel": {
+      "block": "",
+      "fallback": "",
+      "notConfigured": ""
+    }
+  },
+  "setup": {
+    "apiKeyFormatError": "",
+    "apiKeyLabel": {
+      "fallback": "",
+      "kimiCoding": "",
+      "minimax": "",
+      "ollama": "",
+      "openai": "",
+      "openrouter": "",
+      "zai": ""
+    },
+    "apiKeyPlaceholder": {
+      "fallback": "",
+      "kimiCoding": "",
+      "minimax": "",
+      "zai": ""
+    },
+    "apiKeyRequired": "",
+    "apiKeySetup": {
+      "fallback": "",
+      "kimiCoding": "",
+      "minimax": "",
+      "ollama": "",
+      "openai": "",
+      "openrouter": "",
+      "zai": ""
+    },
+    "apiKeyUsage": {
+      "fallback": "",
+      "kimiCoding": "",
+      "minimax": "",
+      "ollama": "",
+      "openai": "",
+      "openrouter": "",
+      "zai": ""
+    },
+    "providerDesc": {
+      "anthropic": "",
+      "fallback": "",
+      "gemini": "",
+      "google": "",
+      "kimi": "",
+      "kimiCoding": "",
+      "minimax": "",
+      "moonshot": "",
+      "ollama": "",
+      "openai": "",
+      "openaiCodex": "",
+      "openrouter": "",
+      "zai": ""
+    }
+  },
   "skip": "건너뛰기",
-  "tryAgain": "다시 시도"
+  "taskForm": {
+    "nodeStatusConnecting": "",
+    "nodeStatusError": "",
+    "nodeStatusOffline": "",
+    "nodeStatusOnline": "",
+    "phasePostMerge": "",
+    "phasePreMerge": ""
+  },
+  "taskReview": {
+    "never": "",
+    "refreshSourceBackground": "",
+    "refreshSourceInitialLoad": "",
+    "refreshSourceManual": ""
+  },
+  "tryAgain": "다시 시도",
+  "workflow": {
+    "postMerge": "",
+    "preMerge": "",
+    "statusAdvisory": "",
+    "statusFailed": "",
+    "statusPassed": "",
+    "statusRunning": "",
+    "statusSkipped": "",
+    "waitingForOutput": ""
+  }
 }

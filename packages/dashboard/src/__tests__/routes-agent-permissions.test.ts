@@ -97,8 +97,10 @@ const mockIsValidPermission = vi.fn(
 );
 const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("@fusion/core", () => {
+vi.mock("@fusion/core", async (importOriginal) => {
+  const __actual = await importOriginal<typeof import("@fusion/core")>();
   return {
+    ...__actual,
     AgentStore: class MockAgentStore {
       init = mockInit;
       getAgent = mockGetAgent;

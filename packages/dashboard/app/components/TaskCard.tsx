@@ -1,9 +1,9 @@
 import "./TaskCard.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
+import { memo, useCallback, useState, useRef, useEffect, useMemo, type ReactElement } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest } from "lucide-react";
-import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
@@ -11,7 +11,7 @@ import {
   VALID_TRANSITIONS,
   getErrorMessage,
 } from "@fusion/core";
-import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
+import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, type WorkflowFieldDefinition } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { PrCreateModal } from "./PrCreateModal";
 import { ProviderIcon } from "./ProviderIcon";
@@ -33,6 +33,15 @@ import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from ".
 import { MAX_AUTO_MERGE_RETRIES, type BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import { useRetryWarning } from "../context/RetryWarningContext";
 import { useColumnLabel } from "../i18n/labels";
+
+/** Per-branch progress snapshot (U13). Surfaced as an optional additive field
+ *  on the task payload for the parallel-window badge (U9). */
+interface BranchProgressEntry {
+  branchId: string;
+  nodeId: string;
+  status: string;
+}
+type TaskWithBranchProgress = Task & { branchProgress?: BranchProgressEntry[] };
 
 // ── Mission title caching ───────────────────────────────────────────────────
 
@@ -135,7 +144,9 @@ function isAgentCreatedTask(task: Task): boolean {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
+// Issue 1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
+// (which are not members and correctly resolve to false).
+const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
@@ -149,7 +160,7 @@ const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
   archived: "var(--text-muted)",
 };
 
-const TIME_INDICATOR_COLUMNS = new Set<Column>([
+const TIME_INDICATOR_COLUMNS = new Set<ColumnId>([
   "in-progress",
   "in-review",
   "done",
@@ -288,6 +299,72 @@ export function formatElapsedDurationDone(elapsedMs: number): string {
 }
 
 
+/** Max number of card-placed custom fields rendered before an overflow chip
+ *  (KTD-14: "max 3 card fields rendered with a +N overflow indicator"). */
+const MAX_CARD_FIELDS = 3;
+
+/** Render a single card-placed custom field value as a badge/chip (U13/KTD-14).
+ *  Returns null for empty/unset values so absent fields take no card space. */
+function renderCardFieldBadge(
+  field: WorkflowFieldDefinition,
+  value: unknown,
+): ReactElement | null {
+  const colorOf = (v: string): string | undefined => field.options?.find((o) => o.value === v)?.color;
+  const labelOf = (v: string): string => field.options?.find((o) => o.value === v)?.label ?? v;
+
+  if (field.type === "boolean") {
+    // Boolean true → labeled chip; false/unset → nothing.
+    if (value !== true) return null;
+    return (
+      <span key={field.id} className="card-field-badge card-field-badge--boolean" title={field.name}>
+        {field.name}
+      </span>
+    );
+  }
+  if (field.type === "enum") {
+    if (typeof value !== "string" || value === "") return null;
+    const color = colorOf(value);
+    return (
+      <span
+        key={field.id}
+        className="card-field-badge card-field-badge--enum"
+        title={`${field.name}: ${labelOf(value)}`}
+        style={color ? { backgroundColor: color, borderColor: color, color: "white" } : undefined}
+      >
+        {labelOf(value)}
+      </span>
+    );
+  }
+  if (field.type === "multi-enum") {
+    const arr = Array.isArray(value) ? (value as string[]) : [];
+    if (arr.length === 0) return null;
+    return (
+      <span key={field.id} className="card-field-badge card-field-badge--multi" title={field.name}>
+        {arr.map((v) => {
+          const color = colorOf(v);
+          return (
+            <span
+              key={v}
+              className="card-field-badge-token"
+              style={color ? { backgroundColor: color, borderColor: color, color: "white" } : undefined}
+            >
+              {labelOf(v)}
+            </span>
+          );
+        })}
+      </span>
+    );
+  }
+  // string / text / number / date / url → simple labeled chip.
+  if (value === undefined || value === null || value === "") return null;
+  const display = field.type === "date" && typeof value === "string" ? value.slice(0, 10) : String(value);
+  return (
+    <span key={field.id} className="card-field-badge" title={`${field.name}: ${display}`}>
+      {display}
+    </span>
+  );
+}
+
 interface TaskCardProps {
   task: Task;
   projectId?: string;
@@ -327,6 +404,9 @@ interface TaskCardProps {
   prAuthAvailable?: boolean;
   /** Whether project-level auto-merge is enabled (hides manual Create PR quick action when true). */
   autoMergeEnabled?: boolean;
+  /** Card-placed custom field definitions for this task's workflow (U13/KTD-14).
+   *  Empty/undefined → no field badges render (card byte-identical to today). */
+  cardFieldDefs?: WorkflowFieldDefinition[];
 }
 
 function getTaskPrimaryPrInfo(task: Pick<Task, "prInfo" | "prInfos">): PrInfo | undefined {
@@ -460,6 +540,10 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.taskStuckTimeoutMs === next.taskStuckTimeoutMs &&
     previous.prAuthAvailable === next.prAuthAvailable &&
     previous.autoMergeEnabled === next.autoMergeEnabled &&
+    previous.cardFieldDefs === next.cardFieldDefs &&
+    (previous.cardFieldDefs == null && next.cardFieldDefs == null
+      ? true
+      : JSON.stringify(previousTask.customFields ?? null) === JSON.stringify(nextTask.customFields ?? null)) &&
     previous.onOpenDetail === next.onOpenDetail &&
     previous.onOpenGroupModal === next.onOpenGroupModal &&
     previous.addToast === next.addToast &&
@@ -484,6 +568,8 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.title === nextTask.title &&
     previousTask.description === nextTask.description &&
     previousTask.column === nextTask.column &&
+    ((previousTask as TaskWithBranchProgress).branchProgress?.length ?? 0) ===
+      ((nextTask as TaskWithBranchProgress).branchProgress?.length ?? 0) &&
     previousTask.columnMovedAt === nextTask.columnMovedAt &&
     previousTask.timedExecutionMs === nextTask.timedExecutionMs &&
     previousTask.updatedAt === nextTask.updatedAt &&
@@ -571,6 +657,7 @@ function TaskCardComponent({
   fanout,
   prAuthAvailable,
   autoMergeEnabled = false,
+  cardFieldDefs,
 }: TaskCardProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
@@ -1746,6 +1833,24 @@ function TaskCardComponent({
             {t("tasks.stuck", "Stuck")}
           </span>
         )}
+        {/* U13/U9: per-branch progress badges while the card is in a parallel
+            window. Reads an optional additive `branchProgress` field on the task
+            payload (server-persisted by U13); absent → nothing renders. */}
+        {Array.isArray((task as TaskWithBranchProgress).branchProgress) &&
+          (task as TaskWithBranchProgress).branchProgress!.length > 0 && (
+            <span
+              className="card-status-badge card-branch-progress"
+              title={t("tasks.branchProgressTitle", "Parallel branches in progress")}
+              data-testid="branch-progress-badge"
+            >
+              {t("tasks.branchProgress", "{{done}}/{{total}} branches", {
+                done: (task as TaskWithBranchProgress).branchProgress!.filter(
+                  (b) => b.status === "completed",
+                ).length,
+                total: (task as TaskWithBranchProgress).branchProgress!.length,
+              })}
+            </span>
+          )}
         {showStalledReview && stalledReview && (
           <span
             className="card-status-badge card-status-badge--in-review stalled-review"
@@ -1916,6 +2021,30 @@ function TaskCardComponent({
       <div className="card-title" title={task.title || task.description || undefined}>
         {truncate(task.title, MAX_TITLE_LENGTH) || truncate(task.description, MAX_TITLE_LENGTH) || task.id}
       </div>
+      {(() => {
+        // Card-placed custom field badges (U13/KTD-14). Bounded to MAX_CARD_FIELDS
+        // with a "+N" overflow chip. Nothing renders when no card fields are
+        // defined or all values are empty — card stays byte-identical to today.
+        const cardDefs = (cardFieldDefs ?? []).filter((f) => f.render?.placement === "card");
+        if (cardDefs.length === 0) return null;
+        const values = task.customFields ?? {};
+        const badges = cardDefs
+          .map((f) => renderCardFieldBadge(f, values[f.id]))
+          .filter((b): b is ReactElement => b !== null);
+        if (badges.length === 0) return null;
+        const shown = badges.slice(0, MAX_CARD_FIELDS);
+        const overflow = badges.length - shown.length;
+        return (
+          <div className="card-field-badges" data-testid="card-field-badges">
+            {shown}
+            {overflow > 0 ? (
+              <span className="card-field-badge card-field-badge--overflow" data-testid="card-field-overflow">
+                +{overflow}
+              </span>
+            ) : null}
+          </div>
+        );
+      })()}
       {hasBranchMetadata && (
         <div className="card-branch-row" aria-label={t("tasks.branchMetadata", "Branch metadata")}>
           {branchMetadata.branch && (
@@ -1973,7 +2102,9 @@ function TaskCardComponent({
                   className="card-progress-fill"
                   style={{
                     width: `${progressPercent}%`,
-                    backgroundColor: COLUMN_PROGRESS_COLOR_MAP[task.column],
+                    // Issue 1403: custom columns have no legacy progress color → fall back to accent.
+                    backgroundColor:
+                      (COLUMN_PROGRESS_COLOR_MAP as Record<string, string>)[task.column] ?? "var(--accent)",
                   }}
                 />
               </div>

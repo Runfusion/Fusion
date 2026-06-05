@@ -1,7 +1,7 @@
 ---
 title: "feat: Workflow interpreter cutover — graph owns the full lifecycle"
 type: feat
-status: active
+status: superseded
 date: 2026-06-03
 depth: deep
 origin: docs/plans/2026-06-03-001-feat-executable-custom-workflows-node-editor-plan.md (Deferred Track)

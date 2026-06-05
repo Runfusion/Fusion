@@ -1,3 +1,4 @@
+import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
 import type { WorkflowDefinition } from "./workflow-definition-types.js";
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
@@ -139,6 +140,32 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       },
     ],
   }),
+  // The stepwise coding workflow (KTD-9) — step inversion as authored graph
+  // structure (parse-steps → foreach{ step-execute → step-review } → review →
+  // merge). Authored directly as a v2 IR (the `linear` helper only builds simple
+  // pipelines); it is read-only like every built-in. Requires the
+  // `workflowGraphExecutor` flag at run time (foreach/step-review/parse-steps are
+  // interpreter-only node kinds, KTD-8); under the flag-off compile path its
+  // step-inversion nodes are skipped, the same posture as the other seam nodes.
+  {
+    id: "builtin:stepwise-coding",
+    name: "Stepwise coding (built-in)",
+    description:
+      "Per-step plan, execute, and review modeled as graph structure: each planned step runs and is reviewed (approve / revise / rethink) before the next, with bounded rework. Requires the workflow graph executor.",
+    ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
+    layout: {
+      start: { x: 60, y: 160 },
+      plan: { x: 230, y: 160 },
+      parse: { x: 400, y: 160 },
+      steps: { x: 570, y: 160 },
+      "rework-hold": { x: 570, y: 320 },
+      review: { x: 740, y: 160 },
+      merge: { x: 910, y: 160 },
+      end: { x: 1080, y: 160 },
+    },
+    createdAt: BUILTIN_TS,
+    updatedAt: BUILTIN_TS,
+  },
 ];
 
 const BUILTIN_BY_ID = new Map(BUILTIN_WORKFLOWS.map((wf) => [wf.id, wf]));

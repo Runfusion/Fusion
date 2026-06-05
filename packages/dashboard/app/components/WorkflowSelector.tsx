@@ -1,10 +1,12 @@
 import "./WorkflowSelector.css";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Workflow as WorkflowIcon } from "lucide-react";
 import type { WorkflowDefinition } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import { fetchWorkflows, fetchProjectDefaultWorkflow, setProjectDefaultWorkflow } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 
 interface WorkflowSelectorProps {
   /** Currently selected workflow id, or null for none. */
@@ -17,6 +19,13 @@ interface WorkflowSelectorProps {
   label?: string;
   /** Optional affordance to open the graph editor. */
   onManage?: () => void;
+  /**
+   * U9: when the task whose workflow is being switched has an active session,
+   * switching aborts that session and re-homes the card into the new workflow's
+   * entry column. Pass `true` to require an abort-warning confirmation before
+   * applying (parallels Column.tsx's preserve-progress confirm).
+   */
+  hasActiveSession?: boolean;
 }
 
 export function WorkflowSelector({
@@ -27,7 +36,10 @@ export function WorkflowSelector({
   disabled,
   label = "Workflow",
   onManage,
+  hasActiveSession,
 }: WorkflowSelectorProps) {
+  const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -55,6 +67,19 @@ export function WorkflowSelector({
   const handleChange = useCallback(
     async (next: string) => {
       const workflowId = next === "" ? null : next;
+      if (hasActiveSession) {
+        const confirmed = await confirm({
+          title: t("workflowSelector.switchActiveTitle", "Switch workflow?"),
+          message: t(
+            "workflowSelector.switchActiveMessage",
+            "This task has an active session. Switching workflows aborts it and re-homes the card into the new workflow's entry column. Continue?",
+          ),
+          confirmLabel: t("workflowSelector.switchConfirm", "Switch and abort"),
+          cancelLabel: t("workflowSelector.switchCancel", "Cancel"),
+          danger: true,
+        });
+        if (!confirmed) return;
+      }
       setApplying(true);
       try {
         await onChange(workflowId);
@@ -64,7 +89,7 @@ export function WorkflowSelector({
         setApplying(false);
       }
     },
-    [onChange, addToast],
+    [onChange, addToast, hasActiveSession, confirm, t],
   );
 
   return (

@@ -1,0 +1,9 @@
+---
+"@runfusion/fusion": minor
+---
+
+Add workflow-defined custom columns with composable traits, behind the `experimentalFeatures.workflowColumns` flag (off by default).
+
+Workflows can now define their own columns, each carrying composable traits (declarative flags plus lifecycle hooks) instead of the fixed `triage → todo → in-progress → in-review → done → archived` pipeline. The dashboard board renders one lane per workflow in use, and graphs gain `hold`, `split`, and `join` nodes for passive dwell and parallel fan-out/join branches. The built-in default workflow reproduces today's pipeline verbatim, and migration rewrites zero task rows — a null workflow selection resolves to the default workflow at read time. With the flag off, the legacy board, transitions, and engine behavior are unchanged.
+
+**ROLLBACK:** Workflow IR now has a `v2` on-disk shape (custom columns + `hold`/`split`/`join` nodes). Pre-v2 binaries hard-reject any IR whose `version !== 'v1'`, so a naive downgrade would brick rows that had been re-serialized as v2. To keep rollback safe, the store downgrades a workflow back to the `v1` shape on save whenever (a) the `experimentalFeatures.workflowColumns` flag is OFF, and (b) the graph is "pure v1" — only `start`/`prompt`/`script`/`gate`/`end` nodes, no `hold`/`split`/`join`, and exactly the synthesized default columns at their default seam-derived placement. v2 is persisted only when the flag is ON or a genuine v2 feature (custom column, applied trait, custom placement, or a v2-only node) is in use. Reading a downgraded `v1` row on a v2 binary re-upgrades it to the identical v2 graph, so this is lossless. Rollback is therefore only unsafe for workflows that actually use v2 features with the flag ON; turn the flag OFF and re-save such workflows (or delete them) before downgrading to a pre-v2 binary.

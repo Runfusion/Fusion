@@ -28,6 +28,8 @@ interface WorktreeGroupProps {
   lastFetchTimeMs?: number;
   /** Lookup of workflow step IDs to display names, fetched once at board level. */
   workflowStepNameLookup?: ReadonlyMap<string, string>;
+  /** Per-task card-placed custom field definitions (U13/KTD-14). */
+  taskCardFieldDefs?: ReadonlyMap<string, import("../api").WorkflowFieldDefinition[]>;
   /** Precomputed blocker fanout keyed by blocker task ID. */
   blockerFanoutMap?: ReadonlyMap<string, BlockerFanoutEntry>;
   /** Whether GitHub CLI auth is available for creating PRs from task cards. */
@@ -51,6 +53,7 @@ function WorktreeGroupComponent({
   onOpenMission,
   lastFetchTimeMs,
   workflowStepNameLookup,
+  taskCardFieldDefs,
   blockerFanoutMap,
   prAuthAvailable,
   autoMergeEnabled,
@@ -68,7 +71,7 @@ function WorktreeGroupComponent({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onRetryTask={onRetryTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} workflowStepNameLookup={workflowStepNameLookup} fanout={blockerFanoutMap?.get(task.id)} prAuthAvailable={prAuthAvailable} autoMergeEnabled={autoMergeEnabled} />
+        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onRetryTask={onRetryTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} workflowStepNameLookup={workflowStepNameLookup} cardFieldDefs={taskCardFieldDefs?.get(task.id)} fanout={blockerFanoutMap?.get(task.id)} prAuthAvailable={prAuthAvailable} autoMergeEnabled={autoMergeEnabled} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -86,6 +89,7 @@ function WorktreeGroupComponent({
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
           workflowStepNameLookup={workflowStepNameLookup}
+          cardFieldDefs={taskCardFieldDefs?.get(task.id)}
           fanout={blockerFanoutMap?.get(task.id)}
           prAuthAvailable={prAuthAvailable}
           autoMergeEnabled={autoMergeEnabled}

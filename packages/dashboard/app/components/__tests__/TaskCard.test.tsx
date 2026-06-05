@@ -493,6 +493,24 @@ describe("TaskCard", () => {
     expect(screen.getByText("FN-001")).toBeDefined();
   });
 
+  it("renders a per-branch progress badge when the task is in a parallel window (U9/U13)", () => {
+    const task = {
+      ...makeTask(),
+      branchProgress: [
+        { branchId: "b1", nodeId: "n1", status: "completed" },
+        { branchId: "b2", nodeId: "n2", status: "running" },
+      ],
+    } as Task;
+    render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} />);
+    const badge = screen.getByTestId("branch-progress-badge");
+    expect(badge.textContent).toContain("1/2");
+  });
+
+  it("does not render a branch-progress badge when there is no parallel window", () => {
+    render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.queryByTestId("branch-progress-badge")).toBeNull();
+  });
+
   it("keeps native card dragging enabled by default", () => {
     const { container } = render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
     const card = container.querySelector(".card") as HTMLElement;
@@ -4169,6 +4187,42 @@ describe("TaskCard memo comparator provenance behavior", () => {
       ),
     ).toBe(false);
   });
+
+  it("skips customFields JSON.stringify when both cardFieldDefs are absent", () => {
+    // Without cardFieldDefs present, two tasks with different customFields should
+    // compare equal (JSON.stringify is skipped — guard path).
+    const taskA = makeTask({ customFields: { x: "a" } });
+    const taskB = makeTask({ customFields: { x: "b" } });
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task: taskA, onOpenDetail: noop, addToast: noop } as any,
+        { task: taskB, onOpenDetail: noop, addToast: noop } as any,
+      ),
+    ).toBe(true);
+  });
+
+  it("detects customFields change when cardFieldDefs are present on both sides", () => {
+    const defs = [{ id: "sev", name: "Severity", type: "enum" as const, render: { placement: "card" as const } }];
+    const taskA = makeTask({ customFields: { sev: "low" } });
+    const taskB = makeTask({ customFields: { sev: "high" } });
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task: taskA, cardFieldDefs: defs, onOpenDetail: noop, addToast: noop } as any,
+        { task: taskB, cardFieldDefs: defs, onOpenDetail: noop, addToast: noop } as any,
+      ),
+    ).toBe(false);
+  });
+
+  it("detects customFields change when only one side has cardFieldDefs", () => {
+    const defs = [{ id: "sev", name: "Severity", type: "enum" as const, render: { placement: "card" as const } }];
+    const task = makeTask({ customFields: { sev: "low" } });
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task, cardFieldDefs: undefined, onOpenDetail: noop, addToast: noop } as any,
+        { task, cardFieldDefs: defs, onOpenDetail: noop, addToast: noop } as any,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("TaskCard mission badge", () => {
@@ -4512,5 +4566,86 @@ describe("TaskCard agent badge", () => {
     );
 
     expect(screen.queryByTitle(/Assigned to/)).toBeNull();
+  });
+});
+
+describe("TaskCard custom field badges (U13/KTD-14)", () => {
+  type FieldDef = import("../../api").WorkflowFieldDefinition;
+  const cardDef = (over: Partial<FieldDef> & Pick<FieldDef, "id" | "name" | "type">): FieldDef => ({
+    render: { placement: "card" },
+    ...over,
+  });
+
+  it("renders no badges and stays byte-identical when no field defs are passed", () => {
+    const { container: withTask } = render(
+      <TaskCard task={makeTask({ customFields: { x: "y" } })} onOpenDetail={noop} addToast={noop} />,
+    );
+    expect(withTask.querySelector('[data-testid="card-field-badges"]')).toBeNull();
+  });
+
+  it("renders an enum badge with the option color and label", () => {
+    const defs: FieldDef[] = [
+      cardDef({ id: "sev", name: "Severity", type: "enum", options: [{ value: "high", label: "High", color: "#ef4444" }] }),
+    ];
+    render(
+      <TaskCard
+        task={makeTask({ customFields: { sev: "high" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+        cardFieldDefs={defs}
+      />,
+    );
+    const badge = screen.getByText("High");
+    expect(badge.getAttribute("style")).toContain("rgb(239, 68, 68)");
+  });
+
+  it("renders a labeled chip for boolean true and nothing for false", () => {
+    const defs: FieldDef[] = [cardDef({ id: "blk", name: "Blocked", type: "boolean" })];
+    const { rerender } = render(
+      <TaskCard task={makeTask({ customFields: { blk: true } })} onOpenDetail={noop} addToast={noop} cardFieldDefs={defs} />,
+    );
+    expect(screen.getByText("Blocked")).toBeTruthy();
+    rerender(
+      <TaskCard task={makeTask({ customFields: { blk: false } })} onOpenDetail={noop} addToast={noop} cardFieldDefs={defs} />,
+    );
+    expect(screen.queryByTestId("card-field-badges")).toBeNull();
+  });
+
+  it("caps at 3 badges and shows a +N overflow indicator", () => {
+    const defs: FieldDef[] = [
+      cardDef({ id: "a", name: "A", type: "string" }),
+      cardDef({ id: "b", name: "B", type: "string" }),
+      cardDef({ id: "c", name: "C", type: "string" }),
+      cardDef({ id: "d", name: "D", type: "string" }),
+      cardDef({ id: "e", name: "E", type: "string" }),
+    ];
+    render(
+      <TaskCard
+        task={makeTask({ customFields: { a: "1", b: "2", c: "3", d: "4", e: "5" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+        cardFieldDefs={defs}
+      />,
+    );
+    const overflow = screen.getByTestId("card-field-overflow");
+    expect(overflow.textContent).toBe("+2");
+    // Exactly 3 value badges + 1 overflow chip.
+    const container = screen.getByTestId("card-field-badges");
+    expect(container.querySelectorAll(".card-field-badge").length).toBe(4);
+  });
+
+  it("ignores non-card-placed defs", () => {
+    const defs: FieldDef[] = [
+      { id: "detailOnly", name: "Detail", type: "string", render: { placement: "detail" } },
+    ];
+    render(
+      <TaskCard
+        task={makeTask({ customFields: { detailOnly: "x" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+        cardFieldDefs={defs}
+      />,
+    );
+    expect(screen.queryByTestId("card-field-badges")).toBeNull();
   });
 });

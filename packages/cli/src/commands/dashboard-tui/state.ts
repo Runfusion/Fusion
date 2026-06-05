@@ -1,3 +1,4 @@
+import type { TraitFlags } from "@fusion/core";
 import type { LogEntry } from "./log-ring-buffer.js";
 
 // ── Public types shared across the whole dashboard-tui module ─────────────────
@@ -131,6 +132,15 @@ export interface TaskItem {
   description: string;
   column: string;
   agentState?: string;
+  /** Display name of the task's resolved workflow column (U11, flag-ON only).
+   *  Used as the secondary label when a card lands in the "Other (custom)"
+   *  bucket so the user keeps the real position. Absent on flag-OFF / legacy
+   *  boards. */
+  columnName?: string;
+  /** Merged trait flags of the task's resolved workflow column (U11, flag-ON
+   *  only). Drives graceful-degradation bucket mapping for non-legacy columns.
+   *  Absent on flag-OFF / legacy boards, where bucketing is by column id. */
+  columnFlags?: TraitFlags;
 }
 
 // Slim agent shape for Agents view list
@@ -220,6 +230,10 @@ export interface TaskDetailData {
   currentStepIndex?: number;
   steps: TaskStep[];
   recentLogs: TaskLogEntry[]; // last ~200 entries on initial load
+  /** Card-placed custom field values, pre-rendered as read-only bracketed
+   *  labels for the task detail view (U13/KTD-14). Absent/empty when the
+   *  workflow declares no card fields or none have values. */
+  customFields?: Array<{ label: string; value: string }>;
 }
 
 export type TaskEvent =

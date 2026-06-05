@@ -79,6 +79,10 @@ import type {
   TaskIdIntegrityReport,
   BranchGroup,
   BranchGroupPrState,
+  WorkflowFieldDefinition,
+  WorkflowFieldType,
+  WorkflowFieldOption,
+  WorkflowFieldRender,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
@@ -531,6 +535,81 @@ export function moveTask(
       ),
     }),
   });
+}
+
+/** Resolved trait flags for a board column (subset the client cares about). */
+export interface BoardWorkflowColumnFlags {
+  countsTowardWip?: boolean;
+  complete?: boolean;
+  archived?: boolean;
+  hiddenFromBoard?: boolean;
+  hold?: boolean;
+  intake?: boolean;
+  mergeBlocker?: boolean;
+  humanReview?: boolean;
+  [key: string]: boolean | undefined;
+}
+
+export interface BoardWorkflowColumn {
+  id: string;
+  name: string;
+  flags: BoardWorkflowColumnFlags;
+}
+
+// WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender
+// are re-exported from @fusion/core above (KTD-13/14).
+export type { WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender };
+
+export interface BoardWorkflowDefinition {
+  id: string;
+  name: string;
+  columns: BoardWorkflowColumn[];
+  /** Custom field definitions declared by this workflow (U13/KTD-14). Absent on
+   *  workflows with no fields, or from older servers. */
+  fields?: WorkflowFieldDefinition[];
+}
+
+export interface BoardWorkflowsPayload {
+  flagEnabled: boolean;
+  defaultWorkflowId: string;
+  workflows: BoardWorkflowDefinition[];
+  taskWorkflowIds: Record<string, string>;
+}
+
+/** A typed custom-field rejection surfaced by the PATCH endpoint (KTD-13). */
+export interface CustomFieldRejection {
+  code: "no-fields-defined" | "unknown-field" | "type-mismatch" | "enum-violation";
+  fieldId: string;
+  detail: string;
+}
+
+/**
+ * Patch a task's custom field values (U13/KTD-14). The server validates the
+ * patch against the task's workflow field schema and returns the updated task;
+ * a validation failure surfaces as a 400 carrying `{ fieldId, code, detail }`.
+ * A `null` value for a field deletes it.
+ */
+export function updateTaskCustomFields(
+  id: string,
+  customFields: Record<string, unknown>,
+  projectId?: string,
+): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/custom-fields`, projectId), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ customFields }),
+  });
+}
+
+/** Fetch the multi-lane board metadata (U9). When the flag is OFF the server
+ *  returns `{ flagEnabled: false }` and the board renders its legacy form. */
+export function fetchBoardWorkflows(projectId?: string): Promise<BoardWorkflowsPayload> {
+  return api<BoardWorkflowsPayload>(withProjectId("/tasks/board-workflows", projectId));
+}
+
+/** Manually promote a held card out of its hold column (U9). */
+export function promoteTask(id: string, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/promote`, projectId), { method: "POST" });
 }
 
 /**
@@ -4958,6 +5037,37 @@ export function fetchWorkflows(projectId?: string): Promise<import("@fusion/core
   return dedupe(path, () => api<import("@fusion/core").WorkflowDefinition[]>(path));
 }
 
+/** A trait catalog entry as returned by GET /api/traits (U10). Mirrors the
+ *  registry's TraitDefinition projection (flags + hook descriptors + schema). */
+export interface TraitCatalogEntry {
+  id: string;
+  name: string;
+  description?: string;
+  builtin: boolean;
+  flags: import("@fusion/core").TraitFlags;
+  hooks?: import("@fusion/core").TraitHookDescriptors;
+  configSchema?: import("@fusion/core").TraitConfigSchema;
+}
+
+/** Fetch the trait catalog (built-ins + registered plugin traits) for the
+ *  workflow editor's trait picker. Registry-backed, read-only, session-scoped. */
+export function fetchTraits(projectId?: string): Promise<TraitCatalogEntry[]> {
+  const path = withProjectId("/traits", projectId);
+  return dedupe(path, () =>
+    api<{ traits: TraitCatalogEntry[] }>(path).then((res) => res.traits),
+  );
+}
+
+/** Fetch the step-parser id catalog (built-ins + registered plugin parsers) for
+ *  the parse-steps node inspector (KTD-12). Registry-backed, read-only,
+ *  session-scoped. Mirrors fetchTraits. */
+export function fetchStepParsers(projectId?: string): Promise<string[]> {
+  const path = withProjectId("/step-parsers", projectId);
+  return dedupe(path, () =>
+    api<{ parsers: Array<{ id: string }> }>(path).then((res) => res.parsers.map((p) => p.id)),
+  );
+}
+
 /** Fetch a single workflow definition. */
 export function fetchWorkflow(id: string, projectId?: string): Promise<import("@fusion/core").WorkflowDefinition> {
   return api<import("@fusion/core").WorkflowDefinition>(withProjectId(`/workflows/${encodeURIComponent(id)}`, projectId));
@@ -5011,8 +5121,18 @@ export function selectTaskWorkflow(
   taskId: string,
   workflowId: string | null,
   projectId?: string,
-): Promise<{ workflowId: string | null; enabledWorkflowSteps: string[] }> {
-  return api<{ workflowId: string | null; enabledWorkflowSteps: string[] }>(
+): Promise<{
+  workflowId: string | null;
+  enabledWorkflowSteps: string[];
+  // U5 (R20): present (flag ON) when the switch re-homed the card; `preserved`
+  // false means the card moved columns and the board needs a refresh.
+  reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
+}> {
+  return api<{
+    workflowId: string | null;
+    enabledWorkflowSteps: string[];
+    reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
+  }>(
     withProjectId(`/tasks/${encodeURIComponent(taskId)}/workflow`, projectId),
     {
       method: "PUT",

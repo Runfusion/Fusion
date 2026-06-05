@@ -4,7 +4,8 @@ import { request } from "../test-request.js";
 const mockGetRunDetail = vi.fn();
 const mockGetRunAuditEvents = vi.fn();
 
-vi.mock("@fusion/core", () => ({
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
   AgentStore: class MockAgentStore {
     init = vi.fn().mockResolvedValue(undefined);
     getRunDetail = mockGetRunDetail;

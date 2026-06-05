@@ -92,6 +92,7 @@ import {
   normalizeMergeAdvanceAutoSyncMode,
   isMergeRequestContractShadowEnabled,
 } from "@fusion/core";
+import { resolveMergePolicy, type MergeFileScopeMode } from "./merge-trait.js";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel } from "./agent-session-helpers.js";
@@ -4930,10 +4931,16 @@ export async function assertSquashOverlapsFileScope(params: {
   taskId: string;
   rootDir: string;
   task: Task;
+  /** U7 (R10): when the merge trait's `fileScope: "custom"` mode is active,
+   *  these glob/path rules replace the task's File Scope section as the
+   *  declared scope. `scopeOverride` is a documented no-op only under
+   *  `fileScope: "off"` (handled by the caller, which skips this assert). */
+  customScopeRules?: string[];
 }): Promise<void> {
-  const { store, taskId, rootDir, task } = params;
+  const { store, taskId, rootDir, task, customScopeRules } = params;
+  const hasCustomRules = Array.isArray(customScopeRules) && customScopeRules.length > 0;
 
-  if (task.scopeOverride === true) {
+  if (!hasCustomRules && task.scopeOverride === true) {
     const reasonSuffix = task.scopeOverrideReason?.trim()
       ? ` — reason: ${task.scopeOverrideReason.trim()}`
       : "";
@@ -4947,11 +4954,16 @@ export async function assertSquashOverlapsFileScope(params: {
     return;
   }
 
-  if (typeof (store as Partial<TaskStore>).parseFileScopeFromPrompt !== "function") {
-    return;
+  let declaredScope: string[];
+  if (hasCustomRules) {
+    // Custom rules replace the parsed File Scope section entirely.
+    declaredScope = customScopeRules;
+  } else {
+    if (typeof (store as Partial<TaskStore>).parseFileScopeFromPrompt !== "function") {
+      return;
+    }
+    declaredScope = await store.parseFileScopeFromPrompt(taskId);
   }
-
-  const declaredScope = await store.parseFileScopeFromPrompt(taskId);
   if (declaredScope.length === 0) {
     return;
   }
@@ -4986,10 +4998,68 @@ export async function enforceSquashFileScopeInvariant(params: {
   resetLabel: string;
   auditor?: RunAuditor;
 }): Promise<void> {
+  // U7 (R10): resolve the file-scope enforcement mode from the merge trait
+  // (flag ON) or settings (back-compat). The lost-work guard trio is NOT gated
+  // by this mode — it lives elsewhere in the mechanics and stays enforced for
+  // every mode (KTD-6).
+  const policy = await resolveMergePolicy(params.store, params.task);
+  const mode: MergeFileScopeMode = policy.fileScope;
+
+  if (mode === "off") {
+    // Skip the violation throw, but emit exactly one per-merge audit event
+    // recording that scope enforcement was disabled by workflow config. Per-task
+    // `scopeOverride` is a documented no-op in this mode (the scope check itself
+    // is disabled, so there is nothing to override).
+    if (params.auditor) {
+      try {
+        await params.auditor.git({
+          type: "merge:file-scope-enforcement-disabled",
+          target: params.taskId,
+          metadata: {
+            resetLabel: params.resetLabel,
+            mode: "off",
+            disabledByWorkflowConfig: true,
+            scopeOverrideIsNoOp: params.task.scopeOverride === true,
+          },
+        });
+      } catch (auditErr) {
+        mergerLog.warn(`${params.taskId}: failed to emit run_audit event for file-scope-enforcement-disabled: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+      }
+    }
+    return;
+  }
+
+  const customScopeRules = mode === "custom" ? policy.fileScopeRules : undefined;
+
   try {
-    await assertSquashOverlapsFileScope(params);
+    await assertSquashOverlapsFileScope({ ...params, customScopeRules });
   } catch (error: unknown) {
     if (!(error instanceof FileScopeViolationError)) {
+      throw error;
+    }
+    // `strict` re-throws the violation (hard guardrail that blocks the merge);
+    // `warn`/`custom` log + proceed, with the audit carrying the violating file
+    // list (same payload as the error).
+    if (mode === "strict") {
+      if (params.auditor) {
+        try {
+          await params.auditor.git({
+            type: "merge:file-scope-violation",
+            target: params.taskId,
+            metadata: {
+              resetLabel: params.resetLabel,
+              mode: "strict",
+              stagedFiles: error.stagedFiles,
+              declaredScope: error.declaredScope,
+              stagedFileCount: error.stagedFiles.length,
+              declaredScopeCount: error.declaredScope.length,
+              warningOnly: false,
+            },
+          });
+        } catch (auditErr) {
+          mergerLog.warn(`${params.taskId}: failed to emit run_audit event for FileScopeViolationError (strict): ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+        }
+      }
       throw error;
     }
     const warningMessage = `${error.message} Warning only — continuing merge.`;
@@ -7534,6 +7604,11 @@ export async function aiMergeTask(
 
   const projectRootDir = rootDir;
   const settings = await store.getSettings();
+  // U7 (R10): resolve the merge trait's policy (strategy / fileScope / rules)
+  // from the task's workflow when the workflowColumns flag is ON, falling back
+  // to the existing settings knobs otherwise. Read-through only — merge
+  // mechanics (and the non-configurable lost-work guard trio) are untouched.
+  const mergePolicy = await resolveMergePolicy(store, task, settings);
   const resolvedIntegrationBranch = await resolveIntegrationBranch(projectRootDir, settings);
   const groupRouting = await resolveBranchGroupMergeRouting({
     task,
@@ -9204,8 +9279,17 @@ export async function aiMergeTask(
 
   let selectedPostMergeAuditStrategy: PostMergeAuditStrategy = "squash";
   let classifiedBranchCommits: BranchCommitClassification[] = [];
-  if (settings.mergeStrategy !== "pull-request") {
-    const configuredRoute = resolveDirectMergeCommitStrategy(settings, task.prompt);
+  // U7 (R10): `pr-only` authored on the merge trait routes through the PR flow
+  // exactly like `settings.mergeStrategy === "pull-request"` — no direct-merge
+  // commit routing runs.
+  const isPullRequestRoute = settings.mergeStrategy === "pull-request" || mergePolicy.pullRequestOnly;
+  if (!isPullRequestRoute) {
+    // When the workflow's merge trait authored a commit strategy, it takes
+    // precedence over the project/prompt setting (read-through, mechanics
+    // unchanged); otherwise fall back to the existing resolver.
+    const configuredRoute = mergePolicy.source === "workflow"
+      ? { strategy: mergePolicy.commitStrategy, source: "workflow" as const }
+      : resolveDirectMergeCommitStrategy(settings, task.prompt);
     if (configuredRoute.strategy === "auto") {
       try {
         const classification = await classifyBranchCommitsForDirectMerge(

@@ -16,7 +16,13 @@ import {
   createPostRoomMessageTool,
   createResearchTools,
   createWorkflowListTool,
+  createWorkflowGetTool,
   createWorkflowSelectTool,
+  createTaskPromoteTool,
+  createWorkflowCreateTool,
+  createWorkflowUpdateTool,
+  createWorkflowDeleteTool,
+  createTraitListTool,
   qmdAgentMemoryCollectionName,
   readAgentMemoryWorkspaceLongTerm,
   sendMessageParams,
@@ -26,6 +32,12 @@ import * as core from "@fusion/core";
 import { ChatStore, Database } from "@fusion/core";
 import type { MessageStore, Message } from "@fusion/core";
 import { getEnabledPluginTools, getResearchToolSurfaceStatus } from "../tool-availability.js";
+import { promoteHeldTask } from "../hold-release.js";
+
+vi.mock("../hold-release.js", () => ({
+  promoteHeldTask: vi.fn(),
+}));
+const mockPromoteHeldTask = vi.mocked(promoteHeldTask);
 
 const loggerSpies = vi.hoisted(() => ({
   log: vi.fn(),
@@ -382,31 +394,248 @@ describe("createWorkflowListTool", () => {
   });
 });
 
+describe("createWorkflowGetTool", () => {
+  it("returns the definition with builtin flag and full IR as JSON", async () => {
+    const ir = {
+      version: "v2",
+      name: "QA",
+      columns: [{ id: "intake", name: "Intake", traits: [] }],
+      nodes: [{ id: "n1", kind: "step-execute" }],
+      edges: [],
+      fields: [{ id: "severity", name: "Severity", type: "enum", options: [{ value: "low", label: "Low" }] }],
+    };
+    const store = {
+      getWorkflowDefinition: vi.fn().mockResolvedValue({ id: "WF-003", name: "QA", description: "QA flow", ir }),
+    };
+    const tool = createWorkflowGetTool(store as any);
+    const result = await tool.execute("call-1", { workflow_id: "WF-003" } as any, undefined, undefined, {} as any);
+    expect(store.getWorkflowDefinition).toHaveBeenCalledWith("WF-003");
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    const parsed = JSON.parse(text);
+    expect(parsed).toMatchObject({ id: "WF-003", name: "QA", description: "QA flow", builtin: false });
+    expect(parsed.ir.fields[0].id).toBe("severity");
+    expect(result.details).toMatchObject({ workflowId: "WF-003", builtin: false });
+  });
+
+  it("marks a builtin id as builtin", async () => {
+    const store = {
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        id: "builtin:coding",
+        name: "Coding",
+        description: "Standard",
+        ir: { version: "v2", name: "Coding", columns: [], nodes: [], edges: [] },
+      }),
+    };
+    const tool = createWorkflowGetTool(store as any);
+    const result = await tool.execute("call-1", { workflow_id: "builtin:coding" } as any, undefined, undefined, {} as any);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(JSON.parse(text).builtin).toBe(true);
+    expect(result.details).toMatchObject({ builtin: true });
+  });
+
+  it("includes layout when the definition carries editor positions", async () => {
+    const layout = { n1: { x: 10, y: 20 } };
+    const store = {
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        id: "WF-005",
+        name: "Laid out",
+        description: "",
+        ir: { version: "v2", name: "Laid out", columns: [], nodes: [{ id: "n1", kind: "step-execute" }], edges: [] },
+        layout,
+      }),
+    };
+    const tool = createWorkflowGetTool(store as any);
+    const result = await tool.execute("call-1", { workflow_id: "WF-005" } as any, undefined, undefined, {} as any);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(JSON.parse(text).layout).toEqual(layout);
+    expect(result.details).toMatchObject({ workflowId: "WF-005", layout });
+  });
+
+  it("omits layout when the definition has none", async () => {
+    const store = {
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        id: "WF-006",
+        name: "No layout",
+        description: "",
+        ir: { version: "v2", name: "No layout", columns: [], nodes: [], edges: [] },
+      }),
+    };
+    const tool = createWorkflowGetTool(store as any);
+    const result = await tool.execute("call-1", { workflow_id: "WF-006" } as any, undefined, undefined, {} as any);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(JSON.parse(text)).not.toHaveProperty("layout");
+    expect(result.details).not.toHaveProperty("layout");
+  });
+
+  it("returns an error result for an unknown id", async () => {
+    const store = { getWorkflowDefinition: vi.fn().mockResolvedValue(undefined) };
+    const tool = createWorkflowGetTool(store as any);
+    const result = await tool.execute("call-1", { workflow_id: "WF-404" } as any, undefined, undefined, {} as any);
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toMatch(/Unknown workflow id 'WF-404'/);
+  });
+});
+
 describe("createWorkflowSelectTool", () => {
   it("selects for the current task by default and reports enabled step count", async () => {
-    const store = { selectTaskWorkflow: vi.fn().mockResolvedValue(["workflow:WF-003:lint"]) };
+    const store = {
+      selectTaskWorkflowAndReconcile: vi.fn().mockResolvedValue({ enabledWorkflowSteps: ["workflow:WF-003:lint"] }),
+    };
     const tool = createWorkflowSelectTool(store as any, "FN-200");
     const result = await tool.execute("call-1", { workflow_id: "WF-003" } as any, undefined, undefined, {} as any);
-    expect(store.selectTaskWorkflow).toHaveBeenCalledWith("FN-200", "WF-003");
+    expect(store.selectTaskWorkflowAndReconcile).toHaveBeenCalledWith("FN-200", "WF-003");
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).toContain("Selected workflow WF-003 for FN-200 (1 step enabled)");
     expect(result.details).toMatchObject({ taskId: "FN-200", workflowId: "WF-003" });
   });
 
   it("honors an explicit task_id override", async () => {
-    const store = { selectTaskWorkflow: vi.fn().mockResolvedValue([]) };
+    const store = { selectTaskWorkflowAndReconcile: vi.fn().mockResolvedValue({ enabledWorkflowSteps: [] }) };
     const tool = createWorkflowSelectTool(store as any, "FN-200");
     await tool.execute("call-1", { workflow_id: "builtin:coding", task_id: "FN-999" } as any, undefined, undefined, {} as any);
-    expect(store.selectTaskWorkflow).toHaveBeenCalledWith("FN-999", "builtin:coding");
+    expect(store.selectTaskWorkflowAndReconcile).toHaveBeenCalledWith("FN-999", "builtin:coding");
+  });
+
+  it("surfaces the reconciliation re-home outcome", async () => {
+    const store = {
+      selectTaskWorkflowAndReconcile: vi.fn().mockResolvedValue({
+        enabledWorkflowSteps: [],
+        reconciliation: { preserved: false, fromColumn: "review", toColumn: "intake" },
+      }),
+    };
+    const tool = createWorkflowSelectTool(store as any, "FN-200");
+    const result = await tool.execute("call-1", { workflow_id: "WF-003" } as any, undefined, undefined, {} as any);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Re-homed from 'review' to 'intake'");
+    expect(result.details).toMatchObject({ reconciliation: { preserved: false, fromColumn: "review", toColumn: "intake" } });
   });
 
   it("returns an error result when selection fails", async () => {
-    const store = { selectTaskWorkflow: vi.fn().mockRejectedValue(new Error("Workflow not found: WF-404")) };
+    const store = { selectTaskWorkflowAndReconcile: vi.fn().mockRejectedValue(new Error("Workflow not found: WF-404")) };
     const tool = createWorkflowSelectTool(store as any, "FN-200");
     const result = await tool.execute("call-1", { workflow_id: "WF-404" } as any, undefined, undefined, {} as any);
     expect((result as { isError?: boolean }).isError).toBe(true);
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).toMatch(/Workflow not found: WF-404/);
+  });
+});
+
+describe("createTaskPromoteTool", () => {
+  beforeEach(() => mockPromoteHeldTask.mockReset());
+
+  it("promotes the current task by default and reports the destination column", async () => {
+    const store = {} as any;
+    mockPromoteHeldTask.mockResolvedValue({ released: true, toColumn: "ready" });
+    const tool = createTaskPromoteTool(store, "FN-200");
+    const result = await tool.execute("c", {} as any, undefined, undefined, {} as any);
+    expect(mockPromoteHeldTask).toHaveBeenCalledWith(store, "FN-200");
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Promoted FN-200 to column 'ready'");
+    expect(result.details).toMatchObject({ taskId: "FN-200", released: true, toColumn: "ready" });
+  });
+
+  it("honors an explicit task_id and surfaces a rejection as an error", async () => {
+    const store = {} as any;
+    mockPromoteHeldTask.mockResolvedValue({ released: false, rejection: "not-held" });
+    const tool = createTaskPromoteTool(store, "FN-200");
+    const result = await tool.execute("c", { task_id: "FN-999" } as any, undefined, undefined, {} as any);
+    expect(mockPromoteHeldTask).toHaveBeenCalledWith(store, "FN-999");
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toMatch(/not-held/);
+  });
+});
+
+describe("createWorkflowCreateTool", () => {
+  it("creates a workflow and returns the new id", async () => {
+    const store = { createWorkflowDefinition: vi.fn().mockResolvedValue({ id: "WF-010", name: "QA" }) };
+    const tool = createWorkflowCreateTool(store as any);
+    const result = await tool.execute("c", { name: "QA", ir: { columns: [] } } as any, undefined, undefined, {} as any);
+    expect(store.createWorkflowDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "QA", ir: { columns: [] } }),
+    );
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Created workflow WF-010 (QA)");
+  });
+
+  it("returns an error result when creation fails", async () => {
+    const store = { createWorkflowDefinition: vi.fn().mockRejectedValue(new Error("Workflow name is required")) };
+    const tool = createWorkflowCreateTool(store as any);
+    const result = await tool.execute("c", { name: "", ir: {} } as any, undefined, undefined, {} as any);
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toMatch(/name is required/);
+  });
+});
+
+describe("createWorkflowUpdateTool", () => {
+  it("updates a workflow and reports the name", async () => {
+    const store = { updateWorkflowDefinition: vi.fn().mockResolvedValue({ id: "WF-010", name: "QA v2" }) };
+    const tool = createWorkflowUpdateTool(store as any);
+    const result = await tool.execute("c", { workflow_id: "WF-010", name: "QA v2" } as any, undefined, undefined, {} as any);
+    expect(store.updateWorkflowDefinition).toHaveBeenCalledWith("WF-010", expect.objectContaining({ name: "QA v2" }));
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Updated workflow WF-010 (QA v2)");
+  });
+
+  it("forwards rehome_to as rehomeTo", async () => {
+    const store = { updateWorkflowDefinition: vi.fn().mockResolvedValue({ id: "WF-010", name: "QA" }) };
+    const tool = createWorkflowUpdateTool(store as any);
+    await tool.execute("c", { workflow_id: "WF-010", ir: { columns: [] }, rehome_to: "intake" } as any, undefined, undefined, {} as any);
+    expect(store.updateWorkflowDefinition).toHaveBeenCalledWith("WF-010", expect.objectContaining({ rehomeTo: "intake" }));
+  });
+
+  it("surfaces an OccupiedColumnsError as a structured retryable response", async () => {
+    const err = new core.OccupiedColumnsError("WF-010", [{ columnId: "review", count: 2 }]);
+    const store = { updateWorkflowDefinition: vi.fn().mockRejectedValue(err) };
+    const tool = createWorkflowUpdateTool(store as any);
+    const result = await tool.execute("c", { workflow_id: "WF-010", ir: { columns: [] } } as any, undefined, undefined, {} as any);
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("review (2)");
+    expect(text).toMatch(/rehome_to/);
+    expect(result.details).toMatchObject({
+      occupiedColumns: [{ columnId: "review", count: 2 }],
+      workflowId: "WF-010",
+      retryWith: "rehome_to",
+    });
+  });
+});
+
+describe("createWorkflowDeleteTool", () => {
+  it("deletes a workflow", async () => {
+    const store = { deleteWorkflowDefinition: vi.fn().mockResolvedValue(undefined) };
+    const tool = createWorkflowDeleteTool(store as any);
+    const result = await tool.execute("c", { workflow_id: "WF-010" } as any, undefined, undefined, {} as any);
+    expect(store.deleteWorkflowDefinition).toHaveBeenCalledWith("WF-010");
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("Deleted workflow WF-010");
+  });
+
+  it("surfaces a built-in protection error", async () => {
+    const store = {
+      deleteWorkflowDefinition: vi.fn().mockRejectedValue(new Error("Built-in workflows cannot be deleted")),
+    };
+    const tool = createWorkflowDeleteTool(store as any);
+    const result = await tool.execute("c", { workflow_id: "builtin:coding" } as any, undefined, undefined, {} as any);
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toMatch(/cannot be deleted/);
+  });
+});
+
+describe("createTraitListTool", () => {
+  it("lists the trait catalog with ids, names, and flags in details", async () => {
+    const tool = createTraitListTool();
+    const result = await tool.execute("c", {} as any, undefined, undefined, {} as any);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toMatch(/Available traits:/);
+    const traits = (result.details as { traits?: Array<{ id: string; name: string; flags: unknown }> }).traits ?? [];
+    expect(traits.length).toBeGreaterThan(0);
+    expect(traits[0]).toHaveProperty("id");
+    expect(traits[0]).toHaveProperty("name");
+    expect(traits[0]).toHaveProperty("flags");
   });
 });
 

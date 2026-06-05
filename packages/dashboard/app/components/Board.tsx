@@ -2,11 +2,16 @@ import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIss
 import { COLUMNS, DEFAULT_COLUMN, isColumn } from "@fusion/core";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { Column } from "./Column";
+import { Lane } from "./Lane";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { fetchWorkflowSteps, type ModelInfo } from "../api";
+import { fetchWorkflowSteps, fetchBoardWorkflows, promoteTask, type ModelInfo, type BoardWorkflowsPayload } from "../api";
 import { useBlockerFanout } from "../hooks/useBlockerFanout";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { subscribeSse } from "../sse-bus";
+
+/** localStorage key for persisted lane collapse state (per project). */
+const LANE_COLLAPSE_STORAGE_KEY = "kb-dashboard-lane-collapsed";
 
 interface BoardProps {
   tasks: Task[];
@@ -261,9 +266,242 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
     };
   }, []);
 
+  // ── U9 multi-lane board (flag-gated) ──────────────────────────────────────
+  // Fetch board-workflows metadata. When the flag is OFF the server returns
+  // { flagEnabled: false } and we render the legacy single-lane board below.
+  const [boardWorkflows, setBoardWorkflows] = useState<BoardWorkflowsPayload | null>(null);
+  const draggingTaskIdRef = useRef<string | null>(null);
+  const [collapsedLanes, setCollapsedLanes] = useState<ReadonlySet<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem(LANE_COLLAPSE_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+      if (Array.isArray(parsed)) return new Set(parsed.filter((x): x is string => typeof x === "string"));
+    } catch {
+      /* ignore corrupt persisted state */
+    }
+    return new Set();
+  });
+
+  // Fetch board workflow lanes for the project. Deliberately NOT keyed on
+  // `tasks` — that refetched on every SSE tick. Instead we refetch on project
+  // change and when the tab regains visibility/focus. A stale-response guard
+  // (monotonic sequence ref) drops out-of-order responses.
+  // A `workflow:updated` (and create/delete) SSE event now drives invalidation
+  // when a definition's lanes / column traits change. The visibility/focus
+  // refetch below is retained as a stopgap for missed events / reconnects.
+  const boardWorkflowsFetchSeqRef = useRef(0);
+  useEffect(() => {
+    const runFetch = () => {
+      const seq = ++boardWorkflowsFetchSeqRef.current;
+      fetchBoardWorkflows(projectId)
+        .then((payload) => {
+          if (seq === boardWorkflowsFetchSeqRef.current) setBoardWorkflows(payload);
+        })
+        .catch(() => {
+          if (seq === boardWorkflowsFetchSeqRef.current) {
+            setBoardWorkflows({ flagEnabled: false, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} });
+          }
+        });
+    };
+    runFetch();
+    const onVisible = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") runFetch();
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
+    if (typeof window !== "undefined") window.addEventListener("focus", onVisible);
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      events: {
+        "workflow:created": runFetch,
+        "workflow:updated": runFetch,
+        "workflow:deleted": runFetch,
+      },
+    });
+    return () => {
+      // Advance the seq so any in-flight response is dropped on cleanup.
+      boardWorkflowsFetchSeqRef.current++;
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
+      if (typeof window !== "undefined") window.removeEventListener("focus", onVisible);
+      unsubscribe();
+    };
+  }, [projectId]);
+
+  const handleToggleLaneCollapse = useCallback((workflowId: string) => {
+    setCollapsedLanes((prev) => {
+      const next = new Set(prev);
+      if (next.has(workflowId)) next.delete(workflowId);
+      else next.add(workflowId);
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(LANE_COLLAPSE_STORAGE_KEY, JSON.stringify([...next]));
+        } catch {
+          /* ignore quota / serialization errors */
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const handlePromote = useCallback(async (taskId: string) => {
+    await promoteTask(taskId, projectId);
+  }, [projectId]);
+
+  const getDraggingTaskId = useCallback(() => draggingTaskIdRef.current, []);
+
+  const flagOn = boardWorkflows?.flagEnabled === true;
+
+  // Group visible tasks into lanes by resolved workflow (null → default lane).
+  const lanes = useMemo(() => {
+    if (!boardWorkflows || !flagOn) return [];
+    const { workflows, taskWorkflowIds, defaultWorkflowId } = boardWorkflows;
+    const byId = new Map(workflows.map((w) => [w.id, w] as const));
+    const tasksByWorkflow = new Map<string, Task[]>();
+    for (const task of tasks) {
+      // Archived cards are excluded from lanes (archived columns are hidden).
+      if (task.column === "archived") continue;
+      const workflowId = taskWorkflowIds[task.id] ?? defaultWorkflowId;
+      (tasksByWorkflow.get(workflowId) ?? tasksByWorkflow.set(workflowId, []).get(workflowId)!).push(task);
+    }
+    const result: Array<{ workflow: typeof workflows[number]; tasks: Task[] }> = [];
+    for (const [workflowId, laneTasks] of tasksByWorkflow) {
+      const workflow = byId.get(workflowId);
+      if (!workflow) continue;
+      if (laneTasks.length === 0) continue; // zero-card lanes hidden
+      result.push({ workflow, tasks: laneTasks });
+    }
+    // Default lane first; then by workflow name for stable ordering.
+    result.sort((a, b) => {
+      if (a.workflow.id === defaultWorkflowId) return -1;
+      if (b.workflow.id === defaultWorkflowId) return 1;
+      return a.workflow.name.localeCompare(b.workflow.name);
+    });
+    return result;
+  }, [boardWorkflows, flagOn, tasks]);
+
+  // Card-placed field defs grouped by workflow id (U13/KTD-14). Only recomputes
+  // when the board-workflows payload changes, not on every SSE task tick.
+  const cardDefsByWorkflow = useMemo(() => {
+    const map = new Map<string, import("../api").WorkflowFieldDefinition[]>();
+    if (!boardWorkflows) return map;
+    for (const wf of boardWorkflows.workflows) {
+      const cardDefs = (wf.fields ?? []).filter((f) => f.render?.placement === "card");
+      if (cardDefs.length > 0) map.set(wf.id, cardDefs);
+    }
+    return map;
+  }, [boardWorkflows]);
+
+  // Per-task card field defs (U13/KTD-14). Recomputes on task list changes but
+  // reuses the stable cardDefsByWorkflow map so the inner loop is cheap.
+  const taskCardFieldDefs = useMemo(() => {
+    const map = new Map<string, import("../api").WorkflowFieldDefinition[]>();
+    if (cardDefsByWorkflow.size === 0) return map;
+    if (!boardWorkflows) return map;
+    const { taskWorkflowIds, defaultWorkflowId } = boardWorkflows;
+    for (const task of tasks) {
+      const workflowId = taskWorkflowIds[task.id] ?? defaultWorkflowId;
+      const defs = cardDefsByWorkflow.get(workflowId);
+      if (defs) map.set(task.id, defs);
+    }
+    return map;
+  }, [cardDefsByWorkflow, tasks, boardWorkflows]);
+
+  // Drag pre-check (R17): adjacency + capacity from the lane's column metadata.
+  // Cross-lane drag → workflow-mismatch. Deterministic rejections return a
+  // messageKey (no-move); null = allowed.
+  const canDropTask = useCallback((taskId: string, targetColumnId: string, laneWorkflowId: string): string | null => {
+    if (!boardWorkflows) return null;
+    const sourceTask = tasks.find((t) => t.id === taskId);
+    if (!sourceTask) return null;
+    const sourceWorkflowId = boardWorkflows.taskWorkflowIds[taskId] ?? boardWorkflows.defaultWorkflowId;
+    // Cross-lane drag never switches workflows (R17).
+    if (sourceWorkflowId !== laneWorkflowId) {
+      return "board.rejection.workflowMismatch";
+    }
+    const workflow = boardWorkflows.workflows.find((w) => w.id === laneWorkflowId);
+    if (!workflow) return null;
+    const targetCol = workflow.columns.find((c) => c.id === targetColumnId);
+    if (!targetCol) return "board.rejection.unknownColumn";
+    // Capacity pre-check: a wip-flagged column that is already full rejects.
+    if (targetCol.flags.countsTowardWip) {
+      const occupants = tasks.filter(
+        (t) => t.column === targetColumnId && (boardWorkflows.taskWorkflowIds[t.id] ?? boardWorkflows.defaultWorkflowId) === laneWorkflowId,
+      ).length;
+      // The default workflow's in-progress limit is maxConcurrent; custom limits
+      // are enforced authoritatively server-side (the 409 fallback still snaps back).
+      if (Number.isFinite(maxConcurrent) && maxConcurrent > 0 && sourceTask.column !== targetColumnId && occupants >= maxConcurrent) {
+        return "board.rejection.capacityExhausted";
+      }
+    }
+    return null;
+  }, [boardWorkflows, tasks, maxConcurrent]);
+
   // FN-4380: GitHub badge state comes from persisted task fields (`task.prInfo`,
   // `task.issueInfo`, `task.githubTracking.issue`) and live WebSocket `badge:updated`
   // messages. We do NOT eagerly call `/api/github/batch-status` on board load.
+
+  if (flagOn) {
+    return (
+      <main
+        className="board board-lanes"
+        id="board"
+        ref={boardRef}
+        onDragStart={(e) => {
+          const id = (e.target as HTMLElement)?.closest?.("[data-id]")?.getAttribute("data-id");
+          if (id) draggingTaskIdRef.current = id;
+        }}
+        onDragEnd={() => {
+          draggingTaskIdRef.current = null;
+        }}
+      >
+        {lanes.map(({ workflow, tasks: laneTasks }) => (
+          <Lane
+            key={workflow.id}
+            workflow={workflow}
+            tasks={laneTasks}
+            collapsed={collapsedLanes.has(workflow.id)}
+            onToggleCollapse={handleToggleLaneCollapse}
+            projectId={projectId}
+            maxConcurrent={maxConcurrent}
+            onMoveTask={onMoveTask}
+            onPromote={handlePromote}
+            canDropTask={canDropTask}
+            getDraggingTaskId={getDraggingTaskId}
+            onPauseTask={onPauseTask}
+            onOpenDetail={onOpenDetail}
+            onOpenGroupModal={onOpenGroupModal}
+            addToast={addToast}
+            onQuickCreate={onQuickCreate}
+            onNewTask={onNewTask}
+            autoMerge={autoMerge}
+            onToggleAutoMerge={onToggleAutoMerge}
+            globalPaused={globalPaused}
+            onUpdateTask={onUpdateTask}
+            onRetryTask={onRetryTask}
+            onArchiveTask={onArchiveTask}
+            onUnarchiveTask={onUnarchiveTask}
+            onDeleteTask={onDeleteTask}
+            availableModels={availableModels}
+            onPlanningMode={onPlanningMode}
+            onSubtaskBreakdown={onSubtaskBreakdown}
+            onOpenDetailWithTab={onOpenDetailWithTab}
+            favoriteProviders={favoriteProviders}
+            favoriteModels={favoriteModels}
+            onToggleFavorite={onToggleFavorite}
+            onToggleModelFavorite={onToggleModelFavorite}
+            isSearchActive={isSearchActive}
+            taskStuckTimeoutMs={taskStuckTimeoutMs}
+            onOpenMission={onOpenMission}
+            lastFetchTimeMs={lastFetchTimeMs}
+            workflowStepNameLookup={workflowStepNameLookup}
+            taskCardFieldDefs={taskCardFieldDefs}
+            blockerFanoutMap={blockerFanoutMap}
+            prAuthAvailable={prAuthAvailable}
+          />
+        ))}
+      </main>
+    );
+  }
 
   return (
     <>
@@ -298,6 +536,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
             onOpenMission={onOpenMission}
             lastFetchTimeMs={lastFetchTimeMs}
             workflowStepNameLookup={workflowStepNameLookup}
+            taskCardFieldDefs={taskCardFieldDefs}
             blockerFanoutMap={blockerFanoutMap}
             prAuthAvailable={prAuthAvailable}
             autoMerge={autoMerge}

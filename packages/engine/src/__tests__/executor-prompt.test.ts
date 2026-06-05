@@ -145,6 +145,34 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Attachments");
   });
 
+  it("includes Custom fields section listing id/name/type, enum options, required, and current value", () => {
+    const task = createMockTaskDetail({ customFields: { severity: "high" } });
+    const result = buildExecutionPrompt(task, "/home/user/project", undefined, undefined, undefined, [
+      { id: "severity", name: "Severity", type: "enum", required: true, options: [
+        { value: "low", label: "Low" },
+        { value: "high", label: "High" },
+      ] },
+      { id: "notes", name: "Notes", type: "text" },
+    ] as any);
+
+    expect(result).toContain("## Custom fields");
+    expect(result).toContain("`severity` (Severity) — type: enum");
+    expect(result).toContain("options: [low (Low), high (High)]");
+    expect(result).toContain("required");
+    expect(result).toContain('current: "high"');
+    // The unset field reports "unset".
+    expect(result).toContain("`notes` (Notes) — type: text; current: unset");
+  });
+
+  it("omits Custom fields section when no field defs are provided", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task, "/home/user/project");
+    expect(result).not.toContain("## Custom fields");
+
+    const resultEmpty = buildExecutionPrompt(task, "/home/user/project", undefined, undefined, undefined, []);
+    expect(resultEmpty).not.toContain("## Custom fields");
+  });
+
   it("includes Project Commands section with test command when settings.testCommand is set", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task, "/home/user/project", {
@@ -2511,6 +2539,36 @@ describe("TaskExecutor global pause behavior", () => {
     // Should move to in-review (normal completion), not todo
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+  });
+});
+
+describe("fn_task_update bare-call guard (P1 api-contract)", () => {
+  // createTaskUpdateTool is a private executor method; the bare-call guard runs
+  // before any store access, so we reach it via the lowest-cost seam: construct
+  // a TaskExecutor over a mock store and invoke the private method with `as any`.
+  function makeTool() {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    return (executor as any).createTaskUpdateTool("FN-001", new Map(), { current: null }, new Map());
+  }
+
+  it("returns isError with a self-describing message when no fields are supplied", async () => {
+    const tool = makeTool();
+    const result = await tool.execute("call-1", {});
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).toContain("fn_task_update requires at least one of");
+    // The legacy no-op text is preserved as the detail.
+    expect(text).toContain("No-op: provide a step+status, dependencies, or custom_fields to update.");
+  });
+
+  it("does not trigger the guard when a dependencies-only patch is supplied", async () => {
+    const tool = makeTool();
+    const result = await tool.execute("call-1", { dependencies: [] });
+    // Reaches the dependencies path, not the bare-call guard.
+    expect(result.isError).not.toBe(true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(text).not.toContain("fn_task_update requires at least one of");
   });
 });
 

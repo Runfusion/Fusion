@@ -66,7 +66,8 @@ vi.mock("../chat.js", () => ({
   __resetChatState: vi.fn(),
 }));
 
-vi.mock("@fusion/core", () => ({
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
   ChatStore: class MockChatStore extends EventEmitter {
     init = mockInit;
     createSession = mockCreateSession;

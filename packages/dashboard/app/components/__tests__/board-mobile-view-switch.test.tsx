@@ -6,6 +6,7 @@ import { ListView } from "../ListView";
 import "../../styles.css";
 
 vi.mock("../../api", () => ({
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
   fetchSettings: vi.fn().mockResolvedValue({

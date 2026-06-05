@@ -103,6 +103,8 @@ export default tseslint.config(
       // Vitest temporary workspace resolution directories
       ".tmp-fn-*/**",
       ".claude/**",
+      // Generated i18n resource typings (emitted by i18n:types)
+      "packages/i18n/src/resources.d.ts",
       // Lock files
       "*.lock",
       "pnpm-lock.yaml",

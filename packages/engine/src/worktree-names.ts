@@ -33,6 +33,17 @@ export function canonicalFusionBranchName(taskId: string): string {
   return `fusion/${taskId.toLowerCase()}`;
 }
 
+/**
+ * Canonical per-instance branch name for a worktree-isolated foreach step
+ * (step-inversion KTD-11, U10): `fusion/<task>-step-<i>`. Deterministic from the
+ * task id + 0-based step index so crash-resume can reconstruct the branch name
+ * (and probe its existence) without persisting it separately — though the
+ * instance row also carries `branchName` for the integration/reconcile path.
+ */
+export function canonicalStepInstanceBranchName(taskId: string, stepIndex: number): string {
+  return `${canonicalFusionBranchName(taskId)}-step-${stepIndex}`;
+}
+
 export function resolveTaskWorkingBranch(task: Pick<Task, "id" | "branch" | "branchContext">): string {
   if (task.branchContext?.assignmentMode === "shared") {
     return canonicalFusionBranchName(task.id);

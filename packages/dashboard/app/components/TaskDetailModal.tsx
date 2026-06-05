@@ -9,19 +9,22 @@ import { useColumnLabel } from "../i18n/labels";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
   TASK_PRIORITIES,
   VALID_TRANSITIONS,
+  isColumn,
   getErrorMessage,
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
 } from "@fusion/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, recoverBranchBinding, refreshPrStatus } from "../api";
-import type { RecoverBranchBindingOutcome } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, recoverBranchBinding, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields } from "../api";
+import type { RecoverBranchBindingOutcome, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
+import { ApiRequestError } from "../api";
+import { TaskFieldsSection } from "./TaskFieldsSection";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
@@ -305,6 +308,11 @@ export interface TaskDetailModalProps {
   initialTab?: TabId;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
+  /** Pre-resolved workflow field defs for this task's workflow (U13/KTD-14).
+   *  When provided (e.g. threaded from a Board that already holds the payload)
+   *  the modal skips its own board-workflows fetch entirely. Falls back to the
+   *  self-fetch when absent (e.g. modal opened from non-board contexts). */
+  workflowFieldDefs?: WorkflowFieldDefinition[] | null;
 }
 
 export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
@@ -456,8 +464,10 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
 
 const DESCRIPTION_TRUNCATE_LENGTH = 200;
 
-const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
-const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo", "in-progress", "in-review"]);
+// #1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
+// (non-members correctly resolve to false → not editable).
+const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
+const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review"]);
 
 export function TaskDetailContent({
   task,
@@ -478,6 +488,7 @@ export function TaskDetailContent({
   mobileHeaderMode = "close",
   embedded = false,
   onRequestClose,
+  workflowFieldDefs: workflowFieldDefsProp,
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
@@ -601,6 +612,69 @@ export function TaskDetailContent({
   const [specFeedback, setSpecFeedback] = useState("");
   const [showRefineModal, setShowRefineModal] = useState(false);
   const [prCreateOpen, setPrCreateOpen] = useState(false);
+
+  // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
+  // from the board-workflows payload; absent when the workflow declares none,
+  // in which case the fields section renders nothing (today's UI byte-identical).
+  // When `workflowFieldDefsProp` is provided by the caller (e.g. the Board
+  // already holds the payload) we skip the self-fetch entirely.
+  const [customFieldDefs, setCustomFieldDefs] = useState<WorkflowFieldDefinition[] | null>(
+    workflowFieldDefsProp !== undefined ? (workflowFieldDefsProp ?? null) : null,
+  );
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, unknown>>(task.customFields ?? {});
+  const [customFieldError, setCustomFieldError] = useState<CustomFieldRejection | null>(null);
+
+  // Keep local field values in sync when the task prop changes (SSE refresh).
+  useEffect(() => {
+    setCustomFieldValues(task.customFields ?? {});
+  }, [task.id, task.customFields]);
+
+  // Resolve this task's workflow field definitions once per task. Skipped when
+  // the caller supplies `workflowFieldDefs` directly (Board context). Best-effort:
+  // a failed fetch (or flag-OFF empty payload) leaves defs null → no section.
+  useEffect(() => {
+    if (workflowFieldDefsProp !== undefined) {
+      // Prop-driven path: keep in sync if the prop changes (task switch etc.).
+      setCustomFieldDefs(workflowFieldDefsProp ?? null);
+      return;
+    }
+    let cancelled = false;
+    void fetchBoardWorkflows(projectId)
+      .then((payload) => {
+        if (cancelled) return;
+        const workflowId = payload.taskWorkflowIds[task.id] ?? payload.defaultWorkflowId;
+        const workflow = payload.workflows.find((w) => w.id === workflowId);
+        setCustomFieldDefs(workflow?.fields ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFieldDefs(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [task.id, projectId, workflowFieldDefsProp]);
+
+  const handleSaveCustomFields = useCallback(
+    async (patch: Record<string, unknown>) => {
+      setCustomFieldError(null);
+      try {
+        const updated = await updateTaskCustomFields(task.id, patch, projectId);
+        setCustomFieldValues(updated.customFields ?? {});
+        onTaskUpdated?.(updated);
+      } catch (err) {
+        if (err instanceof ApiRequestError && err.details && typeof err.details.fieldId === "string") {
+          setCustomFieldError({
+            code: (err.details.code as CustomFieldRejection["code"]) ?? "type-mismatch",
+            fieldId: err.details.fieldId,
+            detail: typeof err.details.detail === "string" ? err.details.detail : err.message,
+          });
+          return;
+        }
+        addToast(getErrorMessage(err) || t("taskFields.saveFailed", "Failed to save field"), "error");
+      }
+    },
+    [task.id, projectId, onTaskUpdated, addToast, t],
+  );
 
   useEffect(() => {
     if (activeTab !== "logs" || logSubview !== "activity") {
@@ -1971,6 +2045,18 @@ export function TaskDetailContent({
     }
   }, [task.id, projectId, workflowEnabledSteps, onTaskUpdated, addToast]);
 
+  // U5 (R20): a workflow switch re-homed the card to a new column. Refetch the
+  // task and push it up so the board reflects the move before the SSE catch-up.
+  const handleWorkflowReconciled = useCallback(async () => {
+    try {
+      const detail = await fetchTaskDetail(task.id, projectId);
+      setFullDetail(detail);
+      onTaskUpdated?.(detail);
+    } catch {
+      // Best-effort refresh; the SSE stream will catch the board up regardless.
+    }
+  }, [task.id, projectId, onTaskUpdated]);
+
   const loadAgents = useCallback(async () => {
     setAgentsLoading(true);
     try {
@@ -2217,7 +2303,9 @@ export function TaskDetailContent({
     return providers;
   }, [workingTask.modelProvider, workingTask.validatorModelProvider, workingTask.planningModelProvider]);
 
-  const transitions = VALID_TRANSITIONS[task.column] || [];
+  // #1403: legacy transitions only exist for legacy columns; a custom column id
+  // has no VALID_TRANSITIONS row, so the move menu shows no legacy targets.
+  const transitions: Column[] = isColumn(task.column) ? [...VALID_TRANSITIONS[task.column]] : [];
   const inReviewMoveTransitions: Column[] = ["todo", "in-progress"];
   const moveTransitions = task.column === "in-review" ? inReviewMoveTransitions : transitions;
   const primaryMoveTransition = moveTransitions[0];
@@ -2468,6 +2556,15 @@ export function TaskDetailContent({
                   </>
                 );
               })()}
+              {customFieldDefs && customFieldDefs.length > 0 ? (
+                <TaskFieldsSection
+                  fieldDefs={customFieldDefs}
+                  customFields={customFieldValues}
+                  onSave={handleSaveCustomFields}
+                  error={customFieldError}
+                  readOnly={Boolean(task.column === "archived")}
+                />
+              ) : null}
               {showNearDuplicateWarning && (
                 <div className="detail-near-duplicate-banner" role="status" aria-live="polite">
                   <div className="detail-near-duplicate-banner__header">
@@ -2761,6 +2858,7 @@ export function TaskDetailContent({
                   && task.status !== "awaiting-cli-approval"
                 }
                 onWorkflowStepsChange={handleWorkflowStepsChange}
+                onWorkflowReconciled={handleWorkflowReconciled}
                 taskStatus={task.status}
                 taskPausedReason={task.pausedReason}
               />

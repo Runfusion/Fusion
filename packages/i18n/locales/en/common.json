@@ -4,8 +4,65 @@
     "close": "Close",
     "save": "Save"
   },
+  "agents": {
+    "ratings": {
+      "trendDeclining": "↓ Declining",
+      "trendImproving": "↑ Improving",
+      "trendInsufficient": "Insufficient data",
+      "trendStable": "→ Stable"
+    },
+    "reflections": {
+      "triggerManual": "Manual",
+      "triggerPeriodic": "Periodic",
+      "triggerPostTask": "Post-Task",
+      "triggerUserRequested": "User Requested"
+    },
+    "time": {
+      "daysAgo_one": "{{count}}d ago",
+      "daysAgo_other": "{{count}}d ago",
+      "hoursAgo_one": "{{count}}h ago",
+      "hoursAgo_other": "{{count}}h ago",
+      "inAMoment": "in a moment",
+      "inDays_one": "in {{count}}d",
+      "inDays_other": "in {{count}}d",
+      "inHours_one": "in {{count}}h",
+      "inHours_other": "in {{count}}h",
+      "inMinutes_one": "in {{count}}m",
+      "inMinutes_other": "in {{count}}m",
+      "justNow": "just now",
+      "minutesAgo_one": "{{count}}m ago",
+      "minutesAgo_other": "{{count}}m ago"
+    }
+  },
   "archive": "Archive",
+  "board": {
+    "rejection": {
+      "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
+      "guardRejected": "This move is not allowed by the workflow.",
+      "mergeBlocked": "This task is blocked from completing until its merge step finishes.",
+      "unknownColumn": "That column doesn't exist in this task's workflow.",
+      "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead."
+    }
+  },
   "cancel": "Cancel",
+  "chat": {
+    "failedToGetResponse": "Failed to get response",
+    "failureReferenceId": "ID",
+    "failureReferenceKind": "Kind",
+    "failureReferenceLabel": "Reference",
+    "failureReferenceMetaLabel": "Label",
+    "openMailboxMessage": "Open mailbox message",
+    "toolCallArgsPrefix": "args",
+    "toolCallResultPrefix": "result",
+    "toolCallStatusCompleted": "completed",
+    "toolCallStatusError": "error",
+    "toolCallStatusErrors": "errors",
+    "toolCallStatusRunning": "running",
+    "toolCallsCount_one": "{{count}} tool calls",
+    "toolCallsCount_other": "{{count}} tool calls",
+    "toolCallsHeader": "Tool calls",
+    "viewFailureDetails": "View failure details"
+  },
   "close": "Close",
   "columns": {
     "archived": "Archived",
@@ -16,8 +73,162 @@
     "triage": "Planning"
   },
   "delete": "Delete",
+  "health": {
+    "anomaly": {
+      "duplicateActiveId": "Duplicate active task ID",
+      "idInBothStorages": "Task ID present in active and archived storage",
+      "sequenceOverlap": "Allocator next sequence overlaps an existing task ID",
+      "unknownPrefix": "Task row uses a prefix outside allocator state"
+    }
+  },
+  "inline": {
+    "connecting": "Connecting",
+    "error": "Error",
+    "offline": "Offline",
+    "online": "Online"
+  },
+  "merge": {
+    "unknown": "Unknown"
+  },
+  "missions": {
+    "autopilotStateActivating": "Activating slice",
+    "autopilotStateCompleting": "Completing",
+    "autopilotStateInactive": "Off",
+    "autopilotStateUnknown": "Unknown",
+    "autopilotStateWatching": "Watching",
+    "interviewStatusAwaitingInput": "Awaiting input",
+    "interviewStatusComplete": "Plan ready",
+    "interviewStatusError": "Needs retry",
+    "interviewStatusGenerating": "Generating plan",
+    "runHelperActive": "Stopping pauses linked tasks and marks the mission blocked.",
+    "runHelperBlocked": "Resuming re-activates the mission and continues execution.",
+    "runHelperPlanning": "Starting activates the first slice so work can begin."
+  },
+  "models": {
+    "messages": {
+      "modelSetTo": "{{label}} model set to {{provider}}/{{modelId}}",
+      "modelSetToDefault": "{{label}} model set to default"
+    }
+  },
+  "nodeStatus": {
+    "connecting": "Connecting",
+    "error": "Error",
+    "offline": "Offline",
+    "online": "Online",
+    "unknown": "Unknown"
+  },
+  "nodes": {
+    "auth": {
+      "differ": "Auth credentials differ",
+      "differProviders": "Auth credentials differ: {{providers}}",
+      "match": "Auth credentials match",
+      "notSynced": "Auth not synced"
+    },
+    "status": {
+      "connecting": "Connecting",
+      "creating": "Creating",
+      "deleting": "Deleting",
+      "error": "Error",
+      "exited": "Exited",
+      "offline": "Offline",
+      "online": "Online",
+      "recreating": "Recreating",
+      "running": "Running",
+      "stopped": "Stopped"
+    }
+  },
   "refresh": "Refresh",
+  "research": {
+    "providerGitHub": "GitHub",
+    "providerLlmSynthesis": "LLM Synthesis",
+    "providerLocalDocs": "Local Docs",
+    "providerPageFetch": "Page Fetch",
+    "providerWebSearch": "Web Search"
+  },
   "retry": "Retry",
+  "routing": {
+    "policyLabel": {
+      "block": "Block execution",
+      "fallback": "Fall back to local",
+      "notConfigured": "Not configured"
+    }
+  },
+  "setup": {
+    "apiKeyFormatError": "{{providerName}} keys should follow this format: {{hint}} (e.g. {{example}})",
+    "apiKeyLabel": {
+      "fallback": "API Key",
+      "kimiCoding": "Kimi API Key",
+      "minimax": "MiniMax API Key",
+      "ollama": "Ollama Endpoint",
+      "openai": "OpenAI API Key",
+      "openrouter": "OpenRouter API Key",
+      "zai": "Zhipu AI API Key"
+    },
+    "apiKeyPlaceholder": {
+      "fallback": "Enter API key",
+      "kimiCoding": "Enter your Kimi API key",
+      "minimax": "Enter your MiniMax API key",
+      "zai": "Enter your Zhipu AI API key"
+    },
+    "apiKeyRequired": "API key is required",
+    "apiKeySetup": {
+      "fallback": "Enter your API key for this provider.",
+      "kimiCoding": "Create your API key in the Moonshot platform account settings.",
+      "minimax": "Generate an API key from the MiniMax platform developer console.",
+      "ollama": "Enter your Ollama endpoint URL (for example http://localhost:11434).",
+      "openai": "Create an API key from your OpenAI dashboard under API keys.",
+      "openrouter": "Create an API key from your OpenRouter account key management page.",
+      "zai": "Create an API key in the Zhipu AI open platform account settings."
+    },
+    "apiKeyUsage": {
+      "fallback": "Used by Fusion to authenticate requests to this provider",
+      "kimiCoding": "Used for Kimi/Moonshot AI models in task execution and planning",
+      "minimax": "Used for MiniMax models in task execution",
+      "ollama": "Connects to your local Ollama instance",
+      "openai": "Used for GPT models in task execution and planning",
+      "openrouter": "Routes to multiple AI model providers through a single key",
+      "zai": "Used for GLM models in task execution"
+    },
+    "providerDesc": {
+      "anthropic": "Claude models — strong at reasoning, analysis, and code",
+      "fallback": "AI provider — connect to start using AI models",
+      "gemini": "Gemini models — multimodal with strong reasoning",
+      "google": "Gemini models — multimodal with strong reasoning",
+      "kimi": "Kimi by Moonshot AI — long-context capabilities",
+      "kimiCoding": "Kimi by Moonshot AI — long-context capabilities",
+      "minimax": "MiniMax models — cost-effective for high-volume usage",
+      "moonshot": "Kimi by Moonshot AI — long-context capabilities",
+      "ollama": "Run open-source models locally on your machine",
+      "openai": "GPT models — versatile for a wide range of tasks",
+      "openaiCodex": "Codex models by OpenAI — optimized for coding tasks",
+      "openrouter": "OpenRouter — route requests across multiple AI providers",
+      "zai": "GLM models by Zhipu AI — strong multilingual support"
+    }
+  },
   "skip": "Skip",
-  "tryAgain": "Try Again"
+  "taskForm": {
+    "nodeStatusConnecting": "Connecting",
+    "nodeStatusError": "Error",
+    "nodeStatusOffline": "Offline",
+    "nodeStatusOnline": "Online",
+    "phasePostMerge": "Post-merge",
+    "phasePreMerge": "Pre-merge"
+  },
+  "taskReview": {
+    "never": "Never",
+    "refreshSourceBackground": "Background",
+    "refreshSourceInitialLoad": "Initial load",
+    "refreshSourceManual": "Manual"
+  },
+  "tryAgain": "Try Again",
+  "workflow": {
+    "postMerge": "Post-merge",
+    "preMerge": "Pre-merge",
+    "statusAdvisory": "Advisory failure",
+    "statusFailed": "Failed",
+    "statusPassed": "Passed",
+    "statusRunning": "Running…",
+    "statusSkipped": "Skipped",
+    "waitingForOutput": "Waiting for agent output…"
+  }
 }

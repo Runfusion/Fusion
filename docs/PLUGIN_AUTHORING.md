@@ -20,6 +20,7 @@ A comprehensive guide to creating Fusion plugins that extend the task board with
 14. [Example Plugins](#14-example-plugins)
 15. [Registering Skills](#15-registering-skills)
 16. [Registering Workflow Steps](#16-registering-workflow-steps)
+16.5. [Contributing Column Traits](#165-contributing-column-traits)
 17. [Contributing Prompt Modifications](#17-contributing-prompt-modifications)
 18. [Plugin Binary Setup Hooks](#18-plugin-binary-setup-hooks)
 
@@ -1475,6 +1476,134 @@ const workflowSteps: PluginWorkflowStepContribution[] = [
 Use `mode: "prompt" | "script"` and `toolMode: "readonly" | "coding"`.
 
 Plugin-contributed workflow steps are materialized through core `resolvePluginWorkflowStep(...)`; `mode`, `phase`, `scriptName`, `toolMode`, `defaultOn`, `modelProvider`, and `modelId` are preserved from your contribution (with defaults when omitted).
+
+## 16.5. Contributing Column Traits
+
+> Requires the `experimentalFeatures.workflowColumns` flag. Traits are the
+> composable building blocks of workflow-defined columns (declarative flags +
+> lifecycle hooks). Plugins contribute traits the same way they contribute
+> workflow steps: declare them on the plugin object and the engine aggregates,
+> caches, and invalidates them through the `PluginRunner` (mirroring
+> `workflowSteps`).
+
+A plugin trait is registered into the core trait registry under a
+plugin-namespaced id `plugin:<pluginId>:<traitId>`, so it can never collide
+with a built-in trait or another plugin's trait, and it resolves through the
+same registry lookup as the 14 built-in traits.
+
+```typescript
+import type { PluginTraitContribution } from "@fusion/plugin-sdk";
+
+const traits: PluginTraitContribution[] = [
+  {
+    traitId: "security-approval",
+    name: "Security Approval Gate",
+    description: "Holds a card until a security review prompt passes.",
+    schemaVersion: 1,
+    flags: { gate: true },
+    hooks: {
+      gate: {
+        mode: "prompt",
+        prompt: "Approve this change for security-sensitive paths?",
+        gateMode: "blocking",
+      },
+    },
+  },
+  {
+    traitId: "slack-notify",
+    name: "Slack Notify",
+    description: "Posts to Slack when a card enters/leaves the column.",
+    schemaVersion: 1,
+    flags: { notify: true },
+    hooks: {
+      onEnter: { mode: "script", scriptName: "slack-notify-enter" },
+      onExit: { mode: "script", scriptName: "slack-notify-exit" },
+    },
+  },
+];
+
+export default definePlugin({
+  manifest: { id: "my-plugin", name: "My Plugin", version: "1.0.0" },
+  hooks: {},
+  traits,
+});
+```
+
+### Contribution shape
+
+| Field | Required | Notes |
+|---|---|---|
+| `traitId` | yes | kebab-case slug, unique within the plugin |
+| `name` | yes | display name |
+| `description` | no | UI description |
+| `schemaVersion` | yes | must be `1` — the versioned hook-descriptor contract (see below) |
+| `flags` | no | declarative flags (restricted flags rejected, see below) |
+| `configSchema` | no | declarative config fields (`{ fields: [...] }`) |
+| `hooks` | no | async hook descriptors (see below) |
+
+### Hook points (async only)
+
+Plugin traits get **async hook points only**:
+
+- `gate` — evaluated **before** a card moves into the column (pre-move, outside
+  the task lock). The verdict is recorded and re-checked cheaply when the move
+  commits.
+- `onEnter` / `onExit` — post-commit, async, idempotent effects.
+- `releaseCondition` — evaluated by the hold/release sweep for `hold` columns.
+
+The synchronous `guard` hook point is **built-in-only** and is rejected at
+validation. Sync guards run inside the task lock and must be fast and pure — a
+plugin hook there could wedge the lock, so plugins use the async `gate` surface
+instead.
+
+Each hook descriptor mirrors the workflow-step shape:
+
+```typescript
+{ mode: "prompt" | "script", prompt?: string, scriptName?: string, gateMode?: "blocking" | "advisory" }
+```
+
+Hooks execute through the **same prompt-session / script / verdict machinery**
+contributed workflow steps use — plugin trait code never runs raw in-process.
+
+### Gate semantics
+
+- `gateMode: "blocking"` (default for gates) **fails closed**: a non-pass
+  verdict — or no recorded verdict at move time — rejects the move with a typed
+  `TransitionRejection`.
+- `gateMode: "advisory"` **records and allows**: the verdict is logged but the
+  move proceeds.
+- Engine-sourced and recovery moves bypass gates entirely (they carry
+  `bypassGuards`), so self-healing is never blocked by a plugin gate.
+
+### Restricted flags
+
+A plugin trait may **not** declare these flags (rejected at validation, and as a
+backstop at registry registration):
+
+- `complete` — a terminal-success column that silently satisfies dependencies.
+- `archived` — globally hidden column semantics.
+
+A plugin needing those semantics composes its trait **alongside** the built-in
+`complete` / `archived` trait on the same column.
+
+### Versioned hook-descriptor schema
+
+`schemaVersion: 1` is required. It pins the hook-descriptor contract so the
+built-in trait vocabulary can grow additively (new flags, hook points, config
+fields) without breaking already-published plugin traits. Validate your
+contribution with `validatePluginTraitContribution(...)` from
+`@fusion/plugin-sdk`.
+
+### Disabling a plugin with live dependents
+
+If a card is currently sitting in a column that uses one of your plugin's
+traits, disabling/uninstalling the plugin is **blocked** with a typed error
+listing the dependent tasks (mirroring the built-in-workflow deletion block).
+
+A **force** path degrades the affected columns to **passive**: the trait's hooks
+become no-ops (the registry resolves them to a no-op plus an audit warning), a
+single audit event is emitted, and the cards remain fully movable. A degraded
+gate column never blocks a card.
 
 ## 17. Contributing Prompt Modifications
 

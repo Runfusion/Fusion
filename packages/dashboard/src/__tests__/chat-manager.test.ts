@@ -22,7 +22,8 @@ const { mockSummarizeTitle } = vi.hoisted(() => ({
   mockSummarizeTitle: vi.fn(),
 }));
 
-vi.mock("@fusion/core", () => ({
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
   summarizeTitle: mockSummarizeTitle,
   DASHBOARD_USER_ID: "dashboard",
   normalizeMessageParticipant: (id: string, type: "user" | "agent" | "system") => {

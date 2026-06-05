@@ -34,8 +34,10 @@ class MockAgentCompaniesParseError extends Error {
   }
 }
 
-vi.mock("@fusion/core", () => {
+vi.mock("@fusion/core", async (importOriginal) => {
+  const __actual = await importOriginal<typeof import("@fusion/core")>();
   return {
+    ...__actual,
     AgentStore: class MockAgentStore {
       init = mockInit;
       createAgent = mockCreateAgent;

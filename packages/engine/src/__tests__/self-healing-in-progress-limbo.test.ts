@@ -118,7 +118,7 @@ describe("recoverInProgressLimbo", () => {
       taskDoneRetryCount: null,
       sessionFile: null,
     }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-5149", "todo", { preserveProgress: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-5149", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       domain: "database",
       mutationType: "task:auto-recover-in-progress-limbo",

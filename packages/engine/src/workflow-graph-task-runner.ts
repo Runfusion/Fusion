@@ -2,7 +2,19 @@ import type { Settings, TaskDetail, WorkflowDefinition } from "@fusion/core";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 
 import { WorkflowGraphExecutor, type WorkflowNodeOutcome } from "./workflow-graph-executor.js";
-import type { WorkflowCustomNodeRunner, WorkflowLegacySeams } from "./workflow-node-handlers.js";
+import type {
+  CodeNodeRunner,
+  ForeachActiveContext,
+  ParseStepsHandlerDeps,
+  WorkflowCustomNodeRunner,
+  WorkflowLegacySeams,
+} from "./workflow-node-handlers.js";
+import type {
+  WorkflowBranchPersistence,
+  WorkflowBranchProgress,
+  WorkflowBranchSemaphore,
+} from "./workflow-graph-branches.js";
+import type { ForeachEnvironment, WorkflowStepInstancePersistence } from "./workflow-graph-foreach.js";
 // (Both types are also used as values in the side-effect tracking wrappers below.)
 
 /**
@@ -37,6 +49,44 @@ export interface WorkflowGraphTaskRunnerDeps {
   maxRetriesPerNode?: number;
   /** Optional diagnostics hook (audit/log emission). Never throws into the run. */
   onEvent?: (event: { type: "start" | "terminal" | "fallback"; taskId: string; detail: string }) => void;
+  /** Per-branch run-state persistence + resume (U13). Additive; in-memory without it. */
+  branchPersistence?: WorkflowBranchPersistence;
+  /** Bounds concurrent branch-node execution (U13); omit when the semaphore is
+   *  enforced beneath runCustomNode at the session layer. */
+  branchSemaphore?: WorkflowBranchSemaphore;
+  /** Live per-branch progress for dashboard badges (U9/U13). */
+  onBranchProgress?: (progress: WorkflowBranchProgress) => void;
+  /** Step-inversion (KTD-6, U3/U4): per-instance run-state persistence for
+   *  foreach instances. Additive; in-memory without it. */
+  stepInstancePersistence?: WorkflowStepInstancePersistence;
+  /** Step-inversion (KTD-4, U5): RETHINK reset-on-rework hook — invoked before
+   *  re-entering step-execute when a rework edge was triggered by an
+   *  `outcome:rethink`. Wired to `resetStepToBaseline` in production. */
+  onReworkReset?: (active: ForeachActiveContext, reason: string) => void | Promise<void>;
+  /** Step-inversion (U12, KTD-12): `parse-steps` node handler deps. Additive;
+   *  a workflow with no parse-steps node never invokes it. */
+  parseStepsDeps?: ParseStepsHandlerDeps;
+  /** Step-inversion (U14, KTD-15): `code` node runner. Additive; a workflow with
+   *  no code node never invokes it. */
+  runCode?: CodeNodeRunner;
+  /** Step-inversion (KTD-11, U10): worktree-isolation + parallel-scheduling deps.
+   *  Additive; a shared-isolation foreach never invokes them. */
+  allocateInstanceWorktree?: ForeachEnvironment["allocateInstanceWorktree"];
+  resolveIntegrationBase?: ForeachEnvironment["resolveIntegrationBase"];
+  integrationGitOps?: ForeachEnvironment["integrationGitOps"];
+  integrationProjection?: ForeachEnvironment["integrationProjection"];
+  semaphoreAvailability?: ForeachEnvironment["semaphoreAvailability"];
+  resumeReconcile?: ForeachEnvironment["resumeReconcile"];
+  /** FIX 4 (context gap): task-level log sink for integration-conflict rework. */
+  logTaskEntry?: ForeachEnvironment["logTaskEntry"];
+  /**
+   * Step-inversion (KTD-6): the production run id, threaded from the caller so it
+   * is the SINGLE source of truth shared with the executor-side persistence deps
+   * (`buildParseStepsDeps` / `buildForeachWorktreeDeps` probe and flip rows under
+   * the SAME id). When omitted the runner derives `${task.id}:${definition.id}` —
+   * the same formula — so a caller that does not thread it keeps prior behavior.
+   */
+  runId?: string;
 }
 
 /**
@@ -47,7 +97,17 @@ export interface WorkflowGraphTaskRunnerDeps {
  * run the legacy pipeline; a task is never stranded by interpreter bugs.
  */
 export class WorkflowGraphTaskRunner {
+  /** Latest per-branch progress, keyed by branchId. Store/dashboard-readable
+   *  (U9 badges). Reset at the start of each run; the card never moves during a
+   *  parallel window (KTD-11) so this is purely presentational state. */
+  private readonly branchProgress = new Map<string, WorkflowBranchProgress>();
+
   public constructor(private readonly deps: WorkflowGraphTaskRunnerDeps) {}
+
+  /** Snapshot of current per-branch progress (branchId, nodeId, status). */
+  public getBranchProgress(): WorkflowBranchProgress[] {
+    return [...this.branchProgress.values()];
+  }
 
   private emit(type: "start" | "terminal" | "fallback", taskId: string, detail: string): void {
     try {
@@ -91,6 +151,7 @@ export class WorkflowGraphTaskRunner {
     }
 
     this.emit("start", task.id, definition.id);
+    this.branchProgress.clear();
 
     // Track whether any node side effects ran. A pre-run interpreter error
     // (bad IR structure, wiring) can safely fall back to the legacy pipeline;
@@ -105,6 +166,14 @@ export class WorkflowGraphTaskRunner {
       review: (t, c) => ((sideEffectsRan = true), invoked.push("review"), seams.review(t, c)),
       merge: (t, c) => ((sideEffectsRan = true), invoked.push("merge"), seams.merge(t, c)),
       schedule: (t, c) => ((sideEffectsRan = true), invoked.push("schedule"), seams.schedule(t, c)),
+      // Step-inversion seams (U3/U5) — forwarded only when wired so a workflow
+      // without foreach/step-review keeps the omitted-optional posture.
+      ...(seams.stepExecute
+        ? { stepExecute: (t, c) => ((sideEffectsRan = true), invoked.push("step-execute"), seams.stepExecute!(t, c)) }
+        : {}),
+      ...(seams.stepReview
+        ? { stepReview: (t, c, cfg) => ((sideEffectsRan = true), invoked.push("step-review"), seams.stepReview!(t, c, cfg)) }
+        : {}),
     };
     const wrappedRunCustomNode: WorkflowCustomNodeRunner = (node, t, c) => {
       sideEffectsRan = true;
@@ -117,6 +186,32 @@ export class WorkflowGraphTaskRunner {
         seams: wrappedSeams,
         runCustomNode: wrappedRunCustomNode,
         maxRetriesPerNode: this.deps.maxRetriesPerNode,
+        branchPersistence: this.deps.branchPersistence,
+        branchSemaphore: this.deps.branchSemaphore,
+        stepInstancePersistence: this.deps.stepInstancePersistence,
+        onReworkReset: this.deps.onReworkReset,
+        parseStepsDeps: this.deps.parseStepsDeps,
+        runCode: this.deps.runCode,
+        // Step-inversion (KTD-11, U10): worktree isolation + parallel scheduling.
+        allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
+        resolveIntegrationBase: this.deps.resolveIntegrationBase,
+        integrationGitOps: this.deps.integrationGitOps,
+        integrationProjection: this.deps.integrationProjection,
+        semaphoreAvailability: this.deps.semaphoreAvailability,
+        resumeReconcile: this.deps.resumeReconcile,
+        logTaskEntry: this.deps.logTaskEntry,
+        // Single source of truth (KTD-6): prefer the caller-threaded run id so the
+        // executor's persistence deps probe/flip rows under the SAME id; fall back
+        // to the canonical derivation when unthreaded.
+        runId: this.deps.runId ?? `${task.id}:${definition.id}`,
+        onBranchProgress: (progress) => {
+          this.branchProgress.set(progress.branchId, progress);
+          try {
+            this.deps.onBranchProgress?.(progress);
+          } catch {
+            // Progress reporting must never affect the run.
+          }
+        },
       });
       const result = await executor.run(task, settings, definition.ir);
       if (!result.executed) {

@@ -134,6 +134,55 @@ The user's mid-stage feedback channel: free-text guidance attached to an answer,
 ### Rehydration
 Re-establishing a live agent handle for a paused CE Session by replaying its recorded conversation against the model. Replay is side-effect-suppressed: it reconstructs the agent's context without re-emitting events, re-streaming Live activity, or re-writing artifacts.
 
+## Plugins
+
+### Bundled Plugin
+A plugin that ships inside the Fusion distribution itself rather than being installed from a user-supplied path — it appears under Settings → Built-in Plugins and can be auto-installed at startup.
+*Avoid:* built-in plugin (as a distinct concept; the Settings label uses "Built-in" for the same thing)
+
+A Bundled Plugin must be registered in several independently maintained surfaces — the Settings catalog, the dashboard server's bundled-id fallback set, the CLI's startup auto-install list, and the build step that stages a loadable copy into the distribution. The surfaces do not cross-check each other: a plugin registered in some but not all appears installable yet fails to install or load, so adding one means mirroring an existing bundled plugin across every surface.
+
+### Plugin Entry
+The single loadable file persisted as a plugin's path and dynamically imported by the loader. The contract is strict: a package directory is never a valid entry (ESM cannot import directories), so every install surface must resolve a concrete file before persisting, preferring the shipped bundle, then a prebuilt output, then raw workspace source. Legacy registrations that stored a directory are healed in place — re-pointed at a resolved entry — the next time the plugin is enabled or auto-installed.
+
+## Workflow columns & traits
+
+*Behind the `experimentalFeatures.workflowColumns` flag. With the flag off, the legacy fixed pipeline (the closed column enum + `VALID_TRANSITIONS`) is authoritative and unchanged.*
+
+### Column (workflow-defined)
+A first-class, workflow-defined unit of task state: an id, a display name, and a set of Trait configurations. A Task's board position is its current column, persisted in `tasks."column"`. Column validity is workflow-scoped — the legacy closed enum widens to a string validated against the Task's resolved workflow. The Default workflow's column ids are byte-identical to the legacy enum values, so no task row is ever rewritten.
+
+### Trait
+Composable column configuration: declarative flags (e.g. `complete`, `archived`, `countsTowardWip`) plus optional lifecycle hooks (`guard`, `gate`, `onEnter`, `onExit`, `releaseCondition`). Built-in and plugin-contributed traits register through one registry. Sync `guard` hooks and the `complete`/`archived` flags are built-in-only; plugin traits get async hook points only. A column's effective flags are the merged flags of its traits; conflicting compositions are rejected at save (server-side and in the editor).
+
+### Lane
+A horizontal row on the multi-lane board, one per workflow in use by visible cards. Each lane renders its own workflow's columns. Tasks with no workflow selection appear in the Default workflow's lane; every card appears in exactly one lane. Zero-card lanes are hidden; lanes are collapsible with persisted state.
+
+### Hold node
+A workflow node kind expressing passive dwell — a card rests in its column until a release condition fires: manual promote, timer, downstream capacity available, dependency satisfied, or external event. Hold release is evaluated by a substrate sweep (the generalized scheduler), which reserves worktree + semaphore slots before issuing the release move.
+
+### Split / Join
+Parallel-branch node kinds. A `split` launches its outgoing edges concurrently; a `join` synchronizes them with `mode: all | any | quorum(n)` and `onBranchFailure: fail-fast | collect`. During the parallel window the card stays in the split's column (its board position never forks); on join resolution it advances to the join's column. `execute`/`merge` seam nodes are forbidden inside branches (one worktree/session per task; merge is exclusive). Per-branch run state persists in SQLite so a crashed branch resumes where it died.
+
+### Default workflow
+The built-in workflow (`builtin:coding`) that reproduces the legacy pipeline verbatim: six columns whose ids equal the legacy enum values, with traits matching legacy semantics (`triage`=intake, `todo`=hold+reset-on-entry, `in-progress`=wip+abort-on-exit+timing, `in-review`=merge-blocker+stall-detection+merge, `done`=complete, `archived`=archived). A null workflow selection resolves to it at read time. Non-editable, non-deletable.
+
+### transitionPending
+A persisted crash-safe marker (`tasks.transitionPending`) written in the same transaction as a column change, recording the post-commit hooks (`hooksRemaining`) that still owe idempotent execution. Cleared once they complete. Recovery reads it exclusively from SQLite (the authoritative store); a crash mid-transition re-runs the idempotent hooks. A throwing or missing hook degrades (audit) and clears its entry — it never strands the card or wedges the task lock.
+
+## Step inversion
+
+*Behind the `experimentalFeatures.workflowGraphExecutor` flag (orthogonal to `workflowColumns`). With the flag off, and for the Default workflow always, step policy is the legacy engine-owned path (PROMPT.md parsing, in-session review verdicts, RETHINK reset) — unchanged.*
+
+### Step instance
+One runtime expansion of a `foreach` template subgraph, bound to a single planned step (`Task.steps[i]`). Identity is deterministic — `<foreachNodeId>#<stepIndex>:<templateNodeId>` — so resume reconstructs the full instance set from the pinned step count without persisting the expansion itself. Each instance carries its own run-state (current node, rework count, baseline/checkpoint, and in worktree mode its branch and integration status) in `workflow_run_step_instances` (schema v108). The step count is pinned at expansion; a later disagreement with the live step list is a `pin-mismatch` failure, never a silent re-expansion. An instance's lifecycle writes flow through `store.updateStep` so `Task.steps[]` stays the physical projection sink for every existing consumer.
+
+### parse-steps
+A workflow graph node that reads a declared Artifact and runs a registry parser to write the canonical step list (`Task.steps[]`) — the only graph-side writer of steps. Built-in parsers are `step-headings` (the `### Step N:` convention, extracted byte-identically from the legacy regex, including the `(depends: N,M)` annotation) and `json-steps`; plugins contribute parsers under `plugin:<pluginId>:<parserId>`. Parsing failures fail closed to a routable `outcome:parse-error` rather than crashing. A parse-steps node must dominate (precede on all paths) any `foreach(source:"task-steps")`, and running one after a foreach has already expanded trips pin protection (an audited failure) so re-plan loops cannot desynchronize an expanded region.
+
+### Custom task field
+A workflow-declared, typed task field (`string | text | number | boolean | enum | multi-enum | date | url`, with enum options and render hints) whose values live in `tasks.customFields`, keyed by field id. The task model is thereby recast as core fields (title, description) + standard metadata + these workflow-defined fields. Writes pass through a single store authority (`updateTaskCustomFields`) that validates each value against the resolving workflow's schema and returns typed rejections (offending `fieldId` + `code`); agents write them via `fn_task_update`'s `custom_fields` patch. Editing a workflow's fields or switching a task's workflow orphans (never destroys) values for removed or type-incompatible ids — orphans are retained and surfaced under a detail disclosure, excluded from cards. Same id means the same field within a project; there is no cross-workflow shared field namespace.
+
 ## Testing
 
 ### Merge Gate

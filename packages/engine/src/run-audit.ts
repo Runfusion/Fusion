@@ -152,6 +152,7 @@ export type GitMutationType =
   | "merge:start"
   | "merge:resolve"
   | "merge:file-scope-violation"
+  | "merge:file-scope-enforcement-disabled"
   | "merge:auto-prerebase:applied"
   | "merge:auto-prerebase:skipped"
   | "merge:auto-prerebase:failed"

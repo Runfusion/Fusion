@@ -242,4 +242,66 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     const result = await runner.run(task, flagOn);
     expect(result.disposition).toBe("completed");
   });
+
+  // #1407/#1412: the runner forwards its injected branchPersistence into the
+  // WorkflowGraphExecutor, which writes per-branch state and prunes stale runs.
+  // Uses a real in-memory persistence whose method shape matches the store-
+  // backed adapter the production executor builds (saveBranchState /
+  // loadBranchStates / clearStaleBranchStates) — no mock of a nonexistent API.
+  function fanoutIr(): WorkflowIr {
+    return {
+      version: "v1",
+      name: "fanout",
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "split", kind: "split" },
+        { id: "a", kind: "prompt", config: { prompt: "a" } },
+        { id: "b", kind: "prompt", config: { prompt: "b" } },
+        { id: "join", kind: "join", config: { mode: "all" } },
+        { id: "zend", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "split" },
+        { from: "split", to: "a" },
+        { from: "split", to: "b" },
+        { from: "a", to: "join" },
+        { from: "b", to: "join" },
+        { from: "join", to: "zend", condition: "success" },
+      ],
+    };
+  }
+
+  it("forwards branchPersistence to the executor: writes branch state and prunes stale runs", async () => {
+    const saved: Array<{ branchId: string; currentNodeId: string; status: string }> = [];
+    const pruneCalls: Array<{ taskId: string; keepRunId: string }> = [];
+    const persistence = {
+      saveBranchState: (s: { branchId: string; currentNodeId: string; status: string }) => {
+        saved.push({ branchId: s.branchId, currentNodeId: s.currentNodeId, status: s.status });
+      },
+      loadBranchStates: () => [],
+      clearStaleBranchStates: (taskId: string, keepRunId: string) => {
+        pruneCalls.push({ taskId, keepRunId });
+      },
+    };
+
+    const runner = new WorkflowGraphTaskRunner({
+      store: storeWith(definition(fanoutIr())),
+      seams: recordingSeams([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      branchPersistence: persistence,
+    });
+
+    const result = await runner.run(task, flagOn);
+    expect(result.disposition).toBe("completed");
+
+    // Both branches persisted, and each reached "completed" at the join.
+    expect(saved.some((s) => s.branchId === "a")).toBe(true);
+    expect(saved.some((s) => s.branchId === "b")).toBe(true);
+    expect(saved.some((s) => s.status === "completed")).toBe(true);
+
+    // Prune ran (on start AND completion) keyed by the runner's runId.
+    expect(pruneCalls.length).toBeGreaterThanOrEqual(2);
+    expect(pruneCalls.every((c) => c.taskId === task.id)).toBe(true);
+    expect(pruneCalls.every((c) => c.keepRunId === `${task.id}:WF-001`)).toBe(true);
+  });
 });

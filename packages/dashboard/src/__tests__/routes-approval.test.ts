@@ -77,7 +77,8 @@ const executeApprovedAgentProvisioning = vi.fn(async (request: any) => {
   throw new Error(`Unsupported provisioning tool: ${tool}`);
 });
 
-vi.mock("@fusion/core", () => ({
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fusion/core")>()),
   ApprovalRequestStore: MockApprovalRequestStore,
   AgentStore: MockAgentStore,
 }));

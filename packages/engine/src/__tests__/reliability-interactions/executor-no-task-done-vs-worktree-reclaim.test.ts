@@ -101,7 +101,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       branch: null,
       worktreeSessionRetryCount: 1,
     }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
     // FN-4806: session-start missing-worktree is engine self-heal, must not burn retry budget
     // and must not mark the task failed.
     expect(store.updateTask).not.toHaveBeenCalledWith(
