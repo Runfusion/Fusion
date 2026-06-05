@@ -7,7 +7,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  addEdge,
   useNodesState,
   useEdgesState,
   type Connection,
@@ -15,8 +14,8 @@ import {
   type Edge as FlowEdge,
 } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2 } from "lucide-react";
-import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation } from "@fusion/core";
+import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, Library, Sparkles } from "lucide-react";
+import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
   fetchWorkflows,
@@ -24,23 +23,36 @@ import {
   updateWorkflow,
   deleteWorkflow,
   compileWorkflow,
+  exportWorkflow,
+  importWorkflow,
+  designWorkflow,
+  ApiRequestError,
+  migrateLegacyWorkflowSteps,
   fetchModels,
   fetchAgents,
   fetchDiscoveredSkills,
+  fetchWorkflowStepTemplates,
+  fetchPluginWorkflowStepTemplates,
   type ModelInfo,
 } from "../api";
 import type { Agent } from "../api";
 import type { DiscoveredSkill } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useConfirm } from "../hooks/useConfirm";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useAppSettings } from "../hooks/useAppSettings";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
+import { WorkflowEditorCatalogContext } from "./nodes/WorkflowEditorCatalogContext";
+import type { NodeSummaryCatalogs } from "./nodes/node-summary";
 import {
   irToFlow,
   flowToIr,
   emptyWorkflowIr,
   emptyWorkflowLayout,
+  copyIrWithFreshIds,
+  insertFragment,
+  fragmentSeamConflicts,
   columnsOf,
   fieldsOf,
   columnsToBandNodes,
@@ -50,11 +62,17 @@ import {
   isColumnBandNode,
   foreachChildFlowId,
   shortConditionLabel,
+  edgeClassName,
+  edgeConditionEditability,
+  buildConnectionEdge,
+  cascadeDelete,
+  WF_EDGE_INTERACTION_WIDTH,
   FOREACH_GROUP_WIDTH,
   FOREACH_GROUP_HEIGHT,
   FOREACH_CHILD_X,
   FOREACH_CHILD_Y,
 } from "./workflow-flow-mapping";
+import { autoLayout, applyAutoLayout } from "./workflow-auto-layout";
 import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
 import { WorkflowColumnPanel } from "./WorkflowColumnPanel";
 import { WorkflowFieldsPanel } from "./WorkflowFieldsPanel";
@@ -97,6 +115,29 @@ function parseModelDropdownValue(value: string): { provider: string; modelId: st
   return { provider: value.slice(0, slashIndex), modelId: value.slice(slashIndex + 1) };
 }
 
+/** Normalized serialization of the editor's authoring state for dirty tracking
+ *  (U4). Serializes nodes/edges through flowToIr (so mapping-layer defaults are
+ *  materialized identically on the loaded and live sides) plus the editor-owned
+ *  name/description and the resulting layout (auto-layout/drag position changes
+ *  count as dirty). Returns a stable JSON string for cheap equality. */
+function serializeGraph(
+  name: string,
+  description: string,
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+  edges: FlowEdge[],
+  columns: WorkflowIrColumn[],
+  fields: WorkflowFieldDefinition[],
+): string {
+  const { ir, layout } = flowToIr(
+    name,
+    nodes,
+    edges,
+    columns.length ? columns : undefined,
+    fields.length ? fields : undefined,
+  );
+  return JSON.stringify({ name, description, ir, layout });
+}
+
 interface WorkflowNodeEditorProps {
   isOpen: boolean;
   onClose: () => void;
@@ -135,6 +176,449 @@ const PALETTE: Array<{ kind: WorkflowEditorNodeKind; label: string; icon: typeof
   { kind: "code", label: "Code", icon: Code2, presetConfig: { source: "" } },
 ];
 
+/** Map a step template to a single pre-configured editor node (kind + config),
+ *  mirroring the U1 `stepInputToNode` converter's field mapping (mode → kind;
+ *  prompt/scriptName/toolMode/gateMode/model overrides → config). Inserting one
+ *  template thus produces the same node the steps→IR migration would. */
+function stepTemplateToNode(tpl: WorkflowStepTemplate): {
+  kind: WorkflowEditorNodeKind;
+  label: string;
+  config: Record<string, unknown>;
+} {
+  const config: Record<string, unknown> = {
+    name: tpl.name,
+    // Always carry gateMode so a materialized node round-trips both modes.
+    gateMode: tpl.gateMode ?? "advisory",
+  };
+  if (tpl.description) config.description = tpl.description;
+
+  if (tpl.mode === "script") {
+    if (tpl.scriptName) config.scriptName = tpl.scriptName;
+    return { kind: "script", label: tpl.name, config };
+  }
+
+  // prompt mode (default)
+  config.prompt = tpl.prompt ?? "";
+  config.toolMode = tpl.toolMode === "coding" ? "coding" : "readonly";
+  // Model overrides only round-trip when BOTH are present (compiler requirement).
+  if (tpl.modelProvider && tpl.modelId) {
+    config.modelProvider = tpl.modelProvider;
+    config.modelId = tpl.modelId;
+  }
+  return { kind: "prompt", label: tpl.name, config };
+}
+
+// Node kinds a user authors from the palette. Structural/derived nodes
+// (start/end and column bands — which map to data.kind "start") are excluded, so
+// a fresh start→end graph counts as trivial. Used by the palette-hint (R9).
+const USER_NODE_KINDS: ReadonlySet<WorkflowEditorNodeKind> = new Set<WorkflowEditorNodeKind>([
+  "prompt",
+  "script",
+  "gate",
+  "code",
+  "hold",
+  "split",
+  "join",
+  "foreach",
+  "step-review",
+  "parse-steps",
+  "merge",
+]);
+
+/** A pickable creation template: "Blank" (id null) or a copyable source
+ *  workflow (built-in or user kind="workflow"). U4/R7. */
+interface WorkflowCreateTemplate {
+  /** null = blank; otherwise the source definition's id. */
+  id: string | null;
+  name: string;
+  description: string;
+  /** Node count of the source IR (0 for blank). */
+  nodeCount: number;
+  /** Source definition for seeding via copyIrWithFreshIds (absent for blank). */
+  source?: WorkflowDefinition;
+  /** True for built-in sources (grouped separately). */
+  builtin: boolean;
+}
+
+/** Local create-workflow dialog (KTD-7). Built on the shared `.modal` primitives
+ *  (precedent: NewTaskModal). Owns its own template/name/description/error state;
+ *  the parent supplies the candidate `workflows` (fragments filtered out here)
+ *  and an async `onCreate` that performs the createWorkflow call and throws on
+ *  failure so the dialog can surface server rejections inline without losing the
+ *  typed input. Escape/overlay close (no dirty state of its own).
+ *
+ *  U4/R7: a template step precedes the name/description fields — a
+ *  radiogroup-semantics option list (Blank default-selected + built-ins + user
+ *  workflows) navigable by ArrowUp/Down; selecting a template prefills the name
+ *  ("<source> copy") while untouched and inherits the source description. */
+function CreateWorkflowDialog({
+  workflows,
+  onCreate,
+  onDesign,
+  onClose,
+}: {
+  workflows: WorkflowDefinition[];
+  onCreate: (name: string, description: string, template: WorkflowCreateTemplate) => Promise<void>;
+  /** U10/R11: design a brand-new workflow from a prompt. Resolves on success
+   *  (the parent seeds + activates the workflow and closes the dialog); throws on
+   *  failure so the dialog surfaces the server message inline without closing.
+   *  `signal` aborts the in-flight design request. */
+  onDesign: (prompt: string, name: string, signal: AbortSignal) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation("app");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  // U10/R11: AI-design disclosure state. `aiOpen` reveals the prompt textarea;
+  // `aiPrompt` holds the request; `aiBusy` flags the in-flight design call (the
+  // submit disables + a spinner + Cancel show); `aiError` is the inline failure.
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  // Tracks whether the user has edited the name; once true, selecting a template
+  // no longer overwrites it (R7: prefill only when untouched).
+  const [nameTouched, setNameTouched] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
+
+  // Build the option list: Blank first (default), then built-in workflows, then
+  // the user's own kind="workflow" definitions. Fragments are excluded entirely.
+  const templates = useMemo<WorkflowCreateTemplate[]>(() => {
+    const blank: WorkflowCreateTemplate = {
+      id: null,
+      name: t("workflows.templateBlank", "Blank"),
+      description: t("workflows.templateBlankDescription", "Start from an empty start → end graph."),
+      nodeCount: 0,
+      builtin: false,
+    };
+    const usable = workflows.filter((w) => w.kind !== "fragment");
+    const toTemplate = (w: WorkflowDefinition): WorkflowCreateTemplate => ({
+      id: w.id,
+      name: w.name,
+      description: w.description ?? "",
+      nodeCount: w.ir.nodes.length,
+      source: w,
+      builtin: isBuiltinWorkflowId(w.id),
+    });
+    const builtins = usable.filter((w) => isBuiltinWorkflowId(w.id)).map(toTemplate);
+    const yours = usable.filter((w) => !isBuiltinWorkflowId(w.id)).map(toTemplate);
+    return [blank, ...builtins, ...yours];
+  }, [workflows, t]);
+
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selected = templates[selectedIndex] ?? templates[0];
+
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
+
+  // Apply a template selection: move the radio focus state and (R7) prefill the
+  // name ("<source> copy") + description from the source, but only while the user
+  // has not edited the name.
+  const selectTemplate = useCallback(
+    (index: number) => {
+      const tmpl = templates[index];
+      if (!tmpl) return;
+      setSelectedIndex(index);
+      if (!nameTouched) {
+        if (tmpl.id === null) {
+          setName("");
+          setDescription("");
+        } else {
+          setName(t("workflows.templateCopyName", "{{name}} copy", { name: tmpl.name }));
+          setDescription(tmpl.description);
+        }
+      }
+      if (error) setError(null);
+    },
+    [templates, nameTouched, error, t],
+  );
+
+  // ArrowUp/Down move the radio selection; Enter confirms and shifts focus to
+  // the name input. Other keys (incl. Escape) bubble to the dialog handler.
+  const handleOptionKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const next = Math.min(selectedIndex + 1, templates.length - 1);
+        selectTemplate(next);
+        optionRefs.current[next]?.focus();
+      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        const prev = Math.max(selectedIndex - 1, 0);
+        selectTemplate(prev);
+        optionRefs.current[prev]?.focus();
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        selectTemplate(selectedIndex);
+        nameRef.current?.focus();
+      }
+    },
+    [selectedIndex, templates.length, selectTemplate],
+  );
+
+  const overlayProps = useOverlayDismiss(onClose);
+
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const trimmed = name.trim();
+      if (!trimmed) {
+        setError(t("workflows.createNameRequired", "Enter a workflow name"));
+        return;
+      }
+      setSubmitting(true);
+      setError(null);
+      try {
+        await onCreate(trimmed, description.trim(), selected);
+        // Success path closes the dialog from the parent.
+      } catch (err) {
+        setError(getErrorMessage(err) || t("workflows.createFailed", "Failed to create workflow"));
+        setSubmitting(false);
+      }
+    },
+    [name, description, selected, onCreate, t],
+  );
+
+  // U10/R11: submit the AI design request. On success the parent seeds the
+  // workflow and closes the dialog; on failure the server message renders inline
+  // (role="alert") and the dialog stays open. The fetch is cancelable via the
+  // Cancel button (AbortController); an abort re-enables the controls silently.
+  const handleAiSubmit = useCallback(async () => {
+    const trimmed = aiPrompt.trim();
+    if (!trimmed) {
+      setAiError(t("workflows.aiPromptRequired", "Describe the workflow you want"));
+      return;
+    }
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      await onDesign(trimmed, name.trim(), controller.signal);
+      // Success closes the dialog from the parent.
+    } catch (err) {
+      if (controller.signal.aborted) {
+        // User-initiated cancel: re-enable silently (no error message).
+        return;
+      }
+      setAiError(getErrorMessage(err) || t("workflows.aiFailed", "Failed to design workflow"));
+    } finally {
+      if (aiAbortRef.current === controller) aiAbortRef.current = null;
+      setAiBusy(false);
+    }
+  }, [aiPrompt, name, onDesign, t]);
+
+  const handleAiCancel = useCallback(() => {
+    aiAbortRef.current?.abort();
+    setAiBusy(false);
+  }, []);
+
+  // Section boundaries for group headers (built-ins / your workflows). Blank is
+  // always index 0; built-ins follow, then user workflows.
+  const firstBuiltinIndex = templates.findIndex((tmpl) => tmpl.id !== null && tmpl.builtin);
+  const firstYoursIndex = templates.findIndex((tmpl) => tmpl.id !== null && !tmpl.builtin);
+
+  return (
+    <div className="modal-overlay open wf-create-overlay" {...overlayProps}>
+      <div
+        className="modal wf-create-modal"
+        data-testid="wf-create-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("workflows.createTitle", "New workflow")}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <div className="modal-header">
+          <h3>{t("workflows.createTitle", "New workflow")}</h3>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={onClose}
+            aria-label={t("actions.close", "Close")}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+            {/* U10/R11: AI-design disclosure. Toggling reveals a prompt textarea
+                + "Design with AI" submit; submitting designs a brand-new workflow
+                from the result (the parent seeds + activates it). In-flight: the
+                submit disables + spins, aria-busy is set on the section, and a
+                Cancel aborts the fetch. Failure renders inline (role="alert"). */}
+            <div className="wf-ai-create" aria-busy={aiBusy} data-testid="wf-ai-create">
+              <button
+                type="button"
+                className="wf-ai-toggle"
+                data-testid="wf-ai-toggle"
+                aria-expanded={aiOpen}
+                onClick={() => {
+                  setAiOpen((o) => !o);
+                  setAiError(null);
+                }}
+              >
+                <Sparkles size={13} />{" "}
+                {t("workflows.aiToggle", "Describe it instead")}
+              </button>
+              {aiOpen && (
+                <div className="wf-ai-create-body">
+                  <textarea
+                    className="wf-ai-prompt"
+                    data-testid="wf-ai-prompt"
+                    rows={3}
+                    value={aiPrompt}
+                    disabled={aiBusy}
+                    placeholder={t(
+                      "workflows.aiPromptPlaceholder",
+                      "e.g. Run lint and tests before merge, then post a changelog comment after merge",
+                    )}
+                    onChange={(e) => {
+                      setAiPrompt(e.target.value);
+                      if (aiError) setAiError(null);
+                    }}
+                  />
+                  {aiError && (
+                    <p className="wf-create-error" role="alert" data-testid="wf-ai-error">
+                      {aiError}
+                    </p>
+                  )}
+                  <div className="wf-ai-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary wf-ai-submit"
+                      data-testid="wf-ai-submit"
+                      disabled={aiBusy}
+                      onClick={() => void handleAiSubmit()}
+                    >
+                      {aiBusy ? <Loader2 size={13} className="wf-spin" /> : <Sparkles size={13} />}{" "}
+                      {t("workflows.aiSubmit", "Design with AI")}
+                    </button>
+                    {aiBusy && (
+                      <button
+                        type="button"
+                        className="btn wf-ai-cancel"
+                        data-testid="wf-ai-cancel"
+                        onClick={handleAiCancel}
+                      >
+                        {t("common.cancel", "Cancel")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="wf-field">
+              <span id="wf-template-label">{t("workflows.templatePickerLabel", "Start from")}</span>
+              <div
+                className="wf-template-list"
+                role="radiogroup"
+                aria-labelledby="wf-template-label"
+                data-testid="wf-template-list"
+              >
+                {templates.map((tmpl, index) => {
+                  const isSelected = index === selectedIndex;
+                  const optionKey = tmpl.id ?? "blank";
+                  return (
+                    <div key={optionKey}>
+                      {index === firstBuiltinIndex && firstBuiltinIndex >= 0 && (
+                        <p className="wf-template-section">
+                          {t("workflows.templateSectionBuiltin", "Built-in workflows")}
+                        </p>
+                      )}
+                      {index === firstYoursIndex && firstYoursIndex >= 0 && (
+                        <p className="wf-template-section">
+                          {t("workflows.templateSectionYours", "Your workflows")}
+                        </p>
+                      )}
+                      <div
+                        ref={(el) => {
+                          optionRefs.current[index] = el;
+                        }}
+                        role="radio"
+                        aria-checked={isSelected}
+                        tabIndex={isSelected ? 0 : -1}
+                        className={`wf-template-option${isSelected ? " selected" : ""}`}
+                        data-testid={tmpl.id === null ? "wf-template-option-blank" : `wf-template-option-${tmpl.id}`}
+                        onClick={() => {
+                          selectTemplate(index);
+                          optionRefs.current[index]?.focus();
+                        }}
+                        onKeyDown={handleOptionKeyDown}
+                      >
+                        <span className="wf-template-option-name">{tmpl.name}</span>
+                        {tmpl.description && (
+                          <span className="wf-template-option-desc">{tmpl.description}</span>
+                        )}
+                        {tmpl.id !== null && (
+                          <span className="wf-template-option-count">
+                            {t("workflows.templateNodeCount", "{{count}} nodes", { count: tmpl.nodeCount })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <label className="wf-field">
+              <span>{t("workflows.createName", "Name")}</span>
+              <input
+                ref={nameRef}
+                data-testid="wf-create-name"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameTouched(true);
+                  if (error) setError(null);
+                }}
+              />
+            </label>
+            <label className="wf-field">
+              <span>{t("workflows.createDescription", "Description (optional)")}</span>
+              <textarea
+                rows={2}
+                data-testid="wf-create-description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </label>
+            {error && (
+              <p className="wf-create-error" role="alert" data-testid="wf-create-error">
+                {error}
+              </p>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={onClose}>
+              {t("common.cancel", "Cancel")}
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              data-testid="wf-create-submit"
+              disabled={submitting}
+            >
+              {submitting ? <Loader2 size={13} className="wf-spin" /> : null}{" "}
+              {t("workflows.createSubmit", "Create")}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function InnerEditor({
   onClose,
   addToast,
@@ -146,11 +630,32 @@ function InnerEditor({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // Info-tone state (KTD-4): set when a save compiles-rejects solely because the
+  // graph branches (interpreter-only), distinct from the warning-toned
+  // validationError used for genuine problems.
+  const [interpreterOnly, setInterpreterOnly] = useState<boolean>(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode<WorkflowFlowNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
+  // Create-workflow dialog (KTD-7) open state + focus-return ref to the
+  // "New workflow" button (NewTaskModal focus pattern).
+  const [createOpen, setCreateOpen] = useState(false);
+  const newWorkflowBtnRef = useRef<HTMLButtonElement>(null);
+  // Inline-editable name/description (KTD-10). `name`/`description` mirror the
+  // active workflow and are persisted through handleSave; `editingName`/
+  // `editingDescription` flag the active inline input.
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [editingDescription, setEditingDescription] = useState(false);
+  // Snapshot of the workflow as loaded, serialized through flowToIr AFTER
+  // irToFlow so mapping-layer defaults (e.g. condition: "success", config
+  // materialization) are present on both sides of the dirty comparison. Set by
+  // the load effect; compared against the live serialization in `isDirty`.
+  const loadedSnapshotRef = useRef<string | null>(null);
   // v2 columns the editor is authoring for the active workflow.
   const [columns, setColumns] = useState<WorkflowIrColumn[]>([]);
   // v2 custom field definitions the editor is authoring (KTD-13/14, U13).
@@ -161,8 +666,113 @@ function InnerEditor({
   // (built-ins + plugin parsers) once GET /api/step-parsers resolves.
   const [stepParsers, setStepParsers] = useState<string[]>([...BUILTIN_STEP_PARSERS]);
 
+  // U9/R8: palette Templates section sources. Built-in + plugin step templates
+  // (fetched once on open) and the fragment definitions (derived from the loaded
+  // workflow list, kind === "fragment"). The collapsed state persists in
+  // localStorage; the inline conflict error is the persistent seam-duplication
+  // notice rendered inside the section.
+  const [stepTemplates, setStepTemplates] = useState<WorkflowStepTemplate[]>([]);
+  const [pluginTemplates, setPluginTemplates] = useState<
+    Array<{ pluginId: string; template: WorkflowStepTemplate }>
+  >([]);
+  const templatesCollapsedStorageKey = "fusion:wf-templates-collapsed";
+  const [templatesCollapsed, setTemplatesCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(templatesCollapsedStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [templateFilter, setTemplateFilter] = useState("");
+  const [templateConflict, setTemplateConflict] = useState<string | null>(null);
+
+  // U12: the columns/fields authoring panels live in the left sidebar (below the
+  // workflow list) as collapsible disclosure sections. Each section's collapsed
+  // state persists in localStorage; default expanded.
+  const columnsCollapsedStorageKey = "fusion:wf-sidebar-columns-collapsed";
+  const fieldsCollapsedStorageKey = "fusion:wf-sidebar-fields-collapsed";
+  const [columnsCollapsed, setColumnsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(columnsCollapsedStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [fieldsCollapsed, setFieldsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(fieldsCollapsedStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(columnsCollapsedStorageKey, columnsCollapsed ? "1" : "0");
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [columnsCollapsed]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(fieldsCollapsedStorageKey, fieldsCollapsed ? "1" : "0");
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [fieldsCollapsed]);
+  // Wrapper around <ReactFlow> so keyboard deletion can return focus to the
+  // canvas container (R6) instead of leaving it on a now-removed node.
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // U2/R5: one-time legacy-step migration notice. Shown after the on-open
+  // migration call converts >0 steps, dismissible, dismissal persisted in
+  // localStorage (per project when a projectId is available). Guards against
+  // re-showing across re-opens.
+  const migrationNoticeStorageKey = useMemo(
+    () => `fusion:wf-migration-notice-dismissed${projectId ? `:${projectId}` : ""}`,
+    [projectId],
+  );
+  const [showMigrationNotice, setShowMigrationNotice] = useState(false);
+
+  // U5/R10: import affordance state. `importError` renders a PERSISTENT inline
+  // error region (not a toast) for client parse failures and server 4xx
+  // validation failures; `importWarnings` renders non-blocking notes in the same
+  // region. The hidden file input is reset after every attempt.
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  // U10/R11: toolbar "Design with AI" panel state. `aiPanelOpen` toggles the
+  // popover; `aiEditPrompt` holds the request; `aiEditBusy` flags the in-flight
+  // call (submit disables + spins, Cancel shows); `aiEditError` is the inline
+  // failure. The proposed replacement applies only through the dirty-guard
+  // confirm — and always confirms (destructive whole-graph replace).
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiEditPrompt, setAiEditPrompt] = useState("");
+  const [aiEditBusy, setAiEditBusy] = useState(false);
+  const [aiEditError, setAiEditError] = useState<string | null>(null);
+  const aiEditAbortRef = useRef<AbortController | null>(null);
+  // U10/R11: when a create-from-AI result is interpreter-only, the new workflow
+  // becomes active and its load effect resets the banner — so we stash the flag
+  // here and the load effect re-raises it once for the workflow it activates.
+  const pendingInterpreterOnlyRef = useRef(false);
+
   const activeWorkflow = useMemo(() => workflows.find((w) => w.id === activeId), [workflows, activeId]);
   const isBuiltin = !!activeWorkflow && isBuiltinWorkflowId(activeWorkflow.id);
+
+  // Live mirror of the active workflow id, readable inside async callbacks that
+  // captured an earlier value before an await (e.g. the AI-design round-trip).
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+
+  // Trivial-graph palette hint (R9): a user-owned workflow whose graph carries no
+  // user-authored node yet (everything is start/end/column-band — column bands map
+  // to data.kind "start"). Disappears as soon as any user node exists; never shows
+  // for built-ins.
+  const isTrivialUserGraph = useMemo(() => {
+    if (!activeWorkflow || isBuiltin) return false;
+    return !nodes.some((n) => USER_NODE_KINDS.has(n.data.kind));
+  }, [activeWorkflow, isBuiltin, nodes]);
 
   // Column-agent authoring requires BOTH flags (R10). When either is off, the
   // picker is disabled (not hidden) and bound columns are inert at execution
@@ -205,6 +815,73 @@ function InnerEditor({
     };
   }, [projectId]);
 
+  // U9/R8: built-in + plugin step templates for the palette Templates section.
+  // Fetched once on open; non-fatal on failure (the subsections simply stay
+  // empty and hide). Fragments come from the workflow list, not a separate fetch.
+  useEffect(() => {
+    let cancelled = false;
+    fetchWorkflowStepTemplates()
+      .then((res) => {
+        if (!cancelled) setStepTemplates(res.templates ?? []);
+      })
+      .catch(() => {
+        // Non-fatal: Built-in steps subsection stays empty.
+      });
+    fetchPluginWorkflowStepTemplates()
+      .then((res) => {
+        if (!cancelled) setPluginTemplates(res.templates ?? []);
+      })
+      .catch(() => {
+        // Non-fatal: Plugin steps subsection stays empty.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist the Templates section collapsed state.
+  useEffect(() => {
+    try {
+      localStorage.setItem(templatesCollapsedStorageKey, templatesCollapsed ? "1" : "0");
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [templatesCollapsed]);
+
+  // U9/R8: fragment definitions surface from the loaded workflow list (kind ===
+  // "fragment"); they are excluded from the sidebar workflow list elsewhere.
+  const fragments = useMemo(
+    () => workflows.filter((w) => w.kind === "fragment"),
+    [workflows],
+  );
+
+  // U9/R8: alphabetical, filtered subsection entries. The filter (a single text
+  // input) matches across all groups by name and only appears once the combined
+  // entry count exceeds 8. Empty subsections are hidden by the render.
+  const templateGroups = useMemo(() => {
+    const q = templateFilter.trim().toLowerCase();
+    const matches = (name: string) => !q || name.toLowerCase().includes(q);
+    const byName = <T extends { name: string }>(a: T, b: T) =>
+      a.name.localeCompare(b.name);
+
+    const fragmentEntries = [...fragments]
+      .sort(byName)
+      .filter((f) => matches(f.name));
+    const stepEntries = [...stepTemplates]
+      .sort(byName)
+      .filter((s) => matches(s.name));
+    const pluginEntries = [...pluginTemplates]
+      .sort((a, b) => a.template.name.localeCompare(b.template.name))
+      .filter((p) => matches(p.template.name));
+
+    return { fragmentEntries, stepEntries, pluginEntries };
+  }, [fragments, stepTemplates, pluginTemplates, templateFilter]);
+
+  // Total entries available (pre-filter) — drives whether the filter input shows.
+  const templateTotalCount =
+    fragments.length + stepTemplates.length + pluginTemplates.length;
+  const hasAnyTemplate = templateTotalCount > 0;
+
   // Composition violations (client mirror of validateColumnTraits).
   const columnViolations: TraitViolation[] = useMemo(
     () => (columns.length ? validateColumnsClient(columns, traitCatalog) : []),
@@ -213,6 +890,18 @@ function InnerEditor({
   // Step nodes not placed in any column (v2 only).
   const unplaced = useMemo(() => unplacedNodeIds(nodes, columns), [nodes, columns]);
   const blockingViolationCount = columnViolations.filter((v) => v.severity === "error").length;
+
+  // Dirty = the normalized live serialization differs from the loaded snapshot
+  // (U4). Built-ins are never dirty (read-only). Memoized over the inputs that
+  // feed serializeGraph; the loaded snapshot is a ref set by the load effect.
+  const isDirty = useMemo(() => {
+    if (isBuiltin) return false;
+    if (!activeWorkflow || loadedSnapshotRef.current === null) return false;
+    return (
+      serializeGraph(name, description, nodes, edges, columns, fields) !==
+      loadedSnapshotRef.current
+    );
+  }, [isBuiltin, activeWorkflow, name, description, nodes, edges, columns, fields]);
 
   const loadWorkflows = useCallback(async () => {
     setLoading(true);
@@ -231,6 +920,111 @@ function InnerEditor({
     void loadWorkflows();
   }, [loadWorkflows]);
 
+  // U2/R5: fire the lazy legacy-step migration once on editor open, then reload
+  // the workflow list so any newly created fragments / "Migrated steps" workflow
+  // appear. Non-fatal on ANY error (incl. 404 if the route ships in a later
+  // release — the call is best-effort). When the run converted >0 steps and the
+  // notice hasn't been dismissed before, surface the one-time notice.
+  const migrationFiredRef = useRef(false);
+  useEffect(() => {
+    if (migrationFiredRef.current) return;
+    migrationFiredRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await migrateLegacyWorkflowSteps(projectId);
+        if (cancelled) return;
+        if (result.migrated > 0) {
+          await loadWorkflows();
+          if (cancelled) return;
+          let dismissed = false;
+          try {
+            dismissed = localStorage.getItem(migrationNoticeStorageKey) === "1";
+          } catch {
+            // localStorage unavailable (private mode / SSR): treat as not dismissed.
+          }
+          if (!dismissed) setShowMigrationNotice(true);
+        }
+      } catch {
+        // Non-fatal: migration is best-effort and tolerates a missing route.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, loadWorkflows, migrationNoticeStorageKey]);
+
+  const dismissMigrationNotice = useCallback(() => {
+    setShowMigrationNotice(false);
+    try {
+      localStorage.setItem(migrationNoticeStorageKey, "1");
+    } catch {
+      // Best-effort persistence; the in-session dismissal still hides it.
+    }
+  }, [migrationNoticeStorageKey]);
+
+  // U5/R9: export the active workflow as a downloaded JSON envelope. Enabled for
+  // built-ins; the caller gates on `isDirty` (a stale export is impossible
+  // because the server reads the persisted definition). Network failures toast.
+  const handleExport = useCallback(async () => {
+    if (!activeWorkflow) return;
+    try {
+      await exportWorkflow(activeWorkflow.id, projectId);
+    } catch (err) {
+      addToast(getErrorMessage(err) || t("workflows.exportFailed", "Failed to export workflow"), "error");
+    }
+  }, [activeWorkflow, projectId, addToast, t]);
+
+  // U5/R10: import a workflow envelope from a selected file. Validation failures
+  // (client JSON.parse or server 4xx) populate the PERSISTENT inline error region
+  // — never a toast. Network/5xx errors toast. The file input resets after every
+  // attempt so re-selecting the same file fires `onChange` again.
+  const handleImportFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset the input immediately so the same file can be re-picked later.
+      if (importInputRef.current) importInputRef.current.value = "";
+      if (!file) return;
+      setImportError(null);
+      setImportWarnings([]);
+      setImporting(true);
+      try {
+        const text = await file.text();
+        let envelope: unknown;
+        try {
+          envelope = JSON.parse(text);
+        } catch {
+          setImportError(t("workflows.importInvalidJson", "That file isn't valid JSON."));
+          return;
+        }
+        const result = await importWorkflow(envelope, projectId);
+        await loadWorkflows();
+        setActiveId(result.workflow.id);
+        addToast(
+          t("workflows.imported", 'Imported workflow "{{name}}"', { name: result.workflow.name }),
+          "success",
+        );
+        if (result.strippedApprovalFlags) {
+          addToast(
+            t("workflows.importStripped", "Auto-approval flags were removed from imported nodes"),
+            "warning",
+          );
+        }
+        if (result.warnings.length > 0) setImportWarnings(result.warnings);
+      } catch (err) {
+        // 4xx → persistent inline validation error; anything else → toast.
+        if (err instanceof ApiRequestError && err.status >= 400 && err.status < 500) {
+          setImportError(getErrorMessage(err) || t("workflows.importFailed", "Import failed"));
+        } else {
+          addToast(getErrorMessage(err) || t("workflows.importFailed", "Import failed"), "error");
+        }
+      } finally {
+        setImporting(false);
+      }
+    },
+    [projectId, loadWorkflows, addToast, t],
+  );
+
   // Load the active workflow graph into the canvas.
   useEffect(() => {
     if (!activeWorkflow) {
@@ -238,16 +1032,43 @@ function InnerEditor({
       setEdges([]);
       setColumns([]);
       setFields([]);
+      setName("");
+      setDescription("");
+      loadedSnapshotRef.current = null;
       return;
     }
     const flow = irToFlow(activeWorkflow);
     setNodes(flow.nodes);
     setEdges(flow.edges);
-    setColumns(columnsOf(activeWorkflow));
-    setFields(fieldsOf(activeWorkflow));
+    const loadedColumns = columnsOf(activeWorkflow);
+    const loadedFields = fieldsOf(activeWorkflow);
+    setColumns(loadedColumns);
+    setFields(loadedFields);
+    setName(activeWorkflow.name);
+    setDescription(activeWorkflow.description ?? "");
+    setEditingName(false);
+    setEditingDescription(false);
+    // Compute the normalized loaded snapshot from the materialized flow (so
+    // mapping defaults match the live side) plus name/description.
+    loadedSnapshotRef.current = serializeGraph(
+      activeWorkflow.name,
+      activeWorkflow.description ?? "",
+      flow.nodes,
+      flow.edges,
+      loadedColumns,
+      loadedFields,
+    );
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setValidationError(null);
+    // Honor a pending AI interpreter-only flag exactly once for the workflow it
+    // just activated; otherwise the banner clears on load (U10/R11).
+    if (pendingInterpreterOnlyRef.current) {
+      pendingInterpreterOnlyRef.current = false;
+      setInterpreterOnly(true);
+    } else {
+      setInterpreterOnly(false);
+    }
   }, [activeWorkflow, setNodes, setEdges]);
 
   // Server-reported node error (e.g. seam-in-branch) attributed to a node id.
@@ -263,13 +1084,28 @@ function InnerEditor({
     });
   }, [columns, setNodes]);
 
+  // Append a new (success) edge directly rather than via React Flow's addEdge,
+  // which dedupes on source/target/handles and would block parallel
+  // success+failure edges between the same pair (KTD-3). buildConnectionEdge
+  // reimplements addEdge's sanity guards plus the author-time cycle guard (KTD-9).
   const onConnect = useCallback(
     (connection: Connection) => {
-      setEdges((eds) =>
-        addEdge({ ...connection, label: "success", data: { condition: "success" } }, eds),
-      );
+      const result = buildConnectionEdge(connection, edges, nodes);
+      if ("error" in result) {
+        if (result.error === "cycle") {
+          addToast(
+            t(
+              "workflowNodes.cycleBlocked",
+              "That connection would create a cycle — only rework edges inside a for-each template may loop back",
+            ),
+            "warning",
+          );
+        }
+        return;
+      }
+      setEdges((eds) => [...eds, result.edge]);
     },
-    [setEdges],
+    [edges, nodes, setEdges, addToast, t],
   );
 
   // Dragging a step node into a column band sets node.column (position-based
@@ -344,6 +1180,152 @@ function InnerEditor({
     [setNodes, t],
   );
 
+  // U9/R8: insert a step template (built-in or plugin) as ONE pre-configured
+  // node, mapping its fields the same way the U1 converter does. Reuses the
+  // addNode path so layout/selection/dirty all behave identically.
+  const handleInsertStepTemplate = useCallback(
+    (tpl: WorkflowStepTemplate) => {
+      if (isBuiltin) return;
+      const { kind, label, config } = stepTemplateToNode(tpl);
+      addNode(kind, label, config);
+    },
+    [isBuiltin, addNode],
+  );
+
+  // U9/R8: insert a fragment definition's body into the active graph. Pre-validates
+  // seam duplication via fragmentSeamConflicts; on conflict, surfaces a persistent
+  // inline error inside the Templates section and does NOT insert. Otherwise
+  // insertFragment remaps ids + rewires internal edges, landing nodes at a fixed
+  // offset from the canvas origin.
+  const handleInsertFragment = useCallback(
+    (fragment: WorkflowDefinition) => {
+      if (isBuiltin) return;
+      const conflicts = fragmentSeamConflicts(fragment.ir, nodes);
+      if (conflicts.length > 0) {
+        setTemplateConflict(conflicts.join(", "));
+        return;
+      }
+      setTemplateConflict(null);
+      const result = insertFragment(
+        nodes,
+        edges,
+        fragment.ir,
+        { x: 240, y: 200 + (nodes.length % 4) * 40 },
+        fragment.layout,
+      );
+      setNodes(result.nodes);
+      setEdges(result.edges);
+      setSelectedNodeId(result.insertedNodeIds[0] ?? null);
+    },
+    [isBuiltin, nodes, edges, setNodes, setEdges],
+  );
+
+  // Auto-layout: one-click left-to-right tidy (U5, R8). Recomputes positions
+  // only; bands and foreach template children are left in place. Marks the
+  // editor dirty automatically via the layout serialization in isDirty.
+  const handleAutoLayout = useCallback(() => {
+    setNodes((ns) => applyAutoLayout(ns, autoLayout(ns, edges, columns)));
+  }, [setNodes, edges, columns]);
+
+  // U10/R11: toolbar "Design with AI" submit. Designs against the ACTIVE workflow
+  // (passing its id; the server reads the persisted IR — the client never posts
+  // IR). On success the returned graph REPLACES the canvas, but only after a
+  // confirm — and we ALWAYS confirm (even when clean) because this is a
+  // destructive whole-graph replace. On confirm we map the returned {ir, layout}
+  // through irToFlow on a definition-shaped object (mirroring the load effect's
+  // mapping); the result is intentionally left UNSAVED so the user explicitly
+  // saves (the dirty snapshot is the active workflow's, so the replaced graph
+  // reads dirty). On failure the canvas is untouched and the panel shows the
+  // server message inline. The fetch is cancelable via the panel's Cancel button.
+  const handleAiEditSubmit = useCallback(async () => {
+    if (!activeWorkflow || isBuiltin) return;
+    const trimmed = aiEditPrompt.trim();
+    if (!trimmed) {
+      setAiEditError(t("workflows.aiPromptRequired", "Describe the workflow you want"));
+      return;
+    }
+    const controller = new AbortController();
+    aiEditAbortRef.current = controller;
+    // Capture the target workflow up-front: if the user switches the active
+    // workflow during the (long) design round-trip, we must NOT apply the result
+    // to whatever workflow happens to be active when it resolves.
+    const targetWorkflow = activeWorkflow;
+    setAiEditBusy(true);
+    setAiEditError(null);
+    try {
+      const result = await designWorkflow(
+        { prompt: trimmed, workflowId: targetWorkflow.id },
+        projectId,
+        controller.signal,
+      );
+      // The active workflow changed mid-flight → discard the stale result.
+      if (activeIdRef.current !== targetWorkflow.id) {
+        addToast(
+          t("workflows.aiStaleDiscarded", "Discarded AI design — you switched workflows"),
+          "warning",
+        );
+        return;
+      }
+      // Always confirm before the destructive replace.
+      const ok = await confirm({
+        title: t("workflows.aiReplaceTitle", "Replace graph?"),
+        message: t(
+          "workflows.aiReplaceConfirm",
+          "Replace the current graph with the AI design? Unsaved changes will be lost.",
+        ),
+        confirmLabel: t("workflows.aiReplaceConfirmLabel", "Replace"),
+        danger: true,
+      });
+      if (!ok) return; // Cancel keeps the current canvas untouched.
+      // Map the returned IR through irToFlow on a definition-shaped object,
+      // mirroring the active-workflow load effect's mapping.
+      const flow = irToFlow({
+        ...targetWorkflow,
+        ir: result.ir,
+        layout: result.layout,
+      });
+      setNodes(flow.nodes);
+      setEdges(flow.edges);
+      setColumns(columnsOf({ ...targetWorkflow, ir: result.ir }));
+      setFields(fieldsOf({ ...targetWorkflow, ir: result.ir }));
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setValidationError(null);
+      // Leave the loaded snapshot pointing at the (still-persisted) base so the
+      // replaced graph reads dirty — the user must explicitly Save.
+      setInterpreterOnly(result.interpreterOnly);
+      if (result.strippedApprovalFlags) {
+        addToast(
+          t("workflows.importStripped", "Auto-approval flags were removed from imported nodes"),
+          "warning",
+        );
+      }
+      setAiPanelOpen(false);
+      setAiEditPrompt("");
+    } catch (err) {
+      if (controller.signal.aborted) return; // user cancel: re-enable silently
+      setAiEditError(getErrorMessage(err) || t("workflows.aiFailed", "Failed to design workflow"));
+    } finally {
+      if (aiEditAbortRef.current === controller) aiEditAbortRef.current = null;
+      setAiEditBusy(false);
+    }
+  }, [
+    activeWorkflow,
+    isBuiltin,
+    aiEditPrompt,
+    projectId,
+    confirm,
+    t,
+    setNodes,
+    setEdges,
+    addToast,
+  ]);
+
+  const handleAiEditCancel = useCallback(() => {
+    aiEditAbortRef.current?.abort();
+    setAiEditBusy(false);
+  }, []);
+
   const updateSelectedData = useCallback(
     (
       patch:
@@ -395,7 +1377,7 @@ function InnerEditor({
             data: { ...(e.data ?? {}), condition, kind: rework ? "rework" : undefined },
             type: rework ? "step" : undefined,
             animated: rework,
-            className: rework ? "wf-edge-rework" : undefined,
+            className: edgeClassName(condition, rework),
           };
         }),
       );
@@ -403,35 +1385,155 @@ function InnerEditor({
     [selectedEdgeId, setEdges],
   );
 
-  const handleCreateWorkflow = useCallback(async () => {
-    const name = window.prompt("New workflow name");
-    if (!name?.trim()) return;
-    try {
+  // ── Deletion (U3, R6) ──────────────────────────────────────────────────────
+  // Apply cascadeDelete to the current graph for the given node/edge ids,
+  // clearing any selection that pointed at a removed element. Shared by the
+  // inspector delete buttons and the keyboard-delete path.
+  const applyDelete = useCallback(
+    (ids: Iterable<string>) => {
+      const idSet = new Set(ids);
+      let next: { nodes: FlowNode<WorkflowFlowNodeData>[]; edges: FlowEdge[] } | null = null;
+      setNodes((ns) => {
+        next = cascadeDelete(ns, edges, idSet);
+        return next.nodes;
+      });
+      if (next) setEdges((next as { edges: FlowEdge[] }).edges);
+      if (selectedNodeId !== null && idSet.has(selectedNodeId)) setSelectedNodeId(null);
+      if (selectedEdgeId !== null && idSet.has(selectedEdgeId)) setSelectedEdgeId(null);
+    },
+    [edges, setNodes, setEdges, selectedNodeId, selectedEdgeId],
+  );
+
+  // Keyboard delete (Backspace/Delete) flows through React Flow's onBeforeDelete:
+  // it hands us the nodes/edges it intends to remove, and we return the
+  // cascadeDelete-expanded set (foreach children + incident edges, protected
+  // nodes filtered out) so React Flow deletes exactly the right elements. After
+  // deletion, focus returns to the canvas container (R6). Built-ins never reach
+  // here (deleteKeyCode is null and selection is read-only), but the protection
+  // in cascadeDelete is the backstop.
+  const onBeforeDelete = useCallback(
+    async ({ nodes: delNodes, edges: delEdges }: { nodes: FlowNode<WorkflowFlowNodeData>[]; edges: FlowEdge[] }) => {
+      if (isBuiltin) return false;
+      const ids = new Set<string>([...delNodes.map((n) => n.id), ...delEdges.map((e) => e.id)]);
+      const result = cascadeDelete(nodes, edges, ids);
+      const removedNodeIds = new Set(nodes.map((n) => n.id));
+      for (const n of result.nodes) removedNodeIds.delete(n.id);
+      const removedEdgeIds = new Set(edges.map((e) => e.id));
+      for (const e of result.edges) removedEdgeIds.delete(e.id);
+      if (removedNodeIds.size === 0 && removedEdgeIds.size === 0) return false;
+      return {
+        nodes: nodes.filter((n) => removedNodeIds.has(n.id)),
+        edges: edges.filter((e) => removedEdgeIds.has(e.id)),
+      };
+    },
+    [isBuiltin, nodes, edges],
+  );
+
+  // After React Flow removes the elements, drop any dangling selection and move
+  // focus to the canvas so keyboard nav continues from a live element (R6).
+  const onNodesDelete = useCallback(() => {
+    setSelectedNodeId(null);
+    canvasRef.current?.focus();
+  }, []);
+  const onEdgesDelete = useCallback(() => {
+    setSelectedEdgeId(null);
+    canvasRef.current?.focus();
+  }, []);
+
+  // Close the create dialog and return focus to its trigger (NewTaskModal
+  // focus-return pattern). Used by both the success and cancel paths.
+  const closeCreateDialog = useCallback(() => {
+    setCreateOpen(false);
+    newWorkflowBtnRef.current?.focus();
+  }, []);
+
+  // Perform the createWorkflow call. Throws on failure so the dialog surfaces
+  // the server error (e.g. duplicate name) inline without losing the input.
+  const handleCreateWorkflow = useCallback(
+    async (workflowName: string, workflowDescription: string, template: WorkflowCreateTemplate) => {
+      // Blank → empty start→end graph; template → a fresh-ID copy of the source
+      // graph + layout (U4/R7, never a reference). Always created kind "workflow".
+      const seed =
+        template.source !== undefined
+          ? copyIrWithFreshIds(template.source.ir, template.source.layout)
+          : { ir: emptyWorkflowIr(workflowName), layout: emptyWorkflowLayout() };
       const created = await createWorkflow(
-        { name: name.trim(), ir: emptyWorkflowIr(name.trim()), layout: emptyWorkflowLayout() },
+        {
+          name: workflowName,
+          description: workflowDescription || undefined,
+          kind: "workflow",
+          ir: seed.ir,
+          layout: seed.layout,
+        },
         projectId,
       );
       setWorkflows((ws) => [...ws, created]);
       setActiveId(created.id);
-      addToast(`Created workflow "${created.name}"`, "success");
-    } catch (err) {
-      addToast(getErrorMessage(err) || "Failed to create workflow", "error");
-    }
-  }, [projectId, addToast]);
+      addToast(t("workflows.created", 'Created workflow "{{name}}"', { name: created.name }), "success");
+      closeCreateDialog();
+    },
+    [projectId, addToast, t, closeCreateDialog],
+  );
+
+  // U10/R11: design a brand-new workflow from a prompt in the create dialog.
+  // Calls the server design route (no IR posted), then creates the workflow
+  // seeded from the returned {ir, layout} via the existing create path. The name
+  // comes from the dialog's name field if filled, else "AI: <first 30 chars>".
+  // After activation: interpreterOnly surfaces the existing info banner; a strip
+  // shows the shared importStripped toast (reused per spec). Throws on failure so
+  // the dialog renders the server message inline and stays open (nothing created).
+  const handleDesignNewWorkflow = useCallback(
+    async (prompt: string, dialogName: string, signal: AbortSignal) => {
+      const result = await designWorkflow({ prompt }, projectId, signal);
+      const fallbackName = `AI: ${prompt.slice(0, 30)}`;
+      const workflowName = dialogName || fallbackName;
+      const created = await createWorkflow(
+        {
+          name: workflowName,
+          kind: "workflow",
+          ir: result.ir,
+          layout: result.layout,
+        },
+        projectId,
+      );
+      // Stash the interpreter-only flag BEFORE activating so the new workflow's
+      // load effect re-raises the banner instead of clearing it (U10/R11).
+      pendingInterpreterOnlyRef.current = result.interpreterOnly;
+      setWorkflows((ws) => [...ws, created]);
+      setActiveId(created.id);
+      addToast(t("workflows.created", 'Created workflow "{{name}}"', { name: created.name }), "success");
+      if (result.strippedApprovalFlags) {
+        addToast(
+          t("workflows.importStripped", "Auto-approval flags were removed from imported nodes"),
+          "warning",
+        );
+      }
+      closeCreateDialog();
+    },
+    [projectId, addToast, t, closeCreateDialog],
+  );
 
   const handleDeleteWorkflow = useCallback(async () => {
     if (!activeWorkflow) return;
     if (isBuiltinWorkflowId(activeWorkflow.id)) return; // built-ins are read-only
-    if (!window.confirm(`Delete workflow "${activeWorkflow.name}"?`)) return;
+    const ok = await confirm({
+      title: t("workflows.deleteTitle", "Delete workflow?"),
+      message: t("workflows.deleteMessage", 'Delete workflow "{{name}}"? This cannot be undone.', {
+        name: activeWorkflow.name,
+      }),
+      confirmLabel: t("common.delete", "Delete"),
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteWorkflow(activeWorkflow.id, projectId);
       setWorkflows((ws) => ws.filter((w) => w.id !== activeWorkflow.id));
       setActiveId(null);
-      addToast("Workflow deleted", "success");
+      addToast(t("workflows.deleted", "Workflow deleted"), "success");
     } catch (err) {
-      addToast(getErrorMessage(err) || "Failed to delete workflow", "error");
+      addToast(getErrorMessage(err) || t("workflows.deleteFailed", "Failed to delete workflow"), "error");
     }
-  }, [activeWorkflow, projectId, addToast]);
+  }, [activeWorkflow, projectId, addToast, confirm, t]);
 
   const handleDuplicate = useCallback(async () => {
     if (!activeWorkflow) return;
@@ -482,29 +1584,63 @@ function InnerEditor({
 
     setSaving(true);
     setValidationError(null);
+    setInterpreterOnly(false);
     setServerNodeError(null);
     try {
+      const trimmedName = name.trim() || activeWorkflow.name;
       const { ir, layout } = flowToIr(
-        activeWorkflow.name,
+        trimmedName,
         nodes,
         edges,
         columns.length ? columns : undefined,
         fields.length ? fields : undefined,
       );
+      // Include name/description in the PATCH only when they changed from the
+      // loaded workflow (KTD-10 inline rename/description persist here).
+      const nameChanged = trimmedName !== activeWorkflow.name;
+      const descChanged = description !== (activeWorkflow.description ?? "");
       const finishSave = async (updated: Awaited<ReturnType<typeof updateWorkflow>>) => {
         setWorkflows((ws) => ws.map((w) => (w.id === updated.id ? updated : w)));
+        // Re-baseline the dirty snapshot to the just-saved state so the editor is
+        // clean immediately after a successful save.
+        loadedSnapshotRef.current = serializeGraph(
+          updated.name,
+          updated.description ?? "",
+          nodes,
+          edges,
+          columns,
+          fields,
+        );
+        setName(updated.name);
+        setDescription(updated.description ?? "");
         // Validate by compiling — surfaces non-linear graphs as a banner.
         try {
           await compileWorkflow(updated.id, projectId);
           addToast(t("workflows.saved", "Workflow saved"), "success");
         } catch (compileErr) {
-          setValidationError(
-            getErrorMessage(compileErr) || t("workflows.savedNotCompilable", "Workflow saved but cannot be compiled"),
-          );
+          const compileMsg = getErrorMessage(compileErr) || "";
+          // KTD-4: branching graphs reject with this shared suffix from
+          // workflow-compiler.ts (both the fan-out and off-main-path messages).
+          // Such a graph still runs on the interpreter — present it as info, not a
+          // warning. NOTE: this string is coupled to the compiler's message; if
+          // that wording changes, update both sites (see compiler message site).
+          if (compileMsg.includes("require the workflow interpreter (deferred)")) {
+            setInterpreterOnly(true);
+          } else {
+            setValidationError(
+              compileMsg || t("workflows.savedNotCompilable", "Workflow saved but cannot be compiled"),
+            );
+          }
         }
       };
+      const savePayload = {
+        ir,
+        layout,
+        ...(nameChanged ? { name: trimmedName } : {}),
+        ...(descChanged ? { description } : {}),
+      };
       try {
-        await finishSave(await updateWorkflow(activeWorkflow.id, { ir, layout }, projectId));
+        await finishSave(await updateWorkflow(activeWorkflow.id, savePayload, projectId));
       } catch (err) {
         // Policy-escalation handshake (R13, PR #1432 review): the route rejects a
         // binding to a broader-than-default agent until the author explicitly
@@ -526,7 +1662,7 @@ function InnerEditor({
           return;
         }
         await finishSave(
-          await updateWorkflow(activeWorkflow.id, { ir, layout, confirmPolicyEscalation: true }, projectId),
+          await updateWorkflow(activeWorkflow.id, { ...savePayload, confirmPolicyEscalation: true }, projectId),
         );
       }
     } catch (err) {
@@ -543,7 +1679,7 @@ function InnerEditor({
     } finally {
       setSaving(false);
     }
-  }, [activeWorkflow, nodes, edges, columns, fields, unplaced, blockingViolationCount, projectId, addToast, t]);
+  }, [activeWorkflow, name, description, nodes, edges, columns, fields, unplaced, blockingViolationCount, projectId, addToast, t]);
 
   // Stamp the shared error-state badge onto offending nodes: unplaced step
   // nodes and any node the server flagged (seam-in-branch). One component
@@ -580,12 +1716,13 @@ function InnerEditor({
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
-  // The edge inspector's verdict/rework controls apply only when the edge's
-  // source node is a step-review node (KTD-4).
-  const selectedEdgeSourceIsReview = useMemo(() => {
-    if (!selectedEdge) return false;
+  // The edge inspector renders different controls per source-node kind (KTD-2):
+  // step-review → verdict controls; prompt/script/gate/code/foreach →
+  // success/failure select; everything else → a read-only condition note.
+  const selectedEdgeEditability = useMemo(() => {
+    if (!selectedEdge) return "readonly" as const;
     const src = nodes.find((n) => n.id === selectedEdge.source);
-    return src?.data.kind === "step-review";
+    return edgeConditionEditability(src?.data.kind);
   }, [selectedEdge, nodes]);
 
   // Artifacts the active workflow declares (KTD-12). The parse-steps inspector
@@ -599,7 +1736,10 @@ function InnerEditor({
     return [];
   }, [activeWorkflow]);
 
-  // Lazy-loaded executor resources
+  // Executor resources. Prefetched once when the editor opens (U1/KTD-6) so node
+  // cards can resolve model/agent/skill ids to display names in their config
+  // summaries; the inspector selects reuse the same state. Failures are
+  // non-fatal — summaries fall back to raw ids — so the prefetch is toastless.
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   // The agent fetches are project-scoped, but this cache survives project
@@ -613,6 +1753,42 @@ function InnerEditor({
   // CLI-agent adapter catalog (U15). Falls back to the static list when the API
   // fetch fails so the picker is always usable.
   const [cliAdapters, setCliAdapters] = useState<CliAdapterDescriptorView[]>(CLI_AGENT_ADAPTER_FALLBACK);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Promise.resolve wraps so a synchronously-undefined return (e.g. a bare
+    // test mock) degrades to "no catalog" instead of throwing — summaries then
+    // fall back to raw ids, which is the documented failure behavior (KTD-6).
+    Promise.resolve(fetchModels())
+      .then((res) => {
+        if (!cancelled && res?.models) setModels(res.models);
+      })
+      .catch(() => {});
+    Promise.resolve(fetchAgents())
+      .then((res) => {
+        if (!cancelled && Array.isArray(res)) setAgents(res);
+      })
+      .catch(() => {});
+    Promise.resolve(fetchDiscoveredSkills(projectId))
+      .then((res) => {
+        if (!cancelled && Array.isArray(res)) setSkills(res);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  // Catalogs handed to the rendered node cards via context (KTD-6). Minimal
+  // structural shape — nodeConfigSummary reads only id/name/provider.
+  const catalogs: NodeSummaryCatalogs = useMemo(
+    () => ({
+      models: models.map((m) => ({ provider: m.provider, id: m.id, name: m.name })),
+      agents: agents.map((a) => ({ id: a.id, name: a.name })),
+      skills: skills.map((s) => ({ id: s.id, name: s.name })),
+    }),
+    [models, agents, skills],
+  );
 
   const currentExecutor = (selectedNode?.data.config?.executor as ExecutorKind | undefined) ?? "model";
 
@@ -696,6 +1872,47 @@ function InnerEditor({
     skills.length,
   ]);
 
+  // ── Dirty-state dismissal guard (U4, R7) ────────────────────────────────────
+  // One synchronous decision point for every dismissal path. If the editor is
+  // clean (or built-in), the action runs immediately; if dirty, the discard
+  // confirm opens and the action runs only in the .then(true) callback. Used by
+  // the X button, overlay click (via useOverlayDismiss), the Escape keydown
+  // handler, and the sidebar workflow switch.
+  const guardedDismiss = useCallback(
+    (proceed: () => void) => {
+      if (!isDirty) {
+        proceed();
+        return;
+      }
+      void confirm({
+        title: t("workflows.discardTitle", "Discard unsaved changes?"),
+        message: t(
+          "workflows.discardMessage",
+          "You have unsaved changes to this workflow. Discard them?",
+        ),
+        confirmLabel: t("workflows.discardConfirm", "Discard"),
+        danger: true,
+      }).then((ok) => {
+        if (ok) proceed();
+      });
+    },
+    [isDirty, confirm, t],
+  );
+
+  const requestClose = useCallback(() => {
+    guardedDismiss(onClose);
+  }, [guardedDismiss, onClose]);
+
+  // Sidebar workflow switch: route through the guard so dirty edits prompt
+  // before the active workflow changes (cancel keeps the current selection).
+  const requestSwitch = useCallback(
+    (id: string) => {
+      if (id === activeId) return;
+      guardedDismiss(() => setActiveId(id));
+    },
+    [guardedDismiss, activeId],
+  );
+
   // When the selected node sits in an override column, eagerly load the agent
   // registry so the "overridden by column agent <name>" note can resolve the
   // name even if this node's own executor isn't "agent".
@@ -715,23 +1932,103 @@ function InnerEditor({
     };
   }, [overrideColumnBinding, agents.length, projectId, addToast]);
 
-  const overlayProps = useOverlayDismiss(onClose);
+  const overlayProps = useOverlayDismiss(requestClose);
 
   return (
     <div className="modal-overlay open wf-editor-overlay" {...overlayProps}>
-      <div className="modal wf-editor-modal" ref={modalRef} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal wf-editor-modal"
+        ref={modalRef}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Dedicated Escape handler (useOverlayDismiss does not cover Escape).
+          // Ignore Escape originating from inputs/textareas/selects so inline
+          // editors (name/description) keep their own Escape-to-cancel behavior.
+          if (e.key !== "Escape") return;
+          // The create dialog (rendered as a child) owns its own Escape; if it's
+          // open, let it handle the event (it stops propagation already).
+          if (createOpen) return;
+          const target = e.target as HTMLElement;
+          const tag = target.tagName;
+          if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+          e.stopPropagation();
+          requestClose();
+        }}
+      >
         <header className="wf-editor-header">
           <h2>Workflows</h2>
-          <button className="wf-editor-close" onClick={onClose} aria-label="Close workflow editor">
+          <button className="wf-editor-close" onClick={requestClose} aria-label="Close workflow editor">
             <X size={18} />
           </button>
         </header>
 
+        {showMigrationNotice ? (
+          <div className="wf-migration-notice" role="status" data-testid="wf-migration-notice">
+            <span className="wf-migration-notice-text">
+              {t(
+                "workflows.migrationNotice",
+                'Your legacy workflow steps were converted — find them as templates in the palette and as the "Migrated steps" workflow.',
+              )}
+            </span>
+            <button
+              type="button"
+              className="wf-migration-notice-dismiss"
+              data-testid="wf-migration-notice-dismiss"
+              onClick={dismissMigrationNotice}
+              aria-label={t("common.dismiss", "Dismiss")}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : null}
+
         <div className="wf-editor-body">
           <aside className="wf-editor-sidebar">
-            <button className="wf-editor-new" onClick={handleCreateWorkflow}>
-              <Plus size={14} /> New workflow
+            <button
+              className="wf-editor-new"
+              ref={newWorkflowBtnRef}
+              data-testid="wf-new-workflow"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus size={14} /> {t("workflows.newWorkflow", "New workflow")}
             </button>
+            {/* U5/R10: keyboard-accessible import affordance triggering a hidden
+                file input; validation failures render in the persistent inline
+                region below (role="alert"), not a toast. */}
+            <button
+              type="button"
+              className="wf-editor-import"
+              data-testid="wf-import"
+              disabled={importing}
+              onClick={() => importInputRef.current?.click()}
+              title={t("workflows.importTooltip", "Import a workflow from a JSON file")}
+            >
+              {importing ? <Loader2 size={14} className="wf-spin" /> : <Upload size={14} />}{" "}
+              {t("workflows.import", "Import")}
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json"
+              className="wf-editor-import-input"
+              data-testid="wf-import-input"
+              style={{ display: "none" }}
+              onChange={handleImportFile}
+            />
+            {importError && (
+              <div className="wf-editor-import-error" role="alert" data-testid="wf-import-error">
+                {importError}
+              </div>
+            )}
+            {importWarnings.length > 0 && (
+              <div className="wf-editor-import-warnings" data-testid="wf-import-warnings">
+                {importWarnings.map((w, i) => (
+                  <p key={i} className="wf-editor-import-warning">
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
             {loading ? (
               <div className="wf-editor-empty">
                 <Loader2 size={16} className="wf-spin" /> Loading…
@@ -744,7 +2041,7 @@ function InnerEditor({
                   <li key={w.id}>
                     <button
                       className={`wf-editor-list-item${w.id === activeId ? " active" : ""}`}
-                      onClick={() => setActiveId(w.id)}
+                      onClick={() => requestSwitch(w.id)}
                     >
                       {w.name}
                     </button>
@@ -752,11 +2049,147 @@ function InnerEditor({
                 ))}
               </ul>
             )}
+
+            {/* U12: columns + fields authoring panels, below the workflow list,
+                each as a collapsible disclosure section. Only shown when a
+                workflow is active (read-only gating preserved via isBuiltin). The
+                disclosure button serves as the section header; the panels' own
+                internal <h3> is suppressed via CSS to avoid a double header. */}
+            {activeWorkflow && (
+              <div className="wf-sidebar-panels">
+                <section className="wf-sidebar-section" data-testid="wf-sidebar-columns-section">
+                  <button
+                    type="button"
+                    className="wf-sidebar-section-toggle"
+                    aria-expanded={!columnsCollapsed}
+                    data-testid="wf-sidebar-columns-toggle"
+                    onClick={() => setColumnsCollapsed((c) => !c)}
+                  >
+                    {columnsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                    <span>{t("workflowColumns.title", "Columns")}</span>
+                  </button>
+                  {!columnsCollapsed && (
+                    <WorkflowColumnPanel
+                      columns={columns}
+                      onChange={setColumns}
+                      violations={columnViolations}
+                      readOnly={isBuiltin}
+                      projectId={projectId}
+                      addToast={addToast}
+                      columnAgentsEnabled={columnAgentsEnabled}
+                    />
+                  )}
+                </section>
+
+                <section className="wf-sidebar-section" data-testid="wf-sidebar-fields-section">
+                  <button
+                    type="button"
+                    className="wf-sidebar-section-toggle"
+                    aria-expanded={!fieldsCollapsed}
+                    data-testid="wf-sidebar-fields-toggle"
+                    onClick={() => setFieldsCollapsed((c) => !c)}
+                  >
+                    {fieldsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                    <span>{t("workflowFields.title", "Fields")}</span>
+                  </button>
+                  {!fieldsCollapsed && (
+                    <WorkflowFieldsPanel
+                      fields={fields}
+                      onChange={setFields}
+                      readOnly={isBuiltin}
+                      addToast={addToast}
+                    />
+                  )}
+                </section>
+              </div>
+            )}
           </aside>
 
           <section className="wf-editor-canvas-wrap">
             {activeWorkflow ? (
               <>
+                {/* Inline name + description strip (KTD-10). Built-ins render as
+                    plain text (no click affordance); user-owned workflows are
+                    click-to-edit (Enter commits, Escape cancels, blur commits). */}
+                <div className="wf-name-strip">
+                  {isBuiltin ? (
+                    <span className="wf-workflow-name wf-workflow-name--readonly" data-testid="wf-workflow-name">
+                      {activeWorkflow.name}
+                    </span>
+                  ) : editingName ? (
+                    <input
+                      className="wf-workflow-name-input"
+                      data-testid="wf-workflow-name-input"
+                      autoFocus
+                      value={name}
+                      aria-label={t("workflows.nameLabel", "Workflow name")}
+                      onChange={(e) => setName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (!name.trim()) setName(activeWorkflow.name);
+                          setEditingName(false);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setName(activeWorkflow.name);
+                          setEditingName(false);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!name.trim()) setName(activeWorkflow.name);
+                        setEditingName(false);
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="wf-workflow-name"
+                      data-testid="wf-workflow-name"
+                      onClick={() => setEditingName(true)}
+                      title={t("workflows.clickToRename", "Click to rename")}
+                    >
+                      {name || activeWorkflow.name}
+                    </button>
+                  )}
+                  {isBuiltin ? (
+                    activeWorkflow.description ? (
+                      <span className="wf-workflow-description wf-workflow-description--readonly" data-testid="wf-workflow-description">
+                        {activeWorkflow.description}
+                      </span>
+                    ) : null
+                  ) : editingDescription ? (
+                    <input
+                      className="wf-workflow-description-input"
+                      data-testid="wf-workflow-description-input"
+                      autoFocus
+                      value={description}
+                      aria-label={t("workflows.descriptionLabel", "Workflow description")}
+                      placeholder={t("workflows.descriptionPlaceholder", "Add a description")}
+                      onChange={(e) => setDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          setEditingDescription(false);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setDescription(activeWorkflow.description ?? "");
+                          setEditingDescription(false);
+                        }
+                      }}
+                      onBlur={() => setEditingDescription(false)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="wf-workflow-description"
+                      data-testid="wf-workflow-description"
+                      onClick={() => setEditingDescription(true)}
+                      title={t("workflows.clickToEditDescription", "Click to edit description")}
+                    >
+                      {description || t("workflows.descriptionPlaceholder", "Add a description")}
+                    </button>
+                  )}
+                </div>
                 {isBuiltin ? (
                   // Read-only built-in: a banner *replaces* the save/edit toolbar
                   // (not an overlay); the canvas below stays inspectable.
@@ -764,6 +2197,17 @@ function InnerEditor({
                     <span className="wf-editor-readonly-note">
                       {t("workflows.readOnlyBuiltin", "Read-only built-in workflow")}
                     </span>
+                    <button
+                      className="wf-editor-action"
+                      data-testid="wf-export"
+                      onClick={handleExport}
+                      title={t(
+                        "workflows.exportTooltip",
+                        "Download as JSON — contains your full prompt and command text",
+                      )}
+                    >
+                      <Download size={13} /> {t("workflows.export", "Export")}
+                    </button>
                     <button className="wf-editor-save wf-editor-duplicate-primary" onClick={handleDuplicate}>
                       <Plus size={13} /> {t("workflows.duplicateToCustomize", "Duplicate to customize")}
                     </button>
@@ -782,6 +2226,100 @@ function InnerEditor({
                       ))}
                     </div>
                     <div className="wf-editor-actions">
+                      {/* U10/R11: "Design with AI" opens a popover panel targeting
+                          the active workflow (workflowId). Hidden for built-ins. */}
+                      <div className="wf-ai-edit-wrap">
+                        <button
+                          className="wf-editor-action"
+                          data-testid="wf-ai-edit"
+                          aria-expanded={aiPanelOpen}
+                          onClick={() => {
+                            setAiPanelOpen((o) => !o);
+                            setAiEditError(null);
+                          }}
+                        >
+                          <Sparkles size={13} /> {t("workflows.aiEdit", "Design with AI")}
+                        </button>
+                        {aiPanelOpen && (
+                          <div
+                            className="wf-ai-panel"
+                            data-testid="wf-ai-panel"
+                            role="dialog"
+                            aria-busy={aiEditBusy}
+                            aria-label={t("workflows.aiEdit", "Design with AI")}
+                          >
+                            <textarea
+                              className="wf-ai-prompt"
+                              data-testid="wf-ai-edit-prompt"
+                              rows={3}
+                              value={aiEditPrompt}
+                              disabled={aiEditBusy}
+                              placeholder={t(
+                                "workflows.aiPromptPlaceholder",
+                                "e.g. Run lint and tests before merge, then post a changelog comment after merge",
+                              )}
+                              onChange={(e) => {
+                                setAiEditPrompt(e.target.value);
+                                if (aiEditError) setAiEditError(null);
+                              }}
+                            />
+                            {aiEditError && (
+                              <p className="wf-create-error" role="alert" data-testid="wf-ai-edit-error">
+                                {aiEditError}
+                              </p>
+                            )}
+                            <div className="wf-ai-actions">
+                              <button
+                                type="button"
+                                className="btn btn-primary wf-ai-submit"
+                                data-testid="wf-ai-edit-submit"
+                                disabled={aiEditBusy}
+                                onClick={() => void handleAiEditSubmit()}
+                              >
+                                {aiEditBusy ? (
+                                  <Loader2 size={13} className="wf-spin" />
+                                ) : (
+                                  <Sparkles size={13} />
+                                )}{" "}
+                                {t("workflows.aiSubmit", "Design with AI")}
+                              </button>
+                              {aiEditBusy && (
+                                <button
+                                  type="button"
+                                  className="btn wf-ai-cancel"
+                                  data-testid="wf-ai-edit-cancel"
+                                  onClick={handleAiEditCancel}
+                                >
+                                  {t("common.cancel", "Cancel")}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        className="wf-editor-action"
+                        onClick={handleAutoLayout}
+                        data-testid="wf-auto-layout"
+                      >
+                        <LayoutGrid size={13} /> {t("workflowNodes.autoLayout", "Auto-layout")}
+                      </button>
+                      <button
+                        className="wf-editor-action"
+                        data-testid="wf-export"
+                        onClick={handleExport}
+                        disabled={isDirty}
+                        title={
+                          isDirty
+                            ? t("workflows.exportDirtyTooltip", "Save before exporting")
+                            : t(
+                                "workflows.exportTooltip",
+                                "Download as JSON — contains your full prompt and command text",
+                              )
+                        }
+                      >
+                        <Download size={13} /> {t("workflows.export", "Export")}
+                      </button>
                       <button className="wf-editor-delete" onClick={handleDeleteWorkflow}>
                         <Trash2 size={13} /> {t("common.delete", "Delete")}
                       </button>
@@ -793,9 +2331,164 @@ function InnerEditor({
                   </div>
                 )}
 
+                {hasAnyTemplate && (
+                  <section
+                    className="wf-templates"
+                    data-testid="wf-palette-templates"
+                    aria-label={t("workflowNodes.templatesSection", "Templates")}
+                  >
+                    <div className="wf-templates-header">
+                      <button
+                        type="button"
+                        className="wf-templates-toggle"
+                        aria-expanded={!templatesCollapsed}
+                        data-testid="wf-templates-toggle"
+                        onClick={() => setTemplatesCollapsed((c) => !c)}
+                      >
+                        {templatesCollapsed ? (
+                          <ChevronRight size={13} />
+                        ) : (
+                          <ChevronDown size={13} />
+                        )}
+                        <Library size={13} />{" "}
+                        {t("workflowNodes.templatesSection", "Templates")}
+                      </button>
+                      {!templatesCollapsed && templateTotalCount > 8 && (
+                        <input
+                          type="text"
+                          className="wf-templates-filter"
+                          data-testid="wf-template-filter"
+                          value={templateFilter}
+                          onChange={(e) => setTemplateFilter(e.target.value)}
+                          placeholder={t(
+                            "workflowNodes.templateFilterPlaceholder",
+                            "Filter templates",
+                          )}
+                          aria-label={t(
+                            "workflowNodes.templateFilterLabel",
+                            "Filter templates",
+                          )}
+                        />
+                      )}
+                    </div>
+
+                    {!templatesCollapsed && (
+                      <div className="wf-templates-body">
+                        {templateConflict && (
+                          <div
+                            className="wf-templates-conflict"
+                            role="alert"
+                            data-testid="wf-tpl-conflict"
+                          >
+                            {t(
+                              "workflowNodes.templateSeamConflict",
+                              'This fragment duplicates the "{{seam}}" seam already on the canvas, so it can\'t be inserted.',
+                              { seam: templateConflict },
+                            )}
+                          </div>
+                        )}
+
+                        {templateGroups.fragmentEntries.length > 0 && (
+                          <div className="wf-templates-group">
+                            <h4 className="wf-templates-group-title">
+                              {t("workflowNodes.templatesFragments", "Fragments")}
+                            </h4>
+                            <div className="wf-templates-entries">
+                              {templateGroups.fragmentEntries.map((f) => (
+                                <button
+                                  key={f.id}
+                                  type="button"
+                                  className="wf-templates-entry"
+                                  data-testid={`wf-tpl-fragment-${f.id}`}
+                                  disabled={isBuiltin}
+                                  aria-label={t(
+                                    "workflowNodes.insertTemplate",
+                                    "Insert template {{name}}",
+                                    { name: f.name },
+                                  )}
+                                  onClick={() => handleInsertFragment(f)}
+                                >
+                                  {f.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {templateGroups.stepEntries.length > 0 && (
+                          <div className="wf-templates-group">
+                            <h4 className="wf-templates-group-title">
+                              {t("workflowNodes.templatesBuiltinSteps", "Built-in steps")}
+                            </h4>
+                            <div className="wf-templates-entries">
+                              {templateGroups.stepEntries.map((s) => (
+                                <button
+                                  key={s.id}
+                                  type="button"
+                                  className="wf-templates-entry"
+                                  data-testid={`wf-tpl-step-${s.id}`}
+                                  disabled={isBuiltin}
+                                  aria-label={t(
+                                    "workflowNodes.insertTemplate",
+                                    "Insert template {{name}}",
+                                    { name: s.name },
+                                  )}
+                                  onClick={() => handleInsertStepTemplate(s)}
+                                >
+                                  {s.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {templateGroups.pluginEntries.length > 0 && (
+                          <div className="wf-templates-group">
+                            <h4 className="wf-templates-group-title">
+                              {t("workflowNodes.templatesPluginSteps", "Plugin steps")}
+                            </h4>
+                            <div className="wf-templates-entries">
+                              {templateGroups.pluginEntries.map(({ pluginId, template }) => (
+                                <button
+                                  key={`${pluginId}:${template.id}`}
+                                  type="button"
+                                  className="wf-templates-entry"
+                                  data-testid={`wf-tpl-plugin-${template.id}`}
+                                  disabled={isBuiltin}
+                                  aria-label={t(
+                                    "workflowNodes.insertTemplate",
+                                    "Insert template {{name}}",
+                                    { name: template.name },
+                                  )}
+                                  onClick={() => handleInsertStepTemplate(template)}
+                                >
+                                  {template.name}
+                                  <span className="wf-templates-badge">{pluginId}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
+
                 {validationError && (
                   <div className="wf-editor-banner" role="alert">
                     {validationError}
+                  </div>
+                )}
+                {interpreterOnly && (
+                  <div
+                    className="wf-editor-banner wf-editor-banner--info"
+                    role="status"
+                    data-testid="wf-interpreter-only-banner"
+                  >
+                    {t(
+                      "workflowNodes.interpreterOnly",
+                      "This workflow branches, so it runs on the graph interpreter — it can't compile to the linear step engine, but it will still run.",
+                    )}
                   </div>
                 )}
                 {unplaced.length > 0 && (
@@ -806,7 +2499,16 @@ function InnerEditor({
                   </div>
                 )}
 
-                <div className="wf-editor-canvas">
+                <div className="wf-editor-canvas" ref={canvasRef} tabIndex={-1}>
+                  {isTrivialUserGraph && (
+                    <div className="wf-trivial-hint" role="status" data-testid="wf-trivial-hint">
+                      {t(
+                        "workflowNodes.trivialGraphHint",
+                        "This workflow only runs start → end. Add steps from the palette above to build it out.",
+                      )}
+                    </div>
+                  )}
+                  <WorkflowEditorCatalogContext.Provider value={catalogs}>
                   <ReactFlow
                     nodes={nodesForRender}
                     edges={edges}
@@ -815,6 +2517,10 @@ function InnerEditor({
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
                     onNodeDragStop={onNodeDragStop}
+                    deleteKeyCode={isBuiltin ? null : ["Backspace", "Delete"]}
+                    onBeforeDelete={onBeforeDelete}
+                    onNodesDelete={onNodesDelete}
+                    onEdgesDelete={onEdgesDelete}
                     onNodeClick={(_, node) => {
                       setSelectedNodeId(node.id);
                       setSelectedEdgeId(null);
@@ -827,41 +2533,38 @@ function InnerEditor({
                       setSelectedNodeId(null);
                       setSelectedEdgeId(null);
                     }}
+                    defaultEdgeOptions={{ interactionWidth: WF_EDGE_INTERACTION_WIDTH }}
                     fitView
                   >
                     <Background />
                     <Controls />
                     <MiniMap pannable zoomable />
                   </ReactFlow>
+                  </WorkflowEditorCatalogContext.Provider>
                 </div>
               </>
             ) : (
-              <div className="wf-editor-empty wf-editor-canvas-empty">
-                {t("workflows.selectOrCreate", "Select or create a workflow to start editing.")}
+              <div className="wf-editor-empty wf-editor-canvas-empty wf-editor-onboard">
+                <Workflow className="wf-editor-onboard-icon" size={40} aria-hidden />
+                <h3 className="wf-editor-onboard-title">
+                  {t("workflows.emptyTitle", "No workflow selected")}
+                </h3>
+                <p className="wf-editor-onboard-text">
+                  {t(
+                    "workflows.emptyDescription",
+                    "Workflows orchestrate the steps and gates that run around task execution. Create one to start arranging that flow.",
+                  )}
+                </p>
+                <button
+                  className="wf-editor-save wf-editor-onboard-cta"
+                  data-testid="wf-empty-create"
+                  onClick={() => setCreateOpen(true)}
+                >
+                  <Plus size={14} /> {t("workflows.newWorkflow", "New workflow")}
+                </button>
               </div>
             )}
           </section>
-
-          {activeWorkflow && (
-            <WorkflowColumnPanel
-              columns={columns}
-              onChange={setColumns}
-              violations={columnViolations}
-              readOnly={isBuiltin}
-              projectId={projectId}
-              addToast={addToast}
-              columnAgentsEnabled={columnAgentsEnabled}
-            />
-          )}
-
-          {activeWorkflow && (
-            <WorkflowFieldsPanel
-              fields={fields}
-              onChange={setFields}
-              readOnly={isBuiltin}
-              addToast={addToast}
-            />
-          )}
 
           {selectedNode && selectedNode.data.kind !== "start" && selectedNode.data.kind !== "end" && (
             <aside className="wf-editor-inspector">
@@ -1537,6 +3240,19 @@ function InnerEditor({
                 </p>
               ) : null}
               </fieldset>
+              {!isBuiltin && (
+                <button
+                  type="button"
+                  className="wf-editor-delete wf-inspector-delete"
+                  data-testid="wf-delete-node"
+                  onClick={() => {
+                    applyDelete([selectedNode.id]);
+                    setSelectedNodeId(null);
+                  }}
+                >
+                  <Trash2 size={13} /> {t("workflowNodes.deleteNode", "Delete node")}
+                </button>
+              )}
             </aside>
           )}
 
@@ -1544,7 +3260,7 @@ function InnerEditor({
             <aside className="wf-editor-inspector" data-testid="wf-edge-inspector">
               <h3>{t("workflowNodes.edgeInspector", "Edge")}</h3>
               <fieldset className="wf-inspector-fields" disabled={isBuiltin}>
-                {selectedEdgeSourceIsReview ? (
+                {selectedEdgeEditability === "verdicts" ? (
                   <>
                     <label className="wf-field">
                       <span>{t("workflowNodes.edgeVerdict", "Review verdict")}</span>
@@ -1583,6 +3299,18 @@ function InnerEditor({
                       )}
                     </p>
                   </>
+                ) : selectedEdgeEditability === "conditions" ? (
+                  <label className="wf-field">
+                    <span>{t("workflowNodes.edgeCondition", "Condition")}</span>
+                    <select
+                      data-testid="wf-edge-condition"
+                      value={String(selectedEdge.data?.condition ?? "success")}
+                      onChange={(e) => updateSelectedEdge({ condition: e.target.value })}
+                    >
+                      <option value="success">success</option>
+                      <option value="failure">failure</option>
+                    </select>
+                  </label>
                 ) : (
                   <p className="wf-inspector-note">
                     {t(
@@ -1593,9 +3321,30 @@ function InnerEditor({
                   </p>
                 )}
               </fieldset>
+              {!isBuiltin && (
+                <button
+                  type="button"
+                  className="wf-editor-delete wf-inspector-delete"
+                  data-testid="wf-delete-edge"
+                  onClick={() => {
+                    applyDelete([selectedEdge.id]);
+                    setSelectedEdgeId(null);
+                  }}
+                >
+                  <Trash2 size={13} /> {t("workflowNodes.deleteEdge", "Delete edge")}
+                </button>
+              )}
             </aside>
           )}
         </div>
+        {createOpen && (
+          <CreateWorkflowDialog
+            workflows={workflows}
+            onCreate={handleCreateWorkflow}
+            onDesign={handleDesignNewWorkflow}
+            onClose={closeCreateDialog}
+          />
+        )}
       </div>
     </div>
   );

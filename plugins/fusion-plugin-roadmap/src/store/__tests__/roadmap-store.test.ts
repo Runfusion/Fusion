@@ -746,7 +746,7 @@ describe("RoadmapStore", () => {
     it("schema version is 110 after init", () => {
       // Tracks @fusion/core's SCHEMA_VERSION (the roadmap store layers on core's
       // Database). Bump this in lockstep when core adds a migration.
-      expect(db.getSchemaVersion()).toBe(110);
+      expect(db.getSchemaVersion()).toBe(111);
     });
   });
 

@@ -1135,6 +1135,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     options?.pluginRunner,
     () => store.getSettings(),
     options?.engine?.getMessageStore(),
+    store,
   );
 
   // CLI Agent Executor — chat surface wiring. When the cli-session transport is

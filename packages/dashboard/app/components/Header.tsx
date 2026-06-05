@@ -197,7 +197,7 @@ export interface HeaderProps {
   onOpenNodes?: () => void;
   /** When false, hides the Nodes management button. Defaults to true for backward compat. */
   showNodesButton?: boolean;
-  onOpenWorkflowSteps?: () => void;
+  onOpenWorkflowEditor?: () => void;
   onOpenScripts?: () => void;
   onRunScript?: (name: string, command: string) => void;
   onToggleTerminal?: () => void;
@@ -266,7 +266,7 @@ export function Header({
   onOpenGitManager,
   onOpenNodes,
   showNodesButton,
-  onOpenWorkflowSteps,
+  onOpenWorkflowEditor,
   onOpenScripts,
   onRunScript,
   onToggleTerminal,
@@ -1593,12 +1593,12 @@ export function Header({
           </button>
         )}
 
-        {/* Workflow Steps - desktop only (moved to overflow on mobile/tablet) */}
-        {!isCompact && onOpenWorkflowSteps && (
+        {/* Workflows - desktop only (moved to overflow on mobile/tablet) */}
+        {!isCompact && onOpenWorkflowEditor && (
           <button
             className="btn-icon"
-            onClick={onOpenWorkflowSteps}
-            title={t("header.workflowSteps", "Workflow Steps")}
+            onClick={onOpenWorkflowEditor}
+            title={t("header.workflows", "Workflows")}
             data-testid="workflow-steps-btn"
           >
             <Workflow size={16} />
@@ -1938,16 +1938,16 @@ export function Header({
                 <span>{t("header.viewUsage", "View Usage")}</span>
               </button>
             )}
-            {/* Workflow Steps - in overflow on mobile */}
-            {onOpenWorkflowSteps && (
+            {/* Workflows - in overflow on mobile */}
+            {onOpenWorkflowEditor && (
               <button
                 className="mobile-overflow-item"
-                onClick={() => handleOverflowAction(onOpenWorkflowSteps)}
+                onClick={() => handleOverflowAction(onOpenWorkflowEditor)}
                 role="menuitem"
                 data-testid="overflow-workflow-steps-btn"
               >
                 <Workflow size={16} />
-                <span>{t("header.workflowSteps", "Workflow Steps")}</span>
+                <span>{t("header.workflows", "Workflows")}</span>
               </button>
             )}
             {/* Settings - always last in overflow menu */}

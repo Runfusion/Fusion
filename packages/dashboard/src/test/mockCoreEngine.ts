@@ -47,6 +47,9 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
   return withFallbackFunctions(actual, {
     createFnAgent: vi.fn(),
     promptWithFallback: vi.fn(),
+    // Returns an iterable tool list; dashboard code spreads its result
+    // (`...createWorkflowAuthoringTools(...)`), so it must not be undefined.
+    createWorkflowAuthoringTools: vi.fn(() => []),
     ...overrides,
   });
 }

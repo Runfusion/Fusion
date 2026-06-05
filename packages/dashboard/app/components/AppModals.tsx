@@ -20,7 +20,6 @@ import { NewTaskModal } from "./NewTaskModal";
 import { SystemStatsModal } from "./SystemStatsModal";
 import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
-import { WorkflowStepManager } from "./WorkflowStepManager";
 import { AgentListModal } from "./AgentListModal";
 import { ModelOnboardingModal } from "./ModelOnboardingModal";
 import { ToastContainer } from "./ToastContainer";
@@ -370,19 +369,6 @@ export function AppModals({
           tasks={tasks}
           addToast={addToast}
           projectId={projectId}
-        />
-      </ModalErrorBoundary>
-
-      <ModalErrorBoundary>
-        <WorkflowStepManager
-          isOpen={modalManager.workflowStepsOpen}
-          onClose={modalManager.closeWorkflowSteps}
-          addToast={addToast}
-          projectId={projectId}
-          onOpenGraphEditor={() => {
-            modalManager.closeWorkflowSteps();
-            modalManager.openWorkflowEditor();
-          }}
         />
       </ModalErrorBoundary>
 

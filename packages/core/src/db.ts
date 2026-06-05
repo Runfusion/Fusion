@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 110;
+const SCHEMA_VERSION = 111;
 
 export { SCHEMA_VERSION };
 
@@ -385,6 +385,10 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
   defaultOn INTEGER DEFAULT 0,
   modelProvider TEXT,
   modelId TEXT,
+  -- (workflow-editor-consolidation U1/U2) when this step has been migrated into a
+  -- fragment WorkflowDefinition, the fragment's id is stamped here so re-runs of
+  -- the lazy migration skip already-migrated rows (marker idempotency).
+  migrated_fragment_id TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
@@ -398,6 +402,11 @@ CREATE TABLE IF NOT EXISTS workflows (
   description TEXT NOT NULL DEFAULT '',
   ir TEXT NOT NULL,
   layout TEXT NOT NULL DEFAULT '{}',
+  -- (workflow-editor-consolidation U1, KTD-1) discriminates reusable single-node
+  -- "fragment" templates from full "workflow" definitions. Fragments never appear
+  -- in task workflow pickers, default-workflow selection, or compile/selection
+  -- paths. Legacy rows default to 'workflow'.
+  kind TEXT NOT NULL DEFAULT 'workflow',
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
@@ -4308,19 +4317,24 @@ export class Database {
       });
     }
 
-    // Migration 109: Durable CLI agent session records (CLI Agent Executor U1).
-    // Adds cli_sessions — one row per long-lived CLI agent session (task
-    // execution, planning, validator, ce, or chat) — so a crashed/restarted
-    // Fusion instance can reason about, resume, or reap sessions from their
-    // persisted state (agentState + terminationReason + resumeAttempts +
-    // nativeSessionId). taskId/chatSessionId are the nullable owning-entity
-    // references; autonomyPosture is JSON. Additive-only, idempotent
-    // (table-exists guard); no backfill.
-    // agentState ∈ starting|ready|busy|waitingOnInput|done|dead|needsAttention.
-    // terminationReason ∈ completed|userExited|killed|crashed|authFailed|engineDeath.
-    // purpose ∈ execute|planning|validator|ce|chat.
+    // Migration 109: Workflow editor consolidation. Adds workflows.kind
+    // (fragment vs workflow discriminator; existing rows default 'workflow')
+    // and workflow_steps.migrated_fragment_id (idempotent lazy step migration).
+    // Additive-only, idempotent (addColumnIfMissing guards); no backfill.
     if (version < 109) {
       this.applyMigration(109, () => {
+        this.addColumnIfMissing("workflows", "kind", "TEXT NOT NULL DEFAULT 'workflow'");
+        this.addColumnIfMissing("workflow_steps", "migrated_fragment_id", "TEXT");
+      });
+    }
+
+    // Migration 110: Durable CLI agent session records (CLI Agent Executor U1).
+    // cli_sessions — one row per long-lived CLI agent session. agentState ∈
+    // starting|ready|busy|waitingOnInput|done|dead|needsAttention; terminationReason
+    // ∈ completed|userExited|killed|crashed|authFailed|engineDeath; purpose ∈
+    // execute|planning|validator|ce|chat. Additive-only, idempotent.
+    if (version < 110) {
+      this.applyMigration(110, () => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS cli_sessions (
             id TEXT PRIMARY KEY,
@@ -4345,12 +4359,9 @@ export class Database {
       });
     }
 
-    // CLI Agent Executor (U12): per-chat-session selection of a cli-agent
-    // adapter. When set, the chat is CLI-backed — composer sends route through
-    // the inject path and adapter transcript events map to chat_messages rows.
-    // Null/empty means the chat uses the standard provider path.
-    if (version < 110) {
-      this.applyMigration(110, () => {
+    // Migration 111: per-chat-session cli-agent adapter selection (U12).
+    if (version < 111) {
+      this.applyMigration(111, () => {
         if (this.hasTable("chat_sessions")) {
           this.addColumnIfMissing("chat_sessions", "cliExecutorAdapterId", "TEXT");
         }

@@ -5275,9 +5275,15 @@ export class TaskExecutor {
         //
         // SECURITY: both flags are intentional project-owner-only escape hatches.
         // They are only reachable by someone who can author/edit a workflow
-        // definition for this project — the same trust boundary that already
-        // lets them add named scripts. They are NOT untrusted-input surfaces,
-        // and neither is enforced at the IR-validation layer.
+        // definition for this project through the trusted dashboard editor /
+        // executor lane — the same trust boundary that already lets them add
+        // named scripts. They are NOT enforced at the IR-validation layer.
+        // Prompt-injectable surfaces strip these flags at the write boundary
+        // before persisting: the import / AI-design routes (stripApprovalFlags
+        // in register-workflow-routes.ts) and the chat/planning workflow
+        // authoring tools (createWorkflowAuthoringTools(..., {stripApprovalFlags:
+        // true}) in chat.ts / planning.ts) — all via stripApprovalBypassFlags in
+        // @fusion/core. Only the executor lane keeps these flags intact.
         const skipApproval = cfg.cliSkipApproval === true || cfg.autoApprove === true;
         if (!skipApproval && !(await this.store.isWorkflowCliCommandApproved(rawCommand))) {
           return this.pauseForCliApproval(node, live, rawCommand);

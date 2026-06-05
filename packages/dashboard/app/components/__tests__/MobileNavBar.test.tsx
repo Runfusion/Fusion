@@ -39,7 +39,7 @@ const createDefaultProps = () => ({
   mailboxUnreadCount: 0,
   mailboxPendingApprovalCount: 0,
   onOpenGitManager: vi.fn(),
-  onOpenWorkflowSteps: vi.fn(),
+  onOpenWorkflowEditor: vi.fn(),
   onOpenSchedules: vi.fn(),
   onOpenScripts: vi.fn(),
   onToggleTerminal: vi.fn(),

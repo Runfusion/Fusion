@@ -16,6 +16,14 @@
  *       remove (old path) + add (new path); the diff lists the removed ids so
  *       the rename is reviewable. New ids in <after> never fail the diff.
  *
+ *       DELIBERATELY UNWIRED IN CI: the quarantine deletion ratchet
+ *       (scripts/lib/test-quarantine.json, docs/testing.md) deletes expired
+ *       quarantined tests by design, and a snapshot-based --diff guard would
+ *       fail on exactly those deletions. If --diff is ever wired to a
+ *       committed snapshot, it must exempt ledger-driven deletions (diff
+ *       against "snapshot minus quarantined entries"), or the two mechanisms
+ *       deadlock.
+ *
  *   --dashboard-curated
  *       Assert that every `*.test.{ts,tsx}` file under packages/dashboard/app
  *       and packages/dashboard/src is included by at least one *executed*

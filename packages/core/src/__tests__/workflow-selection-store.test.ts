@@ -23,6 +23,23 @@ function linearIr(): WorkflowIr {
   };
 }
 
+/** A single-node fragment IR (start → one node → end). */
+function fragmentIr(): WorkflowIr {
+  return {
+    version: "v1",
+    name: "frag",
+    nodes: [
+      { id: "start", kind: "start" },
+      { id: "step-1", kind: "prompt", config: { name: "Doc", prompt: "doc it" } },
+      { id: "end", kind: "end" },
+    ],
+    edges: [
+      { from: "start", to: "step-1", condition: "success" },
+      { from: "step-1", to: "end", condition: "success" },
+    ],
+  };
+}
+
 function branchingIr(): WorkflowIr {
   return {
     version: "v1",
@@ -171,5 +188,72 @@ describe("TaskStore workflow selection (U3)", () => {
     expect(await store.getDefaultWorkflowId()).toBe(wf.id);
     await store.setDefaultWorkflowId(null);
     expect(await store.getDefaultWorkflowId()).toBeUndefined();
+  });
+
+  // U6/R3/KTD-4: create-time `workflowId` materializes the selection atomically.
+  describe("create-time workflowId (U6/R3)", () => {
+    it("materializes enabledWorkflowSteps atomically when workflowId is given", async () => {
+      const wf = await store.createWorkflowDefinition({ name: "Pick", ir: linearIr() });
+
+      const task = await store.createTask({ description: "with workflow", workflowId: wf.id });
+      // Reading the task right after create observes the populated steps — no
+      // intermediate empty state visible to the executor.
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps).toHaveLength(2);
+      expect(store.getTaskWorkflowSelection(task.id)?.workflowId).toBe(wf.id);
+      expect(store.getTaskWorkflowSelection(task.id)?.stepIds).toEqual(detail.enabledWorkflowSteps);
+    });
+
+    it("explicit workflowId overrides the project default", async () => {
+      const def = await store.createWorkflowDefinition({ name: "Default", ir: linearIr() });
+      const chosen = await store.createWorkflowDefinition({ name: "Chosen", ir: linearIr() });
+      await store.setDefaultWorkflowId(def.id);
+
+      const task = await store.createTask({ description: "override default", workflowId: chosen.id });
+      expect(store.getTaskWorkflowSelection(task.id)?.workflowId).toBe(chosen.id);
+    });
+
+    it("workflowId: null skips default materialization (explicit No workflow)", async () => {
+      const def = await store.createWorkflowDefinition({ name: "Default", ir: linearIr() });
+      await store.setDefaultWorkflowId(def.id);
+
+      const task = await store.createTask({ description: "no workflow", workflowId: null });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps ?? []).toHaveLength(0);
+      expect(store.getTaskWorkflowSelection(task.id)).toBeUndefined();
+    });
+
+    it("undefined workflowId still inherits the project default (unchanged)", async () => {
+      const def = await store.createWorkflowDefinition({ name: "Default", ir: linearIr() });
+      await store.setDefaultWorkflowId(def.id);
+
+      const task = await store.createTask({ description: "inherit" });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps).toHaveLength(2);
+      expect(store.getTaskWorkflowSelection(task.id)?.workflowId).toBe(def.id);
+    });
+
+    it("rejects a fragment id before creating the task row", async () => {
+      const frag = await store.createWorkflowDefinition({ name: "Frag", ir: fragmentIr(), kind: "fragment" });
+      const before = (await store.listTasks({ includeArchived: true })).length;
+
+      await expect(
+        store.createTask({ description: "frag pick", workflowId: frag.id }),
+      ).rejects.toThrow(/fragment/i);
+
+      const after = (await store.listTasks({ includeArchived: true })).length;
+      expect(after).toBe(before);
+    });
+
+    it("rejects an unknown workflow id before creating the task row", async () => {
+      const before = (await store.listTasks({ includeArchived: true })).length;
+
+      await expect(
+        store.createTask({ description: "bad pick", workflowId: "WF-404" }),
+      ).rejects.toThrow(/not found/i);
+
+      const after = (await store.listTasks({ includeArchived: true })).length;
+      expect(after).toBe(before);
+    });
   });
 });

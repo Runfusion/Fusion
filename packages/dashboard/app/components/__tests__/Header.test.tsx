@@ -84,6 +84,25 @@ describe("Header", () => {
     expect(screen.getByTitle("Settings")).toBeDefined();
   });
 
+  describe("workflows button", () => {
+    it("renders the desktop workflows button and opens the editor on click", () => {
+      const onOpenWorkflowEditor = vi.fn();
+      renderHeader({ onOpenWorkflowEditor }, "desktop");
+      const btn = screen.getByTestId("workflow-steps-btn");
+      expect(btn.getAttribute("title")).toBe("Workflows");
+      fireEvent.click(btn);
+      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
+    });
+
+    it("opens the editor from the mobile overflow menu", () => {
+      const onOpenWorkflowEditor = vi.fn();
+      renderHeader({ onOpenWorkflowEditor }, "mobile");
+      fireEvent.click(screen.getByTitle("More header actions"));
+      fireEvent.click(screen.getByTestId("overflow-workflow-steps-btn"));
+      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("hides GitHub import for desktop shell host", () => {
     renderHeader({ shellHost: { kind: "desktop-shell" } });
     expect(screen.queryByTitle("Import from GitHub")).toBeNull();
@@ -1617,7 +1636,7 @@ describe("Header", () => {
       const { container } = renderHeader({
         onOpenUsage: noop,
         onOpenActivityLog: noop,
-        onOpenWorkflowSteps: noop,
+        onOpenWorkflowEditor: noop,
         onOpenFiles: noop,
         onOpenGitManager: noop,
         onOpenScripts: noop,
@@ -1651,7 +1670,7 @@ describe("Header", () => {
       const { container } = renderHeader({
         onOpenUsage: noop,
         onOpenActivityLog: noop,
-        onOpenWorkflowSteps: noop,
+        onOpenWorkflowEditor: noop,
         onOpenFiles: noop,
         onOpenGitManager: noop,
       }, "mobile");

@@ -53,7 +53,6 @@ export interface ModalManager {
   fileBrowserInitialFile: string | null;
   activityLogOpen: boolean;
   gitManagerOpen: boolean;
-  workflowStepsOpen: boolean;
   workflowEditorOpen: boolean;
   agentsOpen: boolean;
   scriptsOpen: boolean;
@@ -117,8 +116,6 @@ export interface ModalManager {
   openGitManager: () => void;
   closeGitManager: () => void;
 
-  openWorkflowSteps: () => void;
-  closeWorkflowSteps: () => void;
   openWorkflowEditor: () => void;
   closeWorkflowEditor: () => void;
 
@@ -177,7 +174,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [fileBrowserInitialFile, setFileBrowserInitialFile] = useState<string | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
-  const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
   const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
@@ -196,7 +192,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
       todosOpen ||
       activityLogOpen ||
       gitManagerOpen ||
-      workflowStepsOpen ||
       workflowEditorOpen ||
       scriptsOpen ||
       agentsOpen ||
@@ -345,8 +340,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openGitManager = useCallback(() => setGitManagerOpen(true), []);
   const closeGitManager = useCallback(() => setGitManagerOpen(false), []);
 
-  const openWorkflowSteps = useCallback(() => setWorkflowStepsOpen(true), []);
-  const closeWorkflowSteps = useCallback(() => setWorkflowStepsOpen(false), []);
   const openWorkflowEditor = useCallback(() => setWorkflowEditorOpen(true), []);
   const closeWorkflowEditor = useCallback(() => setWorkflowEditorOpen(false), []);
 
@@ -414,7 +407,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     fileBrowserInitialFile,
     activityLogOpen,
     gitManagerOpen,
-    workflowStepsOpen,
     workflowEditorOpen,
     agentsOpen,
     scriptsOpen,
@@ -458,8 +450,6 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     closeActivityLog,
     openGitManager,
     closeGitManager,
-    openWorkflowSteps,
-    closeWorkflowSteps,
     openWorkflowEditor,
     closeWorkflowEditor,
     openAgents,

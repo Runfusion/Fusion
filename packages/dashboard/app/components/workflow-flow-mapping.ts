@@ -36,11 +36,23 @@ export type { WorkflowFieldDefinition as WorkflowFieldDefinitionShape };
 // `<groupId>::<templateNodeId>`; flowToIr strips the prefix back out when it
 // reassembles the template. Geometry for the group + auto-layout for template
 // nodes lacking persisted layout data.
-export const FOREACH_GROUP_WIDTH = 520;
-export const FOREACH_GROUP_HEIGHT = 200;
+// ── Card-style node dimensions (U1) ─────────────────────────────────────────
+//
+// Cards are larger than the old icon+label pills: a header row plus a config
+// summary line. These constants are the single source of truth for card sizing
+// — the CSS sizes cards to WF_CARD_WIDTH (with WF_CARD_MAX_WIDTH as the hard
+// ceiling so long labels/summaries truncate rather than grow the canvas), and
+// U5's auto-layout imports WF_CARD_WIDTH for column spacing rather than
+// duplicating the number.
+export const WF_CARD_WIDTH = 200;
+export const WF_CARD_MAX_WIDTH = 240;
+export const WF_CARD_HEIGHT = 64;
+
+export const FOREACH_GROUP_WIDTH = 560;
+export const FOREACH_GROUP_HEIGHT = 220;
 export const FOREACH_CHILD_X = 30;
 export const FOREACH_CHILD_Y = 56;
-export const FOREACH_CHILD_STEP_X = 170;
+export const FOREACH_CHILD_STEP_X = 260;
 
 const FOREACH_CHILD_SEP = "::";
 /** Compose a globally-unique flow-node id for a template child. */
@@ -140,8 +152,19 @@ function foreachConfigOf(node: WorkflowIrNode): WorkflowForeachConfig | undefine
   return cfg as WorkflowForeachConfig;
 }
 
+/** CSS class for an edge given its condition + rework kind. Rework takes
+ *  precedence; failure edges get the distinct failure styling; success and other
+ *  conditions get no class (default styling). R2's two-channel rule (label always
+ *  rendered + dash pattern) plus color is enforced by the CSS for these classes. */
+export function edgeClassName(condition: string, isRework: boolean): string | undefined {
+  if (isRework) return "wf-edge-rework";
+  if (condition === "failure") return "wf-edge-failure";
+  return undefined;
+}
+
 /** Build a React Flow edge from an IR edge. Rework edges (KTD-5) carry kind so
- *  the editor renders them dashed in the accent color. */
+ *  the editor renders them dashed in the accent color. Failure edges (R2) carry
+ *  the wf-edge-failure class for a distinct dash + error-token stroke. */
 function irEdgeToFlow(edge: WorkflowIrEdge, index: number, idScope = ""): FlowEdge {
   const condition = edge.condition ?? "success";
   const isRework = edge.kind === "rework";
@@ -153,10 +176,15 @@ function irEdgeToFlow(edge: WorkflowIrEdge, index: number, idScope = ""): FlowEd
     data: { condition, kind: isRework ? "rework" : undefined },
     type: isRework ? "step" : undefined,
     animated: isRework,
-    className: isRework ? "wf-edge-rework" : undefined,
+    className: edgeClassName(condition, isRework),
+    interactionWidth: WF_EDGE_INTERACTION_WIDTH,
     markerEnd: undefined,
   };
 }
+
+/** Default edge hit-target width (px) so edges are clickable/tappable even when
+ *  visually thin. Applied per-edge (defaultEdgeOptions only seeds new edges). */
+export const WF_EDGE_INTERACTION_WIDTH = 24;
 
 /** Short display label for an edge condition. `outcome:<verdict>` conditions
  *  render as the verdict alone (KTD-4); everything else verbatim. */
@@ -398,6 +426,216 @@ function flowEdgeToIr(edge: FlowEdge, groupId?: string): WorkflowIrEdge {
   return { from, to, condition, ...(isRework ? { kind: "rework" as const } : {}) };
 }
 
+// ── Deletion with cascade semantics (U3, R6) ─────────────────────────────────
+//
+// Pure node/edge transformation for deleting nodes and/or edges. React Flow's
+// built-in deletion removes incident edges but does NOT cascade group children
+// (deleting a foreach group leaves its `parentId` children orphaned), so the
+// editor routes all deletions through this helper for explicit, testable
+// behavior.
+
+/** Node kinds that may never be deleted (start/end are structural). */
+const PROTECTED_NODE_KINDS = new Set<string>(["start", "end"]);
+
+/** True when a flow node is protected from deletion: start/end kinds and column
+ *  band group nodes are never removable, regardless of the requested ids. */
+function isProtectedFromDelete(node: FlowNode<WorkflowFlowNodeData>): boolean {
+  return isColumnBandNode(node.id) || PROTECTED_NODE_KINDS.has(node.data.kind);
+}
+
+/**
+ * Delete the requested node and/or edge ids from the flow graph, applying R6's
+ * cascade rules:
+ *   - Deleting a node removes ALL edges incident to it (no auto-bridging).
+ *   - Deleting a `foreach` group node also deletes its template children
+ *     (nodes with `parentId === groupId`) and every edge incident to those
+ *     children (React Flow does not cascade parents — handled explicitly).
+ *   - `start`/`end` nodes and column band nodes are never deleted: they are
+ *     filtered out of the requested ids up front (and their incident edges are
+ *     therefore preserved).
+ *   - Edge ids in `ids` are removed directly.
+ *
+ * Pure and order-independent: the same `ids` set always yields the same result.
+ */
+export function cascadeDelete(
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+  edges: FlowEdge[],
+  ids: Iterable<string>,
+): { nodes: FlowNode<WorkflowFlowNodeData>[]; edges: FlowEdge[] } {
+  const requested = new Set(ids);
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  // Resolve which node ids are actually deletable, expanding foreach groups to
+  // their template children. Protected nodes are dropped from the request.
+  const deleteNodeIds = new Set<string>();
+  for (const id of requested) {
+    const node = nodeById.get(id);
+    if (!node || isProtectedFromDelete(node)) continue;
+    deleteNodeIds.add(id);
+    if (node.data.kind === "foreach") {
+      for (const child of nodes) {
+        if (child.parentId === id) deleteNodeIds.add(child.id);
+      }
+    }
+  }
+
+  // Edge ids requested directly (only ones that exist as edges).
+  const deleteEdgeIds = new Set<string>();
+  for (const e of edges) {
+    if (requested.has(e.id)) deleteEdgeIds.add(e.id);
+  }
+
+  const nextNodes = nodes.filter((n) => !deleteNodeIds.has(n.id));
+  const nextEdges = edges.filter(
+    (e) =>
+      !deleteEdgeIds.has(e.id) &&
+      !deleteNodeIds.has(e.source) &&
+      !deleteNodeIds.has(e.target),
+  );
+  return { nodes: nextNodes, edges: nextEdges };
+}
+
+// ── Edge-condition authoring (U2) ────────────────────────────────────────────
+
+/** Editor node kinds whose edges expose a success/failure condition select
+ *  (KTD-2). step-review uses verdict controls; all other kinds are read-only. */
+const CONDITION_EDITABLE_KINDS = new Set<string>(["prompt", "script", "gate", "code", "foreach"]);
+
+/** Decide what the edge inspector renders for an edge sourced from `sourceKind`:
+ *  - "verdicts": step-review verdict select + rework checkbox (existing);
+ *  - "conditions": success/failure native select (KTD-2);
+ *  - "readonly": a read-only condition note. Pure so the gating is unit-testable
+ *  without rendering edges (jsdom can't). */
+export function edgeConditionEditability(
+  sourceKind: string | undefined,
+): "verdicts" | "conditions" | "readonly" {
+  if (sourceKind === "step-review") return "verdicts";
+  if (sourceKind && CONDITION_EDITABLE_KINDS.has(sourceKind)) return "conditions";
+  return "readonly";
+}
+
+/** True when adding an edge source→target would create a cycle, i.e. `target`
+ *  can already reach `source` by walking existing non-rework edges (rework edges
+ *  are the only legal cycles and are excluded from the reachability walk, per
+ *  KTD-9). Pure + exported so the connect-time guard is testable at the mapping
+ *  layer. */
+export function wouldCreateCycle(edges: FlowEdge[], source: string, target: string): boolean {
+  if (source === target) return true;
+  // Build adjacency over non-rework edges only.
+  const adj = new Map<string, string[]>();
+  for (const e of edges) {
+    if ((e.data?.kind as string | undefined) === "rework") continue;
+    const arr = adj.get(e.source) ?? [];
+    arr.push(e.target);
+    adj.set(e.source, arr);
+  }
+  // Can `target` reach `source`? If so, the new source→target edge closes a loop.
+  const seen = new Set<string>();
+  const stack = [target];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur === source) return true;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    for (const next of adj.get(cur) ?? []) stack.push(next);
+  }
+  return false;
+}
+
+let edgeSeq = 0;
+/** Allocate a globally-unique edge id (mirrors the editor's newNodeId pattern).
+ *  Used by buildConnectionEdge so parallel success+failure edges between the same
+ *  pair don't collide (KTD-3). */
+export function newEdgeId(): string {
+  edgeSeq += 1;
+  return `e-${Date.now().toString(36)}-${edgeSeq}`;
+}
+
+let nodeSeq = 0;
+/** Allocate a globally-unique node id (mirrors the editor's local newNodeId). The
+ *  fragment-insert / graph-copy helpers (U8) remap every node id through this so
+ *  inserted/copied subgraphs never collide with existing ids. */
+export function newNodeId(): string {
+  nodeSeq += 1;
+  return `n-${Date.now().toString(36)}-${nodeSeq}`;
+}
+
+/** Result of attempting to build an edge from a React Flow connection. */
+export type BuildConnectionResult =
+  | { edge: FlowEdge }
+  | { error: "missing-endpoint" | "duplicate" | "cycle" };
+
+/** Construct a new success edge for a React Flow connection, reimplementing the
+ *  sanity guards React Flow's addEdge provided (KTD-3) plus the author-time cycle
+ *  guard (KTD-9). Returns an error tag instead of an edge when the connection is
+ *  rejected so the caller can surface a toast:
+ *    - missing-endpoint: source or target absent;
+ *    - duplicate: an edge with the same source+target+condition already exists
+ *      (parallel edges of a DIFFERENT condition between the same pair ARE allowed);
+ *    - cycle: the connection would close a non-rework loop, and the endpoints are
+ *      not both children of the same foreach template (intra-template rework
+ *      cycles are authored separately and exempt).
+ */
+export function buildConnectionEdge(
+  connection: { source?: string | null; target?: string | null },
+  edges: FlowEdge[],
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+): BuildConnectionResult {
+  const source = connection.source ?? undefined;
+  const target = connection.target ?? undefined;
+  if (!source || !target) return { error: "missing-endpoint" };
+
+  const srcNode = nodes.find((n) => n.id === source);
+  const tgtNode = nodes.find((n) => n.id === target);
+
+  // Existing conditions already authored between this exact pair.
+  const existingConditions = new Set(
+    edges
+      .filter((e) => e.source === source && e.target === target)
+      .map((e) => (e.data?.condition as string | undefined) ?? "success"),
+  );
+
+  // New edges are normally born "success". But a second connect gesture between a
+  // pair that already has a success edge should author the *parallel* "failure"
+  // edge (rather than being rejected as a duplicate), so users can build a
+  // success/failure split with two connect gestures — but only when the source
+  // kind actually exposes a condition select. Block only when both conditions
+  // already exist (or the only available condition is already taken).
+  const supportsConditions = edgeConditionEditability(srcNode?.data.kind) === "conditions";
+  let condition = "success";
+  if (existingConditions.has("success")) {
+    if (supportsConditions && !existingConditions.has("failure")) {
+      condition = "failure";
+    } else {
+      return { error: "duplicate" };
+    }
+  } else if (existingConditions.has(condition)) {
+    return { error: "duplicate" };
+  }
+
+  // Cycle guard (KTD-9). Exempt connections where both endpoints are children of
+  // the same foreach template — those may legitimately be rework cycles authored
+  // separately; the simplest correct rule applies the guard only to non-template
+  // connections.
+  const bothTemplateChildren =
+    !!srcNode?.parentId && srcNode.parentId === tgtNode?.parentId;
+  if (!bothTemplateChildren && wouldCreateCycle(edges, source, target)) {
+    return { error: "cycle" };
+  }
+
+  return {
+    edge: {
+      id: newEdgeId(),
+      source,
+      target,
+      label: shortConditionLabel(condition),
+      data: { condition, kind: undefined },
+      className: edgeClassName(condition, false),
+      interactionWidth: WF_EDGE_INTERACTION_WIDTH,
+    },
+  };
+}
+
 // ── Client-side validation (U10) ─────────────────────────────────────────────
 //
 // The server's parseWorkflowIr (run on PATCH) is the authority for structural
@@ -568,4 +806,296 @@ export function emptyWorkflowIr(name: string): WorkflowIr {
 
 export function emptyWorkflowLayout(): Record<string, { x: number; y: number }> {
   return { start: { x: 80, y: 140 }, end: { x: 460, y: 140 } };
+}
+
+// ── Fragment insertion + graph copy (U8, R7/R8) ──────────────────────────────
+//
+// Pure primitives for the template library: inserting a fragment subgraph into
+// the live canvas (palette Templates section, U9) and copying a whole workflow
+// graph with fresh ids (create-from-template picker, U4/R7). All three return
+// new arrays/objects and never mutate their inputs.
+
+/** Seam markers that participate in the duplicate-seam pre-validation. A canvas
+ *  may host at most one node per seam, so inserting a fragment that carries a
+ *  seam already present on the canvas is rejected. The editor maps the "merge"
+ *  seam to its dedicated "merge" node kind, so a merge node counts as the merge
+ *  seam even without an explicit config.seam. */
+const SEAM_NAMES = new Set<string>(["execute", "review", "merge"]);
+
+/** Read the seam marker a flow node represents, if any: an explicit
+ *  config.seam, or the "merge" editor kind (which is the merge seam). */
+function flowNodeSeam(node: FlowNode<WorkflowFlowNodeData>): string | undefined {
+  if (node.data?.kind === "merge") return "merge";
+  const seam = node.data?.config?.seam;
+  return typeof seam === "string" ? seam : undefined;
+}
+
+/** Read the seam marker an IR node carries via its config.seam. */
+function irNodeSeam(node: WorkflowIrNode): string | undefined {
+  const seam = node.config?.seam;
+  return typeof seam === "string" ? seam : undefined;
+}
+
+/**
+ * Seam names (execute/review/merge) present in BOTH the fragment and the existing
+ * canvas — i.e. seams that would be duplicated by inserting the fragment. An
+ * empty result means the fragment is safe to insert. Other seam values
+ * (planning, step-execute, …) are not pre-validated here (only the tracked
+ * execute/review/merge seams are single-instance on the canvas).
+ */
+export function fragmentSeamConflicts(
+  fragmentIr: WorkflowIr,
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+): string[] {
+  const canvasSeams = new Set<string>();
+  for (const n of nodes) {
+    const seam = flowNodeSeam(n);
+    if (seam && SEAM_NAMES.has(seam)) canvasSeams.add(seam);
+  }
+  const conflicts: string[] = [];
+  const seen = new Set<string>();
+  for (const node of fragmentIr.nodes) {
+    const seam = irNodeSeam(node);
+    if (seam && SEAM_NAMES.has(seam) && canvasSeams.has(seam) && !seen.has(seam)) {
+      seen.add(seam);
+      conflicts.push(seam);
+    }
+  }
+  return conflicts;
+}
+
+/** Build a React Flow node from a single IR node at an absolute position — the
+ *  same mapping irToFlow applies (kind→type via editorKind, data {kind,label,
+ *  config}, deletable). foreach template bodies are remapped by the caller; this
+ *  carries config (including any template) through verbatim. */
+function irNodeToFlowNode(
+  node: WorkflowIrNode,
+  id: string,
+  position: { x: number; y: number },
+): FlowNode<WorkflowFlowNodeData> {
+  const kind = editorKind(node);
+  return {
+    id,
+    type: kind,
+    position,
+    data: { kind, label: nodeLabel(node), config: { ...(node.config ?? {}) } },
+    deletable: node.kind !== "start" && node.kind !== "end",
+  };
+}
+
+/**
+ * Insert a fragment subgraph into a flow graph near `position`.
+ *
+ * The fragment's `start`/`end` nodes (and every edge incident to them) are
+ * stripped; each remaining fragment node id is remapped to a fresh newNodeId()
+ * and the fragment's internal edges are rewired to those ids with fresh edge
+ * ids, preserving condition/kind. Node config and kind are preserved. Inserted
+ * nodes are laid out relative to `position` using the fragment's persisted
+ * layout when present, else simple horizontal x-spacing.
+ *
+ * Returns NEW arrays plus the ids of the inserted (remapped) nodes; inputs are
+ * never mutated.
+ */
+export function insertFragment(
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+  edges: FlowEdge[],
+  fragmentIr: WorkflowIr,
+  position: { x: number; y: number },
+  layout?: Record<string, { x: number; y: number }>,
+): {
+  nodes: FlowNode<WorkflowFlowNodeData>[];
+  edges: FlowEdge[];
+  insertedNodeIds: string[];
+} {
+  // Drop structural start/end; everything else is a real fragment node.
+  const bodyNodes = fragmentIr.nodes.filter((n) => n.kind !== "start" && n.kind !== "end");
+  const droppedIds = new Set(
+    fragmentIr.nodes.filter((n) => n.kind === "start" || n.kind === "end").map((n) => n.id),
+  );
+
+  // Remap every surviving fragment id to a fresh id.
+  const idMap = new Map<string, string>();
+  for (const n of bodyNodes) idMap.set(n.id, newNodeId());
+
+  // Anchor the fragment's layout origin so nodes land near `position`. When the
+  // fragment ships layout, preserve relative offsets; otherwise space the nodes
+  // horizontally.
+  const placed = bodyNodes.map((node) => layout?.[node.id]).filter((p): p is { x: number; y: number } => !!p);
+  const minX = placed.length ? Math.min(...placed.map((p) => p.x)) : 0;
+  const minY = placed.length ? Math.min(...placed.map((p) => p.y)) : 0;
+
+  const insertedNodeIds: string[] = [];
+  // foreach template children are expanded into parented child flow nodes (the
+  // same way irToFlow does), so an inserted foreach round-trips its full template
+  // through flowToIr instead of dropping config.template (which flowToIr would
+  // otherwise rebuild as an empty template from the absent children).
+  const childNodes: FlowNode<WorkflowFlowNodeData>[] = [];
+  const childEdges: FlowEdge[] = [];
+  const newNodes = bodyNodes.map((node, index): FlowNode<WorkflowFlowNodeData> => {
+    const id = idMap.get(node.id)!;
+    insertedNodeIds.push(id);
+    const fromLayout = layout?.[node.id];
+    const pos = fromLayout
+      ? { x: position.x + (fromLayout.x - minX), y: position.y + (fromLayout.y - minY) }
+      : { x: position.x + index * 180, y: position.y };
+    const foreachCfg = foreachConfigOf(node);
+    if (foreachCfg) {
+      const template = foreachCfg.template;
+      template.nodes.forEach((inner, innerIdx) => {
+        const innerKind = editorKind(inner);
+        childNodes.push({
+          id: foreachChildFlowId(id, inner.id),
+          type: innerKind,
+          position: { x: FOREACH_CHILD_X + innerIdx * FOREACH_CHILD_STEP_X, y: FOREACH_CHILD_Y },
+          parentId: id,
+          extent: "parent",
+          data: { kind: innerKind, label: nodeLabel(inner), config: { ...(inner.config ?? {}) } },
+          deletable: true,
+        });
+      });
+      template.edges.forEach((edge, eIdx) => {
+        childEdges.push(irEdgeToFlow(edge, eIdx, `${id}${FOREACH_CHILD_SEP}`));
+      });
+      // The group node keeps everything except the template (children carry it).
+      const { template: _t, ...restCfg } = (node.config ?? {}) as Record<string, unknown>;
+      return {
+        id,
+        type: "foreach",
+        position: pos,
+        data: {
+          kind: "foreach",
+          label: nodeLabel(node),
+          config: { ...restCfg },
+          templateEmpty: template.nodes.length === 0,
+        },
+        style: { width: FOREACH_GROUP_WIDTH, height: FOREACH_GROUP_HEIGHT },
+        deletable: true,
+      };
+    }
+    return irNodeToFlowNode(node, id, pos);
+  });
+
+  // Rewire only the fragment's INTERNAL edges (both endpoints survived). Edges
+  // touching a stripped start/end node are dropped.
+  const newEdges: FlowEdge[] = fragmentIr.edges
+    .filter((e) => !droppedIds.has(e.from) && !droppedIds.has(e.to))
+    .filter((e) => idMap.has(e.from) && idMap.has(e.to))
+    .map((edge, index) => {
+      const flow = irEdgeToFlow(edge, index);
+      return {
+        ...flow,
+        id: newEdgeId(),
+        source: idMap.get(edge.from)!,
+        target: idMap.get(edge.to)!,
+      };
+    });
+
+  return {
+    // Group nodes (in newNodes) must precede their children (childNodes).
+    nodes: [...nodes, ...newNodes, ...childNodes],
+    edges: [...edges, ...newEdges, ...childEdges],
+    insertedNodeIds,
+  };
+}
+
+/** Remap a foreach template's internal node ids + edges to fresh ids. Returns a
+ *  new template object; the original is untouched. Template-local ids are scoped
+ *  to the template, so a fresh local id space suffices (and keeps config compact
+ *  rather than reusing global ids). */
+function copyForeachTemplate(
+  template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] },
+  innerMap: Map<string, string>,
+): { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] } {
+  for (const n of template.nodes) innerMap.set(n.id, newNodeId());
+  const nodes = template.nodes.map((n) => copyIrNode(n, innerMap.get(n.id)!));
+  const edges = template.edges.map((e) => ({
+    ...e,
+    from: innerMap.get(e.from) ?? e.from,
+    to: innerMap.get(e.to) ?? e.to,
+  }));
+  return { nodes, edges };
+}
+
+/** Deep-ish copy of an IR node under a new id, recursing into a foreach
+ *  template's internal node references so they remain self-consistent. When the
+ *  node is a foreach, its template-local id remap is recorded in `templateMaps`
+ *  keyed by the node's ORIGINAL id, so the caller can remap namespaced
+ *  `${groupId}::${templateNodeId}` layout keys consistently. */
+function copyIrNode(
+  node: WorkflowIrNode,
+  newId: string,
+  templateMaps?: Map<string, Map<string, string>>,
+): WorkflowIrNode {
+  const config = node.config ? { ...node.config } : undefined;
+  const foreach = foreachConfigOf(node);
+  if (foreach && config) {
+    const innerMap = new Map<string, string>();
+    config.template = copyForeachTemplate(foreach.template, innerMap);
+    templateMaps?.set(node.id, innerMap);
+  }
+  const copy: WorkflowIrNode = { id: newId, kind: node.kind };
+  if (node.column !== undefined) copy.column = node.column;
+  if (config) copy.config = config;
+  return copy;
+}
+
+/**
+ * Full-graph copy with fresh ids (R7): every top-level node id is remapped to a
+ * fresh id, edges are rewired, and the layout map's keys are remapped to match.
+ * v2 columns/fields/artifacts are preserved untouched (they hold no node id
+ * references). foreach template bodies have their internal node ids + edges
+ * remapped consistently too. Returns a NEW ir + layout; inputs are not mutated.
+ */
+export function copyIrWithFreshIds(
+  ir: WorkflowIr,
+  layout: Record<string, { x: number; y: number }>,
+): { ir: WorkflowIr; layout: Record<string, { x: number; y: number }> } {
+  const idMap = new Map<string, string>();
+  for (const n of ir.nodes) idMap.set(n.id, newNodeId());
+
+  // Per foreach group (by ORIGINAL group id): its template-local id remap, so
+  // namespaced layout keys `${groupId}::${templateNodeId}` can be remapped to
+  // `${newGroupId}::${newTemplateNodeId}` consistently.
+  const templateMaps = new Map<string, Map<string, string>>();
+  const nodes = ir.nodes.map((n) => copyIrNode(n, idMap.get(n.id)!, templateMaps));
+  const edges = ir.edges.map((e) => ({
+    ...e,
+    from: idMap.get(e.from) ?? e.from,
+    to: idMap.get(e.to) ?? e.to,
+  }));
+
+  // Remap layout keys. Top-level node keys remap via idMap; namespaced foreach
+  // child keys remap via the owning group's idMap entry + its inner map; any
+  // unrelated keys pass through unchanged.
+  const newLayout: Record<string, { x: number; y: number }> = {};
+  for (const [key, pos] of Object.entries(layout)) {
+    const sepIdx = key.indexOf(FOREACH_CHILD_SEP);
+    if (sepIdx >= 0) {
+      const groupId = key.slice(0, sepIdx);
+      const innerId = key.slice(sepIdx + FOREACH_CHILD_SEP.length);
+      const newGroupId = idMap.get(groupId);
+      const innerMap = templateMaps.get(groupId);
+      const newInnerId = innerMap?.get(innerId);
+      if (newGroupId && newInnerId) {
+        newLayout[foreachChildFlowId(newGroupId, newInnerId)] = { ...pos };
+        continue;
+      }
+    }
+    const mapped = idMap.get(key);
+    newLayout[mapped ?? key] = { ...pos };
+  }
+
+  let copied: WorkflowIr;
+  if (isV2(ir)) {
+    const v2: WorkflowIrV2 = {
+      ...ir,
+      nodes,
+      edges,
+      columns: ir.columns.map((c) => ({ ...c, traits: c.traits.map((t) => ({ ...t })) })),
+    };
+    copied = v2;
+  } else {
+    copied = { ...ir, nodes, edges };
+  }
+  return { ir: copied, layout: newLayout };
 }

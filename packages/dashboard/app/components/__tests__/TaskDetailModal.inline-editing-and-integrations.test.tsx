@@ -236,13 +236,11 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         const modelLabel = screen.getByText("Model Configuration");
         const sourceLabel = screen.getByText("Source Issue");
-        const workflowSection = screen.getByTestId("workflow-steps-section");
 
+        // U6/R3: the per-step workflow section no longer renders in edit mode,
+        // so we only assert Source Issue stays below Model Configuration.
         expect(
           modelLabel.compareDocumentPosition(sourceLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-        expect(
-          sourceLabel.compareDocumentPosition(workflowSection) & Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       });
     });
@@ -734,9 +732,11 @@ describe("TaskDetailModal", () => {
       // Enter edit mode
       fireEvent.click(container.querySelector(".modal-edit-btn")!);
 
-      // Model configuration and workflow steps should be present via TaskForm
+      // Model configuration is present via TaskForm in edit mode.
+      // U6/R3: the per-step "Workflow Steps" section was removed from TaskForm;
+      // workflow management for an existing task lives in the Workflow tab.
       expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
-      expect(screen.getByText(/Workflow Steps/i)).toBeTruthy();
+      expect(screen.queryByText(/Workflow Steps/i)).toBeNull();
     });
 
     it("save sends only changed fields via updateTask", async () => {
@@ -1606,57 +1606,6 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(addSteeringComment).toHaveBeenCalledWith("FN-099", "Hello", undefined);
         expect(addToast).toHaveBeenCalledWith("Comment added", "success");
-      });
-    });
-  });
-
-
-  describe("Workflow step ordering in edit mode (FN-836)", () => {
-    it("sends ordered enabledWorkflowSteps when saving with reordered steps", async () => {
-      const { updateTask, fetchWorkflowSteps } = await import("../../api");
-      const mockUpdate = vi.mocked(updateTask);
-      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-        { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      ]);
-
-      const { container } = render(
-        <TaskDetailModal
-          task={makeTask({
-            id: "FN-001",
-            column: "triage",
-            title: "Test",
-            description: "Desc",
-            enabledWorkflowSteps: ["WS-001", "WS-002"],
-          })}
-          onClose={noop}
-          onMoveTask={noopMove}
-          onDeleteTask={noopDelete}
-          onMergeTask={noopMerge}
-          onOpenDetail={noopOpenDetail}
-          addToast={noop}
-        />,
-      );
-
-      // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
-
-      // Wait for workflow steps to load and reorder controls to appear
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-      });
-
-      // Move WS-002 up (swap with WS-001)
-      fireEvent.click(screen.getByTestId("workflow-step-move-up-WS-002"));
-
-      // Save
-      fireEvent.click(screen.getByText("Save"));
-
-      await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith("FN-001", expect.objectContaining({
-          enabledWorkflowSteps: ["WS-002", "WS-001"],
-        }), undefined);
       });
     });
   });

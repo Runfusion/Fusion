@@ -943,3 +943,42 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
 export function serializeWorkflowIr(ir: WorkflowIr): string {
   return JSON.stringify(ir, null, 2);
 }
+
+/**
+ * Strip the trust-escalating `cliSkipApproval`/`autoApprove` flags from every
+ * node config in an IR, recursing into foreach `config.template.nodes` at any
+ * nesting depth (foreach-in-foreach). Mutates the passed IR in place and returns
+ * it alongside a `stripped` flag indicating whether anything was removed.
+ *
+ * These flags bypass the CLI first-run approval gate (see executor.ts). They are
+ * legitimate only for workflows authored through the trusted dashboard editor /
+ * executor lane; on prompt-injectable surfaces (chat/planning authoring tools,
+ * import, AI design) they must be removed at the write boundary.
+ */
+export function stripApprovalBypassFlags(ir: WorkflowIr): { ir: WorkflowIr; stripped: boolean } {
+  const nodes = (ir as { nodes?: WorkflowIrNode[] }).nodes;
+  if (!Array.isArray(nodes)) return { ir, stripped: false };
+  let stripped = false;
+  const stripNode = (node: WorkflowIrNode): void => {
+    // Untrusted input may contain non-object entries (null, strings, numbers)
+    // in `nodes` / `template.nodes`; skip them rather than dereferencing.
+    if (!node || typeof node !== "object") return;
+    const cfg = node.config as Record<string, unknown> | undefined;
+    if (cfg && typeof cfg === "object") {
+      if ("cliSkipApproval" in cfg) {
+        delete cfg.cliSkipApproval;
+        stripped = true;
+      }
+      if ("autoApprove" in cfg) {
+        delete cfg.autoApprove;
+        stripped = true;
+      }
+      const template = (cfg as { template?: { nodes?: unknown } }).template;
+      if (template && Array.isArray(template.nodes)) {
+        for (const inner of template.nodes as WorkflowIrNode[]) stripNode(inner);
+      }
+    }
+  };
+  for (const node of nodes) stripNode(node);
+  return { ir, stripped };
+}

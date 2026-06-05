@@ -86,5 +86,12 @@ export function baseInitOptions(): InitOptions {
     // React (and Ink) escape on render; double-escaping mangles output.
     interpolation: { escapeValue: false },
     returnNull: false,
+    // Untranslated keys are backfilled with "" placeholders across the non-en
+    // catalogs (hundreds of them). With i18next's default returnEmptyString:true
+    // those render blank — even when a component passes an inline English default
+    // to t() — because an empty string is still a "found" value. Setting this
+    // false makes empty values fall through the fallback chain to en, which is
+    // the intended behavior for the placeholder convention.
+    returnEmptyString: false,
   };
 }

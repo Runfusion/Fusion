@@ -66,15 +66,26 @@ Rules:
 
 ### Testing commands
 
-Tests are required. Typechecks/manual checks are not substitutes.
+The merge gate is thin and trusted: CI blocks PRs on exactly Lint, Typecheck, Build, and Gate (boot smoke + `pnpm test:gate`). Everything else runs non-blocking in `full-suite.yml` on push to main. A red gate means a real problem; a red non-blocking run is information, not a merge stopper. Typechecks/manual checks are not substitutes for the gate.
 
 ```bash
-pnpm test
-pnpm test:full
+pnpm test          # gate suite + changed-only affected tests (bounded; never full-suite)
+pnpm test:gate     # the merge gate: curated engine-core suite + CI-shape test
+pnpm smoke:boot    # boot smoke: CLI --help + real serve /api/health
+pnpm test:full     # full workspace suite — explicit opt-in only
 pnpm lint
 pnpm build
-pnpm verify:workspace
+pnpm verify:workspace  # deep opt-in verification (lint -> test:full -> build); NOT the merge gate
 ```
+
+### Standing Rule: Flaky Tests Are Quarantined on Sight (Deletion Ratchet)
+
+- A test observed failing without a corresponding real bug in the change is QUARANTINED ON SIGHT: add an entry to `scripts/lib/test-quarantine.json` (`file`, `reason` with a link to the failing run, `quarantinedAt`) AND a matching one-line `exclude` in that package's vitest config, in the same commit.
+- **Agents must never appease a flaky test.** No widened timeouts, no added retries, no loosened or deleted assertions to make a flake pass. Quarantine it instead. Appeasement drains the test's signal and is how the suite rotted last time.
+- A quarantined test is DELETED after 14 days (`quarantinedAt` + 2 weeks) unless rescued. Rescue requires evidence the test catches real regressions plus a root-cause fix — not stabilization passes.
+- A flake INSIDE the merge gate is evicted, not skipped: remove its line from the `engine-core` allow-list in `packages/engine/vitest.config.ts` (the eviction PR does not need the flaky test to pass).
+- A second quarantine in the same subsystem is a product-race smell — look at the product code before the deletion clock runs out (see `docs/solutions/ui-bugs/skill-autocomplete-highlight-reset-on-swr-revalidation.md`: a flake "stabilized" three times was a real race).
+- Gate admission requires evidence of value; tests never graduate into the gate by default. Mechanics: `docs/testing.md` → "Quarantine ledger and the deletion ratchet".
 
 ### Standing Rule: Do Not Add Slow Tests (FN-5048)
 

@@ -371,6 +371,7 @@ export async function createTask(
     dependencies,
     breakIntoSubtasks,
     enabledWorkflowSteps,
+    workflowId,
     assignedAgentId,
     modelPresetId,
     modelProvider,
@@ -407,6 +408,7 @@ export async function createTask(
       dependencies,
       breakIntoSubtasks,
       enabledWorkflowSteps,
+      workflowId,
       assignedAgentId,
       modelPresetId,
       modelProvider,
@@ -5105,6 +5107,106 @@ export function deleteWorkflow(id: string, projectId?: string): Promise<void> {
 export function compileWorkflow(id: string, projectId?: string): Promise<{ steps: WorkflowStepInput[] }> {
   return api<{ steps: WorkflowStepInput[] }>(withProjectId(`/workflows/${encodeURIComponent(id)}/compile`, projectId), {
     method: "POST",
+  });
+}
+
+/** A workflow export envelope (U5/R9/KTD-5). `schemaVersion` is the SERVER's
+ *  schema version at export time — the import route version-gates against it
+ *  (the app build aliases @fusion/core to types-only, so the value can only come
+ *  from the server, never an app-side core import). */
+export interface WorkflowExportEnvelope {
+  fusionWorkflowExport: 1;
+  schemaVersion: number;
+  kind: import("@fusion/core").WorkflowDefinition["kind"];
+  name: string;
+  description: string;
+  ir: import("@fusion/core").WorkflowIr;
+  layout: import("@fusion/core").WorkflowDefinition["layout"];
+}
+
+/** Fetch a workflow's export envelope and trigger a browser download as
+ *  `<name>.workflow.json` (U5/R9). Built-ins are exportable too. Mirrors the
+ *  SettingsModal export pattern (Blob + createObjectURL + a.download). */
+export async function exportWorkflow(id: string, projectId?: string): Promise<WorkflowExportEnvelope> {
+  const envelope = await api<WorkflowExportEnvelope>(
+    withProjectId(`/workflows/${encodeURIComponent(id)}/export`, projectId),
+  );
+  const safeName = (envelope.name || "workflow").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "workflow";
+  const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${safeName}.workflow.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return envelope;
+}
+
+/** Result of POST /api/workflows/import (U5/R10). `strippedApprovalFlags` is set
+ *  when `cliSkipApproval`/`autoApprove` were removed from any node config at the
+ *  trust boundary; `warnings` lists non-blocking issues (e.g. unknown scriptName). */
+export interface ImportWorkflowResult {
+  workflow: import("@fusion/core").WorkflowDefinition;
+  strippedApprovalFlags: boolean;
+  warnings: string[];
+}
+
+/** Import a workflow export envelope (U5/R10). The server is the sole validator;
+ *  validation failures reject with an ApiError carrying the server message. */
+export function importWorkflow(
+  envelope: unknown,
+  projectId?: string,
+): Promise<ImportWorkflowResult> {
+  return api<ImportWorkflowResult>(withProjectId("/workflows/import", projectId), {
+    method: "POST",
+    body: JSON.stringify(envelope),
+  });
+}
+
+/** Result of the lazy legacy-step migration (U2/R5). `migrated` is the number of
+ *  newly converted user steps; `skipped` the count already migrated; when the
+ *  defaultOn subset was non-empty a combined "Migrated steps" workflow id is set. */
+export interface MigrateLegacyStepsResult {
+  migrated: number;
+  skipped: number;
+  combinedWorkflowId?: string;
+}
+
+/** Run the lazy, idempotent migration of legacy user-authored workflow steps into
+ *  fragments + a combined workflow (U2/R5). Safe to call repeatedly. */
+export function migrateLegacyWorkflowSteps(projectId?: string): Promise<MigrateLegacyStepsResult> {
+  return api<MigrateLegacyStepsResult>(withProjectId("/workflows/migrate-legacy-steps", projectId), {
+    method: "POST",
+  });
+}
+
+/** Result of POST /api/workflows/design (U10/R11). The server validates the
+ *  AI-produced IR (parseWorkflowIr), triages compilability (`interpreterOnly`),
+ *  and strips trust-escalating flags (`strippedApprovalFlags`). Persists nothing
+ *  — the client decides what to do with the returned graph. */
+export interface DesignWorkflowResult {
+  ir: import("@fusion/core").WorkflowIr;
+  layout: import("@fusion/core").WorkflowDefinition["layout"];
+  interpreterOnly: boolean;
+  strippedApprovalFlags: boolean;
+}
+
+/** Design a workflow from a natural-language prompt (U10/R11). When `workflowId`
+ *  is supplied the route reads that workflow's persisted IR server-side and folds
+ *  it into the prompt as the base graph (the client never posts IR). An optional
+ *  AbortSignal cancels the in-flight request. Validation failures reject with an
+ *  ApiError carrying the server message; 429 on rate limit. */
+export function designWorkflow(
+  input: { prompt: string; workflowId?: string },
+  projectId?: string,
+  signal?: AbortSignal,
+): Promise<DesignWorkflowResult> {
+  return api<DesignWorkflowResult>(withProjectId("/workflows/design", projectId), {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
   });
 }
 

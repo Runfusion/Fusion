@@ -874,6 +874,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         dependencies,
         breakIntoSubtasks,
         enabledWorkflowSteps,
+        workflowId,
         modelPresetId,
         modelProvider,
         modelId,
@@ -960,6 +961,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         if (!Array.isArray(enabledWorkflowSteps) || !enabledWorkflowSteps.every((id: unknown) => typeof id === "string")) {
           throw badRequest("enabledWorkflowSteps must be an array of strings");
         }
+      }
+
+      // Validate workflowId (U6/R3): undefined = inherit default, null = no
+      // workflow, string = that workflow. Unknown/fragment ids are rejected by
+      // the store below (mapped to 4xx in the catch handler).
+      if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string or null");
       }
 
       // Check for summarize flag in request
@@ -1245,6 +1253,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         dependencies,
         breakIntoSubtasks,
         enabledWorkflowSteps,
+        // U6/R3: forward only when the client set it (string | null). Leaving it
+        // absent preserves the project-default inheritance behavior.
+        ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
         modelPresetId: validateOptionalModelField(modelPresetId, "modelPresetId"),
         modelProvider: executorModel.provider ?? undefined,
         modelId: executorModel.modelId ?? undefined,
@@ -1347,8 +1358,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") ? 400 : 500;
-      throw new ApiError(status, err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      // U6/R3: workflowId validation failures from the store (unknown id /
+      // fragment id) are client errors, not server faults.
+      const isClientError =
+        message.includes("must be a string")
+        || message.includes("must be an array of strings")
+        || /^Workflow '.*' not found$/.test(message)
+        || /is a fragment and cannot be selected/.test(message);
+      const status = isClientError ? 400 : 500;
+      throw new ApiError(status, message);
     }
   });
 

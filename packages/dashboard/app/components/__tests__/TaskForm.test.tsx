@@ -25,7 +25,8 @@ vi.mock("../../api", () => ({
     autoSelectModelPreset: false,
     defaultPresetBySize: {},
   }),
-  fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  // U6/R3: TaskForm now fetches whole workflows (not steps) for the picker.
+  fetchWorkflows: vi.fn().mockResolvedValue([]),
   fetchGlobalSettings: vi.fn().mockResolvedValue({}),
   refineText: vi.fn().mockResolvedValue("Refined text"),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
@@ -64,8 +65,8 @@ function renderTaskForm(props: Partial<React.ComponentProps<typeof TaskForm>> = 
     onPresetModeChange: vi.fn(),
     selectedPresetId: "",
     onSelectedPresetIdChange: vi.fn(),
-    selectedWorkflowSteps: [],
-    onWorkflowStepsChange: vi.fn(),
+    selectedWorkflowId: undefined,
+    onWorkflowIdChange: vi.fn(),
     pendingImages: [],
     onImagesChange: vi.fn(),
     tasks: [],
@@ -96,8 +97,6 @@ function renderTaskFormWithDescriptionState(props: Partial<React.ComponentProps<
     onPresetModeChange: vi.fn(),
     selectedPresetId: "",
     onSelectedPresetIdChange: vi.fn(),
-    selectedWorkflowSteps: [],
-    onWorkflowStepsChange: vi.fn(),
     pendingImages: [],
     onImagesChange: vi.fn(),
     tasks: [],
@@ -642,33 +641,31 @@ describe("TaskForm", () => {
     expect(container.querySelector(".inline-create-previews")).toBeTruthy();
   });
 
-  it("calls onWorkflowStepsChange when a fetched workflow step is toggled", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
+  it("renders a fetched workflow as a dropdown option (U6/R3)", async () => {
+    const { fetchWorkflows } = await import("../../api");
+    vi.mocked(fetchWorkflows).mockResolvedValueOnce([
       {
-        id: "WS-005",
+        id: "WF-1",
         name: "Browser Verification",
         description: "Verify in browser",
-        prompt: "Run browser verification",
-        templateId: "browser-verification",
-        mode: "prompt" as const,
-        enabled: true,
+        kind: "workflow",
+        ir: { version: "v1", name: "Browser Verification", nodes: [], edges: [] },
+        layout: {},
         createdAt: "",
         updatedAt: "",
       },
-    ]);
+    ] as any);
 
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({ onWorkflowStepsChange });
+    const onWorkflowIdChange = vi.fn();
+    renderTaskForm({ onWorkflowIdChange });
 
     await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-checkbox-WS-005")).toBeTruthy();
+      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
     });
 
-    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-005").querySelector('input[type="checkbox"]') as HTMLInputElement;
-    fireEvent.click(checkbox);
-
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-005"]);
+    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "WF-1" } });
+    expect(onWorkflowIdChange).toHaveBeenCalledWith("WF-1");
   });
 
   it("disables all inputs when disabled prop is true", () => {
@@ -1004,406 +1001,146 @@ describe("TaskForm preset selection (FN-819)", () => {
   });
 });
 
-describe("TaskForm workflow step reordering (FN-836)", () => {
+describe("TaskForm workflow picker (U6/R3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("does not show reorder controls when no steps are selected", () => {
-    renderTaskForm({ selectedWorkflowSteps: [] });
-    expect(screen.queryByTestId("workflow-step-order")).toBeNull();
-  });
-
-  it("does not show reorder controls when only one step is selected", () => {
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001"] });
-    expect(screen.queryByTestId("workflow-step-order")).toBeNull();
-  });
-
-  it("shows reorder controls when two or more steps are selected", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"] });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    expect(screen.getByTestId("workflow-step-order-item-WS-001")).toBeTruthy();
-    expect(screen.getByTestId("workflow-step-order-item-WS-002")).toBeTruthy();
-  });
-
-  it("shows numbered execution order", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"] });
-
-    await waitFor(() => {
-      expect(screen.getByText("1")).toBeTruthy();
-      expect(screen.getByText("2")).toBeTruthy();
-    });
-  });
-
-  it("disables move-up button on first step", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"] });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    const moveUpFirst = screen.getByTestId("workflow-step-move-up-WS-001") as HTMLButtonElement;
-    expect(moveUpFirst.disabled).toBe(true);
-  });
-
-  it("disables move-down button on last step", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"] });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    const moveDownLast = screen.getByTestId("workflow-step-move-down-WS-002") as HTMLButtonElement;
-    expect(moveDownLast.disabled).toBe(true);
-  });
-
-  it("calls onWorkflowStepsChange with swapped order when move-up is clicked", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"], onWorkflowStepsChange });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    // Move WS-002 up (swap with WS-001)
-    fireEvent.click(screen.getByTestId("workflow-step-move-up-WS-002"));
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-002", "WS-001"]);
-  });
-
-  it("calls onWorkflowStepsChange with swapped order when move-down is clicked", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"], onWorkflowStepsChange });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    // Move WS-001 down (swap with WS-002)
-    fireEvent.click(screen.getByTestId("workflow-step-move-down-WS-001"));
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-002", "WS-001"]);
-  });
-
-  it("calls onWorkflowStepsChange with step removed when remove button is clicked", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"], onWorkflowStepsChange });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    // Remove WS-001
-    fireEvent.click(screen.getByTestId("workflow-step-remove-WS-001"));
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-002"]);
-  });
-
-  it("falls back to raw step ID in reorder list when metadata is missing", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-999"] });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    const orderItem1 = screen.getByTestId("workflow-step-order-item-WS-001");
-    const orderItem2 = screen.getByTestId("workflow-step-order-item-WS-999");
-
-    // Step metadata can resolve slightly after initial render under heavy suite load.
-    // Accept either the friendly name (preferred) or raw ID fallback.
-    expect(orderItem1.textContent).toMatch(/QA Check|WS-001/);
-    expect(orderItem2.textContent).toContain("WS-999");
-  });
-
-  it("preserves order when adding a new step via checkbox after reorder", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-003", name: "Doc Review", description: "Check docs", prompt: "Check docs", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    // Start with WS-001, WS-002
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002"], onWorkflowStepsChange });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    // Click checkbox to add WS-003 — it should be appended
-    const checkboxRow = await screen.findByTestId("workflow-step-checkbox-WS-003");
-    const checkbox = checkboxRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
-    fireEvent.click(checkbox);
-
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-002", "WS-003"]);
-  });
-
-  it("preserves order when removing a step via remove action (not reorder remove)", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-003", name: "Doc Review", description: "Check docs", prompt: "Check docs", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({ selectedWorkflowSteps: ["WS-001", "WS-002", "WS-003"], onWorkflowStepsChange });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
-    });
-
-    // Remove WS-002 via explicit remove action
-    fireEvent.click(screen.getByTestId("workflow-step-remove-WS-002"));
-
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-003"]);
-  });
-
-  it("shows phase badge for workflow steps with phase info", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, phase: "pre-merge", enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Post-merge Notify", description: "Notify team", prompt: "Notify", mode: "prompt" as const, phase: "post-merge", enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: [] });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-phase-WS-001")).toHaveTextContent("Pre-merge");
-      expect(screen.getByTestId("workflow-step-phase-WS-002")).toHaveTextContent("Post-merge");
-    });
-  });
-
-  it("shows Pre-merge phase badge for legacy steps without phase", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "Legacy Check", description: "No phase field", prompt: "Check", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    renderTaskForm({ selectedWorkflowSteps: [] });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("workflow-step-phase-WS-001")).toHaveTextContent("Pre-merge");
-    });
-  });
-});
-
-describe("TaskForm defaultOn auto-selection (FN-883)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("auto-selects defaultOn workflow steps in create mode", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, defaultOn: false, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    const onDefaultOnApplied = vi.fn();
-    renderTaskForm({
-      mode: "create",
-      onWorkflowStepsChange,
-      onDefaultOnApplied,
-    });
-
-    await waitFor(() => {
-      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001"]);
-    });
-    expect(onDefaultOnApplied).toHaveBeenCalledWith(["WS-001"]);
-  });
-
-  it("auto-expands More options by default when advanced selections are prefilled", () => {
-    renderTaskForm({
-      mode: "create",
-      selectedWorkflowSteps: ["WS-001"],
-    });
-
-    expect(screen.getByTestId("task-form-more-options-toggle")).toHaveAttribute("aria-expanded", "true");
-  });
-
-  it("stays collapsed when auto-expand is disabled even with prefilled advanced selections", () => {
-    renderTaskForm({
-      mode: "create",
-      selectedWorkflowSteps: ["WS-001"],
-      autoExpandMoreOptionsOnSelection: false,
-    });
-
-    expect(screen.getByTestId("task-form-more-options-toggle")).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("hides advanced controls from interaction when More options is collapsed", () => {
-    renderTaskForm({ mode: "create" });
-
-    const toggle = screen.getByTestId("task-form-more-options-toggle");
-    const moreOptions = screen.getByTestId("task-form-more-options");
-
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(moreOptions).toHaveAttribute("hidden");
-    expect(moreOptions).toHaveAttribute("aria-hidden", "true");
-
-    fireEvent.click(toggle);
-
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(moreOptions).not.toHaveAttribute("hidden");
-    expect(moreOptions).toHaveAttribute("aria-hidden", "false");
-  });
-
-  it("does not auto-select workflow steps in edit mode", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({
-      mode: "edit",
-      title: "Test",
-      onTitleChange: vi.fn(),
-      onWorkflowStepsChange,
-    });
-
-    // Wait for workflow steps to load
-    await waitFor(() => {
-      expect(fetchWorkflowSteps).toHaveBeenCalled();
-    });
-
-    // Should NOT have called onWorkflowStepsChange with defaults
-    expect(onWorkflowStepsChange).not.toHaveBeenCalled();
-  });
-
-  it("does not re-apply defaults after user changes workflow steps", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, defaultOn: false, createdAt: "", updatedAt: "" },
-    ]);
-
-    let currentSteps: string[] = [];
-    const onWorkflowStepsChange = vi.fn((steps: string[]) => {
-      currentSteps = steps;
-    });
-
-    const { rerender } = renderTaskForm({
-      mode: "create",
-      selectedWorkflowSteps: currentSteps,
-      onWorkflowStepsChange,
-    });
-
-    // Wait for auto-selection
-    await waitFor(() => {
-      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001"]);
-    });
-
-    // Simulate parent state update by rerendering with new steps
-    rerender(
-      <TaskForm
-        mode="create"
-        description=""
-        onDescriptionChange={vi.fn()}
-        dependencies={[]}
-        onDependenciesChange={vi.fn()}
-        executorModel=""
-        onExecutorModelChange={vi.fn()}
-        validatorModel=""
-        onValidatorModelChange={vi.fn()}
-        presetMode="default"
-        onPresetModeChange={vi.fn()}
-        selectedPresetId=""
-        onSelectedPresetIdChange={vi.fn()}
-        selectedWorkflowSteps={currentSteps}
-        onWorkflowStepsChange={onWorkflowStepsChange}
-        pendingImages={[]}
-        onImagesChange={vi.fn()}
-        tasks={[]}
-        addToast={vi.fn()}
-        isActive={true}
-      />
+  async function mockWorkflows(defs: Array<{ id: string; name: string; kind?: "workflow" | "fragment" }>) {
+    const { fetchWorkflows } = await import("../../api");
+    vi.mocked(fetchWorkflows).mockResolvedValueOnce(
+      defs.map((d) => ({
+        id: d.id,
+        name: d.name,
+        description: "",
+        kind: d.kind ?? "workflow",
+        ir: { version: "v1", name: d.name, nodes: [], edges: [] },
+        layout: {},
+        createdAt: "",
+        updatedAt: "",
+      })) as any,
     );
+  }
 
-    // Clear the mock to track further calls
-    onWorkflowStepsChange.mockClear();
-
-    // Simulate user toggling WS-002 checkbox
-    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-002").querySelector('input[type="checkbox"]') as HTMLInputElement;
-    fireEvent.click(checkbox);
-
-    // Should have been called with user action (adding WS-002 to existing WS-001)
-    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-002"]);
-    // No additional auto-selection calls
-    expect(onWorkflowStepsChange).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not auto-select when no steps have defaultOn", async () => {
-    const { fetchWorkflowSteps } = await import("../../api");
-    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-      { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-    ]);
-
-    const onWorkflowStepsChange = vi.fn();
-    renderTaskForm({
-      mode: "create",
-      onWorkflowStepsChange,
-    });
+  it("renders the dropdown with 'No workflow' first and the help text", async () => {
+    await mockWorkflows([{ id: "WF-1", name: "QA" }]);
+    renderTaskForm({ onWorkflowIdChange: vi.fn() });
 
     await waitFor(() => {
-      expect(fetchWorkflowSteps).toHaveBeenCalled();
+      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
     });
-
-    // Should NOT have called onWorkflowStepsChange
-    expect(onWorkflowStepsChange).not.toHaveBeenCalled();
+    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
+    expect(select.options[0].textContent).toBe("No workflow");
+    expect(screen.getByTestId("task-workflow-help")).toBeTruthy();
   });
+
+  it("badges the project default workflow with (default)", async () => {
+    const { fetchSettings } = await import("../../api");
+    vi.mocked(fetchSettings).mockResolvedValueOnce({
+      modelPresets: [],
+      autoSelectModelPreset: false,
+      defaultPresetBySize: {},
+      defaultWorkflowId: "WF-1",
+    } as any);
+    await mockWorkflows([
+      { id: "WF-1", name: "QA" },
+      { id: "WF-2", name: "Docs" },
+    ]);
+
+    renderTaskForm({ onWorkflowIdChange: vi.fn() });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+    });
+    expect(screen.getByText("QA (default)")).toBeTruthy();
+  });
+
+  it("excludes fragments from the dropdown", async () => {
+    await mockWorkflows([
+      { id: "WF-1", name: "QA", kind: "workflow" },
+      { id: "FRAG-1", name: "Doc Fragment", kind: "fragment" },
+    ]);
+    renderTaskForm({ onWorkflowIdChange: vi.fn() });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+    });
+    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
+    const labels = Array.from(select.options).map((o) => o.textContent);
+    expect(labels).toContain("QA");
+    expect(labels).not.toContain("Doc Fragment");
+  });
+
+  it("passes the chosen workflow id via onWorkflowIdChange", async () => {
+    await mockWorkflows([{ id: "WF-1", name: "QA" }]);
+    const onWorkflowIdChange = vi.fn();
+    renderTaskForm({ onWorkflowIdChange });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+    });
+    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "WF-1" } });
+    expect(onWorkflowIdChange).toHaveBeenCalledWith("WF-1");
+  });
+
+  it("maps 'No workflow' to null", async () => {
+    await mockWorkflows([{ id: "WF-1", name: "QA" }]);
+    const onWorkflowIdChange = vi.fn();
+    renderTaskForm({ onWorkflowIdChange, selectedWorkflowId: "WF-1" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+    });
+    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "__none__" } });
+    expect(onWorkflowIdChange).toHaveBeenCalledWith(null);
+  });
+
+  it("shows a loading placeholder while workflows load", async () => {
+    const { fetchWorkflows } = await import("../../api");
+    let resolveFn: (v: unknown) => void = () => {};
+    vi.mocked(fetchWorkflows).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFn = resolve;
+      }) as any,
+    );
+    renderTaskForm({ onWorkflowIdChange: vi.fn() });
+
+    expect(screen.getByTestId("task-workflow-loading")).toBeTruthy();
+    resolveFn([{ id: "WF-1", name: "QA" }]);
+
+    // After the promise resolves, the loading placeholder is replaced by the
+    // populated select containing the fetched workflow option.
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-workflow-loading")).toBeNull();
+    });
+    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toContain("WF-1");
+  });
+
+  it.each([
+    ["create", { mode: "create" as const }],
+    ["edit", { mode: "edit" as const, title: "Existing task", onTitleChange: vi.fn() }],
+  ])(
+    "regression: no per-step checkboxes and no fetchWorkflowSteps usage (%s mode)",
+    async (_label, modeProps) => {
+      await mockWorkflows([{ id: "WF-1", name: "QA" }]);
+      renderTaskForm({ onWorkflowIdChange: vi.fn(), ...modeProps });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+      });
+      // The old per-step checkbox UI and execution-order controls are gone on
+      // every TaskForm surface (create and edit).
+      expect(screen.queryByTestId("workflow-step-order")).toBeNull();
+      expect(document.querySelector('[data-testid^="workflow-step-checkbox-"]')).toBeNull();
+      // The api mock no longer needs a fetchWorkflowSteps export — TaskForm never
+      // calls it. (If it still did, rendering above would have thrown on the
+      // missing mock export, so reaching this point is itself the regression proof.)
+    },
+  );
 });
 
 describe("TaskForm focus behavior (FN-1459)", () => {
@@ -1511,7 +1248,8 @@ describe("TaskForm focus behavior (FN-1459)", () => {
       });
 
       const modelLabel = screen.getByText("Model Configuration");
-      const workflowLabel = screen.getByText("Workflow Steps");
+      // U6/R3: the per-step "Workflow Steps" section is now the "Workflow" picker.
+      const workflowLabel = screen.getByText("Workflow");
       const injectedBottom = screen.getByTestId("injected-below-model");
       const githubTrackingSection = screen.getByTestId("task-form-github-tracking");
 
@@ -1540,7 +1278,9 @@ describe("TaskForm focus behavior (FN-1459)", () => {
       // Dependencies label and dep-trigger should not be in the document
       expect(screen.queryByText("Dependencies")).toBeNull();
       expect(screen.queryByRole("button", { name: /Add dependencies/i })).toBeNull();
-      expect(screen.queryByText(/selected/i)).toBeNull();
+      // The dependency "N selected" count must be absent (avoid matching the
+      // workflow picker's help copy, which also contains the word "selected").
+      expect(screen.queryByText(/\d+ selected/i)).toBeNull();
     });
 
     it("does not auto-expand More options for dependency selections when hideDependencies is true", async () => {

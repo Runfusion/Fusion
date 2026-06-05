@@ -1,12 +1,12 @@
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type GlobalSettings, type Task, type TaskPriority, type Settings, type WorkflowStep } from "@fusion/core";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type GlobalSettings, type Task, type TaskPriority, type Settings, type WorkflowDefinition } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchModels, fetchSettings, fetchWorkflowSteps, refineText, getRefineErrorMessage, updateGlobalSettings, fetchGlobalSettings, fetchGitBranches, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
+import { fetchModels, fetchSettings, fetchWorkflows, refineText, getRefineErrorMessage, updateGlobalSettings, fetchGlobalSettings, fetchGitBranches, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
-import { Sparkles, ChevronUp, ChevronDown, X, Maximize2, Minimize2 } from "lucide-react";
+import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {
@@ -39,17 +39,6 @@ function sortBranchNames(branches: string[]): string[] {
 }
 
 /** Renders a phase badge using shared .phase-badge classes for consistency */
-function phaseBadge(phase: "pre-merge" | "post-merge", id: string, prefix: string, t: (key: string, defaultValue: string) => string): ReactNode {
-  const phaseClass = phase === "post-merge" ? "phase-badge--post-merge" : "phase-badge--pre-merge";
-  return (
-    <span
-      className={`phase-badge ${phaseClass}`}
-      data-testid={`${prefix}-${id}`}
-    >
-      {phase === "post-merge" ? t("taskForm.phasePostMerge", "Post-merge") : t("taskForm.phasePreMerge", "Pre-merge")}
-    </span>
-  );
-}
 
 export interface PendingImage {
   file: File;
@@ -99,11 +88,15 @@ export interface TaskFormProps {
   selectedPresetId: string;
   onSelectedPresetIdChange: (id: string) => void;
 
-  // Workflow steps
-  selectedWorkflowSteps: string[];
-  onWorkflowStepsChange: (steps: string[]) => void;
-  /** Callback fired when defaultOn steps have been preselected (create mode). Parent can use this to distinguish "no selection yet" from "user explicitly cleared". */
-  onDefaultOnApplied?: (stepIds: string[]) => void;
+  // Workflow selection (U6/R3). The form picks a whole workflow (not individual
+  // steps), applied atomically at task creation via the create-time `workflowId`.
+  //  - `undefined` → inherit the project default (preselected + "(default)" badge).
+  //  - `null`      → "No workflow" (listed first).
+  //  - `string`    → a specific workflow id.
+  // The dropdown only renders when `onWorkflowIdChange` is provided (create mode);
+  // edit-mode workflow management lives in the task detail Workflow tab.
+  selectedWorkflowId?: string | null;
+  onWorkflowIdChange?: (workflowId: string | null) => void;
 
   // Attachments
   pendingImages: PendingImage[];
@@ -179,9 +172,8 @@ export function TaskForm({
   onPresetModeChange,
   selectedPresetId,
   onSelectedPresetIdChange,
-  selectedWorkflowSteps,
-  onWorkflowStepsChange,
-  onDefaultOnApplied,
+  selectedWorkflowId,
+  onWorkflowIdChange,
   pendingImages,
   onImagesChange,
   tasks,
@@ -212,7 +204,6 @@ export function TaskForm({
   const hasInitialMoreOptions =
     (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
-    selectedWorkflowSteps.length > 0 ||
     presetMode !== "default" ||
     (priority ?? DEFAULT_TASK_PRIORITY) !== DEFAULT_TASK_PRIORITY ||
     executorModel !== "" ||
@@ -239,7 +230,9 @@ export function TaskForm({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings | null>(null);
-  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  // U6/R3: full workflow definitions for the picker (fragments excluded below).
+  const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
+  const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [baseBranchOptions, setBaseBranchOptions] = useState<string[]>([]);
   const [baseBranchCustomMode, setBaseBranchCustomMode] = useState(false);
@@ -276,13 +269,19 @@ export function TaskForm({
     fetchSettings(projectId)
       .then((nextSettings) => setSettings(nextSettings))
       .catch(() => setSettings(null));
-    fetchWorkflowSteps(projectId)
-      .then((steps) => setWorkflowSteps(steps.filter((s) => s.enabled)))
-      .catch(() => setWorkflowSteps([]));
+    // U6/R3: load selectable workflows for the picker. Fragments are excluded
+    // (KTD-1) so they never appear as selectable task workflows.
+    if (onWorkflowIdChange) {
+      setWorkflowsLoading(true);
+      fetchWorkflows(projectId)
+        .then((defs) => setWorkflows(defs.filter((d) => d.kind !== "fragment")))
+        .catch(() => setWorkflows([]))
+        .finally(() => setWorkflowsLoading(false));
+    }
     fetchGlobalSettings()
       .then((nextGlobalSettings) => setGlobalSettings(nextGlobalSettings))
       .catch(() => setGlobalSettings(null));
-  }, [isActive, projectId]);
+  }, [isActive, projectId, onWorkflowIdChange]);
 
   const availablePresets = settings?.modelPresets || [];
   const selectedPreset = availablePresets.find((preset) => preset.id === selectedPresetId);
@@ -292,7 +291,6 @@ export function TaskForm({
   const hasMoreOptionSelections =
     (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
-    selectedWorkflowSteps.length > 0 ||
     presetMode !== "default" ||
     (priority ?? DEFAULT_TASK_PRIORITY) !== DEFAULT_TASK_PRIORITY ||
     executorModel !== "" ||
@@ -321,30 +319,9 @@ export function TaskForm({
     }
   }, [isActive, settings, availablePresets, mode]);
 
-  // Auto-select defaultOn workflow steps (create mode, once per activation)
-  const defaultOnAppliedRef = useRef(false);
+  // U6/R3: the workflow picker preselects the project default (undefined →
+  // "(default)"); there is no longer a per-step defaultOn auto-select effect.
   const githubTrackingDefaultAppliedRef = useRef(false);
-  useEffect(() => {
-    if (mode !== "create" || !isActive) return;
-    if (defaultOnAppliedRef.current) return;
-    if (workflowSteps.length === 0) return;
-
-    const defaultOnSteps = workflowSteps.filter((s) => s.defaultOn);
-    if (defaultOnSteps.length === 0) return;
-
-    defaultOnAppliedRef.current = true;
-    const stepIds = defaultOnSteps.map((s) => s.id);
-    onWorkflowStepsChange(stepIds);
-    onDefaultOnApplied?.(stepIds);
-  }, [mode, isActive, workflowSteps]);
-
-  // Reset defaultOn tracking when form deactivates
-  useEffect(() => {
-    if (!isActive) {
-      defaultOnAppliedRef.current = false;
-    }
-  }, [isActive]);
-
   useEffect(() => {
     if (mode !== "create" || !isActive) return;
     if (!onGithubTrackingEnabledChange) return;
@@ -637,30 +614,8 @@ export function TaskForm({
     }
   }, [favoriteModels, favoriteProviders]);
 
-  // Workflow step reorder helpers
-  const moveWorkflowStepUp = useCallback((index: number) => {
-    if (index <= 0) return;
-    const updated = [...selectedWorkflowSteps];
-    [updated[index - 1], updated[index]] = [updated[index], updated[index - 1]];
-    onWorkflowStepsChange(updated);
-  }, [selectedWorkflowSteps, onWorkflowStepsChange]);
-
-  const moveWorkflowStepDown = useCallback((index: number) => {
-    if (index >= selectedWorkflowSteps.length - 1) return;
-    const updated = [...selectedWorkflowSteps];
-    [updated[index], updated[index + 1]] = [updated[index + 1], updated[index]];
-    onWorkflowStepsChange(updated);
-  }, [selectedWorkflowSteps, onWorkflowStepsChange]);
-
-  const removeWorkflowStep = useCallback((stepId: string) => {
-    onWorkflowStepsChange(selectedWorkflowSteps.filter((id) => id !== stepId));
-  }, [selectedWorkflowSteps, onWorkflowStepsChange]);
-
-  // Build a lookup for step names.
-  const workflowStepLookup = new Map<string, { name: string; description: string }>();
-  for (const step of workflowSteps) {
-    workflowStepLookup.set(step.id, { name: step.name, description: step.description });
-  }
+  // U6/R3: the project default workflow id (preselected + "(default)" badged).
+  const defaultWorkflowId = settings?.defaultWorkflowId ?? null;
 
   const availableDeps = tasks
     .filter((t) => !dependencies.includes(t.id))
@@ -1326,94 +1281,63 @@ export function TaskForm({
 
       {renderBelowModelConfiguration}
 
-      {/* Workflow Steps */}
-      <div className="form-group" data-testid="workflow-steps-section">
-        <label>{t("taskForm.workflowStepsLabel", "Workflow Steps")}</label>
-        <div className="workflow-steps-section">
-          <small className="workflow-steps-description">
-            {t("taskForm.workflowStepsDescription", "Select steps to run after task implementation completes")}
+      {/* Workflow picker (U6/R3). A task picks a whole workflow at creation; the
+          selection is materialized atomically server-side via `workflowId`. */}
+      {onWorkflowIdChange && (
+        <div className="form-group" data-testid="workflow-steps-section">
+          <label htmlFor="task-workflow-select">{t("taskForm.workflowLabel", "Workflow")}</label>
+          {workflowsLoading ? (
+            <div className="workflow-select-loading" data-testid="task-workflow-loading">
+              {t("taskForm.workflowsLoading", "Loading workflows…")}
+            </div>
+          ) : workflows.length === 0 ? (
+            // Built-ins are always present, so an empty list means the fetch
+            // failed. No editor-open prop is plumbed through TaskForm, so we
+            // surface a plain-text CTA rather than inventing new prop wiring.
+            <div className="workflow-select-cta" data-testid="task-workflow-cta">
+              {t("taskForm.workflowsCta", "Set up workflows in the editor")}
+            </div>
+          ) : (
+            <select
+              id="task-workflow-select"
+              data-testid="task-workflow-select"
+              value={
+                selectedWorkflowId === null
+                  ? "__none__"
+                  : selectedWorkflowId === undefined
+                    // Inherit project default: show the default option preselected,
+                    // or "No workflow" when no project default is configured.
+                    ? (defaultWorkflowId ?? "__none__")
+                    : selectedWorkflowId
+              }
+              disabled={disabled}
+              onChange={(e) => {
+                const next = e.target.value;
+                onWorkflowIdChange(next === "__none__" ? null : next);
+              }}
+            >
+              {/* "No workflow" listed FIRST (maps to null → explicit opt-out). */}
+              <option value="__none__">{t("taskForm.workflowNone", "No workflow")}</option>
+              {/* Project default preselected + badged when configured. */}
+              {defaultWorkflowId && workflows.some((w) => w.id === defaultWorkflowId) && (
+                <option value={defaultWorkflowId}>
+                  {`${workflows.find((w) => w.id === defaultWorkflowId)?.name ?? defaultWorkflowId} ${t("taskForm.workflowDefaultBadge", "(default)")}`}
+                </option>
+              )}
+              {workflows
+                .filter((w) => w.id !== defaultWorkflowId)
+                .map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+            </select>
+          )}
+          <small className="workflow-select-help" data-testid="task-workflow-help">
+            {t("taskForm.workflowHelp", "The selected workflow's steps run automatically around this task's execution.")}
           </small>
-          <div className="workflow-steps-list">
-            {workflowSteps.length > 0 && workflowSteps.map((step) => (
-              <label
-                key={step.id}
-                className="checkbox-label workflow-step-item"
-                data-testid={`workflow-step-checkbox-${step.id}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedWorkflowSteps.includes(step.id)}
-                  onChange={(e) => {
-                    onWorkflowStepsChange(
-                      e.target.checked
-                        ? [...selectedWorkflowSteps, step.id]
-                        : selectedWorkflowSteps.filter((id) => id !== step.id)
-                    );
-                  }}
-                  disabled={disabled}
-                />
-                <div>
-                  <span className="workflow-step-name">
-                    {step.name}
-                    {phaseBadge(step.phase || "pre-merge", step.id, "workflow-step-phase", t)}
-                  </span>
-                  <div className="workflow-step-description">
-                    {step.description}
-                  </div>
-                </div>
-              </label>
-            ))}
-          </div>
         </div>
-
-        {/* Selected steps — execution order with reorder controls */}
-        {selectedWorkflowSteps.length > 1 && (
-          <div className="workflow-step-order" data-testid="workflow-step-order">
-            <small className="workflow-step-order-label">{t("taskForm.executionOrderLabel", "Execution order:")}</small>
-            {selectedWorkflowSteps.map((stepId, index) => {
-              const stepInfo = workflowStepLookup.get(stepId);
-              return (
-                <div key={stepId} className="workflow-step-order-item" data-testid={`workflow-step-order-item-${stepId}`}>
-                  <span className="workflow-step-order-number">{index + 1}</span>
-                  <span className="workflow-step-order-name">{stepInfo?.name || stepId}</span>
-                  <div className="workflow-step-order-actions">
-                    <button
-                      type="button"
-                      className="btn btn-icon btn-sm"
-                      onClick={() => moveWorkflowStepUp(index)}
-                      disabled={disabled || index === 0}
-                      data-testid={`workflow-step-move-up-${stepId}`}
-                      title={t("taskForm.moveUp", "Move up")}
-                    >
-                      <ChevronUp />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-icon btn-sm"
-                      onClick={() => moveWorkflowStepDown(index)}
-                      disabled={disabled || index === selectedWorkflowSteps.length - 1}
-                      data-testid={`workflow-step-move-down-${stepId}`}
-                      title={t("taskForm.moveDown", "Move down")}
-                    >
-                      <ChevronDown />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-icon btn-sm"
-                      onClick={() => removeWorkflowStep(stepId)}
-                      disabled={disabled}
-                      data-testid={`workflow-step-remove-${stepId}`}
-                      title={t("taskForm.removeStep", "Remove")}
-                    >
-                      <X />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      )}
 
       {(onGithubTrackingEnabledChange || onGithubRepoOverrideChange) && (
         <div className="form-group" data-testid="task-form-github-tracking">

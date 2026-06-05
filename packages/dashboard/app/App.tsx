@@ -1227,9 +1227,9 @@ function AppInner() {
     pushNav({ type: "modal", close: modalManager.closeScripts });
   }, [modalManager, pushNav]);
 
-  const openWorkflowStepsWithNav = useCallback(() => {
-    modalManager.openWorkflowSteps();
-    pushNav({ type: "modal", close: modalManager.closeWorkflowSteps });
+  const openWorkflowEditorWithNav = useCallback(() => {
+    modalManager.openWorkflowEditor();
+    pushNav({ type: "modal", close: modalManager.closeWorkflowEditor });
   }, [modalManager, pushNav]);
 
   const openUsageWithNav = useCallback((anchorRect?: DOMRect | null) => {
@@ -1803,7 +1803,7 @@ function AppInner() {
         onOpenGitManager={openGitManagerWithNav}
         onOpenNodes={handleOpenNodesWithNav}
         showNodesButton={nodesEnabled}
-        onOpenWorkflowSteps={openWorkflowStepsWithNav}
+        onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onOpenScripts={openScriptsWithNav}
         onRunScript={runScriptWithNav}
         onToggleTerminal={toggleTerminalWithNav}
@@ -2007,7 +2007,7 @@ function AppInner() {
         chatHasUnreadResponse={chatHasUnreadResponse}
         stashOrphanCount={stashOrphanCount}
         onOpenGitManager={openGitManagerWithNav}
-        onOpenWorkflowSteps={openWorkflowStepsWithNav}
+        onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onOpenSchedules={openSchedulesWithNav}
         onOpenScripts={openScriptsWithNav}
         onToggleTerminal={toggleTerminalWithNav}

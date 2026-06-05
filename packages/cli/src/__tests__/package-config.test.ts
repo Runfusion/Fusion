@@ -299,10 +299,16 @@ describe("Workspace bootstrap script contract", () => {
 });
 
 describe("Workflow YAML validity", () => {
-  it("ci.yml is valid YAML", () => {
-    const parsed = loadWorkflowYaml("ci.yml");
+  it("pr-checks.yml is valid YAML", () => {
+    const parsed = loadWorkflowYaml("pr-checks.yml");
     expect(parsed).toBeDefined();
-    expect(parsed.name).toBe("CI");
+    expect(parsed.name).toBe("PR Checks");
+  });
+
+  it("full-suite.yml is valid YAML", () => {
+    const parsed = loadWorkflowYaml("full-suite.yml");
+    expect(parsed).toBeDefined();
+    expect(parsed.name).toBe("Full Suite (non-blocking)");
   });
 
   it("version.yml is valid YAML", () => {

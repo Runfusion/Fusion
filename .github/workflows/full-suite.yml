@@ -1,0 +1,176 @@
+name: Full Suite (non-blocking)
+
+# The demoted test tier (docs/plans/2026-06-04-001-refactor-fast-trusted-test-gate-plan.md).
+# Runs the full sharded suite, the engine slow tier, and the dashboard
+# inventory guard on every push to main — post-merge signal only. These jobs
+# are NON-BLOCKING by design: they never run on PRs and must never be added
+# to branch-protection required checks. A red run here is information, not a
+# merge stopper; see docs/testing.md for the quarantine ratchet that keeps
+# this tier honest.
+
+on:
+  push:
+    branches: [main]
+
+# Key the concurrency group by SHA, not ref: on push to main the ref is
+# always refs/heads/main, so a ref-keyed group with cancel-in-progress would
+# let consecutive merges cancel each other's runs — silently skipping the
+# only coverage for everything the gate dropped. Per-SHA groups never collide.
+concurrency:
+  group: full-suite-${{ github.sha }}
+  cancel-in-progress: false
+
+# Least-privilege token: jobs only read the repo (checkout + cache) and upload
+# workflow artifacts (timings), which needs no extra permission scope.
+permissions:
+  contents: read
+
+# FN-4863: Opt JavaScript actions into Node 24 ahead of GitHub's forced cutover on 2026-06-02.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  test-shards:
+    name: Test shard ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Engine tests run real git operations (merge-base against main,
+          # case-variant ref checks) that require full history. Shallow
+          # clones silently break tests like worktree-acquisition's resume
+          # misbinding path.
+          fetch-depth: 0
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      # Dist-artifact cache (L1): ensureTestArtifacts otherwise rebuilds dist/
+      # for 8 packages (~71s) on every shard because CI starts with no dist.
+      # Key on a stable, pre-build, git-based hash of ALL build packages' source
+      # inputs. Exact-match only — NO restore-keys: a partial/stale dist hit is
+      # the exact failure mode this repo has been bitten by (FN-4232/FN-4605),
+      # and ensureTestArtifacts still validates/rebuilds anything missing-or-stale
+      # after restore, so a miss is safe but a wrong-content hit would not be.
+      # NEVER add node_modules here (breaks Windows pnpm junctions elsewhere).
+      - name: Compute dist source hash
+        id: dist-hash
+        run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache built dist artifacts
+        id: dist-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/core/dist
+            packages/dashboard/dist
+            packages/engine/dist
+            packages/plugin-sdk/dist
+            plugins/fusion-plugin-dependency-graph/dist
+            plugins/fusion-plugin-hermes-runtime/dist
+            plugins/fusion-plugin-openclaw-runtime/dist
+            plugins/fusion-plugin-paperclip-runtime/dist
+          key: dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+
+      # On a cache HIT, restored dist files carry their save-time mtimes while
+      # checkout rewrites src mtimes to "now" (src newer than dist), which would
+      # make ensureTestArtifacts' mtime fallback rebuild everything and defeat
+      # the cache. Seed the per-package content-hash cache so its content-hash
+      # short-circuit fires instead. ensureTestArtifacts still runs (inside
+      # test:ci:shard) and rebuilds anything genuinely missing/changed.
+      - name: Seed artifact hash-cache on cache hit
+        if: steps.dist-cache.outputs.cache-hit == 'true'
+        run: node scripts/ensure-test-artifacts.mjs --seed-artifact-cache
+
+      - name: Test (deterministic shard)
+        run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4
+
+      # Each shard emits per-file vitest JSON timing reporter output under
+      # .timings/. Upload as an artifact so the timing snapshot can be
+      # refreshed locally/from the default branch via
+      # `node scripts/ci-test-shard.mjs --write-timings`. We do NOT commit the
+      # snapshot automatically — refresh is manual/scheduled only.
+      - name: Upload per-shard test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-timings-shard-${{ matrix.shard }}
+          # Relative outputFile paths mean each package writes its own
+          # <pkgDir>/.timings/ file — glob the whole tree, not just the root.
+          path: |
+            .timings/timings-*.json
+            packages/*/.timings/timings-*.json
+            plugins/*/.timings/timings-*.json
+            plugins/examples/*/.timings/timings-*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The dashboard quality gate used to enumerate its test files by hand, so any
+  # unenumerated app/ or src/ test file ran in NO project. This guard fails when
+  # a dashboard test file is neither executed by a quality project (curated +
+  # backfill lanes) nor on the reviewed skip-list. Cheap: it only runs
+  # `vitest list`, not the tests.
+  test-inventory-guard:
+    name: Dashboard curated-gate guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      # Same dist-artifact cache as test-shards (L1): the curated-gate guard runs
+      # `vitest list`, whose config resolution can touch built dist, so it also
+      # pays the cold-dist rebuild. Exact-match key on the pre-build source hash;
+      # NO restore-keys (stale dist is the failure mode), NO node_modules.
+      - name: Compute dist source hash
+        id: dist-hash
+        run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache built dist artifacts
+        id: dist-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/core/dist
+            packages/dashboard/dist
+            packages/engine/dist
+            packages/plugin-sdk/dist
+            plugins/fusion-plugin-dependency-graph/dist
+            plugins/fusion-plugin-hermes-runtime/dist
+            plugins/fusion-plugin-openclaw-runtime/dist
+            plugins/fusion-plugin-paperclip-runtime/dist
+          key: dist-${{ runner.os }}-${{ steps.dist-hash.outputs.hash }}
+
+      - name: Seed artifact hash-cache on cache hit
+        if: steps.dist-cache.outputs.cache-hit == 'true'
+        run: node scripts/ensure-test-artifacts.mjs --seed-artifact-cache
+
+      - name: Assert every dashboard test file is gated or skip-listed
+        run: node scripts/check-test-inventory.mjs --dashboard-curated
+
+  # The engine-slow tier (src/**/*.slow.test.ts) runs here with a non-empty
+  # execution assertion, so a glob/config drift that silently empties the tier
+  # fails this workflow instead of passing vacuously. Engine slow tests do real
+  # git operations, so a full clone (fetch-depth: 0) is required.
+  test-slow:
+    name: Engine slow tier
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Run engine-slow with non-empty-execution assertion
+        run: node scripts/assert-engine-slow-nonempty.mjs

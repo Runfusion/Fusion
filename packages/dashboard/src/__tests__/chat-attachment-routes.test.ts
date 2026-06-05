@@ -43,8 +43,7 @@ const { mockChatStreamManager, mockSendMessage, mockCancelGeneration, mockBeginG
   };
 });
 
-vi.mock("@fusion/engine", () => ({
-  listCliAdapterDescriptors: () => [], createFnAgent: vi.fn() }));
+vi.mock("@fusion/engine", () => ({ listCliAdapterDescriptors: () => [], createFnAgent: vi.fn(), createWorkflowAuthoringTools: vi.fn(() => []) }));
 vi.mock("../planning.js", () => ({
   getSession: vi.fn(), cleanupSession: vi.fn(), __setCreateFnAgent: vi.fn(), __resetPlanningState: vi.fn(), setAiSessionStore: vi.fn(), rehydrateFromStore: vi.fn().mockReturnValue(0),
 }));

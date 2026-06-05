@@ -24,6 +24,7 @@ import type {
   ChatSessionCreateInput,
   MessageStore,
   Settings,
+  TaskStore,
 } from "@fusion/core";
 import { summarizeTitle } from "@fusion/core";
 import { EventEmitter } from "node:events";
@@ -40,6 +41,7 @@ import {
   extractRuntimeModel,
   createSendMessageTool,
   createReadMessagesTool,
+  createWorkflowAuthoringTools,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -733,6 +735,10 @@ export class ChatManager {
       | "chatRoomSummaryMaxChars"
     > | undefined,
     private messageStore?: MessageStore,
+    // Scoped task store for the chat's project — enables workflow-authoring
+    // tools (fn_workflow_*). Optional so existing test/construction sites that
+    // don't author workflows keep working.
+    private taskStore?: TaskStore,
   ) {}
 
   /**
@@ -1647,13 +1653,22 @@ export class ChatManager {
             createSendMessageTool(this.messageStore, agent.id),
             createReadMessagesTool(this.messageStore, agent.id),
           ]
-        : undefined;
+        : [];
+
+      // Expose workflow-authoring tools (fn_workflow_*) when a scoped task store
+      // is available. The chat lane has no ambient task, so fn_workflow_select
+      // has no default target — an agent must pass an explicit task_id.
+      const workflowTools = this.taskStore
+        ? createWorkflowAuthoringTools(this.taskStore, "", { stripApprovalFlags: true })
+        : [];
+
+      const customTools = [...messagingTools, ...workflowTools];
 
       const sessionOptions = {
         cwd: this.rootDir,
         systemPrompt,
         tools: "coding" as const,
-        ...(messagingTools ? { customTools: messagingTools } : {}),
+        ...(customTools.length > 0 ? { customTools } : {}),
         sessionManager,
         ...(effectiveModelProvider && effectiveModelId
           ? {

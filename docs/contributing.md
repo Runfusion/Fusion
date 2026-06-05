@@ -63,11 +63,13 @@ FUSION_DEV_PREBUILD=full pnpm dev dashboard  # production-like full workspace pr
 pnpm dev:ui            # dashboard dev server only
 pnpm dev:hmr           # dashboard API + Vite HMR UI, with no startup prebuild
 pnpm lint              # lint all packages
-pnpm test              # changed-only workspace tests (falls back to full suite in safety contexts)
-pnpm test:full         # full workspace quality gate (clean-worktree compatible)
+pnpm test              # merge-gate suite + changed-only affected tests (bounded; never full-suite)
+pnpm test:gate         # the merge gate: curated engine-core suite + CI-shape test
+pnpm smoke:boot        # boot smoke: CLI --help + real serve /api/health
+pnpm test:full         # full workspace suite (explicit opt-in; clean-worktree compatible)
 pnpm build             # workspace builds (excludes desktop/mobile)
 pnpm build:all         # full workspace build (includes desktop/mobile)
-pnpm verify:workspace  # canonical lint -> test -> build verification gate
+pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build
 pnpm typecheck         # workspace typechecks
 ```
 
@@ -80,20 +82,21 @@ Fusion codifies workspace verification as a deterministic contract:
 - Root test entrypoints (`pnpm test` via `scripts/test-changed.mjs` and `pnpm test:ci:shard` via `scripts/ci-test-shard.mjs`) call `scripts/ensure-test-artifacts.mjs`, which deterministically builds only missing/stale required workspace dist artifacts (`@fusion/core`, `@fusion/dashboard`, `@fusion/engine`, `@fusion/plugin-sdk`, and `@fusion-plugin-examples/{dependency-graph,hermes-runtime,openclaw-runtime,paperclip-runtime}`).
 - Package-scoped hooks now mirror this bootstrap for fresh worktrees where needed: `@fusion/dashboard` and `@fusion-plugin-examples/dependency-graph` run `pretest: node ../../scripts/ensure-test-artifacts.mjs`.
 - This includes clean states where those required dist directories are absent.
-- `pnpm verify:workspace` is the canonical pre-merge gate and runs in strict order:
+- `pnpm test:gate` is the merge gate: the curated `engine-core` suite plus the CI-shape test. CI blocks PRs on exactly Lint, Typecheck, Build, and Gate (boot smoke + `pnpm test:gate`) — see `.github/workflows/pr-checks.yml` and docs/testing.md.
+- `pnpm verify:workspace` is the deep opt-in verification (not the merge gate) and runs in strict order:
   1. `pnpm lint`
   2. `pnpm test:full`
   3. `pnpm build`
 
-GitHub Actions now runs deterministic test sharding via `pnpm test:ci:shard --shard <index> --total <count>` in both PR checks and manual CI, while keeping local semantics unchanged:
+GitHub Actions runs deterministic test sharding via `pnpm test:ci:shard --shard <index> --total <count>` in the non-blocking `full-suite.yml` workflow (push to main only — never a PR gate), while keeping local semantics unchanged:
 
-- `pnpm test` remains changed-only local iteration.
-- `pnpm test:full` remains the canonical workspace quality gate; dashboard exhaustive coverage is explicit via `pnpm --filter @fusion/dashboard test:deep`.
-- `pnpm verify:workspace` remains the canonical local lint -> test -> build gate.
+- `pnpm test` remains gate + changed-only local iteration.
+- `pnpm test:full` remains the explicit full workspace suite; dashboard exhaustive coverage is explicit via `pnpm --filter @fusion/dashboard test:deep`.
+- `pnpm verify:workspace` remains the deep opt-in lint -> test -> build verification.
 
 `test:ci:shard` is a CI-focused entrypoint (`scripts/ci-test-shard.mjs`) that deterministically balances workspace packages with `test` scripts by counting package-local `**/__tests__/**/*.test.{ts,tsx,mjs}` files, auto-splitting oversized packages into virtual shard entries (`{ name, shardIndex, shardCount }`), then assigning entries in descending weight order with best-fit placement for unsplit entries (closest under-budget fit, otherwise minimum overshoot) while keeping slices of the same package on different shards when possible. Whole entries run as grouped `pnpm --filter <pkg> test` calls, and virtual entries run one-by-one via `pnpm --filter <pkg> test -- --shard <index>/<count>`. This keeps coverage reproducible while improving shard balance.
 
-`pnpm test` now uses a changed-only entrypoint (`scripts/test-changed.mjs`) for faster local iteration. It resolves the comparison base from `.changeset/config.json` (`baseBranch`) and runs only affected workspaces from `pnpm-workspace.yaml` (both `packages/*` and `plugins/**`) using safe package-first filtering (`pnpm --filter <pkg> test`). It automatically falls back to the full suite when the run is forced (CI / `--full`), the git comparison base or diff cannot be resolved, no changes are detected, shared/root test infrastructure changes, or changed workspace paths cannot be resolved to a workspace package (fail-safe coverage behavior).
+`pnpm test` now uses a changed-only entrypoint (`scripts/test-changed.mjs`) for faster local iteration. It resolves the comparison base from `.changeset/config.json` (`baseBranch`) and runs only affected workspaces from `pnpm-workspace.yaml` (both `packages/*` and `plugins/**`) using safe package-first filtering (`pnpm --filter <pkg> test`). It runs the merge-gate suite first, then the affected set. The full suite runs only on explicit opt-in (`--full` / `pnpm test:full`); shared-infrastructure changes and unresolvable diffs widen the affected set but never escalate to an implicit full-suite run (the old escalation was the local OOM path).
 
 Root test entrypoints (`pnpm test`, `pnpm test:full`, and `pnpm test:ci:shard`) now use a shared CPU-aware default worker budget instead of fixed low values. By default, Fusion sets `FUSION_TEST_TOTAL_WORKERS` to `max(4, min(12, cpuCount - 1))` and `FUSION_TEST_CONCURRENCY` to `2` (clamped to the total budget), while still honoring explicit overrides from `VITEST_MAX_WORKERS`, `FUSION_TEST_TOTAL_WORKERS`, and `FUSION_TEST_CONCURRENCY`.
 
@@ -113,7 +116,8 @@ If you add or change test entrypoints, keep this isolation guard path intact and
 
 Before submitting changes, verify:
 
-- [ ] `pnpm verify:workspace` — canonical lint → test → build gate
+- [ ] `pnpm test:gate` — the merge gate (curated engine-core suite + CI-shape test)
+- [ ] `pnpm verify:workspace` — deep opt-in lint → test:full → build verification
 - [ ] `pnpm typecheck` — type checking passes
 
 ## Realtime/SSE change note
@@ -160,7 +164,7 @@ pnpm build:exe:all  # build multi-target executables
 Default workspace verification stays lean and deterministic:
 
 - `pnpm test` runs the standard suite and does **not** require Bun cross-build integration tests.
-- `pnpm verify:workspace` remains the canonical `lint -> test -> build` gate.
+- `pnpm verify:workspace` remains the deep opt-in `lint -> test -> build` verification.
 
 Slow/pre-release CLI coverage is explicit and opt-in:
 

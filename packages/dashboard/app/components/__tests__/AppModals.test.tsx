@@ -100,10 +100,6 @@ vi.mock("../GitManagerModal", () => ({
   GitManagerModal: () => null,
 }));
 
-vi.mock("../WorkflowStepManager", () => ({
-  WorkflowStepManager: () => null,
-}));
-
 vi.mock("../AgentListModal", () => ({
   AgentListModal: () => null,
 }));
@@ -190,7 +186,6 @@ describe("AppModals", () => {
     newTaskModalOpen: false,
     activityLogOpen: false,
     gitManagerOpen: false,
-    workflowStepsOpen: false,
     agentsOpen: false,
     setupWizardOpen: false,
     modelOnboardingOpen: false,
@@ -234,8 +229,6 @@ describe("AppModals", () => {
     closeActivityLog: vi.fn(),
     openGitManager: vi.fn(),
     closeGitManager: vi.fn(),
-    openWorkflowSteps: vi.fn(),
-    closeWorkflowSteps: vi.fn(),
     openAgents: vi.fn(),
     closeAgents: vi.fn(),
     openSetupWizard: vi.fn(),

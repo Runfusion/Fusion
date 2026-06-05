@@ -16,11 +16,6 @@ vi.mock("lucide-react", () => ({
   Workflow: () => null,
 }));
 
-// Mock WorkflowSelector to avoid API calls in tests
-vi.mock("../WorkflowSelector", () => ({
-  WorkflowSelector: ({ label }: { label?: string }) => <div data-testid="workflow-selector">{label ?? "Workflow"}</div>,
-}));
-
 // Mock the api module
 vi.mock("../../api", () => ({
   uploadAttachment: vi.fn().mockResolvedValue({}),
@@ -33,7 +28,9 @@ vi.mock("../../api", () => ({
     autoSelectModelPreset: false,
     defaultPresetBySize: {},
   }),
-  fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  // U6/R3: TaskForm's picker fetches whole workflows; the per-step
+  // fetchWorkflowSteps + post-create selectTaskWorkflow flow is gone.
+  fetchWorkflows: vi.fn().mockResolvedValue([]),
   fetchGlobalSettings: vi.fn().mockResolvedValue({}),
   fetchGitBranches: vi.fn().mockResolvedValue([]),
   fetchAgents: vi.fn().mockResolvedValue([]),
@@ -41,7 +38,6 @@ vi.mock("../../api", () => ({
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
-  selectTaskWorkflow: vi.fn().mockResolvedValue({ workflowId: null, enabledWorkflowSteps: [] }),
 }));
 
 const mockConfirm = vi.fn();
@@ -165,10 +161,10 @@ describe("NewTaskModal", () => {
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       expect(moreOptions).not.toHaveAttribute("hidden");
     });
-    // Model Configuration, Attachments, and Workflow Steps are revealed
+    // Model Configuration, Attachments, and the Workflow picker are revealed
     expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
     expect(screen.getByText(/Attachments/i)).toBeTruthy();
-    expect(screen.getByText(/Workflow Steps/i)).toBeTruthy();
+    expect(screen.getByText("Workflow")).toBeTruthy();
   });
 
   it("shows dependencies and agent picker by default without expanding More options", () => {
@@ -595,227 +591,91 @@ describe("NewTaskModal", () => {
   });
 
   // Workflow step ordering tests (FN-836)
-  describe("workflow step ordering", () => {
-    it("sends selected enabledWorkflowSteps in create payload", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      ]);
+  describe("workflow selection (U6/R3)", () => {
+    function mockWorkflows(defs: Array<{ id: string; name: string; kind?: "workflow" | "fragment" }>) {
+      return import("../../api").then(({ fetchWorkflows }) => {
+        vi.mocked(fetchWorkflows).mockResolvedValueOnce(
+          defs.map((d) => ({
+            id: d.id,
+            name: d.name,
+            description: "",
+            kind: d.kind ?? "workflow",
+            ir: { version: "v1", name: d.name, nodes: [], edges: [] },
+            layout: {},
+            createdAt: "",
+            updatedAt: "",
+          })) as any,
+        );
+      });
+    }
 
+    it("omits workflowId from the payload when the picker is untouched (inherit default)", async () => {
+      await mockWorkflows([{ id: "WF-1", name: "QA" }]);
       const { props } = renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
       });
 
-      const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
-      fireEvent.click(checkbox);
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Inherit default" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Task with workflow step" } });
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalled();
+      });
+      const payload = vi.mocked(props.onCreateTask).mock.calls[0][0] as Record<string, unknown>;
+      expect("workflowId" in payload).toBe(false);
+    });
+
+    it("sends the chosen workflowId in the create payload", async () => {
+      await mockWorkflows([{ id: "WF-1", name: "QA" }]);
+      const { props } = renderNewTaskModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+      });
+
+      fireEvent.change(screen.getByTestId("task-workflow-select"), { target: { value: "WF-1" } });
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Pick a workflow" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
         expect(props.onCreateTask).toHaveBeenCalledWith(
-          expect.objectContaining({
-            enabledWorkflowSteps: ["WS-001"],
-          }),
+          expect.objectContaining({ workflowId: "WF-1" }),
         );
       });
     });
 
-    it("sends ordered enabledWorkflowSteps in create payload when steps are selected in order", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-        { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      ]);
-
+    it("sends workflowId: null when 'No workflow' is chosen", async () => {
+      await mockWorkflows([{ id: "WF-1", name: "QA" }]);
       const { props } = renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
       });
 
-      // Select WS-001, then WS-002 — order should be preserved
-      const checkbox1 = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
-      fireEvent.click(checkbox1);
-
-      const checkbox2 = screen.getByTestId("workflow-step-checkbox-WS-002").querySelector('input[type="checkbox"]') as HTMLInputElement;
-      fireEvent.click(checkbox2);
-
-      // Type description and submit
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Ordered task" } });
+      // Pick a workflow, then switch to "No workflow" to register an explicit null.
+      fireEvent.change(screen.getByTestId("task-workflow-select"), { target: { value: "WF-1" } });
+      fireEvent.change(screen.getByTestId("task-workflow-select"), { target: { value: "__none__" } });
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "No workflow task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
       await waitFor(() => {
         expect(props.onCreateTask).toHaveBeenCalledWith(
-          expect.objectContaining({
-            enabledWorkflowSteps: ["WS-001", "WS-002"],
-          }),
+          expect.objectContaining({ workflowId: null }),
         );
       });
     });
 
-    it("sends reordered enabledWorkflowSteps after user reorders steps", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-        { id: "WS-002", name: "Security Audit", description: "Check security", prompt: "Check security", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      ]);
-
-      const { props } = renderNewTaskModal();
-
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
-      });
-
-      // Select WS-001, then WS-002
-      const checkbox1 = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
-      fireEvent.click(checkbox1);
-
-      const checkbox2 = screen.getByTestId("workflow-step-checkbox-WS-002").querySelector('input[type="checkbox"]') as HTMLInputElement;
-      fireEvent.click(checkbox2);
-
-      // Now reorder: move WS-002 up
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-move-up-WS-002")).toBeTruthy();
-      });
-      fireEvent.click(screen.getByTestId("workflow-step-move-up-WS-002"));
-
-      // Type description and submit
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Reordered task" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
-
-      await waitFor(() => {
-        expect(props.onCreateTask).toHaveBeenCalledWith(
-          expect.objectContaining({
-            enabledWorkflowSteps: ["WS-002", "WS-001"],
-          }),
-        );
-      });
-    });
-
-  });
-
-  // DefaultOn workflow step handling (FN-883)
-  describe("defaultOn workflow step handling", () => {
-    it("keeps More options collapsed by default even when defaultOn workflow steps are auto-applied", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
-      ]);
-
+    it("does not render the legacy per-step checkbox UI", async () => {
+      await mockWorkflows([{ id: "WF-1", name: "QA" }]);
       renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
       });
-
-      const toggle = screen.getByTestId("task-form-more-options-toggle");
-      expect(toggle).toHaveAttribute("aria-expanded", "false");
-
-      fireEvent.click(toggle);
-
-      await waitFor(() => {
-        expect(toggle).toHaveAttribute("aria-expanded", "true");
-      });
-
-      expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
-      expect(screen.getByText(/Attachments/i)).toBeTruthy();
-      expect(screen.getByText(/Workflow Steps/i)).toBeTruthy();
-    });
-
-    it("sends undefined enabledWorkflowSteps when no defaultOn steps and user hasn't interacted", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, createdAt: "", updatedAt: "" },
-      ]);
-
-      const { props } = renderNewTaskModal();
-
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
-      });
-
-      // Don't interact with workflow steps at all
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: "No interaction task" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
-
-      await waitFor(() => {
-        expect(props.onCreateTask).toHaveBeenCalledWith(
-          expect.objectContaining({
-            enabledWorkflowSteps: undefined,
-          }),
-        );
-      });
-    });
-
-    it("sends empty array when user explicitly deselects all defaultOn steps", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
-      ]);
-
-      const { props } = renderNewTaskModal();
-
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
-      });
-
-      // Wait for auto-selection to happen
-      await waitFor(() => {
-        const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
-        expect(checkbox.checked).toBe(true);
-      });
-
-      // User explicitly deselects the auto-selected step
-      const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
-      fireEvent.click(checkbox);
-
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Deselected task" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
-
-      await waitFor(() => {
-        expect(props.onCreateTask).toHaveBeenCalledWith(
-          expect.objectContaining({
-            enabledWorkflowSteps: [],
-          }),
-        );
-      });
-    });
-
-    it("sends defaultOn step IDs when user doesn't modify the auto-selected steps", async () => {
-      const { fetchWorkflowSteps } = await import("../../api");
-      vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
-        { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", mode: "prompt" as const, enabled: true, defaultOn: true, createdAt: "", updatedAt: "" },
-        { id: "WS-002", name: "Security", description: "Check security", prompt: "Check", mode: "prompt" as const, enabled: true, defaultOn: false, createdAt: "", updatedAt: "" },
-      ]);
-
-      const { props } = renderNewTaskModal();
-
-      await waitFor(() => {
-        expect(screen.getByTestId("workflow-step-checkbox-WS-001")).toBeTruthy();
-      });
-
-      // Wait for auto-selection to happen
-      await waitFor(() => {
-        const checkbox = screen.getByTestId("workflow-step-checkbox-WS-001").querySelector('input[type="checkbox"]') as HTMLInputElement;
-        expect(checkbox.checked).toBe(true);
-      });
-
-      // Don't modify the selection — just submit.
-      // Since user hasn't explicitly changed steps, the explicitlySet flag is false,
-      // so the modal sends undefined (backend applies its own defaults)
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: "Auto-selected task" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
-
-      await waitFor(() => {
-        expect(props.onCreateTask).toHaveBeenCalledWith(
-          expect.objectContaining({
-            enabledWorkflowSteps: undefined,
-          }),
-        );
-      });
+      expect(screen.queryByTestId("workflow-step-order")).toBeNull();
+      expect(document.querySelector('[data-testid^="workflow-step-checkbox-"]')).toBeNull();
     });
   });
 
@@ -1195,12 +1055,12 @@ describe("NewTaskModal", () => {
   });
 
   describe("GitHub tracking", () => {
-    it("renders GitHub tracking after Workflow Steps in more options", async () => {
+    it("renders GitHub tracking after the Workflow picker in more options", async () => {
       renderNewTaskModal();
 
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
-      const workflowLabel = await screen.findByText("Workflow Steps");
+      const workflowLabel = await screen.findByText("Workflow");
       const githubTrackingSection = screen.getByTestId("task-form-github-tracking");
 
       expect(

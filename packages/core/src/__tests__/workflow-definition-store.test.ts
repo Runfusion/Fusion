@@ -180,4 +180,132 @@ describe("TaskStore workflow definitions (U1)", () => {
     const c = await store.createWorkflowDefinition({ name: "C", ir: makeIr() });
     expect(c.id).toBe("WF-003");
   });
+
+  // ── kind discriminator (U1, R6/KTD-1) ────────────────────────────────
+
+  // A pure-v1 start→node→end fragment IR.
+  function fragmentIr(): WorkflowIr {
+    return {
+      version: "v1",
+      name: "frag",
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "step-1", kind: "prompt", config: { name: "Doc", gateMode: "advisory", prompt: "doc it" } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "step-1", condition: "success" },
+        { from: "step-1", to: "end", condition: "success" },
+      ],
+    };
+  }
+
+  it("defaults a created workflow to kind 'workflow'", async () => {
+    const created = await store.createWorkflowDefinition({ name: "W", ir: makeIr() });
+    expect(created.kind).toBe("workflow");
+    expect((await store.getWorkflowDefinition(created.id))?.kind).toBe("workflow");
+  });
+
+  it("persists and round-trips kind 'fragment' (INSERT includes kind)", async () => {
+    const created = await store.createWorkflowDefinition({ name: "Frag", ir: fragmentIr(), kind: "fragment" });
+    expect(created.kind).toBe("fragment");
+    // Raw column persisted.
+    const raw = (store as any).db.prepare("SELECT kind FROM workflows WHERE id = ?").get(created.id) as { kind: string };
+    expect(raw.kind).toBe("fragment");
+    // Reload.
+    expect((await store.getWorkflowDefinition(created.id))?.kind).toBe("fragment");
+  });
+
+  it("preserves kind across updateWorkflowDefinition", async () => {
+    const created = await store.createWorkflowDefinition({ name: "Frag", ir: fragmentIr(), kind: "fragment" });
+    const updated = await store.updateWorkflowDefinition(created.id, { description: "edited" });
+    expect(updated.kind).toBe("fragment");
+    expect((await store.getWorkflowDefinition(created.id))?.kind).toBe("fragment");
+  });
+
+  it("listWorkflowDefinitions({kind:'fragment'}) returns only fragments", async () => {
+    await store.createWorkflowDefinition({ name: "W1", ir: makeIr() });
+    const frag = await store.createWorkflowDefinition({ name: "F1", ir: fragmentIr(), kind: "fragment" });
+    const fragments = await store.listWorkflowDefinitions({ kind: "fragment" });
+    expect(fragments.map((w) => w.id)).toEqual([frag.id]);
+    expect(fragments.every((w) => w.kind === "fragment")).toBe(true);
+  });
+
+  it("built-in list entries are kind 'workflow'", async () => {
+    const all = await store.listWorkflowDefinitions();
+    const builtins = all.filter((w) => isBuiltinWorkflowId(w.id));
+    expect(builtins.length).toBeGreaterThan(0);
+    expect(builtins.every((w) => w.kind === "workflow")).toBe(true);
+    // The workflow filter includes built-ins; the fragment filter excludes them.
+    expect((await store.listWorkflowDefinitions({ kind: "workflow" })).some((w) => isBuiltinWorkflowId(w.id))).toBe(true);
+    expect((await store.listWorkflowDefinitions({ kind: "fragment" })).some((w) => isBuiltinWorkflowId(w.id))).toBe(false);
+  });
+
+  it("cache regression: filtered then unfiltered (and reverse) are both correct", async () => {
+    await store.createWorkflowDefinition({ name: "W1", ir: makeIr() });
+    const frag = await store.createWorkflowDefinition({ name: "F1", ir: fragmentIr(), kind: "fragment" });
+
+    // filtered → unfiltered
+    const f1 = await store.listWorkflowDefinitions({ kind: "fragment" });
+    expect(f1.map((w) => w.id)).toEqual([frag.id]);
+    const allAfterFiltered = await store.listWorkflowDefinitions();
+    expect(allAfterFiltered.filter((w) => !isBuiltinWorkflowId(w.id)).map((w) => w.kind).sort()).toEqual([
+      "fragment",
+      "workflow",
+    ]);
+
+    // unfiltered → filtered (cache already populated by the unfiltered call)
+    const f2 = await store.listWorkflowDefinitions({ kind: "fragment" });
+    expect(f2.map((w) => w.id)).toEqual([frag.id]);
+    const w2 = await store.listWorkflowDefinitions({ kind: "workflow" });
+    expect(w2.filter((w) => !isBuiltinWorkflowId(w.id)).every((w) => w.kind === "workflow")).toBe(true);
+  });
+
+  it("a fragment IR survives downgradeIrToV1IfPure unchanged (persists as v1)", async () => {
+    const created = await store.createWorkflowDefinition({ name: "Frag", ir: fragmentIr(), kind: "fragment" });
+    const raw = (store as any).db.prepare("SELECT ir FROM workflows WHERE id = ?").get(created.id) as { ir: string };
+    expect(JSON.parse(raw.ir).version).toBe("v1");
+  });
+
+  it("selectTaskWorkflow rejects a fragment id with a clear error", async () => {
+    const frag = await store.createWorkflowDefinition({ name: "Frag", ir: fragmentIr(), kind: "fragment" });
+    // Create a task to select against.
+    const task = await store.createTask({ description: "t" });
+    await expect(store.selectTaskWorkflow(task.id, frag.id)).rejects.toThrow(/fragment/i);
+  });
+
+  it("setDefaultWorkflowId rejects a fragment id at the write boundary", async () => {
+    const frag = await store.createWorkflowDefinition({ name: "Frag", ir: fragmentIr(), kind: "fragment" });
+    await expect(store.setDefaultWorkflowId(frag.id)).rejects.toThrow(/fragment/i);
+    expect(await store.getDefaultWorkflowId()).toBeUndefined();
+  });
+
+  it("setDefaultWorkflowId accepts a real workflow and clears with null", async () => {
+    const wf = await store.createWorkflowDefinition({ name: "W", ir: makeIr() });
+    await store.setDefaultWorkflowId(wf.id);
+    expect(await store.getDefaultWorkflowId()).toBe(wf.id);
+    await store.setDefaultWorkflowId(null);
+    expect(await store.getDefaultWorkflowId()).toBeUndefined();
+  });
+
+  it("createTaskWithReservedId honors an explicit workflowId (precedence over default)", async () => {
+    const def = await store.createWorkflowDefinition({ name: "Explicit", ir: makeIr() });
+    const task = await store.createTaskWithReservedId(
+      { description: "t", workflowId: def.id },
+      { taskId: "task-explicit-wf" },
+    );
+    const sel = store.getTaskWorkflowSelection(task.id);
+    expect(sel?.workflowId).toBe(def.id);
+  });
+
+  it("createTaskWithReservedId treats workflowId:null as explicit opt-out", async () => {
+    const def = await store.createWorkflowDefinition({ name: "Def", ir: makeIr() });
+    await store.setDefaultWorkflowId(def.id);
+    const task = await store.createTaskWithReservedId(
+      { description: "t", workflowId: null },
+      { taskId: "task-optout-wf" },
+    );
+    const sel = store.getTaskWorkflowSelection(task.id);
+    expect(sel?.workflowId ?? undefined).toBeUndefined();
+  });
 });

@@ -27,12 +27,10 @@ function findCompositeSetupStep(steps: any[]) {
   return steps.find((step) => step.uses === "./.github/actions/setup-node-pnpm");
 }
 
-describe("CI workflow (.github/workflows/ci.yml)", () => {
+describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
   let workflow: any;
   let content: string;
   let compositeAction: any;
-  let buildSteps: any[];
-  let testShardJob: any;
   let contributingContent: string;
   let readmeContent: string;
   let cliPackageJsonContent: string;
@@ -41,12 +39,10 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
   let buildExeSuiteContent: string;
 
   beforeAll(() => {
-    const result = loadWorkflow("ci.yml");
+    const result = loadWorkflow("pr-checks.yml");
     workflow = result.parsed;
     content = result.content;
     compositeAction = loadYamlFile(".github", "actions", "setup-node-pnpm", "action.yml").parsed;
-    buildSteps = workflow.jobs?.build?.steps ?? [];
-    testShardJob = workflow.jobs?.["test-shards"];
     contributingContent = readFileSync(join(workspaceRoot, "docs", "contributing.md"), "utf-8");
     readmeContent = readFileSync(join(workspaceRoot, "README.md"), "utf-8");
     cliPackageJsonContent = readFileSync(join(workspaceRoot, "packages", "cli", "package.json"), "utf-8");
@@ -64,132 +60,54 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     );
   });
 
-  const findBuildStepByRun = (runSnippet: string) =>
-    buildSteps.find((step) => typeof step.run === "string" && step.run.includes(runSnippet));
-
   it("is valid YAML", () => {
     expect(workflow).toBeDefined();
     expect(typeof workflow).toBe("object");
   });
 
-  it("uses workflow_dispatch trigger (auto CI disabled)", () => {
-    expect(workflow.on).toHaveProperty("workflow_dispatch");
+  it("runs on pull requests targeting main and ONLY there", () => {
+    expect(workflow.on?.pull_request?.branches).toContain("main");
+    // Post-merge signal lives in full-suite.yml; the gate workflow must not
+    // double-run on push (that conflates blocking and non-blocking surfaces).
+    expect(workflow.on?.push).toBeUndefined();
   });
 
-  it("does not auto-trigger on push/pull_request", () => {
-    expect(workflow.on.push).toBeUndefined();
-    expect(workflow.on.pull_request).toBeUndefined();
+  it("blocks PRs on exactly lint, typecheck, build, and gate", () => {
+    expect(Object.keys(workflow.jobs ?? {}).sort()).toEqual(["build", "gate", "lint", "typecheck"]);
   });
 
-  it("pins dependency bootstrap to frozen lockfile", () => {
-    const jobs = [workflow.jobs?.lint, workflow.jobs?.["test-shards"], workflow.jobs?.build];
-    for (const job of jobs) {
-      expect(findCompositeSetupStep(job?.steps ?? [])).toBeDefined();
+  it("contains no shard matrix or full-suite invocation (demoted to full-suite.yml)", () => {
+    expect(workflow.jobs?.["test-shards"]).toBeUndefined();
+    expect(workflow.jobs?.["test-slow"]).toBeUndefined();
+    expect(workflow.jobs?.["test-inventory-guard"]).toBeUndefined();
+    expect(content).not.toContain("test:ci:shard");
+    expect(content).not.toContain("run: pnpm test\n");
+    expect(content).not.toContain("pnpm verify:workspace");
+  });
+
+  it("gate job runs boot smoke and the dedicated test:gate command", () => {
+    const gateSteps = workflow.jobs?.gate?.steps ?? [];
+    expect(
+      gateSteps.some(
+        (step: any) => typeof step.run === "string" && step.run.includes("node scripts/boot-smoke.mjs"),
+      ),
+    ).toBe(true);
+    // The gate must use the dedicated command — `pnpm test` routes through
+    // scripts/test-changed.mjs whose selection semantics are for local runs.
+    expect(
+      gateSteps.some(
+        (step: any) => typeof step.run === "string" && step.run.includes("pnpm test:gate"),
+      ),
+    ).toBe(true);
+  });
+
+  it("pins dependency bootstrap to frozen lockfile in every job", () => {
+    for (const jobName of ["lint", "typecheck", "build", "gate"]) {
+      expect(findCompositeSetupStep(workflow.jobs?.[jobName]?.steps ?? [])).toBeDefined();
     }
     expect(content).not.toContain("run: pnpm install\n");
     expect(content).not.toContain("--no-frozen-lockfile");
     expect(compositeAction.inputs?.["install-args"]?.default).toBe("--frozen-lockfile");
-  });
-
-  it("uses deterministic test sharding and keeps lint/build as explicit jobs", () => {
-    expect(workflow.jobs?.lint).toBeDefined();
-    expect(testShardJob).toBeDefined();
-    expect(workflow.jobs?.build).toBeDefined();
-
-    expect(testShardJob.strategy?.matrix?.shard).toEqual([1, 2, 3]);
-    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3");
-    expect(content).not.toContain("pnpm verify:workspace");
-  });
-
-  it("runs build job after lint and sharded tests, then executes slow lane and binary packaging", () => {
-    expect(workflow.jobs?.build?.needs).toEqual(["lint", "test-shards"]);
-    expect(findBuildStepByRun("pnpm build")).toBeDefined();
-    expect(findBuildStepByRun("pnpm test:slow-cli")).toBeDefined();
-    expect(findBuildStepByRun("build:exe")).toBeDefined();
-  });
-
-  it("keeps contributing docs aligned with verification and slow-lane contracts", () => {
-    expect(contributingContent).toContain("pnpm test:full` must be runnable in a clean worktree without requiring a prior `pnpm build`.");
-    expect(contributingContent).toContain("`pnpm verify:workspace` is the canonical pre-merge gate");
-    expect(contributingContent).toContain("1. `pnpm lint`");
-    expect(contributingContent).toContain("2. `pnpm test:full`");
-    expect(contributingContent).toContain("3. `pnpm build`");
-    expect(contributingContent).toContain("`pnpm test` now uses a changed-only entrypoint");
-
-    expect(contributingContent).toContain("pnpm test:slow-cli");
-    expect(contributingContent).toContain("test:pre-release");
-    expect(contributingContent).toContain("test:extension-integration");
-  });
-
-  it("keeps docs aligned with default and explicit build commands", () => {
-    expect(readmeContent).toContain("pnpm build                    # Build default workspace packages (excludes desktop/mobile)");
-    expect(readmeContent).toContain("pnpm build:all                # Build all packages (including desktop/mobile)");
-
-    expect(contributingContent).toContain("pnpm build      # default build (excludes desktop/mobile)");
-    expect(contributingContent).toContain("pnpm build:all  # full recursive build including desktop/mobile");
-  });
-
-  it("includes binary build step", () => {
-    expect(content).toContain("build:exe");
-  });
-
-  it("keeps explicit gating for audited CLI integration suites", () => {
-    expect(cliPackageJsonContent).toContain('"test:slow-cli"');
-    expect(cliPackageJsonContent).toContain("FUSION_TEST_SLOW_CLI=1");
-    expect(cliPackageJsonContent).toContain('"test:extension-integration"');
-    expect(cliPackageJsonContent).toContain("FUSION_TEST_EXTENSION_INTEGRATION=1");
-    expect(cliPackageJsonContent).toContain("extension-integration.test.ts");
-    expect(cliPackageJsonContent).toContain('"test:build-exe"');
-    expect(cliPackageJsonContent).toContain("FUSION_TEST_BUILD_EXE=1");
-
-    expect(extensionSuiteContent).toContain("describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)");
-    expect(extensionSuiteContent).toContain("FUSION_TEST_EXTENSION_INTEGRATION");
-    expect(extensionSuiteContent).toContain("dist/extension.js");
-
-    expect(agentExportSuiteContent).toContain("describe.skipIf(!SHOULD_RUN_SLOW_CLI)");
-    expect(agentExportSuiteContent).toContain("FUSION_TEST_SLOW_CLI");
-
-    expect(buildExeSuiteContent).toContain('process.env.FUSION_TEST_BUILD_EXE === "1"');
-    expect(buildExeSuiteContent).toContain('process.env.FUSION_TEST_BUILD_EXE === "true"');
-    expect(buildExeSuiteContent).not.toContain("Boolean(process.env.FUSION_TEST_BUILD_EXE)");
-  });
-
-  it("includes Bun setup", () => {
-    expect(content).toContain("oven-sh/setup-bun");
-  });
-
-  it("verifies binary exists after build", () => {
-    expect(content).toContain("test -f packages/cli/dist/fn");
-  });
-});
-
-describe("PR checks workflow (.github/workflows/pr-checks.yml)", () => {
-  let workflow: any;
-  let content: string;
-
-  beforeAll(() => {
-    const result = loadWorkflow("pr-checks.yml");
-    workflow = result.parsed;
-    content = result.content;
-  });
-
-  it("is valid YAML", () => {
-    expect(workflow).toBeDefined();
-    expect(typeof workflow).toBe("object");
-  });
-
-  it("runs on pull requests targeting main", () => {
-    expect(workflow.on?.pull_request?.branches).toContain("main");
-  });
-
-  it("uses the same deterministic test sharding command as manual CI", () => {
-    expect(workflow.jobs?.lint).toBeDefined();
-    expect(workflow.jobs?.typecheck).toBeDefined();
-    expect(workflow.jobs?.build).toBeDefined();
-    expect(workflow.jobs?.["test-shards"]).toBeDefined();
-    expect(workflow.jobs?.["test-shards"]?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
-    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4");
-    expect(content).not.toContain("run: pnpm test\n");
   });
 
   it("keeps lint as install + lint only, without Bun/setup build coupling", () => {
@@ -229,7 +147,99 @@ describe("PR checks workflow (.github/workflows/pr-checks.yml)", () => {
     ).toBe(true);
   });
 
-  it("does not spend PR action minutes on a pre-test workspace build", () => {
+  it("keeps contributing docs aligned with the gate contract", () => {
+    expect(contributingContent).toContain("pnpm test:full` must be runnable in a clean worktree without requiring a prior `pnpm build`.");
+    expect(contributingContent).toContain("`pnpm test:gate` is the merge gate");
+    expect(contributingContent).toContain("`pnpm verify:workspace` is the deep opt-in verification (not the merge gate)");
+    expect(contributingContent).toContain("1. `pnpm lint`");
+    expect(contributingContent).toContain("2. `pnpm test:full`");
+    expect(contributingContent).toContain("3. `pnpm build`");
+    expect(contributingContent).toContain("`pnpm test` now uses a changed-only entrypoint");
+
+    expect(contributingContent).toContain("pnpm test:slow-cli");
+    expect(contributingContent).toContain("test:pre-release");
+    expect(contributingContent).toContain("test:extension-integration");
+  });
+
+  it("keeps docs aligned with default and explicit build commands", () => {
+    expect(readmeContent).toContain("pnpm build                    # Build default workspace packages (excludes desktop/mobile)");
+    expect(readmeContent).toContain("pnpm build:all                # Build all packages (including desktop/mobile)");
+
+    expect(contributingContent).toContain("pnpm build      # default build (excludes desktop/mobile)");
+    expect(contributingContent).toContain("pnpm build:all  # full recursive build including desktop/mobile");
+  });
+
+  it("keeps explicit gating for audited CLI integration suites", () => {
+    expect(cliPackageJsonContent).toContain('"test:slow-cli"');
+    expect(cliPackageJsonContent).toContain("FUSION_TEST_SLOW_CLI=1");
+    expect(cliPackageJsonContent).toContain('"test:extension-integration"');
+    expect(cliPackageJsonContent).toContain("FUSION_TEST_EXTENSION_INTEGRATION=1");
+    expect(cliPackageJsonContent).toContain("extension-integration.test.ts");
+    expect(cliPackageJsonContent).toContain('"test:build-exe"');
+    expect(cliPackageJsonContent).toContain("FUSION_TEST_BUILD_EXE=1");
+
+    expect(extensionSuiteContent).toContain("describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)");
+    expect(extensionSuiteContent).toContain("FUSION_TEST_EXTENSION_INTEGRATION");
+    expect(extensionSuiteContent).toContain("dist/extension.js");
+
+    expect(agentExportSuiteContent).toContain("describe.skipIf(!SHOULD_RUN_SLOW_CLI)");
+    expect(agentExportSuiteContent).toContain("FUSION_TEST_SLOW_CLI");
+
+    expect(buildExeSuiteContent).toContain('process.env.FUSION_TEST_BUILD_EXE === "1"');
+    expect(buildExeSuiteContent).toContain('process.env.FUSION_TEST_BUILD_EXE === "true"');
+    expect(buildExeSuiteContent).not.toContain("Boolean(process.env.FUSION_TEST_BUILD_EXE)");
+  });
+
+  it("the deleted manual CI workflow stays deleted", () => {
+    // ci.yml was the trigger-disabled (FN-1541) 3-shard manual workflow; the
+    // merge-gate redesign removed it. Reintroducing it would resurrect a
+    // second, drift-prone definition of the test pipeline.
+    expect(() => loadWorkflow("ci.yml")).toThrow();
+  });
+});
+
+describe("Full suite workflow (.github/workflows/full-suite.yml)", () => {
+  let workflow: any;
+  let content: string;
+
+  beforeAll(() => {
+    const result = loadWorkflow("full-suite.yml");
+    workflow = result.parsed;
+    content = result.content;
+  });
+
+  it("is valid YAML", () => {
+    expect(workflow).toBeDefined();
+    expect(typeof workflow).toBe("object");
+  });
+
+  it("runs ONLY on push to main — never as a PR gate", () => {
+    expect(workflow.on?.push?.branches).toEqual(["main"]);
+    expect(workflow.on?.pull_request).toBeUndefined();
+  });
+
+  it("carries the demoted tier: 4-way shards, engine slow, inventory guard", () => {
+    expect(workflow.jobs?.["test-shards"]?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
+    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4");
+    expect(workflow.jobs?.["test-slow"]).toBeDefined();
+    expect(workflow.jobs?.["test-inventory-guard"]).toBeDefined();
+  });
+
+  it("keeps full clones where real-git tests need history", () => {
+    const shardSteps = workflow.jobs?.["test-shards"]?.steps ?? [];
+    const slowSteps = workflow.jobs?.["test-slow"]?.steps ?? [];
+    for (const steps of [shardSteps, slowSteps]) {
+      expect(
+        steps.some((step: any) => step.uses?.includes("actions/checkout") && step.with?.["fetch-depth"] === 0),
+      ).toBe(true);
+    }
+  });
+
+  it("still uploads per-shard timing artifacts for snapshot refresh", () => {
+    expect(content).toContain("test-timings-shard-${{ matrix.shard }}");
+  });
+
+  it("does not spend action minutes on a pre-test workspace build", () => {
     const testSteps = workflow.jobs?.["test-shards"]?.steps ?? [];
     expect(
       testSteps.some(

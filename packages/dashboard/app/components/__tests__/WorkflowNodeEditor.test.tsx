@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
 import type { WorkflowDefinition, Settings } from "@fusion/core";
 import type { Agent } from "../../api";
 import { irToFlow, flowToIr, emptyWorkflowIr, emptyWorkflowLayout, foreachChildFlowId } from "../workflow-flow-mapping";
@@ -11,11 +11,27 @@ vi.mock("../../api", () => ({
   updateWorkflow: vi.fn(),
   deleteWorkflow: vi.fn(),
   compileWorkflow: vi.fn(),
+  exportWorkflow: vi.fn(),
+  importWorkflow: vi.fn(),
+  designWorkflow: vi.fn(),
+  ApiRequestError: class ApiRequestError extends Error {
+    status: number;
+    constructor(message: string, status: number) {
+      super(message);
+      this.name = "ApiRequestError";
+      this.status = status;
+    }
+  },
+  migrateLegacyWorkflowSteps: vi.fn(),
   fetchTraits: vi.fn(),
   fetchStepParsers: vi.fn(),
   fetchModels: vi.fn(),
   fetchAgents: vi.fn(),
   fetchDiscoveredSkills: vi.fn(),
+  // Default to resolved empty lists so editors mounted by tests that don't
+  // exercise the Templates section don't reject the on-open prefetch.
+  fetchWorkflowStepTemplates: vi.fn().mockResolvedValue({ templates: [] }),
+  fetchPluginWorkflowStepTemplates: vi.fn().mockResolvedValue({ templates: [] }),
   // useAppSettings (threaded into the editor for the column-agent flag gate, U6)
   // imports these from the same module; provide resolved stubs so the real hook
   // does not throw on undefined fns.
@@ -33,14 +49,24 @@ import {
   updateWorkflow,
   compileWorkflow,
   createWorkflow,
+  deleteWorkflow,
   fetchModels,
+  migrateLegacyWorkflowSteps,
+  exportWorkflow,
+  importWorkflow,
+  designWorkflow,
+  ApiRequestError,
+  fetchWorkflowStepTemplates,
+  fetchPluginWorkflowStepTemplates,
   fetchAgents,
   fetchConfig,
   fetchSettings,
 } from "../../api";
 import type { TraitCatalogEntry } from "../../api";
+import type { WorkflowStepTemplate } from "@fusion/core";
 import { beforeEach as viBeforeEach } from "vitest";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
+import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 
 // useAppSettings (threaded into the editor for the column-agent flag gate)
 // fetches config + settings on mount via the mocked api module. Default both to
@@ -62,6 +88,7 @@ const TRAIT_CATALOG: TraitCatalogEntry[] = [
 function v2Def(): WorkflowDefinition {
   return {
     id: "WF-002",
+    kind: "workflow",
     name: "Custom",
     description: "",
     ir: {
@@ -93,12 +120,31 @@ function v2Def(): WorkflowDefinition {
 
 function builtinDef(): WorkflowDefinition {
   const d = v2Def();
-  return { ...d, id: "builtin:coding", name: "Default coding workflow" };
+  return { ...d, id: "builtin:coding", name: "Default coding workflow", description: "Ships with Fusion" };
+}
+
+function fragmentDef(): WorkflowDefinition {
+  return {
+    id: "WF-FRAG",
+    kind: "fragment",
+    name: "Lint fragment",
+    description: "A single lint step",
+    ir: {
+      version: "v1",
+      name: "Lint fragment",
+      nodes: [{ id: "lint", kind: "gate", config: { scriptName: "lint" } }],
+      edges: [],
+    },
+    layout: { lint: { x: 0, y: 0 } },
+    createdAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+  };
 }
 
 function def(): WorkflowDefinition {
   return {
     id: "WF-001",
+    kind: "workflow",
     name: "QA",
     description: "",
     ir: {
@@ -165,12 +211,40 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
     expect(await screen.findByText("Workflows")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/No workflows yet/i)).toBeInTheDocument());
-    expect(screen.getByText(/Select or create a workflow/i)).toBeInTheDocument();
+    expect(screen.getByText(/No workflow selected/i)).toBeInTheDocument();
+    expect(screen.getByTestId("wf-empty-create")).toBeInTheDocument();
   });
 
   it("renders nothing when closed", () => {
     const { container } = render(<WorkflowNodeEditor isOpen={false} onClose={() => {}} addToast={() => {}} />);
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("WorkflowNodeEditor — U1 card-style nodes", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("renders a config-summary row for a configured node", async () => {
+    // def()'s gate node "Lint" has gateMode "gate" → summary "Gate (blocks)".
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const gate = await screen.findByTestId("wf-node-gate");
+    const summary = await within(gate).findByTestId("wf-node-summary");
+    expect(summary).toHaveTextContent("Gate (blocks)");
+  });
+
+  it("does not render a summary row for structural nodes (start/end)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const start = await screen.findByTestId("wf-node-start");
+    expect(within(start).queryByTestId("wf-node-summary")).not.toBeInTheDocument();
   });
 });
 
@@ -295,6 +369,83 @@ describe("WorkflowNodeEditor — U10 columns/traits/holds", () => {
   });
 });
 
+// ── U3: deletion UX (delete buttons + cascade) ──────────────────────────────
+
+describe("WorkflowNodeEditor — U3 deletion", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+  afterEach(() => cleanup());
+
+  it("shows a Delete node button when a node is selected and removes the node on click", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const gate = await screen.findByTestId("wf-node-gate");
+    fireEvent.click(gate);
+    const delBtn = await screen.findByTestId("wf-delete-node");
+    fireEvent.click(delBtn);
+    // The gate node is removed from the canvas.
+    await waitFor(() => expect(screen.queryByTestId("wf-node-gate")).not.toBeInTheDocument());
+    // Selecting nothing → the delete button is gone too.
+    expect(screen.queryByTestId("wf-delete-node")).not.toBeInTheDocument();
+  });
+
+  it("does not render a Delete node button for built-in workflows", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      { ...def(), id: "builtin:coding", name: "Built-in" },
+    ]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const gate = await screen.findByTestId("wf-node-gate");
+    fireEvent.click(gate);
+    // Inspector renders (read-only note) but no delete button.
+    await screen.findByTestId("wf-readonly-banner");
+    expect(screen.queryByTestId("wf-delete-node")).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkflowNodeEditor — U5 auto-layout", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+  afterEach(() => cleanup());
+
+  it("shows the Auto-layout button for an editable workflow", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-node-start");
+    expect(screen.getByTestId("wf-auto-layout")).toBeInTheDocument();
+  });
+
+  it("does not show the Auto-layout button for a built-in workflow", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-readonly-banner");
+    expect(screen.queryByTestId("wf-auto-layout")).not.toBeInTheDocument();
+  });
+
+  it("repositions nodes on click (a node's transform changes)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    const { container } = render(
+      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />,
+    );
+    await screen.findByTestId("wf-node-start");
+    // React Flow positions step nodes via a translate transform on their wrapper.
+    const wrapperFor = (id: string) =>
+      container.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}"]`);
+    const before = wrapperFor("step")?.style.transform ?? "";
+    fireEvent.click(screen.getByTestId("wf-auto-layout"));
+    await waitFor(() => {
+      const after = wrapperFor("step")?.style.transform ?? "";
+      expect(after).not.toBe("");
+      expect(after).not.toBe(before);
+    });
+  });
+});
+
 // ── U8: step-inversion authoring (foreach/step-review/parse-steps/code) ──────
 
 /** A custom v2 workflow with a foreach (one step-execute child + a step-review)
@@ -303,6 +454,7 @@ describe("WorkflowNodeEditor — U10 columns/traits/holds", () => {
 function stepwiseDef(): WorkflowDefinition {
   return {
     id: "WF-STEP",
+    kind: "workflow",
     name: "Stepwise",
     description: "",
     ir: {
@@ -385,10 +537,9 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     // Adding a foreach renders a group node with an empty inspector hint absent
     // (it has a child) and an inspector for the foreach.
     fireEvent.click(screen.getByText("For-each step").closest("button")!);
-    await waitFor(
-      () => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument(),
-      { timeout: 5000 },
-    );
+    // 5s timeout: React Flow group-node mount can exceed the 1s default under
+    // cold-transform shard load (observed intermittently in CI-like runs).
+    await waitFor(() => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument(), { timeout: 5000 });
     // The foreach inspector shows the Mode select (KTD-3).
     expect(screen.getByText("Mode")).toBeInTheDocument();
     // No empty-state hint because the palette seeded a step-execute child.
@@ -564,6 +715,7 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
 function builtinStepwiseDef(): WorkflowDefinition {
   return {
     id: "builtin:stepwise-coding",
+    kind: "workflow",
     name: "Stepwise coding (built-in)",
     description: "",
     ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
@@ -660,6 +812,1086 @@ describe("WorkflowNodeEditor — built-in stepwise selection render path", () =>
     const approve = template.edges.find((e) => e.condition === "outcome:approve");
     expect(approve).toMatchObject({ from: "step-review", to: "step-done" });
     expect(approve?.kind).toBeUndefined();
+  });
+});
+
+// ── U2: edge-condition authoring (compile-banner split) ─────────────────────
+describe("WorkflowNodeEditor — U2 interpreter-only banner", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({
+      ...v2Def(),
+      ...(updates as object),
+    }));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  async function saveActive() {
+    await screen.findByText("Save");
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+  }
+
+  it("shows an info-tone status banner (not an error) when compile rejects with the interpreter-deferred suffix", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(compileWorkflow).mockRejectedValue(
+      new Error(
+        "node 'step' branches into 2 edges — graphs with branches require the workflow interpreter (deferred)",
+      ),
+    );
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await saveActive();
+
+    const banner = await screen.findByTestId("wf-interpreter-only-banner");
+    expect(banner).toHaveAttribute("role", "status");
+    expect(banner.className).toMatch(/wf-editor-banner--info/);
+    // No alert-toned error banner.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the warning error banner for other (non-interpreter) compile errors", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(compileWorkflow).mockRejectedValue(new Error("node 'step' has no outgoing edge"));
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await saveActive();
+
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent(/no outgoing edge/i);
+    expect(screen.queryByTestId("wf-interpreter-only-banner")).not.toBeInTheDocument();
+  });
+});
+
+// ── U4: dialogs, inline rename/description, dirty guard ─────────────────────
+
+/** Render the editor wrapped in a ConfirmDialogProvider so confirm()/discard
+ *  prompts mount their ConfirmDialog (the app mounts this provider globally in
+ *  App.tsx). The ConfirmDialog's primary button carries the supplied label. */
+function renderWithConfirm(ui: import("react").ReactElement) {
+  return render(<ConfirmDialogProvider>{ui}</ConfirmDialogProvider>);
+}
+
+describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dirty guard", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  // ── Create dialog (KTD-7) ──────────────────────────────────────────────────
+
+  it("opens the create dialog and blocks an empty name with an inline error", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    expect(await screen.findByTestId("wf-create-dialog")).toBeInTheDocument();
+
+    // Submitting with a whitespace-only name shows the inline error and does NOT
+    // call createWorkflow or close the dialog.
+    fireEvent.change(screen.getByTestId("wf-create-name"), { target: { value: "  " } });
+    fireEvent.click(screen.getByTestId("wf-create-submit"));
+    expect(await screen.findByTestId("wf-create-error")).toBeInTheDocument();
+    expect(createWorkflow).not.toHaveBeenCalled();
+    expect(screen.getByTestId("wf-create-dialog")).toBeInTheDocument();
+  });
+
+  it("creates and activates a workflow on a valid submit", async () => {
+    const addToast = vi.fn();
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(createWorkflow).mockResolvedValue({ ...v2Def(), id: "WF-NEW", name: "Pipeline" });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={addToast} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    fireEvent.change(await screen.findByTestId("wf-create-name"), { target: { value: "Pipeline" } });
+    fireEvent.click(screen.getByTestId("wf-create-submit"));
+
+    await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
+    const [input] = vi.mocked(createWorkflow).mock.calls[0];
+    expect((input as { name: string }).name).toBe("Pipeline");
+    // Dialog closes and the new workflow is active (its name shows in the strip).
+    await waitFor(() => expect(screen.queryByTestId("wf-create-dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("wf-workflow-name")).toHaveTextContent("Pipeline"));
+    expect(addToast).toHaveBeenCalledWith(expect.stringMatching(/Pipeline/), "success");
+  });
+
+  it("surfaces a server rejection inline and keeps the dialog open with input preserved", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(createWorkflow).mockRejectedValue(new Error("A workflow named 'Dup' already exists"));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    const nameInput = await screen.findByTestId("wf-create-name");
+    fireEvent.change(nameInput, { target: { value: "Dup" } });
+    fireEvent.click(screen.getByTestId("wf-create-submit"));
+
+    await waitFor(() => expect(screen.getByTestId("wf-create-error")).toHaveTextContent(/already exists/i));
+    // Dialog stays open; the typed name is preserved.
+    expect(screen.getByTestId("wf-create-dialog")).toBeInTheDocument();
+    expect((nameInput as HTMLInputElement).value).toBe("Dup");
+  });
+
+  // ── Template picker (U4/R7) ────────────────────────────────────────────────
+
+  it("shows Blank first (selected), built-ins, and user workflows; fragments absent", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef(), v2Def(), fragmentDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Open via the strip "New workflow" button (the empty CTA only shows with no
+    // workflows; here we have some, so use the toolbar button).
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    const blank = screen.getByTestId("wf-template-option-blank");
+    expect(blank).toHaveAttribute("aria-checked", "true");
+    // Blank is the first radio in the group.
+    const group = screen.getByTestId("wf-template-list");
+    const options = within(group).getAllByRole("radio");
+    expect(options[0]).toBe(blank);
+
+    // Built-in + user workflow present; fragment excluded.
+    expect(screen.getByTestId("wf-template-option-builtin:coding")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-template-option-WF-002")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-template-option-WF-FRAG")).not.toBeInTheDocument();
+  });
+
+  it("renders node count text for template entries", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+    // v2Def has 3 IR nodes (start, step, end).
+    expect(screen.getByTestId("wf-template-option-WF-002")).toHaveTextContent("3 nodes");
+  });
+
+  it("with no user workflows lists Blank + built-ins only (no Your-workflows header)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+    expect(screen.getByTestId("wf-template-option-blank")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-template-option-builtin:coding")).toBeInTheDocument();
+    expect(screen.queryByText("Your workflows")).not.toBeInTheDocument();
+  });
+
+  it("selecting a builtin template prefills '<name> copy' and inherits the description", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    fireEvent.click(screen.getByTestId("wf-template-option-builtin:coding"));
+    expect((screen.getByTestId("wf-create-name") as HTMLInputElement).value).toBe(
+      "Default coding workflow copy",
+    );
+    expect((screen.getByTestId("wf-create-description") as HTMLTextAreaElement).value).toBe(
+      "Ships with Fusion",
+    );
+  });
+
+  it("submitting a template seeds a fresh-ID copy: same node count, all ids differ, description inherited", async () => {
+    const builtin = builtinDef();
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtin]);
+    vi.mocked(createWorkflow).mockResolvedValue({ ...v2Def(), id: "WF-NEW", name: "Default coding workflow copy" });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    fireEvent.click(screen.getByTestId("wf-template-option-builtin:coding"));
+    fireEvent.click(screen.getByTestId("wf-create-submit"));
+
+    await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
+    const [input] = vi.mocked(createWorkflow).mock.calls[0];
+    const created = input as { name: string; description?: string; kind?: string; ir: { nodes: { id: string }[] } };
+    expect(created.kind).toBe("workflow");
+    expect(created.description).toBe("Ships with Fusion");
+    // Same node count as the source IR.
+    expect(created.ir.nodes).toHaveLength(builtin.ir.nodes.length);
+    // Every node id is fresh (none shared with the source).
+    const sourceIds = new Set(builtin.ir.nodes.map((n) => n.id));
+    for (const n of created.ir.nodes) {
+      expect(sourceIds.has(n.id)).toBe(false);
+    }
+  });
+
+  it("blank flow seeds an emptyWorkflowIr-shaped graph (start → end)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    vi.mocked(createWorkflow).mockResolvedValue({ ...v2Def(), id: "WF-NEW", name: "Fresh" });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    // Blank is default-selected; just name + submit.
+    fireEvent.change(screen.getByTestId("wf-create-name"), { target: { value: "Fresh" } });
+    fireEvent.click(screen.getByTestId("wf-create-submit"));
+
+    await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
+    const [input] = vi.mocked(createWorkflow).mock.calls[0];
+    const created = input as { ir: { nodes: { kind: string }[]; edges: unknown[] } };
+    expect(created.ir.nodes.map((n) => n.kind)).toEqual(["start", "end"]);
+    expect(created.ir.edges).toHaveLength(1);
+  });
+
+  it("ArrowDown moves the selected radio (keyboard a11y)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    const blank = screen.getByTestId("wf-template-option-blank");
+    expect(blank).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(blank, { key: "ArrowDown" });
+    expect(blank).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("wf-template-option-builtin:coding")).toHaveAttribute("aria-checked", "true");
+  });
+
+  // ── Delete confirm ─────────────────────────────────────────────────────────
+
+  it("does not delete when no ConfirmDialogProvider is mounted (fallback cancels)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click((await screen.findByText("Delete")).closest("button")!);
+    // The no-op fallback resolves false → deleteWorkflow is never called.
+    // Let the async fallback settle deterministically (no wall-clock delay).
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(deleteWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("deletes after confirming in the ConfirmDialog (with provider)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(deleteWorkflow).mockResolvedValue(undefined);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click((await screen.findByText("Delete")).closest("button")!);
+    // The confirm dialog's primary (danger) button carries the "Delete" label.
+    const dialog = await screen.findByRole("dialog", { name: /Delete workflow\?/i });
+    const confirmBtn = within(dialog).getByRole("button", { name: "Delete" });
+    fireEvent.click(confirmBtn);
+    await waitFor(() => expect(deleteWorkflow).toHaveBeenCalledWith("WF-002", undefined));
+  });
+
+  // ── Inline rename (KTD-10) ─────────────────────────────────────────────────
+
+  it("renames the workflow inline: click → input prefilled → Enter commits", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const nameBtn = await screen.findByTestId("wf-workflow-name");
+    expect(nameBtn).toHaveTextContent("Custom");
+    fireEvent.click(nameBtn);
+    const input = (await screen.findByTestId("wf-workflow-name-input")) as HTMLInputElement;
+    expect(input.value).toBe("Custom");
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("wf-workflow-name")).toHaveTextContent("Renamed"));
+  });
+
+  it("cancels an inline rename on Escape (value reverts)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Wait for the editor to fully stabilize (column panel rendered) before
+    // interacting — clicking mid-load races the initial render cycle.
+    await screen.findByText("Save");
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId("wf-workflow-name"));
+    const input = (await screen.findByTestId("wf-workflow-name-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Throwaway" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(screen.getByTestId("wf-workflow-name")).toHaveTextContent("Custom"));
+  });
+
+  it("shows a built-in workflow name as plain text (no rename input on click)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const nameEl = await screen.findByTestId("wf-workflow-name");
+    // Built-in renders a plain <span>, not a clickable button.
+    expect(nameEl.tagName).toBe("SPAN");
+    fireEvent.click(nameEl);
+    expect(screen.queryByTestId("wf-workflow-name-input")).not.toBeInTheDocument();
+  });
+
+  it("persists a renamed name through the save PATCH", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...v2Def(), ...(updates as object) }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByText("Save");
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId("wf-workflow-name"));
+    const input = await screen.findByTestId("wf-workflow-name-input");
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    expect((updates as { name?: string }).name).toBe("Renamed");
+  });
+
+  // ── Dirty guard ────────────────────────────────────────────────────────────
+
+  it("closes immediately with no confirm when there are no edits", async () => {
+    const onClose = vi.fn();
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+    // Wait for the workflow to load (clean snapshot established).
+    await screen.findByTestId("wf-workflow-name");
+    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    // No discard confirm dialog appeared.
+    expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument();
+  });
+
+  it("load → immediately close produces no spurious dirty prompt", async () => {
+    // Regression for mapping-default asymmetry: the loaded snapshot is computed
+    // through flowToIr(irToFlow(...)) so default-materialization matches the live
+    // side and a freshly-loaded workflow is never dirty.
+    const onClose = vi.fn();
+    vi.mocked(fetchWorkflows).mockResolvedValue([stepwiseDef()]);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+    await screen.findByTestId("wf-node-foreach");
+    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument();
+  });
+
+  it("prompts to discard on close when dirty; confirming closes, cancelling keeps it open", async () => {
+    const onClose = vi.fn();
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+    // Make an edit: inline rename.
+    fireEvent.click(await screen.findByTestId("wf-workflow-name"));
+    const input = await screen.findByTestId("wf-workflow-name-input");
+    fireEvent.change(input, { target: { value: "Edited" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // Close → discard confirm appears. Cancel keeps the editor open.
+    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    const dialog = await screen.findByRole("dialog", { name: /Discard unsaved changes/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument());
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Close again → confirm → onClose fires.
+    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    const dialog2 = await screen.findByRole("dialog", { name: /Discard unsaved changes/i });
+    fireEvent.click(within(dialog2).getByRole("button", { name: /Discard/i }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("prompts to discard when switching workflows while dirty", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      v2Def(),
+      { ...v2Def(), id: "WF-OTHER", name: "Other" },
+    ]);
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Edit the active workflow.
+    fireEvent.click(await screen.findByTestId("wf-workflow-name"));
+    const input = await screen.findByTestId("wf-workflow-name-input");
+    fireEvent.change(input, { target: { value: "Edited" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // Switch to the other workflow in the sidebar → discard confirm.
+    fireEvent.click(screen.getByText("Other"));
+    const dialog = await screen.findByRole("dialog", { name: /Discard unsaved changes/i });
+    // Cancel keeps the current workflow (name still "Edited").
+    fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Discard unsaved changes/i })).not.toBeInTheDocument());
+    expect(screen.getByTestId("wf-workflow-name")).toHaveTextContent("Edited");
+  });
+});
+
+// ── U6: empty / onboarding states ───────────────────────────────────────────
+
+// A user-owned workflow whose graph is only start→end (no user-authored nodes).
+function trivialUserDef(): WorkflowDefinition {
+  return {
+    id: "WF-TRIVIAL",
+    kind: "workflow",
+    name: "Trivial",
+    description: "",
+    ir: {
+      version: "v1",
+      name: "Trivial",
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "end", kind: "end" },
+      ],
+      edges: [{ from: "start", to: "end", condition: "success" }],
+    },
+    layout: { start: { x: 0, y: 0 }, end: { x: 240, y: 0 } },
+    createdAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+  };
+}
+
+describe("WorkflowNodeEditor — U6 empty/onboarding states", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("no-workflow empty state CTA opens the create dialog", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const cta = await screen.findByTestId("wf-empty-create");
+    expect(screen.queryByTestId("wf-create-dialog")).not.toBeInTheDocument();
+    fireEvent.click(cta);
+    expect(await screen.findByTestId("wf-create-dialog")).toBeInTheDocument();
+  });
+
+  it("renders the trivial-graph palette hint for a user-owned start→end workflow", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([trivialUserDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Wait for hydration (the palette appears for editable workflows).
+    await screen.findByText("Save");
+    expect(await screen.findByTestId("wf-trivial-hint")).toBeInTheDocument();
+  });
+
+  it("hides the trivial-graph hint once a user node exists", async () => {
+    // v2Def() carries a "prompt" step → a user-authored node.
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByText("Save");
+    await screen.findByTestId("wf-column-panel");
+    expect(screen.queryByTestId("wf-trivial-hint")).not.toBeInTheDocument();
+  });
+
+  it("never renders the trivial-graph hint for a built-in workflow", async () => {
+    // Built-in that is itself trivial (start→end only) — must still not show the hint.
+    const builtinTrivial: WorkflowDefinition = { ...trivialUserDef(), id: "builtin:trivial", name: "Built-in" };
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinTrivial]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    expect(await screen.findByTestId("wf-readonly-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-trivial-hint")).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkflowNodeEditor — U2 legacy-step migration notice", () => {
+  beforeEach(() => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("shows the one-time notice when migration converted steps", async () => {
+    vi.mocked(migrateLegacyWorkflowSteps).mockResolvedValue({ migrated: 2, skipped: 0, combinedWorkflowId: "WF-010" });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} projectId="p1" />);
+    expect(await screen.findByTestId("wf-migration-notice")).toBeInTheDocument();
+    expect(migrateLegacyWorkflowSteps).toHaveBeenCalledWith("p1");
+  });
+
+  it("dismisses the notice, persisting the dismissal so it stays hidden on re-open", async () => {
+    vi.mocked(migrateLegacyWorkflowSteps).mockResolvedValue({ migrated: 2, skipped: 0, combinedWorkflowId: "WF-010" });
+    const { unmount } = render(
+      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} projectId="p1" />,
+    );
+    const notice = await screen.findByTestId("wf-migration-notice");
+    expect(notice).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("wf-migration-notice-dismiss"));
+    await waitFor(() => expect(screen.queryByTestId("wf-migration-notice")).not.toBeInTheDocument());
+    expect(localStorage.getItem("fusion:wf-migration-notice-dismissed:p1")).toBe("1");
+
+    // Re-open the editor: the persisted dismissal keeps the notice hidden even
+    // though migration still reports migrated > 0.
+    unmount();
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} projectId="p1" />);
+    await screen.findByTestId("wf-new-workflow");
+    expect(screen.queryByTestId("wf-migration-notice")).not.toBeInTheDocument();
+  });
+
+  it("does not show the notice when migration converted nothing", async () => {
+    vi.mocked(migrateLegacyWorkflowSteps).mockResolvedValue({ migrated: 0, skipped: 3 });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} projectId="p1" />);
+    await screen.findByTestId("wf-new-workflow");
+    expect(screen.queryByTestId("wf-migration-notice")).not.toBeInTheDocument();
+  });
+});
+
+// ── U5: import/export ───────────────────────────────────────────────────────
+
+describe("WorkflowNodeEditor — U5 import/export", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+    vi.mocked(migrateLegacyWorkflowSteps).mockResolvedValue({ migrated: 0, skipped: 0 });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("export button is enabled on a clean canvas and disabled after an edit", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    const exportBtn = await screen.findByTestId("wf-export");
+    // Clean canvas → enabled.
+    await waitFor(() => expect(exportBtn).not.toBeDisabled());
+
+    // Make an edit: rename the workflow (click the name, type a new value).
+    fireEvent.click(screen.getByTestId("wf-workflow-name"));
+    const nameInput = await screen.findByTestId("wf-workflow-name-input");
+    fireEvent.change(nameInput, { target: { value: "Custom edited" } });
+
+    await waitFor(() => expect(screen.getByTestId("wf-export")).toBeDisabled());
+  });
+
+  it("export click downloads via exportWorkflow", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(exportWorkflow).mockResolvedValue({
+      fusionWorkflowExport: 1,
+      schemaVersion: 109,
+      kind: "workflow",
+      name: "Custom",
+      description: "",
+      ir: v2Def().ir,
+      layout: {},
+    });
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const exportBtn = await screen.findByTestId("wf-export");
+    await waitFor(() => expect(exportBtn).not.toBeDisabled());
+    fireEvent.click(exportBtn);
+    await waitFor(() => expect(exportWorkflow).toHaveBeenCalledWith("WF-002", undefined));
+  });
+
+  it("import success refreshes the list, activates the imported workflow, and toasts", async () => {
+    const addToast = vi.fn();
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    const imported: WorkflowDefinition = { ...v2Def(), id: "WF-IMP", name: "Brought in" };
+    vi.mocked(importWorkflow).mockResolvedValue({
+      workflow: imported,
+      strippedApprovalFlags: false,
+      warnings: [],
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={addToast} />);
+    await screen.findByTestId("wf-import");
+    // After the import resolves, loadWorkflows re-runs; return the imported one.
+    vi.mocked(fetchWorkflows).mockResolvedValue([imported]);
+
+    const fileInput = screen.getByTestId("wf-import-input") as HTMLInputElement;
+    const file = new File([JSON.stringify({ fusionWorkflowExport: 1 })], "wf.json", { type: "application/json" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(importWorkflow).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith(expect.stringMatching(/Brought in/), "success"),
+    );
+    // Imported workflow is now active in the sidebar (its list item carries the
+    // active class) and rendered into the canvas — appearing more than once.
+    await waitFor(() => expect(screen.getAllByText("Brought in").length).toBeGreaterThan(0));
+    const activeItem = document.querySelector(".wf-editor-list-item.active");
+    expect(activeItem).toHaveTextContent("Brought in");
+  });
+
+  it("import 4xx renders the persistent inline error region; list unchanged", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(importWorkflow).mockRejectedValue(
+      new ApiRequestError("Not a Fusion workflow export file", 400),
+    );
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-import");
+
+    const fileInput = screen.getByTestId("wf-import-input") as HTMLInputElement;
+    const file = new File([JSON.stringify({ nope: true })], "wf.json", { type: "application/json" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    const errorRegion = await screen.findByTestId("wf-import-error");
+    expect(errorRegion).toHaveTextContent("Not a Fusion workflow export file");
+    expect(errorRegion).toHaveAttribute("role", "alert");
+    // List unchanged: still no workflows.
+    expect(screen.getByText(/No workflows yet/i)).toBeInTheDocument();
+  });
+
+  it("import strip notice toast fires when approval flags were removed", async () => {
+    const addToast = vi.fn();
+    const imported: WorkflowDefinition = { ...v2Def(), id: "WF-IMP2", name: "Stripped in" };
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(importWorkflow).mockResolvedValue({
+      workflow: imported,
+      strippedApprovalFlags: true,
+      warnings: [],
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={addToast} />);
+    await screen.findByTestId("wf-import");
+    vi.mocked(fetchWorkflows).mockResolvedValue([imported]);
+
+    const fileInput = screen.getByTestId("wf-import-input") as HTMLInputElement;
+    const file = new File([JSON.stringify({ fusionWorkflowExport: 1 })], "wf.json", { type: "application/json" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith(
+        expect.stringMatching(/Auto-approval flags were removed/),
+        "warning",
+      ),
+    );
+  });
+});
+
+describe("WorkflowNodeEditor — U9 palette Templates section", () => {
+  // A clean prompt-mode built-in step template + a script-mode one.
+  function stepTpl(over: Partial<WorkflowStepTemplate> = {}): WorkflowStepTemplate {
+    return {
+      id: "qa-check",
+      name: "QA Check",
+      description: "Run lint and tests",
+      category: "Quality",
+      prompt: "You are a QA tester.",
+      ...over,
+    };
+  }
+
+  function pluginTpl(): { pluginId: string; template: WorkflowStepTemplate } {
+    return {
+      pluginId: "acme-plugin",
+      template: stepTpl({ id: "acme-scan", name: "Acme Scan", prompt: "Scan it." }),
+    };
+  }
+
+  // A clean fragment (no seam) — one gate node.
+  function cleanFragment(over: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
+    return {
+      id: "WF-FRAG-A",
+      kind: "fragment",
+      name: "Lint fragment",
+      description: "A single lint step",
+      ir: {
+        version: "v1",
+        name: "Lint fragment",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "lint", kind: "gate", config: { name: "Lint", scriptName: "lint", gateMode: "gate" } },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "lint", condition: "success" },
+          { from: "lint", to: "end", condition: "success" },
+        ],
+      },
+      layout: {},
+      createdAt: "2026-06-03T00:00:00.000Z",
+      updatedAt: "2026-06-03T00:00:00.000Z",
+      ...over,
+    };
+  }
+
+  // A fragment that carries a "merge" seam (collides with def()'s merge node).
+  function mergeFragment(): WorkflowDefinition {
+    return {
+      id: "WF-FRAG-MERGE",
+      kind: "fragment",
+      name: "Boundary fragment",
+      description: "Carries a merge seam",
+      ir: {
+        version: "v1",
+        name: "Boundary fragment",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "m", kind: "prompt", config: { seam: "merge" } },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "m", condition: "success" },
+          { from: "m", to: "end", condition: "success" },
+        ],
+      },
+      layout: {},
+      createdAt: "2026-06-03T00:00:00.000Z",
+      updatedAt: "2026-06-03T00:00:00.000Z",
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+    vi.mocked(migrateLegacyWorkflowSteps).mockResolvedValue({ migrated: 0, skipped: 0 });
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({ templates: [] });
+    vi.mocked(fetchPluginWorkflowStepTemplates).mockResolvedValue({ templates: [] });
+    try {
+      localStorage.removeItem("fusion:wf-templates-collapsed");
+    } catch {
+      // ignore
+    }
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("renders three subsections — alphabetical, with plugin owner badge", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      def(),
+      cleanFragment({ id: "WF-FRAG-B", name: "Zeta fragment" }),
+      cleanFragment({ id: "WF-FRAG-A", name: "Alpha fragment" }),
+    ]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: [stepTpl({ id: "zed", name: "Zed Step" }), stepTpl({ id: "qa-check", name: "QA Check" })],
+    });
+    vi.mocked(fetchPluginWorkflowStepTemplates).mockResolvedValue({ templates: [pluginTpl()] });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    const section = await screen.findByTestId("wf-palette-templates");
+    // Three subsection headers present.
+    expect(within(section).getByText("Fragments")).toBeInTheDocument();
+    expect(within(section).getByText("Built-in steps")).toBeInTheDocument();
+    expect(within(section).getByText("Plugin steps")).toBeInTheDocument();
+
+    // Fragments alphabetical: Alpha before Zeta.
+    expect(screen.getByTestId("wf-tpl-fragment-WF-FRAG-A")).toBeInTheDocument();
+    const fragBtns = within(section)
+      .getAllByText(/fragment/i)
+      .map((n) => n.textContent);
+    const alphaIdx = fragBtns.findIndex((t) => /Alpha/.test(t ?? ""));
+    const zetaIdx = fragBtns.findIndex((t) => /Zeta/.test(t ?? ""));
+    expect(alphaIdx).toBeLessThan(zetaIdx);
+
+    // Plugin entry shows the owner badge.
+    const pluginEntry = screen.getByTestId("wf-tpl-plugin-acme-scan");
+    expect(pluginEntry).toHaveTextContent("acme-plugin");
+  });
+
+  it("clicking a step-template entry adds a pre-configured node", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: [stepTpl({ id: "qa-check", name: "QA Check", prompt: "test it" })],
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+    // Canvas can lag the palette under cold-transform shard load.
+    await screen.findByTestId("wf-node-gate", undefined, { timeout: 3000 });
+
+    const before = screen.queryAllByTestId("wf-node-prompt").length;
+    fireEvent.click(screen.getByTestId("wf-tpl-step-qa-check"));
+    await waitFor(
+      () => expect(screen.queryAllByTestId("wf-node-prompt").length).toBe(before + 1),
+      { timeout: 3000 },
+    );
+  });
+
+  it("clicking a fragment with a duplicate merge seam surfaces the inline conflict; no insertion", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), mergeFragment()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+
+    const beforeNodes = document.querySelectorAll('[data-testid^="wf-node-"]').length;
+    fireEvent.click(screen.getByTestId("wf-tpl-fragment-WF-FRAG-MERGE"));
+
+    const conflict = await screen.findByTestId("wf-tpl-conflict");
+    expect(conflict).toHaveAttribute("role", "alert");
+    expect(conflict).toHaveTextContent(/merge/);
+    // No node added.
+    expect(document.querySelectorAll('[data-testid^="wf-node-"]').length).toBe(beforeNodes);
+  });
+
+  it("clicking a clean fragment inserts its non-start/end nodes", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), cleanFragment()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+
+    const beforeGates = screen.queryAllByTestId("wf-node-gate").length;
+    fireEvent.click(screen.getByTestId("wf-tpl-fragment-WF-FRAG-A"));
+    // cleanFragment has exactly one body node (the gate) after start/end strip.
+    await waitFor(() =>
+      expect(screen.getAllByTestId("wf-node-gate").length).toBe(beforeGates + 1),
+    );
+  });
+
+  it("filter input is absent with ≤8 entries and present with >8; filtering narrows entries", async () => {
+    // 1 fragment + 8 built-in steps = 9 entries (> 8).
+    const manySteps = Array.from({ length: 8 }, (_, i) =>
+      stepTpl({ id: `s-${i}`, name: `Step ${i}` }),
+    );
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), cleanFragment()]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({ templates: manySteps });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+
+    const filter = await screen.findByTestId("wf-template-filter");
+    // All 8 step entries present pre-filter.
+    expect(screen.getAllByTestId(/^wf-tpl-step-/).length).toBe(8);
+    // Filter to "Step 3" → only that step survives.
+    fireEvent.change(filter, { target: { value: "Step 3" } });
+    await waitFor(() => expect(screen.getAllByTestId(/^wf-tpl-step-/).length).toBe(1));
+    expect(screen.getByTestId("wf-tpl-step-s-3")).toBeInTheDocument();
+    // Fragment (name "Lint fragment") no longer matches.
+    expect(screen.queryByTestId("wf-tpl-fragment-WF-FRAG-A")).not.toBeInTheDocument();
+  });
+
+  it("filter input absent with ≤8 entries", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), cleanFragment()]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: [stepTpl(), stepTpl({ id: "two", name: "Two" })],
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+    expect(screen.queryByTestId("wf-template-filter")).not.toBeInTheDocument();
+  });
+
+  it("hides the Fragments subsection when no fragments exist", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({ templates: [stepTpl()] });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const section = await screen.findByTestId("wf-palette-templates");
+    expect(within(section).queryByText("Fragments")).not.toBeInTheDocument();
+    expect(within(section).getByText("Built-in steps")).toBeInTheDocument();
+  });
+
+  it("disables all entries when the active workflow is a built-in", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef(), cleanFragment()]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({ templates: [stepTpl()] });
+    vi.mocked(fetchPluginWorkflowStepTemplates).mockResolvedValue({ templates: [pluginTpl()] });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+
+    expect(screen.getByTestId("wf-tpl-fragment-WF-FRAG-A")).toBeDisabled();
+    expect(screen.getByTestId("wf-tpl-step-qa-check")).toBeDisabled();
+    expect(screen.getByTestId("wf-tpl-plugin-acme-scan")).toBeDisabled();
+  });
+});
+
+// ── U10: Design-with-AI editor affordances ──────────────────────────────────
+
+describe("WorkflowNodeEditor — U10 design-with-AI", () => {
+  // A distinctive designed IR: a single script node so the canvas renders
+  // `wf-node-script` (absent from the active v2Def, which has a prompt node).
+  function designedResult(over: Partial<import("../../api").DesignWorkflowResult> = {}) {
+    return {
+      ir: {
+        version: "v1" as const,
+        name: "AI designed",
+        nodes: [
+          { id: "start", kind: "start" as const },
+          { id: "ai-lint", kind: "script" as const, config: { scriptName: "lint" } },
+          { id: "end", kind: "end" as const },
+        ],
+        edges: [
+          { from: "start", to: "ai-lint", condition: "success" as const },
+          { from: "ai-lint", to: "end", condition: "success" as const },
+        ],
+      },
+      layout: { start: { x: 0, y: 0 }, "ai-lint": { x: 120, y: 0 }, end: { x: 240, y: 0 } },
+      interpreterOnly: false,
+      strippedApprovalFlags: false,
+      ...over,
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+    vi.mocked(migrateLegacyWorkflowSteps).mockResolvedValue({ migrated: 0, skipped: 0 });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  // ── Create dialog flow ─────────────────────────────────────────────────────
+
+  it("toggle reveals the prompt textarea; success creates the workflow from the returned IR and closes the dialog", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(designWorkflow).mockResolvedValue(designedResult());
+    vi.mocked(createWorkflow).mockResolvedValue({ ...v2Def(), id: "WF-AI", name: "AI: do the thing" });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    // Textarea hidden until toggled.
+    expect(screen.queryByTestId("wf-ai-prompt")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("wf-ai-toggle"));
+    const prompt = await screen.findByTestId("wf-ai-prompt");
+    fireEvent.change(prompt, { target: { value: "do the thing" } });
+    fireEvent.click(screen.getByTestId("wf-ai-submit"));
+
+    await waitFor(() => expect(designWorkflow).toHaveBeenCalledWith(
+      { prompt: "do the thing" },
+      undefined,
+      expect.any(AbortSignal),
+    ));
+    await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
+    const [input] = vi.mocked(createWorkflow).mock.calls[0];
+    // createWorkflow seeded from the returned IR (node ids/count match).
+    const ir = (input as { ir: { nodes: Array<{ id: string }> } }).ir;
+    expect(ir.nodes.map((n) => n.id)).toEqual(["start", "ai-lint", "end"]);
+    // Dialog closed.
+    await waitFor(() => expect(screen.queryByTestId("wf-create-dialog")).not.toBeInTheDocument());
+  });
+
+  it("422 rejection shows the inline error; createWorkflow not called; dialog stays open", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(designWorkflow).mockRejectedValue(
+      new ApiRequestError("The AI response was not valid JSON.", 422),
+    );
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+    fireEvent.click(screen.getByTestId("wf-ai-toggle"));
+    fireEvent.change(await screen.findByTestId("wf-ai-prompt"), { target: { value: "bad" } });
+    fireEvent.click(screen.getByTestId("wf-ai-submit"));
+
+    const err = await screen.findByTestId("wf-ai-error");
+    expect(err).toHaveTextContent("The AI response was not valid JSON.");
+    expect(err).toHaveAttribute("role", "alert");
+    expect(createWorkflow).not.toHaveBeenCalled();
+    expect(screen.getByTestId("wf-create-dialog")).toBeInTheDocument();
+  });
+
+  it("in-flight: submit disabled + Cancel visible; cancel aborts and re-enables", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    let rejectFn: ((e: unknown) => void) | undefined;
+    vi.mocked(designWorkflow).mockImplementation((_input, _pid, signal) => {
+      return new Promise((_resolve, reject) => {
+        rejectFn = reject;
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+    fireEvent.click(screen.getByTestId("wf-ai-toggle"));
+    fireEvent.change(await screen.findByTestId("wf-ai-prompt"), { target: { value: "slow one" } });
+    fireEvent.click(screen.getByTestId("wf-ai-submit"));
+
+    // In-flight: submit disabled, Cancel visible, section aria-busy.
+    await waitFor(() => expect(screen.getByTestId("wf-ai-submit")).toBeDisabled());
+    expect(screen.getByTestId("wf-ai-cancel")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-ai-create")).toHaveAttribute("aria-busy", "true");
+
+    // Cancel aborts → re-enables, no error shown.
+    fireEvent.click(screen.getByTestId("wf-ai-cancel"));
+    await waitFor(() => expect(screen.getByTestId("wf-ai-submit")).not.toBeDisabled());
+    expect(screen.queryByTestId("wf-ai-error")).not.toBeInTheDocument();
+    expect(createWorkflow).not.toHaveBeenCalled();
+    expect(rejectFn).toBeDefined();
+  });
+
+  it("interpreterOnly result seeds the info banner after the workflow loads", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(designWorkflow).mockResolvedValue(designedResult({ interpreterOnly: true }));
+    vi.mocked(createWorkflow).mockResolvedValue({ ...v2Def(), id: "WF-AI", name: "AI branchy" });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+    fireEvent.click(screen.getByTestId("wf-ai-toggle"));
+    fireEvent.change(await screen.findByTestId("wf-ai-prompt"), { target: { value: "branchy" } });
+    fireEvent.click(screen.getByTestId("wf-ai-submit"));
+
+    expect(await screen.findByTestId("wf-interpreter-only-banner")).toBeInTheDocument();
+  });
+
+  // ── Toolbar flow ───────────────────────────────────────────────────────────
+
+  it("hides the toolbar Design-with-AI button for built-ins", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-readonly-banner");
+    expect(screen.queryByTestId("wf-ai-edit")).not.toBeInTheDocument();
+  });
+
+  it("toolbar flow over a clean canvas: success confirms then replaces the graph and leaves it dirty", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(designWorkflow).mockResolvedValue(designedResult());
+
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Open the panel and submit against the active workflow (no edits = clean).
+    fireEvent.click(await screen.findByTestId("wf-ai-edit"));
+    fireEvent.change(await screen.findByTestId("wf-ai-edit-prompt"), { target: { value: "rebuild it" } });
+    fireEvent.click(screen.getByTestId("wf-ai-edit-submit"));
+
+    await waitFor(() => expect(designWorkflow).toHaveBeenCalledWith(
+      { prompt: "rebuild it", workflowId: "WF-002" },
+      undefined,
+      expect.any(AbortSignal),
+    ));
+    // Always-confirm replace dialog (even though clean).
+    const dialog = await screen.findByRole("dialog", { name: /Replace graph/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Replace/i }));
+
+    // Canvas replaced: the designed script node appears.
+    await waitFor(() => expect(screen.getByTestId("wf-node-script")).toBeInTheDocument());
+    // Dirty: closing now prompts the discard guard.
+    fireEvent.click(screen.getByLabelText("Close workflow editor"));
+    expect(await screen.findByRole("dialog", { name: /Discard unsaved changes/i })).toBeInTheDocument();
+  });
+
+  it("toolbar flow: cancelling the replace confirm keeps the canvas unchanged", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(designWorkflow).mockResolvedValue(designedResult());
+
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Make a dirty edit first (inline rename) so we can prove it survives a cancel.
+    fireEvent.click(await screen.findByTestId("wf-workflow-name"));
+    const input = await screen.findByTestId("wf-workflow-name-input");
+    fireEvent.change(input, { target: { value: "Kept name" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    fireEvent.click(screen.getByTestId("wf-ai-edit"));
+    fireEvent.change(await screen.findByTestId("wf-ai-edit-prompt"), { target: { value: "replace pls" } });
+    fireEvent.click(screen.getByTestId("wf-ai-edit-submit"));
+
+    const dialog = await screen.findByRole("dialog", { name: /Replace graph/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Cancel/i }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /Replace graph/i })).not.toBeInTheDocument(),
+    );
+
+    // The designed script node was NOT inserted; the prior edit is intact.
+    expect(screen.queryByTestId("wf-node-script")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wf-workflow-name")).toHaveTextContent("Kept name");
+  });
+
+  it("toolbar flow: 422 shows the inline panel error and leaves the canvas untouched", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(designWorkflow).mockRejectedValue(
+      new ApiRequestError("Invalid workflow IR", 422),
+    );
+
+    renderWithConfirm(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-ai-edit"));
+    fireEvent.change(await screen.findByTestId("wf-ai-edit-prompt"), { target: { value: "nope" } });
+    fireEvent.click(screen.getByTestId("wf-ai-edit-submit"));
+
+    const err = await screen.findByTestId("wf-ai-edit-error");
+    expect(err).toHaveTextContent("Invalid workflow IR");
+    expect(err).toHaveAttribute("role", "alert");
+    // No replace confirm appeared; canvas unchanged (no script node).
+    expect(screen.queryByRole("dialog", { name: /Replace graph/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("wf-node-script")).not.toBeInTheDocument();
   });
 });
 

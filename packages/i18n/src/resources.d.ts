@@ -1443,6 +1443,7 @@ export default interface Resources {
       "continue": "Continue",
       "create": "Create",
       "delete": "Delete",
+      "dismiss": "Dismiss",
       "edit": "Edit",
       "editMode": "Edit",
       "learnMore": "Learn more →",
@@ -2444,7 +2445,7 @@ export default interface Resources {
       "viewActivityLog": "View Activity Log",
       "viewProjects": "View Projects",
       "viewUsage": "View usage",
-      "workflowSteps": "Workflow Steps",
+      "workflows": "Workflows",
       "workingBranch": "Working branch"
     },
     "health": {
@@ -3460,7 +3461,7 @@ export default interface Resources {
       "terminal": "Terminal",
       "todos": "Todos",
       "usage": "Usage",
-      "workflowSteps": "Workflow Steps"
+      "workflows": "Workflows"
     },
     "newTaskModal": {
       "addDependencies": "Add dependencies",
@@ -6114,6 +6115,12 @@ export default interface Resources {
       "switchToPlainText": "Switch to plain text",
       "yes": "Yes"
     },
+    "taskFields": {
+      "moreFields": "Additional fields",
+      "orphaned": "Orphaned fields",
+      "saveFailed": "Failed to save field",
+      "unset": "—"
+    },
     "taskForm": {
       "addDependencies": "Add dependencies",
       "attachHint": "You can also paste images or drag & drop",
@@ -6213,8 +6220,12 @@ export default interface Resources {
       "titlePlaceholder": "Task title",
       "useDropdown": "Use dropdown",
       "usingPreset": "Using preset: {{name}}",
-      "workflowStepsDescription": "Select steps to run after task implementation completes",
-      "workflowStepsLabel": "Workflow Steps",
+      "workflowDefaultBadge": "(default)",
+      "workflowHelp": "The selected workflow's steps run automatically around this task's execution.",
+      "workflowLabel": "Workflow",
+      "workflowNone": "No workflow",
+      "workflowsCta": "Set up workflows in the editor",
+      "workflowsLoading": "Loading workflows…",
       "workingBranchLabel": "Working branch"
     },
     "taskHandlers": {
@@ -6717,18 +6728,80 @@ export default interface Resources {
       "unplacedCount_one": "{{count}} nodes not placed in a column",
       "unplacedCount_other": "{{count}} nodes not placed in a column"
     },
+    "workflowFields": {
+      "add": "Add field",
+      "addOption": "Add option",
+      "badge": "Render as badge",
+      "default": "Default",
+      "defaultLabel": "Default value",
+      "defaultTrue": "Default on",
+      "duplicateId": "A field with that id already exists",
+      "editId": "Edit id",
+      "empty": "No custom fields yet. Add a field to extend the task form and cards.",
+      "idLabel": "Field id",
+      "idWarn": "Changing the id discards values stored under the old id (remove + add).",
+      "nameLabel": "Field name",
+      "newFieldName": "New field",
+      "newOptionLabel": "Option 1",
+      "noDefault": "— none —",
+      "optionColor": "Option color",
+      "optionLabel": "Option label",
+      "optionN": "Option {{n}}",
+      "optionValue": "Option value",
+      "options": "Options",
+      "placement": "Placement",
+      "placementCard": "Card badge",
+      "placementDetail": "Detail (inline)",
+      "placementSection": "Detail section",
+      "readOnlyHint": "Built-in workflows are read-only — duplicate to edit",
+      "remove": "Remove field",
+      "removeOption": "Remove option",
+      "required": "Required",
+      "title": "Fields",
+      "typeLabel": "Type",
+      "widget": "Widget",
+      "widgetDefault": "Default"
+    },
     "workflowNodes": {
       "advisory": "Advisory",
+      "autoLayout": "Auto-layout",
+      "codeNote": "Runs sandboxed TypeScript. Syntax is validated at save.",
+      "codeSource": "Source (TypeScript)",
+      "codeTimeout": "Timeout (ms)",
+      "cycleBlocked": "That connection would create a cycle — only rework edges inside a for-each template may loop back",
+      "deleteEdge": "Delete edge",
+      "deleteNode": "Delete node",
+      "edgeCondition": "Condition",
+      "edgeConditionLabel": "Condition: {{condition}}",
+      "edgeInspector": "Edge",
+      "edgeNoVerdict": "— success (no verdict) —",
+      "edgeRework": "Rework edge (loop back, bounded)",
+      "edgeReworkNote": "Rework edges are the only legal cycles — they loop back within the for-each step instance, bounded by Max rework cycles.",
+      "edgeVerdict": "Review verdict",
       "failureCollect": "Collect (wait for all)",
       "failureFailFast": "Fail-fast (cancel siblings)",
       "failurePolicy": "On branch failure",
+      "foreachConcurrency": "Concurrency",
+      "foreachEmptyHint": "Drag a step-execute node here",
+      "foreachIsolation": "Isolation",
+      "foreachMaxRework": "Max rework cycles",
+      "foreachMode": "Mode",
+      "foreachNote": "Expands once per planned step. Drop a step-execute node (and optional step-review) into the region.",
+      "foreachParallel": "Parallel",
+      "foreachSequential": "Sequential",
+      "foreachShared": "Shared worktree",
+      "foreachWorktree": "Per-step worktree",
       "gateBlocks": "Gate (blocks)",
       "gateMode": "Gate mode",
+      "insertTemplate": "Insert template {{name}}",
+      "interpreterOnly": "This workflow branches, so it runs on the graph interpreter — it can't compile to the linear step engine, but it will still run.",
       "joinAll": "All branches",
       "joinAny": "Any branch",
       "joinMode": "Join mode",
       "joinQuorum": "Quorum (n)",
       "mergeBoundaryNote": "Steps before this marker run pre-merge; steps after run post-merge.",
+      "parseArtifact": "Artifact",
+      "parseParser": "Parser",
       "quorumN": "Quorum count (n)",
       "releaseCapacity": "Downstream capacity",
       "releaseCondition": "Release condition",
@@ -6736,7 +6809,28 @@ export default interface Resources {
       "releaseExternal": "External event",
       "releaseManual": "Manual promote",
       "releaseTimer": "Timer",
-      "splitNote": "Branches run concurrently from this node. Execute and merge seams are not allowed inside a branch."
+      "reviewCode": "Code review",
+      "reviewModel": "Review model (optional)",
+      "reviewNote": "Verdicts route as outcome edges. Click an outgoing edge to set its verdict and rework behavior.",
+      "reviewPlan": "Plan review",
+      "reviewType": "Review type",
+      "splitNote": "Branches run concurrently from this node. Execute and merge seams are not allowed inside a branch.",
+      "stepExecuteLabel": "Step execute",
+      "summaryAwaitInput": "Waits for user input",
+      "summaryCodeDefault": "TypeScript",
+      "summaryGateAdvisory": "Advisory",
+      "summaryGateBlocks": "Gate (blocks)",
+      "summaryHoldRelease": "Release: {{release}}",
+      "summaryNotConfigured": "Not configured",
+      "summaryReviewType": "{{type}} review",
+      "templateFilterLabel": "Filter templates",
+      "templateFilterPlaceholder": "Filter templates",
+      "templateSeamConflict": "This fragment duplicates the \"{{seam}}\" seam already on the canvas, so it can't be inserted.",
+      "templatesBuiltinSteps": "Built-in steps",
+      "templatesFragments": "Fragments",
+      "templatesPluginSteps": "Plugin steps",
+      "templatesSection": "Templates",
+      "trivialGraphHint": "This workflow only runs start → end. Add steps from the palette above to build it out."
     },
     "workflowSelector": {
       "switchActiveMessage": "This task has an active session. Switching workflows aborts it and re-homes the card into the new workflow's entry column. Continue?",
@@ -6745,12 +6839,62 @@ export default interface Resources {
       "switchConfirm": "Switch and abort"
     },
     "workflows": {
+      "aiEdit": "Design with AI",
+      "aiFailed": "Failed to design workflow",
+      "aiPromptPlaceholder": "e.g. Run lint and tests before merge, then post a changelog comment after merge",
+      "aiPromptRequired": "Describe the workflow you want",
+      "aiReplaceConfirm": "Replace the current graph with the AI design? Unsaved changes will be lost.",
+      "aiReplaceConfirmLabel": "Replace",
+      "aiReplaceTitle": "Replace graph?",
+      "aiSubmit": "Design with AI",
+      "aiToggle": "Describe it instead",
+      "clickToEditDescription": "Click to edit description",
+      "clickToRename": "Click to rename",
+      "createDescription": "Description (optional)",
+      "createFailed": "Failed to create workflow",
+      "createName": "Name",
+      "createNameRequired": "Enter a workflow name",
+      "createSubmit": "Create",
+      "createTitle": "New workflow",
+      "created": "Created workflow \"{{name}}\"",
+      "deleteFailed": "Failed to delete workflow",
+      "deleteMessage": "Delete workflow \"{{name}}\"? This cannot be undone.",
+      "deleteTitle": "Delete workflow?",
+      "deleted": "Workflow deleted",
+      "descriptionLabel": "Workflow description",
+      "descriptionPlaceholder": "Add a description",
+      "discardConfirm": "Discard",
+      "discardMessage": "You have unsaved changes to this workflow. Discard them?",
+      "discardTitle": "Discard unsaved changes?",
       "duplicateToCustomize": "Duplicate to customize",
+      "emptyDescription": "Workflows orchestrate the steps and gates that run around task execution. Create one to start arranging that flow.",
+      "emptyTitle": "No workflow selected",
+      "export": "Export",
+      "exportDirtyTooltip": "Save before exporting",
+      "exportFailed": "Failed to export workflow",
+      "exportTooltip": "Download as JSON — contains your full prompt and command text",
+      "import": "Import",
+      "importFailed": "Import failed",
+      "importInvalidJson": "That file isn't valid JSON.",
+      "importStripped": "Auto-approval flags were removed from imported nodes",
+      "importTooltip": "Import a workflow from a JSON file",
+      "imported": "Imported workflow \"{{name}}\"",
+      "migrationNotice": "Your legacy workflow steps were converted — find them as templates in the palette and as the \"Migrated steps\" workflow.",
+      "nameLabel": "Workflow name",
+      "newWorkflow": "New workflow",
       "readOnlyBuiltin": "Read-only built-in workflow",
       "saveFailed": "Failed to save workflow",
       "saved": "Workflow saved",
       "savedNotCompilable": "Workflow saved but cannot be compiled",
-      "selectOrCreate": "Select or create a workflow to start editing."
+      "selectOrCreate": "Select or create a workflow to start editing.",
+      "templateBlank": "Blank",
+      "templateBlankDescription": "Start from an empty start → end graph.",
+      "templateCopyName": "{{name}} copy",
+      "templateNodeCount_one": "{{count}} nodes",
+      "templateNodeCount_other": "{{count}} nodes",
+      "templatePickerLabel": "Start from",
+      "templateSectionBuiltin": "Built-in workflows",
+      "templateSectionYours": "Your workflows"
     },
     "workspace": {
       "projectRoot": "Project Root",
@@ -6996,6 +7140,11 @@ export default interface Resources {
     }
   },
   "common": {
+    "actions": {
+      "cancel": "Cancel",
+      "close": "Close",
+      "save": "Save"
+    },
     "agents": {
       "ratings": {
         "trendDeclining": "↓ Declining",
@@ -7026,6 +7175,7 @@ export default interface Resources {
         "minutesAgo_other": "{{count}}m ago"
       }
     },
+    "archive": "Archive",
     "board": {
       "rejection": {
         "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
@@ -7035,6 +7185,7 @@ export default interface Resources {
         "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead."
       }
     },
+    "cancel": "Cancel",
     "chat": {
       "failedToGetResponse": "Failed to get response",
       "failureReferenceId": "ID",
@@ -7053,6 +7204,16 @@ export default interface Resources {
       "toolCallsHeader": "Tool calls",
       "viewFailureDetails": "View failure details"
     },
+    "close": "Close",
+    "columns": {
+      "archived": "Archived",
+      "done": "Done",
+      "in-progress": "In Progress",
+      "in-review": "In Review",
+      "todo": "Todo",
+      "triage": "Planning"
+    },
+    "delete": "Delete",
     "health": {
       "anomaly": {
         "duplicateActiveId": "Duplicate active task ID",
@@ -7117,6 +7278,7 @@ export default interface Resources {
         "stopped": "Stopped"
       }
     },
+    "refresh": "Refresh",
     "research": {
       "providerGitHub": "GitHub",
       "providerLlmSynthesis": "LLM Synthesis",
@@ -7124,6 +7286,7 @@ export default interface Resources {
       "providerPageFetch": "Page Fetch",
       "providerWebSearch": "Web Search"
     },
+    "retry": "Retry",
     "routing": {
       "policyLabel": {
         "block": "Block execution",
@@ -7183,6 +7346,7 @@ export default interface Resources {
         "zai": "GLM models by Zhipu AI — strong multilingual support"
       }
     },
+    "skip": "Skip",
     "taskForm": {
       "nodeStatusConnecting": "Connecting",
       "nodeStatusError": "Error",
@@ -7197,6 +7361,7 @@ export default interface Resources {
       "refreshSourceInitialLoad": "Initial load",
       "refreshSourceManual": "Manual"
     },
+    "tryAgain": "Try Again",
     "workflow": {
       "postMerge": "Post-merge",
       "preMerge": "Pre-merge",

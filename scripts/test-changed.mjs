@@ -113,7 +113,7 @@ const HASH_VERSION_PREFIX = "v2";
  *     alone would miss those, so we fold the tree in globally — the simplest
  *     provably-correct choice (mirrors the tsconfig.base.json treatment).
  *
- * NOTE: this list intentionally overlaps `shouldForceFullSuite`'s
+ * NOTE: this list intentionally overlaps `isSharedInfraChange`'s
  * `fullSuitePaths` (which decides full-suite mode, a different axis than cache
  * busting). When adding a new shared root config input, consider both lists.
  */
@@ -428,10 +428,19 @@ function isTestIrrelevantRootPath(file) {
   return ["README", "CHANGELOG.md", "LICENSE", "LICENSE.md"].includes(file);
 }
 
-export function shouldForceFullSuite(changedFiles) {
+export function isSharedInfraChange(changedFiles) {
   // NOTE: overlaps SHARED_HASH_INPUT_PATHS by intent (different axis: this list
-  // forces full-suite mode; that one busts every package's cache hash). When
-  // adding a new shared root config input, consider both lists.
+  // signals shared-infra changes; that one busts every package's cache hash).
+  // When adding a new shared root config input, consider both lists.
+  //
+  // HISTORY: previously named `shouldForceFullSuite` — this signal used to
+  // escalate `pnpm test` to an implicit full
+  // recursive run — which was the local OOM path (two concurrent heavy
+  // packages, 6GB dashboard heaps). Since the merge-gate redesign
+  // (docs/plans/2026-06-04-001-refactor-fast-trusted-test-gate-plan.md) it
+  // routes to GATE mode instead: run the merge-gate suite and point at
+  // `pnpm test:full` for the explicit full sweep. The full suite only ever
+  // runs on explicit opt-in (--full / FUSION_TEST_FULL=1).
   const fullSuitePaths = [
     "package.json",
     "pnpm-lock.yaml",
@@ -1012,13 +1021,16 @@ export function decideExecutionPlan({
   reverseDependencyMap,
 }) {
   if (forceFullSuite) return { mode: "full", reason: "forced" };
-  if (!comparisonBase) return { mode: "full", reason: "missing-comparison-base" };
-  if (!changedFiles) return { mode: "full", reason: "diff-failed" };
-  if (changedFiles.length === 0) return { mode: "full", reason: "no-changes" };
-  if (shouldForceFullSuite(changedFiles)) return { mode: "full", reason: "shared-infra-changed" };
+  // Every implicit wide-blast condition below routes to GATE mode (merge-gate
+  // suite only), never to an implicit full-suite run — the old escalation was
+  // the local OOM path. `pnpm test:full` is the explicit opt-in full sweep.
+  if (!comparisonBase) return { mode: "gate", reason: "missing-comparison-base" };
+  if (!changedFiles) return { mode: "gate", reason: "diff-failed" };
+  if (changedFiles.length === 0) return { mode: "gate", reason: "no-changes" };
+  if (isSharedInfraChange(changedFiles)) return { mode: "gate", reason: "shared-infra-changed" };
 
   const affectedPackages = resolveAffectedPackages(changedFiles, packageNameByDir);
-  if (!affectedPackages || affectedPackages.length === 0) return { mode: "full", reason: "no-affected-package" };
+  if (!affectedPackages || affectedPackages.length === 0) return { mode: "gate", reason: "no-affected-package" };
 
   return {
     mode: "changed",
@@ -1060,8 +1072,11 @@ export function normalizeForwardedArgs(argv) {
 }
 
 export function main(argv = process.argv.slice(2)) {
+  // The full suite is explicit opt-in ONLY (--full / FUSION_TEST_FULL=1).
+  // CI no longer routes through this script (the gate job runs `pnpm
+  // test:gate`; the demoted tier runs `test:ci:shard` in full-suite.yml), so
+  // the old `CI === "true"` force-full branch is gone.
   const forceFullSuite =
-    process.env.CI === "true" ||
     process.env.FUSION_TEST_FULL === "1" ||
     argv.includes("--full");
 
@@ -1136,11 +1151,20 @@ export function main(argv = process.argv.slice(2)) {
     }));
   }
 
-  const hasWork = plan.mode === "full" || activePackages.length > 0;
+  // Gate mode always has work: the merge-gate suite is not covered by the
+  // per-package cache (it spans engine + cli with its own selection), so it
+  // must never short-circuit through the cache-fresh fast path.
+  const hasWork = plan.mode === "full" || plan.mode === "gate" || activePackages.length > 0;
 
   // Cache-fresh fast path: nothing to run. Emit a fast-path mode line, run only
   // the (now cheap) isolation guard, and skip skill-sync, artifact-ensure,
   // HOME creation, and prune.
+  //
+  // NOTE: this path is reachable only in CHANGED mode (gate mode sets hasWork
+  // above), and it intentionally skips the merge-gate suite too: an all-cache-
+  // fresh changed run means the engine/cli content feeding the gate suite is
+  // byte-identical to a previously green run. Any shared-infra change that
+  // could invalidate that reasoning routes to gate mode instead of here.
   if (!hasWork) {
     console.log("[test-changed] fast-path=cache-fresh (no packages to run).");
     console.log(
@@ -1177,24 +1201,44 @@ export function main(argv = process.argv.slice(2)) {
   try {
 
   if (plan.mode === "full") {
-    if (plan.reason === "missing-comparison-base") {
-      console.log(`[test-changed] could not resolve merge-base with ${baseBranch}; running full suite.`);
-    } else if (plan.reason === "diff-failed") {
-      console.log("[test-changed] failed to read git diff; running full suite.");
-    } else if (plan.reason === "no-changes") {
-      console.log("[test-changed] no changes detected against base; running full suite.");
-    } else if (plan.reason === "shared-infra-changed") {
-      console.log("[test-changed] shared/root test infrastructure changed; running full suite.");
-    } else if (plan.reason === "no-affected-package") {
-      console.log("[test-changed] no affected workspace package resolved; running full suite.");
-    }
-
+    // Explicit opt-in only ("forced": --full / FUSION_TEST_FULL=1).
     runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
       env: isolatedHomeEnv,
       onBeforeAfterCheck: cleanupIsolatedHome,
     });
     return;
   }
+
+  if (plan.mode === "gate") {
+    if (plan.reason === "missing-comparison-base") {
+      console.log(`[test-changed] could not resolve merge-base with ${baseBranch}; running merge-gate suite.`);
+    } else if (plan.reason === "diff-failed") {
+      console.log("[test-changed] failed to read git diff; running merge-gate suite.");
+    } else if (plan.reason === "no-changes") {
+      console.log("[test-changed] no changes detected against base; running merge-gate suite.");
+    } else if (plan.reason === "shared-infra-changed") {
+      console.log("[test-changed] shared/root test infrastructure changed; running merge-gate suite.");
+    } else if (plan.reason === "no-affected-package") {
+      console.log("[test-changed] no affected workspace package resolved; running merge-gate suite.");
+    }
+    console.log("[test-changed] need the full sweep instead? run `pnpm test:full` (explicit opt-in).");
+
+    runMaybeIsolated("pnpm", ["test:gate"], {
+      env: isolatedHomeEnv,
+      onBeforeAfterCheck: cleanupIsolatedHome,
+    });
+    return;
+  }
+
+  // Changed mode: merge-gate suite first, then the affected set. The gate is
+  // cheap (~10s) and keeps `pnpm test` green ⇒ mergeable-signal honest; the
+  // affected expansion preserves changed-code coverage. Overlap (engine in the
+  // affected set re-runs the engine-core files) is accepted by design.
+  console.log("[test-changed] running merge-gate suite (pnpm test:gate) before affected packages.");
+  // Run the gate under the same isolation guard as the affected set — a gate
+  // suite leak must trip the checker, not silently become the "before" state
+  // of the later run.
+  runMaybeIsolated("pnpm", ["test:gate"], { env: isolatedHomeEnv });
 
   const filterArgs = activePackages.flatMap((pkg) => ["--filter", pkg]);
   console.log(`[test-changed] running tests for changed packages: ${activePackages.join(", ")}`);

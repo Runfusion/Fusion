@@ -31,9 +31,16 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
-import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+import {
+  createFnAgent as engineCreateFnAgent,
+  createWorkflowAuthoringTools,
+} from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 import { createPlanningBoardTools } from "./planning-board-tools.js";
+
+// The planning lane has no ambient task; fn_workflow_select therefore has no
+// default target and an agent must pass an explicit task_id.
+const PLANNING_NO_AMBIENT_TASK_ID = "";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
@@ -839,7 +846,10 @@ export async function createSession(
     systemPrompt,
     tools: "readonly",
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
-    customTools: [...createPlanningBoardTools(store)],
+    customTools: [
+      ...createPlanningBoardTools(store),
+      ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
+    ],
     onThinking: () => {
       // Non-streaming path ignores thinking output
     },
@@ -1380,7 +1390,10 @@ async function createPlanningAgent(
     systemPrompt,
     tools: "readonly",
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
-    customTools: [...createPlanningBoardTools(store)],
+    customTools: [
+      ...createPlanningBoardTools(store),
+      ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
+    ],
     ...(modelProvider && modelId
       ? {
           defaultProvider: modelProvider,

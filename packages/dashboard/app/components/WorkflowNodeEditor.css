@@ -35,6 +35,37 @@
   cursor: pointer;
 }
 
+/* U2/R5: one-time legacy-step migration notice banner. */
+.wf-migration-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--accent-subtle, rgba(59, 130, 246, 0.12));
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wf-migration-notice-text {
+  flex: 1;
+}
+
+.wf-migration-notice-dismiss {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.wf-migration-notice-dismiss:hover {
+  color: var(--text);
+}
+
 .wf-editor-close:hover {
   color: var(--text);
 }
@@ -49,10 +80,74 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  width: 220px;
+  width: 300px;
   padding: var(--space-sm);
   border-right: 1px solid var(--border);
   overflow-y: auto;
+}
+
+/* U12: columns + fields authoring sections moved into the left sidebar, below
+   the workflow list. Each is a collapsible disclosure whose toggle button is the
+   section header; the panels' own internal <h3> is suppressed to avoid a double
+   header. */
+.wf-sidebar-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.wf-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.wf-sidebar-section-toggle:hover {
+  background: var(--bg-secondary);
+}
+
+/* When nested in the sidebar disclosure, the panels are stacked full-width
+   blocks rather than side columns: drop the dedicated width/border and let them
+   flow inside the sidebar's own scroll. */
+.wf-sidebar-section .wf-column-panel,
+.wf-sidebar-section .wf-fields-panel {
+  width: auto;
+  min-width: 0;
+  padding: 0 var(--space-xs) var(--space-xs);
+  border-left: none;
+  overflow-y: visible;
+}
+
+/* The disclosure toggle is the visible section header; hide the panels' own
+   title heading to avoid a duplicate. The Add button (also in the header) stays. */
+.wf-sidebar-section .wf-column-panel-header h3,
+.wf-sidebar-section .wf-fields-panel-header h3 {
+  display: none;
+}
+
+.wf-sidebar-section .wf-column-panel-header,
+.wf-sidebar-section .wf-fields-panel-header {
+  justify-content: flex-end;
 }
 
 .wf-editor-new {
@@ -69,6 +164,54 @@
 
 .wf-editor-new:hover {
   background: var(--bg-tertiary);
+}
+
+/* U5/R10: sidebar import affordance + persistent inline error/warning regions. */
+.wf-editor-import {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wf-editor-import:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-editor-import:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-editor-import-error {
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-error) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-error);
+  border-radius: var(--radius-sm);
+  color: var(--ws-error);
+  font-size: 0.8rem;
+}
+
+.wf-editor-import-warnings {
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-warning) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-warning);
+  border-radius: var(--radius-sm);
+  color: var(--ws-warning);
+  font-size: 0.8rem;
+}
+
+.wf-editor-import-warning {
+  margin: 0;
+}
+
+.wf-editor-import-warning + .wf-editor-import-warning {
+  margin-top: var(--space-xs);
 }
 
 .wf-editor-list {
@@ -121,6 +264,52 @@
   justify-content: center;
 }
 
+/* No-workflow onboarding panel (R9): icon + heading + explanation + create CTA. */
+.wf-editor-onboard {
+  flex-direction: column;
+  text-align: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+}
+
+.wf-editor-onboard-icon {
+  color: var(--text-muted);
+}
+
+.wf-editor-onboard-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.wf-editor-onboard-text {
+  margin: 0;
+  max-width: 36ch;
+  color: var(--text-muted);
+}
+
+.wf-editor-onboard-cta {
+  margin-top: var(--space-xs);
+}
+
+/* Trivial-graph palette hint (R9): non-blocking banner over the canvas. */
+.wf-trivial-hint {
+  position: absolute;
+  top: var(--space-sm);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  pointer-events: none;
+  max-width: min(90%, 42ch);
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-info) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-info);
+  border-radius: var(--radius-sm);
+  color: var(--ws-info);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
 .wf-editor-toolbar {
   display: flex;
   align-items: center;
@@ -138,6 +327,7 @@
 }
 
 .wf-palette-btn,
+.wf-editor-action,
 .wf-editor-delete,
 .wf-editor-save {
   display: inline-flex;
@@ -153,8 +343,14 @@
 }
 
 .wf-palette-btn:hover,
+.wf-editor-action:hover,
 .wf-editor-delete:hover {
   background: var(--bg-tertiary);
+}
+
+.wf-editor-action:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .wf-editor-actions {
@@ -168,6 +364,116 @@
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* U9/R8: palette Templates section — collapsible, grouped, filterable. */
+.wf-templates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-templates-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.wf-templates-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wf-templates-toggle:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-templates-filter {
+  flex: 0 1 220px;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.wf-templates-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-templates-conflict {
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--ws-error) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-error);
+  border-radius: var(--radius-sm);
+  color: var(--ws-error);
+  font-size: 0.8rem;
+}
+
+.wf-templates-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-templates-group-title {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.wf-templates-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-templates-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.wf-templates-entry:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-templates-entry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wf-templates-badge {
+  padding: 0 var(--space-xs);
+  background: var(--accent-subtle, rgba(59, 130, 246, 0.12));
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.7rem;
 }
 
 /* Neutralize the fieldset wrapper so it only gates interactivity, not layout. */
@@ -194,12 +500,26 @@
   color: var(--ws-error);
 }
 
+/* Inspector delete buttons (U3): sit below the field group, sized to the panel. */
+.wf-inspector-delete {
+  margin-top: var(--space-sm);
+  justify-content: center;
+}
+
 .wf-editor-banner {
   padding: var(--space-sm) var(--space-md);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--ws-warning);
   color: var(--ws-warning);
   font-size: 0.85rem;
+}
+
+/* Info-tone banner (KTD-4): branching graph runs on the interpreter only — not a
+ *  failure, so it uses the info token rather than the warning treatment. */
+.wf-editor-banner--info {
+  border-bottom-color: var(--ws-info);
+  color: var(--ws-info);
+  background: color-mix(in srgb, var(--ws-info) 6%, var(--bg-secondary));
 }
 
 .wf-editor-canvas {
@@ -278,51 +598,102 @@
 }
 
 /* Canvas nodes */
+/* ── U1: card-style nodes ──
+ *  Cards have a header row (icon + label + badges + error badge) and an
+ *  independent config-summary row. Sizing mirrors WF_CARD_WIDTH /
+ *  WF_CARD_MAX_WIDTH in workflow-flow-mapping.ts; the max-width ceiling forces
+ *  long labels/summaries to truncate rather than grow the canvas. Per-kind
+ *  accent uses a left border + a faint header tint over a semantic token. */
 .wf-node {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  width: 200px;
+  max-width: 240px;
   padding: var(--space-xs) var(--space-sm);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
   font-size: 0.8rem;
 }
 
+.wf-node-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+/* Summary row: single line, truncates independently of the header. */
+.wf-node-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+/* Per-kind accent: left border color + a faint header tint. color-mix over
+ *  semantic tokens keeps both themes legible without raw colors. */
 .wf-node-start {
-  border-color: var(--ws-success);
+  border-left-color: var(--ws-success);
 }
 
 .wf-node-end {
-  border-color: var(--text-muted);
+  border-left-color: var(--text-muted);
+}
+
+.wf-node-prompt {
+  border-left-color: var(--accent, var(--todo));
+  background: color-mix(in srgb, var(--accent, var(--todo)) 5%, var(--bg-secondary));
+}
+
+.wf-node-script {
+  border-left-color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
 }
 
 .wf-node-gate {
-  border-color: var(--ws-warning);
+  border-left-color: var(--ws-warning);
+  background: color-mix(in srgb, var(--ws-warning) 6%, var(--bg-secondary));
+}
+
+.wf-node-hold {
+  border-left-color: var(--ws-warning);
+}
+
+.wf-node-split,
+.wf-node-join {
+  border-left-color: var(--accent, var(--ws-info));
 }
 
 .wf-node-merge {
-  border-color: var(--ws-info);
+  border-left-color: var(--ws-info);
   border-style: dashed;
 }
 
 /* ── Step-inversion nodes (KTD-3/4/12/15, U8) ── */
 
 .wf-node-step-execute {
-  border-color: var(--accent, var(--ws-info));
+  border-left-color: var(--accent, var(--ws-info));
+  background: color-mix(in srgb, var(--accent, var(--ws-info)) 5%, var(--bg-secondary));
 }
 
 .wf-node-step-review {
-  border-color: var(--ws-info);
+  border-left-color: var(--ws-info);
+  background: color-mix(in srgb, var(--ws-info) 6%, var(--bg-secondary));
 }
 
 .wf-node-parse-steps {
-  border-color: var(--ws-info);
+  border-left-color: var(--ws-info);
 }
 
 .wf-node-code {
-  border-color: var(--text-muted);
+  border-left-color: var(--text-muted);
   font-family: var(--font-mono, monospace);
 }
 
@@ -367,6 +738,16 @@
   stroke-width: 2;
 }
 
+/* Failure edges (R2): a distinct dash pattern from rework plus an error-token
+ *  stroke. Two-channel rule — the condition label is always rendered (third
+ *  channel is color) so failure edges stay distinguishable in low-contrast
+ *  themes. */
+.react-flow__edge.wf-edge-failure .react-flow__edge-path {
+  stroke: var(--ws-error);
+  stroke-dasharray: 2 4;
+  stroke-width: 2;
+}
+
 .wf-code-source {
   font-family: var(--font-mono, monospace);
   font-size: 0.72rem;
@@ -374,12 +755,24 @@
   overflow-x: auto;
 }
 
+/* Header overflow priority (R1): icon fixed-width; label flex-shrinks first
+ *  with ellipsis; badges + error badge hold their width flush right. */
 .wf-node-icon {
   display: inline-flex;
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
+.wf-node-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .wf-node-badge {
+  flex-shrink: 0;
   font-size: 0.65rem;
   text-transform: uppercase;
   padding: 1px var(--space-xs);
@@ -412,12 +805,14 @@
 
 .wf-node--error {
   border-color: var(--ws-error);
+  border-left-color: var(--ws-error);
 }
 
 .wf-node-error-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+  flex-shrink: 0;
   font-size: 0.65rem;
   padding: 1px var(--space-xs);
   border-radius: var(--radius-sm);
@@ -442,6 +837,149 @@
 .wf-editor-banner--warn {
   background: var(--ws-warning);
   color: var(--bg);
+}
+
+/* Inline name + description strip (KTD-10). */
+.wf-name-strip {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.wf-workflow-name,
+.wf-workflow-name--readonly {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wf-workflow-name:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-workflow-name--readonly {
+  cursor: default;
+}
+
+.wf-workflow-name-input {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+}
+
+.wf-workflow-description,
+.wf-workflow-description--readonly {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wf-workflow-description:hover {
+  background: var(--bg-tertiary);
+}
+
+.wf-workflow-description--readonly {
+  cursor: default;
+}
+
+.wf-workflow-description-input {
+  font-size: 0.78rem;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  min-width: 220px;
+}
+
+/* Create-workflow dialog (KTD-7). */
+/* Template picker (U4/R7): radiogroup of Blank + built-ins + user workflows. */
+.wf-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.wf-template-section {
+  margin: var(--space-xs) 0 var(--space-xs);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.wf-template-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text);
+}
+
+.wf-template-option:hover {
+  background: var(--bg-hover);
+}
+
+.wf-template-option.selected {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.wf-template-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-template-option-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.wf-template-option-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-template-option-count {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+.wf-create-error {
+  margin: var(--space-xs) 0 0;
+  font-size: 0.8rem;
+  color: var(--ws-error);
 }
 
 .wf-column-panel {
@@ -526,4 +1064,84 @@
   font-size: 0.65rem;
   text-transform: uppercase;
   color: var(--text-tertiary);
+}
+
+/* ── U10/R11: Design-with-AI affordances ─────────────────────────────────── */
+
+/* Create-dialog disclosure (above the template picker). */
+.wf-ai-create {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.wf-ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  align-self: flex-start;
+  padding: var(--space-xs) var(--space-xs);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wf-ai-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.wf-ai-create-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-ai-prompt {
+  width: 100%;
+  resize: vertical;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wf-ai-prompt:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-ai-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+/* Toolbar popover panel anchored under the "Design with AI" button. */
+.wf-ai-edit-wrap {
+  position: relative;
+}
+
+.wf-ai-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
 }

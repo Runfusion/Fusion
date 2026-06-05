@@ -60,7 +60,7 @@ export interface MobileNavBarProps {
   chatHasUnreadResponse?: boolean;
   stashOrphanCount?: number;
   onOpenGitManager?: () => void;
-  onOpenWorkflowSteps?: () => void;
+  onOpenWorkflowEditor?: () => void;
   onOpenSchedules?: () => void;
   onOpenScripts?: () => void;
   onToggleTerminal?: () => void;
@@ -127,7 +127,7 @@ export function MobileNavBar({
   chatHasUnreadResponse = false,
   stashOrphanCount = 0,
   onOpenGitManager,
-  onOpenWorkflowSteps,
+  onOpenWorkflowEditor,
   onOpenSchedules,
   onOpenScripts,
   onToggleTerminal,
@@ -590,10 +590,10 @@ export function MobileNavBar({
               type="button"
               className="mobile-more-item"
               data-testid="mobile-more-item-workflow"
-              onClick={() => handleMoreAction(onOpenWorkflowSteps)}
+              onClick={() => handleMoreAction(onOpenWorkflowEditor)}
             >
               <Workflow />
-              <span>{t("nav.workflowSteps", "Workflow Steps")}</span>
+              <span>{t("nav.workflows", "Workflows")}</span>
             </button>
 
             <button

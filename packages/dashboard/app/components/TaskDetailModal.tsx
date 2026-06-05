@@ -2654,8 +2654,6 @@ export function TaskDetailContent({
                 onPresetModeChange={setEditPresetMode}
                 selectedPresetId={editSelectedPresetId}
                 onSelectedPresetIdChange={setEditSelectedPresetId}
-                selectedWorkflowSteps={editSelectedWorkflowSteps}
-                onWorkflowStepsChange={setEditSelectedWorkflowSteps}
                 pendingImages={editPendingImages}
                 onImagesChange={setEditPendingImages}
                 tasks={tasks.filter((t) => t.id !== task.id)}

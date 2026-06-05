@@ -76,6 +76,7 @@ export async function createProjectScopedChatManager(options: {
     options.pluginRunner,
     () => options.store.getSettings(),
     options.messageStore,
+    options.store,
   );
 }
 
@@ -100,6 +101,8 @@ export function getOrCreateScopedChatManager(
     agentStore,
     pluginRunner,
     () => store.getSettings(),
+    undefined,
+    store,
   );
   scopedChatManagerCache.set(key, manager);
   return manager;

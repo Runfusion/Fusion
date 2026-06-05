@@ -8,6 +8,7 @@ import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSn
 import { VALID_TRANSITIONS, COLUMNS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
 import { parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure } from "./workflow-ir.js";
+import { stepsToWorkflowIr, stepToFragmentIr, layoutForIr } from "./workflow-steps-to-ir.js";
 import { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
 import { resolveAllowedColumns, workflowHasColumn } from "./workflow-transitions.js";
 import {
@@ -3738,6 +3739,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     defaultOn: number | null;
     modelProvider: string | null;
     modelId: string | null;
+    migrated_fragment_id?: string | null;
     createdAt: string;
     updatedAt: string;
   }): import("./types.js").WorkflowStep {
@@ -3758,6 +3760,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       defaultOn: row.defaultOn === null || row.defaultOn === undefined ? undefined : Boolean(row.defaultOn),
       modelProvider: row.modelProvider ?? undefined,
       modelId: row.modelId ?? undefined,
+      migratedFragmentId: row.migrated_fragment_id ?? undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -3972,7 +3975,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     // When a project default workflow is configured, new tasks inherit it
     // (compiled to steps) ahead of the legacy default-on step behavior.
     let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
-    if (input.enabledWorkflowSteps === undefined) {
+    // U6/R3/KTD-4: an explicit create-time workflowId beats the project default.
+    // `null` is an explicit opt-out (no workflow), `string` materializes that
+    // workflow, `undefined` falls through to the default-workflow behavior below.
+    // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
+    const explicitWorkflowId =
+      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    if (explicitWorkflowId !== undefined) {
+      if (explicitWorkflowId === null) {
+        // Explicit "No workflow": skip default materialization entirely.
+        resolvedWorkflowSteps = undefined;
+      } else {
+        // Compile + materialize up front so unknown/fragment ids throw BEFORE
+        // the task row is created (no orphaned steps, no half-created task).
+        const selected = await this.materializeExplicitWorkflowSteps(explicitWorkflowId);
+        resolvedWorkflowSteps = selected.stepIds;
+        pendingWorkflowSelection = selected;
+      }
+    } else if (input.enabledWorkflowSteps === undefined) {
       try {
         const inherited = await this.materializeDefaultWorkflowSteps();
         if (inherited) {
@@ -4141,7 +4161,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       : undefined;
 
     let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
-    if (input.enabledWorkflowSteps === undefined && options.applyDefaultWorkflowSteps !== false) {
+    // U6/R3/KTD-4: an explicit create-time workflowId beats the project default,
+    // mirroring createTask(). `null` is an explicit opt-out, `string` materializes
+    // that workflow, `undefined` falls through to the default-workflow behavior.
+    // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
+    const explicitWorkflowId =
+      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    if (explicitWorkflowId !== undefined) {
+      if (explicitWorkflowId === null) {
+        // Explicit "No workflow": skip default materialization entirely.
+        resolvedWorkflowSteps = undefined;
+      } else {
+        // Compile + materialize up front so unknown/fragment ids throw BEFORE
+        // the task row is created (no orphaned steps, no half-created task).
+        const selected = await this.materializeExplicitWorkflowSteps(explicitWorkflowId);
+        resolvedWorkflowSteps = selected.stepIds;
+        pendingWorkflowSelection = selected;
+      }
+    } else if (input.enabledWorkflowSteps === undefined && options.applyDefaultWorkflowSteps !== false) {
       // Mirror createTask: a configured project default workflow takes
       // precedence over legacy default-on steps on this creation path too.
       try {
@@ -11827,6 +11864,7 @@ ${stepsSection}`;
         defaultOn: input.defaultOn !== undefined ? input.defaultOn : undefined,
         modelProvider: mode === "prompt" ? input.modelProvider : undefined,
         modelId: mode === "prompt" ? input.modelId : undefined,
+        migratedFragmentId: input.migratedFragmentId,
         createdAt: now,
         updatedAt: now,
       };
@@ -11847,9 +11885,10 @@ ${stepsSection}`;
           defaultOn,
           modelProvider,
           modelId,
+          migrated_fragment_id,
           createdAt,
           updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         step.id,
         step.templateId ?? null,
@@ -11865,6 +11904,7 @@ ${stepsSection}`;
         step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
         step.modelProvider ?? null,
         step.modelId ?? null,
+        step.migratedFragmentId ?? null,
         step.createdAt,
         step.updatedAt,
       );
@@ -12087,6 +12127,7 @@ ${stepsSection}`;
       if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
       if ("modelId" in updates) step.modelId = updates.modelId;
     }
+    if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
     step.updatedAt = new Date().toISOString();
 
     this.db.prepare(
@@ -12104,6 +12145,7 @@ ${stepsSection}`;
            defaultOn = ?,
            modelProvider = ?,
            modelId = ?,
+           migrated_fragment_id = ?,
            updatedAt = ?
        WHERE id = ?`,
     ).run(
@@ -12120,6 +12162,7 @@ ${stepsSection}`;
       step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
       step.modelProvider ?? null,
       step.modelId ?? null,
+      step.migratedFragmentId ?? null,
       step.updatedAt,
       step.id,
     );
@@ -12195,6 +12238,7 @@ ${stepsSection}`;
     description: string;
     ir: string;
     layout: string;
+    kind?: string | null;
     createdAt: string;
     updatedAt: string;
   }): WorkflowDefinition {
@@ -12202,6 +12246,8 @@ ${stepsSection}`;
       id: row.id,
       name: row.name,
       description: row.description,
+      // Legacy rows (pre-migration-109) have no kind column; default to "workflow".
+      kind: row.kind === "fragment" ? "fragment" : "workflow",
       ir: parseWorkflowIr(row.ir),
       layout: this.parseWorkflowLayout(row.layout),
       createdAt: row.createdAt,
@@ -12256,6 +12302,9 @@ ${stepsSection}`;
         id,
         name,
         description: input.description ?? "",
+        // KTD-1: fragments are pure-v1 IRs and pass through downgradeIrToV1IfPure
+        // unchanged; default to "workflow" when the caller omits the kind.
+        kind: input.kind === "fragment" ? "fragment" : "workflow",
         ir,
         layout,
         createdAt: now,
@@ -12264,8 +12313,8 @@ ${stepsSection}`;
 
       this.db
         .prepare(
-          `INSERT INTO workflows (id, name, description, ir, layout, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO workflows (id, name, description, ir, layout, kind, createdAt, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           definition.id,
@@ -12275,6 +12324,7 @@ ${stepsSection}`;
             flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir),
           ),
           JSON.stringify(definition.layout),
+          definition.kind,
           definition.createdAt,
           definition.updatedAt,
         );
@@ -12285,8 +12335,26 @@ ${stepsSection}`;
     });
   }
 
-  /** List all workflow definitions, oldest first. Cached until a mutation. */
-  async listWorkflowDefinitions(): Promise<WorkflowDefinition[]> {
+  /** List workflow definitions, oldest first. The `kind` filter (KTD-1) selects
+   *  only workflows or only fragments; omit it to get the full merged set.
+   *
+   *  Cache invariant: `workflowDefinitionsCache` ALWAYS holds the full merged set
+   *  (built-ins + every row of every kind). The `kind` filter is applied to a
+   *  slice taken AFTER the cache read — a filtered result is never cached, so a
+   *  filtered call can never poison an unfiltered consumer (or vice versa).
+   */
+  async listWorkflowDefinitions(
+    options?: { kind?: WorkflowDefinition["kind"] },
+  ): Promise<WorkflowDefinition[]> {
+    const all = await this.readAllWorkflowDefinitions();
+    if (options?.kind) return all.filter((wf) => wf.kind === options.kind);
+    return all;
+  }
+
+  /** Read (and cache) the full merged workflow-definition set, oldest first.
+   *  Built-in templates lead the list and cannot be edited/deleted; built-ins
+   *  are always kind "workflow". */
+  private async readAllWorkflowDefinitions(): Promise<WorkflowDefinition[]> {
     if (this.workflowDefinitionsCache) return this.workflowDefinitionsCache;
     const rows = this.db.prepare("SELECT * FROM workflows ORDER BY createdAt ASC").all() as Array<{
       id: string;
@@ -12294,10 +12362,10 @@ ${stepsSection}`;
       description: string;
       ir: string;
       layout: string;
+      kind?: string | null;
       createdAt: string;
       updatedAt: string;
     }>;
-    // Built-in templates lead the list and cannot be edited/deleted.
     this.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => this.toWorkflowDefinition(row))];
     return this.workflowDefinitionsCache;
   }
@@ -12315,6 +12383,7 @@ ${stepsSection}`;
           description: string;
           ir: string;
           layout: string;
+          kind?: string | null;
           createdAt: string;
           updatedAt: string;
         }
@@ -12958,9 +13027,187 @@ ${stepsSection}`;
     if (workflowId) {
       const exists = await this.getWorkflowDefinition(workflowId);
       if (!exists) throw new Error(`Workflow '${workflowId}' not found`);
+      // KTD-1/R6: a fragment is a reusable palette piece, not a selectable
+      // workflow. Reject it at the write boundary so a fragment can never be
+      // persisted as the project default (the read-side skip in
+      // materializeDefaultWorkflowSteps remains as defense in depth).
+      if (exists.kind === "fragment") {
+        throw new Error(`Workflow '${workflowId}' is a fragment and cannot be set as the project default`);
+      }
     }
     // null is updateSettings' explicit-delete sentinel for project keys.
     await this.updateSettings({ defaultWorkflowId: workflowId } as unknown as Partial<Settings>);
+  }
+
+  /**
+   * Synchronous workflow-definition insert used by migration (U2/KTD-3). Mirrors
+   * the persistence side of `createWorkflowDefinition` (validation + flag-aware
+   * downgrade + INSERT + cache bust) but stays synchronous so it can run inside
+   * `transactionImmediate`. The flag value is resolved by the async caller and
+   * passed in, since reading it is async.
+   */
+  private insertWorkflowDefinitionSync(
+    input: WorkflowDefinitionInput,
+    flagOn: boolean,
+  ): WorkflowDefinition {
+    const name = input.name?.trim();
+    if (!name) throw new Error("Workflow name is required");
+    const ir = parseWorkflowIr(input.ir);
+    this.assertWorkflowIrTraitsValid(ir);
+    const layout = input.layout ?? {};
+    const now = new Date().toISOString();
+    const id = this.nextWorkflowDefinitionId();
+    const definition: WorkflowDefinition = {
+      id,
+      name,
+      description: input.description ?? "",
+      kind: input.kind === "fragment" ? "fragment" : "workflow",
+      ir,
+      layout,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO workflows (id, name, description, ir, layout, kind, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        definition.id,
+        definition.name,
+        definition.description,
+        serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
+        JSON.stringify(definition.layout),
+        definition.kind,
+        definition.createdAt,
+        definition.updatedAt,
+      );
+    this.workflowDefinitionsCache = null;
+    return definition;
+  }
+
+  /**
+   * Lazy, idempotent migration of legacy user-authored workflow steps into the
+   * dual workflow-definition representation (U2 / R5 / KTD-3). Runs on first
+   * editor open per project via `POST /api/workflows/migrate-legacy-steps`.
+   *
+   * Policy:
+   *  - Every unmigrated user step (enabled or not, excluding compiled-materialized
+   *    rows) becomes a `kind: "fragment"` definition — the reusable palette piece.
+   *  - The `defaultOn` subset additionally becomes ONE combined `kind: "workflow"`
+   *    definition named "Migrated steps" (these were the steps that ran
+   *    automatically on new tasks); when non-empty and no project default is
+   *    already set, it becomes the project default so new-task behavior is
+   *    preserved. An explicit existing default is never clobbered.
+   *  - Each source row is stamped with `migratedFragmentId` (idempotency marker).
+   *    Source rows are never deleted.
+   *
+   * Idempotency: the unmigrated-rows SELECT and the marker stamping happen inside
+   * a single `transactionImmediate` (write lock acquired BEFORE the SELECT,
+   * matching `selectTaskWorkflow`'s ordering rationale), so concurrent opens /
+   * re-runs converge to a single set of definitions. A second run sees zero
+   * unmigrated rows and returns `{ migrated: 0, skipped: n }`.
+   */
+  async migrateLegacyWorkflowSteps(): Promise<{
+    migrated: number;
+    skipped: number;
+    combinedWorkflowId?: string;
+  }> {
+    // Resolve async prerequisites BEFORE the synchronous transaction: the
+    // workflow-columns flag (for flag-aware persistence). The project default is
+    // re-read AFTER the transaction (compare-and-set) so a concurrently-set
+    // default is never clobbered.
+    const flagOn = await this.workflowColumnsFlagOn();
+
+    const result = this.db.transactionImmediate(() => {
+      // Write lock is now held. Read the raw step rows directly (the cached,
+      // plugin-merged listWorkflowSteps() is not transaction-scoped). Mirror
+      // listWorkflowSteps()'s compiled-materialized filter and toStoredWorkflowStep
+      // mapping so policy decisions match the user-facing step listing.
+      const rows = this.db
+        .prepare("SELECT * FROM workflow_steps ORDER BY createdAt ASC")
+        .all() as Array<Parameters<typeof this.toStoredWorkflowStep>[0]>;
+
+      const userSteps = rows
+        .map((row) => this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(row)))
+        // Compiled-materialized rows are an execution detail, not user-authored.
+        .filter((step) => !step.templateId?.startsWith(WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX));
+
+      const alreadyMigrated = userSteps.filter((s) => s.migratedFragmentId);
+      const unmigrated = userSteps.filter((s) => !s.migratedFragmentId);
+
+      if (unmigrated.length === 0) {
+        return { migrated: 0, skipped: alreadyMigrated.length, combinedWorkflowId: undefined as string | undefined };
+      }
+
+      // Every unmigrated user step → a single-node fragment; stamp the source row.
+      for (const step of unmigrated) {
+        // parseWorkflowIr runs inside both insertWorkflowDefinitionSync and
+        // layoutForIr, so compute the fragment IR once and reuse it.
+        const fragmentIr = stepToFragmentIr(step);
+        const fragment = this.insertWorkflowDefinitionSync(
+          {
+            name: step.name,
+            description: step.description,
+            kind: "fragment",
+            ir: fragmentIr,
+            layout: layoutForIr(fragmentIr),
+          },
+          flagOn,
+        );
+        this.db
+          .prepare("UPDATE workflow_steps SET migrated_fragment_id = ?, updatedAt = ? WHERE id = ?")
+          .run(fragment.id, new Date().toISOString(), step.id);
+      }
+      this.workflowStepsCache = null;
+      this.db.bumpLastModified();
+
+      // The defaultOn subset → one combined "Migrated steps" workflow.
+      const defaultOnSteps = unmigrated.filter((s) => s.defaultOn === true);
+      let combinedWorkflowId: string | undefined;
+      if (defaultOnSteps.length > 0) {
+        const ir = stepsToWorkflowIr(defaultOnSteps, "Migrated steps");
+        const combined = this.insertWorkflowDefinitionSync(
+          {
+            name: "Migrated steps",
+            description: "Converted from your legacy workflow steps",
+            kind: "workflow",
+            ir,
+            layout: layoutForIr(ir),
+          },
+          flagOn,
+        );
+        combinedWorkflowId = combined.id;
+      }
+
+      return { migrated: unmigrated.length, skipped: alreadyMigrated.length, combinedWorkflowId };
+    });
+
+    // Set the combined workflow as the project default — only when one was
+    // created AND no explicit default is already set (don't clobber a user
+    // choice). Done outside the transaction via the async setter so the project
+    // default-workflow hooks run. Compare-and-set against the CURRENT default
+    // (re-read immediately before writing, not the pre-transaction snapshot) so
+    // a default set concurrently by another writer is never overwritten. If the
+    // set fails, swallow the error: a missing migrated default is recoverable
+    // (the user can set one), but throwing here would surface the whole
+    // migration as failed even though the definitions were written.
+    if (result.combinedWorkflowId) {
+      const currentDefaultId = await this.getDefaultWorkflowId();
+      if (!currentDefaultId) {
+        try {
+          await this.setDefaultWorkflowId(result.combinedWorkflowId);
+        } catch (err) {
+          storeLog.warn("Failed to set migrated combined workflow as project default", {
+            phase: "migrateLegacyWorkflowSteps:set-default",
+            combinedWorkflowId: result.combinedWorkflowId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    return result;
   }
 
   /** Whether a raw workflow CLI command has been approved (trust-on-first-use).
@@ -13294,8 +13541,30 @@ ${stepsSection}`;
     if (!workflowId) return undefined;
     const def = await this.getWorkflowDefinition(workflowId);
     if (!def) return undefined;
+    // KTD-1/R6: a fragment must never act as a project default (it is not a
+    // selectable workflow); fall back to no default rather than materializing it.
+    if (def.kind === "fragment") return undefined;
     // Compile (and validate) before creating any rows so a non-compilable
     // default falls back cleanly with nothing written.
+    const inputs = compileWorkflowToSteps(def.ir);
+    const stepIds = await this.materializeWorkflowSteps(workflowId, inputs);
+    return { workflowId, stepIds };
+  }
+
+  /** Resolve an EXPLICITLY requested workflow id (U6/R3/KTD-4) into materialized
+   *  step ids for the create-time `workflowId` parameter. Unlike
+   *  `materializeDefaultWorkflowSteps`, unknown ids and fragments are hard errors
+   *  (thrown BEFORE any task row is created) rather than silent fallbacks, since
+   *  the caller asked for a specific workflow. Compilation happens up front so a
+   *  non-compilable workflow aborts before any rows are written. */
+  private async materializeExplicitWorkflowSteps(
+    workflowId: string,
+  ): Promise<{ workflowId: string; stepIds: string[] }> {
+    const def = await this.getWorkflowDefinition(workflowId);
+    if (!def) throw new Error(`Workflow '${workflowId}' not found`);
+    if (def.kind === "fragment") {
+      throw new Error(`Workflow '${workflowId}' is a fragment and cannot be selected for a task`);
+    }
     const inputs = compileWorkflowToSteps(def.ir);
     const stepIds = await this.materializeWorkflowSteps(workflowId, inputs);
     return { workflowId, stepIds };
@@ -13315,6 +13584,12 @@ ${stepsSection}`;
     return this.withTaskLock(taskId, async () => {
       const def = await this.getWorkflowDefinition(workflowId);
       if (!def) throw new Error(`Workflow '${workflowId}' not found`);
+      // KTD-1/R6: fragments are reusable single-node palette templates, not
+      // selectable workflows. Reject them from task selection with a clear error
+      // rather than materializing a degenerate single-step task.
+      if (def.kind === "fragment") {
+        throw new Error(`Workflow '${workflowId}' is a fragment and cannot be selected for a task`);
+      }
       // Compile once up front: a non-linear graph aborts before any mutation.
       const inputs = compileWorkflowToSteps(def.ir);
 

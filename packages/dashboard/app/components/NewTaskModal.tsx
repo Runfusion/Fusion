@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { DEFAULT_TASK_PRIORITY, type Task, type TaskCreateInput, type TaskPriority } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { uploadAttachment, selectTaskWorkflow } from "../api";
+import { uploadAttachment } from "../api";
 import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
@@ -16,7 +16,6 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
-import { WorkflowSelector } from "./WorkflowSelector";
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -56,9 +55,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [selectedPresetId, setSelectedPresetId] = useState<string>("");
   const [presetMode, setPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [hasDirtyState, setHasDirtyState] = useState(false);
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
-  const [selectedWorkflowSteps, setSelectedWorkflowSteps] = useState<string[]>([]);
-  const [workflowStepsExplicitlySet, setWorkflowStepsExplicitlySet] = useState(false);
+  // U6/R3: tri-state workflow selection. `undefined` = inherit project default,
+  // `null` = explicit "No workflow", `string` = a specific workflow. Materialized
+  // atomically at create time via the `workflowId` create parameter.
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null | undefined>(undefined);
   const [reviewLevel, setReviewLevel] = useState<number | undefined>(undefined);
   const [autoMerge, setAutoMerge] = useState<boolean | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -79,18 +79,6 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   const { hasAiProvider, hasGithub, loading: setupReadinessLoading } = useSetupReadiness(projectId);
   const { nodes } = useNodes();
-
-  // Handler for workflow step changes that detects explicit user interaction
-  const handleWorkflowStepsChange = useCallback((steps: string[]) => {
-    setWorkflowStepsExplicitlySet(true);
-    setSelectedWorkflowSteps(steps);
-  }, []);
-
-  // Callback when defaultOn steps are auto-applied by TaskForm
-  const handleDefaultOnApplied = useCallback(() => {
-    // defaultOn auto-selection is not "explicit" user interaction
-    setWorkflowStepsExplicitlySet(false);
-  }, []);
 
   // Load agents for agent picker
   const loadAgents = useCallback(() => {
@@ -159,12 +147,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       description.trim() !== "" ||
       dependencies.length > 0 ||
       pendingImages.length > 0 ||
-      selectedWorkflowId !== null ||
+      selectedWorkflowId !== undefined ||
       executorModel !== "" ||
       validatorModel !== "" ||
       planningModel !== "" ||
       thinkingLevel !== "" ||
-      selectedWorkflowSteps.length > 0 ||
       selectedAgentId !== null ||
       reviewLevel !== undefined ||
       autoMerge !== undefined ||
@@ -176,7 +163,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, executorModel, validatorModel, planningModel, thinkingLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
 
   const handleClose = useCallback(async () => {
     if (hasDirtyState) {
@@ -199,9 +186,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setThinkingLevel("");
     setSelectedPresetId("");
     setPresetMode("default");
-    setSelectedWorkflowId(null);
-    setSelectedWorkflowSteps([]);
-    setWorkflowStepsExplicitlySet(false);
+    setSelectedWorkflowId(undefined);
     setSelectedAgentId(null);
     setShowAgentPicker(false);
     setReviewLevel(undefined);
@@ -238,9 +223,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         description: trimmedDesc,
         column: "triage",
         dependencies: dependencies.length ? dependencies : undefined,
-        // When user explicitly cleared all workflow steps, send empty array to prevent backend re-applying defaults.
-        // When user hasn't interacted with workflow steps (or left auto-selected defaults), send undefined to let backend apply defaults.
-        enabledWorkflowSteps: workflowStepsExplicitlySet ? (selectedWorkflowSteps.length > 0 ? selectedWorkflowSteps : []) : undefined,
+        // U6/R3: forward the workflow selection only when the user changed it.
+        //  - undefined → omit (store inherits the project default, today's behavior)
+        //  - null      → explicit "No workflow" (store skips default materialization)
+        //  - string    → that workflow, materialized atomically at create time.
+        ...(selectedWorkflowId !== undefined ? { workflowId: selectedWorkflowId } : {}),
         ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
         modelPresetId: presetMode === "preset" ? selectedPresetId || undefined : undefined,
         modelProvider: executorModel && executorSlashIdx !== -1 ? executorModel.slice(0, executorSlashIdx) : undefined,
@@ -269,16 +256,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
           : {}),
       };
 
+      // U6/R3: the workflow is now materialized atomically inside createTask via
+      // the `workflowId` parameter — no post-create selectTaskWorkflow call, so
+      // the executor can never observe the task with the wrong step set.
       const task = await onCreateTask(createInput);
-
-      // Apply custom workflow if selected (non-blocking — task already exists)
-      if (selectedWorkflowId) {
-        try {
-          await selectTaskWorkflow(task.id, selectedWorkflowId, projectId);
-        } catch (err) {
-          addToast(getErrorMessage(err) || "Failed to apply workflow", "error");
-        }
-      }
 
       // Upload pending images as attachments
       if (pendingImages.length > 0) {
@@ -306,9 +287,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       setThinkingLevel("");
       setSelectedPresetId("");
       setPresetMode("default");
-      setSelectedWorkflowId(null);
-      setSelectedWorkflowSteps([]);
-      setWorkflowStepsExplicitlySet(false);
+      setSelectedWorkflowId(undefined);
       setSelectedAgentId(null);
       setShowAgentPicker(false);
       setReviewLevel(undefined);
@@ -326,7 +305,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     } finally {
       setIsSubmitting(false);
     }
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, isSubmitting, githubRepoOverrideInvalid, hasInvalidBranchSelection, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowId, selectedWorkflowSteps, workflowStepsExplicitlySet, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, t]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, isSubmitting, githubRepoOverrideInvalid, hasInvalidBranchSelection, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowId, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, t]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -468,17 +447,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
           )}
         </div>
       </div>
-      {/* Custom Workflow */}
-      <div className="form-group">
-        <WorkflowSelector
-          value={selectedWorkflowId}
-          onChange={(id) => setSelectedWorkflowId(id)}
-          projectId={projectId}
-          addToast={addToast}
-          label="Custom workflow"
-          disabled={isSubmitting}
-        />
-      </div>
+      {/* U6/R3: the workflow picker now lives inside TaskForm (a whole-workflow
+          dropdown materialized atomically at create time), replacing the prior
+          standalone WorkflowSelector + post-create selectTaskWorkflow flow. */}
     </div>
   );
 
@@ -520,9 +491,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             onPresetModeChange={setPresetMode}
             selectedPresetId={selectedPresetId}
             onSelectedPresetIdChange={setSelectedPresetId}
-            selectedWorkflowSteps={selectedWorkflowSteps}
-            onWorkflowStepsChange={handleWorkflowStepsChange}
-            onDefaultOnApplied={handleDefaultOnApplied}
+            selectedWorkflowId={selectedWorkflowId}
+            onWorkflowIdChange={setSelectedWorkflowId}
             pendingImages={pendingImages}
             onImagesChange={setPendingImages}
             tasks={tasks}

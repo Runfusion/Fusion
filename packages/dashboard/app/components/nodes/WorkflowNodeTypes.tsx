@@ -1,5 +1,8 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Play, Flag, MessageSquare, Terminal, Shield, GitMerge, PauseCircle, Split, Merge, AlertTriangle, Repeat, ClipboardCheck, ListChecks, Code2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { nodeConfigSummary } from "./node-summary";
+import { useWorkflowEditorCatalogs } from "./WorkflowEditorCatalogContext";
 
 /** Node kinds the editor can render. "merge" is the pre/post-merge seam marker.
  *  v2 adds "hold" (passive dwell), "split"/"join" (parallel fan-out). The
@@ -69,6 +72,8 @@ export function WorkflowNodeErrorBadge({ message }: { message: string }) {
 }
 
 function NodeShell({ data, kind }: { data: WorkflowFlowNodeData; kind: WorkflowEditorNodeKind }) {
+  const { t } = useTranslation("app");
+  const catalogs = useWorkflowEditorCatalogs();
   const Icon = KIND_ICON[kind];
   const showTarget = kind !== "start";
   const showSource = kind !== "end";
@@ -88,23 +93,33 @@ function NodeShell({ data, kind }: { data: WorkflowFlowNodeData; kind: WorkflowE
   const seam = kind === "prompt" ? (data.config?.seam as string | undefined) : undefined;
   const reviewType = kind === "step-review" ? (data.config?.type as string | undefined) : undefined;
   const parser = kind === "parse-steps" ? (data.config?.parser as string | undefined) : undefined;
+  // Config-summary line (R1, KTD-6): pure helper resolves ids → names via the
+  // prefetched catalogs, with a raw-id fallback. Empty string → skip the row.
+  const summary = nodeConfigSummary(data, catalogs, t);
   return (
     <div
       className={`wf-node wf-node-${kind}${seam === "step-execute" ? " wf-node-step-execute" : ""}${data.errorBadge ? " wf-node--error" : ""}`}
       data-testid={`wf-node-${kind}`}
     >
       {showTarget && <Handle type="target" position={Position.Left} />}
-      <span className="wf-node-icon">
-        <Icon size={14} aria-hidden />
-      </span>
-      <span className="wf-node-label">{data.label || kind}</span>
-      {kind === "gate" && <span className="wf-node-badge">gate</span>}
-      {release && <span className="wf-node-badge">{release}</span>}
-      {joinMode && <span className="wf-node-badge">{joinMode}</span>}
-      {seam === "step-execute" && <span className="wf-node-badge">step</span>}
-      {reviewType && <span className="wf-node-badge">{reviewType}</span>}
-      {parser && <span className="wf-node-badge">{parser}</span>}
-      {data.errorBadge && <WorkflowNodeErrorBadge message={data.errorBadge} />}
+      <div className="wf-node-header">
+        <span className="wf-node-icon">
+          <Icon size={14} aria-hidden />
+        </span>
+        <span className="wf-node-label">{data.label || kind}</span>
+        {kind === "gate" && <span className="wf-node-badge">gate</span>}
+        {release && <span className="wf-node-badge">{release}</span>}
+        {joinMode && <span className="wf-node-badge">{joinMode}</span>}
+        {seam === "step-execute" && <span className="wf-node-badge">step</span>}
+        {reviewType && <span className="wf-node-badge">{reviewType}</span>}
+        {parser && <span className="wf-node-badge">{parser}</span>}
+        {data.errorBadge && <WorkflowNodeErrorBadge message={data.errorBadge} />}
+      </div>
+      {summary && (
+        <div className="wf-node-summary" data-testid="wf-node-summary" title={summary}>
+          {summary}
+        </div>
+      )}
       {showSource && <Handle type="source" position={Position.Right} />}
     </div>
   );

@@ -178,9 +178,9 @@ describe("tablet header controls", () => {
     expect(screen.queryByTitle("Git Manager")).toBeNull();
   });
 
-  it("does not render workflow steps button inline on tablet", () => {
-    renderTabletHeader({ onOpenWorkflowSteps: noop });
-    expect(screen.queryByTitle("Workflow Steps")).toBeNull();
+  it("does not render workflows button inline on tablet", () => {
+    renderTabletHeader({ onOpenWorkflowEditor: noop });
+    expect(screen.queryByTitle("Workflows")).toBeNull();
   });
 
   // ── Overflow menu on tablet ────────────────────────────────────
@@ -254,8 +254,8 @@ describe("tablet header controls", () => {
     expect(screen.getByTestId("overflow-git-btn")).toBeDefined();
   });
 
-  it("overflow menu contains workflow steps on tablet when provided", () => {
-    renderTabletHeader({ onOpenWorkflowSteps: noop });
+  it("overflow menu contains workflows on tablet when provided", () => {
+    renderTabletHeader({ onOpenWorkflowEditor: noop });
     fireEvent.click(screen.getByTitle("More header actions"));
     expect(screen.getByTestId("overflow-workflow-steps-btn")).toBeDefined();
   });
@@ -538,7 +538,7 @@ describe("tablet header controls", () => {
       const { container } = renderTabletHeader({
         onOpenUsage: noop,
         onOpenActivityLog: noop,
-        onOpenWorkflowSteps: noop,
+        onOpenWorkflowEditor: noop,
         onOpenFiles: noop,
         onOpenGitManager: noop,
       });

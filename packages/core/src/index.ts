@@ -49,6 +49,7 @@ export {
 export {
   parseWorkflowIr,
   serializeWorkflowIr,
+  stripApprovalBypassFlags,
   WorkflowIrError,
   DEFAULT_WORKFLOW_COLUMN_IDS,
 } from "./workflow-ir.js";
@@ -236,6 +237,7 @@ export type {
   WorkflowDefinition,
   WorkflowDefinitionInput,
   WorkflowDefinitionUpdate,
+  WorkflowDefinitionKind,
   WorkflowNodeLayout,
 } from "./workflow-definition-types.js";
 export {
@@ -243,6 +245,11 @@ export {
   validateLinearity,
   WorkflowCompileError,
 } from "./workflow-compiler.js";
+export {
+  stepsToWorkflowIr,
+  stepToFragmentIr,
+  layoutForIr,
+} from "./workflow-steps-to-ir.js";
 export {
   BUILTIN_WORKFLOWS,
   BUILTIN_WORKFLOW_ID_PREFIX,
@@ -468,6 +475,7 @@ export {
   toJson,
   toJsonNullable,
   fromJson,
+  SCHEMA_VERSION,
 } from "./db.js";
 export {
   ProjectIdentityConflictError,

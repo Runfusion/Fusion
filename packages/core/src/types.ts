@@ -541,6 +541,11 @@ export interface WorkflowStep {
    *  Must be set together with `modelProvider`. When both model fields are undefined,
    *  the executor uses global settings defaults. Only used when mode is "prompt". */
   modelId?: string;
+  /** (workflow-editor-consolidation U1/U2, KTD-1/KTD-3) when this legacy step has
+   *  been migrated into a fragment WorkflowDefinition, the fragment's id is stamped
+   *  here so the lazy step migration is idempotent (already-stamped rows are
+   *  skipped). Stored in the `migrated_fragment_id` column. */
+  migratedFragmentId?: string;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -651,6 +656,9 @@ export interface WorkflowStepInput {
   modelProvider?: string;
   /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */
   modelId?: string;
+  /** (workflow-editor-consolidation U2, KTD-3) fragment id stamped when this step
+   *  was migrated into a fragment WorkflowDefinition. Set by the migration only. */
+  migratedFragmentId?: string;
 }
 
 /** Result of a workflow step execution on a task. */
@@ -2283,6 +2291,23 @@ export interface TaskCreateInput {
   noCommitsExpected?: boolean;
   /** IDs of workflow steps to enable for this task */
   enabledWorkflowSteps?: string[];
+  /**
+   * Workflow selection applied atomically at task creation (U6/R3/KTD-4).
+   *
+   * Semantics:
+   *  - `undefined` → inherit the project default workflow (today's behavior:
+   *    `materializeDefaultWorkflowSteps` runs, falling back to default-on steps).
+   *  - `null` → explicitly NO workflow: skip default materialization entirely;
+   *    the task is created with no custom workflow steps.
+   *  - `string` → that workflow's compiled steps are materialized and selected
+   *    inside the creation flow, overriding any project default. Fragment IDs
+   *    and unknown IDs are rejected with a clear error BEFORE the task row is
+   *    created.
+   *
+   * Mutually exclusive with `enabledWorkflowSteps`: when `enabledWorkflowSteps`
+   * is provided, it takes precedence and `workflowId` materialization is skipped.
+   */
+  workflowId?: string | null;
   /** Model preset selected during task creation. Presets resolve to concrete model overrides at creation time. */
   modelPresetId?: string;
   /** AI model provider override for the executor agent (e.g., "anthropic").

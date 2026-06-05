@@ -44,6 +44,7 @@ function definition(ir: WorkflowIr): WorkflowDefinition {
     id: "WF-001",
     name: "Full lifecycle",
     description: "",
+    kind: "workflow",
     ir,
     layout: {},
     createdAt: "2026-06-03T00:00:00.000Z",

@@ -97,6 +97,22 @@ function createChatManagerWithoutAgentStore(): ChatManager {
   return new ChatManager(mockChatStore as any, "/tmp/test");
 }
 
+// Minimal stand-in TaskStore. The workflow tool factories only capture the
+// store reference at build time, so name-membership assertions never touch it.
+const mockTaskStore = {} as any;
+
+function createChatManagerWithTaskStore(): ChatManager {
+  return new ChatManager(
+    mockChatStore as any,
+    "/tmp/test",
+    mockAgentStore as any,
+    undefined,
+    undefined,
+    undefined,
+    mockTaskStore,
+  );
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe("ChatManager.sendMessage", () => {
@@ -359,6 +375,37 @@ describe("ChatManager.sendMessage", () => {
     );
     expect(assistantCall).toBeDefined();
     expect(assistantCall?.[1].content).toBe("Hello world!");
+  });
+
+  // U11 / R12 drift guard: the chat lane must expose all six fn_workflow_*
+  // tools to the agent when a scoped task store is available.
+  it("exposes all six fn_workflow_* tools to the chat agent when a task store is present", async () => {
+    let capturedTools: Array<{ name: string }> = [];
+    __setCreateFnAgent(async (options: any) => {
+      capturedTools = options.customTools ?? [];
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+      };
+    });
+
+    const chatManager = createChatManagerWithTaskStore();
+    await chatManager.sendMessage("chat-001", "Author me a workflow");
+
+    const names = capturedTools.map((t) => t.name);
+    for (const required of [
+      "fn_workflow_create",
+      "fn_workflow_update",
+      "fn_workflow_delete",
+      "fn_workflow_list",
+      "fn_workflow_get",
+      "fn_workflow_select",
+    ]) {
+      expect(names).toContain(required);
+    }
   });
 
   it("persists and clears durable in-flight generation snapshots during streaming", async () => {

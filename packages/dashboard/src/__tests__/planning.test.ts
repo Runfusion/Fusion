@@ -388,6 +388,28 @@ describe("planning module", () => {
       expect(customToolNames).toContain("fn_task_get");
     });
 
+    // U11 / R12 drift guard: the planning lane must expose all six
+    // fn_workflow_* tools so planning agents can author workflows.
+    it("exposes all six fn_workflow_* tools to the planning agent", async () => {
+      const createFnAgentSpy = vi.fn(async () => createMockAgent(STANDARD_QUESTION_RESPONSES));
+      __setCreateFnAgent(createFnAgentSpy as any);
+
+      await createSession(getUniqueIp(), initialPlan, MOCK_TASK_STORE, TEST_ROOT_DIR);
+
+      const callArg = createFnAgentSpy.mock.calls[0]?.[0] as { customTools?: Array<{ name: string }> };
+      const customToolNames = callArg.customTools?.map((tool) => tool.name) ?? [];
+      for (const required of [
+        "fn_workflow_create",
+        "fn_workflow_update",
+        "fn_workflow_delete",
+        "fn_workflow_list",
+        "fn_workflow_get",
+        "fn_workflow_select",
+      ]) {
+        expect(customToolNames).toContain(required);
+      }
+    });
+
     it("cleans up session on agent failure", async () => {
       __setCreateFnAgent(async () => {
         throw new Error("Agent creation failed");
