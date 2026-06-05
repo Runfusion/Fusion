@@ -51,6 +51,46 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: "engine-core",
+          // The curated merge-gate suite (see docs/testing.md "Merge gate").
+          // Membership is an explicit allow-list, NOT a glob: tests earn their
+          // way in with evidence of value, and a flaky gate test is evicted by
+          // deleting its line here (no need for the flaky test to pass).
+          // Selection criteria: deterministic (no real git subprocesses, no
+          // real timers/network), fast (<~3s/file per scripts/test-timings.json),
+          // covering regression-prone core invariants: merge lifecycle and
+          // scope, files-changed/fork-point attribution, executor core paths,
+          // triage, scheduling, self-healing.
+          // Budget: the whole project must stay under ~60s wall-clock so the
+          // CI gate job's test run lands under ~1 minute.
+          include: [
+            "src/__tests__/merger-merge-lifecycle.test.ts",
+            "src/__tests__/merger-post-merge.test.ts",
+            "src/__tests__/merger-conflict-resolution.test.ts",
+            "src/__tests__/merger-diff-scope.test.ts",
+            "src/__tests__/merger-file-scope-invariant.test.ts",
+            "src/__tests__/merger-landed-files-capture.test.ts",
+            "src/__tests__/branch-attribution.test.ts",
+            "src/__tests__/executor-core.test.ts",
+            "src/__tests__/executor-recovery.test.ts",
+            "src/__tests__/executor-base-commit-capture.test.ts",
+            "src/__tests__/executor-capture-modified-files-attribution.test.ts",
+            "src/__tests__/triage.test.ts",
+            "src/__tests__/triage-preflight.test.ts",
+            "src/__tests__/scheduler.test.ts",
+            "src/__tests__/scheduler-node-routing.test.ts",
+            "src/__tests__/scheduler-overlap-requeue.test.ts",
+            "src/__tests__/mission-scheduler.test.ts",
+            "src/__tests__/self-healing.test.ts",
+            "src/__tests__/heartbeat-monitor.test.ts",
+            "src/__tests__/workflow-node-handlers.test.ts",
+          ],
+          exclude: ["node_modules/**", "dist/**"],
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: "engine-default",
           include: ["src/**/*.test.ts"],
           exclude: [
