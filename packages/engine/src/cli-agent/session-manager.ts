@@ -37,7 +37,7 @@ import {
 } from "@fusion/core";
 import { loadPtyModule } from "../pty-native.js";
 import type { IPty } from "node-pty";
-import type { CliAdapterRegistry, CliAgentAdapter, CliReadinessDetector } from "./adapter.js";
+import type { CliAdapterRegistry, CliAgentAdapter, CliLaunchSpec, CliReadinessDetector } from "./adapter.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -78,6 +78,15 @@ export class UnknownCliSessionError extends Error {
   constructor(public readonly sessionId: string) {
     super(`No live CLI session: ${sessionId}`);
     this.name = "UnknownCliSessionError";
+  }
+}
+
+/** Thrown when a resume is requested for an adapter that cannot resume. */
+export class CliResumeUnsupportedError extends Error {
+  readonly code = "CLI_RESUME_UNSUPPORTED";
+  constructor(public readonly adapterId: string) {
+    super(`CLI adapter does not support resume: ${adapterId}`);
+    this.name = "CliResumeUnsupportedError";
   }
 }
 
@@ -292,6 +301,19 @@ export interface SpawnCliSessionOptions {
   /** Initial PTY size. */
   cols?: number;
   rows?: number;
+  /**
+   * Resume an existing session record instead of creating a new one. When set,
+   * spawn builds the launch invocation via the adapter's `buildResume` (carrying
+   * the recorded `nativeSessionId`) and REUSES the supplied record id rather than
+   * minting a fresh `cli_sessions` row — so a recovered session never produces a
+   * duplicate record. The adapter MUST advertise `supportsResume`/`buildResume`.
+   */
+  resume?: {
+    /** The existing session record id to relaunch in place. */
+    sessionId: string;
+    /** The recorded native (vendor) session id handed to `buildResume`. */
+    nativeSessionId: string;
+  };
 }
 
 // ── Internal live-session state ─────────────────────────────────────────────
@@ -383,6 +405,16 @@ export class CliSessionManager {
     return this.sessions.size;
   }
 
+  /** Configured ceiling on concurrently live PTY sessions. */
+  capacity(): number {
+    return this.concurrencyCeiling;
+  }
+
+  /** Free concurrency slots remaining before the ceiling (never negative). */
+  availableSlots(): number {
+    return Math.max(0, this.concurrencyCeiling - this.sessions.size);
+  }
+
   /** Whether a session id is currently live. */
   isLive(sessionId: string): boolean {
     return this.sessions.has(sessionId);
@@ -407,22 +439,42 @@ export class CliSessionManager {
       settings: (options.settings ?? {}) as Record<string, unknown>,
       posture,
     };
-    const launch = adapter.buildLaunch(launchCtx);
+
+    // Resume vs fresh launch. A resume relaunches the recorded native session id
+    // via the adapter's `buildResume` and REUSES the existing record (no
+    // duplicate row); a fresh launch uses `buildLaunch` and mints a new record.
+    let launch: CliLaunchSpec;
+    let record: CliSession;
+    if (options.resume) {
+      if (!adapter.capabilities.supportsResume || typeof adapter.buildResume !== "function") {
+        throw new CliResumeUnsupportedError(options.adapterId);
+      }
+      launch = adapter.buildResume({ ...launchCtx, nativeSessionId: options.resume.nativeSessionId });
+      const existing = this.store.getSession(options.resume.sessionId);
+      if (!existing) throw new UnknownCliSessionError(options.resume.sessionId);
+      // Move the reused record back to "starting" for the relaunch.
+      record = this.store.updateSession(options.resume.sessionId, {
+        agentState: "starting",
+        worktreePath: options.worktreePath ?? existing.worktreePath ?? null,
+      }) ?? existing;
+    } else {
+      launch = adapter.buildLaunch(launchCtx);
+      // Persist the session record BEFORE spawning so a crash mid-spawn still has
+      // a durable record to reason about.
+      record = this.store.createSession({
+        adapterId: options.adapterId,
+        projectId: options.projectId,
+        purpose: options.purpose,
+        taskId: options.taskId ?? null,
+        chatSessionId: options.chatSessionId ?? null,
+        worktreePath: options.worktreePath ?? null,
+        autonomyPosture: posture,
+        agentState: "starting",
+      });
+    }
+
     const allowlist = adapter.buildEnvAllowlist(launchCtx);
     const env = this.buildEnv(allowlist);
-
-    // Persist the session record BEFORE spawning so a crash mid-spawn still has
-    // a durable record to reason about.
-    const record = this.store.createSession({
-      adapterId: options.adapterId,
-      projectId: options.projectId,
-      purpose: options.purpose,
-      taskId: options.taskId ?? null,
-      chatSessionId: options.chatSessionId ?? null,
-      worktreePath: options.worktreePath ?? null,
-      autonomyPosture: posture,
-      agentState: "starting",
-    });
 
     const pty = await this.loadPty();
     let child: IPty;

@@ -109,6 +109,16 @@ export interface StuckTaskDetectorOptions {
    *
    *  Errors in this callback fall through to the normal kill path (treated as `false`). */
   onLoopDetected?: (event: StuckTaskEvent) => Promise<boolean>;
+  /**
+   * U8 (CLI Agent Executor): returns true when a task's live CLI agent session
+   * is `waitingOnInput` — expected idleness (a permission/question prompt). When
+   * true, stuck/inactivity flagging is SUPPRESSED for that task this cycle: the
+   * agent is intentionally quiet waiting for a human, not stalled. The U3 stall
+   * backstop (the CLI session state machine's own watchdog) remains the only
+   * escalation path while waiting. Narrow seam: a single lookup; absence
+   * (undefined) preserves the prior behavior. Errors are treated as "not
+   * waiting" (fail toward the normal stuck path, never silently suppress). */
+  isCliSessionWaitingOnInput?: (taskId: string) => boolean;
 }
 
 export class StuckTaskDetector {
@@ -118,6 +128,7 @@ export class StuckTaskDetector {
   private onStuck?: (event: StuckTaskEvent) => void;
   private beforeRequeue?: (taskId: string, reason: "inactivity" | "loop" | "no-progress-churn", event: StuckTaskEvent) => Promise<boolean>;
   private onLoopDetected?: (event: StuckTaskEvent) => Promise<boolean>;
+  private isCliSessionWaitingOnInput?: (taskId: string) => boolean;
   private paused = false;
   private exhaustedTasks = new Set<string>();
 
@@ -129,6 +140,23 @@ export class StuckTaskDetector {
     this.onStuck = options.onStuck;
     this.beforeRequeue = options.beforeRequeue;
     this.onLoopDetected = options.onLoopDetected;
+    this.isCliSessionWaitingOnInput = options.isCliSessionWaitingOnInput;
+  }
+
+  /**
+   * U8: whether stuck flagging should be suppressed for a task because its live
+   * CLI agent session is `waitingOnInput` (expected idleness). Defensive: a
+   * throw in the injected lookup is treated as "not waiting" so a broken seam
+   * never silently disables stuck detection.
+   */
+  private isWaitingOnInput(canonicalTaskId: string): boolean {
+    if (!this.isCliSessionWaitingOnInput) return false;
+    try {
+      return this.isCliSessionWaitingOnInput(canonicalTaskId);
+    } catch (err) {
+      stuckLog.error(`waitingOnInput lookup threw for ${canonicalTaskId}; treating as not waiting:`, err);
+      return false;
+    }
   }
 
   /**
@@ -617,6 +645,13 @@ export class StuckTaskDetector {
       }
       const reason = this.classifyStuckReason(taskId, timeoutMs);
       if (reason !== null) {
+        // U8: suppress flagging while the CLI session is waitingOnInput
+        // (expected idleness). The U3 stall backstop remains the only escalation
+        // path while genuinely waiting.
+        if (this.isWaitingOnInput(entry.canonicalTaskId)) {
+          stuckLog.log(`Suppressing stuck flag for ${taskId} (canonical=${entry.canonicalTaskId}) — CLI session waitingOnInput`);
+          continue;
+        }
         stuckTasks.push(taskId);
       }
     }

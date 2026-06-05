@@ -628,6 +628,7 @@ export {
 export {
   CliSessionManager,
   CliConcurrencyLimitError,
+  CliResumeUnsupportedError,
   UnknownCliSessionError,
   neutralizeInjection,
   DEFAULT_SCROLLBACK_BYTES,
@@ -636,6 +637,15 @@ export {
   type CliSessionManagerOptions,
   type SpawnCliSessionOptions,
 } from "./cli-agent/session-manager.js";
+// CLI Agent Executor — resume coordinator + self-healing/stuck integration (U8).
+export {
+  CliResumeCoordinator,
+  DEFAULT_MAX_RESUME_ATTEMPTS,
+  DEFAULT_RESUME_BACKOFF_BASE_MS,
+  type CliResumeCoordinatorOptions,
+  type ResumeResult,
+  type ResumeDisposition,
+} from "./cli-agent/resume-coordinator.js";
 export {
   TelemetryHub,
   stripAnsiControl,

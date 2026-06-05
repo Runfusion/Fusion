@@ -293,6 +293,16 @@ export interface SelfHealingOptions {
   recoverActiveMissionValidations?: () => Promise<{ recoveredCount: number }>;
   /** Optional callback to reap stale mission validator runs during startup and maintenance. */
   reapStaleMissionValidatorRuns?: () => Promise<{ reapedCount: number }>;
+  /**
+   * U8 (CLI Agent Executor): returns true when a worktree path backs a
+   * resume-eligible `cli_sessions` record. Idle-worktree sweeps
+   * (`enforceWorktreeCap`, `cleanupOrphans`, `reapUnregisteredOrphans`) MUST
+   * treat such a worktree as in-use, so a reaped-but-resumable session cannot
+   * have its worktree reclaimed out from under it before the resume coordinator
+   * relaunches the CLI. Narrow seam: a single predicate; absence (undefined)
+   * preserves the prior behavior. The path passed is the absolute worktree dir.
+   */
+  isWorktreeResumeReserved?: (worktreePath: string) => boolean;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -1548,6 +1558,27 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`Failed to record shared-group self-heal landing audit for ${task.id}: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * U8 seam: whether a worktree path backs a resume-eligible CLI agent session
+   * and must therefore be treated as in-use by idle sweeps. Defensive: a throw
+   * in the injected predicate is treated as "reserved" (conservative — never
+   * reclaim a worktree we can't prove is free).
+   */
+  private isWorktreeResumeReserved(worktreePath: string): boolean {
+    const predicate = this.options.isWorktreeResumeReserved;
+    if (!predicate) return false;
+    try {
+      return predicate(resolve(worktreePath));
+    } catch (err: unknown) {
+      log.warn(
+        `[self-healing] resume-reserved check threw for ${worktreePath}: ${
+          err instanceof Error ? err.message : String(err)
+        } — treating as reserved (conservative)`,
+      );
+      return true;
     }
   }
 
@@ -8434,6 +8465,11 @@ export class SelfHealingManager {
 
       let cleaned = 0;
       for (const worktreePath of orphaned) {
+        // U8: never reclaim a worktree backing a resume-eligible CLI session.
+        if (this.isWorktreeResumeReserved(worktreePath)) {
+          log.log(`[self-healing] deferring idle-sweep for ${worktreePath}: resume-eligible CLI session present`);
+          continue;
+        }
         try {
           await removeWorktree({
             rootDir: this.options.rootDir,
@@ -8504,6 +8540,11 @@ export class SelfHealingManager {
       // admin file while the owning process is still running.
       if (activeSessionRegistry.isPathActive(path)) {
         log.log(`[self-healing] deferring unregistered-orphan reap for ${path}: active session present`);
+        continue;
+      }
+      // U8: never reclaim a worktree backing a resume-eligible CLI session.
+      if (this.isWorktreeResumeReserved(path)) {
+        log.log(`[self-healing] deferring unregistered-orphan reap for ${path}: resume-eligible CLI session present`);
         continue;
       }
       try {
@@ -8639,6 +8680,11 @@ export class SelfHealingManager {
 
       for (const { path: worktreePath } of withMtime) {
         if (removed >= excess) break;
+        // U8: never reclaim a worktree backing a resume-eligible CLI session.
+        if (this.isWorktreeResumeReserved(worktreePath)) {
+          log.log(`[self-healing] cap-enforcement skipping ${worktreePath}: resume-eligible CLI session present`);
+          continue;
+        }
         try {
           await removeWorktree({
             rootDir: this.options.rootDir,
