@@ -3738,6 +3738,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     defaultOn: number | null;
     modelProvider: string | null;
     modelId: string | null;
+    migrated_fragment_id?: string | null;
     createdAt: string;
     updatedAt: string;
   }): import("./types.js").WorkflowStep {
@@ -3758,6 +3759,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       defaultOn: row.defaultOn === null || row.defaultOn === undefined ? undefined : Boolean(row.defaultOn),
       modelProvider: row.modelProvider ?? undefined,
       modelId: row.modelId ?? undefined,
+      migratedFragmentId: row.migrated_fragment_id ?? undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -11827,6 +11829,7 @@ ${stepsSection}`;
         defaultOn: input.defaultOn !== undefined ? input.defaultOn : undefined,
         modelProvider: mode === "prompt" ? input.modelProvider : undefined,
         modelId: mode === "prompt" ? input.modelId : undefined,
+        migratedFragmentId: input.migratedFragmentId,
         createdAt: now,
         updatedAt: now,
       };
@@ -11847,9 +11850,10 @@ ${stepsSection}`;
           defaultOn,
           modelProvider,
           modelId,
+          migrated_fragment_id,
           createdAt,
           updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         step.id,
         step.templateId ?? null,
@@ -11865,6 +11869,7 @@ ${stepsSection}`;
         step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
         step.modelProvider ?? null,
         step.modelId ?? null,
+        step.migratedFragmentId ?? null,
         step.createdAt,
         step.updatedAt,
       );
@@ -12087,6 +12092,7 @@ ${stepsSection}`;
       if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
       if ("modelId" in updates) step.modelId = updates.modelId;
     }
+    if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
     step.updatedAt = new Date().toISOString();
 
     this.db.prepare(
@@ -12104,6 +12110,7 @@ ${stepsSection}`;
            defaultOn = ?,
            modelProvider = ?,
            modelId = ?,
+           migrated_fragment_id = ?,
            updatedAt = ?
        WHERE id = ?`,
     ).run(
@@ -12120,6 +12127,7 @@ ${stepsSection}`;
       step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
       step.modelProvider ?? null,
       step.modelId ?? null,
+      step.migratedFragmentId ?? null,
       step.updatedAt,
       step.id,
     );
@@ -12195,6 +12203,7 @@ ${stepsSection}`;
     description: string;
     ir: string;
     layout: string;
+    kind?: string | null;
     createdAt: string;
     updatedAt: string;
   }): WorkflowDefinition {
@@ -12202,6 +12211,8 @@ ${stepsSection}`;
       id: row.id,
       name: row.name,
       description: row.description,
+      // Legacy rows (pre-migration-109) have no kind column; default to "workflow".
+      kind: row.kind === "fragment" ? "fragment" : "workflow",
       ir: parseWorkflowIr(row.ir),
       layout: this.parseWorkflowLayout(row.layout),
       createdAt: row.createdAt,
@@ -12256,6 +12267,9 @@ ${stepsSection}`;
         id,
         name,
         description: input.description ?? "",
+        // KTD-1: fragments are pure-v1 IRs and pass through downgradeIrToV1IfPure
+        // unchanged; default to "workflow" when the caller omits the kind.
+        kind: input.kind === "fragment" ? "fragment" : "workflow",
         ir,
         layout,
         createdAt: now,
@@ -12264,8 +12278,8 @@ ${stepsSection}`;
 
       this.db
         .prepare(
-          `INSERT INTO workflows (id, name, description, ir, layout, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO workflows (id, name, description, ir, layout, kind, createdAt, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           definition.id,
@@ -12275,6 +12289,7 @@ ${stepsSection}`;
             flagOnForCreate ? definition.ir : downgradeIrToV1IfPure(definition.ir),
           ),
           JSON.stringify(definition.layout),
+          definition.kind,
           definition.createdAt,
           definition.updatedAt,
         );
@@ -12285,8 +12300,26 @@ ${stepsSection}`;
     });
   }
 
-  /** List all workflow definitions, oldest first. Cached until a mutation. */
-  async listWorkflowDefinitions(): Promise<WorkflowDefinition[]> {
+  /** List workflow definitions, oldest first. The `kind` filter (KTD-1) selects
+   *  only workflows or only fragments; omit it to get the full merged set.
+   *
+   *  Cache invariant: `workflowDefinitionsCache` ALWAYS holds the full merged set
+   *  (built-ins + every row of every kind). The `kind` filter is applied to a
+   *  slice taken AFTER the cache read — a filtered result is never cached, so a
+   *  filtered call can never poison an unfiltered consumer (or vice versa).
+   */
+  async listWorkflowDefinitions(
+    options?: { kind?: WorkflowDefinition["kind"] },
+  ): Promise<WorkflowDefinition[]> {
+    const all = await this.readAllWorkflowDefinitions();
+    if (options?.kind) return all.filter((wf) => wf.kind === options.kind);
+    return all;
+  }
+
+  /** Read (and cache) the full merged workflow-definition set, oldest first.
+   *  Built-in templates lead the list and cannot be edited/deleted; built-ins
+   *  are always kind "workflow". */
+  private async readAllWorkflowDefinitions(): Promise<WorkflowDefinition[]> {
     if (this.workflowDefinitionsCache) return this.workflowDefinitionsCache;
     const rows = this.db.prepare("SELECT * FROM workflows ORDER BY createdAt ASC").all() as Array<{
       id: string;
@@ -12294,10 +12327,10 @@ ${stepsSection}`;
       description: string;
       ir: string;
       layout: string;
+      kind?: string | null;
       createdAt: string;
       updatedAt: string;
     }>;
-    // Built-in templates lead the list and cannot be edited/deleted.
     this.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => this.toWorkflowDefinition(row))];
     return this.workflowDefinitionsCache;
   }
@@ -12315,6 +12348,7 @@ ${stepsSection}`;
           description: string;
           ir: string;
           layout: string;
+          kind?: string | null;
           createdAt: string;
           updatedAt: string;
         }
@@ -13250,6 +13284,9 @@ ${stepsSection}`;
     if (!workflowId) return undefined;
     const def = await this.getWorkflowDefinition(workflowId);
     if (!def) return undefined;
+    // KTD-1/R6: a fragment must never act as a project default (it is not a
+    // selectable workflow); fall back to no default rather than materializing it.
+    if (def.kind === "fragment") return undefined;
     // Compile (and validate) before creating any rows so a non-compilable
     // default falls back cleanly with nothing written.
     const inputs = compileWorkflowToSteps(def.ir);
@@ -13271,6 +13308,12 @@ ${stepsSection}`;
     return this.withTaskLock(taskId, async () => {
       const def = await this.getWorkflowDefinition(workflowId);
       if (!def) throw new Error(`Workflow '${workflowId}' not found`);
+      // KTD-1/R6: fragments are reusable single-node palette templates, not
+      // selectable workflows. Reject them from task selection with a clear error
+      // rather than materializing a degenerate single-step task.
+      if (def.kind === "fragment") {
+        throw new Error(`Workflow '${workflowId}' is a fragment and cannot be selected for a task`);
+      }
       // Compile once up front: a non-linear graph aborts before any mutation.
       const inputs = compileWorkflowToSteps(def.ir);
 

@@ -47,6 +47,8 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
     id: spec.id,
     name: spec.name,
     description: spec.description,
+    // Built-ins are always selectable workflows, never fragments (KTD-1).
+    kind: "workflow",
     ir,
     layout,
     createdAt: BUILTIN_TS,
@@ -152,6 +154,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     name: "Stepwise coding (built-in)",
     description:
       "Per-step plan, execute, and review modeled as graph structure: each planned step runs and is reviewed (approve / revise / rethink) before the next, with bounded rework. Requires the workflow graph executor.",
+    kind: "workflow",
     ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
     layout: {
       start: { x: 60, y: 160 },

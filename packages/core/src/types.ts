@@ -541,6 +541,11 @@ export interface WorkflowStep {
    *  Must be set together with `modelProvider`. When both model fields are undefined,
    *  the executor uses global settings defaults. Only used when mode is "prompt". */
   modelId?: string;
+  /** (workflow-editor-consolidation U1/U2, KTD-1/KTD-3) when this legacy step has
+   *  been migrated into a fragment WorkflowDefinition, the fragment's id is stamped
+   *  here so the lazy step migration is idempotent (already-stamped rows are
+   *  skipped). Stored in the `migrated_fragment_id` column. */
+  migratedFragmentId?: string;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
@@ -651,6 +656,9 @@ export interface WorkflowStepInput {
   modelProvider?: string;
   /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */
   modelId?: string;
+  /** (workflow-editor-consolidation U2, KTD-3) fragment id stamped when this step
+   *  was migrated into a fragment WorkflowDefinition. Set by the migration only. */
+  migratedFragmentId?: string;
 }
 
 /** Result of a workflow step execution on a task. */

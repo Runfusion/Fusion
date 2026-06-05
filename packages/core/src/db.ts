@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 108;
+const SCHEMA_VERSION = 109;
 
 export { SCHEMA_VERSION };
 
@@ -385,6 +385,10 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
   defaultOn INTEGER DEFAULT 0,
   modelProvider TEXT,
   modelId TEXT,
+  -- (workflow-editor-consolidation U1/U2) when this step has been migrated into a
+  -- fragment WorkflowDefinition, the fragment's id is stamped here so re-runs of
+  -- the lazy migration skip already-migrated rows (marker idempotency).
+  migrated_fragment_id TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
@@ -398,6 +402,11 @@ CREATE TABLE IF NOT EXISTS workflows (
   description TEXT NOT NULL DEFAULT '',
   ir TEXT NOT NULL,
   layout TEXT NOT NULL DEFAULT '{}',
+  -- (workflow-editor-consolidation U1, KTD-1) discriminates reusable single-node
+  -- "fragment" templates from full "workflow" definitions. Fragments never appear
+  -- in task workflow pickers, default-workflow selection, or compile/selection
+  -- paths. Legacy rows default to 'workflow'.
+  kind TEXT NOT NULL DEFAULT 'workflow',
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
@@ -4288,6 +4297,19 @@ export class Database {
           CREATE INDEX IF NOT EXISTS idx_workflow_run_step_instances_task_run ON workflow_run_step_instances(taskId, runId);
         `);
         this.addColumnIfMissing("tasks", "customFields", "TEXT DEFAULT '{}'");
+      });
+    }
+
+    // Migration 109: Workflow editor consolidation (workflow-editor-consolidation
+    // U1, KTD-1). Adds workflows.kind (fragment vs workflow discriminator;
+    // existing rows default to 'workflow') and workflow_steps.migrated_fragment_id
+    // (nullable marker stamping a step that has been migrated into a fragment, so
+    // the lazy step migration is idempotent). Additive-only, idempotent
+    // (addColumnIfMissing guards); no backfill.
+    if (version < 109) {
+      this.applyMigration(109, () => {
+        this.addColumnIfMissing("workflows", "kind", "TEXT NOT NULL DEFAULT 'workflow'");
+        this.addColumnIfMissing("workflow_steps", "migrated_fragment_id", "TEXT");
       });
     }
 

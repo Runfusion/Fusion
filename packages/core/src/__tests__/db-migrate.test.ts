@@ -715,7 +715,7 @@ describe("schema migration", () => {
 
     const row = db.prepare("SELECT deletedAt FROM tasks WHERE id = 'FN-legacy'").get() as { deletedAt: string | null };
     expect(row.deletedAt).toBeNull();
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
 
     db.close();
   });
@@ -748,7 +748,7 @@ describe("schema migration", () => {
       { id: "WS-001", mode: "prompt", gateMode: "advisory" },
       { id: "WS-002", mode: "script", gateMode: "advisory" },
     ]);
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
 
     db.close();
   });
@@ -798,7 +798,7 @@ describe("schema migration", () => {
       reviewerContextRetryCount: 0,
       reviewerFallbackRetryCount: 0,
     });
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
 
     db.close();
   });
@@ -827,7 +827,7 @@ describe("schema migration", () => {
 
     const columns = db.prepare("PRAGMA table_info(milestones)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain("acceptanceCriteria");
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
 
     db.close();
   });
@@ -868,7 +868,7 @@ describe("schema migration", () => {
     const missionColumns = db.prepare("PRAGMA table_info(missions)").all() as Array<{ name: string }>;
     expect(missionColumns.map((column) => column.name)).toContain("autoMerge");
 
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
     db.close();
   });
 
@@ -902,7 +902,7 @@ describe("schema migration", () => {
       { id: "WS-002", mode: "script", enabled: 1, gateMode: "advisory" },
       { id: "WS-003", mode: "prompt", enabled: 0, gateMode: "advisory" },
     ]);
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
 
     db.close();
   });
@@ -939,7 +939,7 @@ describe("schema migration", () => {
 
     const indexes = db.prepare("PRAGMA index_list(mission_goals)").all() as Array<{ name: string }>;
     expect(indexes.some((index) => index.name === "idxMissionGoalsGoalId")).toBe(true);
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
 
     db.close();
   });
@@ -1000,7 +1000,79 @@ describe("schema migration", () => {
     expect(customFieldsColumn).toBeDefined();
     expect(customFieldsColumn?.dflt_value).toBe("'{}'");
 
-    expect(db.getSchemaVersion()).toBe(108);
+    expect(db.getSchemaVersion()).toBe(109);
     db.close();
+  });
+
+  it("adds workflows.kind + workflow_steps.migrated_fragment_id when migrating from schema version 108", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '108')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workflows (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        ir TEXT NOT NULL,
+        layout TEXT NOT NULL DEFAULT '{}',
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workflow_steps (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'prompt',
+        phase TEXT NOT NULL DEFAULT 'pre-merge',
+        prompt TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+    db.exec(
+      `INSERT INTO workflows (id, name, ir, createdAt, updatedAt) VALUES ('WF-legacy', 'Legacy', '{"version":"v1","name":"x","nodes":[],"edges":[]}', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
+    );
+    db.exec(
+      "INSERT INTO workflow_steps (id, name, description, createdAt, updatedAt) VALUES ('WS-legacy', 'Legacy', 'desc', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')",
+    );
+
+    db.init();
+
+    const workflowColumns = db.prepare("PRAGMA table_info(workflows)").all() as Array<{
+      name: string;
+    }>;
+    expect(workflowColumns.map((c) => c.name)).toContain("kind");
+    // Existing rows default to 'workflow'.
+    const wfRow = db.prepare("SELECT kind FROM workflows WHERE id = 'WF-legacy'").get() as { kind: string };
+    expect(wfRow.kind).toBe("workflow");
+
+    const stepColumns = db.prepare("PRAGMA table_info(workflow_steps)").all() as Array<{ name: string }>;
+    expect(stepColumns.map((c) => c.name)).toContain("migrated_fragment_id");
+    const stepRow = db
+      .prepare("SELECT migrated_fragment_id FROM workflow_steps WHERE id = 'WS-legacy'")
+      .get() as { migrated_fragment_id: string | null };
+    expect(stepRow.migrated_fragment_id).toBeNull();
+
+    expect(db.getSchemaVersion()).toBe(109);
+    db.close();
+  });
+
+  it("migration 109 is idempotent on re-init", () => {
+    const db = new Database(fusionDir);
+    db.init();
+    expect(db.getSchemaVersion()).toBe(109);
+    db.close();
+
+    // Re-open the same on-disk DB: already at 109, the 109 block must be a no-op.
+    const reopened = new Database(fusionDir);
+    reopened.init();
+    expect(reopened.getSchemaVersion()).toBe(109);
+    const workflowColumns = reopened.prepare("PRAGMA table_info(workflows)").all() as Array<{ name: string }>;
+    expect(workflowColumns.filter((c) => c.name === "kind")).toHaveLength(1);
+    reopened.close();
   });
 });

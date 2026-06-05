@@ -159,6 +159,18 @@ function defaultGateMode(node: WorkflowIrNode, mode: "prompt" | "script"): Workf
   return mode === "script" ? "gate" : "advisory";
 }
 
+/**
+ * Map a single user IR node onto a WorkflowStepInput. This is the forward half
+ * of the steps↔IR round-trip contract (workflow-editor-consolidation R4/KTD-2);
+ * its exact inverse is `stepInputToNode` in `workflow-steps-to-ir.ts`. Parity is
+ * pinned by `__tests__/workflow-steps-to-ir.test.ts` over exactly the
+ * compiler-visible fields: name / mode / phase / gateMode / prompt / scriptName /
+ * toolMode / modelProvider / modelId. `enabled` / `defaultOn` / `templateId` are
+ * NOT compiler-visible and are handled by migration policy, not the converter.
+ *
+ * INVERSION CONTRACT: when you add a field here, extend `stepInputToNode` (and
+ * the parity test) in `workflow-steps-to-ir.ts` to keep the round-trip exact.
+ */
 function nodeToStepInput(node: WorkflowIrNode, phase: "pre-merge" | "post-merge"): WorkflowStepInput {
   const scriptName = configString(node, "scriptName");
   const mode: "prompt" | "script" = node.kind === "script" || (node.kind === "gate" && scriptName) ? "script" : "prompt";
