@@ -141,6 +141,10 @@ A plugin that ships inside the Fusion distribution itself rather than being inst
 *Avoid:* built-in plugin (as a distinct concept; the Settings label uses "Built-in" for the same thing)
 
 A Bundled Plugin must be registered in several independently maintained surfaces — the Settings catalog, the dashboard server's bundled-id fallback set, the CLI's startup auto-install list, and the build step that stages a loadable copy into the distribution. The surfaces do not cross-check each other: a plugin registered in some but not all appears installable yet fails to install or load, so adding one means mirroring an existing bundled plugin across every surface.
+
+### Plugin Entry
+The single loadable file persisted as a plugin's path and dynamically imported by the loader. The contract is strict: a package directory is never a valid entry (ESM cannot import directories), so every install surface must resolve a concrete file before persisting, preferring the shipped bundle, then a prebuilt output, then raw workspace source. Legacy registrations that stored a directory are healed in place — re-pointed at a resolved entry — the next time the plugin is enabled or auto-installed.
+
 ## Workflow columns & traits
 
 *Behind the `experimentalFeatures.workflowColumns` flag. With the flag off, the legacy fixed pipeline (the closed column enum + `VALID_TRANSITIONS`) is authoritative and unchanged.*

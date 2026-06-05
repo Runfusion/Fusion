@@ -29,6 +29,7 @@ import {
   listAgentMemoryFiles,
   readAgentMemoryFile,
   resolvePlanningSettingsModel,
+  resolvePluginEntryPath,
   resolveProjectDefaultModel,
   resolveTitleSummarizerSettingsModel,
   writeAgentMemoryFile,
@@ -3618,10 +3619,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Resolve manifest — supports package root and dist-folder selections
       const { manifestDir, manifest } = await resolvePluginManifest(manifestPathForInstall);
 
+      // Register the loadable entry FILE, not the package directory — Node ESM
+      // cannot import directories, so the loader rejects directory paths.
+      const entryPath = resolvePluginEntryPath(manifestDir);
+      if (!entryPath) {
+        throw badRequest(
+          `Plugin at ${manifestDir} has no loadable entry file `
+          + "(expected bundled.js, dist/index.js, or src/index.ts)",
+        );
+      }
+
       try {
         const plugin = await pluginStore.registerPlugin({
           manifest,
-          path: manifestDir,
+          path: entryPath,
           ...(typeof aiScanOnLoad === "boolean" ? { aiScanOnLoad } : {}),
         });
 
@@ -3667,6 +3678,20 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const id = req.params.id as string;
 
     let plugin = await pluginStore.enablePlugin(id);
+
+    // Heal legacy registrations that stored the package directory instead of
+    // a loadable entry file (Node ESM cannot import directories). Mirrors the
+    // CLI's startup heal in ensureBundledPluginInstalled.
+    try {
+      if (nodeFs.statSync(plugin.path).isDirectory()) {
+        const entryPath = resolvePluginEntryPath(plugin.path);
+        if (entryPath) {
+          plugin = await pluginStore.updatePlugin(id, { path: entryPath });
+        }
+      }
+    } catch {
+      // Path missing or unreadable — let loadPlugin surface the real error.
+    }
 
     // Start the plugin if loader is available
     if (options?.pluginLoader) {

@@ -78,6 +78,9 @@ function resolveBundledPluginDir(pluginId: string): string | null {
  * Returns null when the directory exists but none of the loadable entry files
  * are present. Callers must treat that as a missing bundle rather than
  * persisting a directory path that Node cannot import.
+ *
+ * Keep in sync with resolvePluginEntryPath in @fusion/core (plugin-loader.ts),
+ * which the dashboard install/enable routes use for the same contract.
  */
 export function resolvePluginEntryPath(pluginDir: string): string | null {
   const candidates = [

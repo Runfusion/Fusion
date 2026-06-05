@@ -9,7 +9,8 @@
  * - Error isolation (plugin crashes don't crash the loader)
  */
 
-import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -47,6 +48,35 @@ import { scanPluginSecurity } from "./plugin-security-scan.js";
 // Minimum Fusion version for plugin compatibility checks (can be expanded later)
 const MINIMUM_FUSION_VERSION = "0.1.0";
 let moduleImportVersion = 0;
+
+/**
+ * Resolve the actual loadable entry FILE path for a plugin directory. Node ESM
+ * does not allow directory imports, so the registered plugin path must be the
+ * explicit file the loader will dynamic-import. Preference order:
+ *   1. ./bundled.js   (esbuild-bundled, shipped in npm tarball)
+ *   2. ./dist/index.js (legacy prebuilt fallback)
+ *   3. ./src/index.ts (workspace/dev fallback when no bundle exists)
+ *
+ * Returns null when the directory exists but none of the loadable entry files
+ * are present. Callers must treat that as a missing/unloadable plugin rather
+ * than persisting a directory path that Node cannot import.
+ *
+ * Keep in sync with resolvePluginEntryPath in the CLI's
+ * bundled-plugin-install.ts, which keeps a local copy so its fs mocks work.
+ */
+export function resolvePluginEntryPath(pluginDir: string): string | null {
+  const candidates = [
+    join(pluginDir, "bundled.js"),
+    join(pluginDir, "dist", "index.js"),
+    join(pluginDir, "src", "index.ts"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
 
 export interface PluginLoaderOptions {
   /** Plugin store for persistence */

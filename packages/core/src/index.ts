@@ -763,7 +763,7 @@ export {
 } from "./plugin-types.js";
 export { PluginStore } from "./plugin-store.js";
 export type { PluginStoreEvents, PluginRegistrationInput, PluginUpdateInput } from "./plugin-store.js";
-export { PluginLoader } from "./plugin-loader.js";
+export { PluginLoader, resolvePluginEntryPath } from "./plugin-loader.js";
 export { scanPluginSecurity } from "./plugin-security-scan.js";
 export type { PluginSecurityScanResult, PluginSecurityFinding } from "./plugin-security-scan.js";
 export type {

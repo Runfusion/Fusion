@@ -280,6 +280,9 @@ describe("POST /api/plugins mode:install — package root path", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
@@ -313,8 +316,51 @@ describe("POST /api/plugins mode:install — package root path", () => {
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         manifest: expect.objectContaining({ id: "my-plugin" }),
-        path: pkgRoot,
+        // Registered path is the loadable entry file inside the package root
+        path: `${pkgRoot}/bundled.js`,
       }),
+    );
+  });
+
+  it("falls back to dist/index.js when no bundled.js exists", async () => {
+    const pkgRoot = "/home/user/plugins/my-plugin";
+    mockAccess.mockImplementation((p: string) => {
+      if (p === pkgRoot || p === `${pkgRoot}/manifest.json`) return Promise.resolve();
+      return Promise.reject(new Error("not found"));
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(VALID_MANIFEST));
+    mockExistsSync.mockImplementation((p: string) => p === `${pkgRoot}/dist/index.js`);
+    (pluginStore.registerPlugin as ReturnType<typeof vi.fn>).mockResolvedValue(INSTALLED_PLUGIN);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins", {
+      mode: "install",
+      path: pkgRoot,
+    });
+
+    expect(res.status).toBe(201);
+    expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `${pkgRoot}/dist/index.js` }),
+    );
+  });
+
+  it("falls back to src/index.ts for workspace-dev packages without build outputs", async () => {
+    const pkgRoot = "/home/user/plugins/my-plugin";
+    mockAccess.mockImplementation((p: string) => {
+      if (p === pkgRoot || p === `${pkgRoot}/manifest.json`) return Promise.resolve();
+      return Promise.reject(new Error("not found"));
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(VALID_MANIFEST));
+    mockExistsSync.mockImplementation((p: string) => p === `${pkgRoot}/src/index.ts`);
+    (pluginStore.registerPlugin as ReturnType<typeof vi.fn>).mockResolvedValue(INSTALLED_PLUGIN);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins", {
+      mode: "install",
+      path: pkgRoot,
+    });
+
+    expect(res.status).toBe(201);
+    expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `${pkgRoot}/src/index.ts` }),
     );
   });
 
@@ -338,7 +384,7 @@ describe("POST /api/plugins mode:install — package root path", () => {
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: "my-plugin" });
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ path: distPath }),
+      expect.objectContaining({ path: `${distPath}/bundled.js` }),
     );
   });
 
@@ -434,6 +480,7 @@ describe("POST /api/plugins central persistence integration", () => {
       if (p === pluginPath || p === `${pluginPath}/manifest.json`) return Promise.resolve();
       return Promise.reject(new Error("not found"));
     });
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     mockReadFile.mockResolvedValueOnce(JSON.stringify(VALID_MANIFEST));
 
     const app = buildRealApp(pluginStore);
@@ -471,6 +518,9 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
@@ -491,7 +541,7 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
       id: "fusion-plugin-dependency-graph",
       name: "Dependency Graph",
     };
-    mockExistsSync.mockImplementation((p: string) => p.includes("fusion-plugin-dependency-graph/manifest.json"));
+    mockExistsSync.mockImplementation((p: string) => p.includes("fusion-plugin-dependency-graph/manifest.json") || p.endsWith("bundled.js"));
     mockAccess.mockImplementation((p: string) => {
       if (p.includes("fusion-plugin-dependency-graph")) return Promise.resolve();
       return Promise.reject(new Error("not found"));
@@ -512,7 +562,7 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         manifest: expect.objectContaining({ id: "fusion-plugin-dependency-graph" }),
-        path: expect.stringContaining("fusion-plugin-dependency-graph"),
+        path: expect.stringMatching(/fusion-plugin-dependency-graph[\\/]bundled\.js$/),
       }),
     );
   });
@@ -523,7 +573,7 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
       id: "fusion-plugin-reports",
       name: "Reports",
     };
-    mockExistsSync.mockImplementation((p: string) => p.includes("fusion-plugin-reports/manifest.json"));
+    mockExistsSync.mockImplementation((p: string) => p.includes("fusion-plugin-reports/manifest.json") || p.endsWith("bundled.js"));
     mockAccess.mockImplementation((p: string) => {
       if (p.includes("fusion-plugin-reports")) return Promise.resolve();
       return Promise.reject(new Error("not found"));
@@ -544,7 +594,7 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         manifest: expect.objectContaining({ id: "fusion-plugin-reports" }),
-        path: expect.stringContaining("fusion-plugin-reports"),
+        path: expect.stringMatching(/fusion-plugin-reports[\\/]bundled\.js$/),
       }),
     );
   });
@@ -557,7 +607,9 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     };
     // Only the staged bundled copy under dist/plugins exists — the
     // cwd-relative path must miss so the bundled fallback is exercised.
-    mockExistsSync.mockImplementation((p: string) => p.includes("dist/plugins/fusion-plugin-compound-engineering/manifest.json"));
+    mockExistsSync.mockImplementation((p: string) =>
+      p.includes("dist/plugins/fusion-plugin-compound-engineering/manifest.json")
+      || p.includes("dist/plugins/fusion-plugin-compound-engineering/bundled.js"));
     mockAccess.mockImplementation((p: string) => {
       if (p.includes("dist/plugins/fusion-plugin-compound-engineering")) return Promise.resolve();
       return Promise.reject(new Error("not found"));
@@ -575,10 +627,12 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     });
 
     expect(res.status).toBe(201);
+    // The registered path must be the loadable entry FILE, not the
+    // package directory — the loader rejects directory imports.
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         manifest: expect.objectContaining({ id: "fusion-plugin-compound-engineering" }),
-        path: expect.stringContaining("fusion-plugin-compound-engineering"),
+        path: expect.stringMatching(/fusion-plugin-compound-engineering[\\/]bundled\.js$/),
       }),
     );
   });
@@ -591,7 +645,9 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     };
     // Only the staged bundled copy under dist/plugins exists — the
     // cwd-relative path must miss so the bundled fallback is exercised.
-    mockExistsSync.mockImplementation((p: string) => p.includes("dist/plugins/fusion-plugin-cli-printing-press/manifest.json"));
+    mockExistsSync.mockImplementation((p: string) =>
+      p.includes("dist/plugins/fusion-plugin-cli-printing-press/manifest.json")
+      || p.includes("dist/plugins/fusion-plugin-cli-printing-press/bundled.js"));
     mockAccess.mockImplementation((p: string) => {
       if (p.includes("dist/plugins/fusion-plugin-cli-printing-press")) return Promise.resolve();
       return Promise.reject(new Error("not found"));
@@ -612,7 +668,7 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
         manifest: expect.objectContaining({ id: "fusion-plugin-cli-printing-press" }),
-        path: expect.stringContaining("fusion-plugin-cli-printing-press"),
+        path: expect.stringMatching(/fusion-plugin-cli-printing-press[\\/]bundled\.js$/),
       }),
     );
   });
@@ -648,7 +704,7 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
   });
 });
 
-describe("POST /api/plugins mode:install — negative paths", () => {
+describe("POST /api/plugins/:id/enable — legacy directory path heal", () => {
   let pluginStore: PluginStore;
   let pluginLoader: PluginLoader;
   let store: TaskStore;
@@ -668,6 +724,110 @@ describe("POST /api/plugins mode:install — negative paths", () => {
     app.use("/api", createApiRoutes(store, { pluginStore, pluginLoader }));
     return app;
   }
+
+  it("re-points a directory plugin path at its loadable entry before loading", async () => {
+    // Legacy registration stored the package directory; the loader rejects
+    // directory imports, so enable must heal the path first.
+    const dirPath = "/home/user/plugins/my-plugin";
+    mockStatSync.mockReturnValue({ isDirectory: () => true });
+    mockExistsSync.mockImplementation((p: string) => p === `${dirPath}/bundled.js`);
+    (pluginStore.enablePlugin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...INSTALLED_PLUGIN,
+      path: dirPath,
+    });
+    (pluginStore.updatePlugin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...INSTALLED_PLUGIN,
+      path: `${dirPath}/bundled.js`,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins/my-plugin/enable", {});
+
+    expect(res.status).toBe(200);
+    expect(pluginStore.updatePlugin).toHaveBeenCalledWith("my-plugin", { path: `${dirPath}/bundled.js` });
+    expect(pluginLoader.loadPlugin).toHaveBeenCalledWith("my-plugin");
+  });
+
+  it("heals directory paths in createPluginRouter's enable handler too", async () => {
+    const dirPath = "/home/user/plugins/my-plugin";
+    mockStat.mockResolvedValue({ isDirectory: () => true });
+    mockExistsSync.mockImplementation((p: string) => p === `${dirPath}/bundled.js`);
+    (pluginStore.enablePlugin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...INSTALLED_PLUGIN,
+      path: dirPath,
+    });
+    (pluginStore.updatePlugin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...INSTALLED_PLUGIN,
+      path: `${dirPath}/bundled.js`,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/plugins", createPluginRouter(pluginStore, pluginLoader));
+    const res = await REQUEST(app, "POST", "/api/plugins/my-plugin/enable", {});
+
+    expect(res.status).toBe(200);
+    expect(pluginStore.updatePlugin).toHaveBeenCalledWith("my-plugin", { path: `${dirPath}/bundled.js` });
+    expect(pluginLoader.loadPlugin).toHaveBeenCalledWith("my-plugin");
+  });
+
+  it("leaves file paths untouched on enable", async () => {
+    mockStatSync.mockReturnValue({ isDirectory: () => false });
+    (pluginStore.enablePlugin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...INSTALLED_PLUGIN,
+      path: "/home/user/plugins/my-plugin/bundled.js",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins/my-plugin/enable", {});
+
+    expect(res.status).toBe(200);
+    expect(pluginStore.updatePlugin).not.toHaveBeenCalled();
+    expect(pluginLoader.loadPlugin).toHaveBeenCalledWith("my-plugin");
+  });
+});
+
+describe("POST /api/plugins mode:install — negative paths", () => {
+  let pluginStore: PluginStore;
+  let pluginLoader: PluginLoader;
+  let store: TaskStore;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
+    pluginStore = createMockPluginStore();
+    pluginLoader = createMockPluginLoader();
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { pluginStore, pluginLoader }));
+    return app;
+  }
+
+  it("returns 400 when the package has no loadable entry file", async () => {
+    const pkgRoot = "/home/user/plugins/my-plugin";
+    mockAccess.mockImplementation((p: string) => {
+      if (p === pkgRoot || p === `${pkgRoot}/manifest.json`) return Promise.resolve();
+      return Promise.reject(new Error("not found"));
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(VALID_MANIFEST));
+    // Manifest resolves, but no bundled.js / dist/index.js / src/index.ts exists.
+    mockExistsSync.mockReturnValue(false);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins", {
+      mode: "install",
+      path: pkgRoot,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("no loadable entry file");
+    expect(pluginStore.registerPlugin).not.toHaveBeenCalled();
+  });
 
   it("returns 404 when path does not exist", async () => {
     mockAccess.mockRejectedValue(new Error("not found"));
@@ -835,6 +995,9 @@ describe("POST /api/plugins mode:install — manifest validation edge cases", ()
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
@@ -921,6 +1084,9 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore({
       registerPlugin: vi.fn().mockResolvedValue(INSTALLED_PLUGIN),
     });
@@ -954,7 +1120,7 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
 
     expect(res.status).toBe(201);
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ path: parentPath }),
+      expect.objectContaining({ path: `${parentPath}/bundled.js` }),
     );
   });
 
@@ -974,7 +1140,7 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
 
     expect(res.status).toBe(201);
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ path: parentPath }),
+      expect.objectContaining({ path: `${parentPath}/bundled.js` }),
     );
   });
 
@@ -994,7 +1160,7 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
 
     expect(res.status).toBe(201);
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ path: parentPath }),
+      expect.objectContaining({ path: `${parentPath}/bundled.js` }),
     );
   });
 
@@ -1032,9 +1198,9 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
     });
 
     expect(res.status).toBe(201);
-    // Should use the dist dir path since it has its own manifest
+    // Should use the dist dir entry since it has its own manifest
     expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ path: distPath }),
+      expect.objectContaining({ path: `${distPath}/bundled.js` }),
     );
   });
 });
@@ -1049,6 +1215,9 @@ describe("GET /api/plugins/dashboard-views", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
@@ -1166,6 +1335,9 @@ describe("GET /api/plugins/ui-slots", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
@@ -1335,6 +1507,9 @@ describe("GET /api/plugins/ui-contributions", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
@@ -1842,6 +2017,9 @@ describe("GET /api/plugins/runtimes", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Install now registers the loadable entry file; pretend each
+    // package ships an esbuild bundle.
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("bundled.js"));
     pluginStore = createMockPluginStore();
     pluginLoader = createMockPluginLoader();
     store = createMockTaskStore({
