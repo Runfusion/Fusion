@@ -109,6 +109,10 @@ export type {
   WorkflowIrNode,
   WorkflowIrEdge,
   WorkflowIrNodeKind,
+  // Columns + per-column permanent-agent binding (column-agent plan KTD-1, R12).
+  WorkflowIrColumn,
+  WorkflowIrColumnTrait,
+  WorkflowColumnAgent,
   // Foreach / artifacts / custom fields (step inversion).
   WorkflowForeachConfig,
   WorkflowIrArtifact,

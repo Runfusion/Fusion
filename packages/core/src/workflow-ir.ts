@@ -294,7 +294,11 @@ function reachableFrom(
  *  - rework edges legal only when both endpoints are inside this template;
  *  - step-review verdict routing rules (KTD-4).
  */
-function validateForeach(node: WorkflowIrNode, topLevelNodeIds: Set<string>): void {
+function validateForeach(
+  node: WorkflowIrNode,
+  topLevelNodeIds: Set<string>,
+  columnIds: Set<string>,
+): void {
   const cfg = node.config as Partial<WorkflowForeachConfig> | undefined;
   if (!cfg || cfg.source !== "task-steps") {
     throw new WorkflowIrError(
@@ -364,11 +368,18 @@ function validateForeach(node: WorkflowIrNode, topLevelNodeIds: Set<string>): vo
     );
   }
 
-  // No nested foreach.
+  // No nested foreach. Also: a template node's declared `column` must resolve to a
+  // top-level column id (column-agent plan KTD-1) — otherwise a dangling reference
+  // is a silent no-binding no-op at runtime instead of a typed authoring error.
   for (const inner of templateNodes) {
     if (inner.kind === "foreach") {
       throw new WorkflowIrError(
         `foreach node '${node.id}' template may not contain a nested foreach ('${inner.id}')`,
+      );
+    }
+    if (inner.column !== undefined && !columnIds.has(inner.column)) {
+      throw new WorkflowIrError(
+        `Workflow node '${inner.id}' references undefined column '${inner.column}'`,
       );
     }
   }
@@ -898,6 +909,29 @@ function validateColumns(ir: WorkflowIrV2): void {
     if (!Array.isArray(column.traits)) {
       throw new WorkflowIrError(`Workflow IR column '${column.id}' traits must be an array`);
     }
+    validateColumnAgent(column);
+  }
+}
+
+/** Validate a column's optional permanent-agent binding (column-agent plan KTD-1).
+ *  Mirrors the `validateFields` early-return shape: absent → no-op; present →
+ *  `agentId` must be a non-empty string and `mode` exactly `defer`/`override`.
+ *  Agent existence is NOT checked here (no agent store at the IR layer). */
+function validateColumnAgent(column: WorkflowIrColumn): void {
+  const agent = column.agent;
+  if (agent === undefined) return;
+  if (!agent || typeof agent !== "object") {
+    throw new WorkflowIrError(`Workflow IR column '${column.id}' agent must be an object`);
+  }
+  if (typeof agent.agentId !== "string" || agent.agentId === "") {
+    throw new WorkflowIrError(
+      `Workflow IR column '${column.id}' agent must have a non-empty agentId`,
+    );
+  }
+  if (agent.mode !== "defer" && agent.mode !== "override") {
+    throw new WorkflowIrError(
+      `Workflow IR column '${column.id}' agent mode must be 'defer' or 'override' (got '${String(agent.mode)}')`,
+    );
   }
 }
 
@@ -931,7 +965,7 @@ function validateV2(ir: WorkflowIrV2): void {
   const topLevelIds = new Set(ir.nodes.map((n) => n.id));
   validateStepExecutePlacement(ir.nodes);
   for (const node of ir.nodes) {
-    if (node.kind === "foreach") validateForeach(node, topLevelIds);
+    if (node.kind === "foreach") validateForeach(node, topLevelIds, columnIds);
   }
   validateStepReviewRouting(ir.nodes, outgoing, nodesById, false);
   validateParseStepsNodes(ir);
@@ -1046,6 +1080,9 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
     if (col.id !== expectedId || col.name !== expectedId || col.traits.length !== 0) {
       return ir;
     }
+    // A permanent-agent binding is a v2-only feature (column-agent plan, R9): a
+    // graph that staffs a column can never round-trip through a pre-v2 binary.
+    if (col.agent !== undefined) return ir;
   }
 
   // Every node must sit in its default seam-derived column. A node placed

@@ -139,7 +139,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--card);
   transition: transform 0.15s ease;
 }
 

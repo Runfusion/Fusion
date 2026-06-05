@@ -156,3 +156,62 @@ export function resolveEffectiveAgentPermissionPolicy(
     rules: policy.rules,
   });
 }
+
+/**
+ * Disposition strictness rank for column-agent policy-escalation comparison
+ * (R13). A LOWER rank is *broader* (more privileged): `allow` lets an action
+ * through unconditionally, `require-approval` gates it, `block` denies it. An
+ * agent whose policy is broader than the project default on ANY action category
+ * is an escalation that must be explicitly confirmed at save time.
+ */
+const DISPOSITION_BREADTH_RANK: Record<AgentPermissionPolicyDisposition, number> = {
+  allow: 0,
+  "require-approval": 1,
+  block: 2,
+};
+
+/**
+ * The broadest (most-privileged) rank — used as the fallback when a category is
+ * absent from a policy's rules map. Treating a missing category as the broadest
+ * possible disposition (`allow`) ensures an absent key can never silently
+ * *suppress* a genuine escalation: the comparison only flags when the agent is
+ * at least as broad as the default, so an unknown agent-side category errs
+ * toward flagging, and an unknown default-side category errs toward the most
+ * permissive default (the conservative direction for escalation detection).
+ */
+const BROADEST_RANK = DISPOSITION_BREADTH_RANK.allow;
+
+function dispositionRank(
+  rules: AgentPermissionPolicyRules,
+  category: (typeof AGENT_PERMISSION_POLICY_ACTION_CATEGORIES)[number],
+): number {
+  const disposition = rules[category];
+  if (disposition === undefined) {
+    // An absent category must not suppress escalation. Treat the agent side as
+    // broadest (most privileged) so a missing key never narrows the comparison.
+    return BROADEST_RANK;
+  }
+  return DISPOSITION_BREADTH_RANK[disposition];
+}
+
+/**
+ * True when `agentPolicy`'s effective policy is broader (more privileged) than
+ * the project `defaultPolicy` on at least one action category (R13).
+ *
+ * Both arguments should already be resolved via
+ * {@link resolveEffectiveAgentPermissionPolicy}, which fills every category. The
+ * defensive per-category handling here guards against a partial/custom rules
+ * map slipping through with a missing category key — an absent key must never
+ * silently suppress a genuine escalation.
+ */
+export function isPolicyBroaderThanDefault(
+  agentPolicy: AgentPermissionPolicy,
+  defaultPolicy: AgentPermissionPolicy,
+): boolean {
+  for (const category of AGENT_PERMISSION_POLICY_ACTION_CATEGORIES) {
+    const agentRank = dispositionRank(agentPolicy.rules, category);
+    const defaultRank = dispositionRank(defaultPolicy.rules, category);
+    if (agentRank < defaultRank) return true;
+  }
+  return false;
+}

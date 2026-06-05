@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
-import type { WorkflowDefinition } from "@fusion/core";
+import type { WorkflowDefinition, Settings } from "@fusion/core";
+import type { Agent } from "../../api";
 import { irToFlow, flowToIr, emptyWorkflowIr, emptyWorkflowLayout, foreachChildFlowId } from "../workflow-flow-mapping";
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "@fusion/core";
 
@@ -15,12 +16,41 @@ vi.mock("../../api", () => ({
   fetchModels: vi.fn(),
   fetchAgents: vi.fn(),
   fetchDiscoveredSkills: vi.fn(),
+  // useAppSettings (threaded into the editor for the column-agent flag gate, U6)
+  // imports these from the same module; provide resolved stubs so the real hook
+  // does not throw on undefined fns.
+  fetchConfig: vi.fn(),
+  fetchSettings: vi.fn(),
+  updateSettings: vi.fn(),
+  updateGlobalSettings: vi.fn(),
 }));
 
 import { fireEvent } from "@testing-library/react";
-import { fetchWorkflows, fetchTraits, fetchStepParsers, updateWorkflow, compileWorkflow, createWorkflow, fetchModels } from "../../api";
+import {
+  fetchWorkflows,
+  fetchTraits,
+  fetchStepParsers,
+  updateWorkflow,
+  compileWorkflow,
+  createWorkflow,
+  fetchModels,
+  fetchAgents,
+  fetchConfig,
+  fetchSettings,
+} from "../../api";
 import type { TraitCatalogEntry } from "../../api";
+import { beforeEach as viBeforeEach } from "vitest";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
+
+// useAppSettings (threaded into the editor for the column-agent flag gate)
+// fetches config + settings on mount via the mocked api module. Default both to
+// resolved empties for every test so the real hook never rejects; column-agent
+// tests override fetchSettings to flip the flags on. fetchAgents defaults empty.
+viBeforeEach(() => {
+  vi.mocked(fetchConfig).mockResolvedValue({ maxConcurrent: 2, rootDir: "." });
+  vi.mocked(fetchSettings).mockResolvedValue({} as never);
+  vi.mocked(fetchAgents).mockResolvedValue([]);
+});
 
 const TRAIT_CATALOG: TraitCatalogEntry[] = [
   { id: "intake", name: "Intake", builtin: true, flags: { intake: true } },
@@ -348,10 +378,17 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
     await screen.findByText("Save");
+    // Wait for graph/column hydration before driving the palette — clicking
+    // mid-hydration races the flow-state seeding and the added node may never
+    // render (same flake class as the seam-in-branch badge deflake, 86867c57b).
+    expect(await screen.findByTestId("wf-column-panel")).toBeInTheDocument();
     // Adding a foreach renders a group node with an empty inspector hint absent
     // (it has a child) and an inspector for the foreach.
     fireEvent.click(screen.getByText("For-each step").closest("button")!);
-    await waitFor(() => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument());
+    await waitFor(
+      () => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
     // The foreach inspector shows the Mode select (KTD-3).
     expect(screen.getByText("Mode")).toBeInTheDocument();
     // No empty-state hint because the palette seeded a step-execute child.
@@ -623,5 +660,158 @@ describe("WorkflowNodeEditor — built-in stepwise selection render path", () =>
     const approve = template.edges.find((e) => e.condition === "outcome:approve");
     expect(approve).toMatchObject({ from: "step-review", to: "step-done" });
     expect(approve?.kind).toBeUndefined();
+  });
+});
+
+// ── U6: per-column agent picker, mode toggle, stale-id + override surfaces ────
+
+function flagsOn(): Settings {
+  return { experimentalFeatures: { workflowColumns: true, workflowGraphExecutor: true } } as Settings;
+}
+
+function agentList(): Agent[] {
+  return [
+    { id: "agent-001", name: "Reviewer" } as Agent,
+    { id: "agent-002", name: "Implementer" } as Agent,
+  ];
+}
+
+/** A v2 def whose `triage` column binds agent-001 in the given mode, and whose
+ *  `step` node is declared in `triage` (so an override note can surface). */
+function boundDef(mode: "defer" | "override", agentId = "agent-001"): WorkflowDefinition {
+  const d = v2Def();
+  if (d.ir.version === "v2") {
+    d.ir.columns = d.ir.columns.map((c) =>
+      c.id === "triage" ? { ...c, agent: { agentId, mode } } : c,
+    );
+  }
+  return d;
+}
+
+describe("WorkflowNodeEditor — U6 column agents", () => {
+  beforeEach(() => {
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchSettings).mockResolvedValue(flagsOn());
+    vi.mocked(fetchAgents).mockResolvedValue(agentList());
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("renders the per-column agent picker enabled with registry agents when flags are on", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const picker = (await screen.findByTestId("wf-column-agent-select-triage")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.disabled).toBe(false));
+    await waitFor(() =>
+      expect(Array.from(picker.options).some((o) => o.value === "agent-001")).toBe(true),
+    );
+    // "(none)" is the default selection for an unbound column.
+    expect(picker.value).toBe("");
+  });
+
+  it("disables the picker with a flag-naming hint when the flags are off", async () => {
+    vi.mocked(fetchSettings).mockResolvedValue({} as Settings);
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const picker = (await screen.findByTestId("wf-column-agent-select-triage")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.disabled).toBe(true));
+    expect(picker.title).toMatch(/workflowColumns/);
+    expect(picker.title).toMatch(/workflowGraphExecutor/);
+  });
+
+  it("selecting an agent reveals the defer/override mode toggle (default defer) and writes the binding", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...v2Def(), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const picker = (await screen.findByTestId("wf-column-agent-select-triage")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.disabled).toBe(false));
+    fireEvent.change(picker, { target: { value: "agent-001" } });
+
+    // Mode toggle appears; defer is checked by default.
+    const deferRadio = (await screen.findByText("Defer")).closest("label")!.querySelector("input")! as HTMLInputElement;
+    expect(deferRadio.checked).toBe(true);
+    // Badge reflects the bound agent name.
+    expect(await screen.findByTestId("wf-column-agent-badge-triage")).toHaveTextContent("Reviewer");
+
+    // Save round-trips the binding into the IR.
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const cols = (updates as { ir: { columns: { id: string; agent?: { agentId: string; mode: string } }[] } }).ir.columns;
+    const triage = cols.find((c) => c.id === "triage");
+    expect(triage?.agent).toEqual({ agentId: "agent-001", mode: "defer" });
+  });
+
+  it("toggling the mode to override saves the binding with mode: override", async () => {
+    // Start from a deferred binding so the mode toggle is already visible.
+    vi.mocked(fetchWorkflows).mockResolvedValue([boundDef("defer")]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...boundDef("defer"), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const picker = (await screen.findByTestId("wf-column-agent-select-triage")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe("agent-001"));
+
+    // Defer is the initial mode; flip to Override.
+    const deferRadio = (await screen.findByText("Defer")).closest("label")!.querySelector("input")! as HTMLInputElement;
+    expect(deferRadio.checked).toBe(true);
+    const overrideRadio = screen.getByText("Override").closest("label")!.querySelector("input")! as HTMLInputElement;
+    fireEvent.click(overrideRadio);
+    await waitFor(() => expect(overrideRadio.checked).toBe(true));
+
+    // Save round-trips the updated mode into the IR.
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const cols = (updates as { ir: { columns: { id: string; agent?: { agentId: string; mode: string } }[] } }).ir.columns;
+    const triage = cols.find((c) => c.id === "triage");
+    expect(triage?.agent).toEqual({ agentId: "agent-001", mode: "override" });
+  });
+
+  it("clearing to (none) removes the agent key entirely (no agent: null)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([boundDef("defer")]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...boundDef("defer"), ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const picker = (await screen.findByTestId("wf-column-agent-select-triage")) as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe("agent-001"));
+    fireEvent.change(picker, { target: { value: "" } });
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const cols = (updates as { ir: { columns: { id: string; agent?: unknown }[] } }).ir.columns;
+    const triage = cols.find((c) => c.id === "triage")!;
+    expect("agent" in triage).toBe(false);
+  });
+
+  it("renders a not-found warning for a stored agentId absent from the registry, preserving the value", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([boundDef("defer", "agent-ghost")]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // The stale id surfaces a not-found annotation and remains the picker value.
+    const stale = await screen.findByTestId("wf-column-agent-stale-triage");
+    expect(stale).toHaveTextContent(/agent-ghost/);
+    const picker = screen.getByTestId("wf-column-agent-select-triage") as HTMLSelectElement;
+    expect(picker.value).toBe("agent-ghost");
+  });
+
+  it("surfaces an inline error near the picker when the agents fetch fails", async () => {
+    vi.mocked(fetchAgents).mockRejectedValue(new Error("agents offline"));
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-column-panel");
+    await waitFor(() => expect(screen.getAllByText(/agents offline/i).length).toBeGreaterThan(0));
+  });
+
+  it("shows the overridden-by-column-agent note on a node inside an override column", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([boundDef("override")]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    // Select the prompt node placed in the override column.
+    const node = await screen.findByTestId("wf-node-prompt");
+    fireEvent.click(node);
+    const note = await screen.findByTestId("wf-node-overridden-by-column-agent");
+    expect(note).toHaveTextContent(/Overridden by column agent/i);
+    expect(note).toHaveTextContent("Reviewer");
   });
 });

@@ -10,7 +10,13 @@
 //   suite `stepwise-workflow-parity.test.ts`. Keep the two concerns separate.
 // ─────────────────────────────────────────────────────────────────────────────
 import { describe, expect, it, vi } from "vitest";
-import type { TaskDetail } from "@fusion/core";
+import type { TaskDetail, WorkflowIrV2, WorkflowStage } from "@fusion/core";
+import {
+  BUILTIN_CODING_WORKFLOW_IR,
+  buildWorkflowObservation,
+  buildWorkflowObservationFromTask,
+  compareWorkflowRunObservations,
+} from "@fusion/core";
 
 import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
 import type { WorkflowLegacySeams } from "../workflow-node-handlers.js";
@@ -121,5 +127,79 @@ describe("WorkflowGraphExecutor interpreter-parity", () => {
     expect(result.outcome).toBe("failure");
     expect(seams.review).not.toHaveBeenCalled();
     expect(seams.merge).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COLUMN-AGENT INVISIBILITY PARITY (plan U7 / R9)
+//
+// The per-column agent feature must be invisible when no column carries a
+// binding: the built-in default workflow synthesizes no `agent` field on any
+// column, and a binding-free run produces observations identical to legacy via
+// the same `compareWorkflowRunObservations` machinery the dual-observe gate uses.
+// This is the byte-identity / parity oracle for the feature being unbound.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("column-agent feature is invisible when unbound (U7 / R9)", () => {
+  it("the default built-in workflow synthesizes NO column agent field on any column", () => {
+    const ir = BUILTIN_CODING_WORKFLOW_IR as WorkflowIrV2;
+    expect(ir.version).toBe("v2");
+    expect(ir.columns.length).toBeGreaterThan(0);
+    for (const col of ir.columns) {
+      // Absent, not `null` and not an explicit default — R9 omission guarantee.
+      expect("agent" in col).toBe(false);
+    }
+  });
+
+  it("a binding-free run yields observations identical to legacy (compareWorkflowRunObservations agrees)", async () => {
+    // Drive the graph executor over the default execute→review→merge sequence and
+    // collect the stage transitions; with zero column bindings, the column-agent
+    // feature contributes nothing, so the interpreter observation must equal the
+    // legacy authoritative observation with no drift.
+    const stages: string[] = [];
+    const seams: WorkflowLegacySeams = {
+      planning: async () => ({ outcome: "success" }),
+      execute: async () => ({ outcome: "success" }),
+      review: async () => ({ outcome: "success" }),
+      merge: async () => ({ outcome: "success" }),
+      schedule: async () => ({ outcome: "success" }),
+    };
+    type BaseSeam = "planning" | "execute" | "review" | "merge" | "schedule";
+    const executor = new WorkflowGraphExecutor({
+      seams,
+      handlers: {
+        prompt: async (node, ctx) => {
+          const seam = String(node.config?.seam) as BaseSeam;
+          stages.push(seam);
+          return seams[seam](ctx.task, ctx.context);
+        },
+      },
+    });
+
+    const result = await executor.run(task, {
+      experimentalFeatures: { workflowGraphExecutor: true },
+    });
+    expect(result.outcome).toBe("success");
+    // Bind the invariant to actual executor behavior (PR #1432 review): the
+    // observation below derives from the run-captured seam sequence, so seam
+    // drift fails here instead of being masked by a hard-coded literal.
+    expect(stages).toEqual(["execute", "review", "merge"]);
+
+    // Legacy authoritative observation: a clean run that lands in `done`/merged.
+    const legacyObs = buildWorkflowObservationFromTask(
+      { column: "done", status: "done", review: { verdict: "approve" } },
+      { columnSequence: ["todo", "in-progress", "in-review", "done"] },
+    );
+    // Interpreter (binding-free) observation assembled from the same run.
+    const interpreterObs = buildWorkflowObservation({
+      stageTransitions: ["triage", ...stages] as WorkflowStage[],
+      terminalColumn: "done",
+      terminalStatus: "done",
+      reviewVerdict: "approve",
+      mergeOutcome: "merged",
+    });
+
+    const report = compareWorkflowRunObservations(legacyObs, interpreterObs);
+    expect(report.agree).toBe(true);
+    expect(report.diffs).toEqual([]);
   });
 });

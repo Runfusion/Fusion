@@ -589,7 +589,13 @@ export class InProcessRuntime
             });
           },
           this.taskStore,
-          { isTaskExecuting: (taskId) => this.executor.getExecutingTaskIds().has(taskId) },
+          {
+            isTaskExecuting: (taskId) => this.executor.getExecutingTaskIds().has(taskId),
+            // Column-agent principal alignment (plan U5, R6): reverse-direction guard
+            // — an override/defer column agent must not heartbeat concurrently with a
+            // column-bound session it runs but is not assigned to.
+            isAgentEffectivelyExecuting: (agentId) => this.executor.isAgentEffectivelyExecuting(agentId),
+          },
         );
         this.triggerScheduler.start();
 

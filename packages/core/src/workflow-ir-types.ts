@@ -147,11 +147,32 @@ export interface WorkflowIrColumnTrait {
   config?: Record<string, unknown>;
 }
 
+/** Per-column permanent-agent binding (column-agent plan KTD-1). A column may name
+ *  one agent from the registry plus a mode that decides precedence against
+ *  node-level / task-level agent and model settings:
+ *  - `defer`: the column agent applies only when the work carries no own settings
+ *    (no agent identity and no complete modelProvider+modelId pair — KTD-5).
+ *  - `override`: the column agent supersedes node/task settings wholesale.
+ *  This is execution identity (consumed by the executor's session-building paths),
+ *  not a board-transition trait — hence a first-class typed field, not a trait
+ *  config blob (KTD-1). Agent *existence* is not an IR concern (no agent store at
+ *  this layer); it is enforced at write time (route) and falls back at read time. */
+export interface WorkflowColumnAgent {
+  /** Registry agent id that staffs the column. Non-empty. */
+  agentId: string;
+  /** Precedence mode against node/task settings. */
+  mode: "defer" | "override";
+}
+
 /** A workflow-defined board column. */
 export interface WorkflowIrColumn {
   id: string;
   name: string;
   traits: WorkflowIrColumnTrait[];
+  /** Optional permanent-agent binding (column-agent plan KTD-1). Additive and
+   *  omitted entirely when unset — never serialized as `agent: null` — so legacy
+   *  and default workflows stay byte-identical (R9). */
+  agent?: WorkflowColumnAgent;
 }
 
 /** Release conditions for a `hold` node (KTD-2, R3). */

@@ -567,6 +567,134 @@ describe("createWorkflowCreateTool", () => {
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).toMatch(/name is required/);
   });
+
+  // R13: the column-agent policy-escalation gate (shared with the dashboard
+  // route) must also fire on the agent-tool write path. A binding to an agent
+  // whose policy is broader than the project default is rejected unless the
+  // tool is called with confirm_policy_escalation: true.
+  it("rejects a binding to a more-privileged agent without confirm_policy_escalation", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "wf-tool-ca-root-"));
+    const globalDir = await mkdtemp(join(tmpdir(), "wf-tool-ca-global-"));
+    const store = new core.TaskStore(rootDir, globalDir);
+    try {
+      await store.init();
+      // Restrict the project default; the bound agent is unrestricted (broader).
+      await store.updateSettings({ defaultAgentPermissionPolicy: { rules: { file_write_delete: "block" } } } as any);
+      const agentStore = new core.AgentStore({ rootDir: store.getFusionDir() });
+      await agentStore.init();
+      const agent = await agentStore.createAgent({
+        name: "Privileged",
+        role: "executor",
+        permissionPolicy: { presetId: "unrestricted" },
+      } as any);
+
+      const ir = {
+        version: "v2",
+        name: "bound",
+        columns: [
+          { id: "triage", name: "Triage", traits: [{ trait: "intake" }], agent: { agentId: agent.id, mode: "override" } },
+          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "triage" },
+          { id: "work", kind: "prompt", column: "triage", config: { prompt: "do" } },
+          { id: "end", kind: "end", column: "done" },
+        ],
+        edges: [
+          { from: "start", to: "work", condition: "success" },
+          { from: "work", to: "end", condition: "success" },
+        ],
+      };
+      const tool = createWorkflowCreateTool(store as any);
+
+      const denied = await tool.execute("c", { name: "Esc", ir } as any, undefined, undefined, {} as any);
+      expect((denied as { isError?: boolean }).isError).toBe(true);
+      const text = denied.content[0]?.type === "text" ? denied.content[0].text : "";
+      expect(text).toMatch(/triage/);
+      expect(text).toMatch(/confirm_policy_escalation: true/);
+      expect(denied.details).toMatchObject({ columnId: "triage", agentId: agent.id, reason: "policy-escalation" });
+
+      // With the flag set, the gate passes and the store write proceeds.
+      const ok = await tool.execute("c", { name: "Esc2", ir, confirm_policy_escalation: true } as any, undefined, undefined, {} as any);
+      expect((ok as { isError?: boolean }).isError).toBeFalsy();
+      const okText = ok.content[0]?.type === "text" ? ok.content[0].text : "";
+      expect(okText).toMatch(/Created workflow/);
+    } finally {
+      store.close();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(globalDir, { recursive: true, force: true });
+    }
+  });
+
+  // FN-5893: the escalation invariant must hold on ALL workflow write surfaces —
+  // the update tool is the second one (the dashboard route has its own tests).
+  it("update tool enforces the same policy-escalation gate", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "wf-tool-ca-upd-root-"));
+    const globalDir = await mkdtemp(join(tmpdir(), "wf-tool-ca-upd-global-"));
+    const store = new core.TaskStore(rootDir, globalDir);
+    try {
+      await store.init();
+      await store.updateSettings({ defaultAgentPermissionPolicy: { rules: { file_write_delete: "block" } } } as any);
+      const agentStore = new core.AgentStore({ rootDir: store.getFusionDir() });
+      await agentStore.init();
+      const agent = await agentStore.createAgent({
+        name: "Privileged",
+        role: "executor",
+        permissionPolicy: { presetId: "unrestricted" },
+      } as any);
+
+      const boundIr = (name: string) => ({
+        version: "v2",
+        name,
+        columns: [
+          { id: "triage", name: "Triage", traits: [{ trait: "intake" }], agent: { agentId: agent.id, mode: "override" } },
+          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "triage" },
+          { id: "work", kind: "prompt", column: "triage", config: { prompt: "do" } },
+          { id: "end", kind: "end", column: "done" },
+        ],
+        edges: [
+          { from: "start", to: "work", condition: "success" },
+          { from: "work", to: "end", condition: "success" },
+        ],
+      });
+
+      // Seed an unbound workflow to update.
+      const unbound = { ...boundIr("plain"), columns: boundIr("plain").columns.map(({ agent: _a, ...c }) => c) };
+      const created = await store.createWorkflowDefinition({ name: "plain", ir: unbound as any });
+
+      const tool = createWorkflowUpdateTool(store as any);
+      const denied = await tool.execute(
+        "c",
+        { workflow_id: created.id, ir: boundIr("bound") } as any,
+        undefined,
+        undefined,
+        {} as any,
+      );
+      expect((denied as { isError?: boolean }).isError).toBe(true);
+      const text = denied.content[0]?.type === "text" ? denied.content[0].text : "";
+      expect(text).toMatch(/triage/);
+      expect(text).toMatch(/confirm_policy_escalation: true/);
+      expect(denied.details).toMatchObject({ columnId: "triage", agentId: agent.id, reason: "policy-escalation" });
+
+      const ok = await tool.execute(
+        "c",
+        { workflow_id: created.id, ir: boundIr("bound"), confirm_policy_escalation: true } as any,
+        undefined,
+        undefined,
+        {} as any,
+      );
+      expect((ok as { isError?: boolean }).isError).toBeFalsy();
+      const okText = ok.content[0]?.type === "text" ? ok.content[0].text : "";
+      expect(okText).toMatch(/Updated workflow/);
+    } finally {
+      store.close();
+      await rm(rootDir, { recursive: true, force: true });
+      await rm(globalDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("createWorkflowUpdateTool", () => {

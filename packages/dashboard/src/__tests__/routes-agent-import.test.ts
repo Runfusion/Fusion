@@ -75,6 +75,7 @@ vi.mock("@fusion/core", () => {
     isEphemeralAgent: (agent: { metadata?: Record<string, unknown> }) =>
       agent?.metadata?.agentKind === "task-worker",
     deterministicGuardLocks: new Map(),
+    registerTraitHookImpl: () => {},
   };
 });
 

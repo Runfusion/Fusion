@@ -125,6 +125,18 @@ export interface StepSessionExecutorOptions {
   permanentAgentGating?: PermanentAgentGatingContext;
   /** Task-scoped environment injected into non-git subprocesses. */
   taskEnv?: NodeJS.ProcessEnv;
+  /**
+   * Column-agent identity override for session attribution (column-agent plan U4,
+   * R2/R3/R4). When the governing foreach/step-execute node's declared column
+   * binds an agent that supersedes the task's `assignedAgentId` (override, or
+   * defer with no own settings), the executor passes the column agent's id here so
+   * the per-step run auditor attributes the session to who actually ran — not
+   * `taskDetail.assignedAgentId`. Absent → attribution falls back to
+   * `taskDetail.assignedAgentId ?? "executor"` (byte-identical legacy path). The
+   * column agent's MODEL flows separately via {@link assignedAgentRuntimeConfig}
+   * (the executor swaps it to the column agent's `runtimeConfig` at the seam).
+   */
+  effectiveAgentId?: string;
 }
 
 // ── File Scope Extraction ─────────────────────────────────────────────
@@ -1018,7 +1030,10 @@ Follow instructions precisely and avoid unrelated changes.`,
             defaultThinkingLevel: taskDetail.thinkingLevel ?? settings.defaultThinkingLevel,
             runAuditor: createRunAuditor(this.store, {
               runId: generateSyntheticRunId("workflow-step", taskDetail.id),
-              agentId: taskDetail.assignedAgentId ?? "executor",
+              // Column-agent attribution (U4): the effective column agent is the
+              // principal that actually ran when the seam node's column governs;
+              // fall back to the task's assigned agent (legacy, byte-identical).
+              agentId: this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor",
               taskId: taskDetail.id,
               taskLineageId: taskDetail.lineageId,
               phase: "execute",

@@ -23,6 +23,7 @@ vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
   batchUpdateTaskModels: vi.fn(),
   fetchNodes: vi.fn().mockResolvedValue([]),
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
 }));
 
 import { fetchTaskDetail, batchUpdateTaskModels, fetchNodes } from "../../api";

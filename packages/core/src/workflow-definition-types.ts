@@ -49,6 +49,13 @@ export interface WorkflowDefinitionUpdate {
    */
   rehomeTo?: string;
   /**
+   * Column-agent policy escalation (column-agent plan R13): set true to confirm
+   * binding a column agent whose permission policy is broader than the project
+   * default. Without it, the write surfaces (dashboard routes, fn_workflow_*
+   * tools) reject such bindings with a typed policy-escalation error.
+   */
+  confirmPolicyEscalation?: boolean;
+  /**
    * U11/KTD-13: when an IR update changes a custom field's type incompatibly for
    * tasks that already hold a value under that field, the update is blocked with
    * a typed {@link import("./workflow-reconciliation.js").IncompatibleFieldChangeError}

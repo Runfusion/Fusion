@@ -61,6 +61,36 @@ FN-5769 evaluated whether those conventions required a `1.1.0` schema bump and r
 
 The `workflowColumns` track introduces **IR v2** (`version: "v2"`), where a workflow additionally defines its own **columns** (`{ id, name, traits: [{ trait, config }] }`), places nodes in columns (`node.column`), and gains `hold`, `split`, and `join` node kinds. Columns become first-class, workflow-defined task state carrying composable **traits** (declarative flags + lifecycle hooks); this generalizes the fixed pipeline + the `gateMode` semantics documented below into per-column trait configuration. v1 graphs still parse and upgrade by synthesizing default-workflow columns. The column/trait model — the trait vocabulary, the substrate/policy line, the transition authority, and the graduation gate — is documented in **`docs/architecture.md` § 9 "Workflow-defined columns & traits"** and the **Concepts** glossary (column, trait, lane, hold node, split/join, default workflow, `transitionPending`). The whole v2 model is gated behind `experimentalFeatures.workflowColumns`; with the flag off, the v1 IR and the quality-gate `WorkflowStep` model below are unchanged.
 
+### Workflow IR v2 — per-column agent assignment
+
+A v2 column can optionally name a **permanent agent** from the agent registry, staffing every card that flows through it once instead of node-by-node or task-by-task. The binding is a first-class optional field on the column (not a trait — traits are board-transition policy; this is execution identity):
+
+```ts
+{ id: "review", name: "Review", traits: [],
+  agent: { agentId: "agent-001", mode: "defer" | "override" } }
+```
+
+**Binding shape.** `agent.agentId` is a non-empty registry agent id; `agent.mode` is `defer` or `override`. The field is omitted entirely when unset — a column with no `agent` key yields no binding, and the built-in default workflow carries none (it stays byte-identical, the parity oracle). Adding a binding forces the workflow to v2.
+
+**Which column governs.** The binding keys off the node's **declared** IR column (`node.column`), never the task's current board lane. A node with no declared column resolves normally (no column agent), even when other columns carry override bindings.
+
+**`defer` vs `override`.**
+
+- **`defer`** — the column agent is the default *only* when the work carries no agent/model settings of its own. "Own settings" is all-or-nothing: an own agent identity **or** a complete `modelProvider`+`modelId` pair suppresses the column agent entirely. An incomplete model pair (provider with no model id) does **not** count as own settings, so the column agent still wins (matching the executor's both-present model rule). The column agent is never blended with own settings — filling only the missing half would create hybrid identities that are impossible to audit.
+- **`override`** — the column agent supersedes node-level and task-level agent/model settings: identity, model, **and** persona.
+
+**Where it applies.** The effective agent governs all session-running work attributable to the column's nodes: custom prompt/gate/script nodes, the execute seam's coding session, and step-execute sessions. Raw CLI script nodes run no session, so the binding is a no-op there (the skip is audited). Every adoption is logged (`running as column agent '<id>' (<mode>)`) so the audit trail explains who ran and why.
+
+**Foreach template inheritance.** A node inside a `foreach` template subgraph inherits the **enclosing foreach node's** column, unless the template node declares its own `column` (which then wins). Each per-step instance session is attributed to the resolved column agent.
+
+**Principal semantics.** The effective column agent becomes the **principal**, not merely a model source. Action gating is computed for the agent actually running (a security boundary — never `task.assignedAgentId` when an override governs). Heartbeat serialization follows it in both directions: a column agent with `allowParallelExecution=false` is serialized like an assigned agent, the engine re-dispatches tasks whose *effective* column agent matches (not only `assignedAgentId` matches), and the heartbeat scheduler never lets a column agent heartbeat concurrently with its own override session. A workflow-definition edit or agent `runtimeConfig` change that re-keys the effective agent/model hot-swaps a running session, the same way a `task.modelProvider` change does today.
+
+**Missing-agent fallback.** A missing or deleted agent at resolution time logs and falls back to normal resolution — a live session is never aborted because its column agent was deleted mid-flight.
+
+**Flag requirements.** Column agents act only when **both** `experimentalFeatures.workflowColumns` and `experimentalFeatures.workflowGraphExecutor` are on; with either off the binding is inert (config is still stored and round-trips — only execution is gated), and the editor surfaces that the picker is disabled with a tooltip naming both flags.
+
+**Write-time validation.** Saving a workflow validates agent references: an unknown `agentId` is rejected with a typed 4xx naming the column. Binding an agent whose permission policy is broader than the project default requires an explicit policy-escalation confirmation (`confirmPolicyEscalation`) at save time, so override cannot silently re-key action gates to a more-privileged agent.
+
 ### Workflow IR v2 — step inversion (foreach, step-review, parse-steps, code)
 
 The **step-inversion** track makes task *steps* themselves workflow-modelable. Today the engine owns step policy end-to-end (PROMPT.md parsing, per-step review verdicts, RETHINK/REVISE control flow, merge blocking). Step inversion extracts exactly one new substrate capability — *run one step inside a task's session, and reset one step to its baseline* — and exposes everything else as authored graph structure. It is additive to IR v2 and gated by `experimentalFeatures.workflowGraphExecutor`. The default coding workflow is untouched and byte-identical (it keeps its monolithic `execute` seam and is the parity oracle); inversion is opt-in via custom workflows and a new built-in **stepwise coding workflow**.

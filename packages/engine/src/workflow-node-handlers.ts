@@ -1,4 +1,4 @@
-import { WorkflowIrError, getStepParser } from "@fusion/core";
+import { WorkflowIrError, getStepParser, instanceNodeId } from "@fusion/core";
 import type { TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 
 import type { WorkflowNodeHandler, WorkflowNodeResult } from "./workflow-graph-executor.js";
@@ -70,6 +70,19 @@ export interface StepReviewSeamResult {
  *  Template node handlers (step-execute now; step-review in U5) read it to learn
  *  which step they operate on and the per-instance baseline/checkpoint state. */
 export const FOREACH_ACTIVE_CONTEXT_KEY = "foreach:active";
+
+/**
+ * Reserved context key carrying the GOVERNING graph node id into the legacy
+ * coding seams (column-agent plan U4, R4). The execute seam reads the seam node's
+ * own id; the step-execute seam reads the foreach INSTANCE node id
+ * (`<foreachId>#<i>:<templateNodeId>`) so the core column-agent resolver can map
+ * it through template inheritance to the governing column's binding. The seam
+ * stamps it into a per-run executor slot before driving the implementation pass,
+ * so the binding the session runs under keys off the node's DECLARED IR column
+ * — never the task's current board lane. Custom (non-seam) nodes never use this:
+ * runGraphCustomNode receives its binding directly as a parameter (U3).
+ */
+export const SEAM_GOVERNING_NODE_CONTEXT_KEY = "workflow:seam-governing-node-id";
 
 /**
  * Reserved context marker set by the split sub-walk (`runSplitJoin`) for the
@@ -179,9 +192,24 @@ export function createPromptLikeHandler(
         // succeed — that would merge a task with no step work done.
         return { outcome: "failure", value: "step-execute-unwired" };
       }
+      // Column-agent seam wiring (U4, R4): the GOVERNING node for a step-execute
+      // session is the foreach INSTANCE node id, so the core resolver can map it
+      // through template inheritance to the enclosing foreach's bound column (or
+      // the template node's own column when it declares one). The template node id
+      // is THIS node's id; the foreach node id + step index come from the active
+      // instance context. Stamped so the seam threads it into the session build.
+      context.context[SEAM_GOVERNING_NODE_CONTEXT_KEY] = instanceNodeId(
+        active.foreachNodeId,
+        active.stepIndex,
+        node.id,
+      );
       return seams.stepExecute(context.task, context.context);
     }
     if (seam) {
+      // Column-agent seam wiring (U4, R4): for the execute seam the governing node
+      // IS the seam node, so its declared column drives the binding. (Other seams
+      // — planning/review/merge/schedule — stamp it too; only execute reads it.)
+      context.context[SEAM_GOVERNING_NODE_CONTEXT_KEY] = node.id;
       return seams[seam]!(context.task, context.context);
     }
     if (!runCustomNode) {

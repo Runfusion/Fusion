@@ -3649,17 +3649,26 @@ export class HeartbeatTriggerScheduler {
   private configRevisionListener: ((agentId: string, revision: AgentConfigRevision) => void) | null = null;
   private deletedListener: ((agentId: string) => void) | null = null;
   private isTaskExecuting?: (taskId: string) => boolean;
+  /** Column-agent principal alignment (plan U5, R6). True when the agent is the
+   *  EFFECTIVE column-agent principal of some currently-executing task — i.e. an
+   *  override/defer-bound column staffs it, even though the agent is not that task's
+   *  `assignedAgentId`. The reverse-direction parallel-execution guards consult this
+   *  in addition to `isTaskExecuting(agent.taskId)` so an `allowParallelExecution=false`
+   *  column agent does not heartbeat concurrently with its own override session.
+   *  Absent (legacy/no executor wiring) → treated as never effectively executing. */
+  private isAgentEffectivelyExecuting?: (agentId: string) => boolean;
   private timerAuditIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
   private static readonly TIMER_AUDIT_INTERVAL_MS = 60_000;
   private static readonly DEFAULT_REPAIR_STALE_MULTIPLIER = 2;
   private static readonly DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
 
-  constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: { isTaskExecuting?: (taskId: string) => boolean }) {
+  constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: { isTaskExecuting?: (taskId: string) => boolean; isAgentEffectivelyExecuting?: (agentId: string) => boolean }) {
     this.store = store;
     this.callback = callback;
     this.taskStore = taskStore;
     this.isTaskExecuting = options?.isTaskExecuting;
+    this.isAgentEffectivelyExecuting = options?.isAgentEffectivelyExecuting;
   }
 
   /**
@@ -3955,9 +3964,16 @@ export class HeartbeatTriggerScheduler {
           return;
         }
 
-        // Guard: when parallel execution is disabled, skip if the bound task is actively executing
-        if (runtimeConfig.allowParallelExecution === false && this.isTaskExecuting?.(taskId)) {
-          heartbeatLog.log(`Assignment tick skipped for ${agent.id} (parallel execution disabled, task ${taskId} executing)`);
+        // Guard: when parallel execution is disabled, skip if the bound task is
+        // actively executing — OR (plan U5, R6, reverse direction) if this agent is
+        // the EFFECTIVE column-agent principal of some other actively-executing task
+        // it is not assigned to. Without the second check an override-column agent
+        // would heartbeat concurrently with its own column-bound session.
+        if (
+          runtimeConfig.allowParallelExecution === false
+          && (this.isTaskExecuting?.(taskId) || this.isAgentEffectivelyExecuting?.(agent.id))
+        ) {
+          heartbeatLog.log(`Assignment tick skipped for ${agent.id} (parallel execution disabled, task ${taskId} or column-bound session executing)`);
           return;
         }
 
@@ -4323,9 +4339,19 @@ export class HeartbeatTriggerScheduler {
         return;
       }
 
-      // Guard: when parallel execution is disabled, skip if the agent's bound task is actively executing
-      if (timerRc.allowParallelExecution === false && agent.taskId && this.isTaskExecuting?.(agent.taskId)) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (parallel execution disabled, task ${agent.taskId} executing)`);
+      // Guard: when parallel execution is disabled, skip if the agent's bound task is
+      // actively executing — OR (plan U5, R6, reverse direction) if this agent is the
+      // EFFECTIVE column-agent principal of some actively-executing task it is not
+      // assigned to (override/defer column staffing). `agent.taskId` may be empty in
+      // the column-bound case, so the effective check is independent of it.
+      if (
+        timerRc.allowParallelExecution === false
+        && (
+          (agent.taskId && this.isTaskExecuting?.(agent.taskId))
+          || this.isAgentEffectivelyExecuting?.(agentId)
+        )
+      ) {
+        heartbeatLog.log(`Timer tick skipped for ${agentId} (parallel execution disabled, bound task ${agent.taskId ?? "—"} or column-bound session executing)`);
         return;
       }
 

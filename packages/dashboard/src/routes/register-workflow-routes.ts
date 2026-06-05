@@ -1,4 +1,9 @@
-import type { WorkflowIr, WorkflowIrNode, WorkflowSettingDefinition, TaskStore } from "@fusion/core";
+import type {
+  WorkflowIr,
+  WorkflowIrNode,
+  WorkflowSettingDefinition,
+  TaskStore,
+} from "@fusion/core";
 import {
   ColumnTraitValidationError,
   OccupiedColumnsError,
@@ -6,6 +11,7 @@ import {
   WorkflowCompileError,
   WorkflowIrError,
   WorkflowSettingRejectionError,
+  ColumnAgentBindingError,
   compileWorkflowToSteps,
   listTraits,
   listStepParsers,
@@ -14,6 +20,8 @@ import {
   findOrphanedSettingValues,
   isBuiltinWorkflowId,
   BUILTIN_WORKFLOW_SETTINGS,
+  AgentStore,
+  validateColumnAgentBindings,
 } from "@fusion/core";
 import { validateCodeNodeSources } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
@@ -71,6 +79,40 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
     if (declared && declared.length > 0) return declared;
     if (isBuiltinWorkflowId(workflowId)) return BUILTIN_WORKFLOW_SETTINGS;
     return declared;
+  }
+
+  /**
+   * Write-time column-agent validation (U6, R11/R13). Delegates to the shared
+   * `validateColumnAgentBindings` helper in @fusion/core (the SAME gate the
+   * `fn_workflow_*` agent tools run), then maps its typed
+   * {@link ColumnAgentBindingError} onto an HTTP 400 carrying the structured
+   * fields the client UI consumes. Inspects columns BEFORE persisting and never
+   * mutates the IR.
+   */
+  async function assertColumnAgentsExist(
+    ir: unknown,
+    store: TaskStore,
+    confirmPolicyEscalation: boolean,
+  ): Promise<void> {
+    // Skip store/agent-registry I/O entirely when no column carries a binding.
+    const columns = (ir as { columns?: unknown })?.columns;
+    if (!Array.isArray(columns) || !columns.some((c) => c?.agent?.agentId)) return;
+
+    const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+    await agentStore.init();
+    const settings = await store.getSettings();
+    try {
+      await validateColumnAgentBindings({ ir, agentStore, settings, confirmPolicyEscalation });
+    } catch (err: unknown) {
+      if (err instanceof ColumnAgentBindingError) {
+        throw badRequest(err.message, {
+          columnId: err.columnId,
+          agentId: err.agentId,
+          ...(err.reason === "policy-escalation" ? { policyEscalation: true } : {}),
+        });
+      }
+      throw err;
+    }
   }
 
   // GET /api/traits — trait catalog for the node editor's trait picker (U10).
@@ -132,12 +174,13 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
   router.post("/workflows", async (req, res) => {
     try {
       const { store, projectId } = await getProjectContext(req);
-      const { name, description, layout } = req.body ?? {};
+      const { name, description, layout, confirmPolicyEscalation } = req.body ?? {};
       if (!name || typeof name !== "string" || !name.trim()) {
         throw badRequest("name is required");
       }
       const ir = requireIr(req.body);
       await assertCodeNodesCompile(ir);
+      await assertColumnAgentsExist(ir, store, confirmPolicyEscalation === true);
       const created = await store.createWorkflowDefinition({ name, description, ir, layout });
       emitWorkflowSseEvent("workflow:created", created, projectId);
       res.status(201).json(created);
@@ -170,7 +213,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
   router.patch("/workflows/:id", async (req, res) => {
     try {
       const { store, projectId } = await getProjectContext(req);
-      const { name, description, ir, layout, rehomeTo } = req.body ?? {};
+      const { name, description, ir, layout, rehomeTo, confirmPolicyEscalation } = req.body ?? {};
       if (name !== undefined && (typeof name !== "string" || !name.trim())) {
         throw badRequest("name must be a non-empty string");
       }
@@ -182,6 +225,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       }
       if (ir !== undefined) {
         await assertCodeNodesCompile(ir);
+        await assertColumnAgentsExist(ir, store, confirmPolicyEscalation === true);
       }
       const updated = await store.updateWorkflowDefinition(req.params.id, {
         name,

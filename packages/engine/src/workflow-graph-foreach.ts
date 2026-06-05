@@ -1,5 +1,5 @@
 import type { TaskDetail, TaskStep, WorkflowIrEdge, WorkflowIrNode } from "@fusion/core";
-import { WorkflowIrError } from "@fusion/core";
+import { WorkflowIrError, instanceNodeId } from "@fusion/core";
 
 import type { WorkflowNodeOutcome, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import {
@@ -247,10 +247,10 @@ export interface ForeachRunResult {
   visitedNodeIds: string[];
 }
 
-/** Materialize a deterministic instance node id (KTD-3) — pure, no IR mutation. */
-export function instanceNodeId(foreachNodeId: string, stepIndex: number, templateNodeId: string): string {
-  return `${foreachNodeId}#${stepIndex}:${templateNodeId}`;
-}
+// `instanceNodeId` now lives in `@fusion/core` (column-agent plan KTD-2) so the
+// instance-id format has exactly one owner. Re-exported here (the imported binding)
+// for back-compat with any local callers; the format is unchanged.
+export { instanceNodeId };
 
 /** Resolve the foreach config, validating the bits this module relies on. */
 function resolveForeachConfig(node: WorkflowIrNode): {

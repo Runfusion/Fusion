@@ -315,6 +315,15 @@ export function createMockStore() {
     _trigger(event: string, ...args: unknown[]) {
       for (const fn of listeners.get(event) || []) fn(...args);
     },
+    /** Like `_trigger`, but awaits every (possibly async) listener — deterministic
+     *  synchronization for tests asserting NEGATIVE outcomes after an event
+     *  (e.g. "setModel was NOT called"), where `vi.waitFor` cannot apply and a
+     *  bare `setTimeout(0)` is a brittle real-timer wait. */
+    async _triggerAsync(event: string, ...args: unknown[]) {
+      await Promise.allSettled(
+        (listeners.get(event) || []).map((fn) => Promise.resolve(fn(...args))),
+      );
+    },
     emit: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     getTask: vi.fn().mockResolvedValue({
