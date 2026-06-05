@@ -219,6 +219,20 @@ export type {
   FieldReconciliation,
 } from "./task-fields.js";
 export {
+  validateSettingValuePatch,
+  resolveEffectiveSettingValues,
+  findOrphanedSettingValues,
+  makeWorkflowSettingRejection,
+  WorkflowSettingRejectionError,
+  WORKFLOW_SETTING_REJECTION_CODES,
+} from "./workflow-settings.js";
+export type {
+  WorkflowSettingRejection,
+  WorkflowSettingRejectionCode,
+  SettingValuePatchResult,
+  OrphanedSettingValue,
+} from "./workflow-settings.js";
+export {
   readTransitionPending,
   writeTransitionPending,
   clearTransitionPending,

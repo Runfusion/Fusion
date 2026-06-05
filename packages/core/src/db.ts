@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 108;
+const SCHEMA_VERSION = 109;
 
 export { SCHEMA_VERSION };
 
@@ -615,6 +615,16 @@ CREATE TABLE IF NOT EXISTS workflow_run_step_instances (
   PRIMARY KEY (taskId, runId, foreachNodeId, stepIndex)
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_run_step_instances_task_run ON workflow_run_step_instances(taskId, runId);
+
+-- Workflow setting values per (workflowId, projectId). JSON values map; validated
+-- against the named workflow's declared settings by the store write authority.
+CREATE TABLE IF NOT EXISTS workflow_settings (
+  workflowId TEXT NOT NULL,
+  projectId TEXT NOT NULL,
+  "values" TEXT DEFAULT '{}',
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (workflowId, projectId)
+);
 
 -- Task documents (key-value store per task with revision tracking)
 CREATE TABLE IF NOT EXISTS task_documents (
@@ -4291,6 +4301,26 @@ export class Database {
       });
     }
 
+    // Migration 109: Workflow setting values (workflow-settings U2, KTD-2).
+    // Adds workflow_settings — one row per (workflowId, projectId) carrying a JSON
+    // map of setting values declared by the workflow's IR. Values are validated by
+    // the store write authority against the named workflow's declarations; built-in
+    // workflow ids are accepted for value writes even though their declarations are
+    // non-editable. Additive-only, idempotent (table-exists guard); no backfill.
+    if (version < 109) {
+      this.applyMigration(109, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS workflow_settings (
+            workflowId TEXT NOT NULL,
+            projectId TEXT NOT NULL,
+            "values" TEXT DEFAULT '{}',
+            updatedAt TEXT NOT NULL,
+            PRIMARY KEY (workflowId, projectId)
+          );
+        `);
+      });
+    }
+
   }
 
   /**
@@ -4367,7 +4397,8 @@ export class Database {
    */
   private addColumnIfMissing(table: string, column: string, definition: string): void {
     if (!this.hasColumn(table, column)) {
-      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      // Quote the column identifier so reserved words (e.g. `values`) are legal.
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN "${column}" ${definition}`);
     }
   }
 
@@ -4385,7 +4416,8 @@ export class Database {
       return;
     }
 
-    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    // Quote the column identifier so reserved words (e.g. `values`) are legal.
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN "${column}" ${definition}`);
     columns.add(column);
     if (cache) {
       cache.set(table, columns);

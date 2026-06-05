@@ -45,7 +45,7 @@ import {
   reconcileHooksRemaining,
 } from "./transition-pending.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
-import type { WorkflowIr, WorkflowIrColumn, WorkflowFieldDefinition } from "./workflow-ir-types.js";
+import type { WorkflowIr, WorkflowIrColumn, WorkflowFieldDefinition, WorkflowSettingDefinition } from "./workflow-ir-types.js";
 import {
   validateCustomFieldPatch,
   applyFieldDefaults,
@@ -53,6 +53,12 @@ import {
   CustomFieldRejectionError,
   type CustomFieldRejection,
 } from "./task-fields.js";
+import {
+  validateSettingValuePatch,
+  resolveEffectiveSettingValues,
+  WorkflowSettingRejectionError,
+  type WorkflowSettingRejection,
+} from "./workflow-settings.js";
 // Side-effect import: registers the 14 built-in trait DEFINITIONS into the
 // shared trait registry on load (the flag-ON path resolves traits by id).
 import "./builtin-traits.js";
@@ -68,6 +74,8 @@ import type {
 } from "./workflow-definition-types.js";
 import { compileWorkflowToSteps } from "./workflow-compiler.js";
 import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, isBuiltinWorkflowId } from "./builtin-workflows.js";
+import { resolveWorkflowIrById } from "./workflow-ir-resolver.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import {
   WORKFLOW_PARITY_OBSERVED_MUTATION,
   WORKFLOW_PARITY_DRIFT_MUTATION,
@@ -6964,6 +6972,98 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
+  // ── Workflow setting values (U2, R2/R4, KTD-2/KTD-9) ───────────────────────
+  //
+  // Setting VALUES persist per `(workflowId, projectId)` in the `workflow_settings`
+  // table; declarations live in the named workflow's IR (built-in or custom). This
+  // is the single validating write authority: values are validated against the
+  // NAMED workflow's declarations (not the project's current default workflow), and
+  // invalid values are NEVER persisted. Built-in workflow ids are accepted for
+  // value writes even though built-in DECLARATIONS are non-editable
+  // (`updateWorkflowDefinition` still rejects built-in edits) — the two error paths
+  // stay distinct (KTD-2).
+
+  /** Resolve the setting DECLARATIONS for a workflow id (built-in or custom). The
+   *  built-in path mirrors the IR resolver (`resolveWorkflowIrById`): built-in ids
+   *  resolve through the same code path so value writes target the same schema the
+   *  engine resolver sees. For built-in ids whose resolved IR does not yet carry
+   *  `settings` (the linear `BUILTIN_WORKFLOWS` graphs predate the settings
+   *  declarations), fall back to the canonical built-in declaration catalog
+   *  (`BUILTIN_WORKFLOW_SETTINGS`) so built-in VALUE writes succeed (R4/KTD-2).
+   *  Returns `undefined` when the workflow is missing or declares no settings. */
+  private async resolveWorkflowSettingDeclarations(
+    workflowId: string,
+  ): Promise<WorkflowSettingDefinition[] | undefined> {
+    const ir = await resolveWorkflowIrById(this, workflowId);
+    const declared = ir.version === "v2" ? ir.settings : undefined;
+    if (declared && declared.length > 0) return declared;
+    // Built-in workflows declare the full moved-key catalog (the migration parity
+    // anchor); their selectable graphs may not embed it yet.
+    if (isBuiltinWorkflowId(workflowId)) return BUILTIN_WORKFLOW_SETTINGS;
+    return declared;
+  }
+
+  /** Read the raw stored setting-value map for `(workflowId, projectId)`. Returns
+   *  an empty object when no row exists. Raw (pre drop-on-orphan) — callers that
+   *  need engine-effective values run {@link resolveEffectiveSettingValues}. */
+  getWorkflowSettingValues(workflowId: string, projectId: string): Record<string, unknown> {
+    const row = this.db
+      .prepare('SELECT "values" FROM workflow_settings WHERE workflowId = ? AND projectId = ?')
+      .get(workflowId, projectId) as { values: string } | undefined;
+    if (!row) return {};
+    try {
+      const parsed = JSON.parse(row.values) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Write setting VALUES for `(workflowId, projectId)`. The patch is validated
+   * against the NAMED workflow's declarations via {@link validateSettingValuePatch};
+   * on ANY rejection nothing is persisted (write-boundary contract) and a typed
+   * {@link WorkflowSettingRejectionError} is thrown. Accepted keys merge into the
+   * stored row; a `null` value deletes the key (null-as-delete). Built-in workflow
+   * value writes succeed (R4).
+   */
+  async updateWorkflowSettingValues(
+    workflowId: string,
+    projectId: string,
+    patch: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const declarations = await this.resolveWorkflowSettingDeclarations(workflowId);
+    const result = validateSettingValuePatch(declarations, patch);
+    if (result.rejections.length > 0) {
+      // Invalid values are NEVER persisted — fail the whole write loudly.
+      throw new WorkflowSettingRejectionError(result.rejections);
+    }
+
+    const current = this.getWorkflowSettingValues(workflowId, projectId);
+    const next: Record<string, unknown> = { ...current };
+    for (const [key, value] of Object.entries(result.accepted)) {
+      if (value === null) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+    }
+
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO workflow_settings (workflowId, projectId, "values", updatedAt)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(workflowId, projectId)
+         DO UPDATE SET "values" = excluded."values", updatedAt = excluded.updatedAt`,
+      )
+      .run(workflowId, projectId, JSON.stringify(next), now);
+    this.db.bumpLastModified();
+    return next;
+  }
+
   /**
    * The body of {@link updateTask} WITHOUT acquiring the per-task lock. Callers
    * that already hold `withTaskLock(id)` — e.g. workflow-selection mutations
@@ -12497,6 +12597,12 @@ ${stepsSection}`;
       throw new Error(`Workflow '${id}' not found`);
     }
     this.workflowDefinitionsCache = null;
+
+    // Cascade (KTD-9): delete this workflow's setting-value rows across all
+    // projects. Tasks pinned to the deleted workflow degrade to `builtin:coding`
+    // via the resolver and read built-in declarations + built-in values, so no
+    // unreachable orphan value rows remain.
+    this.db.prepare("DELETE FROM workflow_settings WHERE workflowId = ?").run(id);
 
     // Cascade: clear the project default when it pointed at this workflow.
     try {
