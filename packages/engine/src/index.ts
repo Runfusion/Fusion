@@ -623,3 +623,26 @@ export {
   getNativePrebuildName,
   resetPtyModuleCacheForTests,
 } from "./pty-native.js";
+// CLI Agent Executor — telemetry hub (U3) consumed by the dashboard hook route (U17).
+export {
+  TelemetryHub,
+  stripAnsiControl,
+  DEFAULT_MAX_EVENT_CHARS,
+  DEFAULT_MAX_EVENTS_PER_TURN,
+  DEFAULT_CHUNK_CARRY_CHARS,
+  type TelemetryHubOptions,
+  type TelemetryEvent,
+  type TelemetryEventKind,
+  type SanitizedTelemetryEvent,
+  type NotificationDispatch,
+} from "./cli-agent/telemetry-hub.js";
+// CLI Agent Executor — per-session hook scripts / notify shim (U17).
+export {
+  writeSessionHookScripts,
+  cleanupSessionHookDir,
+  buildHookScriptContent,
+  buildNotifyShimContent,
+  HOOK_SCRIPT_NAMES,
+  type WriteSessionHookScriptsOptions,
+  type WrittenHookScripts,
+} from "./cli-agent/hook-scripts.js";

@@ -16,8 +16,18 @@ import type { IncomingMessage } from "node:http";
  */
 export const TOKEN_QUERY_PARAM = "fn_token";
 
-/** Paths that are exempt from authentication (liveness probes). */
-const EXEMPT_PATHS = ["/api/health"];
+/**
+ * Paths exempt from the daemon bearer-token middleware.
+ *
+ * - `/api/health` — liveness probes.
+ * - `/api/cli-agent/hooks` — the CLI-agent hook ingestion route (U17). Hook
+ *   scripts run inside the spawned CLI process and only hold the per-session hook
+ *   token, NOT the daemon bearer token. That route does its OWN authentication:
+ *   it validates the per-session token against the engine-held registry
+ *   (constant-time) and rejects browser-context requests (Origin/Host CSRF
+ *   defense). It must therefore bypass the daemon-token gate, not weaken it.
+ */
+const EXEMPT_PATHS = ["/api/health", "/api/cli-agent/hooks"];
 
 /**
  * Only /api/* paths are gated by this middleware. The SPA shell (index.html,

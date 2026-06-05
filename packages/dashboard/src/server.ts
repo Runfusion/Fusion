@@ -194,6 +194,18 @@ export interface ServerOptions {
   engineManager?: import("@fusion/engine").ProjectEngineManager;
   /** Optional HybridExecutor orchestration context for multi-project runtime plumbing. */
   hybridExecutor?: import("@fusion/engine").HybridExecutor;
+  /**
+   * Resolver for the engine-held CLI-agent telemetry hub (U17 hook route).
+   * Given a request's projectId (if any) and the target session id, returns the
+   * in-process TelemetryHub that owns that session's token registry, or undefined
+   * when no hub / session is live. The hook route validates the per-session token
+   * against this hub and forwards validated payloads to `hub.ingest`. Injected
+   * here (rather than reached through the engine) so the engine↔dashboard wiring
+   * can be supplied by later units and stubbed in tests. */
+  cliAgentHubResolver?: (
+    projectId: string | undefined,
+    sessionId: string,
+  ) => import("@fusion/engine").TelemetryHub | undefined;
   /** Shared CentralCore instance used by the engine manager.
    *  Routes that mutate central runtime state should use this instance so
    *  in-process listeners (for example global concurrency changes) are notified. */
