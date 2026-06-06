@@ -71,6 +71,11 @@ export type {
   WorkflowFieldOption,
   WorkflowFieldRender,
 } from "./workflow-ir-types.js";
+export {
+  DEFAULT_MAX_REWORK_CYCLES,
+  MAX_REWORK_CYCLES_CAP,
+  resolveMaxReworkCycles,
+} from "./workflow-ir-types.js";
 export { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 export { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
 

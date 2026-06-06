@@ -48,6 +48,7 @@ export {
 } from "./workflow-node-handlers.js";
 export {
   createPrNodeHandlers,
+  createAutoMergeGateHandler,
   buildPrNodeDeps,
   type PrNodeDeps,
   type PrNodeGithubOps,

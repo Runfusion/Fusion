@@ -1,5 +1,5 @@
 import type { Settings, TaskDetail, TaskStep, WorkflowIr, WorkflowIrEdge, WorkflowIrNode } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, WorkflowIrError, isExperimentalFeatureEnabled } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, WorkflowIrError, isExperimentalFeatureEnabled, resolveMaxReworkCycles } from "@fusion/core";
 
 import {
   createDefaultNodeHandlers,
@@ -183,6 +183,43 @@ export class WorkflowGraphExecutor {
     const inStack = new Set<string>();
     const runId = this.deps.runId ?? `${task.id}:run`;
 
+    // Bounded-rework generalization (U6). A `kind: "rework"` edge is the only
+    // legal cycle: it loops back to a "rework region head" (the edge's `to` node).
+    // The same mechanism the foreach sub-walk uses (bounded budget, exhaustion
+    // routes `outcome:rework-exhausted`) is lifted to the top-level walk so the PR
+    // review loop (await-review → pr-respond → rework → await-review) is legal and
+    // bounded. Every NON-rework back-edge still throws "Cycle detected" below.
+    //
+    //  - reworkHeads: every node that is the target of a rework edge.
+    //  - reworkBudget: per-head remaining traversals, seeded lazily from the head
+    //    node's `config.maxReworkCycles` (shared default + clamp from core).
+    //  - The loop is iterative at the head frame: when a downstream node takes its
+    //    rework edge back to a head currently on the stack, the head's walk frame
+    //    catches a REWORK_SIGNAL sentinel and re-iterates (under budget) instead of
+    //    recursing — so `inStack` never sees the head re-entered as a cycle.
+    const reworkHeads = new Set<string>();
+    for (const edge of ir.edges) {
+      if (edge.kind === "rework") reworkHeads.add(edge.to);
+    }
+    const reworkBudget = new Map<string, number>();
+    const reworkBudgetFor = (headId: string): number => {
+      const existing = reworkBudget.get(headId);
+      if (existing !== undefined) return existing;
+      const head = nodeMap.get(headId);
+      const seeded = resolveMaxReworkCycles(head?.config?.maxReworkCycles);
+      reworkBudget.set(headId, seeded);
+      return seeded;
+    };
+    // Sentinel a downstream rework edge returns up the recursion to its loop head.
+    interface ReworkSignal {
+      readonly __rework: true;
+      readonly headId: string;
+      /** The source node's result, carried so the head re-runs against fresh state. */
+      readonly source: WorkflowNodeResult;
+    }
+    const isReworkSignal = (r: WorkflowNodeResult | ReworkSignal): r is ReworkSignal =>
+      (r as ReworkSignal).__rework === true;
+
     // On resume, completed branch nodes (from a prior crashed run) are skipped
     // so their handlers do not re-fire (idempotency).
     let completedNodeIds: Set<string> | undefined;
@@ -220,14 +257,11 @@ export class WorkflowGraphExecutor {
       completedNodeIds,
     });
 
-    const walk = async (nodeId: string): Promise<WorkflowNodeResult> => {
-      const node = nodeMap.get(nodeId);
-      if (!node) throw new WorkflowIrError(`Unknown workflow node: ${nodeId}`);
-      if (inStack.has(nodeId)) throw new WorkflowIrError(`Cycle detected at node: ${nodeId}`);
-      inStack.add(nodeId);
-      visitedNodeIds.push(nodeId);
-
-      try {
+    // Execute one node and traverse its outgoing edges. May return a ReworkSignal
+    // (a rework back-edge fired); the caller frame propagates or consumes it.
+    const runNodeAndTraverse = async (
+      node: WorkflowIrNode,
+    ): Promise<WorkflowNodeResult | ReworkSignal> => {
         if (node.kind === "start") {
           return await traverseChildren(node, { outcome: "success" });
         }
@@ -310,12 +344,55 @@ export class WorkflowGraphExecutor {
         if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
 
         return await traverseChildren(node, result);
+    };
+
+    // Recursive walk into a node. A rework region head (target of a `kind:
+    // "rework"` edge) is wrapped in an iterative loop: while a downstream rework
+    // edge fires back to it (returned as a ReworkSignal under budget) the head
+    // re-runs; budget exhaustion re-routes the head with an
+    // `outcome:rework-exhausted` source so its forward edge carries the flow out.
+    // Every NON-rework back-edge still hits the cycle detector and throws.
+    const walk = async (nodeId: string): Promise<WorkflowNodeResult | ReworkSignal> => {
+      const node = nodeMap.get(nodeId);
+      if (!node) throw new WorkflowIrError(`Unknown workflow node: ${nodeId}`);
+      if (inStack.has(nodeId)) throw new WorkflowIrError(`Cycle detected at node: ${nodeId}`);
+      inStack.add(nodeId);
+      visitedNodeIds.push(nodeId);
+
+      try {
+        const isReworkHead = reworkHeads.has(nodeId);
+        for (;;) {
+          const outcome = await runNodeAndTraverse(node);
+          if (!isReworkSignal(outcome)) return outcome;
+          // A rework back-edge fired. It must target THIS head (the deepest
+          // enclosing rework head); a signal for an outer head propagates up.
+          if (!isReworkHead || outcome.headId !== nodeId) return outcome;
+          const remaining = reworkBudgetFor(nodeId);
+          if (remaining > 0) {
+            reworkBudget.set(nodeId, remaining - 1);
+            continue; // re-run the head node fresh (await-review re-evaluates)
+          }
+          // Budget exhausted: route the head's `outcome:rework-exhausted` forward
+          // edge (mirrors the foreach node's `{outcome:"failure", value:
+          // "rework-exhausted"}`). The `failure` outcome is deliberate so the
+          // exhausted re-route does NOT also satisfy the head's generic
+          // `condition:"success"` forward edge (which would re-enter the loop body
+          // and never terminate). Never loops forever; never throws "Cycle
+          // detected" for the legal rework edge.
+          const exhausted = await traverseChildren(node, { outcome: "failure", value: "rework-exhausted" });
+          // If no `outcome:rework-exhausted` edge exists the source bubbles back
+          // (a failure outcome) — a finite, routable terminal, never an infinite loop.
+          return exhausted;
+        }
       } finally {
         inStack.delete(nodeId);
       }
     };
 
-    const traverseChildren = async (node: WorkflowIrNode, sourceResult: WorkflowNodeResult): Promise<WorkflowNodeResult> => {
+    const traverseChildren = async (
+      node: WorkflowIrNode,
+      sourceResult: WorkflowNodeResult,
+    ): Promise<WorkflowNodeResult | ReworkSignal> => {
       const edges = outgoingMap.get(node.id) ?? [];
       if (edges.length === 0) {
         return sourceResult;
@@ -327,13 +404,22 @@ export class WorkflowGraphExecutor {
       }
 
       let aggregate: WorkflowNodeResult = sourceResult;
+      // Forward edges first, deterministic by target id (matches prior ordering);
+      // a rework edge is a loop-back and is handled distinctly below.
       for (const edge of matching.sort((a, b) => a.to.localeCompare(b.to))) {
+        // Rework back-edge: do NOT recurse (the head is on the stack — that would
+        // be a cycle). Bubble a ReworkSignal up to the head's iterative loop.
+        if (edge.kind === "rework" && inStack.has(edge.to)) {
+          return { __rework: true, headId: edge.to, source: sourceResult } satisfies ReworkSignal;
+        }
         const target = nodeMap.get(edge.to);
         if (target?.kind === "end") {
           aggregate = sourceResult;
           continue;
         }
         const child = await walk(edge.to);
+        // A ReworkSignal propagated from deeper: bubble it further up unchanged.
+        if (isReworkSignal(child)) return child;
         if (child.outcome === "failure") {
           aggregate = child;
           break;
@@ -344,6 +430,11 @@ export class WorkflowGraphExecutor {
     };
 
     const terminal = await walk(startNode.id);
+    if (isReworkSignal(terminal)) {
+      // A rework edge whose target is not an enclosing head on the stack — i.e. a
+      // rework edge pointing at a node never entered as a loop head. Malformed IR.
+      throw new WorkflowIrError(`Rework edge targets a node that is not a region head: ${terminal.headId}`);
+    }
     // Prune again on run completion (#1412): keeps only this run's rows so the
     // table does not accumulate historical runs for a long-lived task.
     await this.pruneStaleBranches(task.id, runId);

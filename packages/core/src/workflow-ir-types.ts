@@ -31,13 +31,32 @@ export interface WorkflowIrNode {
   config?: Record<string, unknown>;
 }
 
+/** Default bounded-rework budget when a rework region omits `maxReworkCycles`
+ *  (KTD-5 foreach default; U6 reuses it for the top-level review loop). */
+export const DEFAULT_MAX_REWORK_CYCLES = 3;
+/** Defensive clamp on any rework budget (KTD-5; shared by foreach + U6). */
+export const MAX_REWORK_CYCLES_CAP = 10;
+
+/** Resolve a bounded-rework budget from a config bag, applying the shared
+ *  default + clamp. Used by the foreach sub-walk and the top-level rework loop so
+ *  the bound semantics cannot drift between the two. */
+export function resolveMaxReworkCycles(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : DEFAULT_MAX_REWORK_CYCLES;
+  return Math.max(1, Math.min(MAX_REWORK_CYCLES_CAP, Math.floor(n)));
+}
+
 export interface WorkflowIrEdge {
   from: string;
   to: string;
   condition?: string;
-  /** Step-inversion (KTD-5): `rework` edges are the only legal cycles, scoped to
-   *  one foreach template instance and bounded by the foreach `maxReworkCycles`.
-   *  They are exempt from cycle/parallelism complaints. */
+  /** Step-inversion (KTD-5) + PR review loop (U6): `rework` edges are the only
+   *  legal cycles. Originally scoped to one foreach template instance and bounded
+   *  by the foreach `maxReworkCycles`; U6 generalizes the same mechanism to the
+   *  top-level walk so a PR review region (await-review → pr-respond → back to
+   *  await-review) is a legal bounded cycle too. The bound on a top-level rework
+   *  edge is `maxReworkCycles` on this edge's `from` node config (the loop head),
+   *  defaulting to {@link DEFAULT_MAX_REWORK_CYCLES}. Either way, rework edges are
+   *  exempt from "Cycle detected"; every other back-edge still throws. */
   kind?: "rework";
 }
 

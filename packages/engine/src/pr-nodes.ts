@@ -17,6 +17,7 @@
 
 import {
   isPrEntityActionable,
+  isPrEntityAutoMergeReady,
   type PrEntity,
   type PrEntityCreateInput,
   type PrEntityUpdate,
@@ -423,5 +424,53 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
     "pr-create": prCreate,
     "pr-respond": prRespond,
     "pr-merge": prMerge,
+  };
+}
+
+/**
+ * Auto-merge gate handler (U6, R10). Placed after the approval step. It
+ * re-evaluates the LIVE PR entity each time (never trusts a cached/SSE copy) and
+ * routes:
+ *
+ *   - `outcome:auto-on`  → toward `pr-merge`, when {@link isPrEntityAutoMergeReady}
+ *     (opted in + approved + all checks concluded success + mergeable clean +
+ *     verified).
+ *   - `outcome:auto-off` → park for a manual-release merge, for EVERY non-ready
+ *     case: not opted in, pending/failed checks, UNKNOWN/conflicting mergeability,
+ *     unverified entity, or no live entity at all. The gate never blocks the run.
+ *
+ * Reuses the gate-routing contract (`{ outcome: "success", value }` consumed by
+ * `outcome:` edges in shouldTraverseEdge) rather than forking a parallel routing
+ * mechanism. The store/entity lookup is injected via {@link PrNodeDeps} so the
+ * engine stays dashboard-import-free. The `auto-merge ready` predicate lives in
+ * @fusion/core so the gate, the dashboard, and the reconcile share one
+ * definition and cannot drift.
+ */
+export function createAutoMergeGateHandler(deps: Pick<PrNodeDeps, "getStore" | "audit">): WorkflowNodeHandler {
+  const audit = (reason: string, detail: string): void => {
+    try {
+      deps.audit?.(reason, detail);
+    } catch {
+      // Audit must never affect the run.
+    }
+  };
+  return async (node, ctx) => {
+    const store = deps.getStore();
+    const entity = store.getActivePrEntityBySource("task", ctx.task.id)
+      ?? store.getActivePrEntityBySource("branch-group", ctx.task.id);
+
+    if (!entity) {
+      // No live entity → cannot auto-merge; park for manual handling (never block).
+      audit("auto-merge-gate-no-entity", `auto-merge gate '${node.id}' found no live PR entity for task ${ctx.task.id}`);
+      return { outcome: "success", value: "auto-off" };
+    }
+
+    // Re-fetch authoritative state: the entity row IS the live copy here (store
+    // read), so pending checks / UNKNOWN mergeable / unverified / not-opted-in all
+    // fall to auto-off via the shared predicate.
+    if (isPrEntityAutoMergeReady(entity)) {
+      return { outcome: "success", value: "auto-on" };
+    }
+    return { outcome: "success", value: "auto-off" };
   };
 }
