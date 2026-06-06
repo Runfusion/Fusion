@@ -305,6 +305,81 @@ export interface MissionValidatorRun {
   updatedAt: string;
 }
 
+// ── Task Reviewer Run Types (company-model U6) ──────────────────────
+
+/**
+ * Status values for a task-keyed Reviewer verdict run (company-model U6).
+ *
+ * Mirrors the conceptual lifecycle of {@link ValidatorRunStatus} but uses the
+ * company-model verbs (pass/fail/blocked) and adds an explicit `pending` head
+ * state for a run that is created but not yet executing. The verdict is
+ * write-once: once a run reaches a terminal status (pass | fail | blocked |
+ * error) it can never transition again.
+ */
+export const TASK_REVIEWER_RUN_STATUSES = [
+  "pending",
+  "running",
+  "pass",
+  "fail",
+  "blocked",
+  "error",
+] as const;
+export type TaskReviewerRunStatus = (typeof TASK_REVIEWER_RUN_STATUSES)[number];
+
+/** A run is terminal when its verdict can no longer change (write-once). */
+export const TERMINAL_TASK_REVIEWER_RUN_STATUSES: ReadonlySet<TaskReviewerRunStatus> =
+  new Set(["pass", "fail", "blocked", "error"]);
+
+/** A single structured failure reason persisted on a fail/blocked verdict. */
+export interface TaskReviewerFailureReason {
+  /** Short human-readable failure title. */
+  title: string;
+  /** Detailed explanation of what was expected vs observed. */
+  message: string;
+  /** Optional expected value/behavior. */
+  expected?: string;
+  /** Optional observed value/behavior. */
+  actual?: string;
+}
+
+/**
+ * A task-keyed Reviewer verdict run (company-model U6, R11/R16).
+ *
+ * The Reviewer absorbs the mission Validator on company-model boards: entering
+ * the in-review column starts a run keyed to the board task; the persisted
+ * verdict gates the exit from in-review. Mirrors {@link MissionValidatorRun} in
+ * shape but keyed to a task/board rather than a mission feature/milestone/slice,
+ * so the mission tables and their FK constraints stay untouched.
+ */
+export interface TaskReviewerRun {
+  /** Unique identifier (e.g., "RR-XXXXXXXX-XXXX"). */
+  id: string;
+  /** The board task this run evaluates. */
+  taskId: string;
+  /** The board the task is homed on (for board-scoped recovery sweeps). */
+  boardId: string;
+  /** Current status of the run. */
+  status: TaskReviewerRunStatus;
+  /** Verdict summary (set on completion). */
+  summary?: string;
+  /** Structured failure reasons (set on fail/blocked verdict). */
+  failureReasons?: TaskReviewerFailureReason[];
+  /** The Reviewer effective-agent identity that owns this run. A `pass` verdict
+   *  may only be written by this identity (write-once authority, U6). */
+  reviewerAgentId?: string;
+  /** Which rework round this run corresponds to (0-based; increments on each
+   *  fail → backward → re-enter-in-review cycle). */
+  reworkRound: number;
+  /** ISO-8601 timestamp when the run started. */
+  startedAt: string;
+  /** ISO-8601 timestamp when the run completed (if terminal). */
+  completedAt?: string;
+  /** ISO-8601 timestamp of creation. */
+  createdAt: string;
+  /** ISO-8601 timestamp of last update. */
+  updatedAt: string;
+}
+
 /**
  * An assertion failure record represents a single assertion failure
  * within a validator run.

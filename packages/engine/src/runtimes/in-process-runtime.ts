@@ -50,6 +50,8 @@ import { MeshLeaseManager } from "../mesh-lease-manager.js";
 import { PluginRunner } from "../plugin-runner.js";
 import { MissionAutopilot } from "../mission-autopilot.js";
 import { MissionExecutionLoop } from "../mission-execution-loop.js";
+import { ReviewerGate } from "../reviewer-gate.js";
+import { createReviewerEvaluator } from "../reviewer-evaluator.js";
 import { TriageProcessor } from "../triage.js";
 import { EphemeralWorkerManager } from "../ephemeral-worker-manager.js";
 import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
@@ -137,6 +139,11 @@ export class InProcessRuntime
   private routineScheduler?: RoutineScheduler;
   private missionExecutionLoop?: MissionExecutionLoop;
   private missionAutopilot?: MissionAutopilot;
+  /** Company-model U6: drives the task-keyed Reviewer verdict run on in-review
+   *  entry and re-drives orphans via the self-healing sweep. Constructed
+   *  unconditionally; inert (every drive no-ops) when the flag is off or the
+   *  board is not a company-model board. */
+  private reviewerGate?: ReviewerGate;
   private triageProcessor?: TriageProcessor;
   private messageStore?: MessageStore;
   private chatStore?: ChatStore;
@@ -397,6 +404,23 @@ export class InProcessRuntime
 
       const autoClaimSnapshotManager = new AutoClaimSnapshotManager({ taskStore: this.taskStore });
 
+      // Company-model U6 (R11/R16): the Reviewer absorbs the Validator. The gate
+      // drives a task-keyed Reviewer verdict run when a task enters in-review on a
+      // company-model board, gating its exit. Constructed unconditionally — the
+      // gate self-validates the flag + board on every drive and no-ops otherwise
+      // (kill-switch parity), so it is safe to always wire into the Scheduler entry
+      // hook and the self-healing recovery sweep below. The production evaluator is
+      // a readonly AI-judge session mirroring the mission validator.
+      this.reviewerGate = new ReviewerGate({
+        store: this.taskStore,
+        evaluate: createReviewerEvaluator({
+          taskStore: this.taskStore,
+          rootDir: this.config.workingDirectory,
+          pluginRunner: this.pluginRunner,
+          agentStore: this.agentStore,
+        }),
+      });
+
       this.scheduler = new Scheduler(this.taskStore, {
         maxConcurrent: this.config.maxConcurrent,
         maxWorktrees: this.config.maxWorktrees,
@@ -405,6 +429,9 @@ export class InProcessRuntime
         missionStore,
         missionAutopilot,
         missionExecutionLoop,
+        // Company-model U6: fire the Reviewer gate on in-review entry (idempotent,
+        // inert off-flag / non-company board).
+        reviewerGate: this.reviewerGate,
         leaseManager: this.leaseManager,
         onTaskFailed: (taskId) => {
           if (missionAutopilot) {
@@ -879,6 +906,15 @@ export class InProcessRuntime
             return { reapedCount: 0 };
           }
           return this.missionExecutionLoop.reapStaleValidatorRuns(VALIDATOR_RUN_STALE_MAX_AGE_MS);
+        },
+        // Company-model U6: reap orphaned task-keyed Reviewer runs and re-drive
+        // verdict-pending in-review tasks so a crash mid-review never strands a
+        // task. Reuses the mission validator stale threshold. Inert off-flag.
+        recoverOrphanedReviewerRuns: async () => {
+          if (!this.reviewerGate) {
+            return { reapedCount: 0, reDrivenCount: 0 };
+          }
+          return this.reviewerGate.recoverOrphanedReviewerRuns(VALIDATOR_RUN_STALE_MAX_AGE_MS);
         },
         reconcileAllMissionFeatures: async () => this.scheduler.reconcileAllMissionFeatures(),
         chatStore: this.chatStore,

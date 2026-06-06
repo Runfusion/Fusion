@@ -23,6 +23,7 @@ import {
   validateCompanyBoardMove,
 } from "./workflow-transitions.js";
 import type { MoveActor } from "./workflow-transitions.js";
+import { isCompanyBoardIr, resolveCompanyRoleColumnId } from "./company-board-template.js";
 import {
   type PluginGateVerdict,
   findWorkflowColumn,
@@ -111,6 +112,7 @@ import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { buildSnippet, extractGoalCitations } from "./goal-citation-extractor.js";
 import { MissionStore } from "./mission-store.js";
 import { BoardStore } from "./board-store.js";
+import { TaskReviewerStore, MANUAL_APPROVAL_LOG_PREFIX } from "./task-reviewer-store.js";
 import { PluginStore } from "./plugin-store.js";
 import { InsightStore } from "./insight-store.js";
 import { ResearchStore } from "./research-store.js";
@@ -1372,6 +1374,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private missionStore: MissionStore | null = null;
   /** Cached BoardStore instance (company-model U1) */
   private boardStore: BoardStore | null = null;
+  private taskReviewerStore: TaskReviewerStore | null = null;
   /** Cached PluginStore instance */
   private pluginStore: PluginStore | null = null;
   /** Cached InsightStore instance */
@@ -6511,6 +6514,66 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
             ),
             `Invalid transition: '${fromColumn}' → '${toColumn}'. ${actorRejection.message}`,
           );
+        }
+      }
+      // 2c. U6 (R11/R16): Reviewer verdict gate on the EXIT from in-review. On a
+      //     company-model board, a task entering in-review starts a task-keyed
+      //     Reviewer run; the persisted write-once verdict gates the exit toward
+      //     done / post-review columns. For an AGENT actor, the latest verdict
+      //     must be `pass` — otherwise the move is rejected (typed). The HUMAN
+      //     owner stays exempt (R5/AE6): a human in-review→forward drag with a
+      //     pending/failed verdict completes as manually-approved and stamps an
+      //     explicit `manualApproval` marker on the task metadata so U7 routes it
+      //     manual-never-auto. Inert for non-company boards, system/recovery
+      //     moves (bypassGuards), backward moves, and moves not leaving in-review.
+      if (
+        !bypassGuards &&
+        options?.recoveryRehome !== true &&
+        isCompanyBoardIr(workflowIr)
+      ) {
+        const reviewerColumnId = resolveCompanyRoleColumnId(workflowIr, "reviewer");
+        const leavingReview = reviewerColumnId !== undefined && fromColumn === reviewerColumnId;
+        if (leavingReview) {
+          const fromIdx = workflowIr.version === "v2"
+            ? workflowIr.columns.findIndex((c) => c.id === fromColumn)
+            : -1;
+          const toIdx = workflowIr.version === "v2"
+            ? workflowIr.columns.findIndex((c) => c.id === toColumn)
+            : -1;
+          const forward = fromIdx >= 0 && toIdx > fromIdx;
+          if (forward) {
+            const reviewerStore = this.getTaskReviewerStore();
+            const verdict = reviewerStore.getLatestVerdict(id);
+            const actor = options?.actor ?? { kind: "human" as const };
+            if (actor.kind === "agent") {
+              if (verdict?.status !== "pass") {
+                const detail = verdict
+                  ? `latest Reviewer verdict is '${verdict.status}', not 'pass'`
+                  : "no Reviewer verdict has been recorded yet";
+                throw new TransitionRejectionError(
+                  makeTransitionRejection(
+                    "guard-rejected",
+                    "transition.rejected.reviewerVerdictPending",
+                    true,
+                    `The Reviewer must pass before this task can leave in-review (${detail})`,
+                  ),
+                  `Cannot move ${id} out of in-review: ${detail}`,
+                );
+              }
+            } else if (verdict?.status !== "pass") {
+              // Human owner exemption (AE6): record an explicit manual-approval
+              // marker (a stable-prefixed task-log entry) so downstream (U7) can
+              // route this completion as manual, never auto-merge. Appended to the
+              // in-memory task; it persists with the move's upsert below.
+              task.log.push({
+                timestamp: internal.now ?? new Date().toISOString(),
+                action: `${MANUAL_APPROVAL_LOG_PREFIX}${verdict?.status ?? "no-verdict"})`,
+                outcome:
+                  `Human owner approved exit from in-review with Reviewer verdict ` +
+                  `'${verdict?.status ?? "(none)"}'; routed as manual completion (AE6)`,
+              });
+            }
+          }
         }
       }
       // 3. Sync trait guards (in-lock). Skipped entirely when bypassGuards
@@ -14878,6 +14941,18 @@ ${notificationsSection}`;
       this.boardStore = new BoardStore(this.fusionDir, this.db, this);
     }
     return this.boardStore;
+  }
+
+  /**
+   * Get the TaskReviewerStore for company-model Reviewer verdict runs (U6).
+   * Lazily initializes the store on first access. Shares the central DB so the
+   * `task_reviewer_runs` rows live alongside the other task data.
+   */
+  getTaskReviewerStore(): TaskReviewerStore {
+    if (!this.taskReviewerStore) {
+      this.taskReviewerStore = new TaskReviewerStore(this.db);
+    }
+    return this.taskReviewerStore;
   }
 
   /**

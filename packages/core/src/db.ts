@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 115;
+const SCHEMA_VERSION = 116;
 
 export { SCHEMA_VERSION };
 
@@ -441,6 +441,29 @@ CREATE TABLE IF NOT EXISTS boards (
   updatedAt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idxBoardsProjectOrdering ON boards(projectId, ordering);
+
+-- Company-model U6 (R11/R16): task-keyed Reviewer verdict runs. Mirrors the
+-- mission_validator_runs shape but keyed to a board task (taskId/boardId) rather
+-- than a mission feature/milestone/slice — the mission tables stay untouched so
+-- mission-path FK integrity is unaffected. The Reviewer's run is started when a
+-- task enters the in-review column and its persisted verdict gates the exit.
+-- failureReasons holds a JSON array of structured failure records (write-once).
+CREATE TABLE IF NOT EXISTS task_reviewer_runs (
+  id TEXT PRIMARY KEY,
+  taskId TEXT NOT NULL,
+  boardId TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  summary TEXT,
+  failureReasons TEXT,
+  reviewerAgentId TEXT,
+  reworkRound INTEGER NOT NULL DEFAULT 0,
+  startedAt TEXT NOT NULL,
+  completedAt TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idxTaskReviewerRunsTaskId ON task_reviewer_runs(taskId);
+CREATE INDEX IF NOT EXISTS idxTaskReviewerRunsStatus ON task_reviewer_runs(status);
 
 -- Activity log with indexed columns for efficient queries
 CREATE TABLE IF NOT EXISTS activityLog (
@@ -4576,6 +4599,35 @@ export class Database {
       });
     }
 
+    // v116 (company-model U6, R11/R16): task-keyed Reviewer verdict runs. Entering
+    // the in-review column on a company-model board starts a Reviewer run; the
+    // persisted write-once verdict gates the exit from in-review. Mirrors the
+    // mission_validator_runs shape but keyed to a board task — the mission tables
+    // and their FK constraints are untouched. Idempotent: CREATE TABLE/INDEX IF NOT
+    // EXISTS are no-ops once the table exists (fresh DBs created it in SCHEMA_SQL).
+    if (version < 116) {
+      this.applyMigration(116, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS task_reviewer_runs (
+            id TEXT PRIMARY KEY,
+            taskId TEXT NOT NULL,
+            boardId TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            summary TEXT,
+            failureReasons TEXT,
+            reviewerAgentId TEXT,
+            reworkRound INTEGER NOT NULL DEFAULT 0,
+            startedAt TEXT NOT NULL,
+            completedAt TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idxTaskReviewerRunsTaskId ON task_reviewer_runs(taskId);
+          CREATE INDEX IF NOT EXISTS idxTaskReviewerRunsStatus ON task_reviewer_runs(status);
+        `);
+      });
+    }
+
   }
 
   /**
@@ -4689,6 +4741,23 @@ export class Database {
     const setBoardAndColumn = this.db.prepare(
       `UPDATE tasks SET boardId = ?, "column" = ? WHERE id = ?`,
     );
+    // Legacy DBs migrating from pre-v25 fixtures (or partial seeds) may not
+    // have runAuditEvents at this point in the migration chain. Mirror the
+    // v25 definition (IF NOT EXISTS) so the conform audit never aborts the
+    // conversion.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS runAuditEvents (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        taskId TEXT,
+        agentId TEXT NOT NULL,
+        runId TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        mutationType TEXT NOT NULL,
+        target TEXT NOT NULL,
+        metadata TEXT
+      );
+    `);
     const auditInsert = this.db.prepare(
       `INSERT INTO runAuditEvents (id, timestamp, taskId, agentId, runId, domain, mutationType, target, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

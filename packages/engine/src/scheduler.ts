@@ -418,6 +418,15 @@ export interface SchedulerOptions {
   prMonitor?: PrMonitor;
   /** Optional MissionStore for slice activation and auto-advance */
   missionStore?: MissionStore;
+  /**
+   * Company-model U6: optional Reviewer gate. When wired, a task entering the
+   * in-review column on a company-model board triggers a task-keyed Reviewer run.
+   * The call is idempotent (no-op if a run is in flight / verdict exists) and
+   * inert on non-company boards and when the flag is off, so this seam is safe to
+   * always fire. The self-healing recovery sweep re-drives any missed entry, so
+   * exactly-once is not load-bearing here. Absent → no Reviewer runs on entry.
+   */
+  reviewerGate?: { driveReviewForTask: (taskId: string) => Promise<unknown> };
   /** Optional lease manager used to recover stale checkout leases before scheduling. */
   leaseManager?: MeshLeaseManager;
   /** Optional MissionAutopilot for autonomous mission progression */
@@ -591,6 +600,16 @@ export class Scheduler {
           // Task moved out of in-review, stop monitoring
           this.options.prMonitor.stopMonitoring(task.id);
         }
+      }
+
+      // Company-model U6: entering in-review on a company-model board triggers a
+      // task-keyed Reviewer run. Fire-and-forget + idempotent: the gate
+      // re-validates the board/column/flag and no-ops otherwise, and the
+      // self-healing sweep re-drives any missed entry.
+      if (this.options.reviewerGate && to === "in-review") {
+        void Promise.resolve(this.options.reviewerGate.driveReviewForTask(task.id)).catch((err) => {
+          schedulerLog.error(`Reviewer gate drive failed for ${task.id}:`, err);
+        });
       }
 
       // Mission progress tracking. Resolve by linked feature instead of only

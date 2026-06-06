@@ -113,6 +113,17 @@ export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryConte
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
 export {
+  ReviewerGate,
+  type ReviewerGateOptions,
+  type ReviewerEvaluator,
+  type ReviewerEvaluation,
+  type DriveResult,
+  formatFailureFeedback,
+  REVIEWER_NEEDS_ATTENTION_LOG_PREFIX,
+  REVIEWER_FAIL_FEEDBACK_LOG_PREFIX,
+} from "./reviewer-gate.js";
+export { createReviewerEvaluator, type ReviewerEvaluatorDeps } from "./reviewer-evaluator.js";
+export {
   aiMergeTask,
   listAutostashOrphans,
   applyAutostashBySha,

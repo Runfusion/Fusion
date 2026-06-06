@@ -295,6 +295,14 @@ export interface SelfHealingOptions {
   /** Optional callback to reap stale mission validator runs during startup and maintenance. */
   reapStaleMissionValidatorRuns?: () => Promise<{ reapedCount: number }>;
   /**
+   * Company-model U6: optional callback to reap orphaned task-keyed Reviewer runs
+   * and re-drive verdict-pending in-review tasks during startup and maintenance.
+   * Mirrors {@link reapStaleMissionValidatorRuns} but for the Reviewer-gate runs.
+   * Absent (undefined) → inert, preserving prior behavior (flag-off / mission-only
+   * deployments). The mission validator sweep is independent and untouched.
+   */
+  recoverOrphanedReviewerRuns?: () => Promise<{ reapedCount: number; reDrivenCount: number }>;
+  /**
    * U8 (CLI Agent Executor): returns true when a worktree path backs a
    * resume-eligible `cli_sessions` record. Idle-worktree sweeps
    * (`enforceWorktreeCap`, `cleanupOrphans`, `reapUnregisteredOrphans`) MUST
@@ -884,6 +892,19 @@ export class SelfHealingManager {
             return undefined;
           }
           await this.options.reapStaleMissionValidatorRuns();
+          return undefined;
+        },
+      },
+      {
+        // Company-model U6: reap orphaned task-keyed Reviewer runs and re-drive
+        // verdict-pending in-review tasks. Independent of the mission validator
+        // sweep above; inert when the callback is absent.
+        name: "recover-orphaned-reviewer-runs",
+        fn: async () => {
+          if (!this.options.recoverOrphanedReviewerRuns) {
+            return undefined;
+          }
+          await this.options.recoverOrphanedReviewerRuns();
           return undefined;
         },
       },
@@ -1755,6 +1776,16 @@ export class SelfHealingManager {
                 return;
               }
               await this.options.reapStaleMissionValidatorRuns();
+            },
+          },
+          {
+            // Company-model U6: startup recovery for orphaned Reviewer runs.
+            name: "recover-orphaned-reviewer-runs",
+            fn: async () => {
+              if (!this.options.recoverOrphanedReviewerRuns) {
+                return;
+              }
+              await this.options.recoverOrphanedReviewerRuns();
             },
           },
           {

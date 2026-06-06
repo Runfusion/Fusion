@@ -1031,6 +1031,8 @@ export {
   VALIDATOR_RUN_STATUSES,
   MISSION_ASSERTION_STATUSES,
   MILESTONE_VALIDATION_STATES,
+  TASK_REVIEWER_RUN_STATUSES,
+  TERMINAL_TASK_REVIEWER_RUN_STATUSES,
 } from "./mission-types.js";
 export type {
   MissionStatus,
@@ -1088,11 +1090,23 @@ export type {
   AssertionLinkedPayload,
   AssertionUnlinkedPayload,
   MilestoneValidationUpdatedPayload,
+  // Task-keyed Reviewer verdict run types (company-model U6)
+  TaskReviewerRun,
+  TaskReviewerRunStatus,
+  TaskReviewerFailureReason,
 } from "./mission-types.js";
 export { MissionStore } from "./mission-store.js";
 export type { MissionStoreEvents, MissionSummary } from "./mission-store.js";
 export { BoardStore, BoardHasTasksError } from "./board-store.js";
 export type { BoardStoreEvents } from "./board-store.js";
+export {
+  TaskReviewerStore,
+  ReviewerRunTerminalError,
+  ReviewerRunWriterError,
+  MANUAL_APPROVAL_LOG_PREFIX,
+  hasManualApprovalMarker,
+} from "./task-reviewer-store.js";
+export type { TaskReviewerStoreEvents, ReviewerVerdict } from "./task-reviewer-store.js";
 export { ACTIVE_GOAL_LIMIT, ActiveGoalLimitExceededError } from "./goal-types.js";
 export type { Goal, GoalCreateInput, GoalListFilter, GoalStatus, GoalUpdateInput } from "./goal-types.js";
 export { GoalStore } from "./goal-store.js";
