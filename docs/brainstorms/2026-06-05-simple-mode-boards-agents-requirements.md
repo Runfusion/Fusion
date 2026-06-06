@@ -1,0 +1,163 @@
+---
+date: 2026-06-05
+topic: simple-mode-boards-agents
+---
+
+# Simple Mode: Boards, Teams, and the Company Model
+
+## Summary
+
+Productize Fusion's existing workflow engine into a "company" model: every project gets a CEO (the single global-chat entry point that routes work), and every board gets a mandatory Lead → Executor → Reviewer team with optional custom agent-columns in between — one persistent agent per column, no ephemeral agents. Boards are the first-class containers: a task lands on a board and inherits that board's columns; workflow/column config is a property of the board, never a per-task selection. Multi-lane converts to multi-board, and the graph/workflow editor plus Missions and other non-core surfaces move behind an "advanced mode."
+
+---
+
+## Problem Frame
+
+Fusion's engine already supports custom columns, column-bound agents, and graph workflows (behind `experimentalFeatures.workflowColumns` and `workflowGraphExecutor`), but the product surface exposes that power as raw complexity: per-task workflow selection, derived lanes, ephemeral per-task agents, and a board crowded with concepts (missions, traits, graph nodes) that a new user must navigate before getting value.
+
+Two concrete pains anchor this work:
+
+1. **Non-coding tasks don't fit.** The legacy pipeline hard-codes coding semantics — worktree, branch, in-review-as-merge-blocker, done-as-merged. A documentation task or a content task has no branch to merge, so it has no honest path through the board.
+2. **Tasks can't complete without human oversight.** There is no trusted reviewing actor whose verdict the user is willing to let gate auto-merge, so every task ends with the human babysitting the finish line.
+
+The fix is not more engine capability — it's an opinionated, legible default experience: a company you can explain in one sentence (someone structures the request, someone executes it, someone reviews it), with the existing general machinery preserved as an escape hatch.
+
+---
+
+## Key Decisions
+
+- **Opinionated layer over the existing engine, not a replacement.** Simple mode is a constrained preset over the workflow-columns + column-agent + trait machinery already built. The graph executor's generality (split/join, hold nodes, custom traits) is retained, gated behind advanced mode.
+- **The board is the container; workflow is board config.** Tasks never select a workflow. A task lands on a board and inherits that board's columns and team. This inverts today's model (task selects workflow → lane derived).
+- **Multi-board replaces multi-lane.** Boards become first-class navigable entities, each with its own team and column config. The lane concept and per-task workflow selection are removed, not kept alongside.
+- **Persistent named agents only — ephemeral agents are eliminated in simple mode.** Every piece of work is performed by a named agent staffed on a column. The roster is the mental model. Per-task agent selection disappears from simple mode (retained in advanced mode).
+- **CEO exists from day one, even with one board.** Project creation always creates the CEO. Global chat always talks to the CEO, who delegates to boards. This costs a fourth mandatory agent with little to do in single-board v1, in exchange for a mental model that doesn't shift when boards multiply.
+- **Hard movement constraints chosen for auditability.** Sequential column movement, no skipping, one agent per column, locked endpoint roles. These constraints are what make autonomous agent work legible and trustworthy; flexibility lives in advanced mode.
+- **The Reviewer absorbs the Validator.** The existing Validator Run machinery (Contract Assertions, verdicts, fix feedback) becomes the Reviewer's engine: when a task reaches In Review, the board's Reviewer agent runs the validation. One judge, one mental model — "the Reviewer" is the productized face of the validator, not a second parallel judge.
+- **Simple-mode curation is decided here, not in planning.** Simple mode keeps boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Advanced mode gates Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces.
+- **"Executor" is the role name** (replacing "Engineer") — the role is not inherently a coder; any action-performing agent can hold the slot's column shape.
+
+```mermaid
+flowchart TB
+  U[User] -->|global chat| CEO
+  U -->|per-task chat| ANY[Any agent, within a task]
+  CEO -->|routes request to the right board| B1
+  subgraph B1 [Board]
+    direction LR
+    L[Lead - Todo] --> X[Executor - In Progress]
+    X --> C[Custom agent columns 0..n]
+    C --> R[Reviewer - In Review]
+    R --> D[Done]
+    R -.->|reject, move backward| X
+  end
+  CEO -.-> B2[Other boards...]
+```
+
+---
+
+## Actors
+
+- A1. **User (owner)** — talks to the CEO in global chat, can talk to any agent inside a task, oversees all boards, and may move any card anywhere (movement constraints bind agents, not the owner).
+- A2. **CEO** — project-level agent created at project creation. The single task-entry point in global chat: interprets a request, selects the responsible board, and creates the task in that board's Todo queue.
+- A3. **Lead** — mandatory, bound to the Todo column. Sorts, structures, and formalizes incoming tasks; prepares the execution prompt for the board's Executor. Role is locked: only its instructions are customizable.
+- A4. **Executor** — mandatory, bound to the In Progress column. Performs the requested action (coding or otherwise).
+- A5. **Reviewer** — mandatory, bound to the In Review column. Analyzes and validates completed work; its verdict gates Done (and merge, on coding boards). May move tasks backward.
+- A6. **Custom column agent** — optional persistent agent staffed on a user-created column between Todo and In Review (e.g., a Documentation Specialist). One agent per column; an agent holds at most one column per board.
+
+---
+
+## Requirements
+
+**Board & column model**
+
+- R1. Every board is created with three mandatory, locked role-columns: Lead → Todo, Executor → In Progress, Reviewer → In Review. These cannot be deleted or replaced; their instructions are customizable.
+- R2. Users can insert any number of custom columns, but only between Todo and In Review — never before Todo or after In Review.
+- R3. Each column is staffed by exactly one agent, and an agent can hold at most one column per board.
+- R4. The board owns its workflow/column config. A task lands on a board and inherits that board's columns; there is no per-task workflow selection.
+- R5. Agent-driven task movement is strictly sequential — column to adjacent column, no skipping. Only the Lead and the Reviewer may move a task backward. The human owner is exempt and may move any card anywhere.
+- R6. Boards must support non-coding work: a board whose columns carry no merge machinery lets a task flow Todo → … → Done without a branch, worktree, or merge step.
+
+**Agents & roster**
+
+- R7. Simple mode has no ephemeral agents: every unit of work executes as a named, persistent agent staffed on a column. Per-task agent selection is removed from simple mode (retained in advanced mode).
+- R8. Project creation auto-creates the CEO and Board 1 with its Lead, Executor, and Reviewer pre-staffed — a new user gets a working team with zero configuration.
+- R9. The CEO is the only entry point in global chat. Given a user request, it selects the responsible board and creates the task in that board's Todo queue.
+- R10. Users can talk to any agent within a specific task; the agent incorporates the message on its next reasoning cycle.
+
+**Review & autonomous completion**
+
+- R11. The Reviewer's verdict gates the transition to Done. On coding boards, a passing verdict feeds the existing auto-merge gate so a task can complete and merge with no human oversight; a failing verdict moves the task backward with feedback.
+- R16. The Reviewer subsumes the existing Validator: Validator Runs execute as the board Reviewer's evaluation, and no separate validator concept is exposed in simple mode. There is exactly one "AI judge of done" per board.
+
+**Multi-board**
+
+- R12. A project supports multiple boards, each with its own team, columns, and config. Boards can run simultaneously.
+- R13. Multi-lane converts to multi-board: the lane concept is removed from the dashboard, and each existing workflow-in-use becomes a board. Existing tasks migrate to the board derived from their previous workflow; no task data is lost.
+
+**Simple / advanced mode**
+
+- R14. Simple mode is the default UI and keeps: boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Advanced mode gates: Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces.
+- R15. Advanced-mode capabilities remain fully functional — gating is a UI-visibility concern, not a feature removal. Existing projects relying on those surfaces keep working after opting into advanced mode.
+
+---
+
+## Key Flows
+
+- F1. Chat request to done, hands-free
+  - **Trigger:** User sends a request in global chat ("create a new blog article").
+  - **Steps:** CEO identifies the responsible board and creates a task in its Todo queue → Lead structures the request and prepares the execution prompt → task advances to In Progress, Executor performs the work → task passes through any custom columns (each agent does its specialty) → Reviewer evaluates → pass: task moves to Done (and auto-merges on a coding board).
+  - **Covers:** R1, R5, R9, R11.
+- F2. Reviewer rejection
+  - **Trigger:** Reviewer's evaluation fails.
+  - **Steps:** Reviewer moves the task backward with feedback → the receiving column's agent reworks → task advances sequentially again to In Review.
+  - **Covers:** R5, R11.
+- F3. New project onboarding
+  - **Trigger:** User creates a project.
+  - **Steps:** CEO is created; Board 1 is created with Lead, Executor, Reviewer staffed; user lands on Board 1 and can immediately send their first request in global chat.
+  - **Covers:** R8, R9.
+- F4. Existing project migration
+  - **Trigger:** A project with lanes / per-task workflows upgrades.
+  - **Steps:** Each workflow in use becomes a board; tasks land on the board derived from their workflow; mandatory teams are auto-created per board; missions and graph surfaces move behind advanced mode.
+  - **Covers:** R13, R14, R15.
+
+---
+
+## Acceptance Examples
+
+- AE1. **Covers R11.** Given a coding board with auto-merge enabled, when the Reviewer passes a task in In Review, then the task's branch enters the merge queue and the task reaches Done with no human action.
+- AE2. **Covers R6, R11.** Given a board for documentation work, when a task reaches In Review and the Reviewer passes it, then the task moves to Done without any branch or merge step occurring.
+- AE3. **Covers R3.** Given an agent already staffed on a column of a board, when the user tries to assign that agent to a second column on the same board, then the assignment is rejected with a clear explanation.
+- AE4. **Covers R5.** Given a task in Todo, when the Executor (or any non-Lead/Reviewer agent) attempts to move it directly to In Review, then the move is rejected; when the human owner drags the same card to In Review, the move succeeds.
+- AE5. **Covers R9.** Given a single-board project, when the user sends any request in global chat, then the CEO creates the task on Board 1's Todo queue (routing degenerates gracefully when there is only one board).
+
+---
+
+## Scope Boundaries
+
+**Deferred for later**
+
+- Non-developer verticals (the "bakery" scenario, WhatsApp intake, marketing teams) — north-star positioning; the v1 persona stays the solo developer running coding-plus-adjacent boards.
+- CEO "automatic mode" (acting continuously without an explicit user message).
+- Multi-user / collaboration on boards.
+
+**Outside this product's identity**
+
+- Building tool-specific integrations (Remotion, Instagram, Canva, calendars) into core. Specialized boards get their capabilities from the plugin ecosystem; core ships the company model, not the tools.
+
+---
+
+## Dependencies / Assumptions
+
+- Builds on the existing `experimentalFeatures.workflowColumns` and `workflowGraphExecutor` machinery — Column, Trait, Column agent (`defer`/`override`), Default workflow. Simple mode is a preset over these, which assumes they graduate from experimental to the default path.
+- The Reviewer gate reuses the existing validator machinery (Contract Assertions, Validator Run) as its engine per R16; how its verdict plugs into the auto-merge blocker seam is a planning question.
+- Assumption: advanced mode retains per-task agent selection and all current graph capabilities — nothing is deleted, only re-surfaced.
+- Assumption: movement constraints (R5) bind agents only; the human owner always has override.
+
+---
+
+## Outstanding Questions
+
+**Deferred to planning**
+
+- Migration mechanics for lanes → boards and existing per-task agent settings.
+- How the CEO identifies the responsible board (board descriptions, Lead self-reporting, routing instructions) and what happens on ambiguous routing.
+- Whether mandatory-role agents are shared across boards or per-board instances (each board has its own Lead/Reviewer per the model; naming/identity scheme is a planning detail).
