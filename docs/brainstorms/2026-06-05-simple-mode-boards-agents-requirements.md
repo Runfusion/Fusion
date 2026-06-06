@@ -29,7 +29,7 @@ The fix is not more engine capability — it's an opinionated, legible default e
 - **Opinionated layer over the existing engine, not a replacement.** Simple mode is a constrained preset over the workflow-columns + column-agent + trait machinery already built. The graph executor's generality (split/join, hold nodes, custom traits) is retained, gated behind advanced mode.
 - **The board is the container; workflow is board config.** Tasks never select a workflow. A task lands on a board and inherits that board's columns and team. This inverts today's model (task selects workflow → lane derived).
 - **Multi-board replaces multi-lane.** Boards become first-class navigable entities, each with its own team and column config. The lane concept and per-task workflow selection are removed, not kept alongside.
-- **Persistent named agents only — ephemeral agents are eliminated in simple mode.** Every piece of work is performed by a named agent staffed on a column. The roster is the mental model. Per-task agent selection disappears from simple mode (retained in advanced mode).
+- **Persistent named agents only — ephemeral agents are eliminated entirely under the company model.** Every piece of work, in simple and advanced mode alike, is performed by a named persistent agent; the roster is the mental model. Per-task agent selection disappears from simple mode; advanced mode retains it, choosing from the persistent roster. The legacy flag-off path keeps ephemeral workers untouched; the ephemeral machinery is deleted at flag graduation.
 - **CEO exists from day one, even with one board.** Project creation always creates the CEO. Global chat always talks to the CEO, who delegates to boards. This costs a fourth mandatory agent with little to do in single-board v1, in exchange for a mental model that doesn't shift when boards multiply.
 - **Hard movement constraints chosen for auditability.** Sequential column movement, no skipping, one agent per column, locked endpoint roles. These constraints are what make autonomous agent work legible and trustworthy; flexibility lives in advanced mode.
 - **The Reviewer absorbs the Validator.** The existing Validator Run machinery (Contract Assertions, verdicts, fix feedback) becomes the Reviewer's engine: when a task reaches In Review, the board's Reviewer agent runs the validation. One judge, one mental model — "the Reviewer" is the productized face of the validator, not a second parallel judge.
@@ -70,22 +70,22 @@ flowchart TB
 **Board & column model**
 
 - R1. Every board is created with three mandatory, locked role-columns: Lead → Todo, Executor → In Progress, Reviewer → In Review. These cannot be deleted or replaced; their instructions are customizable.
-- R2. Users can insert any number of custom columns, but only between Todo and In Review — never before Todo or after In Review.
-- R3. Each column is staffed by exactly one agent, and an agent can hold at most one column per board.
+- R2. Users can insert any number of custom columns between Todo and In Review, and after In Review for post-approval steps (e.g., Deploy, Publish) — never before Todo, so nothing bypasses Lead intake. The Reviewer's verdict remains the sole gate out of In Review; Done follows the last column.
+- R3. Each column is staffed by exactly one agent. In simple mode an agent can hold at most one column per board; advanced mode may staff one agent on multiple columns of a board. Sharing an agent across boards is always allowed.
 - R4. The board owns its workflow/column config. A task lands on a board and inherits that board's columns; there is no per-task workflow selection.
 - R5. Agent-driven task movement is strictly sequential — column to adjacent column, no skipping. Only the Lead and the Reviewer may move a task backward. The human owner is exempt and may move any card anywhere.
 - R6. Boards must support non-coding work: a board whose columns carry no merge machinery lets a task flow Todo → … → Done without a branch, worktree, or merge step.
 
 **Agents & roster**
 
-- R7. Simple mode has no ephemeral agents: every unit of work executes as a named, persistent agent staffed on a column. Per-task agent selection is removed from simple mode (retained in advanced mode).
+- R7. The company model has no ephemeral agents: every unit of work, in simple and advanced mode alike, executes as a named, persistent agent. Per-task agent selection is removed from simple mode; advanced mode retains it, choosing from the persistent roster.
 - R8. Project creation auto-creates the CEO and Board 1 with its Lead, Executor, and Reviewer pre-staffed — a new user gets a working team with zero configuration.
 - R9. The CEO is the only entry point in global chat. Given a user request, it selects the responsible board and creates the task in that board's Todo queue.
 - R10. Users can talk to any agent within a specific task; the agent incorporates the message on its next reasoning cycle.
 
 **Review & autonomous completion**
 
-- R11. The Reviewer's verdict gates the transition to Done. On coding boards, a passing verdict feeds the existing auto-merge gate so a task can complete and merge with no human oversight; a failing verdict moves the task backward with feedback.
+- R11. The Reviewer's verdict gates the transition out of In Review. On coding boards, a passing verdict feeds the project's merge mode — auto-merge, or opening a pull request via the existing PR flow — so a task can complete with no human oversight (or land as a ready-to-review PR); a failing verdict moves the task backward with feedback.
 - R16. The Reviewer subsumes the existing Validator: Validator Runs execute as the board Reviewer's evaluation, and no separate validator concept is exposed in simple mode. There is exactly one "AI judge of done" per board.
 
 **Multi-board**
@@ -95,8 +95,9 @@ flowchart TB
 
 **Simple / advanced mode**
 
-- R14. Simple mode is the default UI and keeps: boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Advanced mode gates: Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces.
+- R14. Simple mode is the default UI and keeps: boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Advanced mode gates: Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces. Plugin-contributed user-facing views and surfaces can declare simple-mode compatibility and appear in simple mode — only plugin development surfaces are categorically gated.
 - R15. Advanced-mode capabilities remain fully functional — gating is a UI-visibility concern, not a feature removal. Existing projects relying on those surfaces keep working after opting into advanced mode.
+- R17. An existing legacy/advanced project can be converted to simple mode on demand — the same conform mapping the upgrade migration uses (columns onto the company template, team seeded), triggered explicitly from settings rather than only at upgrade.
 
 ---
 
@@ -104,7 +105,7 @@ flowchart TB
 
 - F1. Chat request to done, hands-free
   - **Trigger:** User sends a request in global chat ("create a new blog article").
-  - **Steps:** CEO identifies the responsible board and creates a task in its Todo queue → Lead structures the request and prepares the execution prompt → task advances to In Progress, Executor performs the work → task passes through any custom columns (each agent does its specialty) → Reviewer evaluates → pass: task moves to Done (and auto-merges on a coding board).
+  - **Steps:** CEO identifies the responsible board and creates a task in its Todo queue → Lead structures the request and prepares the execution prompt → task advances to In Progress, Executor performs the work → task passes through any custom columns (each agent does its specialty) → Reviewer evaluates → pass: task moves through any post-approval columns to Done (and, on a coding board, auto-merges or opens a pull request per the project's merge mode).
   - **Covers:** R1, R5, R9, R11.
 - F2. Reviewer rejection
   - **Trigger:** Reviewer's evaluation fails.

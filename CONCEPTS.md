@@ -228,7 +228,7 @@ A second quarantine in the same subsystem is a product-race smell: the flake may
 *Proposed product shape (see docs/brainstorms/2026-06-05-simple-mode-boards-agents-requirements.md); not yet implemented. Supersedes Lane and per-task workflow selection when it ships.*
 
 ### Board
-The first-class task container in the company model: a task lands on a board and inherits that board's columns and team. The board — never the task — owns its workflow/column config. Every board carries the three mandatory role-columns (Lead → Todo, Executor → In Progress, Reviewer → In Review) plus optional custom agent-columns between them; one persistent agent per column, an agent on at most one column per board. Replaces the Lane concept.
+The first-class task container in the company model: a task lands on a board and inherits that board's columns and team. The board — never the task — owns its workflow/column config. Every board carries the three mandatory role-columns (Lead → Todo, Executor → In Progress, Reviewer → In Review) plus optional custom agent-columns between them and after In Review (post-approval steps); nothing before Todo. One persistent agent per column; in simple mode an agent holds at most one column per board (advanced mode may staff several; cross-board sharing always allowed). Replaces the Lane concept.
 
 ### CEO
 The project-level agent auto-created with every project and the single task-entry point in global chat: it interprets a user request, selects the responsible Board, and creates the task in that board's Todo queue. Other agents are reachable only within a specific task.
@@ -240,7 +240,7 @@ The mandatory agent bound to a board's Todo column: sorts, structures, and forma
 The mandatory agent bound to a board's In Progress column: performs the requested action. Deliberately not named "Engineer" — the slot is action-shaped, not coding-shaped; non-coding boards staff it with whatever specialist fits.
 
 ### Reviewer
-The mandatory agent bound to a board's In Review column: its verdict gates the transition to Done (and feeds the auto-merge gate on coding boards), enabling tasks to complete without human oversight. May move a task backward with feedback.
+The mandatory agent bound to a board's In Review column: its verdict gates the exit from In Review (and on coding boards feeds the project's merge mode — auto-merge or PR creation), enabling tasks to complete without human oversight. May move a task backward with feedback.
 
 ### Simple mode / Advanced mode
 The two-tier UI posture of the company model: simple mode (default) exposes only boards, teams, and tasks; advanced mode gates the graph/workflow editor, Missions, traits configuration, per-task agent selection, and other non-core surfaces. Gating is UI visibility only — no capability is removed.
