@@ -270,6 +270,126 @@ export function computeIncompatibleFieldChanges(
   return changes;
 }
 
+// ── (d) Company-model board column placement rules (U3, R1/R2) ───────────────
+//
+// For a company-model board (its IR carries `role` markers — see
+// `isCompanyBoardIr`), the locked role columns and the custom-column placement
+// region are enforced server-side at save time, independently of the editor:
+//
+//   - the three locked role columns (todo/in-progress/in-review) may NOT be
+//     deleted or renamed; their agent staffing is fine (U2 owns binding edits);
+//   - custom columns are legal between todo and in-review AND after in-review
+//     (post-approval steps, before done) — NEVER before todo;
+//   - the Reviewer's in-review column remains the sole gate out of in-review:
+//     done and any post-approval columns sit after it (enforced by "after
+//     in-review" placement; the verdict gate itself is U6).
+//
+// These rules fire only when the EXISTING workflow is a company board (the board
+// already carries the template); a non-company workflow is untouched. The flag
+// is consulted by the caller (the store's save path) where settings are
+// reachable; this pure validator keys off the template markers so it is callable
+// in isolation.
+
+import { isCompanyBoardIr } from "./company-board-template.js";
+
+/** Reasons a company-board column edit is rejected (U3, R1/R2). */
+export type CompanyBoardColumnEditReason =
+  /** A locked role column was deleted. */
+  | "role-column-deleted"
+  /** A locked role column was renamed (id or display name changed). */
+  | "role-column-renamed"
+  /** A custom column was placed before the todo (Lead) column. */
+  | "custom-column-before-todo";
+
+/**
+ * Thrown by the workflow update path when an edit to a company-model board
+ * violates the locked-role-column or custom-column-placement rules (U3, R1/R2).
+ * Carries the offending column id and a `reason` discriminant so each write
+ * surface can map it to its transport without re-deriving the message.
+ */
+export class CompanyBoardColumnEditError extends Error {
+  readonly columnId: string;
+  readonly reason: CompanyBoardColumnEditReason;
+  constructor(args: { message: string; columnId: string; reason: CompanyBoardColumnEditReason }) {
+    super(args.message);
+    this.name = "CompanyBoardColumnEditError";
+    this.columnId = args.columnId;
+    this.reason = args.reason;
+  }
+}
+
+/** The role columns of a company-board IR, keyed by id. */
+function roleColumnsById(ir: WorkflowIr): Map<string, WorkflowIrColumn> {
+  const map = new Map<string, WorkflowIrColumn>();
+  for (const col of columnsOf(ir)) {
+    if (col.role !== undefined) map.set(col.id, col);
+  }
+  return map;
+}
+
+/**
+ * Validate a company-board column edit (`existingIr` → `nextIr`). No-op when the
+ * existing board is not a company board (it never carries the template markers).
+ * Throws a typed {@link CompanyBoardColumnEditError} on the first violation:
+ *
+ *  - a locked role column removed → `role-column-deleted`;
+ *  - a locked role column whose id survives but whose name changed →
+ *    `role-column-renamed` (id changes surface as a delete since ids are the
+ *    identity key — a renamed-id role column has no surviving match);
+ *  - a non-role (custom) column placed before the todo column → before-todo.
+ *
+ * Agent staffing edits on a role column are NOT inspected here (U2's
+ * `validateColumnAgentBindings` owns those) — only structural delete/rename and
+ * custom-column placement.
+ */
+export function validateCompanyBoardColumnEdit(
+  existingIr: WorkflowIr,
+  nextIr: WorkflowIr,
+): void {
+  if (!isCompanyBoardIr(existingIr)) return;
+
+  const existingRoles = roleColumnsById(existingIr);
+  const nextById = new Map(columnsOf(nextIr).map((c) => [c.id, c]));
+
+  // Locked role columns: never deleted, never renamed.
+  for (const [id, oldCol] of existingRoles) {
+    if (oldCol.locked !== true) continue;
+    const next = nextById.get(id);
+    if (!next) {
+      throw new CompanyBoardColumnEditError({
+        message: `Locked role column '${id}' cannot be deleted from a company board`,
+        columnId: id,
+        reason: "role-column-deleted",
+      });
+    }
+    if (next.name !== oldCol.name) {
+      throw new CompanyBoardColumnEditError({
+        message: `Locked role column '${id}' cannot be renamed (from '${oldCol.name}' to '${next.name}')`,
+        columnId: id,
+        reason: "role-column-renamed",
+      });
+    }
+  }
+
+  // Custom-column placement: nothing before todo. A custom (non-role) column may
+  // sit only at index >= the todo column's index. The role columns themselves
+  // are validated above; here we only police the non-role columns' position.
+  const nextColumns = columnsOf(nextIr);
+  const todoIndex = nextColumns.findIndex((c) => c.role === "lead");
+  if (todoIndex >= 0) {
+    for (let i = 0; i < todoIndex; i++) {
+      const col = nextColumns[i];
+      if (col.role === undefined) {
+        throw new CompanyBoardColumnEditError({
+          message: `Custom column '${col.id}' cannot be placed before the Todo column on a company board`,
+          columnId: col.id,
+          reason: "custom-column-before-todo",
+        });
+      }
+    }
+  }
+}
+
 // ── Abort-on-switch DI seam (core stays engine-free) ─────────────────────────
 //
 // A workflow switch must abort the card's in-flight processing BEFORE the move

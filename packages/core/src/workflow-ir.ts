@@ -910,6 +910,28 @@ function validateColumns(ir: WorkflowIrV2): void {
       throw new WorkflowIrError(`Workflow IR column '${column.id}' traits must be an array`);
     }
     validateColumnAgent(column);
+    validateColumnRole(column);
+  }
+}
+
+/** Recognized company-model role markers (U3, R1). */
+const COLUMN_ROLES: ReadonlySet<string> = new Set(["lead", "executor", "reviewer"]);
+
+/** Validate a column's optional company-model `role`/`locked` markers (U3, R1).
+ *  Mirrors `validateColumnAgent`: absent → no-op; present → `role` must be one of
+ *  the three recognized values and `locked` must be a boolean. The markers are
+ *  config data (only the company board template sets them); existence/placement
+ *  rules live in workflow-reconciliation, not here. */
+function validateColumnRole(column: WorkflowIrColumn): void {
+  if (column.role !== undefined && !COLUMN_ROLES.has(column.role)) {
+    throw new WorkflowIrError(
+      `Workflow IR column '${column.id}' role must be 'lead', 'executor', or 'reviewer' (got '${String(column.role)}')`,
+    );
+  }
+  if (column.locked !== undefined && typeof column.locked !== "boolean") {
+    throw new WorkflowIrError(
+      `Workflow IR column '${column.id}' locked must be a boolean when present`,
+    );
   }
 }
 
@@ -1083,6 +1105,9 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
     // A permanent-agent binding is a v2-only feature (column-agent plan, R9): a
     // graph that staffs a column can never round-trip through a pre-v2 binary.
     if (col.agent !== undefined) return ir;
+    // Company-model role/lock markers (U3, R1) are v2-only features: a board
+    // template that carries them must stay v2.
+    if (col.role !== undefined || col.locked !== undefined) return ir;
   }
 
   // Every node must sit in its default seam-derived column. A node placed

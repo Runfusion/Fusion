@@ -232,6 +232,14 @@ export interface WorkflowColumnAgent {
   mode: "defer" | "override";
 }
 
+/** The three locked role columns of a company-model board (U3, R1). A column's
+ *  `role` is the identity of the agent slot the board mandates there: the Lead
+ *  staffs todo, the Executor in-progress, the Reviewer in-review. Only the
+ *  company board template carries these markers — legacy/default workflows never
+ *  set them, so flag-off boards stay byte-identical and the company-model
+ *  placement/movement rules (which key off the markers) never fire for them. */
+export type WorkflowColumnRole = "lead" | "executor" | "reviewer";
+
 /** A workflow-defined board column. */
 export interface WorkflowIrColumn {
   id: string;
@@ -241,6 +249,17 @@ export interface WorkflowIrColumn {
    *  omitted entirely when unset — never serialized as `agent: null` — so legacy
    *  and default workflows stay byte-identical (R9). */
   agent?: WorkflowColumnAgent;
+  /** Company-model role marker (U3, R1). Present only on the three mandatory
+   *  role columns of a company board template; absent everywhere else. The
+   *  company-model placement (workflow-reconciliation) and movement
+   *  (workflow-transitions) rules key off this marker, so a board that carries
+   *  it is a company-model board and one that doesn't is left on the legacy
+   *  path. Additive — omitted entirely when unset. */
+  role?: WorkflowColumnRole;
+  /** Company-model lock marker (U3, R1). A locked column is non-deletable and
+   *  non-renamable: the save-validation path rejects edits that remove or rename
+   *  it. The three role columns are locked. Additive — omitted when unset. */
+  locked?: boolean;
 }
 
 /** Release conditions for a `hold` node (KTD-2, R3). */

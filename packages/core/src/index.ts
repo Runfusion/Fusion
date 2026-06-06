@@ -65,6 +65,7 @@ export type {
   WorkflowIrColumn,
   WorkflowIrColumnTrait,
   WorkflowColumnAgent,
+  WorkflowColumnRole,
   WorkflowHoldRelease,
   WorkflowJoinMode,
   WorkflowJoinBranchFailure,
@@ -101,6 +102,13 @@ export type {
   EffectiveAgentResult,
 } from "./column-agent-resolver.js";
 export { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
+// ── U3: company-model board column template ───────────────────────────────────
+export {
+  COMPANY_BOARD_TEMPLATE_IR,
+  COMPANY_BOARD_TEMPLATE_NON_CODING_IR,
+  COMPANY_BOARD_COLUMN_IDS,
+  isCompanyBoardIr,
+} from "./company-board-template.js";
 export { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
 export { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 export {
@@ -201,8 +209,15 @@ export {
   resolveColumnAdjacency,
   resolveAllowedColumns,
   workflowHasColumn,
+  // U3: company-model actor-aware movement rules (R5).
+  validateCompanyBoardMove,
 } from "./workflow-transitions.js";
-export type { ColumnAdjacency } from "./workflow-transitions.js";
+export type {
+  ColumnAdjacency,
+  MoveActor,
+  CompanyBoardMoveReason,
+  CompanyBoardMoveRejection,
+} from "./workflow-transitions.js";
 export { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
 // ── U8: pre-evaluated plugin gate verdicts (KTD-2) ───────────────────────────
 export {
@@ -226,6 +241,9 @@ export {
   setReconciliationAbort,
   runReconciliationAbort,
   __resetReconciliationAbortForTests,
+  // U3: company-board column placement rules (R1/R2).
+  CompanyBoardColumnEditError,
+  validateCompanyBoardColumnEdit,
 } from "./workflow-reconciliation.js";
 export type {
   SwitchReconciliation,
@@ -233,6 +251,7 @@ export type {
   IncompatibleFieldChange,
   ReconciliationAbort,
   ReconciliationAbortContext,
+  CompanyBoardColumnEditReason,
 } from "./workflow-reconciliation.js";
 export {
   validateCustomFieldPatch,

@@ -38,6 +38,7 @@ import type { WorkflowIr, WorkflowIrColumn } from "./workflow-ir-types.js";
 import { isExperimentalFeatureEnabled } from "./experimental-features.js";
 import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { resolveWorkflowIrById } from "./workflow-ir-resolver.js";
+import { COMPANY_BOARD_TEMPLATE_IR } from "./company-board-template.js";
 
 /** The three mandatory role columns every company-model board carries, mapped to
  *  the role that staffs each one (R1). Column ids match the built-in coding IR. */
@@ -265,8 +266,15 @@ async function staffBoardColumns(
     if (!existingAgents.some((a) => a.id === agent.id)) existingAgents.push(agent);
   }
 
-  // Resolve the board's current IR and stamp the bindings.
-  const baseIr = await resolveWorkflowIrById(taskStore, board.workflowId);
+  // Resolve the base IR to stamp the bindings onto. For a NEW flag-on board
+  // (still pointing at a built-in workflow) the company board template is the
+  // default (U3): no triage column, locked role columns, company-model markers
+  // the placement/movement rules key off. A board converted from a non-default
+  // workflow during migration (U1 conform-on-migrate) keeps its own custom IR —
+  // its workflowId is non-builtin, so we resolve that.
+  const baseIr = isBuiltinish(board.workflowId)
+    ? COMPANY_BOARD_TEMPLATE_IR
+    : await resolveWorkflowIrById(taskStore, board.workflowId);
   const stampedIr = applyTeamBindings(baseIr, roleAgentIds);
 
   // Persist as a board-owned workflow when the board still points at a built-in

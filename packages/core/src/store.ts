@@ -17,7 +17,12 @@ import {
 import { parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure } from "./workflow-ir.js";
 import { stepsToWorkflowIr, stepToFragmentIr, layoutForIr } from "./workflow-steps-to-ir.js";
 import { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
-import { resolveAllowedColumns, workflowHasColumn } from "./workflow-transitions.js";
+import {
+  resolveAllowedColumns,
+  workflowHasColumn,
+  validateCompanyBoardMove,
+} from "./workflow-transitions.js";
+import type { MoveActor } from "./workflow-transitions.js";
 import {
   type PluginGateVerdict,
   findWorkflowColumn,
@@ -34,6 +39,7 @@ import {
   resolveEntryColumnId,
   resolveSwitchReconciliation,
   runReconciliationAbort,
+  validateCompanyBoardColumnEdit,
 } from "./workflow-reconciliation.js";
 import {
   type DefaultWorkflowMoveContext,
@@ -1207,6 +1213,16 @@ interface MoveTaskOptions {
    * endpoint. When set, implies `bypassGuards`.
    */
   recoveryRehome?: boolean;
+  /**
+   * U3 (R5): the actor performing the move, for company-model board movement
+   * rules. Defaults to the human owner (`{ kind: "human" }`) so every existing
+   * UI/HTTP drag caller stays exempt from the agent restrictions; agent-tool
+   * move callers pass `{ kind: "agent", agentId }` so the adjacent-forward /
+   * Lead-Reviewer-only-backward rules apply. Consulted ONLY on the flag-ON
+   * workflow path for boards whose IR carries the company template markers; it
+   * is inert for legacy/custom workflows and flag-off moves.
+   */
+  actor?: MoveActor;
 }
 
 interface MoveTaskInternalOptions {
@@ -6469,6 +6485,33 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           `Invalid transition: '${fromColumn}' → '${toColumn}'. ` +
             `Valid targets: ${allowed.join(", ") || "none"}`,
         );
+      }
+      // 2b. U3 (R5): company-model actor-aware movement. For a board whose IR
+      //     carries the company template markers, an agent move must be adjacent-
+      //     forward, and only the Lead/Reviewer may move backward; the human
+      //     owner is unrestricted. Skipped for engine/recovery/scheduler moves
+      //     (bypassGuards) — those are system moves, not actor-driven — and inert
+      //     for non-company workflows (validateCompanyBoardMove returns undefined).
+      //     Actor defaults to the human owner so existing UI/HTTP callers stay
+      //     exempt.
+      if (!bypassGuards && options?.recoveryRehome !== true) {
+        const actorRejection = validateCompanyBoardMove(
+          workflowIr,
+          fromColumn,
+          toColumn,
+          options?.actor ?? { kind: "human" },
+        );
+        if (actorRejection) {
+          throw new TransitionRejectionError(
+            makeTransitionRejection(
+              "guard-rejected",
+              "transition.rejected.invalidTransition",
+              false,
+              actorRejection.message,
+            ),
+            `Invalid transition: '${fromColumn}' → '${toColumn}'. ${actorRejection.message}`,
+          );
+        }
       }
       // 3. Sync trait guards (in-lock). Skipped entirely when bypassGuards
       //    (engine/recovery moves, KTD-9). The default workflow's merge-blocker
@@ -13159,6 +13202,14 @@ ${stepsSection}`;
       // Residual A: reject save-blocking trait composition conflicts server-side
       // when the IR is being changed.
       if (updates.ir !== undefined) this.assertWorkflowIrTraitsValid(ir);
+      // U3 (R1/R2): when the flag is ON and the EXISTING workflow is a company
+      // board (carries the template's role markers), enforce the locked-role-
+      // column and custom-column placement rules server-side — independently of
+      // the editor. A non-company workflow is untouched (the validator no-ops on
+      // a non-company existing IR), and flag-off is byte-identical (gate below).
+      if (updates.ir !== undefined && flagOn) {
+        validateCompanyBoardColumnEdit(existing.ir, ir);
+      }
       const next: WorkflowDefinition = {
         ...existing,
         name,
