@@ -32,7 +32,13 @@ import type { AutoClaimSnapshotManager } from "./auto-claim-snapshot.js";
 import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { isWorkflowColumnsEnabled, DEFAULT_WORKFLOW_POOL_ID } from "@fusion/core";
+import {
+  isWorkflowColumnsEnabled,
+  DEFAULT_WORKFLOW_POOL_ID,
+  isCompanyModelEnabled,
+  isCompanyBoardIr,
+  resolveWorkflowIrForTask,
+} from "@fusion/core";
 import { runHoldReleaseSweep, type SlotReservation } from "./hold-release.js";
 
 /**
@@ -1841,7 +1847,25 @@ export class Scheduler {
           }
         }
 
-        if (latestSettings.ephemeralAgentsEnabled === false && !freshTask.assignedAgentId) {
+        // Company-model boards (U4, R7): the column's bound agent is the
+        // persistent execution owner, resolved at dispatch by
+        // EphemeralWorkerManager.onTaskStart. The generic permanent-agent auto-pick
+        // below would stamp an ARBITRARY pool executor onto `assignedAgentId`, which
+        // would then win (as own settings) over the column agent — defeating the
+        // role binding. Skip it for company-model tasks so the column agent governs.
+        // Best-effort + flag-gated: any failure or flag-off falls through to the
+        // legacy auto-assign (kill-switch parity).
+        let isCompanyModelTask = false;
+        if (isCompanyModelEnabled(latestSettings)) {
+          try {
+            const ir = await resolveWorkflowIrForTask(this.store, freshTask.id);
+            isCompanyModelTask = isCompanyBoardIr(ir);
+          } catch {
+            isCompanyModelTask = false;
+          }
+        }
+
+        if (latestSettings.ephemeralAgentsEnabled === false && !freshTask.assignedAgentId && !isCompanyModelTask) {
           if (!this.options.agentStore) {
             if (!loggedMissingAgentStoreThisPass) {
               loggedMissingAgentStoreThisPass = true;

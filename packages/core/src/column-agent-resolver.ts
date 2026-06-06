@@ -217,3 +217,40 @@ export function resolveEffectiveAgent(input: EffectiveAgentInput): EffectiveAgen
   }
   return { source: "column-agent", agentId: binding.agentId };
 }
+
+// ── Company-model column-by-id resolution (U4) ───────────────────────────────
+// The graph-executor seam path resolves the column agent by *node* id
+// (`resolveColumnAgentBinding`), because that path knows the governing node. The
+// company-model ephemeral-bypass path (engine `EphemeralWorkerManager.onTaskStart`,
+// `task-agent-sync`) only knows the task's CURRENT *column* — so it needs a
+// column-keyed counterpart. Both ultimately read the same `column.agent` field, so
+// the precedence decision still flows through the one shared `resolveEffectiveAgent`
+// resolver (no reimplemented precedence — KTD-2/KTD-5).
+
+/** The agent binding (if any) declared directly on `columnId`. A column WITHOUT an
+ *  `agent` field yields `undefined` (same guarantee as `resolveColumnAgentBinding`).
+ *  Returns `undefined` for v1 IRs (no columns). */
+export function resolveColumnAgentForColumn(
+  ir: WorkflowIr,
+  columnId: string | undefined,
+): WorkflowColumnAgent | undefined {
+  if (ir.version !== "v2" || columnId === undefined) return undefined;
+  return ir.columns.find((c) => c.id === columnId)?.agent;
+}
+
+/** Resolve the EFFECTIVE execution agent id for a company-model task on `columnId`,
+ *  applying the column binding's defer/override precedence against the task's OWN
+ *  settings (an explicit advanced per-task `assignedAgentId` / complete model pair).
+ *  Returns the agent id when the column agent governs, else `undefined` (the caller
+ *  falls back to the task's own `assignedAgentId` / the legacy path). The precedence
+ *  itself is delegated to {@link resolveEffectiveAgent} so it is never reimplemented
+ *  (U4, KTD-2/KTD-5). */
+export function resolveCompanyExecutionAgentId(
+  ir: WorkflowIr,
+  columnId: string | undefined,
+  ownSettings: Omit<EffectiveAgentInput, "binding">,
+): string | undefined {
+  const binding = resolveColumnAgentForColumn(ir, columnId);
+  const effective = resolveEffectiveAgent({ binding, ...ownSettings });
+  return effective.source === "column-agent" ? effective.agentId : undefined;
+}

@@ -44,6 +44,20 @@ export interface EphemeralWorkerManagerOptions {
    */
   isDeletionPendingExternal?: (agentId: string) => boolean;
   getSettings?: () => Promise<Pick<Settings, "ephemeralAgentsEnabled">>;
+  /**
+   * Company-model persistent-agent resolver (U4, R7). When
+   * `experimentalFeatures.companyModel` is on AND the task is homed on a
+   * company-model board, this resolves the persistent column agent that should
+   * own execution (the column's bound agent by default; an explicit advanced
+   * per-task `assignedAgentId` referencing a durable roster agent still wins —
+   * the precedence flows through the shared core resolver). When it returns a
+   * durable agent, `onTaskStart` binds THAT agent and NEVER spawns an ephemeral
+   * worker. Returns `null` for non-company tasks / flag-off / unresolvable IR so
+   * the legacy ephemeral path runs byte-identically (kill-switch parity). The
+   * flag/IR/settings logic lives at the runtime construction site (where the
+   * store and settings live), keeping this manager DI-clean.
+   */
+  resolveCompanyExecutionOwner?: (task: Task) => Promise<{ agentId: string } | null>;
 }
 
 const TERMINAL_TASK_COLUMNS = new Set<Task["column"]>(["done", "archived"]);
@@ -54,6 +68,7 @@ export class EphemeralWorkerManager {
   private readonly log: EphemeralWorkerLogger;
   private readonly isDeletionPendingExternal: (agentId: string) => boolean;
   private readonly getSettings: () => Promise<Pick<Settings, "ephemeralAgentsEnabled">>;
+  private readonly resolveCompanyExecutionOwner?: (task: Task) => Promise<{ agentId: string } | null>;
 
   /** taskId → owner. In-memory only; on-disk fallback covers restart gaps. */
   private readonly taskAgentMap = new Map<string, TaskOwner>();
@@ -68,6 +83,28 @@ export class EphemeralWorkerManager {
     this.log = options.logger;
     this.isDeletionPendingExternal = options.isDeletionPendingExternal ?? (() => false);
     this.getSettings = options.getSettings ?? (async () => ({ ephemeralAgentsEnabled: true }));
+    this.resolveCompanyExecutionOwner = options.resolveCompanyExecutionOwner;
+  }
+
+  /**
+   * Bind a durable agent as the execution owner of a task: link it, flip it
+   * through active → running, and record it in the in-memory owner map. Shared by
+   * the explicit-`assignedAgentId` branch and the company-model column-agent
+   * branch (U4) so both establish ownership identically. Returns the owner, or
+   * `null` when the agent is missing / ephemeral (caller falls through).
+   */
+  private async bindDurableOwner(taskId: string, agent: Agent): Promise<TaskOwner | null> {
+    if (isEphemeralAgent(agent)) return null;
+    this.taskAgentMap.set(taskId, { agentId: agent.id, ephemeral: false });
+    await this.agentStore.syncExecutionTaskLink(agent.id, taskId);
+    const currentState = agent.state;
+    if (currentState !== "running") {
+      if (currentState !== "active") {
+        await this.agentStore.updateAgentState(agent.id, "active");
+      }
+      await this.agentStore.updateAgentState(agent.id, "running");
+    }
+    return { agentId: agent.id, ephemeral: false };
   }
 
   // ── public surface ───────────────────────────────────────────────────────
@@ -83,20 +120,36 @@ export class EphemeralWorkerManager {
    */
   async onTaskStart(task: Task): Promise<TaskOwner | null> {
     try {
+      // Advanced per-task override (R7): an explicit durable `assignedAgentId`
+      // owns execution directly — never an ephemeral worker. This branch is
+      // unchanged from the legacy path (flag-off byte-identical) and also wins
+      // under the company model: when a task carries its own durable agent, the
+      // company resolver below would `defer` to it anyway, but binding it here
+      // short-circuits the IR resolution entirely.
       const assignedAgentId = task.assignedAgentId;
       if (assignedAgentId) {
         const assignedAgent = await this.agentStore.getAgent(assignedAgentId);
-        if (assignedAgent && !isEphemeralAgent(assignedAgent)) {
-          this.taskAgentMap.set(task.id, { agentId: assignedAgent.id, ephemeral: false });
-          await this.agentStore.syncExecutionTaskLink(assignedAgent.id, task.id);
-          const currentState = assignedAgent.state;
-          if (currentState !== "running") {
-            if (currentState !== "active") {
-              await this.agentStore.updateAgentState(assignedAgent.id, "active");
-            }
-            await this.agentStore.updateAgentState(assignedAgent.id, "running");
+        if (assignedAgent) {
+          const owner = await this.bindDurableOwner(task.id, assignedAgent);
+          if (owner) return owner;
+        }
+      }
+
+      // Company-model persistent-agent bypass (U4, R7). With the flag on AND the
+      // task on a company-model board, the column's bound agent owns execution and
+      // NO ephemeral worker is created. The resolver applies defer/override
+      // precedence through the shared core resolver, so a task with no own settings
+      // resolves to the column agent (the common case). Returns null for
+      // non-company tasks / flag-off / unresolvable IR / missing agent → the
+      // legacy ephemeral path below runs byte-identically (kill-switch parity).
+      if (this.resolveCompanyExecutionOwner) {
+        const resolved = await this.resolveCompanyExecutionOwner(task).catch(() => null);
+        if (resolved) {
+          const columnAgent = await this.agentStore.getAgent(resolved.agentId);
+          if (columnAgent) {
+            const owner = await this.bindDurableOwner(task.id, columnAgent);
+            if (owner) return owner;
           }
-          return { agentId: assignedAgent.id, ephemeral: false };
         }
       }
 

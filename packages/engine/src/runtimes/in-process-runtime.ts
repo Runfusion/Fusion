@@ -17,7 +17,13 @@ import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
-import { isExperimentalFeatureEnabled } from "@fusion/core";
+import {
+  isExperimentalFeatureEnabled,
+  isCompanyModelEnabled,
+  isCompanyBoardIr,
+  resolveWorkflowIrForTask,
+  resolveCompanyExecutionAgentId,
+} from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
 import { buildPrNodeDeps } from "../pr-nodes.js";
 import { WorktreePool, isGitRepository, type PoolInvariantViolation } from "../worktree-pool.js";
@@ -686,6 +692,32 @@ export class InProcessRuntime
             getSettings: async () => {
               const settings = await this.taskStore.getSettings();
               return { ephemeralAgentsEnabled: settings.ephemeralAgentsEnabled };
+            },
+            // Company-model persistent-agent bypass (U4, R7). Flag-gated: returns
+            // null unless `companyModel` is on AND the task is on a company-model
+            // board (IR carries role markers — `isCompanyBoardIr`, U3). Resolves the
+            // effective column agent for the task's CURRENT column through the shared
+            // core resolver (defer/override precedence: an explicit advanced per-task
+            // `assignedAgentId`/model wins). Best-effort: any resolution failure
+            // yields null so the legacy ephemeral path runs (kill-switch parity).
+            resolveCompanyExecutionOwner: async (task) => {
+              try {
+                const settings = await this.taskStore.getSettings();
+                // Kill-switch parity: every entry point reads the flag. Flag off →
+                // null → ephemeral path byte-identical to today.
+                if (!isCompanyModelEnabled(settings)) return null;
+                const ir = await resolveWorkflowIrForTask(this.taskStore, task.id);
+                if (!ir || !isCompanyBoardIr(ir)) return null;
+                const hasOwnModelPair = Boolean(task.modelProvider && task.modelId);
+                const agentId = resolveCompanyExecutionAgentId(ir, task.column, {
+                  ownAgentId: task.assignedAgentId ?? undefined,
+                  ownModelProvider: hasOwnModelPair ? task.modelProvider ?? undefined : undefined,
+                  ownModelId: hasOwnModelPair ? task.modelId ?? undefined : undefined,
+                });
+                return agentId ? { agentId } : null;
+              } catch {
+                return null;
+              }
             },
           });
         }

@@ -95,6 +95,8 @@ export {
   parseInstanceNodeId,
   resolveColumnAgentBinding,
   resolveEffectiveAgent,
+  resolveColumnAgentForColumn,
+  resolveCompanyExecutionAgentId,
 } from "./column-agent-resolver.js";
 export type {
   ParsedInstanceNodeId,
@@ -219,6 +221,7 @@ export type {
   CompanyBoardMoveRejection,
 } from "./workflow-transitions.js";
 export { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
+export { isCompanyModelEnabled } from "./company-model-settings.js";
 // ── U8: pre-evaluated plugin gate verdicts (KTD-2) ───────────────────────────
 export {
   findWorkflowColumn,
