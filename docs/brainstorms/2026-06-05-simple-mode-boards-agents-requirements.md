@@ -106,6 +106,7 @@ flowchart TB
 - R20. Plan review and approval: a per-board "require plan approval" setting (default-on for Compound Engineering boards) parks a task once the Lead finishes structuring it; the user reviews the attached plan from the task on any surface and explicitly approves before the Executor starts — or sends feedback that returns it to the Lead. Bypassed in LFG mode.
 - R21. Structured Q&A: when a column engine needs user input (Lead brainstorming/planning foremost), the task card shows an awaiting-input state and sends a notification; opening the card presents a structured Q&A view — multiple choice, radio buttons, free text, like planning mode — whose answers resume the agent's session.
 - R22. LFG mode (Compound Engineering boards only): the board (or an individual task) runs the full pipeline end-to-end with zero user interaction — stages run headless with autonomous defaults, and the plan-approval gate and Q&A are bypassed.
+- R23. Simple mode always uses worktree isolation: per-task worktrees cannot be disabled from simple mode, and the board shows only tasks and columns — worktree/branch details stay out of the cards (task detail and advanced mode carry them).
 
 ---
 
