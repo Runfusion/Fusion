@@ -7000,6 +7000,14 @@ export function browseDirectory(
   return api<BrowseDirectoryResult>(fullPath);
 }
 
+/** Create a new directory */
+export function createDirectory(path: string): Promise<{ success: true; path: string }> {
+  return api<{ success: true; path: string }>("/create-directory", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
 /** Register a new project */
 export function registerProject(input: ProjectCreateInput): Promise<ProjectInfo> {
   return api<ProjectInfo>("/projects", {

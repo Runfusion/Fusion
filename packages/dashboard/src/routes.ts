@@ -4455,6 +4455,74 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  /**
+   * POST /api/create-directory
+   * Create a new directory at the specified path.
+   * Body: { path: string }
+   * Returns: { success: true, path: string }
+   */
+  router.post("/create-directory", async (req, res) => {
+    try {
+      const { resolve } = await import("node:path");
+      const { mkdir, stat } = await import("node:fs/promises");
+
+      const rawPath = req.body?.path as string | undefined;
+      if (!rawPath) {
+        throw badRequest("Path is required");
+      }
+
+      // Validate: must be absolute, no .. traversal
+      const resolvedPath = resolve(rawPath);
+      if (rawPath.includes("..")) {
+        throw badRequest("Path must not contain '..' traversal");
+      }
+      if (resolvedPath !== resolve(resolvedPath)) {
+        throw badRequest("Path must be absolute");
+      }
+
+      // Check if path already exists
+      try {
+        const existingStat = await stat(resolvedPath);
+        if (existingStat.isDirectory()) {
+          throw badRequest("Directory already exists");
+        }
+        throw badRequest("A file already exists at this path");
+      } catch (err: unknown) {
+        const e = err as { code?: string };
+        if (e.code !== "ENOENT") {
+          throw err;
+        }
+        // ENOENT means it doesn't exist — proceed
+      }
+
+      // Ensure parent directory exists
+      const { dirname } = await import("node:path");
+      const parentPath = dirname(resolvedPath);
+      try {
+        const parentStat = await stat(parentPath);
+        if (!parentStat.isDirectory()) {
+          throw badRequest("Parent path is not a directory");
+        }
+      } catch (err: unknown) {
+        const e = err as { code?: string };
+        if (e.code === "ENOENT") {
+          throw badRequest("Parent directory does not exist");
+        }
+        throw err;
+      }
+
+      // Create the directory
+      await mkdir(resolvedPath);
+
+      res.json({ success: true, path: resolvedPath });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   // Registrar order is API-contract sensitive. Keep this domain sequence stable:
   // 1) project routes (`/projects/across-nodes|detect` before `/projects/:id`)
   // 2) node CRUD/operational routes
