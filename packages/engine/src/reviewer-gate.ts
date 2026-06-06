@@ -74,6 +74,17 @@ export interface ReviewerGateOptions {
   backwardTargetColumn?: string;
   /** Override the max rework budget (default: resolveMaxReworkCycles default). */
   maxReworkCycles?: number;
+  /**
+   * U7 verdict-driven enqueue seam ("Auto-merge enqueue is verdict-driven, not
+   * entry-driven"). Fired exactly when a drive produces a PASS verdict on a
+   * company-model board. The runtime wires this to consult the auto-merge
+   * chokepoint (`shouldAutoMergeTask`) and route the task: auto-enqueue → the
+   * merge queue; pr-subgraph → the unified PR sub-graph (no legacy enqueue);
+   * manual-required → existing manual parking. Fire-and-forget + best-effort: a
+   * throw is swallowed (logged) so the verdict itself is never lost; the
+   * self-healing sweep re-evaluates a missed pass.
+   */
+  onVerdictPass?: (taskId: string) => void | Promise<void>;
 }
 
 /** The result of a single drive attempt (for tests/observability). */
@@ -104,6 +115,7 @@ export class ReviewerGate {
   private getSettings: () => Promise<Pick<Settings, "experimentalFeatures"> | undefined>;
   private backwardTargetColumnOverride?: string;
   private maxReworkCyclesOverride?: number;
+  private onVerdictPass?: (taskId: string) => void | Promise<void>;
   /** Task ids with a drive currently running, to dedupe concurrent triggers. */
   private inFlight = new Set<string>();
 
@@ -113,6 +125,14 @@ export class ReviewerGate {
     this.getSettings = options.getSettings ?? (() => this.store.getSettings());
     this.backwardTargetColumnOverride = options.backwardTargetColumn;
     this.maxReworkCyclesOverride = options.maxReworkCycles;
+    this.onVerdictPass = options.onVerdictPass;
+  }
+
+  /** Late-bind the verdict-pass enqueue seam (U7). The runtime constructs the
+   *  gate before the ProjectEngine's enqueue path exists, so this allows wiring
+   *  it after construction. */
+  setVerdictPassHandler(handler: (taskId: string) => void | Promise<void>): void {
+    this.onVerdictPass = handler;
   }
 
   private get reviewerStore() {
@@ -199,6 +219,20 @@ export class ReviewerGate {
       });
 
       if (evaluation.status === "pass") {
+        // U7: verdict-driven enqueue. A pass on a company board is the trigger
+        // for the auto-merge handoff (deferred from in-review ENTRY). The handler
+        // consults the chokepoint and routes (merge queue / PR sub-graph / manual).
+        // Best-effort: a throw here must not lose the persisted pass verdict —
+        // the self-healing sweep / the merger's periodic enqueue re-evaluate.
+        if (this.onVerdictPass) {
+          try {
+            await this.onVerdictPass(taskId);
+          } catch (err) {
+            gateLog.warn(
+              `onVerdictPass handler failed for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
         return { outcome: "passed", run: completed };
       }
       if (evaluation.status === "blocked") {

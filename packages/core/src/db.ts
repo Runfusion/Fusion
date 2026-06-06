@@ -4680,8 +4680,16 @@ export class Database {
 
     // Every task (excluding deleted) needs a board. Collect each task's resolved
     // workflow id; tasks with no selection resolve to the default workflow.
+    // Legacy seeds migrating from very old versions may not have the deletedAt
+    // column yet (it arrives via compat reconciliation after the version
+    // blocks), so only filter on it when present.
+    const hasDeletedAt = (
+      this.db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>
+    ).some((c) => c.name === "deletedAt");
     const tasks = this.db
-      .prepare(`SELECT id, "column" AS col, boardId FROM tasks WHERE deletedAt IS NULL`)
+      .prepare(
+        `SELECT id, "column" AS col, boardId FROM tasks${hasDeletedAt ? " WHERE deletedAt IS NULL" : ""}`,
+      )
       .all() as Array<{ id: string; col: string; boardId: string | null }>;
 
     // The set of distinct workflows actually in use. The default workflow is

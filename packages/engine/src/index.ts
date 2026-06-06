@@ -124,6 +124,11 @@ export {
 } from "./reviewer-gate.js";
 export { createReviewerEvaluator, type ReviewerEvaluatorDeps } from "./reviewer-evaluator.js";
 export {
+  resolveAutoMergeRoute,
+  irIsPrMode,
+  type AutoMergeGateEngineDeps,
+} from "./auto-merge-gate-engine.js";
+export {
   aiMergeTask,
   listAutostashOrphans,
   applyAutostashBySha,

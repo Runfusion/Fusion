@@ -9,6 +9,7 @@ import type {
   AutomationStore as AutomationStoreType,
   ScheduledTask,
   AutomationRunResult,
+  ShouldAutoMergeResult,
 } from "@fusion/core";
 import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, normalizeMergerMode, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
@@ -17,6 +18,7 @@ import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
+import { resolveAutoMergeRoute } from "./auto-merge-gate-engine.js";
 import type { PrNodeGithubOps } from "./pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
@@ -379,6 +381,19 @@ export class ProjectEngine {
   private taskUpdatedHandler?: (...args: any[]) => void;
   private taskDeletedHandler?: (...args: any[]) => void;
   private autostashOrphansHandler?: (...args: any[]) => void;
+
+  /**
+   * U7 auto-merge chokepoint binding. Resolves the verdict-aware / PR-mode
+   * routing for a task (delegates to core's `shouldAutoMergeTask` via the engine
+   * wrapper). Wired by the runtime; when unset (legacy wiring), the entry-time
+   * handoff falls back to `allowInReviewMergeProcessing` only — byte-identical to
+   * pre-U7 behavior on legacy boards.
+   */
+  private autoMergeGate?: (taskId: string, taskHint?: Task) => Promise<ShouldAutoMergeResult>;
+
+  setAutoMergeGate(gate: (taskId: string, taskHint?: Task) => Promise<ShouldAutoMergeResult>): void {
+    this.autoMergeGate = gate;
+  }
 
   constructor(
     private config: ProjectRuntimeConfig,
@@ -1575,14 +1590,31 @@ export class ProjectEngine {
     return allowsAutoMergeProcessing(task, settings) || isSharedBranchGroupMemberIntegration(task);
   }
 
-  private enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge">): number {
+  private async enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge">): Promise<number> {
     const eligible = sortTasksByPriorityThenAgeAndId(
       tasks.filter((t) => !t.paused && this.canMergeTask(t as any) && this.allowInReviewMergeProcessing(t, settings)) as Task[],
     );
+    let enqueued = 0;
     for (const t of eligible) {
+      // U7 chokepoint: on company-model boards the enqueue is verdict-driven, and
+      // PR-mode boards never touch the legacy queue. The periodic/startup re-enqueue
+      // sweeps must respect that — a verdict-pending company task (route `blocked`)
+      // or a PR-mode task (`pr-subgraph`) must NOT be enqueued here. For legacy /
+      // non-company boards the chokepoint returns `auto-enqueue` (the
+      // `allowInReviewMergeProcessing` filter above already matched), so behavior
+      // is byte-identical to pre-U7. Shared-branch-group members (route
+      // `auto-enqueue` — they carry no company/PR markers) flow through unchanged.
+      if (this.autoMergeGate) {
+        const routing = await this.autoMergeGate(t.id, t).catch(() => undefined);
+        // Skip only the NEW exclusions (company verdict-pending → `blocked`,
+        // PR-mode → `pr-subgraph`). `manual-required` tasks still enqueue so the
+        // merger parks + finalization sweeps still process them (additive contract).
+        if (routing && (routing.route === "blocked" || routing.route === "pr-subgraph")) continue;
+      }
       this.internalEnqueueMerge(t.id);
+      enqueued++;
     }
-    return eligible.length;
+    return enqueued;
   }
 
   private reconcileStaleMergeActive(): number {
@@ -2832,6 +2864,11 @@ export class ProjectEngine {
   }
 
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
+    // U7: bind the auto-merge chokepoint to this project's store so the
+    // entry-time handoff (below) can consult the verdict-aware / PR-mode routing.
+    if (!this.autoMergeGate) {
+      this.autoMergeGate = (taskId, taskHint) => resolveAutoMergeRoute({ store }, taskId, taskHint);
+    }
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
       if (to !== "in-review") return;
       if (task.paused) return;
@@ -2875,6 +2912,31 @@ export class ProjectEngine {
           if (!this.allowInReviewMergeProcessing(latestTask, settings)) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: autoMerge disabled`);
             return;
+          }
+          // U7 ("Auto-merge enqueue is verdict-driven"): on company-model boards
+          // the entry-time handoff must NOT enqueue — the enqueue defers to a
+          // passing Reviewer verdict (driven by the ReviewerGate pass seam). For
+          // PR-mode boards the unified PR sub-graph drives completion, never the
+          // legacy queue. The chokepoint returns `auto-enqueue` only for legacy /
+          // non-company auto-merge boards here (byte-identical to today's path,
+          // since `allowInReviewMergeProcessing` already passed above); company
+          // boards return `blocked` (verdict pending at entry) and PR-mode boards
+          // return `pr-subgraph` — both skip the legacy enqueue.
+          if (this.autoMergeGate) {
+            const routing = await this.autoMergeGate(task.id, latestTask).catch(() => undefined);
+            // Only the NEW exclusions skip the legacy enqueue: `blocked` (company
+            // verdict pending/fail) and `pr-subgraph` (PR-mode boards merge through
+            // the PR sub-graph). `manual-required` tasks (explicit per-task false
+            // under global-on) STILL flow into the merger here — it parks them as
+            // manual-required and the merged-task finalization sweeps still see them
+            // (preserving the additive trigger-gate contract; see the per-task
+            // auto-merge-override solution doc).
+            if (routing && (routing.route === "blocked" || routing.route === "pr-subgraph")) {
+              runtimeLog.log(
+                `Auto-merge handoff (${task.id}) deferred: ${routing.route} (${routing.reason})`,
+              );
+              return;
+            }
           }
           // Belt-and-braces: eager handoff still clears a stale mergeActive
           // entry before enqueue so freshly completed review tasks do not wait
@@ -3062,7 +3124,7 @@ export class ProjectEngine {
 
       const settings = await store.getSettings();
 
-      const enqueued = this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
+      const enqueued = await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
       if (enqueued > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${enqueued} task(s)`);
       }
@@ -3121,7 +3183,7 @@ export class ProjectEngine {
         const settings = await store.getSettings();
         if (!settings.globalPause && !settings.enginePaused) {
           const tasks = await store.listTasks({ column: "in-review" });
-          this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
+          await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
         }
       } catch (err: unknown) {
         runtimeLog.warn(
@@ -3182,7 +3244,7 @@ export class ProjectEngine {
 
     try {
       const tasks = await store.listTasks({ column: "in-review" });
-      this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
+      await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
     } catch (err: unknown) {
       runtimeLog.warn(
         `${source}: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,

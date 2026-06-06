@@ -6682,6 +6682,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         bypassGuards,
         movedAt,
         settings: settingsForInReview,
+        // U7: company boards defer autoMerge stamping to verdict completion.
+        isCompanyBoard: workflowIr ? isCompanyBoardIr(workflowIr) : false,
         options: {
           preserveStatus: options?.preserveStatus,
           preserveResumeState: options?.preserveResumeState,

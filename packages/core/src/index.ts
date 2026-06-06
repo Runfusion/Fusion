@@ -624,6 +624,13 @@ export {
   type MergeTargetResolverOptions,
 } from "./task-merge.js";
 export {
+  shouldAutoMergeTask,
+  type AutoMergeRoute,
+  type ReviewerVerdictStatus,
+  type ShouldAutoMergeInput,
+  type ShouldAutoMergeResult,
+} from "./auto-merge-gate.js";
+export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,
 } from "./branch-group-completion.js";

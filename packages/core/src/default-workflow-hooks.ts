@@ -75,6 +75,14 @@ export interface DefaultWorkflowMoveContext {
   movedAt: string;
   /** Settings snapshot for autoMerge stamping (only read when entering review). */
   settings: Pick<Settings, "autoMerge"> | undefined;
+  /**
+   * True when this move is on a company-model board (flag-on + `isCompanyBoardIr`).
+   * Company-model U7 ("Auto-merge enqueue is verdict-driven, not entry-driven"):
+   * autoMerge is NOT stamped at in-review entry on company boards — the enqueue
+   * trigger defers to verdict completion (a passing Reviewer verdict stamps and
+   * enqueues). Legacy / non-company boards keep the entry-time stamping below.
+   */
+  isCompanyBoard?: boolean;
   /** Move options that influence reopen/timing semantics. */
   options: {
     preserveStatus?: boolean;
@@ -169,9 +177,12 @@ export function applyResetOnEntryEffects(ctx: DefaultWorkflowMoveContext): void 
  *  clearing. The queue enqueue itself is in-txn and store-owned (handoff path);
  *  the field effects mirror the legacy in-review block. */
 export function applyInReviewEnterEffects(ctx: DefaultWorkflowMoveContext): void {
-  const { task, toColumn, settings } = ctx;
+  const { task, toColumn, settings, isCompanyBoard } = ctx;
   if (toColumn !== "in-review") return;
-  if (task.autoMerge === undefined && settings) {
+  // U7: on company-model boards the autoMerge stamp + enqueue are verdict-driven,
+  // not entry-driven — defer stamping until a passing Reviewer verdict. Legacy /
+  // non-company boards keep the entry-time stamp (byte-identical to today).
+  if (!isCompanyBoard && task.autoMerge === undefined && settings) {
     task.autoMerge = settings.autoMerge;
   }
   task.recoveryRetryCount = undefined;

@@ -52,6 +52,7 @@ import { MissionAutopilot } from "../mission-autopilot.js";
 import { MissionExecutionLoop } from "../mission-execution-loop.js";
 import { ReviewerGate } from "../reviewer-gate.js";
 import { createReviewerEvaluator } from "../reviewer-evaluator.js";
+import { resolveAutoMergeRoute } from "../auto-merge-gate-engine.js";
 import { TriageProcessor } from "../triage.js";
 import { EphemeralWorkerManager } from "../ephemeral-worker-manager.js";
 import { validateProjectNodeMapping } from "../node-dispatch-validation.js";
@@ -419,6 +420,22 @@ export class InProcessRuntime
           pluginRunner: this.pluginRunner,
           agentStore: this.agentStore,
         }),
+        // U7 ("Auto-merge enqueue is verdict-driven, not entry-driven"): a passing
+        // Reviewer verdict on a company board is the enqueue trigger (deferred from
+        // in-review entry). Consult the auto-merge chokepoint and route: auto-enqueue
+        // → the legacy merge queue (via the ProjectEngine-supplied mergeEnqueuer);
+        // pr-subgraph → the unified PR sub-graph drives completion (the graph walk
+        // picks up pr-create; no legacy enqueue); manual-required/blocked → no
+        // enqueue. Best-effort: the verdict is already persisted, and the merger's
+        // periodic enqueue + self-healing re-evaluate a missed handoff.
+        onVerdictPass: async (taskId) => {
+          const store = this.taskStore;
+          if (!store) return;
+          const routing = await resolveAutoMergeRoute({ store }, taskId).catch(() => undefined);
+          if (routing?.route === "auto-enqueue") {
+            this.mergeEnqueuer?.(taskId);
+          }
+        },
       });
 
       this.scheduler = new Scheduler(this.taskStore, {

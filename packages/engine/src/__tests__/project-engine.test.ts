@@ -2801,21 +2801,24 @@ describe("enqueueEligibleInReviewTasks honors per-task autoMerge override (share
     const enqueueSpy = vi
       .spyOn(engine, "internalEnqueueMerge")
       .mockImplementation(() => true);
-    const run = (tasks: Task[], settings: { autoMerge: boolean }): number =>
-      engine.enqueueEligibleInReviewTasks(tasks, settings) as number;
+    // U7: enqueueEligibleInReviewTasks is now async (the per-task chokepoint gate
+    // is async). Without an autoMergeGate wired (test engines aren't started),
+    // the chokepoint is skipped and behavior is byte-identical to pre-U7.
+    const run = (tasks: Task[], settings: { autoMerge: boolean }): Promise<number> =>
+      engine.enqueueEligibleInReviewTasks(tasks, settings) as Promise<number>;
     return { engine, enqueueSpy, run };
   };
 
-  it("enqueues an in-review task with autoMerge:true even when the global setting is off", () => {
+  it("enqueues an in-review task with autoMerge:true even when the global setting is off", async () => {
     const { enqueueSpy, run } = setup();
-    const count = run([inReview("FN-override", { autoMerge: true })], { autoMerge: false });
+    const count = await run([inReview("FN-override", { autoMerge: true })], { autoMerge: false });
     expect(count).toBe(1);
     expect(enqueueSpy).toHaveBeenCalledWith("FN-override");
   });
 
-  it("does not enqueue a sibling task without an override in the same sweep when the global setting is off", () => {
+  it("does not enqueue a sibling task without an override in the same sweep when the global setting is off", async () => {
     const { enqueueSpy, run } = setup();
-    const count = run(
+    const count = await run(
       [inReview("FN-override", { autoMerge: true }), inReview("FN-plain")],
       { autoMerge: false },
     );
@@ -2824,9 +2827,9 @@ describe("enqueueEligibleInReviewTasks honors per-task autoMerge override (share
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-plain");
   });
 
-  it("still enqueues a task with autoMerge:false when the global setting is on (parked manual-required downstream)", () => {
+  it("still enqueues a task with autoMerge:false when the global setting is on (parked manual-required downstream)", async () => {
     const { enqueueSpy, run } = setup();
-    const count = run([inReview("FN-explicit-false", { autoMerge: false })], { autoMerge: true });
+    const count = await run([inReview("FN-explicit-false", { autoMerge: false })], { autoMerge: true });
     expect(count).toBe(1);
     expect(enqueueSpy).toHaveBeenCalledWith("FN-explicit-false");
   });
