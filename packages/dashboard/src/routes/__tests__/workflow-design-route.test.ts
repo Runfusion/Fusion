@@ -26,7 +26,6 @@ import { request } from "../../test-request.js";
 /** Captures the prompt the route fed the agent and returns canned `text`. */
 function makeFakeAgent(text: string) {
   const captured: { systemPrompt?: string; userPrompt?: string } = {};
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const factory: any = async (opts: any) => {
     captured.systemPrompt = opts.systemPrompt;
     let textListener: ((delta: string) => void) | undefined;
@@ -49,7 +48,6 @@ function makeFakeAgent(text: string) {
  *  can assert the route releases the session even when the model turn throws. */
 function makeRejectingAgent() {
   const state = { disposed: false };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const factory: any = async () => {
     const session = {
       on(_event: "text", _listener: (delta: string) => void) {},
