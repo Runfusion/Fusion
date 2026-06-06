@@ -105,7 +105,6 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
     if (browser.isOpen && browser.currentPath) {
       fetchEntries(browser.currentPath, browser.showHidden);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browser.showHidden, fetchEntries]);
 
   const handleToggleCreateFolder = useCallback(() => {
