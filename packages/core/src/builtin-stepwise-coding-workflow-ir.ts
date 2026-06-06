@@ -1,5 +1,6 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 
 /**
  * The built-in **stepwise** coding workflow (KTD-9) — the demonstration of step
@@ -144,6 +145,8 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "merge", to: "end", condition: "success" },
     { from: "merge", to: "end", condition: "failure" },
   ],
+  // Workflow-settings (U1, R4): same moved-key catalog as the default builtin.
+  settings: BUILTIN_WORKFLOW_SETTINGS,
 };
 
 export const BUILTIN_STEPWISE_CODING_WORKFLOW_IR = parseWorkflowIr(

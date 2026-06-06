@@ -1,0 +1,7 @@
+/* SettingsTextareaRow (U8 / KTD-10) — multi-line text input control slot. */
+
+.settings-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+}

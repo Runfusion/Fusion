@@ -83,6 +83,11 @@ import type {
   WorkflowFieldType,
   WorkflowFieldOption,
   WorkflowFieldRender,
+  WorkflowSettingDefinition,
+  WorkflowSettingType,
+  WorkflowSettingOption,
+  WorkflowSettingRender,
+  WorkflowSettingRejection,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
@@ -561,6 +566,10 @@ export interface BoardWorkflowColumn {
 // WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender
 // are re-exported from @fusion/core above (KTD-13/14).
 export type { WorkflowFieldDefinition, WorkflowFieldType, WorkflowFieldOption, WorkflowFieldRender };
+
+// Workflow-settings (U6/KTD-1) declaration types re-exported from @fusion/core so
+// the WorkflowSettingsPanel imports them from `../api` like the field types.
+export type { WorkflowSettingDefinition, WorkflowSettingType, WorkflowSettingOption, WorkflowSettingRender, WorkflowSettingRejection };
 
 export interface BoardWorkflowDefinition {
   id: string;
@@ -5103,6 +5112,46 @@ export function deleteWorkflow(id: string, projectId?: string): Promise<void> {
   return api<void>(withProjectId(`/workflows/${encodeURIComponent(id)}`, projectId), { method: "DELETE" });
 }
 
+/** The per-`(workflowId, project)` setting-value payload returned by the
+ *  workflow setting-value endpoints (U6/R5): the raw `stored` map, the
+ *  `effective` map (stored ?? declaration default, drop-on-orphan), and the
+ *  `orphaned` stored entries that no longer validate against the declarations. */
+export interface WorkflowSettingValuesPayload {
+  stored: Record<string, unknown>;
+  effective: Record<string, unknown>;
+  orphaned: Array<{ id: string; value: unknown }>;
+}
+
+/** Read the setting VALUES (stored/effective/orphaned) for a workflow in the
+ *  current project context (U6). The project is bound server-side to the
+ *  scoped store. */
+export function fetchWorkflowSettingValues(
+  id: string,
+  projectId?: string,
+): Promise<WorkflowSettingValuesPayload> {
+  return api<WorkflowSettingValuesPayload>(
+    withProjectId(`/workflows/${encodeURIComponent(id)}/setting-values`, projectId),
+  );
+}
+
+/** Write setting VALUES for a workflow in the current project context (U6). The
+ *  `values` map is validated against the named workflow's declarations; a `null`
+ *  value deletes that key. A typed rejection surfaces as an ApiRequestError with
+ *  `status: 400` and `details.rejections: WorkflowSettingRejection[]`. */
+export function updateWorkflowSettingValues(
+  id: string,
+  values: Record<string, unknown>,
+  projectId?: string,
+): Promise<WorkflowSettingValuesPayload> {
+  return api<WorkflowSettingValuesPayload>(
+    withProjectId(`/workflows/${encodeURIComponent(id)}/setting-values`, projectId),
+    {
+      method: "PATCH",
+      body: JSON.stringify({ values }),
+    },
+  );
+}
+
 /** Preview the compiled steps for a workflow. Rejects (422) for non-linear graphs. */
 export function compileWorkflow(id: string, projectId?: string): Promise<{ steps: WorkflowStepInput[] }> {
   return api<{ steps: WorkflowStepInput[] }>(withProjectId(`/workflows/${encodeURIComponent(id)}/compile`, projectId), {
@@ -6328,6 +6377,7 @@ export interface SettingsImportResponse {
   success: boolean;
   globalCount: number;
   projectCount: number;
+  workflowSettingsCount: number;
   error?: string;
 }
 

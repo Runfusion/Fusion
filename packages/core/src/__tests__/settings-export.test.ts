@@ -139,14 +139,23 @@ describe("settings-export", () => {
       ]);
     });
 
-    it("should return error for wrong version", () => {
+    it("should accept v2 data", () => {
       const data = {
         version: 2,
         exportedAt: new Date().toISOString(),
         global: {},
       };
+      expect(validateImportData(data)).toEqual([]);
+    });
+
+    it("should return error for wrong version", () => {
+      const data = {
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        global: {},
+      };
       expect(validateImportData(data)).toContain(
-        "Unsupported export version: 2. Expected: 1"
+        "Unsupported export version: 3. Expected: 1 or 2"
       );
     });
 
@@ -166,7 +175,7 @@ describe("settings-export", () => {
         exportedAt: new Date().toISOString(),
       };
       expect(validateImportData(data)).toContain(
-        "Export data must contain at least one of 'global' or 'project' settings"
+        "Export data must contain at least one of 'global', 'project', or 'workflowSettings' settings"
       );
     });
 
@@ -201,7 +210,7 @@ describe("settings-export", () => {
 
       const result = await exportSettings(store);
 
-      expect(result.version).toBe(1);
+      expect(result.version).toBe(2);
       expect(result.exportedAt).toBeDefined();
       expect(result.global).toBeDefined();
       expect(result.global?.themeMode).toBe("dark");
@@ -365,7 +374,7 @@ describe("settings-export", () => {
 
     it("should fail with validation errors for invalid data", async () => {
       const importData = {
-        version: 2,
+        version: 3,
         exportedAt: new Date().toISOString(),
         global: {},
       } as unknown as SettingsExportData;
@@ -373,7 +382,7 @@ describe("settings-export", () => {
       const result = await importSettings(store, importData);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Unsupported export version: 2");
+      expect(result.error).toContain("Unsupported export version: 3");
     });
 
     it("should handle import errors gracefully", async () => {
@@ -510,6 +519,203 @@ describe("settings-export", () => {
 
       const settings = await store.getSettings();
       expect(settings.promptOverrides).toEqual({ "triage-welcome": "Triage" });
+    });
+  });
+
+  // ── U5: workflow settings (v2) export/import + v1 upgrade (KTD-8) ──────────
+  describe("workflow settings export/import (U5/KTD-8)", () => {
+    function rawDb(s: TaskStore): {
+      prepare: (sql: string) => { run: (...a: unknown[]) => unknown };
+    } {
+      return (s as unknown as { db: { prepare: (sql: string) => { run: (...a: unknown[]) => unknown } } }).db;
+    }
+
+    it("export post-migration carries workflow setting values; no moved key under project", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      // A normal unrelated project key + a workflow setting value on builtin:coding.
+      await store.updateSettings({ maxConcurrent: 3 });
+      await store.updateWorkflowSettingValues("builtin:coding", projectId, {
+        workflowStepTimeoutMs: 120_000,
+        requirePrApproval: true,
+      });
+
+      const result = await exportSettings(store, { scope: "project" });
+
+      expect(result.version).toBe(2);
+      // Project section: the unrelated key survives, NO moved key present.
+      expect(result.project?.maxConcurrent).toBe(3);
+      expect((result.project as Record<string, unknown>)?.workflowStepTimeoutMs).toBeUndefined();
+      expect((result.project as Record<string, unknown>)?.requirePrApproval).toBeUndefined();
+      // workflowSettings section carries the value-table row.
+      expect(result.workflowSettings?.["builtin:coding"]).toEqual({
+        workflowStepTimeoutMs: 120_000,
+        requirePrApproval: true,
+      });
+    });
+
+    it("import v1 payload containing workflowStepTimeoutMs → value lands per target rule, not project settings", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      const importData = {
+        version: 1 as const,
+        exportedAt: new Date().toISOString(),
+        project: {
+          // unrelated key — imports normally
+          maxConcurrent: 5,
+          // moved key — must be UPGRADED into workflow setting values
+          workflowStepTimeoutMs: 90_000,
+        } as Record<string, unknown>,
+      };
+
+      const result = await importSettings(store, importData as unknown as SettingsExportData, {
+        scope: "project",
+        merge: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.projectCount).toBe(1); // only maxConcurrent
+      expect(result.workflowSettingsCount).toBeGreaterThanOrEqual(1);
+
+      // Project settings: moved key never written into raw project settings.
+      const settings = await store.getSettings();
+      expect(settings.maxConcurrent).toBe(5);
+      const db = (store as unknown as { db: { prepare: (s: string) => { get: (...a: unknown[]) => unknown } } }).db;
+      const rawProject = JSON.parse(
+        (db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings: string }).settings,
+      ) as Record<string, unknown>;
+      expect(rawProject.workflowStepTimeoutMs).toBeUndefined();
+
+      // Value landed on the resolved default workflow (builtin:coding, unset default).
+      expect(store.getWorkflowSettingValues("builtin:coding", projectId).workflowStepTimeoutMs).toBe(90_000);
+    });
+
+    it("import v1 upgrade targets every in-use selection workflow ∪ default", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      // Seed an in-use selection on a builtin workflow distinct from the default.
+      rawDb(store)
+        .prepare(
+          `INSERT INTO task_workflow_selection (taskId, workflowId, stepIds, updatedAt)
+           VALUES (?, ?, '[]', ?)
+           ON CONFLICT(taskId) DO UPDATE SET workflowId = excluded.workflowId`,
+        )
+        .run("task-1", "builtin:quick-fix", new Date().toISOString());
+
+      const importData = {
+        version: 1 as const,
+        exportedAt: new Date().toISOString(),
+        project: { requirePrApproval: true } as Record<string, unknown>,
+      };
+
+      await importSettings(store, importData as unknown as SettingsExportData, { scope: "project" });
+
+      // Both the in-use selection workflow and the default lane received the value.
+      expect(store.getWorkflowSettingValues("builtin:quick-fix", projectId).requirePrApproval).toBe(true);
+      expect(store.getWorkflowSettingValues("builtin:coding", projectId).requirePrApproval).toBe(true);
+    });
+
+    it("import v2 round-trips workflow setting values", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      const importData: SettingsExportData = {
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        workflowSettings: {
+          "builtin:coding": { workflowStepTimeoutMs: 45_000, requirePrApproval: true },
+        },
+      };
+
+      const result = await importSettings(store, importData, { scope: "project", merge: true });
+
+      expect(result.success).toBe(true);
+      expect(result.workflowSettingsCount).toBe(2);
+      expect(store.getWorkflowSettingValues("builtin:coding", projectId)).toEqual({
+        workflowStepTimeoutMs: 45_000,
+        requirePrApproval: true,
+      });
+    });
+
+    it("import v2 drops-and-logs invalid values without aborting", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      const importData: SettingsExportData = {
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        workflowSettings: {
+          // workflowStepTimeoutMs expects a number; the bad string is dropped, the
+          // valid requirePrApproval still lands.
+          "builtin:coding": {
+            workflowStepTimeoutMs: "not-a-number" as unknown as number,
+            requirePrApproval: true,
+          },
+        },
+      };
+
+      const result = await importSettings(store, importData, { scope: "project", merge: true });
+
+      expect(result.success).toBe(true);
+      const stored = store.getWorkflowSettingValues("builtin:coding", projectId);
+      expect(stored.workflowStepTimeoutMs).toBeUndefined();
+      expect(stored.requirePrApproval).toBe(true);
+    });
+
+    it("merge mode merges into existing rows; replace mode replaces the workflow's row", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      await store.updateWorkflowSettingValues("builtin:coding", projectId, {
+        workflowStepTimeoutMs: 10_000,
+        requirePrApproval: true,
+      });
+
+      // merge: only requirePrApproval changes; the timeout survives.
+      await importSettings(
+        store,
+        {
+          version: 2,
+          exportedAt: new Date().toISOString(),
+          workflowSettings: { "builtin:coding": { requirePrApproval: false } },
+        },
+        { scope: "project", merge: true },
+      );
+      expect(store.getWorkflowSettingValues("builtin:coding", projectId)).toEqual({
+        workflowStepTimeoutMs: 10_000,
+        requirePrApproval: false,
+      });
+
+      // replace: the row becomes exactly the imported values (timeout dropped).
+      await importSettings(
+        store,
+        {
+          version: 2,
+          exportedAt: new Date().toISOString(),
+          workflowSettings: { "builtin:coding": { requirePrApproval: true } },
+        },
+        { scope: "project", merge: false },
+      );
+      expect(store.getWorkflowSettingValues("builtin:coding", projectId)).toEqual({
+        requirePrApproval: true,
+      });
+    });
+
+    it("export → import round-trips the full payload", async () => {
+      const projectId = store.getWorkflowSettingsProjectId();
+      await store.updateSettings({ maxConcurrent: 4 });
+      await store.updateWorkflowSettingValues("builtin:coding", projectId, {
+        workflowStepTimeoutMs: 77_000,
+      });
+
+      const exported = await exportSettings(store, { scope: "project" });
+
+      // Fresh store, import the exported payload.
+      const env2 = createTestEnv();
+      const { TaskStore: TS } = await import("../store.js");
+      const store2 = new TS(env2.tempDir, env2.globalSettingsDir, { inMemoryDb: true });
+      await store2.init();
+      try {
+        const r = await importSettings(store2, exported, { scope: "project", merge: true });
+        expect(r.success).toBe(true);
+        const settings2 = await store2.getSettings();
+        expect(settings2.maxConcurrent).toBe(4);
+        expect(store2.getWorkflowSettingValues("builtin:coding", store2.getWorkflowSettingsProjectId()).workflowStepTimeoutMs).toBe(77_000);
+      } finally {
+        store2.close();
+        cleanupTestEnv(env2.tempDir);
+      }
     });
   });
 

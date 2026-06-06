@@ -10,6 +10,8 @@ import type {
   WorkflowForeachConfig,
   WorkflowFieldDefinition,
   WorkflowFieldType,
+  WorkflowSettingDefinition,
+  WorkflowSettingType,
 } from "./workflow-ir-types.js";
 
 export class WorkflowIrError extends Error {
@@ -56,6 +58,27 @@ const FIELD_RENDER_PLACEMENTS: ReadonlySet<string> = new Set([
 ]);
 
 const FIELD_RENDER_WIDGETS: ReadonlySet<string> = new Set([
+  "select",
+  "radio",
+  "chips",
+  "input",
+  "textarea",
+  "toggle",
+]);
+
+/** Workflow-settings (U1) value-type whitelist (mirrors WORKFLOW_FIELD_TYPES). */
+export const WORKFLOW_SETTING_TYPES: ReadonlySet<WorkflowSettingType> = new Set([
+  "string",
+  "text",
+  "number",
+  "boolean",
+  "enum",
+  "multi-enum",
+]);
+
+/** Workflow-settings render-widget whitelist (mirrors FIELD_RENDER_WIDGETS;
+ *  no placement — settings have no card/detail placement). */
+export const SETTING_RENDER_WIDGETS: ReadonlySet<string> = new Set([
   "select",
   "radio",
   "chips",
@@ -737,6 +760,139 @@ function validateFields(fields: WorkflowFieldDefinition[] | undefined): void {
   }
 }
 
+/** Validate that a setting's `default` conforms to its own type/options (U1).
+ *  Unlike `validateFields`, settings validate defaults because the engine's
+ *  effective-settings resolver (U3) consumes the default directly — a malformed
+ *  default would feed garbage into execution. */
+function validateSettingDefault(setting: WorkflowSettingDefinition): void {
+  const value = setting.default;
+  if (value === undefined) return;
+  const id = setting.id;
+  switch (setting.type) {
+    case "string":
+    case "text":
+      if (typeof value !== "string") {
+        throw new WorkflowIrError(
+          `Workflow setting '${id}' default must be a string for type '${setting.type}'`,
+        );
+      }
+      break;
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new WorkflowIrError(
+          `Workflow setting '${id}' default must be a finite number`,
+        );
+      }
+      break;
+    case "boolean":
+      if (typeof value !== "boolean") {
+        throw new WorkflowIrError(`Workflow setting '${id}' default must be a boolean`);
+      }
+      break;
+    case "enum": {
+      const allowed = new Set((setting.options ?? []).map((o) => o.value));
+      if (typeof value !== "string" || !allowed.has(value)) {
+        throw new WorkflowIrError(
+          `Workflow setting '${id}' default '${String(value)}' is not one of its enum options`,
+        );
+      }
+      break;
+    }
+    case "multi-enum": {
+      const allowed = new Set((setting.options ?? []).map((o) => o.value));
+      if (!Array.isArray(value)) {
+        throw new WorkflowIrError(
+          `Workflow setting '${id}' default must be an array for type 'multi-enum'`,
+        );
+      }
+      for (const entry of value) {
+        if (typeof entry !== "string" || !allowed.has(entry)) {
+          throw new WorkflowIrError(
+            `Workflow setting '${id}' default '${String(entry)}' is not one of its enum options`,
+          );
+        }
+      }
+      break;
+    }
+  }
+}
+
+/** Validate `settings` declarations (U1, R1). Mirrors `validateFields`: non-empty
+ *  unique ids, type whitelist, options iff enum-kind, unique option values, render
+ *  widget whitelist — plus default validation (settings need it; see
+ *  `validateSettingDefault`). */
+function validateSettings(settings: WorkflowSettingDefinition[] | undefined): void {
+  if (settings === undefined) return;
+  if (!Array.isArray(settings)) {
+    throw new WorkflowIrError("Workflow IR settings must be an array");
+  }
+  const seen = new Set<string>();
+  for (const setting of settings) {
+    if (!setting || typeof setting.id !== "string" || setting.id === "") {
+      throw new WorkflowIrError("Workflow setting must have a non-empty id");
+    }
+    if (seen.has(setting.id)) {
+      throw new WorkflowIrError(`Workflow IR has duplicate setting id '${setting.id}'`);
+    }
+    seen.add(setting.id);
+    if (typeof setting.name !== "string" || setting.name === "") {
+      throw new WorkflowIrError(
+        `Workflow setting '${setting.id}' must have a non-empty name`,
+      );
+    }
+    if (!WORKFLOW_SETTING_TYPES.has(setting.type)) {
+      throw new WorkflowIrError(
+        `Workflow setting '${setting.id}' has unknown type '${String(setting.type)}'`,
+      );
+    }
+    const isEnum = setting.type === "enum" || setting.type === "multi-enum";
+    if (isEnum) {
+      if (!Array.isArray(setting.options) || setting.options.length === 0) {
+        throw new WorkflowIrError(
+          `Workflow setting '${setting.id}' of type '${setting.type}' must declare non-empty options`,
+        );
+      }
+      const optSeen = new Set<string>();
+      for (const opt of setting.options) {
+        if (!opt || typeof opt.value !== "string" || opt.value === "") {
+          throw new WorkflowIrError(
+            `Workflow setting '${setting.id}' option must have a non-empty value`,
+          );
+        }
+        if (typeof opt.label !== "string" || opt.label === "") {
+          throw new WorkflowIrError(
+            `Workflow setting '${setting.id}' option '${opt.value}' must have a non-empty label`,
+          );
+        }
+        if (optSeen.has(opt.value)) {
+          throw new WorkflowIrError(
+            `Workflow setting '${setting.id}' has duplicate option value '${opt.value}'`,
+          );
+        }
+        optSeen.add(opt.value);
+      }
+    } else if (setting.options !== undefined) {
+      throw new WorkflowIrError(
+        `Workflow setting '${setting.id}' of type '${setting.type}' must not declare options`,
+      );
+    }
+    if (setting.description !== undefined && typeof setting.description !== "string") {
+      throw new WorkflowIrError(
+        `Workflow setting '${setting.id}' description must be a string`,
+      );
+    }
+    if (setting.render !== undefined) {
+      const r = setting.render;
+      if (r.widget !== undefined && !SETTING_RENDER_WIDGETS.has(r.widget)) {
+        throw new WorkflowIrError(
+          `Workflow setting '${setting.id}' render.widget '${String(r.widget)}' is not allowed`,
+        );
+      }
+    }
+    validateSettingDefault(setting);
+  }
+}
+
 function validateColumns(ir: WorkflowIrV2): void {
   if (!Array.isArray(ir.columns)) {
     throw new WorkflowIrError("Workflow IR v2 columns must be an array");
@@ -815,6 +971,7 @@ function validateV2(ir: WorkflowIrV2): void {
   validateParseStepsNodes(ir);
   validateCodeNodes(ir.nodes);
   validateFields(ir.fields);
+  validateSettings(ir.settings);
 
   // Rework edges are legal only intra-template; any rework edge at the top level
   // is rejected (template rework edges are validated inside validateForeach and
@@ -903,8 +1060,13 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
     if (!V1_NODE_KINDS.has(node.kind)) return ir;
   }
 
-  // Step-inversion declarations (artifacts/fields) are v2-only features.
-  if ((ir.artifacts && ir.artifacts.length > 0) || (ir.fields && ir.fields.length > 0)) {
+  // Step-inversion declarations (artifacts/fields) and workflow settings (U1)
+  // are v2-only features.
+  if (
+    (ir.artifacts && ir.artifacts.length > 0) ||
+    (ir.fields && ir.fields.length > 0) ||
+    (ir.settings && ir.settings.length > 0)
+  ) {
     return ir;
   }
 

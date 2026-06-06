@@ -110,6 +110,9 @@ export async function runSettingsImport(
     if (result.projectCount > 0) {
       console.log(`    Imported ${result.projectCount} project setting(s)`);
     }
+    if (result.workflowSettingsCount > 0) {
+      console.log(`    Upgraded ${result.workflowSettingsCount} workflow setting value(s)`);
+    }
     console.log();
 
     process.exit(0);

@@ -1,4 +1,5 @@
 import type { ProjectSettings } from "@fusion/core";
+import { isMovedSettingsKey } from "@fusion/core";
 import { basename } from "node:path";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { getFusionAuthPath } from "../auth-paths.js";
@@ -17,14 +18,17 @@ function computeSettingsDiff(
   localGlobalSettings: Record<string, unknown>,
   localProjectSettings: Record<string, unknown>,
 ): { global: string[]; project: string[] } {
+  // Moved (tombstoned) keys are excluded from the diff entirely (KTD-8): workflow
+  // settings are not synced across nodes yet, so they must never appear in a
+  // diff/push/pull field list — even if a mid-migration peer still carries them.
   const globalKeys = Array.from(new Set([
     ...Object.keys(remoteSettings.global ?? {}),
     ...Object.keys(localGlobalSettings ?? {}),
-  ]));
+  ])).filter((key) => !isMovedSettingsKey(key));
   const projectKeys = Array.from(new Set([
     ...Object.keys(remoteSettings.project ?? {}),
     ...Object.keys(localProjectSettings ?? {}),
-  ]));
+  ])).filter((key) => !isMovedSettingsKey(key));
 
   return {
     global: globalKeys.filter((key) => JSON.stringify(remoteSettings.global?.[key]) !== JSON.stringify(localGlobalSettings[key])),

@@ -7,6 +7,7 @@ import type {
   WorkflowIrEdge,
   WorkflowDefinition,
   WorkflowFieldDefinition,
+  WorkflowSettingDefinition,
 } from "@fusion/core";
 import type { WorkflowFlowNodeData, WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 
@@ -307,6 +308,7 @@ export function flowToIr(
   edges: FlowEdge[],
   columns?: WorkflowIrColumn[],
   fields?: WorkflowFieldDefinition[],
+  settings?: WorkflowSettingDefinition[],
 ): { ir: WorkflowIr; layout: Record<string, { x: number; y: number }> } {
   const realNodes = nodes.filter((n) => !isColumnBandNode(n.id));
   // Partition by parentId: foreach group children reassemble into that group's
@@ -323,9 +325,10 @@ export function flowToIr(
   }
   const groupIds = new Set(topNodes.filter((n) => n.data.kind === "foreach").map((n) => n.id));
   const hasFields = Array.isArray(fields) && fields.length > 0;
-  // Fields are a v2-only declaration: a workflow with fields but no custom
-  // columns still serializes as v2 (with the synthesized default columns).
-  const v2 = (Array.isArray(columns) && columns.length > 0) || hasFields;
+  const hasSettings = Array.isArray(settings) && settings.length > 0;
+  // Fields and settings are v2-only declarations: a workflow with either but no
+  // custom columns still serializes as v2 (with the synthesized default columns).
+  const v2 = (Array.isArray(columns) && columns.length > 0) || hasFields || hasSettings;
   const layout: Record<string, { x: number; y: number }> = {};
 
   /** Project one flow node (top-level or template child) into an IR node. */
@@ -408,6 +411,16 @@ export function flowToIr(
       // WorkflowFieldDefinition; the editor carries the array through opaquely
       // and the server validator is the source of truth, so assign via unknown.
       (ir as { fields?: unknown }).fields = fields!.map((f) => ({ ...f }));
+    }
+    if (hasSettings) {
+      // Setting DECLARATIONS round-trip through the editor opaquely (server
+      // validator is the source of truth, same as fields). Values live in the
+      // workflow_settings table, NOT in the IR (KTD-2).
+      (ir as { settings?: unknown }).settings = settings!.map((s) => ({
+        ...s,
+        options: s.options ? s.options.map((o) => ({ ...o })) : undefined,
+        render: s.render ? { ...s.render } : undefined,
+      }));
     }
     return { ir, layout };
   }
@@ -788,6 +801,20 @@ export function fieldsOf(def: WorkflowDefinition): WorkflowFieldDefinition[] {
     ...f,
     options: f.options ? f.options.map((o) => ({ ...o })) : undefined,
     render: f.render ? { ...f.render } : undefined,
+  }));
+}
+
+/** Extract the editor's working setting-declaration list from a definition (U6,
+ *  KTD-1). v2 with `settings` → a deep-ish copy; v1 or no settings → empty.
+ *  Setting VALUES are not carried here — they live per-`(workflowId, projectId)`
+ *  in the workflow_settings table and are fetched separately (KTD-2). */
+export function settingsOf(def: WorkflowDefinition): WorkflowSettingDefinition[] {
+  const ir = def.ir as { settings?: WorkflowSettingDefinition[] };
+  if (!isV2(def.ir) || !Array.isArray(ir.settings)) return [];
+  return ir.settings.map((s) => ({
+    ...s,
+    options: s.options ? s.options.map((o) => ({ ...o })) : undefined,
+    render: s.render ? { ...s.render } : undefined,
   }));
 }
 

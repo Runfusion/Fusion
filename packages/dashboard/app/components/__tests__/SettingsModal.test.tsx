@@ -1273,7 +1273,10 @@ describe("SettingsModal", () => {
       expect(screen.queryByText("Title, commit message, and GitHub tracking issue summarization model")).not.toBeInTheDocument();
     });
 
-    it("shows summarization model picker for GitHub tracking defaults", async () => {
+    it("shows a moved-to-workflow note for the summarizer model when GitHub tracking defaults are on", async () => {
+      // The title-summarizer model lane was hard-moved (U4) onto workflow
+      // settings; the Project Models section now surfaces a moved-to-workflow
+      // note instead of an inline picker.
       mockFetchSettings.mockResolvedValueOnce({
         ...defaultSettings,
         githubTrackingEnabledByDefault: true,
@@ -1284,7 +1287,10 @@ describe("SettingsModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Project Models" }));
 
-      expect(screen.getByText("Title, commit message, and GitHub tracking issue summarization model")).toBeInTheDocument();
+      expect(
+        screen.queryByText("Title, commit message, and GitHub tracking issue summarization model"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/model used for summarization now lives on the workflow/i)).toBeInTheDocument();
     });
 
     it("picks a project repo suggestion and preserves label association", async () => {
@@ -1569,7 +1575,7 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
 
       expect(screen.queryByText(/^Version\s+/)).not.toBeInTheDocument();
-      await userEvent.click(screen.getByText("Scheduling"));
+      await userEvent.click(screen.getByText("Scheduling & Capacity"));
       expect(await screen.findByLabelText("Max Concurrent Tasks")).toBeInTheDocument();
       expect(addToast).not.toHaveBeenCalled();
     });
@@ -2383,7 +2389,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
       expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
@@ -2393,7 +2399,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       await userEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
 
@@ -2407,7 +2413,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       await userEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
       await userEvent.click(await screen.findByRole("button", { name: "Select README.md" }));
@@ -2435,7 +2441,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
       expect(select.value).toBe("lite");
@@ -2458,7 +2464,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       const input = screen.getByLabelText("Max Concurrent Tasks") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -2473,7 +2479,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       const input = screen.getByLabelText("Global Max Concurrent") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -2488,7 +2494,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       const input = screen.getByLabelText("Poll Interval (ms)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -2502,7 +2508,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Scheduling"));
+      fireEvent.click(screen.getByText("Scheduling & Capacity"));
 
       const input = screen.getByLabelText("Stale High Fan-out Escalation (hours)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -3166,26 +3172,20 @@ describe("SettingsModal", () => {
         expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeVisible();
       });
 
-      it("loads workflow revision fork checkbox from project settings", () => {
-        const checkbox = screen.getByRole("checkbox", {
-          name: /fork scope-mismatched workflow revisions into follow-up tasks/i,
-        });
-        expect(checkbox).toBeChecked();
+      it("no longer renders the moved workflow revision fork checkbox", () => {
+        // workflowRevisionForkOnScopeMismatch was hard-moved (U4) onto workflow
+        // settings; the Merge section must not expose it anymore.
+        expect(
+          screen.queryByRole("checkbox", {
+            name: /fork scope-mismatched workflow revisions into follow-up tasks/i,
+          }),
+        ).not.toBeInTheDocument();
       });
 
-      it("saves workflow revision fork checkbox changes", async () => {
-        const checkbox = screen.getByRole("checkbox", {
-          name: /fork scope-mismatched workflow revisions into follow-up tasks/i,
-        });
-        await userEvent.click(checkbox);
-        await userEvent.click(screen.getByRole("button", { name: "Save" }));
-
-        await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-        });
-
-        const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
-        expect(payload.workflowRevisionForkOnScopeMismatch).toBe(false);
+      it("renders a redirect stub for the moved review/verification settings", () => {
+        expect(
+          screen.getByText(/Review, verification auto-fix, and scope-enforcement settings now live on the workflow/i),
+        ).toBeInTheDocument();
       });
 
       it("shows Push Remote input when push-after-merge is enabled", async () => {
@@ -3218,64 +3218,38 @@ describe("SettingsModal", () => {
       });
     });
 
-    describe("verificationFixRetries", () => {
-      it("shows default value 3 when verificationFixRetries is not set", async () => {
-        mockFetchSettings.mockResolvedValueOnce({
-          ...defaultSettings,
-          verificationFixRetries: undefined,
-        });
-
+    describe("verificationFixRetries (moved to workflow settings)", () => {
+      // verificationFixRetries was hard-moved (U4) onto workflow settings. The
+      // Merge section must not expose it anymore — neither input nor save path.
+      it("no longer renders the verification auto-fix retries input", async () => {
         renderModal({ initialSection: "merge" });
         await waitForSettingsModalReady();
 
-        const retriesInput = screen.getByLabelText("Verification auto-fix retries") as HTMLInputElement;
-        expect(retriesInput.value).toBe("3");
+        expect(screen.queryByLabelText("Verification auto-fix retries")).not.toBeInTheDocument();
       });
 
-      it.each([0, 1, 2, 3])("persists valid value %i", async (value) => {
+      it("never sends verificationFixRetries through the save payload", async () => {
         renderModal({ initialSection: "merge" });
         await waitForSettingsModalReady();
 
-        const retriesInput = screen.getByLabelText("Verification auto-fix retries") as HTMLInputElement;
-        fireEvent.change(retriesInput, { target: { value: String(value) } });
         await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
         await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+          expect(mockUpdateSettings).toHaveBeenCalled();
         });
 
         const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
-        expect(payload.verificationFixRetries).toBe(value);
+        expect(payload).not.toHaveProperty("verificationFixRetries");
       });
 
-      it("clamps out-of-range values", async () => {
-        renderModal({ initialSection: "merge" });
+      it("opens workflow settings from the redirect stub", async () => {
+        const onOpenWorkflowSettings = vi.fn();
+        renderModal({ initialSection: "merge", onOpenWorkflowSettings });
         await waitForSettingsModalReady();
 
-        const retriesInput = screen.getByLabelText("Verification auto-fix retries") as HTMLInputElement;
-
-        fireEvent.change(retriesInput, { target: { value: "5" } });
-        expect(retriesInput.value).toBe("3");
-
-        fireEvent.change(retriesInput, { target: { value: "-1" } });
-        expect(retriesInput.value).toBe("0");
-      });
-
-      it("saving after clearing input persists undefined and falls back to visible default 3", async () => {
-        renderModal({ initialSection: "merge" });
-        await waitForSettingsModalReady();
-
-        const retriesInput = screen.getByLabelText("Verification auto-fix retries") as HTMLInputElement;
-        await userEvent.clear(retriesInput);
-        await userEvent.click(screen.getByRole("button", { name: "Save" }));
-
-        await waitFor(() => {
-          expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
-        });
-
-        const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
-        expect(payload.verificationFixRetries).toBeUndefined();
-        expect(retriesInput.value).toBe("3");
+        const buttons = screen.getAllByRole("button", { name: "Open workflow settings" });
+        await userEvent.click(buttons[0]);
+        expect(onOpenWorkflowSettings).toHaveBeenCalled();
       });
     });
 

@@ -1,0 +1,40 @@
+/* MovedSettingsStub (U9 / KTD-5) — redirect stub for hard-moved settings. */
+
+.settings-moved-stub {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2, var(--surface));
+}
+
+.settings-moved-stub__message {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.settings-moved-stub__action {
+  align-self: flex-start;
+  padding: var(--space-xs) var(--space-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.settings-moved-stub__action:hover:not(:disabled) {
+  background: var(--surface-hover, var(--surface-2, var(--surface)));
+  border-color: var(--accent, var(--border));
+}
+
+.settings-moved-stub__action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

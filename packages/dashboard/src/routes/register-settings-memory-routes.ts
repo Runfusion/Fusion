@@ -2353,6 +2353,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         throw new ApiError(500, result.error ?? "Import failed", {
           globalCount: result.globalCount,
           projectCount: result.projectCount,
+          workflowSettingsCount: result.workflowSettingsCount,
         });
       }
 
@@ -2360,6 +2361,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         success: true,
         globalCount: result.globalCount,
         projectCount: result.projectCount,
+        workflowSettingsCount: result.workflowSettingsCount,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

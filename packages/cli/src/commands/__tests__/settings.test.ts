@@ -85,6 +85,10 @@ describe("settings commands", () => {
     expect(VALID_SETTINGS).toContain("worktrunk.enabled");
     expect(VALID_SETTINGS).toContain("worktrunk.binaryPath");
     expect(VALID_SETTINGS).toContain("worktrunk.onFailure");
+    // Moved keys are NOT settable via the CLI (they live in workflow settings).
+    expect(VALID_SETTINGS).not.toContain("runStepsInNewSessions");
+    expect(VALID_SETTINGS).not.toContain("maxParallelSteps");
+    expect(VALID_SETTINGS).not.toContain("requirePlanApproval");
     expect(parseValue("ntfyEnabled", "yes")).toBe(true);
     expect(parseValue("maxConcurrent", "4")).toBe(4);
     expect(parseValue("worktreeNaming", "task-id")).toBe("task-id");
@@ -212,20 +216,21 @@ describe("settings commands", () => {
     expect(resolveProject).not.toHaveBeenCalled();
   });
 
-  it("runSettingsSet with project updates runStepsInNewSessions", async () => {
-    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ runStepsInNewSessions: true }));
-    const getSettings = vi.fn().mockResolvedValue(makeSettings({ runStepsInNewSessions: true }));
+  it("rejects setting a moved key (runStepsInNewSessions) and prints the workflow-settings redirect hint", async () => {
+    const updateSettings = vi.fn();
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj-1",
       projectName: "demo-project",
       projectPath: "/projects/demo",
       isRegistered: true,
-      store: { updateSettings, getSettings } as any,
+      store: { updateSettings, getSettings: vi.fn() } as any,
     });
 
-    await runSettingsSet("runStepsInNewSessions", "true", "demo-project");
+    await expect(runSettingsSet("runStepsInNewSessions", "true", "demo-project")).rejects.toThrow("process.exit:1");
 
-    expect(updateSettings).toHaveBeenCalledWith({ runStepsInNewSessions: true });
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith('Error: Unknown setting "runStepsInNewSessions"');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("workflow settings"));
   });
 
   it("runSettingsSet with project updates worktreesDir", async () => {
@@ -244,19 +249,20 @@ describe("settings commands", () => {
     expect(updateSettings).toHaveBeenCalledWith({ worktreesDir: "~/.fn-worktrees/{repo}" });
   });
 
-  it("runSettingsSet with project updates maxParallelSteps", async () => {    const updateSettings = vi.fn().mockResolvedValue(makeSettings({ maxParallelSteps: 3 }));
-    const getSettings = vi.fn().mockResolvedValue(makeSettings({ maxParallelSteps: 3 }));
+  it("rejects setting a moved key (maxParallelSteps) — it lives in workflow settings now", async () => {
+    const updateSettings = vi.fn();
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj-1",
       projectName: "demo-project",
       projectPath: "/projects/demo",
       isRegistered: true,
-      store: { updateSettings, getSettings } as any,
+      store: { updateSettings, getSettings: vi.fn() } as any,
     });
 
-    await runSettingsSet("maxParallelSteps", "3", "demo-project");
+    await expect(runSettingsSet("maxParallelSteps", "3", "demo-project")).rejects.toThrow("process.exit:1");
 
-    expect(updateSettings).toHaveBeenCalledWith({ maxParallelSteps: 3 });
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith('Error: Unknown setting "maxParallelSteps"');
   });
 
   it("runSettingsSet updates defaultNodeId and unavailableNodePolicy", async () => {
@@ -277,7 +283,7 @@ describe("settings commands", () => {
     expect(updateSettings).toHaveBeenNthCalledWith(2, { unavailableNodePolicy: "fallback-local" });
   });
 
-  it("rejects maxParallelSteps values outside range", async () => {
+  it("rejects values outside range for a still-valid numeric setting (maxWorktrees)", async () => {
     vi.mocked(resolveProject).mockResolvedValue({
       projectId: "proj-1",
       projectName: "demo-project",
@@ -286,11 +292,11 @@ describe("settings commands", () => {
       store: { updateSettings: vi.fn(), getSettings: vi.fn() } as any,
     });
 
-    await expect(runSettingsSet("maxParallelSteps", "5", "demo-project")).rejects.toThrow("process.exit:1");
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Value out of range for maxParallelSteps"));
+    await expect(runSettingsSet("maxWorktrees", "99", "demo-project")).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Value out of range for maxWorktrees"));
   });
 
-  it("runSettingsShow displays Execution section with step-session settings", async () => {
+  it("runSettingsShow prints the workflow-settings redirect hint and no longer lists moved step settings", async () => {
     const getSettings = vi.fn().mockResolvedValue(makeSettings({
       runStepsInNewSessions: true,
       maxParallelSteps: 3,
@@ -306,9 +312,11 @@ describe("settings commands", () => {
     await runSettingsShow("demo-project");
 
     const output = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
-    expect(output).toContain("Execution");
-    expect(output).toContain("Run Steps In New Sessions");
-    expect(output).toContain("Max Parallel Steps");
+    // Moved step settings are no longer listed; the redirect hint points users
+    // to workflow settings.
+    expect(output).not.toContain("Run Steps In New Sessions");
+    expect(output).not.toContain("Max Parallel Steps");
+    expect(output).toContain("workflow settings");
   });
 
   it("rejects enabling worktrunk when binary is not verified", async () => {

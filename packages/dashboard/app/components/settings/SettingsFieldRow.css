@@ -1,0 +1,94 @@
+/* SettingsFieldRow (U8 / KTD-10) — base layout for a single settings control:
+ * label + optional scope badge on the leading line, the control slot beside or
+ * below it, then help text and an error band. Shared by every typed row so the
+ * redesigned SettingsModal and the WorkflowSettingsPanel read identically.
+ * Mirrors the token/class conventions of WorkflowFieldsPanel.css. */
+
+.settings-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0;
+}
+
+.settings-field-row.is-disabled {
+  opacity: 0.6;
+}
+
+.settings-field-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.settings-field-row-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.settings-field-row-scope {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--surface-muted, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+.settings-field-row-scope--global {
+  color: var(--accent, #7c5cbf);
+  border-color: var(--accent, #7c5cbf);
+}
+
+.settings-field-row-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.settings-field-row-control > input:not([type="checkbox"]),
+.settings-field-row-control > select,
+.settings-field-row-control > textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-field-row-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  transition: color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.settings-field-row-clear:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.settings-field-row-clear:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-field-row-help {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.settings-field-row-error {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--color-error, #f85149);
+}

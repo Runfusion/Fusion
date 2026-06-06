@@ -15,6 +15,13 @@ These tools are **not** part of the user-invokable extension surface. They are i
 | `fn_task_log` | executor, heartbeat | Write significant task log entries | `message` (string), `outcome?` (string) |
 | `fn_task_document_write` | triage, executor, heartbeat | Save/update a named task document revision | `key` (string), `content` (string), `author?` (string) |
 | `fn_task_document_read` | triage, executor, heartbeat | Read one task document or list all | `key?` (string) |
+| `fn_workflow_list` | executor | List the project's custom workflows (read-only built-ins plus user definitions) | none |
+| `fn_workflow_get` | executor | Fetch one workflow definition by id — name, description, builtin flag, and the full IR (nodes/edges/columns/artifacts/fields/settings) as JSON | `workflow_id` (string) |
+| `fn_workflow_select` | executor | Assign a custom workflow to a task (defaults to the current task) | `workflow_id` (string), `task_id?` (string) |
+| `fn_workflow_create` | executor | Create a custom workflow definition from a graph IR (validated server-side). v2 IR supports step-inversion constructs: `parse-steps`, `foreach` (mode/isolation/concurrency/maxReworkCycles), `step-execute`, `step-review`, `code` nodes, `rework` edges, plus `artifacts`, custom `fields`, and typed `settings` declarations | `name` (string), `description?` (string), `ir` (object), `layout?` (object) |
+| `fn_workflow_update` | executor | Update a custom workflow definition's name/description/ir/layout (built-ins cannot be edited; same step-inversion IR constructs as create; editing `fields` orphans rather than destroys existing task values; editing `settings` declarations drops orphaned setting values on resolution) | `workflow_id` (string), `name?` (string), `description?` (string), `ir?` (object), `layout?` (object), `rehome_to?` (string) |
+| `fn_workflow_delete` | executor | Delete a custom workflow definition (built-ins cannot be deleted); selecting tasks are re-homed to the default workflow's entry column | `workflow_id` (string) |
+| `fn_workflow_settings` | executor | Read/write a workflow's per-`(workflow, project)` setting **values** (`get` returns `{stored, effective, orphaned}`; `set` writes `values` and returns `{stored, effective, orphaned}`, with `null` clearing an override — including any stored value for an orphaned key). Validated against the named workflow's declared settings; built-in **values** are writable though built-in **declarations** are not; invalid values return a typed rejection list and persist nothing | `action` (`get` \| `set`), `workflow_id` (string), `values?` (object keyed by setting id) |
 | `fn_workflow_list` | executor, chat, planning | List the project's custom workflows (read-only built-ins plus user definitions) | none |
 | `fn_workflow_get` | executor, chat, planning | Fetch one workflow definition by id — name, description, builtin flag, and the full IR (nodes/edges/columns/artifacts/fields) as JSON | `workflow_id` (string) |
 | `fn_workflow_select` | executor, chat, planning | Assign a custom workflow to a task (defaults to the current task) | `workflow_id` (string), `task_id?` (string) |
@@ -76,3 +83,62 @@ Note: step-session execution (`step-session-executor.ts`) reuses executor coordi
 | Tool | Purpose | Parameters |
 |---|---|---|
 | `fn_heartbeat_done` | Signal end of heartbeat run with optional summary | `summary?` (string) |
+
+## Workflow settings: declarations vs. values
+
+Workflow settings split into two surfaces (the same split as custom task fields, one level up):
+
+- **Declarations** (the typed schema) live in the workflow IR's `settings` array and are authored with `fn_workflow_create` / `fn_workflow_update`. Built-in workflow declarations cannot be edited (the store's built-in guard rejects the IR edit with a `WorkflowIrError`/built-in error surfaced through the tool result).
+- **Values** (the per-`(workflow, project)` data) are read/written with `fn_workflow_settings`. Built-in workflow **values** are writable so each project can tune `builtin:coding` differently.
+
+Declare a setting (custom workflow):
+
+```jsonc
+// fn_workflow_create
+{
+  "name": "QA",
+  "ir": {
+    "version": "v2",
+    "name": "QA",
+    "columns": [{ "id": "intake", "name": "Intake", "traits": [] }],
+    "nodes": [],
+    "edges": [],
+    "settings": [
+      { "id": "reviewHandoffPolicy", "name": "Review handoff", "type": "enum",
+        "default": "disabled",
+        "options": [
+          { "value": "disabled", "label": "Disabled" },
+          { "value": "always", "label": "Always" }
+        ] }
+    ]
+  }
+}
+```
+
+Write a value (built-in workflow VALUE — accepted even though built-in declarations are read-only):
+
+```jsonc
+// fn_workflow_settings
+{ "action": "set", "workflow_id": "builtin:coding",
+  "values": { "workflowStepTimeoutMs": 600000, "reviewHandoffPolicy": "always" } }
+```
+
+An invalid value (e.g. an enum violation) is rejected with a typed list and persists nothing:
+
+```jsonc
+// returns isError:true with details.rejections:
+// [{ "code": "enum-violation", "settingId": "reviewHandoffPolicy", "message": "..." }]
+```
+
+Read values — `effective` is what the engine actually consumes (declaration defaults filled in, orphaned values dropped); `stored` is the raw override map; `orphaned` lists stored entries with no current declaration (or a value that no longer validates). `set` returns the same `{stored, effective, orphaned}` shape:
+
+```jsonc
+// fn_workflow_settings
+{ "action": "get", "workflow_id": "builtin:coding" }
+// → { "workflowId": "builtin:coding",
+//     "stored":    { "workflowStepTimeoutMs": 600000 },
+//     "effective": { "workflowStepTimeoutMs": 600000, "reviewHandoffPolicy": "disabled", ... },
+//     "orphaned":  [] }
+```
+
+Patching a key to `null` clears any stored value for it — including a value left behind under an orphaned key — so `set` doubles as the way to drop orphans. To see the full declaration catalog (every setting id, type, and default) call `fn_workflow_get` on `builtin:coding`, whose IR `settings` array is the canonical catalog.

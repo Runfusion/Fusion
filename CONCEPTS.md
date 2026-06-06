@@ -10,6 +10,15 @@ One of Fusion's user-facing frontends — the browser dashboard and the terminal
 ### Global Settings
 User-level settings persisted server-side that apply across all Surfaces and all projects, as opposed to per-project settings. Values are validated at the write boundary — an invalid value is dropped rather than persisted — so every reader can trust what it loads.
 
+### Workflow Setting
+A typed setting declared by a workflow in its IR (id, type, default, options), mirroring the custom-task-field shape. Declarations describe the schema; *values* persist per workflow + project through a single validating store authority, so built-in workflows can carry values without their IR being editable. The engine consumes **effective settings** — stored value falling back to declaration default, with values that no longer validate against the current declaration dropped (never fed to execution).
+
+### Effective Settings
+The per-task, flat `Partial<Settings>`-shaped value map the engine reads at executor entry, composed from the task's resolved workflow: for each declared Workflow Setting, the stored `(workflowId, projectId)` value falls back to the declaration default, with stored values that no longer validate against the current declaration dropped. Resolution never throws — a missing or corrupt workflow degrades to the built-in coding declarations — so every read site receives a usable value. Because built-in declaration defaults are byte-equal to the legacy project-settings defaults, an untuned project resolves to identical behavior across the settings hard-move.
+
+### Moved Settings Keys
+The tombstone allowlist (`MOVED_SETTINGS_KEYS`) of the step-execution, review/approval, and per-phase model-lane keys that the one-time hard-move migration relocated from project/global settings into Workflow Settings. It is the single record of the old names and shields every surface that can encounter a legacy payload — cross-node sync diffs, v1 settings imports, and stale writers — from resurrecting a moved key. A consistency test enforces that a key lives in exactly one regime (project settings *or* the tombstone list, never both).
+
 ### Three-Tier Setting
 The named persistence pattern for a user preference on the dashboard: a device-local cache for instant reads, a write-through to Global Settings so other Surfaces see it, and a hydrate-on-mount from the server when no local value exists. A local or in-flight user choice always wins over server hydration, and changes propagate to other open tabs.
 
@@ -186,7 +195,7 @@ A persisted crash-safe marker (`tasks.transitionPending`) written in the same tr
 *Behind the `experimentalFeatures.workflowGraphExecutor` flag (orthogonal to `workflowColumns`). With the flag off, and for the Default workflow always, step policy is the legacy engine-owned path (PROMPT.md parsing, in-session review verdicts, RETHINK reset) — unchanged.*
 
 ### Step instance
-One runtime expansion of a `foreach` template subgraph, bound to a single planned step (`Task.steps[i]`). Identity is deterministic — `<foreachNodeId>#<stepIndex>:<templateNodeId>` — so resume reconstructs the full instance set from the pinned step count without persisting the expansion itself. Each instance carries its own run-state (current node, rework count, baseline/checkpoint, and in worktree mode its branch and integration status) in `workflow_run_step_instances` (schema v108). The step count is pinned at expansion; a later disagreement with the live step list is a `pin-mismatch` failure, never a silent re-expansion. An instance's lifecycle writes flow through `store.updateStep` so `Task.steps[]` stays the physical projection sink for every existing consumer.
+One runtime expansion of a `foreach` template subgraph, bound to a single planned step (`Task.steps[i]`). Identity is deterministic — `<foreachNodeId>#<stepIndex>:<templateNodeId>` — so resume reconstructs the full instance set from the pinned step count without persisting the expansion itself. Each instance carries its own run-state (current node, rework count, baseline/checkpoint, and in worktree mode its branch and integration status) in its own persisted run-state table. The step count is pinned at expansion; a later disagreement with the live step list is a `pin-mismatch` failure, never a silent re-expansion. An instance's lifecycle writes flow through `store.updateStep` so `Task.steps[]` stays the physical projection sink for every existing consumer.
 
 ### parse-steps
 A workflow graph node that reads a declared Artifact and runs a registry parser to write the canonical step list (`Task.steps[]`) — the only graph-side writer of steps. Built-in parsers are `step-headings` (the `### Step N:` convention, extracted byte-identically from the legacy regex, including the `(depends: N,M)` annotation) and `json-steps`; plugins contribute parsers under `plugin:<pluginId>:<parserId>`. Parsing failures fail closed to a routable `outcome:parse-error` rather than crashing. A parse-steps node must dominate (precede on all paths) any `foreach(source:"task-steps")`, and running one after a foreach has already expanded trips pin protection (an audited failure) so re-plan loops cannot desynchronize an expanded region.
@@ -194,6 +203,10 @@ A workflow graph node that reads a declared Artifact and runs a registry parser 
 ### Custom task field
 A workflow-declared, typed task field (`string | text | number | boolean | enum | multi-enum | date | url`, with enum options and render hints) whose values live in `tasks.customFields`, keyed by field id. The task model is thereby recast as core fields (title, description) + standard metadata + these workflow-defined fields. Writes pass through a single store authority (`updateTaskCustomFields`) that validates each value against the resolving workflow's schema and returns typed rejections (offending `fieldId` + `code`); agents write them via `fn_task_update`'s `custom_fields` patch. Editing a workflow's fields or switching a task's workflow orphans (never destroys) values for removed or type-incompatible ids — orphans are retained and surfaced under a detail disclosure, excluded from cards. Same id means the same field within a project; there is no cross-workflow shared field namespace.
 
+## Persistence & migrations
+
+### Schema-Version Sweep
+The named process performed atomically with any bump of the core schema-version counter: a repo-wide hunt for hard-coded assertions of the old version number, updated in the same commit as the bump. The sweep's scope is every workspace that can embed the core database — packages *and* plugins — because any package instantiating the core store observes the current version; scoping the hunt to one workspace silently strands assertions in the others. Downstream consumers should prefer asserting against the exported version constant instead of a literal, which removes them from the sweep entirely.
 ## CLI executor
 
 ### CLI Executor

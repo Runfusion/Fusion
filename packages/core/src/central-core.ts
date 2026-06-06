@@ -83,6 +83,7 @@ import { getAppVersion, parseSemver } from "./app-version.js";
 import { validateDockerNodeConfig } from "./types.js";
 import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "./global-settings.js";
+import { stripMovedSettingsKeys } from "./moved-settings.js";
 import { NodeConnection } from "./node-connection.js";
 import { NodeDiscovery } from "./node-discovery.js";
 import { collectSystemMetrics } from "./system-metrics.js";
@@ -3659,12 +3660,18 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     let projectCount = 0;
     const authCount = payload.providerAuth ? Object.keys(payload.providerAuth).length : 0;
 
-    // Apply global settings (shallow merge, local-wins)
+    // Apply global settings (shallow merge, local-wins).
+    // Moved (tombstoned) keys are dropped here as a second line of defense — a
+    // mid-migration peer must never resurrect a moved key cross-node (KTD-8). The
+    // count reflects only the keys that survive the strip.
     if (payload.global) {
       // The actual application of global settings is handled by the caller (dashboard route)
-      // since CentralCore doesn't have access to GlobalSettingsStore.
-      // We simply count the number of global settings entries for reporting.
-      globalCount = Object.keys(payload.global).length;
+      // since CentralCore doesn't have access to GlobalSettingsStore. Mutate the payload
+      // in place so the caller applies the stripped version — otherwise moved keys survive
+      // in payload.global and get resurrected cross-node (KTD-8).
+      const cleanGlobal = stripMovedSettingsKeys(payload.global as Record<string, unknown>);
+      payload.global = cleanGlobal as typeof payload.global;
+      globalCount = Object.keys(cleanGlobal).length;
     }
 
     // Apply project settings (match by name, local-wins merge)
@@ -3675,11 +3682,17 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       for (const [projectName, remoteSettings] of Object.entries(payload.projects)) {
         const localProject = projectsByName.get(projectName);
         if (localProject) {
+          // Strip moved keys from the inbound remote settings before merging —
+          // defense beyond the store guard so they can never be persisted into a
+          // project's raw config via the cross-node path (KTD-8).
+          const cleanRemote = stripMovedSettingsKeys(
+            (remoteSettings ?? {}) as unknown as Record<string, unknown>,
+          ) as Partial<ProjectSettings>;
           // Merge settings: local values take precedence
           const mergedSettings: ProjectSettings = {
-            ...remoteSettings,
+            ...cleanRemote,
             ...localProject.settings,
-          };
+          } as ProjectSettings;
           await this.updateProject(localProject.id, { settings: mergedSettings });
           projectCount++;
         }

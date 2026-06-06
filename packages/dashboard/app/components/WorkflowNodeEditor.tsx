@@ -55,6 +55,7 @@ import {
   fragmentSeamConflicts,
   columnsOf,
   fieldsOf,
+  settingsOf,
   columnsToBandNodes,
   strictColumnForY,
   validateColumnsClient,
@@ -76,7 +77,8 @@ import { autoLayout, applyAutoLayout } from "./workflow-auto-layout";
 import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
 import { WorkflowColumnPanel } from "./WorkflowColumnPanel";
 import { WorkflowFieldsPanel } from "./WorkflowFieldsPanel";
-import type { WorkflowFieldDefinition } from "../api";
+import { WorkflowSettingsPanel } from "./WorkflowSettingsPanel";
+import type { WorkflowFieldDefinition, WorkflowSettingDefinition } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 
 type ExecutorKind = "model" | "agent" | "skill" | "cli" | "cli-agent";
@@ -127,6 +129,7 @@ function serializeGraph(
   edges: FlowEdge[],
   columns: WorkflowIrColumn[],
   fields: WorkflowFieldDefinition[],
+  settings: WorkflowSettingDefinition[],
 ): string {
   const { ir, layout } = flowToIr(
     name,
@@ -134,6 +137,7 @@ function serializeGraph(
     edges,
     columns.length ? columns : undefined,
     fields.length ? fields : undefined,
+    settings.length ? settings : undefined,
   );
   return JSON.stringify({ name, description, ir, layout });
 }
@@ -143,6 +147,10 @@ interface WorkflowNodeEditorProps {
   onClose: () => void;
   addToast: (message: string, type?: ToastType) => void;
   projectId?: string;
+  /** When "settings" the editor scrolls the WorkflowSettingsPanel into view on
+   *  mount (U6/U9: redirect stubs link here via a `?panel=settings` param read by
+   *  the editor's mount site). */
+  initialPanel?: "settings";
 }
 
 let nodeSeq = 0;
@@ -623,6 +631,7 @@ function InnerEditor({
   onClose,
   addToast,
   projectId,
+  initialPanel,
   modalRef,
 }: Omit<WorkflowNodeEditorProps, "isOpen"> & { modalRef: React.RefObject<HTMLDivElement | null> }) {
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
@@ -660,6 +669,13 @@ function InnerEditor({
   const [columns, setColumns] = useState<WorkflowIrColumn[]>([]);
   // v2 custom field definitions the editor is authoring (KTD-13/14, U13).
   const [fields, setFields] = useState<WorkflowFieldDefinition[]>([]);
+  // v2 typed setting declarations the editor is authoring (U6, KTD-1). Setting
+  // VALUES live per-project in the workflow_settings table (KTD-2) and are
+  // managed by the panel's Values tab, not this declaration array.
+  const [settings, setSettings] = useState<WorkflowSettingDefinition[]>([]);
+  // Ref to the settings panel so a `?panel=settings` deep link can scroll it
+  // into view on mount (U6/U9 redirect stubs).
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   const [traitCatalog, setTraitCatalog] = useState<TraitCatalogEntry[]>([]);
   // Step-parser ids for the parse-steps inspector (KTD-12). Seeded with the
   // built-in pair so the select is never empty; replaced by the live catalog
@@ -691,6 +707,7 @@ function InnerEditor({
   // state persists in localStorage; default expanded.
   const columnsCollapsedStorageKey = "fusion:wf-sidebar-columns-collapsed";
   const fieldsCollapsedStorageKey = "fusion:wf-sidebar-fields-collapsed";
+  const settingsCollapsedStorageKey = "fusion:wf-sidebar-settings-collapsed";
   const [columnsCollapsed, setColumnsCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(columnsCollapsedStorageKey) === "1";
@@ -701,6 +718,13 @@ function InnerEditor({
   const [fieldsCollapsed, setFieldsCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(fieldsCollapsedStorageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [settingsCollapsed, setSettingsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(settingsCollapsedStorageKey) === "1";
     } catch {
       return false;
     }
@@ -719,6 +743,13 @@ function InnerEditor({
       // localStorage unavailable (private mode / SSR): non-fatal.
     }
   }, [fieldsCollapsed]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(settingsCollapsedStorageKey, settingsCollapsed ? "1" : "0");
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [settingsCollapsed]);
   // Wrapper around <ReactFlow> so keyboard deletion can return focus to the
   // canvas container (R6) instead of leaving it on a now-removed node.
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -898,10 +929,10 @@ function InnerEditor({
     if (isBuiltin) return false;
     if (!activeWorkflow || loadedSnapshotRef.current === null) return false;
     return (
-      serializeGraph(name, description, nodes, edges, columns, fields) !==
+      serializeGraph(name, description, nodes, edges, columns, fields, settings) !==
       loadedSnapshotRef.current
     );
-  }, [isBuiltin, activeWorkflow, name, description, nodes, edges, columns, fields]);
+  }, [isBuiltin, activeWorkflow, name, description, nodes, edges, columns, fields, settings]);
 
   const loadWorkflows = useCallback(async () => {
     setLoading(true);
@@ -1032,6 +1063,7 @@ function InnerEditor({
       setEdges([]);
       setColumns([]);
       setFields([]);
+      setSettings([]);
       setName("");
       setDescription("");
       loadedSnapshotRef.current = null;
@@ -1042,8 +1074,10 @@ function InnerEditor({
     setEdges(flow.edges);
     const loadedColumns = columnsOf(activeWorkflow);
     const loadedFields = fieldsOf(activeWorkflow);
+    const loadedSettings = settingsOf(activeWorkflow);
     setColumns(loadedColumns);
     setFields(loadedFields);
+    setSettings(loadedSettings);
     setName(activeWorkflow.name);
     setDescription(activeWorkflow.description ?? "");
     setEditingName(false);
@@ -1057,6 +1091,7 @@ function InnerEditor({
       flow.edges,
       loadedColumns,
       loadedFields,
+      loadedSettings,
     );
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
@@ -1070,6 +1105,28 @@ function InnerEditor({
       setInterpreterOnly(false);
     }
   }, [activeWorkflow, setNodes, setEdges]);
+
+  // `?panel=settings` deep link (U6/U9 redirect stubs): once the active workflow
+  // has loaded, scroll the settings panel into view. Runs once per editor open.
+  const didScrollToSettings = useRef(false);
+  useEffect(() => {
+    if (initialPanel !== "settings" || didScrollToSettings.current) return;
+    if (!activeWorkflow) return;
+    const el = settingsPanelRef.current;
+    if (el) {
+      didScrollToSettings.current = true;
+      el.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
+    }
+  }, [initialPanel, activeWorkflow]);
+
+  // Reset the one-shot scroll latch whenever the deep-link target changes (e.g.
+  // the panel is closed and re-opened with `?panel=settings`), so a fresh open
+  // scrolls the settings panel into view again instead of staying latched.
+  useEffect(() => {
+    return () => {
+      didScrollToSettings.current = false;
+    };
+  }, [initialPanel]);
 
   // Server-reported node error (e.g. seam-in-branch) attributed to a node id.
   const [serverNodeError, setServerNodeError] = useState<{ nodeId: string; message: string } | null>(null);
@@ -1594,6 +1651,7 @@ function InnerEditor({
         edges,
         columns.length ? columns : undefined,
         fields.length ? fields : undefined,
+        settings.length ? settings : undefined,
       );
       // Include name/description in the PATCH only when they changed from the
       // loaded workflow (KTD-10 inline rename/description persist here).
@@ -1610,6 +1668,7 @@ function InnerEditor({
           edges,
           columns,
           fields,
+          settings,
         );
         setName(updated.name);
         setDescription(updated.description ?? "");
@@ -1679,7 +1738,7 @@ function InnerEditor({
     } finally {
       setSaving(false);
     }
-  }, [activeWorkflow, name, description, nodes, edges, columns, fields, unplaced, blockingViolationCount, projectId, addToast, t]);
+  }, [activeWorkflow, name, description, nodes, edges, columns, fields, settings, unplaced, blockingViolationCount, projectId, addToast, t]);
 
   // Stamp the shared error-state badge onto offending nodes: unplaced step
   // nodes and any node the server flagged (seam-in-branch). One component
@@ -2099,6 +2158,31 @@ function InnerEditor({
                       readOnly={isBuiltin}
                       addToast={addToast}
                     />
+                  )}
+                </section>
+
+                <section className="wf-sidebar-section" data-testid="wf-sidebar-settings-section">
+                  <button
+                    type="button"
+                    className="wf-sidebar-section-toggle"
+                    aria-expanded={!settingsCollapsed}
+                    data-testid="wf-sidebar-settings-toggle"
+                    onClick={() => setSettingsCollapsed((c) => !c)}
+                  >
+                    {settingsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                    <span>{t("workflowSettings.title", "Settings")}</span>
+                  </button>
+                  {!settingsCollapsed && (
+                    <div ref={settingsPanelRef} className="wf-settings-panel-wrap">
+                      <WorkflowSettingsPanel
+                        workflowId={activeWorkflow.id}
+                        settings={settings}
+                        onChange={setSettings}
+                        readOnly={isBuiltin}
+                        projectId={projectId}
+                        addToast={addToast}
+                      />
+                    </div>
                   )}
                 </section>
               </div>

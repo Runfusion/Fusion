@@ -182,7 +182,56 @@ describe("settings key parity", () => {
   it("keeps task stuck timeout active by default without coupling to workflow step timeout", () => {
     expect(DEFAULT_PROJECT_SETTINGS.taskStuckTimeoutMs).toBe(600_000);
     expect(DEFAULT_PROJECT_SETTINGS.runtimeStopDrainMs).toBe(2_000);
-    expect(DEFAULT_PROJECT_SETTINGS.workflowStepTimeoutMs).toBe(360_000);
+    // workflowStepTimeoutMs MOVED to workflow settings (U4) — no longer a project key.
+    expect(isProjectSettingsKey("workflowStepTimeoutMs")).toBe(false);
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("workflowStepTimeoutMs");
+  });
+
+  it("removes the moved settings keys (U4 hard-move) from the project scope", () => {
+    const movedKeys = [
+      "workflowStepTimeoutMs",
+      "workflowStepScopeEnforcement",
+      "planOnlyScopeLeakEnforcement",
+      "workflowRevisionForkOnScopeMismatch",
+      "strictScopeEnforcement",
+      "runStepsInNewSessions",
+      "maxParallelSteps",
+      "buildRetryCount",
+      "verificationFixRetries",
+      "maxPostReviewFixes",
+      "requirePrApproval",
+      "requirePlanApproval",
+      "reviewHandoffPolicy",
+      "maxReviewerContextRetries",
+      "maxReviewerFallbackRetries",
+      "reflectionEnabled",
+      "executionProvider",
+      "executionModelId",
+      "planningProvider",
+      "planningModelId",
+      "planningFallbackProvider",
+      "planningFallbackModelId",
+      "validatorProvider",
+      "validatorModelId",
+      "validatorFallbackProvider",
+      "validatorFallbackModelId",
+      "titleSummarizerProvider",
+      "titleSummarizerModelId",
+      "titleSummarizerFallbackProvider",
+      "titleSummarizerFallbackModelId",
+    ];
+    for (const key of movedKeys) {
+      expect(isProjectSettingsKey(key)).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain(key);
+      expect(isGlobalSettingsKey(key)).toBe(false);
+    }
+  });
+
+  it("keeps buildTimeoutMs / reflectionIntervalMs / reflectionAfterTask project-scoped (NOT moved)", () => {
+    expect(isProjectSettingsKey("buildTimeoutMs")).toBe(true);
+    expect(isProjectSettingsKey("reflectionIntervalMs")).toBe(true);
+    expect(isProjectSettingsKey("reflectionAfterTask")).toBe(true);
+    expect(DEFAULT_PROJECT_SETTINGS.buildTimeoutMs).toBe(300_000);
   });
 
   it("defaults engine activation grace and leaves engine active clock undefined", () => {
@@ -367,27 +416,33 @@ describe("eval settings parity regression (FN-3393)", () => {
 });
 
 describe("model lane key parity regression (FN-1729)", () => {
-  // All model lane provider/modelId pairs that should exist
+  // All model lane provider/modelId pairs that should exist.
+  //
+  // U4 hard-move: the per-PHASE project lanes (execution/planning/validator/
+  // titleSummarizer provider+model, plus their fallbacks) MOVED to workflow
+  // settings and are no longer in either scope key list ("workflow" scope). The
+  // GLOBAL baseline lanes (`*GlobalProvider`) and the default/fallback baseline
+  // stay global.
   const allModelLanePairs = [
     // Default baseline (global only)
     { provider: "defaultProvider", modelId: "defaultModelId", expectedScope: "global" },
     // Fallback baseline (global only)
     { provider: "fallbackProvider", modelId: "fallbackModelId", expectedScope: "global" },
     // Execution lane
-    { provider: "executionProvider", modelId: "executionModelId", expectedScope: "project" },
+    { provider: "executionProvider", modelId: "executionModelId", expectedScope: "workflow" },
     { provider: "executionGlobalProvider", modelId: "executionGlobalModelId", expectedScope: "global" },
     // Planning lane
-    { provider: "planningProvider", modelId: "planningModelId", expectedScope: "project" },
+    { provider: "planningProvider", modelId: "planningModelId", expectedScope: "workflow" },
     { provider: "planningGlobalProvider", modelId: "planningGlobalModelId", expectedScope: "global" },
-    { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "project" },
+    { provider: "planningFallbackProvider", modelId: "planningFallbackModelId", expectedScope: "workflow" },
     // Validator lane
-    { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "project" },
+    { provider: "validatorProvider", modelId: "validatorModelId", expectedScope: "workflow" },
     { provider: "validatorGlobalProvider", modelId: "validatorGlobalModelId", expectedScope: "global" },
-    { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId", expectedScope: "project" },
+    { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId", expectedScope: "workflow" },
     // Summarizer lane
-    { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId", expectedScope: "project" },
+    { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId", expectedScope: "workflow" },
     { provider: "titleSummarizerGlobalProvider", modelId: "titleSummarizerGlobalModelId", expectedScope: "global" },
-    { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId", expectedScope: "project" },
+    { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId", expectedScope: "workflow" },
   ] as const;
 
   it.each(allModelLanePairs)(
@@ -396,6 +451,12 @@ describe("model lane key parity regression (FN-1729)", () => {
       if (expectedScope === "global") {
         expect(isGlobalSettingsKey(provider)).toBe(true);
         expect(isGlobalSettingsKey(modelId)).toBe(true);
+        expect(isProjectSettingsKey(provider)).toBe(false);
+        expect(isProjectSettingsKey(modelId)).toBe(false);
+      } else if (expectedScope === "workflow") {
+        // Moved to workflow settings — absent from BOTH scope key lists.
+        expect(isGlobalSettingsKey(provider)).toBe(false);
+        expect(isGlobalSettingsKey(modelId)).toBe(false);
         expect(isProjectSettingsKey(provider)).toBe(false);
         expect(isProjectSettingsKey(modelId)).toBe(false);
       } else {
@@ -407,15 +468,19 @@ describe("model lane key parity regression (FN-1729)", () => {
     },
   );
 
-  it("model lane keys appear in exactly one scope key list", () => {
+  it("scoped (non-workflow) model lane keys appear in exactly one scope key list", () => {
     const globalKeys = new Set(GLOBAL_SETTINGS_KEYS as readonly string[]);
     const projectKeys = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
 
-    for (const { provider, modelId } of allModelLanePairs) {
+    for (const { provider, modelId, expectedScope } of allModelLanePairs) {
+      if (expectedScope === "workflow") {
+        // Workflow-scoped lanes are in neither list.
+        expect(globalKeys.has(provider) || projectKeys.has(provider)).toBe(false);
+        expect(globalKeys.has(modelId) || projectKeys.has(modelId)).toBe(false);
+        continue;
+      }
       const inGlobal = globalKeys.has(provider) && globalKeys.has(modelId);
       const inProject = projectKeys.has(provider) && projectKeys.has(modelId);
-
-      // Each pair must appear in exactly one scope
       expect(inGlobal || inProject).toBe(true);
       expect(inGlobal && inProject).toBe(false);
     }
@@ -433,15 +498,14 @@ describe("model lane key parity regression (FN-1729)", () => {
     }
   });
 
-  it("all project model lane keys are in PROJECT_SETTINGS_KEYS", () => {
-    const projectKeys = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
-
-    const projectLanes = allModelLanePairs
-      .filter((p) => p.expectedScope === "project")
+  it("moved (workflow) model lane keys are in NEITHER scope key list", () => {
+    const allKeys = new Set([...GLOBAL_SETTINGS_KEYS, ...PROJECT_SETTINGS_KEYS] as readonly string[]);
+    const workflowLanes = allModelLanePairs
+      .filter((p) => p.expectedScope === "workflow")
       .flatMap((p) => [p.provider, p.modelId]);
 
-    for (const key of projectLanes) {
-      expect(projectKeys.has(key)).toBe(true);
+    for (const key of workflowLanes) {
+      expect(allKeys.has(key)).toBe(false);
     }
   });
 

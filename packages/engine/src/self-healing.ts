@@ -31,6 +31,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
+import { mergeEffectiveSettings } from "./effective-settings.js";
 import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
@@ -5039,11 +5040,19 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const maxFixes = settings.maxPostReviewFixes ?? 1;
-      if (!Number.isFinite(maxFixes) || maxFixes <= 0) return 0;
 
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+
+      // Resolve the per-task effective `maxPostReviewFixes` (U3, KTD-3) — this is a
+      // cross-task recovery sweep, so the budget is resolved per task rather than
+      // from a single global read. Behavior-inert when nothing is customized.
+      const maxFixesByTask = new Map<string, number>();
+      for (const task of tasks) {
+        const eff = await mergeEffectiveSettings(this.store, task, settings);
+        maxFixesByTask.set(task.id, eff.maxPostReviewFixes ?? 1);
+      }
+      const maxFixesFor = (taskId: string): number => maxFixesByTask.get(taskId) ?? 1;
 
       const candidates = tasks.filter((task) => {
         if (task.column !== "in-review") return false;
@@ -5053,6 +5062,8 @@ export class SelfHealingManager {
         // merging, etc.). Only revive tasks that are otherwise idle.
         if (task.status) return false;
         if (executingIds.has(task.id)) return false;
+        const maxFixes = maxFixesFor(task.id);
+        if (!Number.isFinite(maxFixes) || maxFixes <= 0) return false;
         if ((task.postReviewFixCount ?? 0) >= maxFixes) return false;
 
         // Must have at least one failed pre-merge workflow step result.
@@ -5082,6 +5093,7 @@ export class SelfHealingManager {
       let recovered = 0;
       for (const task of candidates) {
         const nextCount = (task.postReviewFixCount ?? 0) + 1;
+        const maxFixes = maxFixesFor(task.id);
         try {
           // Increment the counter BEFORE delegating so that even if the
           // executor path crashes or races, the budget is still consumed and

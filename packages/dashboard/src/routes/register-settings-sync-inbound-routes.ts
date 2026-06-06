@@ -1,3 +1,4 @@
+import { isMovedSettingsKey } from "@fusion/core";
 import { ApiError, badRequest } from "../api-error.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import { getFusionAuthPath } from "../auth-paths.js";
@@ -71,7 +72,9 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
         const localGlobal = await store.getGlobalSettingsStore().getSettings() as Record<string, unknown>;
         const globalPatch = Object.fromEntries(
           Object.entries(payload.global as Record<string, unknown>)
-            .filter(([key, value]) => value !== undefined && localGlobal[key] === undefined),
+            // Drop moved (tombstoned) keys here too — defense beyond the store
+            // guard so an inbound push can never resurrect a moved key (KTD-8).
+            .filter(([key, value]) => value !== undefined && localGlobal[key] === undefined && !isMovedSettingsKey(key)),
         );
         if (Object.keys(globalPatch).length > 0) {
           await store.updateGlobalSettings(globalPatch);
@@ -79,11 +82,13 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
 
-      // Build applied/skipped field lists
+      // Build applied/skipped field lists. Moved keys are excluded so the reported
+      // applied set matches what actually persisted (the store + applyRemoteSettings
+      // both drop them).
       const appliedFields = [
         ...Object.keys(payload.global || {}),
         ...Object.keys(payload.projects || {}),
-      ];
+      ].filter((key) => !isMovedSettingsKey(key));
       const skippedFields = result.error ? appliedFields : [];
 
       await central.close();

@@ -190,6 +190,7 @@ const qualityAppComponentTests = [
   "TaskIdIntegrityBanner",
   "TrackingRepoSelect",
   "WorkflowFieldsPanel",
+  "WorkflowSettingsPanel",
   "WorkflowNodeEditor",
   "WorkflowResultsTab",
   "WorkflowSelector",

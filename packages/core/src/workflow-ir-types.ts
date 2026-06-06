@@ -141,6 +141,48 @@ export interface WorkflowFieldDefinition {
   render?: WorkflowFieldRender;
 }
 
+/** Workflow-settings (U1): the supported setting value types. A whitelist
+ *  mirroring the scalar/enum subset of `WorkflowFieldType` — settings carry
+ *  workflow-scoped policy (step timeouts, review gates, model lanes), so the
+ *  date/url field types do not apply. */
+export type WorkflowSettingType =
+  | "string"
+  | "text"
+  | "number"
+  | "boolean"
+  | "enum"
+  | "multi-enum";
+
+/** A single enum/multi-enum option for a workflow setting (mirrors
+ *  `WorkflowFieldOption`). */
+export interface WorkflowSettingOption {
+  value: string;
+  label: string;
+  color?: string;
+}
+
+/** Rendering instructions for a workflow setting (U1, KTD-1). Settings get their
+ *  OWN render-hint type: a widget only — NO `card`/`detail` placement, which is
+ *  task-card-specific. The widget whitelist mirrors the field render widgets. */
+export interface WorkflowSettingRender {
+  widget?: "select" | "radio" | "chips" | "input" | "textarea" | "toggle";
+}
+
+/** Workflow-settings (U1, R1, KTD-1): a workflow-declared typed setting. Clones
+ *  the shape of `WorkflowFieldDefinition` (one level up) — declarations describe
+ *  the schema; the per-`(workflowId, projectId)` value table (U2) carries data.
+ *  `default` is consumed by the engine's effective-settings resolver (U3), so it
+ *  is validated against its own type/options at parse time. */
+export interface WorkflowSettingDefinition {
+  id: string;
+  name: string;
+  type: WorkflowSettingType;
+  default?: unknown;
+  options?: WorkflowSettingOption[];
+  description?: string;
+  render?: WorkflowSettingRender;
+}
+
 /** A single trait configuration applied to a column. The `trait` is an opaque
  *  registry id (resolved by the trait registry shipped in U2); `config` carries
  *  trait-specific options validated by that trait's schema. */
@@ -210,6 +252,9 @@ export interface WorkflowIrV2 {
   edges: WorkflowIrEdge[];
   artifacts?: WorkflowIrArtifact[];
   fields?: WorkflowFieldDefinition[];
+  /** Workflow-settings (U1, R1): typed setting declarations. Additive; absent on
+   *  legacy graphs. Values persist per-`(workflowId, projectId)` (U2), not here. */
+  settings?: WorkflowSettingDefinition[];
 }
 
 /** Either IR version. v1 graphs upgrade to v2 on parse (see parseWorkflowIr). */

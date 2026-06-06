@@ -28,6 +28,7 @@ import {
   resolveTaskValidatorModel,
 } from "@fusion/core";
 import { createFnAgent, promptWithFallback, type AgentResult } from "./pi.js";
+import { mergeEffectiveSettings } from "./effective-settings.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -469,7 +470,14 @@ export class MissionExecutionLoop extends EventEmitter {
       ? await this.agentStore.getAgent(task.assignedAgentId).catch(() => null)
       : null;
     const validationRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
-    const settings = await this.taskStore.getSettings().catch(() => undefined);
+    // Merge per-task effective workflow settings (U3, KTD-3) so the validator
+    // model-lane reads pick up workflow values; skip when there is no task in
+    // scope (mission-level validation has no per-task workflow). Behavior-inert by
+    // default.
+    const baseSettings = await this.taskStore.getSettings().catch(() => undefined);
+    const settings = task && baseSettings
+      ? await mergeEffectiveSettings(this.taskStore, task, baseSettings)
+      : baseSettings;
     const validationSessionModel = this.resolveValidationSessionModel(
       task,
       settings,

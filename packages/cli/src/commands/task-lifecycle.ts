@@ -24,7 +24,7 @@ const execAsync = promisify(exec);
 const execFileAsync: (file: string, args: string[], opts?: import("node:child_process").ExecFileOptions) => Promise<{ stdout: string; stderr: string }> = (file, args, opts) =>
   (promisify(childProcess.execFile) as (f: string, a: string[], o?: object) => Promise<{ stdout: string; stderr: string }>)(file, args, opts);
 import type { TaskStore } from "@fusion/core";
-import { resolveTaskMergeTarget, getCurrentRepo, isBranchGroupMemberLanded } from "@fusion/core";
+import { resolveTaskMergeTarget, getCurrentRepo, isBranchGroupMemberLanded, resolveEffectiveSettings } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
 import { activeSessionRegistry, resolveIntegrationBranch } from "@fusion/engine";
 import type { CreateGroupPrFn, SyncGroupPrFn, WorktreePool } from "@fusion/engine";
@@ -448,6 +448,17 @@ export async function processPullRequestMergeTask(
 
   const branch = getTaskBranchName(task.id);
   const settings = await store.getSettings();
+  // `requirePrApproval` MOVED to workflow settings (U4): resolve the task's
+  // effective workflow settings and overlay them onto the project/global base so
+  // the approval-gate reads the per-(workflow, project) value post-migration. The
+  // resolver never throws — a missing workflow degrades to built-in declaration
+  // defaults (requirePrApproval=false), matching the pre-move default.
+  try {
+    const effective = await resolveEffectiveSettings(store, { id: task.id });
+    Object.assign(settings as Record<string, unknown>, effective);
+  } catch {
+    // Defensive: keep the base settings if effective resolution fails entirely.
+  }
   const resolvedIntegrationBranch = await resolveIntegrationBranch(cwd, settings);
   const projectDefaultBranch = resolvedIntegrationBranch;
 

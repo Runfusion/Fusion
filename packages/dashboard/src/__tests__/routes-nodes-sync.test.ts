@@ -4,6 +4,7 @@ import { request, get } from "../test-request.js";
 import { createServer } from "../server.js";
 import { resetRuntimeLogSink, setRuntimeLogSink, type RuntimeLogContext } from "../runtime-logger.js";
 import { MISSING_REMOTE_NODE_API_KEY_MESSAGE } from "../routes/register-settings-sync-helpers.js";
+import { MOVED_SETTINGS_KEYS } from "@fusion/core";
 
 // Mock node:fs for auth.json reading
 vi.mock("node:fs", () => ({
@@ -530,6 +531,50 @@ describe("Node settings sync routes", () => {
       expect(res.body.diff.global).toEqual(expect.arrayContaining(["defaultProvider", "defaultModelId"]));
       expect(res.body.diff.project).toEqual(expect.arrayContaining(["maxConcurrent", "worktreesDir"]));
       expect(mockApplyRemoteSettings).not.toHaveBeenCalled();
+    });
+
+    it("manual diff EXCLUDES moved keys even when a mid-migration remote peer still carries them (KTD-8)", async () => {
+      const movedProjectKey = MOVED_SETTINGS_KEYS[0]; // e.g. workflowStepTimeoutMs
+      const movedGlobalKey = MOVED_SETTINGS_KEYS.find((k) => k === "executionProvider") ?? MOVED_SETTINGS_KEYS[1];
+      const remoteNode = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(remoteNode);
+      // REAL post-broadcast shape: an unmigrated peer's /settings/scopes still lists
+      // moved keys flat under global/project, with values that DIFFER from local.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          global: { defaultProvider: "openai", [movedGlobalKey]: "anthropic" },
+          project: { maxConcurrent: 3, [movedProjectKey]: 999_999 },
+        }),
+      });
+      // Migrated local node: no moved keys present at all.
+      vi.spyOn(store, "getSettingsByScope").mockResolvedValue({
+        global: {},
+        project: { maxConcurrent: 1 },
+      });
+      vi.spyOn(store, "getGlobalSettingsStore").mockReturnValue({
+        getSettings: vi.fn().mockResolvedValue({ defaultProvider: "anthropic" }),
+      } as ReturnType<MockStore["getGlobalSettingsStore"]>);
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/nodes/node-remote-001/settings/pull",
+        JSON.stringify({ conflictResolution: "manual" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      // Non-moved differences still surface.
+      expect(res.body.diff.global).toContain("defaultProvider");
+      expect(res.body.diff.project).toContain("maxConcurrent");
+      // Moved keys NEVER appear in the diff, despite differing values.
+      expect(res.body.diff.global).not.toContain(movedGlobalKey);
+      expect(res.body.diff.project).not.toContain(movedProjectKey);
+      for (const k of MOVED_SETTINGS_KEYS) {
+        expect(res.body.diff.global).not.toContain(k);
+        expect(res.body.diff.project).not.toContain(k);
+      }
     });
 
     it("returns 400 for local node", async () => {
@@ -1061,6 +1106,44 @@ describe("Node settings sync routes", () => {
 
       expect(res.status).toBe(200);
       expect(mockStoreUpdateGlobalSettings).toHaveBeenCalledWith({ dashboardCurrentNodeId: "node-remote-001" });
+    });
+
+    it("drops moved keys from an inbound push: never applied to global settings, never in appliedFields (KTD-8)", async () => {
+      const localNode = createMockLocalNode();
+      mockListNodes.mockResolvedValue([localNode]);
+      mockApplyRemoteSettings.mockResolvedValue({
+        success: true,
+        globalCount: 1,
+        projectCount: 0,
+        authCount: 0,
+      });
+      const movedGlobalKey = MOVED_SETTINGS_KEYS.find((k) => k === "executionProvider") ?? MOVED_SETTINGS_KEYS[0];
+
+      // REAL post-broadcast payload from a mid-migration peer: a moved key rides
+      // along under `global` next to a legitimate new key.
+      const res = await request(
+        app,
+        "POST",
+        "/api/settings/sync-receive",
+        JSON.stringify({
+          sourceNodeId: "node-remote-001",
+          exportedAt: "2026-04-14T10:00:00.000Z",
+          checksum: "abc123",
+          version: 1,
+          global: { newLegitKey: "value-x", [movedGlobalKey]: "anthropic" },
+        }),
+        { "content-type": "application/json", "Authorization": `Bearer ${localNode.apiKey}` },
+      );
+
+      expect(res.status).toBe(200);
+      // The legit key is applied; the moved key is NOT in the patch.
+      const patches = mockStoreUpdateGlobalSettings.mock.calls.map((c) => c[0] as Record<string, unknown>);
+      const applied = Object.assign({}, ...patches) as Record<string, unknown>;
+      expect(applied.newLegitKey).toBe("value-x");
+      expect(applied[movedGlobalKey]).toBeUndefined();
+      // appliedFields reported back also excludes the moved key.
+      expect(res.body.appliedFields).toContain("newLegitKey");
+      expect(res.body.appliedFields).not.toContain(movedGlobalKey);
     });
 
     it("returns 401 when auth header is missing", async () => {

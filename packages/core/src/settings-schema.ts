@@ -7,6 +7,56 @@ export interface MergeRequestContractShadowSettingsSource {
 type CompleteSettings<T> = { [K in keyof Required<T>]: Required<T>[K] | undefined };
 
 /**
+ * The settings keys hard-MOVED to workflow settings in U4 (see
+ * `moved-settings.ts`). They are REMOVED from `DEFAULT_PROJECT_SETTINGS` (so they
+ * leave `PROJECT_SETTINGS_KEYS` / the save-split), but their FIELDS are retained
+ * on the `ProjectSettings` type for the engine's flat `settings.<key>` reads and
+ * the U3 effective-settings merge. `DEFAULT_PROJECT_SETTINGS` is therefore
+ * type-checked against `ProjectSettings` MINUS these keys — the type-vs-schema
+ * split documented in `moved-settings.ts`.
+ *
+ * This union is NOT compile-time-enforced against `MOVED_SETTINGS_KEYS`.
+ * Enforcement lives in `src/__tests__/settings-consistency.test.ts` (every key
+ * must belong to exactly one regime). A STALE entry here only loosens the `Omit`
+ * type — at worst it lets `DEFAULT_PROJECT_SETTINGS` drop a key it should keep;
+ * it can never re-add a key to the schema object. A MISSING entry surfaces as a
+ * type error on `DEFAULT_PROJECT_SETTINGS` if that key still has a default.
+ */
+type MovedProjectSettingsKey =
+  | "workflowStepTimeoutMs"
+  | "workflowStepScopeEnforcement"
+  | "planOnlyScopeLeakEnforcement"
+  | "workflowRevisionForkOnScopeMismatch"
+  | "strictScopeEnforcement"
+  | "runStepsInNewSessions"
+  | "maxParallelSteps"
+  | "buildRetryCount"
+  | "verificationFixRetries"
+  | "maxPostReviewFixes"
+  | "requirePrApproval"
+  | "requirePlanApproval"
+  | "reviewHandoffPolicy"
+  | "maxReviewerContextRetries"
+  | "maxReviewerFallbackRetries"
+  | "reflectionEnabled"
+  | "executionProvider"
+  | "executionModelId"
+  | "planningProvider"
+  | "planningModelId"
+  | "planningFallbackProvider"
+  | "planningFallbackModelId"
+  | "validatorProvider"
+  | "validatorModelId"
+  | "validatorFallbackProvider"
+  | "validatorFallbackModelId"
+  | "titleSummarizerProvider"
+  | "titleSummarizerModelId"
+  | "titleSummarizerFallbackProvider"
+  | "titleSummarizerFallbackModelId";
+
+type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
+
+/**
  * Settings schema source of truth.
  *
  * The default objects intentionally include optional keys with `undefined`
@@ -211,7 +261,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   mergeIntegrationWorktree: "reuse-task-worktree",
   mergeAdvanceAutoSync: "stash-and-ff",
   integrationBranch: undefined,
-  requirePrApproval: false,
+  // `requirePrApproval` MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
   pushAfterMerge: false,
   pushRemote: "origin",
   unavailableNodePolicy: "block",
@@ -238,19 +288,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   commitAuthorEnabled: true,
   commitAuthorName: "Fusion",
   commitAuthorEmail: "noreply@runfusion.ai",
-  planningProvider: undefined,
-  planningModelId: undefined,
-  planningFallbackProvider: undefined,
-  planningFallbackModelId: undefined,
-  // Project-level default override and execution lane
+  // Per-phase model lanes (planning/execution/validator) MOVED to workflow
+  // settings (U4) — see MOVED_SETTINGS_KEYS. The GLOBAL baseline lanes
+  // (executionGlobalProvider etc.) stay global; project default overrides stay.
+  // Project-level default override (NOT moved — stays project-scoped)
   defaultProviderOverride: undefined,
   defaultModelIdOverride: undefined,
-  executionProvider: undefined,
-  executionModelId: undefined,
-  validatorProvider: undefined,
-  validatorModelId: undefined,
-  validatorFallbackProvider: undefined,
-  validatorFallbackModelId: undefined,
   modelPresets: [],
   autoSelectModelPreset: false,
   completionDocumentationMode: "off",
@@ -285,15 +328,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
     maxRetries: 3,
   },
   reliabilityStatsResetAt: undefined,
-  workflowStepTimeoutMs: 360_000,
-  workflowStepScopeEnforcement: "block",
-  planOnlyScopeLeakEnforcement: "warn",
-  workflowRevisionForkOnScopeMismatch: true,
-  strictScopeEnforcement: false,
-  buildRetryCount: 0,
-  verificationFixRetries: 3,
+  // Step-execution knobs (workflowStepTimeoutMs, workflowStepScopeEnforcement,
+  // planOnlyScopeLeakEnforcement, workflowRevisionForkOnScopeMismatch,
+  // strictScopeEnforcement, buildRetryCount, verificationFixRetries,
+  // requirePlanApproval) MOVED to workflow settings (U4) — see
+  // MOVED_SETTINGS_KEYS. `buildTimeoutMs` is NOT moved (no engine reader) and
+  // stays a plain project setting:
   buildTimeoutMs: 300_000,
-  requirePlanApproval: false,
   ephemeralAgentsEnabled: true,
   agentProvisioning: {},
   sandboxProvisioning: {},
@@ -337,11 +378,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   autoUnpauseMaxDelayMs: 3_600_000,
   maxStuckKills: 6,
   maxBranchConflictRecoveries: 5,
-  maxReviewerContextRetries: 2,
-  maxReviewerFallbackRetries: 2,
+  // maxReviewerContextRetries / maxReviewerFallbackRetries MOVED to workflow
+  // settings (U4) — see MOVED_SETTINGS_KEYS.
   maxTotalRetriesBeforeFail: 25,
   preserveProgressOnStuckRequeue: true,
-  maxPostReviewFixes: 1,
+  // maxPostReviewFixes MOVED to workflow settings (U4).
   maxSpawnedAgentsPerParent: 5,
   maxSpawnedAgentsGlobal: 20,
   // Run maintenance (including WAL checkpointing) every 5 minutes by default.
@@ -370,10 +411,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryBackupScope: "all" as const,
   autoSummarizeTitles: false,
   useAiMergeCommitSummary: true,
-  titleSummarizerProvider: undefined,
-  titleSummarizerModelId: undefined,
-  titleSummarizerFallbackProvider: undefined,
-  titleSummarizerFallbackModelId: undefined,
+  // Title-summarizer model lanes MOVED to workflow settings (U4) —
+  // see MOVED_SETTINGS_KEYS.
   scripts: undefined,
   setupScript: undefined,
   insightExtractionEnabled: false,
@@ -394,17 +433,19 @@ export const DEFAULT_PROJECT_SETTINGS = {
   memoryDreamsSchedule: "0 4 * * *",
   tokenCap: undefined,
   taskTokenBudget: undefined,
-  runStepsInNewSessions: false,
-  maxParallelSteps: 2,
+  // runStepsInNewSessions / maxParallelSteps MOVED to workflow settings (U4) —
+  // see MOVED_SETTINGS_KEYS.
   missionStaleThresholdMs: 600_000,
   missionMaxTaskRetries: 3,
   missionHealthCheckIntervalMs: 300_000,
   agentPrompts: undefined,
   promptOverrides: undefined,
-  reflectionEnabled: false,
+  // reflectionEnabled MOVED to workflow settings (U4). reflectionIntervalMs /
+  // reflectionAfterTask have no engine reader, so they STAY plain project
+  // settings (catalog-shrink rule) and are NOT in MOVED_SETTINGS_KEYS.
   reflectionIntervalMs: 3_600_000,
   reflectionAfterTask: true,
-  reviewHandoffPolicy: "disabled",
+  // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
   showQuickChatFAB: false,
   chatAutoCleanupDays: 0,
   mailAutoCleanupDays: 0,
@@ -453,7 +494,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   researchDefaultTimeout: 300000,
   researchMaxSourcesPerRun: 20,
   researchMaxSynthesisRounds: 2,
-} satisfies CompleteSettings<ProjectSettings>;
+} satisfies CompleteSettings<ProjectSettingsSchema>;
 
 /**
  * Merged default settings (backward compatible).

@@ -124,150 +124,71 @@ describe("TaskStore", () => {
 
   // ── Planning/Validator Model Settings ────────────────────────────
 
-  describe("planning/validator model settings", () => {
-    it("saves and restores planning model settings via updateSettings", async () => {
+  // U4 hard-move: planning/validator (and execution/titleSummarizer) PROJECT model
+  // lanes MOVED to workflow settings. `updateSettings` now DROPS them (R8); their
+  // persistence/precedence is covered by the workflow-settings + settings-migration
+  // suites. This block asserts the new drop behavior at the project-settings layer.
+  describe("planning/validator model settings (moved to workflow settings)", () => {
+    it("drops planning model settings from project settings (not persisted)", async () => {
       await harness.store().updateSettings({
         planningProvider: "anthropic",
         planningModelId: "claude-sonnet-4-5",
-      });
-      const settings = await harness.store().getSettings();
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
-    });
-
-    it("saves and restores validator model settings via updateSettings", async () => {
-      await harness.store().updateSettings({
-        validatorProvider: "openai",
-        validatorModelId: "gpt-4o",
-      });
-      const settings = await harness.store().getSettings();
-      expect(settings.validatorProvider).toBe("openai");
-      expect(settings.validatorModelId).toBe("gpt-4o");
-    });
-
-    it("saves and restores both planning and validator model settings via updateSettings", async () => {
-      await harness.store().updateSettings({
-        planningProvider: "anthropic",
-        planningModelId: "claude-sonnet-4-5",
-        validatorProvider: "openai",
-        validatorModelId: "gpt-4o",
-      });
-      const settings = await harness.store().getSettings();
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
-      expect(settings.validatorProvider).toBe("openai");
-      expect(settings.validatorModelId).toBe("gpt-4o");
-    });
-
-    it("clears planning model settings when set to undefined", async () => {
-      await harness.store().updateSettings({
-        planningProvider: "anthropic",
-        planningModelId: "claude-sonnet-4-5",
-      });
-      await harness.store().updateSettings({
-        planningProvider: undefined,
-        planningModelId: undefined,
       });
       const settings = await harness.store().getSettings();
       expect(settings.planningProvider).toBeUndefined();
       expect(settings.planningModelId).toBeUndefined();
+
+      const config = JSON.parse(await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8"));
+      expect((config.settings as any).planningProvider).toBeUndefined();
+      expect((config.settings as any).planningModelId).toBeUndefined();
     });
 
-    it("clears validator model settings when set to undefined", async () => {
+    it("drops validator model settings from project settings (not persisted)", async () => {
       await harness.store().updateSettings({
         validatorProvider: "openai",
         validatorModelId: "gpt-4o",
-      });
-      await harness.store().updateSettings({
-        validatorProvider: undefined,
-        validatorModelId: undefined,
       });
       const settings = await harness.store().getSettings();
       expect(settings.validatorProvider).toBeUndefined();
       expect(settings.validatorModelId).toBeUndefined();
     });
 
-    it("persists planning/validator settings in project config", async () => {
+    it("drops both planning and validator model settings together", async () => {
       await harness.store().updateSettings({
         planningProvider: "anthropic",
-        planningModelId: "claude-opus-4",
+        planningModelId: "claude-sonnet-4-5",
         validatorProvider: "openai",
-        validatorModelId: "gpt-4-turbo",
+        validatorModelId: "gpt-4o",
       });
-
-      // Verify the settings are in the project config file
-      const configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
-      const config = JSON.parse(configRaw);
-      expect(config.settings.planningProvider).toBe("anthropic");
-      expect(config.settings.planningModelId).toBe("claude-opus-4");
-      expect(config.settings.validatorProvider).toBe("openai");
-      expect(config.settings.validatorModelId).toBe("gpt-4-turbo");
+      const settings = await harness.store().getSettings();
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.validatorProvider).toBeUndefined();
     });
   });
 
   // ── Dual-Scope Lane Model Settings (FN-1710) ─────────────────────
 
   describe("dual-scope lane model settings", () => {
-    // Legacy backward compatibility tests
-    it("legacy: project config with only planningProvider/planningModelId round-trips unchanged", async () => {
+    // U4 hard-move: the per-phase PROJECT lanes are dropped by updateSettings.
+    it("moved project lanes are dropped, not round-tripped through project config", async () => {
       await harness.store().updateSettings({
         planningProvider: "anthropic",
         planningModelId: "claude-sonnet-4-5",
-      });
-
-      const settings = await harness.store().getSettings();
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
-
-      // Verify it's persisted correctly
-      const configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
-      const config = JSON.parse(configRaw);
-      expect(config.settings.planningProvider).toBe("anthropic");
-      expect(config.settings.planningModelId).toBe("claude-sonnet-4-5");
-    });
-
-    it("legacy: project config with only validatorProvider/validatorModelId round-trips unchanged", async () => {
-      await harness.store().updateSettings({
         validatorProvider: "openai",
         validatorModelId: "gpt-4o",
-      });
-
-      const settings = await harness.store().getSettings();
-      expect(settings.validatorProvider).toBe("openai");
-      expect(settings.validatorModelId).toBe("gpt-4o");
-
-      const configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
-      const config = JSON.parse(configRaw);
-      expect(config.settings.validatorProvider).toBe("openai");
-      expect(config.settings.validatorModelId).toBe("gpt-4o");
-    });
-
-    it("legacy: project config with only titleSummarizerProvider/titleSummarizerModelId round-trips unchanged", async () => {
-      await harness.store().updateSettings({
         titleSummarizerProvider: "google",
         titleSummarizerModelId: "gemini-2.5-pro",
       });
 
       const settings = await harness.store().getSettings();
-      expect(settings.titleSummarizerProvider).toBe("google");
-      expect(settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.titleSummarizerProvider).toBeUndefined();
 
-      const configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
-      const config = JSON.parse(configRaw);
-      expect(config.settings.titleSummarizerProvider).toBe("google");
-      expect(config.settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
-    });
-
-    it("legacy: partial provider without modelId behaves correctly", async () => {
-      // Set provider only without modelId (partial legacy pair)
-      await harness.store().updateSettings({
-        planningProvider: "anthropic",
-        // No planningModelId
-      });
-
-      const settings = await harness.store().getSettings();
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBeUndefined();
+      const config = JSON.parse(await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8"));
+      expect((config.settings as any).planningProvider).toBeUndefined();
+      expect((config.settings as any).validatorProvider).toBeUndefined();
+      expect((config.settings as any).titleSummarizerProvider).toBeUndefined();
     });
 
     // New default override fields
@@ -300,26 +221,26 @@ describe("TaskStore", () => {
     });
 
     // New execution lane fields
-    it("persists executionProvider/executionModelId via updateSettings", async () => {
+    it("executionProvider/executionModelId are DROPPED from project settings (moved)", async () => {
       await harness.store().updateSettings({
         executionProvider: "anthropic",
         executionModelId: "claude-opus-4",
       });
 
       const settings = await harness.store().getSettings();
-      expect(settings.executionProvider).toBe("anthropic");
-      expect(settings.executionModelId).toBe("claude-opus-4");
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.executionModelId).toBeUndefined();
     });
 
-    it("executionProvider/executionModelId appear in project scope", async () => {
+    it("executionProvider/executionModelId never appear in project scope (moved)", async () => {
       await harness.store().updateSettings({
         executionProvider: "openai",
         executionModelId: "gpt-4-turbo",
       });
 
       const { project } = await harness.store().getSettingsByScope();
-      expect(project.executionProvider).toBe("openai");
-      expect(project.executionModelId).toBe("gpt-4-turbo");
+      expect((project as any).executionProvider).toBeUndefined();
+      expect((project as any).executionModelId).toBeUndefined();
     });
 
     it("executionProvider/executionModelId default to undefined", async () => {
@@ -399,12 +320,12 @@ describe("TaskStore", () => {
         planningModelId: "gpt-4o",
       });
 
-      // Both should be readable with no crashes
+      // Global lane stays; project lane is MOVED → dropped.
       const settings = await harness.store().getSettings();
       expect(settings.planningGlobalProvider).toBe("anthropic");
       expect(settings.planningGlobalModelId).toBe("claude-sonnet-4-5");
-      expect(settings.planningProvider).toBe("openai");
-      expect(settings.planningModelId).toBe("gpt-4o");
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
     });
 
     it("mixed shape: project validatorProvider + global validatorGlobalProvider is stable", async () => {
@@ -421,8 +342,8 @@ describe("TaskStore", () => {
       const settings = await harness.store().getSettings();
       expect(settings.validatorGlobalProvider).toBe("google");
       expect(settings.validatorGlobalModelId).toBe("gemini-2.5-pro");
-      expect(settings.validatorProvider).toBe("anthropic");
-      expect(settings.validatorModelId).toBe("claude-opus-4");
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.validatorModelId).toBeUndefined();
     });
 
     it("mixed shape: project titleSummarizerProvider + global titleSummarizerGlobalProvider is stable", async () => {
@@ -439,8 +360,8 @@ describe("TaskStore", () => {
       const settings = await harness.store().getSettings();
       expect(settings.titleSummarizerGlobalProvider).toBe("openai");
       expect(settings.titleSummarizerGlobalModelId).toBe("gpt-4o-mini");
-      expect(settings.titleSummarizerProvider).toBe("anthropic");
-      expect(settings.titleSummarizerModelId).toBe("claude-haiku");
+      expect(settings.titleSummarizerProvider).toBeUndefined();
+      expect(settings.titleSummarizerModelId).toBeUndefined();
     });
 
     // Global-only key filtering tests
@@ -496,21 +417,45 @@ describe("TaskStore", () => {
   describe("model lane persistence regression", () => {
     // Table-driven test matrix: verifies all model lane fields persist correctly
     // Fields are split by their correct scope (global or project)
+    // U4 hard-move: the per-PHASE project lanes (execution/planning/validator/
+    // titleSummarizer + fallbacks) MOVED to workflow settings and no longer
+    // persist through `updateSettings` (the stale-writer guard drops them). They
+    // are covered by the workflow-settings store + settings-migration suites.
+    // Only `defaultProviderOverride`/`defaultModelIdOverride` remain project-scoped.
     const projectModelLanePairs = [
-      // Execution lane (project override)
-      { provider: "executionProvider", modelId: "executionModelId" },
-      // Planning lane (project override + fallback)
-      { provider: "planningProvider", modelId: "planningModelId" },
-      { provider: "planningFallbackProvider", modelId: "planningFallbackModelId" },
-      // Validator lane (project override + fallback)
-      { provider: "validatorProvider", modelId: "validatorModelId" },
-      { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId" },
-      // Summarizer lane (project override + fallback)
-      { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId" },
-      { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId" },
-      // Default override (project-level override of global defaults)
+      // Default override (project-level override of global defaults) — NOT moved.
       { provider: "defaultProviderOverride", modelId: "defaultModelIdOverride" },
     ] as const;
+
+    // The moved lanes, asserted to be DROPPED from project settings (R8).
+    const movedProjectModelLanePairs = [
+      { provider: "executionProvider", modelId: "executionModelId" },
+      { provider: "planningProvider", modelId: "planningModelId" },
+      { provider: "planningFallbackProvider", modelId: "planningFallbackModelId" },
+      { provider: "validatorProvider", modelId: "validatorModelId" },
+      { provider: "validatorFallbackProvider", modelId: "validatorFallbackModelId" },
+      { provider: "titleSummarizerProvider", modelId: "titleSummarizerModelId" },
+      { provider: "titleSummarizerFallbackProvider", modelId: "titleSummarizerFallbackModelId" },
+    ] as const;
+
+    it.each(movedProjectModelLanePairs)(
+      "moved lane $provider/$modelId is DROPPED from project settings (U4 hard-move)",
+      async ({ provider, modelId }) => {
+        const patch: Record<string, string> = {};
+        patch[provider] = "anthropic";
+        patch[modelId] = "claude-opus-4";
+        await harness.store().updateSettings(patch);
+
+        const settings = await harness.store().getSettings();
+        expect((settings as any)[provider]).toBeUndefined();
+        expect((settings as any)[modelId]).toBeUndefined();
+
+        const configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
+        const config = JSON.parse(configRaw);
+        expect((config.settings as any)[provider]).toBeUndefined();
+        expect((config.settings as any)[modelId]).toBeUndefined();
+      },
+    );
 
     const globalModelLanePairs = [
       // Default baseline
@@ -740,13 +685,11 @@ describe("TaskStore", () => {
         planningGlobalModelId: "claude-sonnet-4-5",
       });
 
+      // U4 hard-move: the per-phase project lanes are dropped; use a remaining
+      // project-scoped key (defaultProviderOverride) for the project-scope side.
       await harness.store().updateSettings({
-        planningProvider: "anthropic",
-        planningModelId: "claude-opus-4",
-        planningFallbackProvider: "openai",
-        planningFallbackModelId: "gpt-4o-mini",
-        executionProvider: "google",
-        executionModelId: "gemini-2.5-pro",
+        defaultProviderOverride: "anthropic",
+        defaultModelIdOverride: "claude-opus-4",
       });
 
       const { global, project } = await harness.store().getSettingsByScope();
@@ -759,20 +702,15 @@ describe("TaskStore", () => {
       expect(global.planningGlobalProvider).toBe("anthropic");
       expect(global.planningGlobalModelId).toBe("claude-sonnet-4-5");
 
-      // Project scope
-      expect(project.planningProvider).toBe("anthropic");
-      expect(project.planningModelId).toBe("claude-opus-4");
-      expect(project.planningFallbackProvider).toBe("openai");
-      expect(project.planningFallbackModelId).toBe("gpt-4o-mini");
-      expect(project.executionProvider).toBe("google");
-      expect(project.executionModelId).toBe("gemini-2.5-pro");
+      // Project scope (remaining, non-moved keys)
+      expect(project.defaultProviderOverride).toBe("anthropic");
+      expect(project.defaultModelIdOverride).toBe("claude-opus-4");
 
-      // Verify no cross-contamination
-      expect((global as any).planningProvider).toBeUndefined();
-      expect((global as any).planningFallbackProvider).toBeUndefined();
-      expect((global as any).executionProvider).toBeUndefined();
+      // Verify no cross-contamination + moved lanes never resurface in project scope
       expect((project as any).planningGlobalProvider).toBeUndefined();
       expect((project as any).defaultProvider).toBeUndefined();
+      expect((project as any).planningProvider).toBeUndefined();
+      expect((project as any).executionProvider).toBeUndefined();
     });
   });
 
@@ -893,24 +831,25 @@ describe("TaskStore", () => {
       expect(settings.fallbackModelId).toBe("gpt-4o");
       expect(settings.planningGlobalProvider).toBe("google");
       expect(settings.planningGlobalModelId).toBe("gemini-2.5-pro");
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
-      expect(settings.planningFallbackProvider).toBe("openai");
-      expect(settings.planningFallbackModelId).toBe("gpt-4o-mini");
       expect(settings.executionGlobalProvider).toBe("anthropic");
       expect(settings.executionGlobalModelId).toBe("claude-opus-4");
-      expect(settings.executionProvider).toBe("google");
-      expect(settings.executionModelId).toBe("gemini-2.5-pro");
-      expect(settings.validatorProvider).toBe("anthropic");
-      expect(settings.validatorModelId).toBe("claude-opus-4");
-      expect(settings.validatorFallbackProvider).toBe("openai");
-      expect(settings.validatorFallbackModelId).toBe("gpt-4o");
-      expect(settings.titleSummarizerProvider).toBe("google");
-      expect(settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
       expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
       expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
-      expect(settings.titleSummarizerFallbackProvider).toBe("anthropic");
-      expect(settings.titleSummarizerFallbackModelId).toBe("claude-haiku");
+      // U4 hard-move: the per-phase PROJECT lanes are dropped by updateSettings.
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
+      expect(settings.planningFallbackProvider).toBeUndefined();
+      expect(settings.planningFallbackModelId).toBeUndefined();
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.executionModelId).toBeUndefined();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.validatorModelId).toBeUndefined();
+      expect(settings.validatorFallbackProvider).toBeUndefined();
+      expect(settings.validatorFallbackModelId).toBeUndefined();
+      expect(settings.titleSummarizerProvider).toBeUndefined();
+      expect(settings.titleSummarizerModelId).toBeUndefined();
+      expect(settings.titleSummarizerFallbackProvider).toBeUndefined();
+      expect(settings.titleSummarizerFallbackModelId).toBeUndefined();
     });
   });
 
@@ -932,9 +871,11 @@ describe("TaskStore", () => {
 
       const settings = await harness.store().getSettings();
 
-      // Project pair should win
-      expect(settings.planningProvider).toBe("openai");
-      expect(settings.planningModelId).toBe("gpt-4o");
+      // U4 hard-move: project lane no longer persists in project settings; the
+      // project-vs-global precedence now resolves through workflow effective
+      // settings (covered by the workflow-settings/migration suites).
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
 
       // Global should still be readable
       expect(settings.planningGlobalProvider).toBe("anthropic");
@@ -996,9 +937,9 @@ describe("TaskStore", () => {
 
       const settings = await harness.store().getSettings();
 
-      // Project override should win
-      expect(settings.executionProvider).toBe("openai");
-      expect(settings.executionModelId).toBe("gpt-4o");
+      // U4 hard-move: execution project lane dropped from project settings.
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.executionModelId).toBeUndefined();
 
       // Global should still be accessible
       expect(settings.executionGlobalProvider).toBe("google");
@@ -1050,31 +991,23 @@ describe("TaskStore", () => {
       expect(settings.fallbackProvider).toBe("openai");
       expect(settings.fallbackModelId).toBe("gpt-4o");
 
-      expect(settings.executionProvider).toBe("openai");
-      expect(settings.executionModelId).toBe("gpt-4o-mini");
+      // Global lanes stay; U4 hard-move drops every per-phase PROJECT lane.
       expect(settings.executionGlobalProvider).toBe("google");
       expect(settings.executionGlobalModelId).toBe("gemini-2.5-pro");
-
-      expect(settings.planningProvider).toBe("google");
-      expect(settings.planningModelId).toBe("gemini-2.5-flash");
       expect(settings.planningGlobalProvider).toBe("anthropic");
       expect(settings.planningGlobalModelId).toBe("claude-opus-4");
-      expect(settings.planningFallbackProvider).toBe("anthropic");
-      expect(settings.planningFallbackModelId).toBe("claude-sonnet-4-5");
-
-      expect(settings.validatorProvider).toBe("google");
-      expect(settings.validatorModelId).toBe("gemini-2.5-pro");
       expect(settings.validatorGlobalProvider).toBe("openai");
       expect(settings.validatorGlobalModelId).toBe("gpt-4-turbo");
-      expect(settings.validatorFallbackProvider).toBe("anthropic");
-      expect(settings.validatorFallbackModelId).toBe("claude-opus-4");
-
-      expect(settings.titleSummarizerProvider).toBe("openai");
-      expect(settings.titleSummarizerModelId).toBe("gpt-4o");
       expect(settings.titleSummarizerGlobalProvider).toBe("anthropic");
       expect(settings.titleSummarizerGlobalModelId).toBe("claude-haiku");
-      expect(settings.titleSummarizerFallbackProvider).toBe("google");
-      expect(settings.titleSummarizerFallbackModelId).toBe("gemini-2.5-flash");
+
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningFallbackProvider).toBeUndefined();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.validatorFallbackProvider).toBeUndefined();
+      expect(settings.titleSummarizerProvider).toBeUndefined();
+      expect(settings.titleSummarizerFallbackProvider).toBeUndefined();
     });
   });
 
@@ -1096,11 +1029,11 @@ describe("TaskStore", () => {
 
       const settings = await harness.store().getSettings();
 
-      // Both should coexist
+      // Global lane stays; U4 drops the project lane.
       expect(settings.executionGlobalProvider).toBe("anthropic");
       expect(settings.executionGlobalModelId).toBe("claude-sonnet-4-5");
-      expect(settings.planningProvider).toBe("openai");
-      expect(settings.planningModelId).toBe("gpt-4o");
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
     });
 
     it("mixed legacy canonical shapes resolve deterministically", async () => {
@@ -1132,17 +1065,12 @@ describe("TaskStore", () => {
 
       const settings = await harness.store().getSettings();
 
-      // Legacy shapes preserved
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
-      expect(settings.validatorProvider).toBe("openai");
-      expect(settings.validatorModelId).toBe("gpt-4o");
-      expect(settings.titleSummarizerProvider).toBe("google");
-      expect(settings.titleSummarizerModelId).toBe("gemini-2.5-pro");
-
-      // Canonical shapes preserved
-      expect(settings.executionProvider).toBe("anthropic");
-      expect(settings.executionModelId).toBe("claude-opus-4");
+      // U4 hard-move: all per-phase PROJECT lanes are dropped from project settings.
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.titleSummarizerProvider).toBeUndefined();
+      expect(settings.executionProvider).toBeUndefined();
+      expect(settings.executionModelId).toBeUndefined();
 
       // Global canonical shapes preserved
       expect(settings.planningGlobalProvider).toBe("anthropic");
@@ -1151,66 +1079,43 @@ describe("TaskStore", () => {
       expect(settings.validatorGlobalModelId).toBe("gpt-4o-mini");
     });
 
-    it("legacy format: planningProvider without planningModelId is valid partial pair", async () => {
-      await harness.store().updateSettings({
-        planningProvider: "anthropic",
-        // planningModelId intentionally omitted
-      });
-
+    // U4 hard-move: partial/full PROJECT lane writes are dropped — they no longer
+    // persist in project settings. (Workflow-setting partial-pair semantics are
+    // covered by the workflow-settings suite.)
+    it("moved project lane: planningProvider without planningModelId is dropped", async () => {
+      await harness.store().updateSettings({ planningProvider: "anthropic" });
       const settings = await harness.store().getSettings();
-      expect(settings.planningProvider).toBe("anthropic");
+      expect(settings.planningProvider).toBeUndefined();
       expect(settings.planningModelId).toBeUndefined();
     });
 
-    it("legacy format: validatorProvider without validatorModelId is valid partial pair", async () => {
-      await harness.store().updateSettings({
-        validatorProvider: "openai",
-        // validatorModelId intentionally omitted
-      });
-
+    it("moved project lane: validatorProvider without validatorModelId is dropped", async () => {
+      await harness.store().updateSettings({ validatorProvider: "openai" });
       const settings = await harness.store().getSettings();
-      expect(settings.validatorProvider).toBe("openai");
+      expect(settings.validatorProvider).toBeUndefined();
       expect(settings.validatorModelId).toBeUndefined();
     });
 
-    it("canonical format: executionProvider without executionModelId is valid partial pair", async () => {
-      await harness.store().updateSettings({
-        executionProvider: "google",
-        // executionModelId intentionally omitted
-      });
-
+    it("moved project lane: executionProvider without executionModelId is dropped", async () => {
+      await harness.store().updateSettings({ executionProvider: "google" });
       const settings = await harness.store().getSettings();
-      expect(settings.executionProvider).toBe("google");
+      expect(settings.executionProvider).toBeUndefined();
       expect(settings.executionModelId).toBeUndefined();
     });
 
-    it("mixed: full pair + partial pair coexist in same lane", async () => {
-      // Set full planning pair
+    it("moved project lanes: full + partial writes all drop from project settings", async () => {
       await harness.store().updateSettings({
         planningProvider: "anthropic",
         planningModelId: "claude-sonnet-4-5",
-      });
-
-      // Set partial validator pair (only provider)
-      await harness.store().updateSettings({
         validatorProvider: "openai",
-        // validatorModelId intentionally omitted
-      });
-
-      // Set full execution pair
-      await harness.store().updateSettings({
         executionProvider: "google",
         executionModelId: "gemini-2.5-pro",
       });
 
       const settings = await harness.store().getSettings();
-
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
-      expect(settings.validatorProvider).toBe("openai");
-      expect(settings.validatorModelId).toBeUndefined();
-      expect(settings.executionProvider).toBe("google");
-      expect(settings.executionModelId).toBe("gemini-2.5-pro");
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.validatorProvider).toBeUndefined();
+      expect(settings.executionProvider).toBeUndefined();
     });
   });
 
@@ -1222,9 +1127,11 @@ describe("TaskStore", () => {
         planningModelId: "claude-sonnet-4-5",
       });
 
+      // U4 hard-move: the project lane never persists (dropped on write), so it is
+      // already undefined; a subsequent null-clear is a harmless no-op.
       let settings = await harness.store().getSettings();
-      expect(settings.planningProvider).toBe("anthropic");
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5");
+      expect(settings.planningProvider).toBeUndefined();
+      expect(settings.planningModelId).toBeUndefined();
 
       // Clear with null
       // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
@@ -1392,8 +1299,10 @@ describe("TaskStore", () => {
       await harness.store().updateSettings({ planningProvider: null });
 
       const settings = await harness.store().getSettings();
+      // U4 hard-move: both moved-lane fields are dropped on the initial write, so
+      // neither persists in project settings.
       expect(settings.planningProvider).toBeUndefined();
-      expect(settings.planningModelId).toBe("claude-sonnet-4-5"); // Preserved
+      expect(settings.planningModelId).toBeUndefined();
     });
 
     it("cleared model settings fall back to undefined (not default values)", async () => {
@@ -1426,26 +1335,23 @@ describe("TaskStore", () => {
       expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
     });
 
-    it("cleared model settings removed from persisted config", async () => {
+    it("moved model settings are never persisted to config (dropped on write)", async () => {
       await harness.store().updateSettings({
         planningProvider: "anthropic",
         planningModelId: "claude-sonnet-4-5",
       });
 
-      // Verify persisted
-      let configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
-      let config = JSON.parse(configRaw);
-      expect((config.settings as any).planningProvider).toBe("anthropic");
+      // U4 hard-move: never persisted to project config in the first place.
+      let config = JSON.parse(await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8"));
+      expect((config.settings as any).planningProvider).toBeUndefined();
 
-      // Clear with null
+      // Null-clear is a harmless no-op; still absent.
       // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
       await harness.store().updateSettings({ planningProvider: null });
       // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
       await harness.store().updateSettings({ planningModelId: null });
 
-      // Verify removed from persisted config
-      configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
-      config = JSON.parse(configRaw);
+      config = JSON.parse(await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8"));
       expect((config.settings as any).planningProvider).toBeUndefined();
       expect((config.settings as any).planningModelId).toBeUndefined();
     });

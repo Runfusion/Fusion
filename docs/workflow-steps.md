@@ -492,6 +492,34 @@ Parity coverage includes flag-OFF no-op behavior, lifecycle ordering parity vs l
 | `GET /api/workflow-step-templates` | List built-in templates |
 | `POST /api/workflow-step-templates/:id/create` | Materialize template as workflow step |
 
+## Workflow Settings
+
+Workflows can declare **typed settings** in their IR — the same authoring pattern as
+custom task fields, one level up. A setting declaration carries `{ id, name, type,
+default?, options?, description? }` with the type whitelist `string | text | number |
+boolean | enum | multi-enum`. Declarations are validated at save (unique ids, type
+whitelist, options only for enum kinds, default validates against its own type).
+
+Setting **values** persist per `(workflowId, projectId)` in a dedicated value table,
+separate from the declarations: built-in workflows declare settings but their
+declarations are non-editable, while their *values* are writable per project. The
+engine resolves *effective settings* per task as `stored value ?? declaration
+default`, dropping any stored value that no longer validates against the current
+declaration (drop-on-orphan) and falling back to the default.
+
+The **step-execution**, **review/approval**, and **per-phase model-lane** knobs that
+used to be project settings are now workflow settings declared by `builtin:coding`
+with their former defaults. See
+[Settings Reference → Workflow Settings](./settings-reference.md#workflow-settings)
+for the full moved-key catalog, the editor walkthrough, and the export/sync posture.
+
+Authoring surfaces:
+
+- **Workflow editor → Settings panel** — Definitions (declarations/defaults) and
+  Values (per-project) tabs.
+- **Agent tools** — `fn_workflow_create`/`fn_workflow_update` accept `settings`
+  declarations; `fn_workflow_settings` reads/writes values.
+
 ## Screenshot
 
 ![Workflow step manager](./screenshots/workflow-steps.png)

@@ -1,5 +1,6 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 
 /**
  * The built-in default workflow as a v2 IR. Its six columns have ids that are
@@ -59,6 +60,9 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "review", to: "end", condition: "failure" },
     { from: "merge", to: "end", condition: "failure" },
   ],
+  // Workflow-settings (U1, R4): declare the full moved-key catalog with defaults
+  // byte-equal to today's DEFAULT_PROJECT_SETTINGS literals. Inert until U3.
+  settings: BUILTIN_WORKFLOW_SETTINGS,
 };
 
 export const BUILTIN_CODING_WORKFLOW_IR = parseWorkflowIr(RAW_BUILTIN_CODING_WORKFLOW_IR);

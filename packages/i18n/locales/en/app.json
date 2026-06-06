@@ -5067,6 +5067,13 @@
       "selectWorktreesDir": "Select worktrees directory",
       "tryAgain": "Try again"
     },
+    "movedStub": {
+      "openWorkflowSettings": "Open workflow settings",
+      "stepExecution": "Step execution settings (run steps in new sessions, max parallel steps) now live on the workflow.",
+      "reviewVerification": "Review, verification auto-fix, and scope-enforcement settings now live on the workflow.",
+      "modelLanes": "Per-phase model lanes (execution, planning, reviewer, their fallbacks, and the title summarizer) now live on the workflow.",
+      "summarizerModelInline": "The model used for summarization now lives on the workflow (title summarizer lane). Open workflow settings to choose it."
+    },
     "cliAgents": {
       "heading": "CLI Agents",
       "description": "Per-adapter launch configuration for CLI coding agents driven in engine-owned terminals.",

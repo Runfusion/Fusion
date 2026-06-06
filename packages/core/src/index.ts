@@ -52,6 +52,8 @@ export {
   stripApprovalBypassFlags,
   WorkflowIrError,
   DEFAULT_WORKFLOW_COLUMN_IDS,
+  WORKFLOW_SETTING_TYPES,
+  SETTING_RENDER_WIDGETS,
 } from "./workflow-ir.js";
 export type {
   WorkflowIr,
@@ -73,6 +75,11 @@ export type {
   WorkflowFieldType,
   WorkflowFieldOption,
   WorkflowFieldRender,
+  // Workflow-settings (U1): typed setting declaration IR types.
+  WorkflowSettingDefinition,
+  WorkflowSettingType,
+  WorkflowSettingOption,
+  WorkflowSettingRender,
   // CLI Agent Executor (U7): node-config executor typing.
   WorkflowNodeExecutorKind,
   WorkflowNodeExecutorConfig,
@@ -90,6 +97,15 @@ export type {
 } from "./column-agent-resolver.js";
 export { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 export { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
+export { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
+export {
+  MOVED_SETTINGS_KEYS,
+  SETTINGS_MIGRATION_VERSION,
+  SETTINGS_MIGRATION_MARKER_KEY,
+  isMovedSettingsKey,
+  stripMovedSettingsKeys,
+  patchContainsMovedKey,
+} from "./moved-settings.js";
 
 // ── Trait model (U2) ─────────────────────────────────────────────────
 export type {
@@ -228,6 +244,20 @@ export type {
   FieldReconciliation,
 } from "./task-fields.js";
 export {
+  validateSettingValuePatch,
+  resolveEffectiveSettingValues,
+  findOrphanedSettingValues,
+  makeWorkflowSettingRejection,
+  WorkflowSettingRejectionError,
+  WORKFLOW_SETTING_REJECTION_CODES,
+} from "./workflow-settings.js";
+export type {
+  WorkflowSettingRejection,
+  WorkflowSettingRejectionCode,
+  SettingValuePatchResult,
+  OrphanedSettingValue,
+} from "./workflow-settings.js";
+export {
   readTransitionPending,
   writeTransitionPending,
   clearTransitionPending,
@@ -261,6 +291,14 @@ export {
   resolveWorkflowIrById,
   type WorkflowIrResolverStore,
 } from "./workflow-ir-resolver.js";
+export {
+  resolveEffectiveSettings,
+  resolveEffectiveSettingsDetailed,
+  resolveEffectiveSettingsById,
+  type WorkflowSettingsResolverStore,
+  type EffectiveSettingsResult,
+  type EffectiveSettingsTaskRef,
+} from "./workflow-settings-resolver.js";
 
 // ── Engine wiring (set by @fusion/engine at module load) ────────────
 export {
@@ -834,12 +872,14 @@ export {
   generateExportFilename,
   readExportFile,
   writeExportFile,
+  SETTINGS_EXPORT_VERSION,
 } from "./settings-export.js";
 export type {
   SettingsExportData,
   ExportSettingsOptions,
   ImportSettingsOptions,
   ImportResult,
+  WorkflowSettingsExportSection,
 } from "./settings-export.js";
 
 // ── AI Summarization ─────────────────────────────────────────────────────

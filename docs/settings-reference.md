@@ -173,9 +173,74 @@ fn settings set updateCheckEnabled false
 
 ---
 
+## Workflow Settings
+
+Some knobs that used to live in this Settings reference as project settings are now
+**workflow settings**: they are declared by a workflow and their values are stored
+**per `(workflow, project)`**, not as ambient project settings. A workflow models
+*how* tasks execute, so the timeouts, review gates, and per-phase model lanes that
+govern that execution belong to the workflow.
+
+**Where to set them.** Open the **workflow editor** (the workflow node editor in the
+dashboard) and select the **Settings** panel. It has two tabs:
+
+- **Definitions** — the typed declarations and defaults (read-only for the built-in
+  `builtin:coding` workflow; editable for custom workflows).
+- **Values** — the per-project values for the workflow that is open. Values are
+  editable for any workflow, including built-ins. Edits batch and commit through a
+  single **Save** in the Values tab.
+
+**How values resolve.** The engine resolves *effective settings* per task as
+`stored value ?? declaration default`. A built-in workflow with no stored value
+falls back to the declaration default, which is byte-equal to the legacy project
+default — so an untuned project behaves exactly as before. Switching a project to a
+**new** custom workflow starts that workflow from its own declaration defaults, not
+the project's prior customized values.
+
+**Agents.** `fn_workflow_create`/`fn_workflow_update` accept `settings` declarations,
+and the `fn_workflow_settings` tool reads and writes values with the same typed
+validation as the editor (invalid values are rejected, never persisted). See
+[engine tools reference](../packages/cli/skill/fusion/references/engine-tools.md).
+
+**Sync & export.**
+
+- Workflow settings are **not synced across nodes yet** (a node-sync channel for the
+  value table is planned). Cross-node settings sync filters these keys out of its
+  diff and surfaces a "Workflow settings are not synced across nodes yet" note.
+- Workflow setting values **are** included in **settings export v2** under a
+  `workflowSettings` section keyed `workflowId → { settingKey: value }`. Importing a
+  v1 export upgrades any moved key it carries into the appropriate workflow's values
+  instead of writing it back into project settings.
+
+### Where did my setting go?
+
+These groups moved out of project settings and into workflow settings (built-in
+`builtin:coding` declares all of them with their former defaults):
+
+| Group | Keys (examples) |
+|---|---|
+| **Step execution** | `workflowStepTimeoutMs`, `runStepsInNewSessions`, `maxParallelSteps`, `workflowStepScopeEnforcement`, `strictScopeEnforcement`, `verificationFixRetries`, `maxPostReviewFixes`, `buildRetryCount` |
+| **Review / approval** | `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries` |
+| **Per-phase model lanes** | `executionProvider`/`executionModelId`, `planningProvider`/`planningModelId` (+ fallbacks), `validatorProvider`/`validatorModelId` (+ fallbacks), `titleSummarizerProvider`/`titleSummarizerModelId` (+ fallback) |
+
+In the dashboard Settings modal, the former locations now show a short redirect stub
+linking to the workflow editor (for one release). Set these in the workflow editor's
+**Settings → Values** tab for the workflow you want to tune.
+
+> Note: the global baseline model lanes (`executionGlobalProvider` etc.) and
+> integrity guarantees stay where they are — only the per-workflow process policy
+> moved.
+
 ## Project Settings
 
 Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`.
+
+> **Moved keys retained for reference.** Some rows below — the step-execution,
+> review/approval, and per-phase model-lane keys listed under
+> [Where did my setting go?](#where-did-my-setting-go) — are no longer project
+> settings. They are documented here for type/default reference only; configure them
+> in the **workflow editor → Settings → Values** tab. They are not writable through
+> `PUT /api/settings`.
 
 | Setting | Type | Default | Description |
 |---|---|---:|---|

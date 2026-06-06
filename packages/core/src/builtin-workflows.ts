@@ -1,4 +1,5 @@
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import type { WorkflowDefinition } from "./workflow-definition-types.js";
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
@@ -43,6 +44,14 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
     layout[node.id] = { x: 60 + i * 170, y: 160 };
   });
   const ir = parseWorkflowIr({ version: "v1", name: spec.name, nodes, edges });
+  // Attach the moved-key settings catalog (U1/U3, R4) so every built-in workflow
+  // carries its declarations through the resolver path (resolveWorkflowIrById →
+  // resolveEffectiveSettings). v1 graphs upgrade to v2 on parse, so the parsed IR
+  // is v2 and can carry `settings`. Defaults are byte-equal to legacy
+  // DEFAULT_PROJECT_SETTINGS literals, so this is behavior-inert.
+  if (ir.version === "v2") {
+    ir.settings = BUILTIN_WORKFLOW_SETTINGS;
+  }
   return {
     id: spec.id,
     name: spec.name,

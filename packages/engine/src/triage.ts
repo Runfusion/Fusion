@@ -35,6 +35,7 @@ import {
   resolvePlanningSessionModel,
 } from "./agent-session-helpers.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
+import { mergeEffectiveSettings } from "./effective-settings.js";
 import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spec-validation/task-document-references.js";
 import {
   detectExternalIntegrationEvidenceGaps,
@@ -911,7 +912,9 @@ export class TriageProcessor {
       return false;
     }
 
-    const settings = await this.store.getSettings();
+    // Merge per-task effective workflow settings (U3, KTD-3) so requirePlanApproval
+    // resolves from the workflow. Behavior-inert when nothing is customized.
+    const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
     const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
     const written = await readFile(promptPath, "utf-8").catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1079,7 +1082,10 @@ export class TriageProcessor {
 
     try {
       const detail = await this.store.getTask(task.id);
-      const settings = await this.store.getSettings();
+      // Merge per-task effective workflow settings (U3, KTD-3) over the base so the
+      // planning-phase reads (requirePlanApproval, planning/validator model lanes)
+      // pick up workflow values. Behavior-inert when nothing is customized.
+      const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
       const promptPath = `.fusion/tasks/${task.id}/PROMPT.md`;
       const isFast = task.executionMode === "fast";
 
@@ -2200,8 +2206,10 @@ export class TriageProcessor {
           }
 
           // Re-read settings at review time so long-lived triage sessions pick up
-          // model changes made after the session started.
-          const currentSettings = await store.getSettings();
+          // model changes made after the session started. Merge per-task effective
+          // workflow settings (U3, KTD-3) so the validator model-lane reads below
+          // pick up workflow values. Behavior-inert when nothing is customized.
+          const currentSettings = await mergeEffectiveSettings(store, currentDetail, await store.getSettings());
 
           // Spec reviewer runs via semaphore.runNested so it transiently
           // bumps activeCount for honest observability while bypassing the

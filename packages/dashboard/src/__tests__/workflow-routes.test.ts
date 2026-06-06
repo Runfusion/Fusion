@@ -86,6 +86,8 @@ describe("workflow routes (U4)", () => {
   const put = (path: string, body: unknown) =>
     request(app, "PUT", path, JSON.stringify(body), { "content-type": "application/json" });
   const get = (path: string) => request(app, "GET", path);
+  const patch = (path: string, body: unknown) =>
+    request(app, "PATCH", path, JSON.stringify(body), { "content-type": "application/json" });
 
   it("POST /workflows creates with valid IR and rejects malformed IR", async () => {
     const ok = await post("/api/workflows", { name: "QA", ir: linearIr() });
@@ -443,6 +445,150 @@ describe("workflow routes (U4)", () => {
       expect(recon?.preserved).toBe(false);
       expect(recon?.toColumn).toBe("intake");
       expect((await store.getTask(t.id)).column).toBe("intake");
+    });
+  });
+
+  // ── Workflow setting VALUES (U6, R5) ───────────────────────────────────────
+  describe("setting-values routes (U6)", () => {
+    // A v2 IR declaring one of each value-relevant type.
+    function settingsIr(name: string): WorkflowIr {
+      return {
+        version: "v2",
+        name,
+        columns: [],
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "end", kind: "end" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+        settings: [
+          { id: "timeout-ms", name: "Timeout", type: "number", default: 1000 },
+          { id: "new-sessions", name: "New sessions", type: "boolean", default: false },
+          {
+            id: "review-policy",
+            name: "Review policy",
+            type: "enum",
+            default: "strict",
+            options: [
+              { value: "strict", label: "Strict" },
+              { value: "lenient", label: "Lenient" },
+            ],
+          },
+          { id: "label", name: "Label", type: "string" },
+        ],
+      } as WorkflowIr;
+    }
+
+    async function createSettingsWorkflow(): Promise<string> {
+      const wf = await post("/api/workflows", { name: "sw-settings", ir: settingsIr("sw-settings") });
+      expect(wf.status).toBe(201);
+      return (wf.body as { id: string }).id;
+    }
+
+    it("GET returns stored/effective/orphaned (defaults until a value is stored)", async () => {
+      const id = await createSettingsWorkflow();
+      const res = await get(`/api/workflows/${encodeURIComponent(id)}/setting-values`);
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        stored: Record<string, unknown>;
+        effective: Record<string, unknown>;
+        orphaned: Array<{ id: string }>;
+      };
+      expect(body.stored).toEqual({});
+      // Declaration defaults fill the effective map (drop-on-orphan, KTD-6).
+      expect(body.effective["timeout-ms"]).toBe(1000);
+      expect(body.effective["new-sessions"]).toBe(false);
+      expect(body.effective["review-policy"]).toBe("strict");
+      expect(body.orphaned).toEqual([]);
+    });
+
+    it("PATCH writes a valid batch (one request, multiple keys) and reflects it", async () => {
+      const id = await createSettingsWorkflow();
+      const res = await patch(`/api/workflows/${encodeURIComponent(id)}/setting-values`, {
+        values: { "timeout-ms": 5000, "new-sessions": true, "review-policy": "lenient" },
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { stored: Record<string, unknown>; effective: Record<string, unknown> };
+      expect(body.stored).toEqual({ "timeout-ms": 5000, "new-sessions": true, "review-policy": "lenient" });
+      expect(body.effective["timeout-ms"]).toBe(5000);
+      expect(body.effective["label"]).toBeUndefined(); // no default, no stored
+    });
+
+    it("PATCH null deletes a key (clear-to-default)", async () => {
+      const id = await createSettingsWorkflow();
+      await patch(`/api/workflows/${encodeURIComponent(id)}/setting-values`, { values: { "timeout-ms": 5000 } });
+      const res = await patch(`/api/workflows/${encodeURIComponent(id)}/setting-values`, {
+        values: { "timeout-ms": null },
+      });
+      expect(res.status).toBe(200);
+      const body = res.body as { stored: Record<string, unknown>; effective: Record<string, unknown> };
+      expect(body.stored["timeout-ms"]).toBeUndefined();
+      expect(body.effective["timeout-ms"]).toBe(1000); // back to declaration default
+    });
+
+    it("PATCH rejects an invalid value with 400 + typed rejections; nothing persisted", async () => {
+      const id = await createSettingsWorkflow();
+      const res = await patch(`/api/workflows/${encodeURIComponent(id)}/setting-values`, {
+        values: { "timeout-ms": "not-a-number", "review-policy": "bogus" },
+      });
+      expect(res.status).toBe(400);
+      const details = (res.body as { details?: { rejections?: Array<{ settingId: string; code: string }> } }).details;
+      const rejections = details?.rejections ?? [];
+      const byId = Object.fromEntries(rejections.map((r) => [r.settingId, r.code]));
+      expect(byId["timeout-ms"]).toBe("type-mismatch");
+      expect(byId["review-policy"]).toBe("enum-violation");
+      // Write-boundary contract: nothing persisted.
+      const after = await get(`/api/workflows/${encodeURIComponent(id)}/setting-values`);
+      expect((after.body as { stored: Record<string, unknown> }).stored).toEqual({});
+    });
+
+    it("PATCH accepts a value write for a built-in workflow (R4)", async () => {
+      const res = await patch("/api/workflows/builtin:coding/setting-values", {
+        values: { workflowStepTimeoutMs: 123_456 },
+      });
+      // Built-in coding declares the moved-key catalog; a valid numeric write
+      // succeeds even though built-in DECLARATIONS are not editable.
+      expect(res.status).toBe(200);
+      const body = res.body as { stored: Record<string, unknown> };
+      expect(body.stored["workflowStepTimeoutMs"]).toBe(123_456);
+    });
+
+    it("GET surfaces orphaned stored values after a declaration retype", async () => {
+      const id = await createSettingsWorkflow();
+      // Store a valid number for timeout-ms.
+      await patch(`/api/workflows/${encodeURIComponent(id)}/setting-values`, { values: { "timeout-ms": 5000 } });
+      // Retype timeout-ms to a string via an IR save → the stored number orphans.
+      const retyped = settingsIr("sw-settings");
+      (retyped as { settings?: Array<{ id: string; type: string; default?: unknown }> }).settings![0] = {
+        id: "timeout-ms",
+        name: "Timeout",
+        type: "string",
+      } as never;
+      await patch(`/api/workflows/${encodeURIComponent(id)}`, { ir: retyped });
+      const res = await get(`/api/workflows/${encodeURIComponent(id)}/setting-values`);
+      expect(res.status).toBe(200);
+      const body = res.body as { effective: Record<string, unknown>; orphaned: Array<{ id: string; value: unknown }> };
+      expect(body.orphaned.some((o) => o.id === "timeout-ms" && o.value === 5000)).toBe(true);
+      // Effective drops the orphan (no string default declared) → undefined.
+      expect(body.effective["timeout-ms"]).toBeUndefined();
+    });
+
+    it("PATCH 400 when values is missing/not an object", async () => {
+      const id = await createSettingsWorkflow();
+      const res = await patch(`/api/workflows/${encodeURIComponent(id)}/setting-values`, { values: [1, 2, 3] });
+      expect(res.status).toBe(400);
+    });
+
+    it("GET returns 404 for an unknown workflow id (neither built-in nor custom)", async () => {
+      const res = await get("/api/workflows/WF-404/setting-values");
+      expect(res.status).toBe(404);
+    });
+
+    it("PATCH returns 404 for an unknown workflow id (neither built-in nor custom)", async () => {
+      const res = await patch("/api/workflows/WF-404/setting-values", {
+        values: { "timeout-ms": 5000 },
+      });
+      expect(res.status).toBe(404);
     });
   });
 });

@@ -3,6 +3,7 @@ import { execSync, exec } from "node:child_process";
 import * as childProcess from "node:child_process";
 import { promisify } from "node:util";
 import { IDENTITY_GUARD_BYPASS_ENV } from "./worktree-hooks.js";
+import { mergeEffectiveSettings } from "./effective-settings.js";
 
 // Internal git plumbing intentionally bypasses sandbox backends.
 const execAsync = promisify(exec);
@@ -7603,7 +7604,11 @@ export async function aiMergeTask(
   }
 
   const projectRootDir = rootDir;
-  const settings = await store.getSettings();
+  // Merge per-task effective workflow settings (U3, KTD-3) over the base so the
+  // merger's flat reads (strictScopeEnforcement, verificationFixRetries,
+  // buildRetryCount, titleSummarizer lanes — all threaded from here via
+  // executeMergeAttempt) pick up workflow values. Behavior-inert by default.
+  const settings = await mergeEffectiveSettings(store, task, await store.getSettings());
   // U7 (R10): resolve the merge trait's policy (strategy / fileScope / rules)
   // from the task's workflow when the workflowColumns flag is ON, falling back
   // to the existing settings knobs otherwise. Read-through only — merge
@@ -9523,7 +9528,7 @@ export async function aiMergeTask(
       // Try in-merge fix attempts before propagating
       if (error.name === "VerificationError") {
         const verificationErr = error as VerificationError;
-        const maxFixRetries = Math.min(settings.verificationFixRetries ?? 2, 3);
+        const maxFixRetries = Math.min(settings.verificationFixRetries ?? 3, 3); // U3: aligned to schema default (3); was ?? 2 (dead today, DEFAULT_PROJECT_SETTINGS re-injects 3)
 
         if (maxFixRetries > 0 && (verificationErr.verificationResult.testResult || verificationErr.verificationResult.buildResult)) {
           mergerLog.log(`${taskId}: deterministic verification failed — attempting in-merge fix (up to ${maxFixRetries} attempts)`);
@@ -9682,7 +9687,7 @@ export async function aiMergeTask(
 
       // Check if it's a build verification failure
       if (error.message?.includes("Build verification failed")) {
-        const maxFixRetries = Math.min(settings.verificationFixRetries ?? 2, 3);
+        const maxFixRetries = Math.min(settings.verificationFixRetries ?? 3, 3); // U3: aligned to schema default (3); was ?? 2 (dead today, DEFAULT_PROJECT_SETTINGS re-injects 3)
 
         // Try in-merge fix before falling back to build retry
         if (maxFixRetries > 0 && (effectiveTestCommand || effectiveBuildCommand)) {
@@ -11585,7 +11590,14 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     preAttemptHeadSha,
   } = params;
 
-  const settings = await store.getSettings();
+  // Merge per-task effective workflow settings (U3, KTD-3) — this worker re-fetches
+  // settings independently of aiMergeTask, so apply the same merge here (covers the
+  // titleSummarizer lane reads in resolveSafeCommitBody). Behavior-inert by default.
+  const settings = await mergeEffectiveSettings(
+    store,
+    await store.getTask(taskId),
+    await store.getSettings(),
+  );
 
   // Track build failure state
   let buildFailed = false;

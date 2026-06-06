@@ -70,12 +70,42 @@ interface MockTask {
   column: string;
 }
 
+// `requirePrApproval` MOVED to workflow settings (U4): the CLI now resolves the
+// task's EFFECTIVE workflow settings and overlays them onto the project base. So a
+// mock store must expose `requirePrApproval` (and any moved key) through the
+// effective-settings resolver store surface (`getWorkflowSettingValues` etc.), not
+// through `getSettings()`. These stubs make `resolveEffectiveSettings` degrade to
+// `builtin:coding` and read the moved value from the stored workflow values.
+const MOVED_TEST_KEYS = new Set(["requirePrApproval"]);
+
+function splitMovedSettings(settings: Record<string, unknown>) {
+  const projectSettings: Record<string, unknown> = {};
+  const workflowValues: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (MOVED_TEST_KEYS.has(key)) workflowValues[key] = value;
+    else projectSettings[key] = value;
+  }
+  return { projectSettings, workflowValues };
+}
+
+function workflowSettingsResolverStubs(workflowValues: Record<string, unknown>) {
+  return {
+    // No selection → resolver degrades to builtin:coding, whose declarations carry
+    // the moved-key catalog; the stored values below override the declaration default.
+    getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined),
+    getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
+    getWorkflowSettingValues: vi.fn().mockReturnValue(workflowValues),
+    getWorkflowSettingsProjectId: vi.fn().mockReturnValue("test-project"),
+  };
+}
+
 function makeStore(task: MockTask, settings: Record<string, unknown> = {}) {
   const emitter = new EventEmitter();
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  const { projectSettings, workflowValues } = splitMovedSettings(settings);
   return Object.assign(emitter, {
     getTask: vi.fn().mockResolvedValue(task),
-    getSettings: vi.fn().mockResolvedValue({ requirePrApproval: false, ...settings }),
+    getSettings: vi.fn().mockResolvedValue({ ...projectSettings }),
     updateTask: vi.fn(async (id: string, patch: Record<string, unknown>) => {
       updates.push({ id, patch });
     }),
@@ -86,6 +116,7 @@ function makeStore(task: MockTask, settings: Record<string, unknown> = {}) {
     getBranchGroup: vi.fn().mockReturnValue(null),
     updateBranchGroup: vi.fn(),
     listTasksByBranchGroup: vi.fn().mockResolvedValue([]),
+    ...workflowSettingsResolverStubs(workflowValues),
     _updates: updates,
   });
 }
@@ -93,9 +124,11 @@ function makeStore(task: MockTask, settings: Record<string, unknown> = {}) {
 function makeStatefulStore(task: MockTask, settings: Record<string, unknown> = {}) {
   const emitter = new EventEmitter();
   let state = structuredClone(task);
+  const { projectSettings, workflowValues } = splitMovedSettings(settings);
   return Object.assign(emitter, {
     getTask: vi.fn(async () => structuredClone(state)),
-    getSettings: vi.fn().mockResolvedValue({ requirePrApproval: false, ...settings }),
+    getSettings: vi.fn().mockResolvedValue({ ...projectSettings }),
+    ...workflowSettingsResolverStubs(workflowValues),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => {
       state = { ...state, ...patch };
     }),

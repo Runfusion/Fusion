@@ -9,7 +9,12 @@ import {
 import { probeWorktrunk, resolveWorktrunkBinary } from "@fusion/engine";
 import { resolveProject } from "../project-context.js";
 
-// Settings that can be updated via CLI
+// Settings that can be updated via CLI.
+//
+// NOTE: the step/review/model-lane policy keys (`runStepsInNewSessions`,
+// `maxParallelSteps`, `requirePlanApproval`, etc.) were MOVED to workflow settings
+// (U4/KTD-5) and are intentionally ABSENT here — they live as per-workflow values,
+// not project/global settings. See WORKFLOW_SETTINGS_REDIRECT_HINT below.
 export const VALID_SETTINGS = [
   "maxConcurrent",
   "maxWorktrees",
@@ -19,11 +24,8 @@ export const VALID_SETTINGS = [
   "ntfyTopic",
   "autoResolveConflicts",
   "smartConflictResolution",
-  "requirePlanApproval",
   "ntfyEnabled",
   "defaultModel",
-  "runStepsInNewSessions",
-  "maxParallelSteps",
   "defaultNodeId",
   "unavailableNodePolicy",
   "worktrunk.enabled",
@@ -31,6 +33,11 @@ export const VALID_SETTINGS = [
   "worktrunk.onFailure",
   "language",
 ] as const;
+
+// One-line redirect surfaced wherever the CLI lists/validates settings keys, so
+// users who reach for a moved key learn where it lives now (U5/KTD-8).
+export const WORKFLOW_SETTINGS_REDIRECT_HINT =
+  "Note: step, review, and model-lane policy now live in workflow settings — edit them in the workflow editor or via fn_workflow_settings.";
 
 const GLOBAL_ONLY_SETTINGS = ["ntfyEnabled", "ntfyTopic", "defaultModel", "language"] as const;
 const PROJECT_ONLY_SETTINGS = [
@@ -41,9 +48,6 @@ const PROJECT_ONLY_SETTINGS = [
   "taskPrefix",
   "autoResolveConflicts",
   "smartConflictResolution",
-  "requirePlanApproval",
-  "runStepsInNewSessions",
-  "maxParallelSteps",
   "defaultNodeId",
   "unavailableNodePolicy",
 ] as const;
@@ -54,13 +58,11 @@ type ValidSettingKey = (typeof VALID_SETTINGS)[number];
 const BOOLEAN_SETTINGS: readonly string[] = [
   "autoResolveConflicts",
   "smartConflictResolution",
-  "requirePlanApproval",
   "ntfyEnabled",
-  "runStepsInNewSessions",
   "worktrunk.enabled",
 ];
 
-const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees", "maxParallelSteps"];
+const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees"];
 
 const ENUM_SETTINGS: Record<string, readonly string[]> = {
   worktreeNaming: ["random", "task-id", "task-title"],
@@ -83,7 +85,6 @@ const STRING_SETTINGS: readonly string[] = [
 const NUMBER_RANGES: Record<string, { min: number; max: number }> = {
   maxConcurrent: { min: 1, max: 10 },
   maxWorktrees: { min: 1, max: 20 },
-  maxParallelSteps: { min: 1, max: 4 },
 };
 
 async function getGlobalSettingsStore(): Promise<GlobalSettingsStore> {
@@ -257,10 +258,6 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
       keys: ["maxConcurrent", "maxWorktrees", "autoResolveConflicts", "smartConflictResolution"],
     },
     {
-      title: "Execution",
-      keys: ["runStepsInNewSessions", "maxParallelSteps"],
-    },
-    {
       title: "Worktrees",
       keys: ["worktreeNaming", "worktreesDir", "recycleWorktrees"],
     },
@@ -270,7 +267,7 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
     },
     {
       title: "Tasks",
-      keys: ["taskPrefix", "requirePlanApproval", "includeTaskIdInCommit"],
+      keys: ["taskPrefix", "includeTaskIdInCommit"],
     },
     {
       title: "Node Routing",
@@ -302,6 +299,8 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
   }
 
   console.log();
+  console.log(`  ${WORKFLOW_SETTINGS_REDIRECT_HINT}`);
+  console.log();
 }
 
 /**
@@ -315,6 +314,7 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
   if (!VALID_SETTINGS.includes(key as ValidSettingKey)) {
     console.error(`Error: Unknown setting "${key}"`);
     console.error(`Valid settings: ${VALID_SETTINGS.join(", ")}`);
+    console.error(WORKFLOW_SETTINGS_REDIRECT_HINT);
     process.exit(1);
     return;
   }

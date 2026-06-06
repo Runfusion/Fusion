@@ -7,6 +7,13 @@ import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, 
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, COLUMNS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
+import {
+  MOVED_SETTINGS_KEYS,
+  SETTINGS_MIGRATION_VERSION,
+  SETTINGS_MIGRATION_MARKER_KEY,
+  stripMovedSettingsKeys,
+  patchContainsMovedKey,
+} from "./moved-settings.js";
 import { parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure } from "./workflow-ir.js";
 import { stepsToWorkflowIr, stepToFragmentIr, layoutForIr } from "./workflow-steps-to-ir.js";
 import { isWorkflowColumnsEnabled } from "./workflow-columns-settings.js";
@@ -46,7 +53,7 @@ import {
   reconcileHooksRemaining,
 } from "./transition-pending.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
-import type { WorkflowIr, WorkflowIrColumn, WorkflowFieldDefinition } from "./workflow-ir-types.js";
+import type { WorkflowIr, WorkflowIrColumn, WorkflowFieldDefinition, WorkflowSettingDefinition } from "./workflow-ir-types.js";
 import {
   validateCustomFieldPatch,
   applyFieldDefaults,
@@ -54,6 +61,7 @@ import {
   CustomFieldRejectionError,
   type CustomFieldRejection,
 } from "./task-fields.js";
+import { validateSettingValuePatch, WorkflowSettingRejectionError } from "./workflow-settings.js";
 // Side-effect import: registers the 14 built-in trait DEFINITIONS into the
 // shared trait registry on load (the flag-ON path resolves traits by id).
 import "./builtin-traits.js";
@@ -69,6 +77,8 @@ import type {
 } from "./workflow-definition-types.js";
 import { compileWorkflowToSteps } from "./workflow-compiler.js";
 import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, isBuiltinWorkflowId } from "./builtin-workflows.js";
+import { resolveWorkflowIrById } from "./workflow-ir-resolver.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import {
   WORKFLOW_PARITY_OBSERVED_MUTATION,
   WORKFLOW_PARITY_DRIFT_MUTATION,
@@ -127,6 +137,7 @@ import { validateNodeOverrideChange } from "./node-override-guard.js";
 import { sanitizeTitle, summarizeTitle } from "./ai-summarize.js";
 import { extractTaskIdTokens, normalizeTitleForTaskId } from "./task-title-id-drift.js";
 import { resolveTitleSummarizerSettingsModel } from "./model-resolution.js";
+import { resolveEffectiveSettingsById } from "./workflow-settings-resolver.js";
 import { getErrorMessage } from "./error-message.js";
 import { getTaskCreatedHook } from "./task-creation-hooks.js";
 import {
@@ -1572,6 +1583,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     await this.migrateActiveArchivedTasksToArchiveDb();
     await this.migrateAgentLogEntriesToFilesOnce();
     await this.cleanupNoOpTaskMovedActivityRowsOnce();
+    // U4: one-time per-project hard-move of MOVED_SETTINGS_KEYS into workflow
+    // setting values (marker-gated, idempotent, never blocks startup).
+    try {
+      await this.migrateMovedSettingsToWorkflowValuesOnce();
+    } catch (err) {
+      storeLog.warn("Settings hard-move migration failed during init (non-fatal)", {
+        phase: "init:settings-hard-move",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     // Re-run init when migrations are pending, or when the deferred
     // agentLogEntries drop still needs to fire: migration 102 skips the
     // destructive drop until migrateAgentLogEntriesToFilesOnce() above writes
@@ -3340,9 +3361,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * to the project config. Use `updateGlobalSettings()` for global fields.
    */
   async updateSettings(patch: Partial<Settings>): Promise<Settings> {
+    // Stale-writer guard (U4, R8): moved keys no longer live in project settings —
+    // they belong to workflow setting values. Drop any moved key arriving from a
+    // stale writer/import so it is never persisted back into raw storage (where the
+    // default re-injection trap would silently override the migrated value).
+    const guardedPatch =
+      patchContainsMovedKey(patch as Record<string, unknown>)
+        ? (() => {
+            storeLog.warn("Dropped moved settings keys from project updateSettings patch", {
+              phase: "updateSettings:moved-key-guard",
+              dropped: Object.keys(patch).filter((k) => (MOVED_SETTINGS_KEYS as readonly string[]).includes(k)),
+            });
+            return stripMovedSettingsKeys(patch as Record<string, unknown>) as Partial<Settings>;
+          })()
+        : patch;
+
     // Filter out global-only fields — they should go through updateGlobalSettings()
     const projectPatch: Partial<Settings> = {};
-    for (const [key, value] of Object.entries(patch)) {
+    for (const [key, value] of Object.entries(guardedPatch)) {
       if (!isGlobalOnlySettingsKey(key)) {
         (projectPatch as Record<string, unknown>)[key] = value;
       }
@@ -3454,7 +3490,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const config = this.readConfigFast();
     const previous: Settings = { ...DEFAULT_SETTINGS, ...previousGlobal, ...config.settings } as Settings;
 
-    const globalPatch: Partial<GlobalSettings> = { ...patch };
+    // Stale-writer guard (U4, R8): moved keys are all project-scoped, but null
+    // them defensively out of the global write path too so a stale writer cannot
+    // resurrect them in the global store.
+    const globalPatch: Partial<GlobalSettings> = patchContainsMovedKey(patch as Record<string, unknown>)
+      ? (stripMovedSettingsKeys(patch as Record<string, unknown>) as Partial<GlobalSettings>)
+      : { ...patch };
     delete globalPatch.secretsSyncPassphraseConfigured;
 
     // Handle deep merge + targeted null clear semantics for remoteAccess
@@ -3941,7 +3982,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     let onSummarize = options?.onSummarize;
     if (!onSummarize && resolvedSettings?.autoSummarizeTitles === true) {
-      const summarizerModel = resolveTitleSummarizerSettingsModel(resolvedSettings);
+      // The title-summarizer model lanes MOVED to workflow settings (U4/KTD-7).
+      // At task-creation time there is no task/workflow yet, so resolve the
+      // project DEFAULT workflow's effective settings (unset default normalizes to
+      // builtin:coding) and overlay them so the moved lane reads from its new home;
+      // the global `titleSummarizerGlobal*` lane in `resolvedSettings` remains the
+      // fallback below.
+      let summarizerSettings: Partial<Settings> = resolvedSettings ?? {};
+      try {
+        const defaultWorkflowId = (await this.getDefaultWorkflowId()) ?? "builtin:coding";
+        const effective = await resolveEffectiveSettingsById(
+          this,
+          defaultWorkflowId,
+          this.getWorkflowSettingsProjectId(),
+        );
+        summarizerSettings = { ...summarizerSettings, ...(effective as Partial<Settings>) };
+      } catch {
+        // Never-throw: fall back to the base settings (global lane only).
+      }
+      const summarizerModel = resolveTitleSummarizerSettingsModel(summarizerSettings);
       if (summarizerModel.provider && summarizerModel.modelId) {
         onSummarize = async (description: string) => {
           try {
@@ -6998,6 +7057,181 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // the second merge.
       const task = await this.updateTaskUnlocked(taskId, { customFields: result.normalized }, runContext);
       return { ok: true as const, task };
+    });
+  }
+
+  // ── Workflow setting values (U2, R2/R4, KTD-2/KTD-9) ───────────────────────
+  //
+  // Setting VALUES persist per `(workflowId, projectId)` in the `workflow_settings`
+  // table; declarations live in the named workflow's IR (built-in or custom). This
+  // is the single validating write authority: values are validated against the
+  // NAMED workflow's declarations (not the project's current default workflow), and
+  // invalid values are NEVER persisted. Built-in workflow ids are accepted for
+  // value writes even though built-in DECLARATIONS are non-editable
+  // (`updateWorkflowDefinition` still rejects built-in edits) — the two error paths
+  // stay distinct (KTD-2).
+
+  /** Resolve the setting DECLARATIONS for a workflow id (built-in or custom). The
+   *  built-in path mirrors the IR resolver (`resolveWorkflowIrById`): built-in ids
+   *  resolve through the same code path so value writes target the same schema the
+   *  engine resolver sees. As of U3 every built-in workflow IR embeds
+   *  `BUILTIN_WORKFLOW_SETTINGS` (attached in `builtin-workflows.ts` /
+   *  `builtin-coding-workflow-ir.ts`), so the `declared` branch below now handles
+   *  built-ins too. The built-in catalog fallback is kept as a cheap defensive belt
+   *  in case a future built-in graph is constructed without the embed (R4/KTD-2).
+   *  Returns `undefined` when the workflow is missing or declares no settings. */
+  private async resolveWorkflowSettingDeclarations(
+    workflowId: string,
+  ): Promise<WorkflowSettingDefinition[] | undefined> {
+    const ir = await resolveWorkflowIrById(this, workflowId);
+    const declared = ir.version === "v2" ? ir.settings : undefined;
+    if (declared && declared.length > 0) return declared;
+    // Defensive belt: built-in ids always have a declaration catalog even if a
+    // particular built-in graph somehow lacks the embed.
+    if (isBuiltinWorkflowId(workflowId)) return BUILTIN_WORKFLOW_SETTINGS;
+    return declared;
+  }
+
+  /** The stable project id this store scopes `workflow_settings` value rows by
+   *  (U3). A single store instance is bound to one project (its `rootDir`); the
+   *  durable project-identity id is that project's key. Falls back to the store's
+   *  `rootDir` when no identity row exists yet (fresh project pre-identity), which
+   *  is still stable per store instance. The engine's per-task effective-settings
+   *  resolver uses this so reads/writes share one project key. */
+  getWorkflowSettingsProjectId(): string {
+    try {
+      return this.db.getProjectIdentity()?.id ?? this.rootDir;
+    } catch {
+      return this.rootDir;
+    }
+  }
+
+  /**
+   * Enumerate every stored `workflow_settings` value row for THIS project
+   * (`getWorkflowSettingsProjectId()`), returned as `workflowId → values map`.
+   * Used by settings export v2 to carry the value table. Rows whose JSON is
+   * corrupt or non-object are skipped; rows with an empty values map are
+   * included as `{}` only if the row physically exists (callers that want to
+   * drop empties filter on their side).
+   */
+  listWorkflowSettingValuesForProject(): Record<string, Record<string, unknown>> {
+    const projectId = this.getWorkflowSettingsProjectId();
+    const rows = this.db
+      .prepare('SELECT workflowId, "values" FROM workflow_settings WHERE projectId = ?')
+      .all(projectId) as Array<{ workflowId: string; values: string }>;
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.values) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          out[row.workflowId] = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Skip corrupt row.
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Compute the write-target workflow ids for moved-setting values in THIS
+   * project: every distinct `task_workflow_selection.workflowId` in use ∪ the
+   * resolved project default, where an unset/empty/missing default normalizes to
+   * `builtin:coding`. Shared by the U4 hard-move migration and the U5 settings
+   * export v1→v2 upgrade so both write to exactly the same lanes.
+   */
+  async computeMovedSettingsTargetWorkflowIds(): Promise<Set<string>> {
+    const targetWorkflowIds = new Set<string>();
+    try {
+      const rows = this.db
+        .prepare("SELECT DISTINCT workflowId FROM task_workflow_selection WHERE workflowId IS NOT NULL AND workflowId != ''")
+        .all() as Array<{ workflowId: string }>;
+      for (const row of rows) {
+        if (row.workflowId && row.workflowId.trim()) targetWorkflowIds.add(row.workflowId);
+      }
+    } catch {
+      // No selections / table issue — fall through to the default below.
+    }
+    let defaultWorkflowId = "builtin:coding";
+    try {
+      const resolved = await this.getDefaultWorkflowId();
+      if (resolved && resolved.trim()) {
+        const exists = isBuiltinWorkflowId(resolved) || (await this.getWorkflowDefinition(resolved));
+        defaultWorkflowId = exists ? resolved : "builtin:coding";
+      }
+    } catch {
+      defaultWorkflowId = "builtin:coding";
+    }
+    targetWorkflowIds.add(defaultWorkflowId);
+    return targetWorkflowIds;
+  }
+
+  /** Read the raw stored setting-value map for `(workflowId, projectId)`. Returns
+   *  an empty object when no row exists. Raw (pre drop-on-orphan) — callers that
+   *  need engine-effective values run {@link resolveEffectiveSettingValues}. */
+  getWorkflowSettingValues(workflowId: string, projectId: string): Record<string, unknown> {
+    const row = this.db
+      .prepare('SELECT "values" FROM workflow_settings WHERE workflowId = ? AND projectId = ?')
+      .get(workflowId, projectId) as { values: string } | undefined;
+    if (!row) return {};
+    try {
+      const parsed = JSON.parse(row.values) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Write setting VALUES for `(workflowId, projectId)`. The patch is validated
+   * against the NAMED workflow's declarations via {@link validateSettingValuePatch};
+   * on ANY rejection nothing is persisted (write-boundary contract) and a typed
+   * {@link WorkflowSettingRejectionError} is thrown. Accepted keys merge into the
+   * stored row; a `null` value deletes the key (null-as-delete). Built-in workflow
+   * value writes succeed (R4).
+   */
+  async updateWorkflowSettingValues(
+    workflowId: string,
+    projectId: string,
+    patch: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const declarations = await this.resolveWorkflowSettingDeclarations(workflowId);
+    const result = validateSettingValuePatch(declarations, patch);
+    if (result.rejections.length > 0) {
+      // Invalid values are NEVER persisted — fail the whole write loudly.
+      throw new WorkflowSettingRejectionError(result.rejections);
+    }
+
+    // Read-merge-upsert must be atomic: two concurrent calls for the same
+    // (workflowId, projectId) could otherwise both merge from the same
+    // pre-update snapshot, and the later upsert would erase the earlier
+    // call's keys (lost update). Serialize the whole cycle under an immediate
+    // write transaction. Validation/declaration resolution above stays outside
+    // since it's async and doesn't read the row being mutated.
+    return this.db.transactionImmediate(() => {
+      const current = this.getWorkflowSettingValues(workflowId, projectId);
+      const next: Record<string, unknown> = { ...current };
+      for (const [key, value] of Object.entries(result.accepted)) {
+        if (value === null) {
+          delete next[key];
+        } else {
+          next[key] = value;
+        }
+      }
+
+      const now = new Date().toISOString();
+      this.db
+        .prepare(
+          `INSERT INTO workflow_settings (workflowId, projectId, "values", updatedAt)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(workflowId, projectId)
+           DO UPDATE SET "values" = excluded."values", updatedAt = excluded.updatedAt`,
+        )
+        .run(workflowId, projectId, JSON.stringify(next), now);
+      this.db.bumpLastModified();
+      return next;
     });
   }
 
@@ -11614,6 +11848,206 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
+  /**
+   * U4 (R6/R8, KTD-5): one-time, idempotent, per-project hard-move of the
+   * `MOVED_SETTINGS_KEYS` catalog out of project/global settings and into
+   * `workflow_settings` values, keyed per `(workflowId, projectId)`.
+   *
+   * Gated by the `settingsMigrationVersion` `__meta` marker so it runs exactly
+   * once per project DB. The sequence (matching the plan's HTD diagram):
+   *
+   *   1. Read the RAW persisted project + global settings (the typed read can no
+   *      longer see moved keys post-schema-removal, so read the JSON directly);
+   *      snapshot ONLY the moved keys the user actually CUSTOMIZED (present in raw
+   *      storage) — defaults are not snapshotted (they re-derive from declarations).
+   *   2. Compute the write target = distinct `task_workflow_selection.workflowId`
+   *      for this project ∪ the resolved project default, where an unset/empty
+   *      `defaultWorkflowId` normalizes to `builtin:coding` (the id every
+   *      selection-less task resolves to). A default pointing at a deleted/missing
+   *      workflow also degrades to `builtin:coding`.
+   *   3. Validate the snapshot against EACH target workflow's declarations (the
+   *      values came from validated project settings, so this normally passes); a
+   *      value that fails the new validation is DROPPED and logged — never aborts.
+   *   4. In ONE SQLite transaction: upsert the accepted snapshot into each
+   *      `(workflowId, projectId)` value row, null the moved keys out of the raw
+   *      project `config.settings`, and set the marker. (The async validation /
+   *      declaration resolution happens BEFORE the transaction — the transaction
+   *      body is pure synchronous SQLite, so the persisted writes commit atomically.)
+   *   5. Defensively null the moved keys out of the global store (outside the txn;
+   *      all moved keys are project-scoped, so this is belt-and-suspenders).
+   *
+   * Idempotent / crash-safe: value upserts overwrite identically, the raw null-out
+   * is re-runnable, and the marker is set LAST inside the transaction. A crash
+   * between the value-write and the null-out re-runs the whole thing and converges.
+   */
+  private async migrateMovedSettingsToWorkflowValuesOnce(): Promise<void> {
+    const markerKey = SETTINGS_MIGRATION_MARKER_KEY;
+    const markerRow = this.db.prepare("SELECT value FROM __meta WHERE key = ?").get(markerKey) as
+      | { value: string }
+      | undefined;
+    if (markerRow && Number(markerRow.value) >= SETTINGS_MIGRATION_VERSION) {
+      return;
+    }
+
+    const movedKeys = MOVED_SETTINGS_KEYS as readonly string[];
+    const projectId = this.getWorkflowSettingsProjectId();
+
+    // (1) Snapshot CUSTOMIZED moved keys from RAW persisted project + global stores.
+    const rawProjectSettings = this.readRawProjectSettings();
+    let rawGlobalSettings: Record<string, unknown> = {};
+    try {
+      rawGlobalSettings = await this.globalSettingsStore.readRaw();
+    } catch {
+      rawGlobalSettings = {};
+    }
+    const snapshot: Record<string, unknown> = {};
+    for (const key of movedKeys) {
+      // Project storage wins over global (moved keys are project-scoped); only
+      // snapshot keys the user actually customized (present in raw storage).
+      if (Object.prototype.hasOwnProperty.call(rawProjectSettings, key)) {
+        snapshot[key] = rawProjectSettings[key];
+      } else if (Object.prototype.hasOwnProperty.call(rawGlobalSettings, key)) {
+        snapshot[key] = rawGlobalSettings[key];
+      }
+    }
+
+    // (2) Compute the write-target workflow ids (shared with the U5 v1→v2
+    //     import upgrade so both write to identical lanes).
+    const targetWorkflowIds = await this.computeMovedSettingsTargetWorkflowIds();
+
+    // (3) Validate the snapshot per target workflow (async declaration resolution
+    //     done HERE, before the synchronous transaction). Drop-and-log invalid
+    //     values; never abort. Empty accepted maps are fine (nothing to write).
+    const acceptedByWorkflow = new Map<string, Record<string, unknown>>();
+    if (Object.keys(snapshot).length > 0) {
+      for (const workflowId of targetWorkflowIds) {
+        let declarations: WorkflowSettingDefinition[] | undefined;
+        try {
+          declarations = await this.resolveWorkflowSettingDeclarations(workflowId);
+        } catch {
+          declarations = undefined;
+        }
+        const result = validateSettingValuePatch(declarations, snapshot);
+        if (result.rejections.length > 0) {
+          storeLog.warn("Dropped invalid moved-setting values during hard-move migration", {
+            phase: "migrateMovedSettings:validate",
+            workflowId,
+            projectId,
+            rejected: result.rejections.map((r) => `${r.settingId}:${r.code}`),
+          });
+        }
+        acceptedByWorkflow.set(workflowId, result.accepted);
+      }
+    }
+
+    // (4) ONE SQLite transaction: value upserts + raw project null-out + marker.
+    const now = new Date().toISOString();
+    this.db.transactionImmediate(() => {
+      for (const [workflowId, accepted] of acceptedByWorkflow) {
+        if (Object.keys(accepted).length === 0) continue;
+        const current = this.getWorkflowSettingValues(workflowId, projectId);
+        const next: Record<string, unknown> = { ...current };
+        for (const [k, v] of Object.entries(accepted)) {
+          if (v === null || v === undefined) {
+            delete next[k];
+          } else {
+            next[k] = v;
+          }
+        }
+        this.db
+          .prepare(
+            `INSERT INTO workflow_settings (workflowId, projectId, "values", updatedAt)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(workflowId, projectId)
+             DO UPDATE SET "values" = excluded."values", updatedAt = excluded.updatedAt`,
+          )
+          .run(workflowId, projectId, JSON.stringify(next), now);
+      }
+
+      // Null the moved keys out of the raw project config.settings.
+      const configRow = this.db.prepare("SELECT settings FROM config WHERE id = 1").get() as
+        | { settings: string }
+        | undefined;
+      if (configRow) {
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = (JSON.parse(configRow.settings) as Record<string, unknown>) ?? {};
+        } catch {
+          parsed = {};
+        }
+        let changed = false;
+        for (const key of movedKeys) {
+          if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+            delete parsed[key];
+            changed = true;
+          }
+        }
+        if (changed) {
+          this.db
+            .prepare("UPDATE config SET settings = ?, updatedAt = ? WHERE id = 1")
+            .run(JSON.stringify(parsed), now);
+        }
+      }
+
+      this.db.prepare(`
+        INSERT INTO __meta (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(markerKey, String(SETTINGS_MIGRATION_VERSION));
+      this.db.bumpLastModified();
+    });
+
+    // (5) Defensive: null the moved keys out of the global store (outside the txn).
+    const globalMovedPatch: Record<string, unknown> = {};
+    for (const key of movedKeys) {
+      if (Object.prototype.hasOwnProperty.call(rawGlobalSettings, key)) {
+        globalMovedPatch[key] = null; // null-as-delete
+      }
+    }
+    if (Object.keys(globalMovedPatch).length > 0) {
+      try {
+        await this.globalSettingsStore.updateSettings(globalMovedPatch as Partial<GlobalSettings>);
+      } catch (err) {
+        storeLog.warn("Global moved-key null-out failed during hard-move migration (non-fatal)", {
+          phase: "migrateMovedSettings:global-nullout",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Invalidate cached config so subsequent reads reflect the removed keys.
+    this.invalidateConfigCacheAfterMigration();
+  }
+
+  /** Read the RAW persisted project settings JSON (the `config.settings` row),
+   *  WITHOUT applying `DEFAULT_SETTINGS`. The migration needs this because the
+   *  typed read merges defaults (which no longer contain moved keys), so it could
+   *  not distinguish a customized moved value from an absent one. Returns `{}` on
+   *  any read/parse failure. */
+  private readRawProjectSettings(): Record<string, unknown> {
+    try {
+      const row = this.db.prepare("SELECT settings FROM config WHERE id = 1").get() as
+        | { settings: string }
+        | undefined;
+      if (!row) return {};
+      const parsed = JSON.parse(row.settings) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Drop any in-memory config cache after the migration mutates the raw
+   *  `config.settings` row directly (bypassing `writeConfig`). No-op if the store
+   *  has no such cache field. */
+  private invalidateConfigCacheAfterMigration(): void {
+    // The project config is read fresh from SQLite each call (readConfigFast),
+    // so there is no project-settings cache to invalidate. The global store does
+    // cache; updateSettings() above already refreshed it. This hook exists as a
+    // documented seam in case a config cache is added later.
+  }
+
   // ── Archive Cleanup Methods ─────────────────────────────────────────
 
   /**
@@ -12566,6 +13000,12 @@ ${stepsSection}`;
       throw new Error(`Workflow '${id}' not found`);
     }
     this.workflowDefinitionsCache = null;
+
+    // Cascade (KTD-9): delete this workflow's setting-value rows across all
+    // projects. Tasks pinned to the deleted workflow degrade to `builtin:coding`
+    // via the resolver and read built-in declarations + built-in values, so no
+    // unreachable orphan value rows remain.
+    this.db.prepare("DELETE FROM workflow_settings WHERE workflowId = ?").run(id);
 
     // Cascade: clear the project default when it pointed at this workflow.
     try {

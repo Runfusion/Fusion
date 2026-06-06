@@ -550,7 +550,7 @@
   background: var(--text-muted);
 }
 .settings-content > * {
-  animation: settingsFadeIn var(--transition-normal);
+  animation: settingsFadeIn var(--duration-normal) ease;
 }
 @keyframes settingsFadeIn {
   from {
@@ -2108,6 +2108,13 @@
 .settings-warning-banner strong {
   color: var(--color-warning);
   margin-right: var(--space-xs);
+}
+
+/* KTD-8: informational note at the bottom of the Node Sync section. */
+.settings-sync-workflow-note {
+  margin-top: var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
 }
 
 @media (max-width: 768px) {

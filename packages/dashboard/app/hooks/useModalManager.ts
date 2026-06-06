@@ -54,6 +54,8 @@ export interface ModalManager {
   activityLogOpen: boolean;
   gitManagerOpen: boolean;
   workflowEditorOpen: boolean;
+  /** When the workflow editor opens, which internal panel to pre-select (U9 redirect stubs). */
+  workflowEditorInitialPanel?: "settings";
   agentsOpen: boolean;
   scriptsOpen: boolean;
   setupWizardOpen: boolean;
@@ -116,7 +118,7 @@ export interface ModalManager {
   openGitManager: () => void;
   closeGitManager: () => void;
 
-  openWorkflowEditor: () => void;
+  openWorkflowEditor: (initialPanel?: "settings") => void;
   closeWorkflowEditor: () => void;
 
   openAgents: () => void;
@@ -175,6 +177,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false);
+  const [workflowEditorInitialPanel, setWorkflowEditorInitialPanel] = useState<"settings" | undefined>(undefined);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [scriptsOpen, setScriptsOpen] = useState(false);
   const [setupWizardOpen, setSetupWizardOpen] = useState(false);
@@ -340,8 +343,14 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openGitManager = useCallback(() => setGitManagerOpen(true), []);
   const closeGitManager = useCallback(() => setGitManagerOpen(false), []);
 
-  const openWorkflowEditor = useCallback(() => setWorkflowEditorOpen(true), []);
-  const closeWorkflowEditor = useCallback(() => setWorkflowEditorOpen(false), []);
+  const openWorkflowEditor = useCallback((initialPanel?: "settings") => {
+    setWorkflowEditorInitialPanel(initialPanel);
+    setWorkflowEditorOpen(true);
+  }, []);
+  const closeWorkflowEditor = useCallback(() => {
+    setWorkflowEditorOpen(false);
+    setWorkflowEditorInitialPanel(undefined);
+  }, []);
 
   const openAgents = useCallback(() => setAgentsOpen(true), []);
   const closeAgents = useCallback(() => setAgentsOpen(false), []);
@@ -408,6 +417,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     activityLogOpen,
     gitManagerOpen,
     workflowEditorOpen,
+    workflowEditorInitialPanel,
     agentsOpen,
     scriptsOpen,
     setupWizardOpen,

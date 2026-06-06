@@ -12,6 +12,7 @@
 import type { TaskStore, TaskComment, AgentPromptsConfig, Settings } from "@fusion/core";
 import { buildReviewerMemoryInstructions, resolveAgentPrompt, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode } from "@fusion/core";
 import { recordRetry } from "./retry-burned-logger.js";
+import { mergeEffectiveSettings } from "./effective-settings.js";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { createResolvedAgentSession, extractRuntimeHint } from "./agent-session-helpers.js";
@@ -676,7 +677,21 @@ export async function reviewStep(
   };
 
   const hasConfiguredFallback = Boolean(validatorFallbackProvider && validatorFallbackModelId);
-  const retrySettings = liveSettings ?? options.settings;
+  // Merge per-task effective workflow settings (U3, KTD-3) over the base so the
+  // retry-budget reads (maxReviewerContextRetries / maxReviewerFallbackRetries via
+  // recordRetry) pick up workflow values. `liveSettings`/`options.settings` are the
+  // base; the merge is behavior-inert when nothing is customized. Resolved once
+  // here (all recordRetry sites share it).
+  const retrySettingsBase = liveSettings ?? options.settings;
+  let retrySettings = retrySettingsBase;
+  if (options.store && options.taskId && retrySettingsBase) {
+    try {
+      const retryTask = await options.store.getTask(options.taskId);
+      retrySettings = await mergeEffectiveSettings(options.store, retryTask, retrySettingsBase);
+    } catch {
+      // Keep the base snapshot on any store/resolve error (never-throw).
+    }
+  }
 
   const resetReviewerFallbackRetryCount = async (): Promise<void> => {
     if (!options.store || !options.taskId || typeof options.store.updateTask !== "function") {

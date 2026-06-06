@@ -1,0 +1,341 @@
+/* WorkflowSettingsPanel (U6 / KTD-1/KTD-2) — sibling of the fields/column panels.
+ * Mirrors .wf-fields-panel layout so the panels read side-by-side; adds an
+ * internal tab pair (Definitions / Values). Design tokens only; animations use
+ * --duration-* and muted text uses --text-muted. */
+
+/* Wrapper div carries the scroll-into-view ref for `?panel=settings` deep links;
+ * it must not interfere with the editor's flex-row panel layout. */
+.wf-settings-panel-wrap {
+  display: flex;
+  min-height: 0;
+}
+
+.wf-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 320px;
+  min-width: 300px;
+  padding: var(--space-md);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.wf-settings-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wf-settings-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-settings-tab {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 0.72rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.wf-settings-tab.is-active {
+  color: var(--text-primary, #fff);
+  border-bottom-color: var(--accent, #4f7cff);
+}
+
+.wf-settings-tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-settings-tabpanel-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.wf-settings-add,
+.wf-settings-save-values,
+.wf-settings-option-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wf-settings-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.wf-settings-note {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.7rem;
+}
+
+.wf-settings-note--info {
+  color: var(--text-muted);
+}
+
+.wf-settings-note--muted {
+  color: var(--text-muted);
+}
+
+.wf-settings-note--warn {
+  color: var(--ws-warning, #f59e0b);
+}
+
+/* ── Definitions list ── */
+
+.wf-settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wf-setting-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-setting-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-setting-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-setting-id-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-setting-id-static {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.wf-setting-id-edit {
+  font-size: 0.65rem;
+  background: none;
+  border: none;
+  color: var(--accent, #4f7cff);
+  cursor: pointer;
+  padding: 0;
+}
+
+.wf-setting-id-warn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  font-size: 0.65rem;
+  color: var(--ws-warning, #f59e0b);
+}
+
+.wf-setting-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+}
+
+.wf-setting-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.wf-setting-sub > span {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.wf-setting--checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.wf-setting-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px dashed var(--border);
+}
+
+.wf-setting-options-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.wf-setting-option-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wf-setting-option-value,
+.wf-setting-option-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.wf-setting-option-colors {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.wf-setting-color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  padding: 0;
+  cursor: pointer;
+}
+
+.wf-setting-color-swatch.is-active {
+  outline: 2px solid var(--text-primary, #fff);
+  outline-offset: 1px;
+}
+
+/* ── Values tab ── */
+
+.wf-settings-values-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.wf-settings-values-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.wf-settings-value-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wf-settings-customized {
+  align-self: flex-start;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent, #4f7cff);
+}
+
+.wf-settings-reset-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+/* ── Orphaned disclosure ── */
+
+.wf-settings-orphaned {
+  border-top: 1px dashed var(--border);
+  padding-top: var(--space-xs);
+}
+
+.wf-settings-orphaned-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.wf-settings-orphaned-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+.wf-settings-orphaned-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wf-settings-orphaned-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-settings-orphan-id {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+
+.wf-settings-orphan-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-settings-orphan-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
