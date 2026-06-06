@@ -33,7 +33,7 @@ The fix is not more engine capability — it's an opinionated, legible default e
 - **CEO exists from day one, even with one board.** Project creation always creates the CEO. Global chat always talks to the CEO, who delegates to boards. This costs a fourth mandatory agent with little to do in single-board v1, in exchange for a mental model that doesn't shift when boards multiply.
 - **Hard movement constraints chosen for auditability.** Sequential column movement, no skipping, one agent per column, locked endpoint roles. These constraints are what make autonomous agent work legible and trustworthy; flexibility lives in advanced mode.
 - **The Reviewer absorbs the Validator.** The existing Validator Run machinery (Contract Assertions, verdicts, fix feedback) becomes the Reviewer's engine: when a task reaches In Review, the board's Reviewer agent runs the validation. One judge, one mental model — "the Reviewer" is the productized face of the validator, not a second parallel judge.
-- **Simple-mode curation is decided here, not in planning.** Simple mode keeps boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Advanced mode gates Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces.
+- **Simple-mode curation is decided here, not in planning.** Simple mode keeps boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Simple mode HIDES (and advanced mode shows) Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces.
 - **"Executor" is the role name** (replacing "Engineer") — the role is not inherently a coder; any action-performing agent can hold the slot's column shape.
 
 ```mermaid
@@ -70,11 +70,12 @@ flowchart TB
 **Board & column model**
 
 - R1. Every board is created with three mandatory, locked role-columns: Lead → Todo, Executor → In Progress, Reviewer → In Review. These cannot be deleted or replaced; their instructions are customizable.
-- R2. Users can insert any number of custom columns between Todo and In Review, and after In Review for post-approval steps (e.g., Deploy, Publish) — never before Todo, so nothing bypasses Lead intake. The Reviewer's verdict remains the sole gate out of In Review; Done follows the last column.
-- R3. Each column is staffed by exactly one agent. In simple mode an agent can hold at most one column per board; advanced mode may staff one agent on multiple columns of a board. Sharing an agent across boards is always allowed.
+- R2. Users can insert any number of custom columns between Todo and In Review, and after In Review for post-approval steps (e.g., Deploy, Publish) — never agent columns before Todo, so nothing bypasses Lead intake. One built-in exception sits before Todo: the unstaffed Idea column, a human-managed intake backlog (user-created tasks land there; Idea ↔ Todo is a human move per R5; CEO-routed tasks land directly in Todo). The Reviewer's verdict remains the sole gate out of In Review; Done follows the last column.
+- R3. Each column is staffed by exactly one agent. In simple mode an agent can hold at most one column per board; advanced mode may staff one agent on multiple columns of a board. Agents are strictly board-scoped: an agent belongs to exactly one board (the CEO is project-level), there is no cross-board staffing or agent transfer, and the agents menu and agent creation are board-scoped — a board shows only its own team. (A company-wide roster/overview is a possible later addition.)
 - R4. The board owns its workflow/column config. A task lands on a board and inherits that board's columns; there is no per-task workflow selection.
-- R5. Agent-driven task movement is strictly sequential — column to adjacent column, no skipping. Only the Lead and the Reviewer may move a task backward. The human owner is exempt and may move any card anywhere.
-- R6. Boards must support non-coding work: a board whose columns carry no merge machinery lets a task flow Todo → … → Done without a branch, worktree, or merge step.
+- R5. Agent-driven task movement is strictly sequential — column to adjacent column, no skipping. Only the Lead and the Reviewer may move a task backward. The CEO has no movement powers (it only creates tasks). The human owner is NOT broadly exempt: human drags are limited to Idea ↔ Todo, Done → Archive, and Done/Archive → Todo (the revert flow, R24). A task that doesn't meet expectations is refined — sent back through the cycle with updated instructions — never hand-dragged across stages (no Todo → In Review shortcuts, no In Review → Done bypass of the Reviewer).
+- R24. Revert flow: the user can send a Done or Archived task back to Todo; doing so reverts the changes that task merged (a revert of its merge commit on the integration branch) and re-enters the cycle so a new outcome can be produced. Feasibility caveat: post-merge reverts can conflict with later work — surface conflicts to the user rather than forcing.
+- R6. Boards must support non-coding work — via the reliable path: every board keeps the worktree/merge machinery intact, and non-coding tasks simply produce a `report.md` (or similar artifact) that is committed and merged through the same pipeline. No merge-less column variant: removing the machinery per-board risked coding tasks executing without a worktree/merge on mis-classified boards, especially under low-end models.
 
 **Agents & roster**
 
@@ -95,7 +96,7 @@ flowchart TB
 
 **Simple / advanced mode**
 
-- R14. Simple mode is the default UI and keeps: boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Advanced mode gates: Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces. Plugin-contributed user-facing views and surfaces can declare simple-mode compatibility and appear in simple mode — only plugin development surfaces are categorically gated.
+- R14. Simple mode is the default UI and keeps: boards (tasks, columns, drag), global chat (CEO), per-task chat, the agent roster, basic project settings, and notifications. Simple mode HIDES (and advanced mode shows): Missions (milestones/slices/autopilot), the graph/workflow editor, traits configuration, per-task agent and model selection, custom task fields, branch-group / merge-queue management UI, and plugin development surfaces. Plugin-contributed user-facing views and surfaces can declare simple-mode compatibility and appear in simple mode — only plugin development surfaces are categorically gated.
 - R15. Advanced-mode capabilities remain fully functional — gating is a UI-visibility concern, not a feature removal. Existing projects relying on those surfaces keep working after opting into advanced mode.
 - R17. An existing legacy/advanced project can be converted to simple mode on demand — the same conform mapping the upgrade migration uses (columns onto the company template, team seeded), triggered explicitly from settings rather than only at upgrade.
 
@@ -134,9 +135,9 @@ flowchart TB
 ## Acceptance Examples
 
 - AE1. **Covers R11.** Given a coding board with auto-merge enabled, when the Reviewer passes a task in In Review, then the task's branch enters the merge queue and the task reaches Done with no human action.
-- AE2. **Covers R6, R11.** Given a board for documentation work, when a task reaches In Review and the Reviewer passes it, then the task moves to Done without any branch or merge step occurring.
+- AE2. **Covers R6, R11.** Given a board for documentation work, when the Executor completes the task by producing a `report.md` in its worktree and the Reviewer passes it in In Review, then the task merges and reaches Done through the standard pipeline — same machinery as a coding task, different artifact.
 - AE3. **Covers R3.** Given an agent already staffed on a column of a board, when the user tries to assign that agent to a second column on the same board, then the assignment is rejected with a clear explanation.
-- AE4. **Covers R5.** Given a task in Todo, when the Executor (or any non-Lead/Reviewer agent) attempts to move it directly to In Review, then the move is rejected; when the human owner drags the same card to In Review, the move succeeds.
+- AE4. **Covers R5.** Given a task in Todo, when the Executor (or any non-Lead/Reviewer agent) attempts to move it directly to In Review, then the move is rejected; when the human owner attempts the same Todo → In Review drag, it is also rejected — human drags are limited to Idea ↔ Todo, Done → Archive, and Done/Archive → Todo (revert).
 - AE5. **Covers R9.** Given a single-board project, when the user sends any request in global chat, then the CEO creates the task on Board 1's Todo queue (routing degenerates gracefully when there is only one board).
 
 ---
