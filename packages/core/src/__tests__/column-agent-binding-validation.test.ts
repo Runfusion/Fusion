@@ -161,6 +161,120 @@ describe("U2 validateColumnAgentBindings — staffing constraints", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("R3: rejects staffing an agent that belongs to another board (marker check)", async () => {
+    // A seeded agent carrying a companyBoardId marker for a DIFFERENT board.
+    const otherBoardLead = (
+      await agentStore.createAgent({
+        name: "Other Lead",
+        role: "lead",
+        metadata: { companyBoardId: "board-other" },
+      })
+    ).id;
+    const ir = teamIr({ todo: otherBoardLead, "in-progress": executor, "in-review": reviewer });
+    await expect(
+      validateColumnAgentBindings({
+        ir,
+        agentStore,
+        settings: SETTINGS,
+        confirmPolicyEscalation: false,
+        mode: "simple",
+        mandatoryRoleColumnIds: MANDATORY,
+        boardId: "board-this",
+      }),
+    ).rejects.toMatchObject({
+      name: "ColumnAgentBindingError",
+      reason: "agent-other-board",
+      agentId: otherBoardLead,
+    });
+  });
+
+  it("R3: a marker-bearing agent staffed on ITS OWN board passes", async () => {
+    const ownLead = (
+      await agentStore.createAgent({
+        name: "Own Lead",
+        role: "lead",
+        metadata: { companyBoardId: "board-this" },
+      })
+    ).id;
+    const ir = teamIr({ todo: ownLead, "in-progress": executor, "in-review": reviewer });
+    await expect(
+      validateColumnAgentBindings({
+        ir,
+        agentStore,
+        settings: SETTINGS,
+        confirmPolicyEscalation: false,
+        mode: "simple",
+        mandatoryRoleColumnIds: MANDATORY,
+        boardId: "board-this",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("R3: rejects a markerless legacy agent already staffed on another board", async () => {
+    // `executor` carries no board marker but is listed as staffed elsewhere.
+    const ir = teamIr({ todo: lead, "in-progress": executor, "in-review": reviewer });
+    await expect(
+      validateColumnAgentBindings({
+        ir,
+        agentStore,
+        settings: SETTINGS,
+        confirmPolicyEscalation: false,
+        mode: "simple",
+        mandatoryRoleColumnIds: MANDATORY,
+        boardId: "board-this",
+        otherBoardAgentIds: new Set([executor]),
+      }),
+    ).rejects.toMatchObject({
+      name: "ColumnAgentBindingError",
+      reason: "agent-other-board",
+      agentId: executor,
+    });
+  });
+
+  it("R3: the CEO can never staff a column (rejected outright)", async () => {
+    const ceo = (await agentStore.createAgent({ name: "CEO", role: "ceo" })).id;
+    const ir = teamIr({ todo: ceo, "in-progress": executor, "in-review": reviewer });
+    await expect(
+      validateColumnAgentBindings({
+        ir,
+        agentStore,
+        settings: SETTINGS,
+        confirmPolicyEscalation: false,
+        mode: "simple",
+        mandatoryRoleColumnIds: MANDATORY,
+        boardId: "board-this",
+      }),
+    ).rejects.toMatchObject({
+      name: "ColumnAgentBindingError",
+      reason: "ceo-not-staffable",
+      agentId: ceo,
+    });
+  });
+
+  it("R3: board-scoping is opt-in — omitting boardId leaves same-board rules unchanged", async () => {
+    // An other-board marker agent passes when boardId is not supplied (legacy
+    // call site); the CEO check is independent of boardId, so test with a normal
+    // agent here.
+    const otherBoardLead = (
+      await agentStore.createAgent({
+        name: "Other Lead 2",
+        role: "lead",
+        metadata: { companyBoardId: "board-other" },
+      })
+    ).id;
+    const ir = teamIr({ todo: otherBoardLead, "in-progress": executor, "in-review": reviewer });
+    await expect(
+      validateColumnAgentBindings({
+        ir,
+        agentStore,
+        settings: SETTINGS,
+        confirmPolicyEscalation: false,
+        mode: "simple",
+        mandatoryRoleColumnIds: MANDATORY,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("an instanceof check on the typed error works", async () => {
     const ir = teamIr({ todo: lead, "in-progress": lead, "in-review": reviewer });
     try {

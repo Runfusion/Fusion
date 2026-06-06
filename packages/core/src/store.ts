@@ -112,7 +112,7 @@ import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { buildSnippet, extractGoalCitations } from "./goal-citation-extractor.js";
 import { MissionStore } from "./mission-store.js";
 import { BoardStore } from "./board-store.js";
-import { TaskReviewerStore, MANUAL_APPROVAL_LOG_PREFIX } from "./task-reviewer-store.js";
+import { TaskReviewerStore } from "./task-reviewer-store.js";
 import { PluginStore } from "./plugin-store.js";
 import { InsightStore } from "./insight-store.js";
 import { ResearchStore } from "./research-store.js";
@@ -6519,13 +6519,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // 2c. U6 (R11/R16): Reviewer verdict gate on the EXIT from in-review. On a
       //     company-model board, a task entering in-review starts a task-keyed
       //     Reviewer run; the persisted write-once verdict gates the exit toward
-      //     done / post-review columns. For an AGENT actor, the latest verdict
-      //     must be `pass` — otherwise the move is rejected (typed). The HUMAN
-      //     owner stays exempt (R5/AE6): a human in-review→forward drag with a
-      //     pending/failed verdict completes as manually-approved and stamps an
-      //     explicit `manualApproval` marker on the task metadata so U7 routes it
-      //     manual-never-auto. Inert for non-company boards, system/recovery
-      //     moves (bypassGuards), backward moves, and moves not leaving in-review.
+      //     done / post-review columns. The verdict must be `pass` — otherwise the
+      //     forward move is rejected (typed). There is NO human exemption: the
+      //     human movement matrix (block 2b) already rejects any human move out of
+      //     in-review (KTD "the movement matrix is strict for everyone"), so only
+      //     an agent move can reach here. Inert for non-company boards,
+      //     system/recovery moves (bypassGuards), backward moves, and moves not
+      //     leaving in-review.
       if (
         !bypassGuards &&
         options?.recoveryRehome !== true &&
@@ -6544,34 +6544,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           if (forward) {
             const reviewerStore = this.getTaskReviewerStore();
             const verdict = reviewerStore.getLatestVerdict(id);
-            const actor = options?.actor ?? { kind: "human" as const };
-            if (actor.kind === "agent") {
-              if (verdict?.status !== "pass") {
-                const detail = verdict
-                  ? `latest Reviewer verdict is '${verdict.status}', not 'pass'`
-                  : "no Reviewer verdict has been recorded yet";
-                throw new TransitionRejectionError(
-                  makeTransitionRejection(
-                    "guard-rejected",
-                    "transition.rejected.reviewerVerdictPending",
-                    true,
-                    `The Reviewer must pass before this task can leave in-review (${detail})`,
-                  ),
-                  `Cannot move ${id} out of in-review: ${detail}`,
-                );
-              }
-            } else if (verdict?.status !== "pass") {
-              // Human owner exemption (AE6): record an explicit manual-approval
-              // marker (a stable-prefixed task-log entry) so downstream (U7) can
-              // route this completion as manual, never auto-merge. Appended to the
-              // in-memory task; it persists with the move's upsert below.
-              task.log.push({
-                timestamp: internal.now ?? new Date().toISOString(),
-                action: `${MANUAL_APPROVAL_LOG_PREFIX}${verdict?.status ?? "no-verdict"})`,
-                outcome:
-                  `Human owner approved exit from in-review with Reviewer verdict ` +
-                  `'${verdict?.status ?? "(none)"}'; routed as manual completion (AE6)`,
-              });
+            if (verdict?.status !== "pass") {
+              const detail = verdict
+                ? `latest Reviewer verdict is '${verdict.status}', not 'pass'`
+                : "no Reviewer verdict has been recorded yet";
+              throw new TransitionRejectionError(
+                makeTransitionRejection(
+                  "guard-rejected",
+                  "transition.rejected.reviewerVerdictPending",
+                  true,
+                  `The Reviewer must pass before this task can leave in-review (${detail})`,
+                ),
+                `Cannot move ${id} out of in-review: ${detail}`,
+              );
             }
           }
         }

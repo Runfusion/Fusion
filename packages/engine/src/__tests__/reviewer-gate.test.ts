@@ -10,7 +10,6 @@
 // Covers the U6 plan scenarios:
 //  - AE1 (verdict half): enter in-review → run starts under Reviewer identity →
 //    pass persisted → an AGENT done-move is allowed.
-//  - AE2: non-coding board passes → done with no merge-queue interaction.
 //  - fail → task moved backward to in-progress as the Reviewer actor with
 //    feedback attached; re-entering in-review starts a fresh run (round +1).
 //  - rework budget exhausted → parks in in-review with a persisted diagnostic;
@@ -18,8 +17,8 @@
 //  - write-once: a second complete on a terminal run rejected; pass by a
 //    non-reviewer identity rejected (store-level — see core store test); here we
 //    assert the gate blocks an agent done-move while the verdict is pending.
-//  - AE6: a human drag in-review→done with a pending verdict succeeds and
-//    records a manual-approval marker.
+//  - AE6 (inverted): a human drag in-review→done is REJECTED by the strict human
+//    movement matrix, regardless of the verdict (no human drag out of in-review).
 //  - orphaned running run → reaped to error; sweep re-drives a fresh run.
 //  - flag off: no reviewer runs fire on in-review entry.
 
@@ -32,8 +31,6 @@ import {
   TaskStore,
   parseWorkflowIr,
   COMPANY_BOARD_TEMPLATE_IR,
-  COMPANY_BOARD_TEMPLATE_NON_CODING_IR,
-  MANUAL_APPROVAL_LOG_PREFIX,
   type WorkflowIr,
   type WorkflowIrColumn,
 } from "@fusion/core";
@@ -52,7 +49,7 @@ function makeTmpDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-/** A staffed company IR (coding or non-coding) — mirrors board-team-seed. */
+/** A staffed company IR — mirrors board-team-seed. */
 function staffedCompanyIr(template: WorkflowIr): WorkflowIr {
   if (template.version !== "v2") throw new Error("expected v2");
   const columns: WorkflowIrColumn[] = template.columns.map((c) => {
@@ -70,7 +67,7 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
   let store: TaskStore;
   let companyWorkflowId: string;
 
-  async function setup(coding = false): Promise<void> {
+  async function setup(): Promise<void> {
     rootDir = makeTmpDir("kb-engine-reviewer-gate-");
     globalDir = makeTmpDir("kb-engine-reviewer-gate-global-");
     store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
@@ -78,9 +75,10 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
     await store.updateGlobalSettings({
       experimentalFeatures: { workflowColumns: true, companyModel: true },
     });
+    // R6: every company board keeps the full merge machinery — one template.
     const def = await store.createWorkflowDefinition({
-      name: coding ? "company-coding" : "company-noncoding",
-      ir: staffedCompanyIr(coding ? COMPANY_BOARD_TEMPLATE_IR : COMPANY_BOARD_TEMPLATE_NON_CODING_IR),
+      name: "company",
+      ir: staffedCompanyIr(COMPANY_BOARD_TEMPLATE_IR),
     });
     companyWorkflowId = def.id;
   }
@@ -91,12 +89,20 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
     await rm(globalDir, { recursive: true, force: true });
   }
 
-  /** Create a task on the company workflow and move it (as human) to in-review. */
+  /** Create a task on the company workflow and walk it to in-review. The human
+   *  matrix forbids dragging into the working pipeline, so we advance via agent
+   *  adjacent-forward moves (todo→in-progress→in-review), as the engine would. */
   async function taskInReview(): Promise<string> {
     const task = await store.createTask({ description: "company task" });
     await store.selectTaskWorkflowAndReconcile(task.id, companyWorkflowId);
-    await store.moveTask(task.id, "in-progress", { moveSource: "user", actor: { kind: "human" } });
-    await store.moveTask(task.id, "in-review", { moveSource: "user", actor: { kind: "human" } });
+    // A fresh task lands on the `idea` intake column; walk it forward one column
+    // at a time via agent adjacent-forward moves (idea→todo→in-progress→in-review).
+    for (const target of ["todo", "in-progress", "in-review"]) {
+      await store.moveTask(task.id, target, {
+        moveSource: "user",
+        actor: { kind: "agent", agentId: EXECUTOR },
+      });
+    }
     return task.id;
   }
 
@@ -112,7 +118,7 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
   });
 
   it("AE1: pass verdict persists under Reviewer identity and unblocks the agent done-move", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     const gate = new ReviewerGate({ store, evaluate: passEvaluator });
     const result = await gate.driveReviewForTask(id);
@@ -131,7 +137,7 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
   });
 
   it("agent done-move is rejected while the verdict is pending (gate consulted)", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     // No run driven yet → no verdict. An agent cannot leave in-review.
     await expect(
@@ -139,23 +145,8 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
     ).rejects.toThrow(/Reviewer must pass|verdict/i);
   });
 
-  it("AE2: non-coding board pass → done with no merge-queue involvement", async () => {
-    await setup(false);
-    const id = await taskInReview();
-    const gate = new ReviewerGate({ store, evaluate: passEvaluator });
-    await gate.driveReviewForTask(id);
-    await store.moveTask(id, "done", { moveSource: "user", actor: { kind: "agent", agentId: REVIEWER } });
-    // The non-coding in-review column omits the merge trait, so no merge-queue
-    // row is ever created for this task.
-    const rawDb = (store as unknown as { db: { prepare: (s: string) => { get: (...a: unknown[]) => unknown } } }).db;
-    const queued = rawDb.prepare("SELECT 1 AS found FROM mergeQueue WHERE taskId = ?").get(id) as
-      | { found?: number }
-      | undefined;
-    expect(queued?.found).toBeUndefined();
-  });
-
   it("fail → moves backward to in-progress as Reviewer actor with feedback; re-entry increments the round", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     const gate = new ReviewerGate({ store, evaluate: failEvaluator });
     const result = await gate.driveReviewForTask(id);
@@ -171,7 +162,7 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
     expect(rs.getLatestVerdict(id)?.reworkRound).toBe(0);
 
     // Re-enter in-review (as human) and re-drive → a fresh run at round 1.
-    await store.moveTask(id, "in-review", { moveSource: "user", actor: { kind: "human" } });
+    await store.moveTask(id, "in-review", { moveSource: "user", actor: { kind: "agent", agentId: EXECUTOR } });
     await gate.driveReviewForTask(id);
     const runs = rs.listRunsForTask(id);
     expect(runs).toHaveLength(2);
@@ -179,13 +170,13 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
   });
 
   it("rework budget exhausted → parks in in-review with a persisted diagnostic; no further backward move", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     const gate = new ReviewerGate({ store, evaluate: failEvaluator, maxReworkCycles: 2 });
 
     // Round 0: fail → moved backward.
     expect((await gate.driveReviewForTask(id)).outcome).toBe("failed-moved-backward");
-    await store.moveTask(id, "in-review", { moveSource: "user", actor: { kind: "human" } });
+    await store.moveTask(id, "in-review", { moveSource: "user", actor: { kind: "agent", agentId: EXECUTOR } });
 
     // Round 1: budget (2) reached → park, NO backward move.
     const second = await gate.driveReviewForTask(id);
@@ -196,21 +187,29 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
     expect(task.log.some((e) => e.action.startsWith(REVIEWER_NEEDS_ATTENTION_LOG_PREFIX))).toBe(true);
   });
 
-  it("AE6: a human drag in-review→done with a pending verdict succeeds and records a manual-approval marker", async () => {
-    await setup(false);
+  it("AE6 (inverted): a human drag in-review→done is rejected by the strict movement matrix", async () => {
+    await setup();
     const id = await taskInReview();
-    // No verdict yet. Human owner is exempt and may complete the task manually.
-    const moved = await store.moveTask(id, "done", {
-      moveSource: "user",
-      actor: { kind: "human" },
-    });
-    expect(moved.column).toBe("done");
-    const task = await store.getTask(id);
-    expect(task.log.some((e) => e.action.startsWith(MANUAL_APPROVAL_LOG_PREFIX))).toBe(true);
+    // No verdict yet. The human matrix forbids any move out of in-review — the
+    // rejection comes from the actor-rule layer (not the verdict gate), so it
+    // fires regardless of verdict state.
+    await expect(
+      store.moveTask(id, "done", { moveSource: "user", actor: { kind: "human" } }),
+    ).rejects.toThrow(/Human moves are limited/i);
+    const pending = await store.getTask(id);
+    expect(pending.column).toBe("in-review");
+
+    // Even WITH a passing verdict, the human still cannot drag it out.
+    const gate = new ReviewerGate({ store, evaluate: passEvaluator });
+    await gate.driveReviewForTask(id);
+    await expect(
+      store.moveTask(id, "done", { moveSource: "user", actor: { kind: "human" } }),
+    ).rejects.toThrow(/Human moves are limited/i);
+    expect((await store.getTask(id)).column).toBe("in-review");
   });
 
   it("orphaned running run → reaped to error; sweep re-drives a fresh run", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     const rs = store.getTaskReviewerStore();
     // Simulate an orphaned in-flight run (owner crashed mid-run).
@@ -230,7 +229,7 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
   });
 
   it("flag off: no reviewer run fires on drive", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     // Turn the company-model flag off.
     await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true, companyModel: false } });
@@ -241,7 +240,7 @@ describe("ReviewerGate — task-keyed verdict gating (U6)", () => {
   });
 
   it("idempotency: a second drive after a pass verdict is a no-op", async () => {
-    await setup(false);
+    await setup();
     const id = await taskInReview();
     const gate = new ReviewerGate({ store, evaluate: passEvaluator });
     await gate.driveReviewForTask(id);

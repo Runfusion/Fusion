@@ -107,7 +107,6 @@ export { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 // ── U3: company-model board column template ───────────────────────────────────
 export {
   COMPANY_BOARD_TEMPLATE_IR,
-  COMPANY_BOARD_TEMPLATE_NON_CODING_IR,
   COMPANY_BOARD_COLUMN_IDS,
   isCompanyBoardIr,
   resolveCompanyRoleColumnId,

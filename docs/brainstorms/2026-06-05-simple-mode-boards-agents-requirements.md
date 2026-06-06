@@ -56,7 +56,7 @@ flowchart TB
 
 ## Actors
 
-- A1. **User (owner)** — talks to the CEO in global chat, can talk to any agent inside a task, oversees all boards, and may move any card anywhere (movement constraints bind agents, not the owner).
+- A1. **User (owner)** — talks to the CEO in global chat, can talk to any agent inside a task, and oversees all boards. Owner drags are limited to Idea ↔ Todo, Done → Archive, and Done/Archive → Todo (revert, R24); everything else flows through the agents and explicit affordances (refine, approve plan, merge request).
 - A2. **CEO** — project-level agent created at project creation. The single task-entry point in global chat: interprets a request, selects the responsible board, and creates the task in that board's Todo queue.
 - A3. **Lead** — mandatory, bound to the Todo column. Sorts, structures, and formalizes incoming tasks; prepares the execution prompt for the board's Executor. Role is locked: only its instructions are customizable.
 - A4. **Executor** — mandatory, bound to the In Progress column. Performs the requested action (coding or otherwise).

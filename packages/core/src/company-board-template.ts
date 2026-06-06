@@ -8,7 +8,13 @@
  *
  * Differences from {@link BUILTIN_CODING_WORKFLOW_IR}:
  *  - NO `triage` column — the Lead absorbs triage's spec work on Todo entry
- *    (U5), so the company board's entry column is `todo` directly.
+ *    (U5), so the company board's working entry column is `todo` directly.
+ *  - An unstaffed, locked `idea` intake column sits BEFORE `todo` (R5/KTD):
+ *    user-created tasks land there; CEO-routed tasks land in Todo. The idea
+ *    column carries the `intake` trait, has no `role` marker (it is never a
+ *    mandatory-role-staffing column, so U2's staffing validation ignores it) and
+ *    is never picked up by the Lead triage scan / dispatch (those gate on the
+ *    todo column id specifically).
  *  - The three role columns (todo / in-progress / in-review) carry company-model
  *    markers: `role` ("lead" | "executor" | "reviewer") and `locked: true`.
  *    These markers are the carrier the placement/movement rules key off
@@ -17,35 +23,32 @@
  *    Legacy/default workflows never set them, so flag-off behavior is byte-
  *    identical.
  *
- * Two variants:
- *  - {@link COMPANY_BOARD_TEMPLATE_IR} (coding): the in-review column keeps the
- *    full merge machinery (merge-blocker + stall-detection + merge), mirroring
- *    legacy semantics so a coding board still gates done on a clean merge.
- *  - {@link COMPANY_BOARD_TEMPLATE_NON_CODING_IR} (non-coding): the in-review
- *    column OMITS the merge-blocker and merge traits (keeps stall-detection), so
- *    a task flows in-review → done with NO merge-queue interaction (R6, AE2).
+ * Single variant: every company board keeps the full merge machinery (R6) — a
+ * non-coding board differs only by agent instructions (no code enforces that), so
+ * there is no merge-less column variant.
  *
  * Trait mapping mirrors the legacy semantics for the columns that exist:
+ *   idea        = intake
  *   todo        = hold(capacity) + reset-on-entry
  *   in-progress = wip + abort-on-exit + timing
- *   in-review   = merge-blocker + stall-detection + merge   (coding)
- *               = stall-detection                            (non-coding)
+ *   in-review   = merge-blocker + stall-detection + merge
  *   done        = complete
  *   archived    = archived
  *
  * The graph (nodes/edges) reuses the coding pipeline's execute → review → merge
- * walk for the coding variant; the non-coding variant drops the `merge` node (no
- * merge step) so the walk is execute → review → end.
+ * walk (the `idea` column is intake-only and carries no automation node).
  */
 
 import type { WorkflowIr, WorkflowIrColumn, WorkflowColumnRole } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 
-/** The company board's column ids in board order (no triage). Custom columns
- *  may be inserted between todo and in-review, and after in-review before done
- *  (R2) — never before todo. */
+/** The company board's column ids in board order. The unstaffed locked `idea`
+ *  intake column leads; `todo` is the working entry column. Custom columns may be
+ *  inserted between todo and in-review, and after in-review before done (R2) —
+ *  never before todo (idea is the only pre-todo column). */
 export const COMPANY_BOARD_COLUMN_IDS = [
+  "idea",
   "todo",
   "in-progress",
   "in-review",
@@ -53,7 +56,18 @@ export const COMPANY_BOARD_COLUMN_IDS = [
   "archived",
 ] as const;
 
-/** The three locked role columns, in board order (R1). */
+/** The unstaffed, locked intake column before todo (R5/KTD). No `role` marker —
+ *  it is never a mandatory-role-staffing column. User-created tasks land here;
+ *  CEO-routed tasks land in todo. The Lead triage scan / dispatch never pick it
+ *  up (they gate on the todo column id). */
+const IDEA_COLUMN: WorkflowIrColumn = {
+  id: "idea",
+  name: "Idea",
+  locked: true,
+  traits: [{ trait: "intake" }],
+};
+
+/** The two locked role columns at the head of the working pipeline (R1). */
 const ROLE_COLUMNS: WorkflowIrColumn[] = [
   {
     id: "todo",
@@ -77,8 +91,8 @@ const TAIL_COLUMNS: WorkflowIrColumn[] = [
   { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
 ];
 
-/** The Reviewer's in-review column for the CODING variant: full merge machinery,
- *  mirroring legacy semantics. */
+/** The Reviewer's in-review column: full merge machinery, mirroring legacy
+ *  semantics (R6 — every company board keeps the merge machinery). */
 const IN_REVIEW_CODING: WorkflowIrColumn = {
   id: "in-review",
   name: "In review",
@@ -87,21 +101,10 @@ const IN_REVIEW_CODING: WorkflowIrColumn = {
   traits: [{ trait: "merge-blocker" }, { trait: "stall-detection" }, { trait: "merge" }],
 };
 
-/** The Reviewer's in-review column for the NON-CODING variant: no merge-blocker,
- *  no merge — the Reviewer's verdict still gates the exit, but there is no branch
- *  or merge step, so a task reaches done with no merge-queue interaction (R6). */
-const IN_REVIEW_NON_CODING: WorkflowIrColumn = {
-  id: "in-review",
-  name: "In review",
-  role: "reviewer",
-  locked: true,
-  traits: [{ trait: "stall-detection" }],
-};
-
 const RAW_COMPANY_BOARD_TEMPLATE_IR: WorkflowIr = {
   version: "v2",
   name: "company-board-template",
-  columns: [...ROLE_COLUMNS, IN_REVIEW_CODING, ...TAIL_COLUMNS],
+  columns: [IDEA_COLUMN, ...ROLE_COLUMNS, IN_REVIEW_CODING, ...TAIL_COLUMNS],
   nodes: [
     { id: "start", kind: "start", column: "todo" },
     { id: "execute", kind: "prompt", column: "in-progress", config: { seam: "execute" } },
@@ -121,33 +124,10 @@ const RAW_COMPANY_BOARD_TEMPLATE_IR: WorkflowIr = {
   settings: BUILTIN_WORKFLOW_SETTINGS,
 };
 
-const RAW_COMPANY_BOARD_TEMPLATE_NON_CODING_IR: WorkflowIr = {
-  version: "v2",
-  name: "company-board-template-non-coding",
-  columns: [...ROLE_COLUMNS, IN_REVIEW_NON_CODING, ...TAIL_COLUMNS],
-  nodes: [
-    { id: "start", kind: "start", column: "todo" },
-    { id: "execute", kind: "prompt", column: "in-progress", config: { seam: "execute" } },
-    { id: "review", kind: "prompt", column: "in-review", config: { seam: "review" } },
-    { id: "end", kind: "end", column: "done" },
-  ],
-  edges: [
-    { from: "start", to: "execute" },
-    { from: "execute", to: "review", condition: "success" },
-    { from: "review", to: "end", condition: "success" },
-    { from: "execute", to: "end", condition: "failure" },
-    { from: "review", to: "end", condition: "failure" },
-  ],
-  settings: BUILTIN_WORKFLOW_SETTINGS,
-};
-
-/** The coding company board template (default for new flag-on boards). */
+/** The company board template (default for new flag-on boards). Every company
+ *  board keeps the full merge machinery (R6); non-coding boards differ only by
+ *  agent instructions. */
 export const COMPANY_BOARD_TEMPLATE_IR = parseWorkflowIr(RAW_COMPANY_BOARD_TEMPLATE_IR);
-
-/** The non-coding company board template (no branch/merge machinery, R6). */
-export const COMPANY_BOARD_TEMPLATE_NON_CODING_IR = parseWorkflowIr(
-  RAW_COMPANY_BOARD_TEMPLATE_NON_CODING_IR,
-);
 
 /**
  * True when an IR carries the company-model markers — i.e. at least one column

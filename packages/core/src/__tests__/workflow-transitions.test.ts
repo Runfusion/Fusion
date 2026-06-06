@@ -40,14 +40,12 @@ const asExecutor: MoveActor = { kind: "agent", agentId: EXECUTOR };
 const asLead: MoveActor = { kind: "agent", agentId: LEAD };
 const asReviewer: MoveActor = { kind: "agent", agentId: REVIEWER };
 
-describe("U3 company-board movement rules (R5, AE4)", () => {
+describe("U3 company-board agent movement rules (R5, AE4)", () => {
   const ir = staffedCompanyIr();
 
-  it("AE4: executor-agent skip todo→in-review is rejected; human succeeds", () => {
+  it("AE4: executor-agent skip todo→in-review is rejected", () => {
     const rejection = validateCompanyBoardMove(ir, "todo", "in-review", asExecutor);
     expect(rejection?.reason).toBe("agent-skip-forward");
-    // Same move by the human owner is unrestricted.
-    expect(validateCompanyBoardMove(ir, "todo", "in-review", human)).toBeUndefined();
   });
 
   it("sequential: agent todo→in-progress (adjacent forward) succeeds", () => {
@@ -68,6 +66,20 @@ describe("U3 company-board movement rules (R5, AE4)", () => {
     expect(validateCompanyBoardMove(ir, "in-progress", "todo", asLead)).toBeUndefined();
   });
 
+  it("the CEO gets the standard agent rules (no movement powers, R5)", () => {
+    // An agent that is NOT the board's Lead/Reviewer (the CEO is project-level and
+    // staffs no role column) cannot skip forward nor move backward.
+    const asCeo: MoveActor = { kind: "agent", agentId: "agent-ceo" };
+    expect(validateCompanyBoardMove(ir, "todo", "in-review", asCeo)?.reason).toBe(
+      "agent-skip-forward",
+    );
+    expect(validateCompanyBoardMove(ir, "in-review", "todo", asCeo)?.reason).toBe(
+      "agent-backward-not-allowed",
+    );
+    // It may still do a plain adjacent-forward move like any agent.
+    expect(validateCompanyBoardMove(ir, "todo", "in-progress", asCeo)).toBeUndefined();
+  });
+
   it("non-company workflow is unaffected (validator no-ops)", () => {
     const plain = parseWorkflowIr({
       version: "v2",
@@ -85,14 +97,60 @@ describe("U3 company-board movement rules (R5, AE4)", () => {
     });
     // Even a skip move by an agent returns undefined on a non-company board.
     expect(validateCompanyBoardMove(plain, "a", "c", asExecutor)).toBeUndefined();
+    // And a human move that would be outside the matrix is also untouched.
+    expect(validateCompanyBoardMove(plain, "a", "c", human)).toBeUndefined();
   });
 
-  it("company board adjacency lets the human reach any column (skip allowed at graph level)", () => {
-    // The all-to-all company adjacency is what keeps the human owner unrestricted;
-    // the actor rule (above) is what narrows agents.
+  it("company board adjacency stays all-to-all at the graph level (actor rule narrows)", () => {
+    // The all-to-all company adjacency keeps the column graph permissive and never
+    // strands a card; the actor rule layer enforces the strict matrix.
     const allowed = resolveAllowedColumns(ir, "todo");
-    expect(allowed).toEqual(expect.arrayContaining(["in-progress", "in-review", "done", "archived"]));
+    expect(allowed).toEqual(
+      expect.arrayContaining(["idea", "in-progress", "in-review", "done", "archived"]),
+    );
     expect(allowed).not.toContain("todo");
+  });
+});
+
+describe("U3 company-board HUMAN movement matrix (R5/R24)", () => {
+  const ir = staffedCompanyIr();
+
+  it("allows idea ↔ todo (both directions)", () => {
+    expect(validateCompanyBoardMove(ir, "idea", "todo", human)).toBeUndefined();
+    expect(validateCompanyBoardMove(ir, "todo", "idea", human)).toBeUndefined();
+  });
+
+  it("allows done → archived", () => {
+    expect(validateCompanyBoardMove(ir, "done", "archived", human)).toBeUndefined();
+  });
+
+  it("allows the revert paths done → todo and archived → todo", () => {
+    expect(validateCompanyBoardMove(ir, "done", "todo", human)).toBeUndefined();
+    expect(validateCompanyBoardMove(ir, "archived", "todo", human)).toBeUndefined();
+  });
+
+  it("rejects todo → in-review (human, outside the matrix)", () => {
+    expect(validateCompanyBoardMove(ir, "todo", "in-review", human)?.reason).toBe(
+      "human-move-not-allowed",
+    );
+  });
+
+  it("rejects in-review → done (no human drag out of in-review)", () => {
+    expect(validateCompanyBoardMove(ir, "in-review", "done", human)?.reason).toBe(
+      "human-move-not-allowed",
+    );
+  });
+
+  it("rejects in-progress → done (human stage skip)", () => {
+    expect(validateCompanyBoardMove(ir, "in-progress", "done", human)?.reason).toBe(
+      "human-move-not-allowed",
+    );
+  });
+
+  it("rejects todo → in-progress (human moving into the working pipeline)", () => {
+    expect(validateCompanyBoardMove(ir, "todo", "in-progress", human)?.reason).toBe(
+      "human-move-not-allowed",
+    );
   });
 });
 
@@ -152,6 +210,39 @@ describe("U3 company-board column placement rules (R1/R2)", () => {
     const next = {
       ...existing,
       columns: existing.columns.map((c) => (c.id === "todo" ? { ...c, name: "Inbox" } : c)),
+    };
+    try {
+      validateCompanyBoardColumnEdit(existing, next);
+      throw new Error("expected rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CompanyBoardColumnEditError);
+      expect((err as CompanyBoardColumnEditError).reason).toBe("role-column-renamed");
+    }
+  });
+
+  it("the locked idea column is exempt from the before-todo rule (no-op edit passes)", () => {
+    // The template ships with `idea` before todo; an unchanged edit must not trip
+    // the custom-column-before-todo rule.
+    expect(() => validateCompanyBoardColumnEdit(existing, existing)).not.toThrow();
+  });
+
+  it("deleting the locked idea column is rejected", () => {
+    if (existing.version !== "v2") throw new Error("expected v2");
+    const next = { ...existing, columns: existing.columns.filter((c) => c.id !== "idea") };
+    try {
+      validateCompanyBoardColumnEdit(existing, next);
+      throw new Error("expected rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CompanyBoardColumnEditError);
+      expect((err as CompanyBoardColumnEditError).reason).toBe("role-column-deleted");
+    }
+  });
+
+  it("renaming the locked idea column is rejected", () => {
+    if (existing.version !== "v2") throw new Error("expected v2");
+    const next = {
+      ...existing,
+      columns: existing.columns.map((c) => (c.id === "idea" ? { ...c, name: "Inbox" } : c)),
     };
     try {
       validateCompanyBoardColumnEdit(existing, next);
@@ -234,7 +325,7 @@ describe("U3 actor threading through moveTask (flag-on store, AE4)", () => {
     return task.id;
   }
 
-  it("AE4: executor-agent move todo→in-review (skip) is rejected; human succeeds", async () => {
+  it("AE4: executor-agent move todo→in-review (skip) is rejected", async () => {
     const rejected = await companyTask();
     await expect(
       store.moveTask(rejected, "in-review", {
@@ -242,16 +333,27 @@ describe("U3 actor threading through moveTask (flag-on store, AE4)", () => {
         actor: { kind: "agent", agentId: EXECUTOR },
       }),
     ).rejects.toThrow(/skip|advance one column/i);
+  });
 
-    // Same move by the human owner succeeds (default actor is human; pass it
-    // explicitly for clarity).
-    const ok = await companyTask();
-    const moved = await store.moveTask(ok, "in-review", {
+  it("human move out of the matrix (todo→in-review) is rejected", async () => {
+    // The matrix is strict for everyone: a human cannot drag into in-review.
+    const id = await companyTask();
+    await expect(
+      store.moveTask(id, "in-review", {
+        moveSource: "user",
+        actor: { kind: "human" },
+        allowDirectInReviewMove: true,
+      }),
+    ).rejects.toThrow(/Human moves are limited/i);
+  });
+
+  it("human matrix move todo→idea succeeds", async () => {
+    const id = await companyTask();
+    const moved = await store.moveTask(id, "idea", {
       moveSource: "user",
       actor: { kind: "human" },
-      allowDirectInReviewMove: true,
     });
-    expect(moved.column).toBe("in-review");
+    expect(moved.column).toBe("idea");
   });
 
   it("sequential agent move todo→in-progress succeeds", async () => {
@@ -263,14 +365,16 @@ describe("U3 actor threading through moveTask (flag-on store, AE4)", () => {
     expect(moved.column).toBe("in-progress");
   });
 
-  it("default actor (omitted) is human — existing callers stay exempt", async () => {
+  it("default actor (omitted) is human — bound by the human matrix", async () => {
     const id = await companyTask();
-    // No actor supplied: behaves as the human owner, so a skip is allowed.
-    const moved = await store.moveTask(id, "in-review", {
-      moveSource: "user",
-      allowDirectInReviewMove: true,
-    });
-    expect(moved.column).toBe("in-review");
+    // No actor supplied: behaves as the human owner, so a skip into in-review is
+    // rejected by the matrix.
+    await expect(
+      store.moveTask(id, "in-review", {
+        moveSource: "user",
+        allowDirectInReviewMove: true,
+      }),
+    ).rejects.toThrow(/Human moves are limited/i);
   });
 
   it("save path rejects renaming a role column on a company board (server-side)", async () => {

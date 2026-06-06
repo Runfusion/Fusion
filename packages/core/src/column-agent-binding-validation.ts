@@ -23,7 +23,13 @@ export type ColumnAgentBindingReason =
   /** U2: in simple mode the same agent staffs more than one column of this board. */
   | "agent-multiple-columns"
   /** U2: a mandatory role column (lead/executor/reviewer) was left unstaffed. */
-  | "mandatory-column-unstaffed";
+  | "mandatory-column-unstaffed"
+  /** R3: the agent belongs to another board (its `companyBoardId` marker differs
+   *  from this board, or — for a markerless legacy agent — it is already staffed
+   *  on a different board). Agents are strictly board-scoped. */
+  | "agent-other-board"
+  /** R3: the project-level CEO (capability "ceo") can never staff a column. */
+  | "ceo-not-staffable";
 
 export class ColumnAgentBindingError extends Error {
   readonly columnId: string;
@@ -88,8 +94,20 @@ export async function validateColumnAgentBindings(args: {
   mode?: "simple" | "advanced";
   /** Column ids that must always be staffed (U2). Empty/omitted → no check. */
   mandatoryRoleColumnIds?: readonly string[];
+  /** The id of the board this IR belongs to (R3). When provided, board-scoping is
+   *  enforced: an agent whose `metadata.companyBoardId` marker names a DIFFERENT
+   *  board is rejected (`agent-other-board`), and the CEO is rejected outright
+   *  (`ceo-not-staffable`). Omit to skip board-scoping (legacy callers). */
+  boardId?: string;
+  /** Agent ids already staffed on OTHER boards of this project (R3). Used to
+   *  board-scope MARKERLESS legacy/user agents that carry no `companyBoardId`:
+   *  staffing such an agent here when it already staffs a different board is
+   *  rejected (`agent-other-board`). Marker-bearing agents are scoped by their
+   *  marker alone and don't need this. Omit when a cross-board lookup isn't
+   *  available — the marker check still applies. */
+  otherBoardAgentIds?: ReadonlySet<string>;
 }): Promise<void> {
-  const { ir, agentStore, settings, confirmPolicyEscalation } = args;
+  const { ir, agentStore, settings, confirmPolicyEscalation, boardId, otherBoardAgentIds } = args;
   const mode = args.mode ?? "advanced";
   const mandatory = args.mandatoryRoleColumnIds ?? [];
   const columns = (ir as { columns?: unknown })?.columns;
@@ -157,6 +175,44 @@ export async function validateColumnAgentBindings(args: {
         agentId,
         reason: "unknown-agent",
       });
+    }
+    // (c) Board-scoping (R3). The CEO is project-level and never staffs a column;
+    // every other agent belongs to exactly one board.
+    if (agent.role === "ceo") {
+      throw new ColumnAgentBindingError({
+        message:
+          `Column '${col.id}' binds the project CEO '${agentId}'; the CEO is project-level ` +
+          `and can never staff a board column`,
+        columnId: col.id,
+        agentId,
+        reason: "ceo-not-staffable",
+      });
+    }
+    if (boardId !== undefined) {
+      const agentBoardId = agent.metadata?.["companyBoardId"];
+      if (typeof agentBoardId === "string") {
+        // Marker-bearing seed agent: must match this board.
+        if (agentBoardId !== boardId) {
+          throw new ColumnAgentBindingError({
+            message:
+              `Column '${col.id}' binds agent '${agentId}' which belongs to board ` +
+              `'${agentBoardId}', not this board '${boardId}'; agents are board-scoped`,
+            columnId: col.id,
+            agentId,
+            reason: "agent-other-board",
+          });
+        }
+      } else if (otherBoardAgentIds?.has(agentId)) {
+        // Markerless legacy/user agent already staffed on a different board.
+        throw new ColumnAgentBindingError({
+          message:
+            `Column '${col.id}' binds agent '${agentId}' which is already staffed on ` +
+            `another board; an agent may belong to only one board`,
+          columnId: col.id,
+          agentId,
+          reason: "agent-other-board",
+        });
+      }
     }
     const agentPolicy = resolveEffectiveAgentPermissionPolicy(
       agent.permissionPolicy,

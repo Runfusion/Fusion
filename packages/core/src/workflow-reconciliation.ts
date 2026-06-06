@@ -276,10 +276,12 @@ export function computeIncompatibleFieldChanges(
 // `isCompanyBoardIr`), the locked role columns and the custom-column placement
 // region are enforced server-side at save time, independently of the editor:
 //
-//   - the three locked role columns (todo/in-progress/in-review) may NOT be
-//     deleted or renamed; their agent staffing is fine (U2 owns binding edits);
+//   - the three locked role columns (todo/in-progress/in-review) AND the locked
+//     unstaffed `idea` intake column may NOT be deleted or renamed; their agent
+//     staffing is fine (U2 owns binding edits);
 //   - custom columns are legal between todo and in-review AND after in-review
-//     (post-approval steps, before done) — NEVER before todo;
+//     (post-approval steps, before done) — NEVER before todo (the locked `idea`
+//     column is the only pre-todo column and is exempt from this rule);
 //   - the Reviewer's in-review column remains the sole gate out of in-review:
 //     done and any post-approval columns sit after it (enforced by "after
 //     in-review" placement; the verdict gate itself is U6).
@@ -318,11 +320,13 @@ export class CompanyBoardColumnEditError extends Error {
   }
 }
 
-/** The role columns of a company-board IR, keyed by id. */
-function roleColumnsById(ir: WorkflowIr): Map<string, WorkflowIrColumn> {
+/** The LOCKED columns of a company-board IR, keyed by id — the three role columns
+ *  plus the unstaffed `idea` intake column (locked, no role). These may never be
+ *  deleted or renamed. */
+function lockedColumnsById(ir: WorkflowIr): Map<string, WorkflowIrColumn> {
   const map = new Map<string, WorkflowIrColumn>();
   for (const col of columnsOf(ir)) {
-    if (col.role !== undefined) map.set(col.id, col);
+    if (col.locked === true || col.role !== undefined) map.set(col.id, col);
   }
   return map;
 }
@@ -348,38 +352,41 @@ export function validateCompanyBoardColumnEdit(
 ): void {
   if (!isCompanyBoardIr(existingIr)) return;
 
-  const existingRoles = roleColumnsById(existingIr);
+  const existingLocked = lockedColumnsById(existingIr);
   const nextById = new Map(columnsOf(nextIr).map((c) => [c.id, c]));
 
-  // Locked role columns: never deleted, never renamed.
-  for (const [id, oldCol] of existingRoles) {
+  // Locked columns (role columns + the `idea` intake column): never deleted,
+  // never renamed.
+  for (const [id, oldCol] of existingLocked) {
     if (oldCol.locked !== true) continue;
     const next = nextById.get(id);
     if (!next) {
       throw new CompanyBoardColumnEditError({
-        message: `Locked role column '${id}' cannot be deleted from a company board`,
+        message: `Locked column '${id}' cannot be deleted from a company board`,
         columnId: id,
         reason: "role-column-deleted",
       });
     }
     if (next.name !== oldCol.name) {
       throw new CompanyBoardColumnEditError({
-        message: `Locked role column '${id}' cannot be renamed (from '${oldCol.name}' to '${next.name}')`,
+        message: `Locked column '${id}' cannot be renamed (from '${oldCol.name}' to '${next.name}')`,
         columnId: id,
         reason: "role-column-renamed",
       });
     }
   }
 
-  // Custom-column placement: nothing before todo. A custom (non-role) column may
-  // sit only at index >= the todo column's index. The role columns themselves
-  // are validated above; here we only police the non-role columns' position.
+  // Custom-column placement: nothing before todo. A custom (non-role, non-locked)
+  // column may sit only at index >= the todo column's index. The locked `idea`
+  // intake column is exempt (it is the one legitimate pre-todo column). The role
+  // columns themselves are validated above; here we only police the non-role,
+  // non-locked columns' position.
   const nextColumns = columnsOf(nextIr);
   const todoIndex = nextColumns.findIndex((c) => c.role === "lead");
   if (todoIndex >= 0) {
     for (let i = 0; i < todoIndex; i++) {
       const col = nextColumns[i];
-      if (col.role === undefined) {
+      if (col.role === undefined && col.locked !== true) {
         throw new CompanyBoardColumnEditError({
           message: `Custom column '${col.id}' cannot be placed before the Todo column on a company board`,
           columnId: col.id,

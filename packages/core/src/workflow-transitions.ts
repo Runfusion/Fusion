@@ -75,9 +75,10 @@ function orderDerivedAdjacency(ir: WorkflowIrV2): ColumnAdjacency {
 }
 
 /** Derive an all-to-all adjacency (every column reachable from every other) for
- *  a company-model board. The human owner is unrestricted (R5), so the base
- *  column-graph must not constrain them; agent moves are narrowed afterward by
- *  {@link validateCompanyBoardMove} (adjacent-forward / Lead-Reviewer-backward).
+ *  a company-model board. The actor-rule layer ({@link validateCompanyBoardMove})
+ *  enforces the strict movement matrix on top of this graph (the human matrix and
+ *  the agent adjacent-forward / Lead-Reviewer-backward rules), so the base column
+ *  graph stays permissive and never strands a card.
  *  Self-edges are omitted (a same-column move is a no-op handled upstream). */
 function companyBoardAdjacency(ir: WorkflowIrV2): ColumnAdjacency {
   const adj: ColumnAdjacency = new Map();
@@ -133,16 +134,22 @@ export function workflowHasColumn(ir: WorkflowIr, columnId: string): boolean {
 // ── Company-model actor-aware movement rules (U3, R5) ────────────────────────
 //
 // On a company-model board (its IR carries `role` markers — `isCompanyBoardIr`)
-// movement is restricted by WHO is moving the card:
+// movement is restricted by WHO is moving the card. The matrix is strict for
+// everyone (KTD "The movement matrix is strict for everyone"):
 //
-//   - the human owner (`actor.kind === "human"`) is UNRESTRICTED — the R5
-//     exemption. Drag-and-drop and every existing UI/HTTP caller defaults to a
-//     human actor, so their behavior is unchanged;
 //   - an agent (`actor.kind === "agent"`) may only move strictly
 //     ADJACENT-FORWARD in the board's column order (no skipping). The single
 //     exception is BACKWARD: an agent may move a card backward only when its
 //     effective identity is the board's Lead or Reviewer (the two roles allowed
-//     to send work back, R5); a backward target may be any earlier column.
+//     to send work back, R5); a backward target may be any earlier column. The
+//     CEO is not the board's Lead/Reviewer, so it gets the standard agent rules
+//     (no special movement powers — R5).
+//   - the human owner (`actor.kind === "human"`) is limited to the exact human
+//     matrix (R5/R24): idea ↔ todo, done → archived, and the revert paths
+//     done → todo and archived → todo. Any other human move (e.g. dragging into
+//     or out of in-review, skipping stages) is rejected with
+//     `"human-move-not-allowed"`. The revert paths only PERMIT the move here; the
+//     actual git revert (R24) lands elsewhere.
 //
 // These rules are layered ON TOP of the column-graph adjacency check (which still
 // runs), and fire only for company boards — a legacy/custom workflow never
@@ -150,7 +157,8 @@ export function workflowHasColumn(ir: WorkflowIr, columnId: string): boolean {
 // it and the move is governed solely by `resolveAllowedColumns`.
 
 /** The actor performing a move (U3, R5). Default posture is the human owner so
- *  existing UI/HTTP callers stay exempt; agent tool callers pass their identity. */
+ *  existing UI/HTTP callers pass through the human matrix; agent tool callers pass
+ *  their identity. */
 export interface MoveActor {
   kind: "human" | "agent";
   /** The acting agent's id (when `kind === "agent"`). Resolved against the
@@ -158,12 +166,24 @@ export interface MoveActor {
   agentId?: string;
 }
 
-/** Reasons a company-model agent move is rejected (U3, R5). */
+/** Reasons a company-model move is rejected (U3, R5). */
 export type CompanyBoardMoveReason =
   /** An agent tried to skip forward (non-adjacent forward move). */
   | "agent-skip-forward"
   /** A non-Lead/Reviewer agent tried to move a card backward. */
-  | "agent-backward-not-allowed";
+  | "agent-backward-not-allowed"
+  /** A human tried a move outside the human matrix (R5/R24). */
+  | "human-move-not-allowed";
+
+/** The exact set of column→column moves a human owner may perform on a company
+ *  board (R5/R24): idea ↔ todo, done → archived, done → todo, archived → todo. */
+const HUMAN_ALLOWED_MOVES: ReadonlySet<string> = new Set([
+  "idea→todo",
+  "todo→idea",
+  "done→archived",
+  "done→todo",
+  "archived→todo",
+]);
 
 /** A typed rejection of a company-model agent move (U3, R5). */
 export interface CompanyBoardMoveRejection {
@@ -201,8 +221,19 @@ export function validateCompanyBoardMove(
   actor: MoveActor,
 ): CompanyBoardMoveRejection | undefined {
   if (!isCompanyBoardIr(ir)) return undefined;
-  // Human owner is unrestricted (R5 exemption).
-  if (actor.kind === "human") return undefined;
+
+  // Human owner: limited to the exact human matrix (R5/R24). Any other move is
+  // rejected. Keyed by literal column ids — the company template's matrix columns
+  // (idea/todo/done/archived) are fixed locked ids.
+  if (actor.kind === "human") {
+    if (HUMAN_ALLOWED_MOVES.has(`${fromColumn}→${toColumn}`)) return undefined;
+    return {
+      reason: "human-move-not-allowed",
+      message:
+        `Human moves are limited to idea ↔ todo, done → archived, and the revert ` +
+        `paths done → todo / archived → todo; '${fromColumn}' → '${toColumn}' rejected`,
+    };
+  }
 
   const v2 = ir as WorkflowIrV2;
   const fromIdx = columnOrderIndex(v2, fromColumn);

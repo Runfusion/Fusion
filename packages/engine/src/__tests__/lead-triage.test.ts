@@ -360,6 +360,39 @@ describe("U5 — company todo scan picks up needs-spec tasks but not specced/par
     }
   });
 
+  it("an idea-column task is never specified/dispatched (the scan gates on the todo column)", async () => {
+    const rootDir = await fixtureRoot("lead-triage-idea-");
+    try {
+      const taskId = "FN-IDEA-1";
+      // No PROMPT.md → would need a spec IF it were on the todo column; but it
+      // sits on the unstaffed `idea` intake column, which the scan never touches.
+      await mkdir(join(rootDir, ".fusion", "tasks", taskId), { recursive: true });
+
+      const ideaTask = companyTask({ id: taskId, column: "idea" });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([ideaTask]),
+      });
+
+      const processor = new TriageProcessor(store, rootDir, {
+        resolveLeadTriageContext: async () => ({
+          leadColumnId: "todo",
+          leadAgentId: "lead-agent-1",
+          requirePlanApproval: false,
+        }),
+      });
+      const specifySpy = vi.spyOn(processor, "specifyTask").mockResolvedValue(undefined);
+
+      (processor as any).running = true;
+      await (processor as any).poll();
+
+      // The idea column is not the Lead column (todo), so the task is never
+      // discovered for specification or dispatch.
+      expect(specifySpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup(rootDir);
+    }
+  });
+
   it("stuck-detection exclusion: an awaiting-approval parked task is not discovered/dispatched", async () => {
     const rootDir = await fixtureRoot("lead-triage-parked-");
     try {
