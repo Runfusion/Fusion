@@ -2272,6 +2272,13 @@ export interface Task {
   executionMode?: ExecutionMode;
   /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
   assignedAgentId?: string;
+  /** The Board this task is homed on (company-model U1). Every task gains a board
+   *  at migration v114; the board owns the workflow/column config, superseding the
+   *  per-task `task_workflow_selection`. The resolver chain resolves a task's
+   *  workflow IR through this board reference as the primary path; tasks without a
+   *  boardId fall back to the legacy selection path unchanged. Company-model
+   *  *semantics* (teams, movement rules) stay behind `experimentalFeatures.companyModel`. */
+  boardId?: string;
   /** Per-task node override. When set, this task routes to the specified node instead of the project's default node. Undefined means use the project default. Use empty string to explicitly clear. */
   nodeId?: string;
   /** The node this task is actually routed to (resolved from nodeId override or project default). Set by the scheduler at dispatch time. */
@@ -4074,6 +4081,51 @@ export {
 export interface BoardConfig {
   nextId: number;
   settings?: Settings;
+}
+
+/**
+ * A persisted Board (company-model U1) — the first-class task container that
+ * wraps a workflow config. Each board references its own workflow definition
+ * (built-in or custom) via `workflowId`; tasks land on a board (`Task.boardId`)
+ * rather than selecting a workflow per-task. Board containment is universal and
+ * unflagged — the migration assigns every task a board; company-model
+ * *semantics* (teams, movement rules, CEO) stay behind
+ * `experimentalFeatures.companyModel` in later units.
+ *
+ * Distinct from the legacy `board.ts` transition utility and from `BoardConfig`
+ * (the legacy nextId/settings blob). The board's column/agent config lives in
+ * its referenced workflow IR — the board row carries only identity + ordering.
+ */
+export interface Board {
+  id: string;
+  /** Stable project-identity id this board belongs to. */
+  projectId: string;
+  name: string;
+  description: string;
+  /** The workflow definition (built-in id like `builtin:coding`, or a custom
+   *  workflow id) whose IR supplies this board's columns + agent staffing. */
+  workflowId: string;
+  /** Sort order within the project's board list (ascending). */
+  ordering: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Input for creating a Board. `description`/`ordering` default when omitted. */
+export interface BoardCreateInput {
+  projectId?: string;
+  name: string;
+  description?: string;
+  workflowId: string;
+  ordering?: number;
+}
+
+/** Partial update for a Board. Only supplied fields are written. */
+export interface BoardUpdate {
+  name?: string;
+  description?: string;
+  workflowId?: string;
+  ordering?: number;
 }
 
 export interface DistributedTaskIdReserveInput {

@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 113;
+const SCHEMA_VERSION = 114;
 
 export { SCHEMA_VERSION };
 
@@ -324,7 +324,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   deletedAt TEXT,
   allowResurrection INTEGER DEFAULT 0,
   transitionPending TEXT,
-  customFields TEXT DEFAULT '{}'
+  customFields TEXT DEFAULT '{}',
+  -- (company-model U1) the Board this task is homed on. Nullable: legacy paths
+  -- and the resolver fall back to task_workflow_selection when absent. The
+  -- migration v114 backfills a board for every existing task.
+  boardId TEXT
 );
 
 -- Config table (single row with project settings)
@@ -420,6 +424,22 @@ CREATE TABLE IF NOT EXISTS task_workflow_selection (
   stepIds TEXT NOT NULL DEFAULT '[]',
   updatedAt TEXT NOT NULL
 );
+
+-- (company-model U1) Persisted Board entity. Each board wraps a workflow config
+-- by reference (workflowId -> built-in or custom workflow id) and homes tasks
+-- (tasks.boardId). Board containment is universal/unflagged; company-model
+-- semantics (teams, movement rules) stay behind the flag in later units.
+CREATE TABLE IF NOT EXISTS boards (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  workflowId TEXT NOT NULL,
+  ordering INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idxBoardsProjectOrdering ON boards(projectId, ordering);
 
 -- Activity log with indexed columns for efficient queries
 CREATE TABLE IF NOT EXISTS activityLog (
@@ -4512,6 +4532,239 @@ export class Database {
       });
     }
 
+    // Migration 114: Persisted Board entity + universal lanes→boards conversion
+    // (company-model U1). Creates the `boards` table, adds `tasks.boardId`, and
+    // converts each distinct workflow-in-use into a board, homing every task on a
+    // board. Board containment is universal and UNFLAGGED — this runs regardless
+    // of `experimentalFeatures.companyModel`; only company-model *semantics*
+    // (teams, movement rules, CEO) stay behind the flag in later units.
+    //
+    // applyMigration is NOT transactional here: the version only bumps after the
+    // whole body succeeds, so a crash mid-body re-runs the entire body at next
+    // boot. The body is therefore idempotent/re-runnable — IF NOT EXISTS DDL,
+    // addColumnIfMissing, and INSERT OR IGNORE keyed on the board's stable id.
+    if (version < 114) {
+      this.applyMigration(114, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS boards (
+            id TEXT PRIMARY KEY,
+            projectId TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            workflowId TEXT NOT NULL,
+            ordering INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idxBoardsProjectOrdering ON boards(projectId, ordering);
+        `);
+        this.addColumnIfMissing("tasks", "boardId", "TEXT");
+        this.convertLanesToBoards();
+      });
+    }
+
+  }
+
+  /**
+   * Universal lanes→boards conversion (migration v114 body, company-model U1).
+   *
+   * Each distinct workflow-in-use becomes a Board. The canonical key is the
+   * RESOLVED workflow id from `task_workflow_selection`: a null/dangling
+   * selection resolves to `builtin:coding` (the default board), so duplicate
+   * selections of one workflow collapse to one board and dangling selections
+   * fall back to the default rather than orphaning tasks. Every task is homed.
+   *
+   * Default-board (builtin:coding) tasks keep their column value byte-identical
+   * EXCEPT `triage` tasks, which move to `todo` (status + session linkage kept —
+   * only the column value changes; this is the single column-value rewrite the
+   * company model performs). Non-default boards conform-on-migrate: their columns
+   * map onto the company template (entry/hold/intake → todo, wip → in-progress,
+   * mergeBlocker/humanReview → in-review, complete → done, archived → archived),
+   * with extra columns carried as custom columns between todo and in-review.
+   * Every column-value rewrite is recorded in `runAuditEvents`.
+   *
+   * Idempotent: boards use a stable id derived from the resolved workflow id, and
+   * task homing only writes rows whose `boardId` is still NULL, so a re-run after
+   * a converted DB changes nothing.
+   */
+  private convertLanesToBoards(): void {
+    const DEFAULT_WORKFLOW_ID = "builtin:coding";
+    const now = new Date().toISOString();
+    const projectId = this.getProjectIdentity()?.id ?? "";
+
+    // Resolve the workflow id a task is selected onto. A row whose workflowId no
+    // longer resolves to a real workflow (built-in or a present `workflows` row)
+    // is treated as dangling and falls back to the default workflow.
+    const customWorkflowIds = new Set(
+      (this.db.prepare("SELECT id FROM workflows").all() as Array<{ id: string }>).map((r) => r.id),
+    );
+    const resolveWorkflowId = (raw: string | null | undefined): string => {
+      if (!raw) return DEFAULT_WORKFLOW_ID;
+      if (raw.startsWith("builtin:")) return raw;
+      if (customWorkflowIds.has(raw)) return raw;
+      return DEFAULT_WORKFLOW_ID;
+    };
+
+    // Selection map: taskId → raw selected workflowId.
+    const selections = new Map<string, string>();
+    for (const row of this.db
+      .prepare("SELECT taskId, workflowId FROM task_workflow_selection")
+      .all() as Array<{ taskId: string; workflowId: string | null }>) {
+      if (row.workflowId) selections.set(row.taskId, row.workflowId);
+    }
+
+    // Every task (excluding deleted) needs a board. Collect each task's resolved
+    // workflow id; tasks with no selection resolve to the default workflow.
+    const tasks = this.db
+      .prepare(`SELECT id, "column" AS col, boardId FROM tasks WHERE deletedAt IS NULL`)
+      .all() as Array<{ id: string; col: string; boardId: string | null }>;
+
+    // The set of distinct workflows actually in use. The default workflow is
+    // always included so unselected tasks (and dangling fallbacks) have a home.
+    const inUse = new Set<string>([DEFAULT_WORKFLOW_ID]);
+    for (const task of tasks) {
+      inUse.add(resolveWorkflowId(selections.get(task.id)));
+    }
+
+    // Stable board id per resolved workflow so re-runs are idempotent.
+    const boardIdFor = (workflowId: string): string => `board-${workflowId}`;
+
+    // Resolve a display name for a workflow (the board's name). Custom workflows
+    // use their stored `name`; built-ins use a friendly fallback; the default
+    // board reads as "Board 1".
+    const customNames = new Map(
+      (this.db.prepare("SELECT id, name FROM workflows").all() as Array<{ id: string; name: string }>).map(
+        (r) => [r.id, r.name] as const,
+      ),
+    );
+    const boardNameFor = (workflowId: string): string => {
+      if (workflowId === DEFAULT_WORKFLOW_ID) return "Board 1";
+      return customNames.get(workflowId) ?? workflowId;
+    };
+
+    // Insert a board per distinct workflow-in-use, ordered with the default first.
+    const ordered = [DEFAULT_WORKFLOW_ID, ...[...inUse].filter((id) => id !== DEFAULT_WORKFLOW_ID).sort()];
+    const insertBoard = this.db.prepare(
+      `INSERT OR IGNORE INTO boards (id, projectId, name, description, workflowId, ordering, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ordered.forEach((workflowId, index) => {
+      insertBoard.run(
+        boardIdFor(workflowId),
+        projectId,
+        boardNameFor(workflowId),
+        "",
+        workflowId,
+        index,
+        now,
+        now,
+      );
+    });
+
+    // Build a column-conform map per non-default workflow: source column id →
+    // company-template column id. Default-workflow columns are byte-identical
+    // (only triage→todo, handled per-task below), so it needs no map.
+    const conformMaps = new Map<string, Map<string, string>>();
+    for (const workflowId of inUse) {
+      if (workflowId === DEFAULT_WORKFLOW_ID) continue;
+      const map = this.buildColumnConformMap(workflowId);
+      if (map) conformMaps.set(workflowId, map);
+    }
+
+    // Home every task and rewrite column values where conform/triage requires it.
+    const setBoard = this.db.prepare(`UPDATE tasks SET boardId = ? WHERE id = ?`);
+    const setBoardAndColumn = this.db.prepare(
+      `UPDATE tasks SET boardId = ?, "column" = ? WHERE id = ?`,
+    );
+    const auditInsert = this.db.prepare(
+      `INSERT INTO runAuditEvents (id, timestamp, taskId, agentId, runId, domain, mutationType, target, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const recordRewrite = (taskId: string, workflowId: string, from: string, to: string): void => {
+      auditInsert.run(
+        randomUUID(),
+        new Date().toISOString(),
+        taskId,
+        "migration:v114",
+        "migration:lanes-to-boards",
+        "database",
+        "board:column-conform",
+        taskId,
+        JSON.stringify({ workflowId, fromColumn: from, toColumn: to }),
+      );
+    };
+
+    for (const task of tasks) {
+      if (task.boardId) continue; // already homed (idempotent re-run)
+      const workflowId = resolveWorkflowId(selections.get(task.id));
+      const boardId = boardIdFor(workflowId);
+
+      if (workflowId === DEFAULT_WORKFLOW_ID) {
+        // Default board: preserve the column value byte-identical except triage,
+        // which the Lead absorbs — triage tasks move to todo (status + session
+        // linkage untouched; only the column value changes).
+        if (task.col === "triage") {
+          setBoardAndColumn.run(boardId, "todo", task.id);
+          recordRewrite(task.id, workflowId, "triage", "todo");
+        } else {
+          setBoard.run(boardId, task.id);
+        }
+        continue;
+      }
+
+      // Non-default board: conform the stored column onto the company template.
+      const map = conformMaps.get(workflowId);
+      const target = map?.get(task.col);
+      if (target && target !== task.col) {
+        setBoardAndColumn.run(boardId, target, task.id);
+        recordRewrite(task.id, workflowId, task.col, target);
+      } else {
+        setBoard.run(boardId, task.id);
+      }
+    }
+  }
+
+  /**
+   * Build a conform-on-migrate column map for a non-default workflow: each of its
+   * column ids → the company-template column it maps onto. Classification reads
+   * the column's trait ids straight from the stored IR JSON (db.ts stays free of
+   * the trait registry): intake/hold → todo, wip → in-progress,
+   * merge-blocker/human-review → in-review, complete → done, archived → archived.
+   * Extra (unclassifiable) columns are carried as custom columns and keep their
+   * own id (no rewrite), sequenced between todo and in-review by the board's
+   * workflow config — so only role-region columns are rewritten.
+   *
+   * Returns undefined when the workflow has no explicit columns (a v1/legacy IR),
+   * in which case its stored column values are already legacy enum ids and need
+   * no conform — the default classification applies at the task level.
+   */
+  private buildColumnConformMap(workflowId: string): Map<string, string> | undefined {
+    const row = this.db.prepare("SELECT ir FROM workflows WHERE id = ?").get(workflowId) as
+      | { ir: string }
+      | undefined;
+    if (!row?.ir) return undefined;
+    let ir: { columns?: Array<{ id: string; traits?: Array<{ trait?: string }> }> };
+    try {
+      ir = JSON.parse(row.ir) as typeof ir;
+    } catch {
+      return undefined;
+    }
+    const columns = ir.columns;
+    if (!Array.isArray(columns) || columns.length === 0) return undefined;
+
+    const map = new Map<string, string>();
+    for (const column of columns) {
+      const traitIds = new Set((column.traits ?? []).map((t) => t?.trait).filter(Boolean) as string[]);
+      let target: string | undefined;
+      if (traitIds.has("archived")) target = "archived";
+      else if (traitIds.has("complete")) target = "done";
+      else if (traitIds.has("merge-blocker") || traitIds.has("human-review")) target = "in-review";
+      else if (traitIds.has("wip")) target = "in-progress";
+      else if (traitIds.has("intake") || traitIds.has("hold")) target = "todo";
+      // Unclassifiable columns are carried as custom columns: keep their own id.
+      if (target) map.set(column.id, target);
+    }
+    return map;
   }
 
   /**

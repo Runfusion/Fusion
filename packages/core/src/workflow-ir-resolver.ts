@@ -23,6 +23,12 @@ import type { WorkflowIr } from "./workflow-ir-types.js";
 export interface WorkflowIrResolverStore {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
   getWorkflowDefinition(id: string): Promise<{ ir: string | WorkflowIr } | undefined>;
+  /** Company-model U1 (optional): the board a task is homed on, and the board's
+   *  workflow reference. When present, board→IR resolution is the primary path;
+   *  tasks without a boardId fall back to the legacy task_workflow_selection path
+   *  unchanged. Optional so existing callers / older stores keep working. */
+  getTaskBoardId?(taskId: string): string | undefined;
+  getBoardWorkflowId?(boardId: string): string | undefined;
 }
 
 /**
@@ -68,6 +74,20 @@ export async function resolveWorkflowIrForTask(
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
 ): Promise<WorkflowIr> {
+  // Company-model U1: board→IR is the primary path. A task homed on a board
+  // resolves its IR through the board's workflow reference. Tasks without a
+  // boardId (or stores without board support) fall back to the legacy
+  // task_workflow_selection path below, unchanged.
+  try {
+    const boardId = store.getTaskBoardId?.(taskId);
+    if (boardId) {
+      const boardWorkflowId = store.getBoardWorkflowId?.(boardId);
+      if (boardWorkflowId) return resolveWorkflowIrById(store, boardWorkflowId, irCache);
+    }
+  } catch {
+    return BUILTIN_CODING_WORKFLOW_IR;
+  }
+
   let workflowId: string | undefined;
   try {
     workflowId = store.getTaskWorkflowSelection(taskId)?.workflowId;

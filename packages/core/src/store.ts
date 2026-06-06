@@ -104,6 +104,7 @@ import { ArchiveDatabase } from "./archive-db.js";
 import { detectLegacyData, migrateFromLegacy } from "./db-migrate.js";
 import { buildSnippet, extractGoalCitations } from "./goal-citation-extractor.js";
 import { MissionStore } from "./mission-store.js";
+import { BoardStore } from "./board-store.js";
 import { PluginStore } from "./plugin-store.js";
 import { InsightStore } from "./insight-store.js";
 import { ResearchStore } from "./research-store.js";
@@ -260,6 +261,7 @@ interface TaskRow {
   scopeOverrideReason: string | null;
   scopeAutoWiden: string | null;
   assignedAgentId: string | null;
+  boardId: string | null;
   pausedByAgentId: string | null;
   assigneeUserId: string | null;
   nodeId: string | null;
@@ -1352,6 +1354,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   /** Cached MissionStore instance */
   private missionStore: MissionStore | null = null;
+  /** Cached BoardStore instance (company-model U1) */
+  private boardStore: BoardStore | null = null;
   /** Cached PluginStore instance */
   private pluginStore: PluginStore | null = null;
   /** Cached InsightStore instance */
@@ -1854,6 +1858,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       missionId: row.missionId || undefined,
       sliceId: row.sliceId || undefined,
       assignedAgentId: row.assignedAgentId || undefined,
+      boardId: row.boardId || undefined,
       pausedByAgentId: row.pausedByAgentId || undefined,
       assigneeUserId: row.assigneeUserId || undefined,
       nodeId: row.nodeId || undefined,
@@ -2264,7 +2269,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "dependencies", "steps", "customFields", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
       "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
-      "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
+      "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "boardId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
       // `log` is fetched in slim mode so the server can aggregate
@@ -2313,7 +2318,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
       "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
-      "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
+      "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "boardId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
     ];
@@ -2441,6 +2446,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.scopeOverrideReason ?? null,
       toJson(task.scopeAutoWiden || []),
       task.assignedAgentId ?? null,
+      task.boardId ?? null,
       task.pausedByAgentId ?? null,
       task.assigneeUserId ?? null,
       task.nodeId ?? null,
@@ -2483,7 +2489,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, customFields, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, autoMerge, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, autoMerge, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, boardId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
       ) VALUES (${placeholders})
     `).run(...values);
     this.db.bumpLastModified();
@@ -2510,7 +2516,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, customFields, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, autoMerge, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, autoMerge, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, boardId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
       ) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET
         lineageId = excluded.lineageId,
@@ -2611,6 +2617,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         scopeOverrideReason = excluded.scopeOverrideReason,
         scopeAutoWiden = excluded.scopeAutoWiden,
         assignedAgentId = excluded.assignedAgentId,
+        boardId = excluded.boardId,
         pausedByAgentId = excluded.pausedByAgentId,
         assigneeUserId = excluded.assigneeUserId,
         nodeId = excluded.nodeId,
@@ -14809,6 +14816,39 @@ ${notificationsSection}`;
       this.missionStore = new MissionStore(this.fusionDir, this.db, this);
     }
     return this.missionStore;
+  }
+
+  /**
+   * Get the BoardStore instance for company-model Board operations (U1).
+   * Lazily initializes the BoardStore on first access.
+   */
+  getBoardStore(): BoardStore {
+    if (!this.boardStore) {
+      this.boardStore = new BoardStore(this.fusionDir, this.db, this);
+    }
+    return this.boardStore;
+  }
+
+  /**
+   * The board id a task is homed on (company-model U1), or undefined. Read-only
+   * helper consumed by the workflow-IR resolver's board→IR primary path.
+   */
+  getTaskBoardId(taskId: string): string | undefined {
+    const row = this.db.prepare(`SELECT boardId FROM tasks WHERE id = ?`).get(taskId) as
+      | { boardId: string | null }
+      | undefined;
+    return row?.boardId || undefined;
+  }
+
+  /**
+   * The workflow id a board references (company-model U1), or undefined. Read-only
+   * helper consumed by the workflow-IR resolver's board→IR primary path.
+   */
+  getBoardWorkflowId(boardId: string): string | undefined {
+    const row = this.db.prepare(`SELECT workflowId FROM boards WHERE id = ?`).get(boardId) as
+      | { workflowId: string | null }
+      | undefined;
+    return row?.workflowId || undefined;
   }
 
   /**
