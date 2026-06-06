@@ -63,3 +63,21 @@ export function isPrEntityAutoMergeReady(
   if (entity.mergeable !== "clean") return false;
   return true;
 }
+
+/**
+ * The live auto-merge gate reason shown next to the toggle (R11). Mirrors the
+ * auto-merge-ready predicate ordering so every surface (the dashboard route and
+ * the `fn pr` CLI) reports the same status and never disagrees with what the gate
+ * will actually do. Shared in @fusion/core (R13) so the two surfaces cannot drift.
+ */
+export function autoMergeGateReason(
+  entity: Pick<PrEntity, "state" | "unverified" | "autoMerge" | "reviewDecision" | "checksRollup" | "mergeable">,
+): string {
+  if (!entity.autoMerge) return "Auto-merge off";
+  if (entity.mergeable === "conflicting") return "Blocked: conflict";
+  if (entity.reviewDecision !== "APPROVED") return "Waiting for approval";
+  if (entity.checksRollup !== "success") return "Waiting for checks";
+  if (entity.mergeable !== "clean") return "Waiting for checks";
+  if (isPrEntityAutoMergeReady(entity)) return "Ready to merge";
+  return "Waiting for checks";
+}

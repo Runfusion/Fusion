@@ -16,15 +16,31 @@ vi.mock("@fusion/engine", () => ({
   releaseHeldTaskByEvent: (...args: unknown[]) => releaseHeldTaskByEvent(...args),
 }));
 
-// @fusion/dashboard is only touched by runPrCreate (not exercised here); stub it
-// so importing the module never pulls the heavy dashboard graph.
+// @fusion/dashboard is touched by runPrCreate; stub it so importing the module
+// never pulls the heavy dashboard graph. `createPr` is controllable so the create
+// path can be asserted to write the unified PR entity.
+const createPr = vi.fn();
 vi.mock("@fusion/dashboard", () => ({
-  GitHubClient: class {},
+  GitHubClient: class {
+    createPr(...args: unknown[]) {
+      return createPr(...args);
+    }
+  },
   generatePrMetadata: vi.fn(),
+}));
+
+// gh-cli helpers used by runPrCreate (repo resolution + auth gating).
+vi.mock("@fusion/core/gh-cli", () => ({
+  classifyGhError: vi.fn(() => ({ message: "err" })),
+  getGhErrorMessage: vi.fn(() => "err"),
+  getCurrentRepo: vi.fn(() => ({ owner: "owner", repo: "repo" })),
+  isGhAuthenticated: vi.fn(() => true),
+  isGhAvailable: vi.fn(() => true),
 }));
 
 const { resolveProject } = await import("../project-context.js");
 const {
+  runPrCreate,
   runPrList,
   runPrShow,
   runPrApprove,
@@ -84,6 +100,54 @@ describe("fn pr commands", () => {
   afterEach(() => {
     process.exit = originalExit;
     vi.restoreAllMocks();
+  });
+
+  // ── create → legacy prInfo + unified PR entity ──────────────────────────────
+
+  it("runPrCreate writes the unified PR entity (not just legacy prInfo)", async () => {
+    const prInfo = {
+      url: "https://github.com/owner/repo/pull/7",
+      number: 7,
+      status: "open",
+      title: "T",
+      headBranch: "fusion/fn-001",
+      baseBranch: "main",
+      commentCount: 0,
+    };
+    delete process.env.GITHUB_REPOSITORY;
+    createPr.mockResolvedValue(prInfo);
+    const getTask = vi.fn().mockResolvedValue({
+      id: "FN-001",
+      title: "Task one",
+      description: "do a thing",
+      column: "in-review",
+      prInfo: undefined,
+    });
+    const updatePrInfo = vi.fn();
+    const ensurePrEntityForSource = vi.fn().mockReturnValue(makeEntity({ id: "PR-NEW", state: "creating" }));
+    const updatePrEntity = vi.fn().mockReturnValue(makeEntity({ id: "PR-NEW" }));
+    const logEntry = vi.fn();
+    mockStore({ getTask, updatePrInfo, ensurePrEntityForSource, updatePrEntity, logEntry });
+
+    await runPrCreate("FN-001", { ai: false });
+
+    // Legacy field is still written (additive, migration-safe).
+    expect(updatePrInfo).toHaveBeenCalledWith("FN-001", prInfo);
+    // Unified entity is created via the same store path the pr-create node uses.
+    expect(ensurePrEntityForSource).toHaveBeenCalledWith({
+      sourceType: "task",
+      sourceId: "FN-001",
+      repo: "owner/repo",
+      headBranch: "fusion/fn-001",
+      baseBranch: "main",
+      state: "creating",
+    });
+    // …then flipped to open with the persisted PR number/url.
+    expect(updatePrEntity).toHaveBeenCalledWith("PR-NEW", {
+      state: "open",
+      prNumber: 7,
+      prUrl: "https://github.com/owner/repo/pull/7",
+    });
   });
 
   // ── read commands ──────────────────────────────────────────────────────────

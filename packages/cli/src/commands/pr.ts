@@ -2,7 +2,7 @@ import {
   TaskStore,
   isPrEntityActive,
   isPrEntityActionable,
-  isPrEntityAutoMergeReady,
+  autoMergeGateReason,
   type PrEntity,
   type PrThreadState,
 } from "@fusion/core";
@@ -199,8 +199,27 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
       reviewers: options.reviewers,
     });
 
-    // Store PR info
+    // Store PR info (legacy field, still read by some surfaces during migration).
     await store.updatePrInfo(task.id, prInfo);
+
+    // Also write the unified PR entity via the SAME store path the pr-create
+    // workflow node uses (mirrors pr-nodes.ts: ensure → flip to open with the
+    // persisted PR number/url). Without this the PR would be invisible to
+    // `fn pr list/show`, the reconciler, and the workflow nodes (R13 parity).
+    const entity = store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: task.id,
+      repo: `${owner}/${repo}`,
+      headBranch: branchName,
+      baseBranch: prInfo.baseBranch,
+      state: "creating",
+    });
+    store.updatePrEntity(entity.id, {
+      state: "open",
+      prNumber: prInfo.number,
+      prUrl: prInfo.url,
+    });
+
     await store.logEntry(task.id, "Created PR", `PR #${prInfo.number}: ${prInfo.url}`);
 
     console.log();
@@ -233,16 +252,6 @@ function requireEntity(store: TaskStore, id: string): PrEntity {
     process.exit(1);
   }
   return entity;
-}
-
-function autoMergeReason(entity: PrEntity): string {
-  if (!entity.autoMerge) return "Auto-merge off";
-  if (entity.mergeable === "conflicting") return "Blocked: conflict";
-  if (entity.reviewDecision !== "APPROVED") return "Waiting for approval";
-  if (entity.checksRollup !== "success") return "Waiting for checks";
-  if (entity.mergeable !== "clean") return "Waiting for checks";
-  if (isPrEntityAutoMergeReady(entity)) return "Ready to merge";
-  return "Waiting for checks";
 }
 
 export async function runPrList(projectName?: string) {
@@ -284,7 +293,7 @@ export async function runPrShow(id: string, projectName?: string) {
   console.log(`    Mergeable: ${entity.mergeable ?? "unknown"}`);
   console.log(`    Review:    ${entity.reviewDecision ?? "none"}`);
   console.log(`    Checks:    ${entity.checksRollup ?? "none"}`);
-  console.log(`    Auto-merge: ${entity.autoMerge ? "on" : "off"} (${autoMergeReason(entity)})`);
+  console.log(`    Auto-merge: ${entity.autoMerge ? "on" : "off"} (${autoMergeGateReason(entity)})`);
   console.log(`    Active:    ${isPrEntityActive(entity) ? "yes" : "no"}; actionable: ${isPrEntityActionable(entity) ? "yes" : "no"}`);
   console.log(`    Rounds:    ${entity.responseRounds}; threads: ${threads.length} (${pending} pending, ${disagreed} disagreed)`);
   console.log();
@@ -363,5 +372,5 @@ export async function runPrAutomerge(id: string, enabled: boolean | undefined, p
 
   const next = typeof enabled === "boolean" ? enabled : !entity.autoMerge;
   const updated = store.updatePrEntity(id, { autoMerge: next });
-  console.log(`\n  ✓ Auto-merge ${updated.autoMerge ? "enabled" : "disabled"} for ${id} (${autoMergeReason(updated)})\n`);
+  console.log(`\n  ✓ Auto-merge ${updated.autoMerge ? "enabled" : "disabled"} for ${id} (${autoMergeGateReason(updated)})\n`);
 }

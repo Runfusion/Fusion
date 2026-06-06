@@ -340,7 +340,7 @@ export function syncGroupPrCallback(
  *  without the stale-head guard, which the reconcile still corroborates. */
 async function resolveBranchHeadOid(cwd: string, branch: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execAsync(`git rev-parse "${branch}"`, { cwd, timeout: 30_000 });
+    const { stdout } = await execFileAsync("git", ["rev-parse", branch], { cwd, timeout: 30_000 });
     const oid = stdout.trim();
     return oid.length > 0 ? oid : undefined;
   } catch {

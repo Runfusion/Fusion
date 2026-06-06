@@ -185,14 +185,46 @@ describe("PR node handlers (U3)", () => {
     expect(store.getPrEntity(created.id)?.responseRounds).toBe(1);
   });
 
-  it("pr-respond delegates to the injected respond callback", async () => {
-    store.ensurePrEntityForSource({ ...SOURCE, state: "open", prNumber: 9 });
-    const respond = vi.fn(async () => ({ value: "fixed" as const, contextPatch: { k: "v" } }));
+  it("pr-respond delegates to the injected respond callback with the POST-increment entity", async () => {
+    const created = store.ensurePrEntityForSource({ ...SOURCE, state: "open", prNumber: 9 });
+    store.updatePrEntity(created.id, { responseRounds: 3 });
+    let forwardedRounds: number | undefined;
+    const respond: PrNodeDeps["respond"] = async (input) => {
+      forwardedRounds = input.entity.responseRounds;
+      return { value: "fixed" as const, contextPatch: { k: "v" } };
+    };
     const handlers = createPrNodeHandlers(deps({ respond }));
 
     const result = await handlers["pr-respond"]({ id: "r", kind: "pr-respond" } as WorkflowIrNode, ctx());
     expect(result).toEqual({ outcome: "success", value: "fixed", contextPatch: { k: "v" } });
-    expect(respond).toHaveBeenCalledTimes(1);
+    // The handler must forward the entity returned by updatePrEntity (post-increment),
+    // not the stale pre-increment copy — otherwise the R8 cap check fires one round late.
+    expect(forwardedRounds).toBe(4);
+  });
+
+  it("pr-merge / pr-respond resolve a branch-group entity via branchContext.groupId, not task id", async () => {
+    // Branch-group PR entities are keyed by the GROUP id (sourceId = branch_groups.id).
+    // A shared-mode task carries that id on branchContext.groupId, NOT task.id.
+    const groupId = "BG-1";
+    store.ensurePrEntityForSource({
+      sourceType: "branch-group",
+      sourceId: groupId,
+      repo: "owner/repo",
+      headBranch: "fusion/bg-1",
+      state: "open",
+      prNumber: 11,
+    });
+    const groupCtx = {
+      task: { id: "T-shared", branchContext: { groupId } } as unknown as TaskDetail,
+      settings: undefined,
+      context: {},
+    } as WorkflowNodeExecutionContext;
+
+    const mergePr = vi.fn(async () => ({ status: "merged-requested" }) as PrMergeCallResult);
+    const handlers = createPrNodeHandlers(deps({ mergePr }));
+    const merge = await handlers["pr-merge"]({ id: "m", kind: "pr-merge" } as WorkflowIrNode, groupCtx);
+    expect(merge).toEqual({ outcome: "success", value: "merged-requested" });
+    expect(mergePr).toHaveBeenCalledTimes(1);
   });
 
   it("unwired pr-* deps fail closed (value:pr-nodes-unwired)", async () => {

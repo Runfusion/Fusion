@@ -4,6 +4,7 @@ import {
   isPrEntityActive,
   isPrEntityActionable,
   isPrEntityAutoMergeReady,
+  autoMergeGateReason,
 } from "@fusion/core";
 import { badRequest, notFound, ApiError } from "../api-error.js";
 
@@ -41,20 +42,10 @@ function parseProjectId(req: Request): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-/**
- * The live auto-merge gate reason shown next to the toggle (R11). Mirrors the
- * engine's auto-merge-ready predicate ordering so the UI never disagrees with
- * what the gate will actually do.
- */
-export function autoMergeGateReason(entity: PrEntity): string {
-  if (!entity.autoMerge) return "Auto-merge off";
-  if (entity.mergeable === "conflicting") return "Blocked: conflict";
-  if (entity.reviewDecision !== "APPROVED") return "Waiting for approval";
-  if (entity.checksRollup !== "success") return "Waiting for checks";
-  if (entity.mergeable !== "clean") return "Waiting for checks";
-  if (isPrEntityAutoMergeReady(entity)) return "Ready to merge";
-  return "Waiting for checks";
-}
+// `autoMergeGateReason` is the single R13-shared definition in @fusion/core
+// (consumed here and by the `fn pr` CLI); re-exported so existing dashboard
+// importers keep working.
+export { autoMergeGateReason };
 
 /** Whether the entity is in a hard conflict (Merge must be disabled, R11). */
 export function isPrConflicting(entity: PrEntity): boolean {

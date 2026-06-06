@@ -805,10 +805,10 @@ describe("bin command routing and fallbacks", () => {
   });
 
   it("routes daemon command with all flags", async () => {
-    await runBin(["daemon", "--port", "4040", "--host", "127.0.0.1", "--token", "fn_abc123", "--paused", "--token-only"]);
+    await runBin(["daemon", "--port", "5055", "--host", "127.0.0.1", "--token", "fn_abc123", "--paused", "--token-only"]);
 
     expect(commandMocks.runDaemon).toHaveBeenCalledWith({
-      port: 4040,
+      port: 5055,
       paused: true,
       interactive: false,
       host: "127.0.0.1",

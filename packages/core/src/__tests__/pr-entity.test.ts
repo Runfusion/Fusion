@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoMergeGateReason,
   isPrBacked,
   isPrEntityActionable,
   isPrEntityActive,
@@ -70,5 +71,20 @@ describe("PR entity predicates", () => {
     expect(isPrEntityAutoMergeReady({ ...base, checksRollup: "pending" })).toBe(false);
     expect(isPrEntityAutoMergeReady({ ...base, mergeable: "unknown" })).toBe(false);
     expect(isPrEntityAutoMergeReady({ ...base, unverified: true })).toBe(false);
+  });
+
+  it("autoMergeGateReason is the single R13-shared status string for both surfaces", () => {
+    const ready = entity({
+      autoMerge: true,
+      reviewDecision: "APPROVED",
+      checksRollup: "success",
+      mergeable: "clean",
+    });
+    expect(autoMergeGateReason(ready)).toBe("Ready to merge");
+    expect(autoMergeGateReason({ ...ready, autoMerge: false })).toBe("Auto-merge off");
+    expect(autoMergeGateReason({ ...ready, mergeable: "conflicting" })).toBe("Blocked: conflict");
+    expect(autoMergeGateReason({ ...ready, reviewDecision: "CHANGES_REQUESTED" })).toBe("Waiting for approval");
+    expect(autoMergeGateReason({ ...ready, checksRollup: "pending" })).toBe("Waiting for checks");
+    expect(autoMergeGateReason({ ...ready, mergeable: "unknown" })).toBe("Waiting for checks");
   });
 });

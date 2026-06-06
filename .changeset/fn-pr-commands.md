@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": minor
+"@runfusion/fusion": major
 ---
 
 Add the unified `fn pr` command namespace for CLI parity with the dashboard's

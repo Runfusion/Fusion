@@ -611,6 +611,7 @@ export {
   isPrBacked,
   isPrEntityActionable,
   isPrEntityAutoMergeReady,
+  autoMergeGateReason,
 } from "./pr-entity.js";
 export {
   findVitestProcessIds,
