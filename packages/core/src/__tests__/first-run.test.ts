@@ -1,16 +1,32 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { tempWorkspace } from "@fusion/test-utils";
 import { FirstRunExperience, createFirstRunExperience } from "../first-run.js";
 import { CentralCore } from "../central-core.js";
+
+const execFileAsync = promisify(execFile);
 
 // Helper to create a fake kb project structure
 function createFakeKbProject(dir: string): void {
   mkdirSync(join(dir, ".fusion"), { recursive: true });
   writeFileSync(join(dir, ".fusion", "fusion.db"), "");
+}
+
+async function isGitRepository(path: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", path, "rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf-8",
+      timeout: 10_000,
+    });
+    return stdout.trim() === "true";
+  } catch {
+    return false;
+  }
 }
 
 const TEST_FILE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -187,6 +203,7 @@ describe("FirstRunExperience", () => {
       expect(result.success).toBe(true);
       expect(result.projects).toHaveLength(1);
       expect(result.projects[0].name).toBe("new-project");
+      await expect(isGitRepository(projectDir)).resolves.toBe(true);
       expect(result.nextSteps.length).toBeGreaterThan(0);
     });
 

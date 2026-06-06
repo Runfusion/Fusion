@@ -3,9 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFile } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { tempWorkspace, useIsolatedCwd } from "@fusion/test-utils";
 import {
   FirstRunDetector,
@@ -16,12 +18,26 @@ import {
 } from "../migration.js";
 import { CentralCore } from "../central-core.js";
 
+const execFileAsync = promisify(execFile);
+
 // Helper to create a fake kb project
 function createFakeKbProject(dir: string): void {
   const kbDir = join(dir, ".fusion");
   mkdirSync(kbDir, { recursive: true });
   // A zero-byte file is a valid SQLite bootstrap database.
   writeFileSync(join(kbDir, "fusion.db"), "");
+}
+
+async function isGitRepository(path: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", path, "rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf-8",
+      timeout: 10_000,
+    });
+    return stdout.trim() === "true";
+  } catch {
+    return false;
+  }
 }
 
 function createInvalidKbProject(dir: string): void {
@@ -469,6 +485,8 @@ describe("MigrationCoordinator", () => {
       expect(result.success).toBe(true);
       expect(result.projectsRegistered).toHaveLength(2);
       expect(result.errors).toHaveLength(0);
+      await expect(isGitRepository(tempProjectDir1)).resolves.toBe(true);
+      await expect(isGitRepository(tempProjectDir2)).resolves.toBe(true);
     });
 
     it("should skip already registered projects", async () => {

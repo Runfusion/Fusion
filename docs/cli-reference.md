@@ -36,6 +36,11 @@ fn init
 fn init --name my-project --path /absolute/path/to/project
 ```
 
+When the target directory is not already a Git repository, Fusion initializes
+minimal Git metadata during registration so task worktrees can be created. Use
+`fn init --git` only when you also want Fusion to create the explicit starter
+commit used by that flag.
+
 During fresh initialization, Fusion also installs the bundled `fusion` skill into supported local agent homes when the target skill does not already exist:
 
 - `~/.claude/skills/fusion`
@@ -617,6 +622,10 @@ fn project remove my-app --force
 ```
 
 Subcommands: `list|ls`, `add`, `remove|rm`, `show`, `info`, `set-default|default`, `detect`.
+
+`fn project add` registers an existing directory with Fusion. If the directory
+does not contain a Git repository yet, Fusion runs a minimal `git init` during
+registration and fails the registration if Git is unavailable.
 
 ---
 

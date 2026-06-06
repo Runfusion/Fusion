@@ -90,5 +90,5 @@ docker run --rm \
 ## Notes
 
 - The container runs as the non-root `node` user.
-- `git` must be available in the project volume for worktree operations (`.git` metadata and repository history are required).
+- `git` must be available in the container and project volume for worktree operations. Fusion initializes missing repositories during project registration, but existing `.git` metadata and repository history are still required once tasks begin.
 - The root `Dockerfile` installs with `pnpm install --frozen-lockfile` before copying full source, so every workspace package/plugin manifest in `pnpm-workspace.yaml` must have a corresponding `COPY <path>/package.json` line in the builder stage.

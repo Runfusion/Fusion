@@ -830,6 +830,26 @@ describe("POST /api/projects route handler", () => {
     expect((res.body as any).error).toContain("bad identity json");
   });
 
+  it("does not activate the project when shared registration fails", async () => {
+    const store = new MockStoreForRoutes();
+    const app = await createApp(store);
+    mockEnsureProjectForPath.mockRejectedValueOnce(
+      new Error("Could not initialize Git repository at /tmp: git is not installed"),
+    );
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({ name: "Test Project", path: "/tmp" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(500);
+    expect((res.body as any).error).toContain("Could not initialize Git repository");
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
   it("calls ensureMemoryFileWithBackend after project activation", async () => {
     const store = new MockStoreForRoutes();
     const app = await createApp(store);

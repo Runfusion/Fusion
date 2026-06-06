@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { runInit } from "../init.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { GitRepositoryInitializationError } from "@fusion/core";
 
 const execAsync = promisify(exec);
 
@@ -156,6 +157,14 @@ describe("init command", () => {
     await expect(runInit({ path: tempProjectDir })).rejects.toThrow(
       `Existing database at ${dbPath} is not a valid SQLite database.`,
     );
+  });
+
+  it("propagates Git initialization failures instead of reporting local init success", async () => {
+    const error = new GitRepositoryInitializationError(tempProjectDir, "git is not installed");
+    mockEnsureProjectForPath.mockRejectedValueOnce(error);
+
+    await expect(runInit({ path: tempProjectDir })).rejects.toBe(error);
+    expect(mockCentralClose).toHaveBeenCalled();
   });
 
   it("should be idempotent - report already initialized", async () => {
@@ -358,7 +367,7 @@ describe("init command", () => {
     expect(Number(commitCount)).toBe(1);
   });
 
-  it("does not create git repository without --git and logs a hint", async () => {
+  it("delegates registration without --git and does not log a manual git hint", async () => {
     const originalLog = console.log;
     const logs: string[] = [];
     console.log = (...args: unknown[]) => {
@@ -372,6 +381,11 @@ describe("init command", () => {
     }
 
     expect(existsSync(join(tempProjectDir, ".git"))).toBe(false);
-    expect(logs.join("\n")).toContain("Not a git repository. Run 'fn init --git' to auto-initialize one.");
+    expect(mockEnsureProjectForPath).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: tempProjectDir,
+      }),
+    );
+    expect(logs.join("\n")).not.toContain("Not a git repository");
   });
 });

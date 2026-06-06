@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import {
   CentralCore,
+  GitRepositoryInitializationError,
   QMD_INSTALL_COMMAND,
   isQmdAvailable,
   isValidSqliteDatabaseFile,
@@ -105,12 +106,9 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     console.log(`  ✓ Created .fusion/ directory`);
   }
 
-  const hasGitRepo = await isGitRepo(cwd);
-  if (!hasGitRepo && options.git) {
+  if (options.git && !(await isGitRepo(cwd))) {
     await initializeGitRepo(cwd);
     console.log(`  ✓ Initialized git repository`);
-  } else if (!hasGitRepo) {
-    console.log(`  ⚠ Not a git repository. Run 'fn init --git' to auto-initialize one.`);
   }
 
   // Add local Fusion/Pi storage directories to .gitignore
@@ -178,6 +176,10 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
 
     await central.close();
   } catch (err) {
+    if (err instanceof GitRepositoryInitializationError) {
+      await central.close();
+      throw err;
+    }
     // If central DB registration fails, still report success since local files are created
     console.log(`  ⚠ Could not register in central database: ${(err as Error).message}`);
     console.log(`\n✓ Project initialized locally (central registration can be done later)`);

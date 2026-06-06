@@ -93,6 +93,10 @@ import {
   ProjectIdentityConflictError,
   type ProjectIdentity,
 } from "./project-identity.js";
+import {
+  ensureGitRepositoryForProjectPath,
+  type GitRepositoryEnsureOutcome,
+} from "./git-repository.js";
 // ── Event Types ───────────────────────────────────────────────────────────
 
 export interface CentralCoreEvents {
@@ -161,6 +165,11 @@ export interface EnsureProjectForPathResult {
   project: RegisteredProject;
   reattached: boolean;
   outcome: "existing" | "reattached" | "registered";
+  gitRepository?: GitRepositoryEnsureOutcome;
+}
+
+export interface CentralCoreOptions {
+  ensureGitRepositoryForProjectPath?: typeof ensureGitRepositoryForProjectPath;
 }
 
 export class CentralCore extends EventEmitter<CentralCoreEvents> {
@@ -170,6 +179,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private nodeDiscovery: NodeDiscovery | null = null;
   private discoveryConfig: DiscoveryConfig | null = null;
   private readonly discoveredNodes = new Map<string, DiscoveredNode>();
+  private readonly ensureGitRepositoryForProjectPath: typeof ensureGitRepositoryForProjectPath;
 
   private readonly onDiscoveryNodeDiscovered = (node: DiscoveredNode): void => {
     void this.handleDiscoveryNodeDiscovered(node).catch((error) => {
@@ -194,10 +204,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * @param globalDir — Directory for central database. Defaults to `~/.fusion/`.
    *                  Accepts a custom path for testing.
    */
-  constructor(globalDir?: string) {
+  constructor(globalDir?: string, options: CentralCoreOptions = {}) {
     super();
     this.setMaxListeners(100);
     this.globalDir = resolveGlobalDir(globalDir);
+    this.ensureGitRepositoryForProjectPath =
+      options.ensureGitRepositoryForProjectPath ?? ensureGitRepositoryForProjectPath;
   }
 
   /**
@@ -424,6 +436,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     if (input.identity?.id) {
       const byId = await this.getProject(input.identity.id);
       if (!byId) {
+        const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
         const reattached = await this.registerProject({
           id: input.identity.id,
           name: input.name ?? basename(input.path),
@@ -433,7 +446,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           settings: input.settings,
         });
         this.emit("project:reattached", reattached, "identity-recovered");
-        return { project: reattached, reattached: true, outcome: "reattached" };
+        return { project: reattached, reattached: true, outcome: "reattached", gitRepository };
       }
       if (byId.path !== input.path) {
         throw new ProjectIdentityConflictError(input.identity.id, byId.path, input.path);
@@ -441,6 +454,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       return { project: byId, reattached: false, outcome: "existing" };
     }
 
+    const gitRepository = await this.ensureGitRepositoryForProjectPath(input.path);
     const registered = await this.registerProject({
       name: input.name ?? basename(input.path),
       path: input.path,
@@ -448,7 +462,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       nodeId: input.nodeId,
       settings: input.settings,
     });
-    return { project: registered, reattached: false, outcome: "registered" };
+    return { project: registered, reattached: false, outcome: "registered", gitRepository };
   }
 
   /**

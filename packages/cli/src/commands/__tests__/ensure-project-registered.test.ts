@@ -70,6 +70,7 @@ describe("ensureCwdProjectRegistered", () => {
     });
 
     expect(result).not.toBeNull();
+    expect(existsSync(join(cwd, ".git"))).toBe(true);
     expect(existsSync(join(cwd, ".fusion"))).toBe(true);
     expect(existsSync(join(cwd, ".fusion", "fusion.db"))).toBe(true);
     expect(ensureSpy).toHaveBeenCalledWith(
@@ -156,6 +157,7 @@ describe("ensureCwdProjectRegistered", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("[serve] Failed to auto-register current project: boom"),
     );
+    expect(readProjectIdentity(cwd)).toBeNull();
 
     await central.close();
   });
