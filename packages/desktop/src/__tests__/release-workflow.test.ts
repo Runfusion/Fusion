@@ -41,12 +41,15 @@ describe("desktop release workflow wiring", () => {
     }
   });
 
-  it("wires release aggregation to include desktop assets across platforms", async () => {
+  it("wires private artifact collection to include desktop assets across platforms", async () => {
     const release = await readRepoFile(".github/workflows/release.yml");
 
     expect(release).toContain(
       "needs: [build-binaries, build-desktop-windows, build-desktop-macos, build-desktop-linux]",
     );
+    expect(release).toContain("fusion-private-release-artifacts");
+    expect(release).toContain("retention-days: 30");
+    expect(release).not.toContain("softprops/action-gh-release");
     expect(release).toContain('find artifacts -type f \\(');
     expect(release).toContain('-name "*.exe"');
     expect(release).toContain('-name "*.exe.sha256"');

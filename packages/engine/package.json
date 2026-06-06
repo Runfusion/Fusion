@@ -3,14 +3,14 @@
   "version": "0.39.0",
   "license": "MIT",
   "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
-  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "homepage": "https://github.com/Runfusion/fusion-pro#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Runfusion/Fusion",
+    "url": "https://github.com/Runfusion/fusion-pro",
     "directory": "packages/engine"
   },
   "bugs": {
-    "url": "https://github.com/Runfusion/Fusion/issues"
+    "url": "https://github.com/Runfusion/fusion-pro/issues"
   },
   "type": "module",
   "exports": {
@@ -19,9 +19,6 @@
       "source": "./src/index.ts",
       "import": "./dist/index.js"
     }
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "dist",

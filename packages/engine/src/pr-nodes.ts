@@ -49,7 +49,7 @@ export interface PrNodeStore extends PrResponseRunStore {
 }
 
 /** Identity of the PR an entity is created for, resolved from the task + node. */
-export interface PrSourceDescriptor extends PrEntityCreateInput {}
+export type PrSourceDescriptor = PrEntityCreateInput;
 
 /** Input for the injected `createPr` callback (the dashboard GitHubClient wrapper). */
 export interface PrCreateCallInput {

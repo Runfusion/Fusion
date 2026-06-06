@@ -1,15 +1,14 @@
 #!/usr/bin/env node
-// Local release: consume changesets, bump versions, publish to npm, push tag,
-// and sync the homebrew tap formula (homebrew-tap/Formula/fusion.rb).
+// Local release: consume changesets, bump versions, publish to a configured
+// private npm-compatible registry, and push the release tag.
 //
 // This is a local-machine alternative to the `version.yml` CI workflow.
-// Trade-off: CI publishes with npm provenance via OIDC; this script does not.
-// If you want provenance, run the workflow manually instead of this script.
 //
 // Requirements:
 //   - clean working tree on `main`, up to date with origin
 //   - at least one pending changeset in .changeset/
-//   - `npm login` already completed (publish uses the active npm token)
+//   - private package registry configured through FUSION_RELEASE_PACKAGE_REGISTRY
+//   - package registry token available in NODE_AUTH_TOKEN by default
 //
 // Usage:
 //   pnpm release              # interactive: review changesets, accept or override version, confirm
@@ -23,7 +22,12 @@ import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
-import { extractVersionNotes } from "./lib/extract-version-notes.mjs";
+import {
+  assertReleaseTokenAvailable,
+  formatReleaseTargetSummary,
+  resolvePrivateReleaseTarget,
+  shellQuote,
+} from "./lib/private-release-target.mjs";
 
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
@@ -284,9 +288,8 @@ function escapeRegex(s) {
 }
 
 /**
- * Pack @runfusion/fusion and runfusion.ai, install them into a clean temp dir
- * with plain `npm` (mimicking the `npx runfusion.ai` install path), and invoke
- * the bin with --help. Throws via fail() on any error.
+ * Pack @runfusion/fusion, install it into a clean temp dir with plain `npm`,
+ * and invoke the bin with --help. Throws via fail() on any error.
  *
  * Why this exists: the workspace install hides missing-from-published-deps
  * bugs because pnpm hoists devDeps. Issue #33 (dockerode missing in published
@@ -295,7 +298,6 @@ function escapeRegex(s) {
 function runReleaseSmoke() {
   const repoRoot = resolve(".");
   const fusionDir = join(repoRoot, "packages", "cli");
-  const aliasDir = join(repoRoot, "packages", "cli-alias");
   const smokeDir = mkdtempSync(join(tmpdir(), "fusion-smoke-"));
   const packDir = join(smokeDir, "tarballs");
   spawnSync("mkdir", ["-p", packDir]);
@@ -312,23 +314,17 @@ function runReleaseSmoke() {
     }
   };
   packOne(fusionDir);
-  packOne(aliasDir);
 
   const tarballs = readdirSync(packDir).filter((f) => f.endsWith(".tgz"));
   const fusionTarball = tarballs.find((f) => f.startsWith("runfusion-fusion-"));
-  const aliasTarball = tarballs.find((f) => f.startsWith("runfusion.ai-"));
-  if (!fusionTarball || !aliasTarball) {
+  if (!fusionTarball) {
     cleanupSmoke(smokeDir);
     fail(`Could not find packed tarballs in ${packDir}: ${tarballs.join(", ")}`);
   }
   const fusionTarballPath = join(packDir, fusionTarball);
-  const aliasTarballPath = join(packDir, aliasTarball);
 
   const installDir = join(smokeDir, "install");
   spawnSync("mkdir", ["-p", installDir]);
-  // Override @runfusion/fusion to the local tarball — without this, npm tries
-  // to fetch the version-matching tarball from the registry (which we haven't
-  // published yet).
   writeFileSync(
     join(installDir, "package.json"),
     JSON.stringify(
@@ -336,7 +332,6 @@ function runReleaseSmoke() {
         name: "fusion-smoke-test",
         version: "0.0.0",
         private: true,
-        overrides: { "@runfusion/fusion": `file:${fusionTarballPath}` },
       },
       null,
       2,
@@ -345,7 +340,7 @@ function runReleaseSmoke() {
 
   const npmInstall = spawnSync(
     "npm",
-    ["install", "--no-audit", "--no-fund", "--ignore-scripts", aliasTarballPath],
+    ["install", "--no-audit", "--no-fund", "--ignore-scripts", fusionTarballPath],
     { cwd: installDir, stdio: "pipe", encoding: "utf8" },
   );
   if (npmInstall.status !== 0) {
@@ -353,15 +348,12 @@ function runReleaseSmoke() {
     fail(`npm install of packed tarballs failed:\n${npmInstall.stderr || npmInstall.stdout}`);
   }
 
-  // Invoke the bin via the alias entry. Exercises the same import graph as
-  // `npx runfusion.ai` and surfaces ERR_MODULE_NOT_FOUND for any externalized
-  // module that isn't a real published dep (the dockerode bug).
-  const aliasBin = join(installDir, "node_modules", "runfusion.ai", "index.js");
-  if (!existsSync(aliasBin)) {
+  const cliBin = join(installDir, "node_modules", ".bin", "fn");
+  if (!existsSync(cliBin)) {
     cleanupSmoke(smokeDir);
-    fail(`Smoke install missing alias bin at ${aliasBin}`);
+    fail(`Smoke install missing CLI bin at ${cliBin}`);
   }
-  const invoke = spawnSync("node", [aliasBin, "--help"], {
+  const invoke = spawnSync(cliBin, ["--help"], {
     cwd: installDir,
     stdio: "pipe",
     encoding: "utf8",
@@ -379,78 +371,6 @@ function runReleaseSmoke() {
 
 function cleanupSmoke(dir) {
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
-}
-
-/**
- * After the npm publish + tag push, sync `homebrew-tap/Formula/fusion.rb` to
- * the new version: rewrite the tarball `url` and recompute its sha256 from the
- * registry, then commit and push the tap formula update on top of the release
- * commit. The npm registry can take a few seconds to surface a freshly
- * published tarball, so we retry briefly. Failures are non-fatal — the user
- * can re-run the bump manually if needed; the release itself is already out.
- */
-function bumpHomebrewTap(version) {
-  const formulaPath = join("homebrew-tap", "Formula", "fusion.rb");
-  if (!existsSync(formulaPath)) {
-    warn(`Homebrew tap formula not found at ${formulaPath} — skipping tap bump.`);
-    return;
-  }
-
-  const tarballUrl = `https://registry.npmjs.org/@runfusion/fusion/-/fusion-${version}.tgz`;
-  info(`Fetching ${tarballUrl} to compute sha256…`);
-
-  let sha256;
-  const maxAttempts = 6;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const r = spawnSync(
-      "bash",
-      ["-c", `set -o pipefail; curl -sfL "${tarballUrl}" | shasum -a 256 | awk '{print $1}'`],
-      { stdio: "pipe", encoding: "utf8" }
-    );
-    const out = (r.stdout || "").trim();
-    if (r.status === 0 && /^[0-9a-f]{64}$/.test(out)) {
-      sha256 = out;
-      break;
-    }
-    if (attempt < maxAttempts) {
-      warn(`  npm registry not ready (attempt ${attempt}/${maxAttempts}); retrying in 5s…`);
-      spawnSync("sleep", ["5"]);
-    }
-  }
-  if (!sha256) {
-    warn(`Could not fetch sha256 for ${tarballUrl} after ${maxAttempts} attempts. Update ${formulaPath} manually.`);
-    return;
-  }
-
-  const raw = readFileSync(formulaPath, "utf8");
-  const patched = raw
-    .replace(/^(\s*url\s+)"[^"]*"/m, `$1"${tarballUrl}"`)
-    .replace(/^(\s*sha256\s+)"[0-9a-f]{64}"/m, `$1"${sha256}"`);
-  if (patched === raw) {
-    warn(`Formula at ${formulaPath} unchanged — could not match url/sha256 lines (already at v${version}?). No tap commit created.`);
-    return;
-  }
-  writeFileSync(formulaPath, patched);
-
-  // homebrew-tap is a sibling clone (gitignored in this repo) with its own git
-  // history; run git inside that working tree, not the main repo.
-  const tapCwd = "homebrew-tap";
-  run(`git add Formula/fusion.rb`, { cwd: tapCwd });
-  const commit = run(
-    `git commit -m "chore(tap): bump fusion to v${version}" -m "Auto-bumped by scripts/release.mjs after npm publish."`,
-    { allowFail: true, capture: true, cwd: tapCwd }
-  );
-  if (commit.status !== 0) {
-    warn(`Tap commit failed (working tree may already be clean). Inspect ${formulaPath} manually.`);
-    return;
-  }
-
-  const push = run("git push origin main", { allowFail: true, capture: true, cwd: tapCwd });
-  if (push.status !== 0) {
-    warn(`Failed to push tap bump commit to origin/main. Run \`git push origin main\` manually.`);
-    return;
-  }
-  ok(`Homebrew tap formula bumped to v${version} (sha256 ${sha256.slice(0, 12)}…) and pushed.`);
 }
 
 function findPackageDir(name) {
@@ -471,6 +391,16 @@ function findPackageDir(name) {
 }
 
 // --- Preflight ------------------------------------------------------------
+
+info("Resolving private release target…");
+let releaseTarget;
+try {
+  releaseTarget = resolvePrivateReleaseTarget(process.env);
+  if (!DRY_RUN) assertReleaseTokenAvailable(releaseTarget, process.env);
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+ok(`Private release target:\n${formatReleaseTargetSummary(releaseTarget)}`);
 
 info("Preflight checks…");
 
@@ -526,6 +456,8 @@ if (chosenVersion !== proposedVersion) {
 if (DRY_RUN) {
   warn("--dry-run: stopping before version bump. No files modified, no commit, no publish, no tag.");
   info(`Would release v${chosenVersion} (${releases.length} package(s) bumped).`);
+  info(`Would publish with: ${releaseTarget.publishCommand.map(shellQuote).join(" ")}`);
+  info(`Binary destination: ${releaseTarget.binaryDestination}`);
   process.exit(0);
 }
 
@@ -575,8 +507,8 @@ run(
 );
 
 // --- Pre-publish smoke ----------------------------------------------------
-// Pack the public CLI tarballs, install them with plain `npm` into a clean
-// temp dir, and exercise the bin to verify a real `npx runfusion.ai` install
+// Pack the CLI tarball, install it with plain `npm` into a clean temp dir,
+// and exercise the bin to verify a real package install
 // would succeed. Catches missing-published-deps (dockerode-class), missing
 // files-glob entries, broken bin shebangs, etc. that the workspace install
 // masks via pnpm hoisting.
@@ -587,8 +519,8 @@ ok("Pre-publish smoke passed.");
 
 // --- Publish --------------------------------------------------------------
 
-info("Publishing to npm (non-private packages only)…");
-run("pnpm -r publish --access public --no-git-checks");
+info(`Publishing ${releaseTarget.packageName} to private registry ${releaseTarget.packageRegistry}…`);
+run(releaseTarget.publishCommand.map(shellQuote).join(" "));
 
 // --- Push + tag -----------------------------------------------------------
 
@@ -599,53 +531,7 @@ info(`Creating and pushing tag v${version}…`);
 run(`git tag v${version}`);
 run(`git push origin v${version}`);
 
-// --- Homebrew tap bump ----------------------------------------------------
-// Sync homebrew-tap/Formula/fusion.rb (url + sha256) to the new version so
-// `brew install runfusion/tap/fusion` stays in lockstep with npm.
-info("Bumping homebrew tap formula…");
-bumpHomebrewTap(version);
+// --- Binary distribution -------------------------------------------------
 
-// --- GitHub Release ------------------------------------------------------
-
-let githubReleaseStatus = "not-created";
-const changelogContent = readFileSync("CHANGELOG.md", "utf8");
-const releaseNotes = extractVersionNotes(changelogContent, version);
-const ghCheck = spawnSync("gh", ["--version"], { stdio: "pipe" });
-
-if (ghCheck.status !== 0) {
-  githubReleaseStatus = "missing-gh";
-  warn(`⚠ gh CLI not found. Create the GitHub Release manually:\n  gh release create v${version} --title "v${version}" --latest`);
-} else {
-  let notesFile;
-  try {
-    const notesDir = mkdtempSync(join(tmpdir(), "fusion-release-notes-"));
-    notesFile = join(notesDir, `v${version}-notes.md`);
-    writeFileSync(notesFile, `${releaseNotes}\n`, "utf8");
-
-    const ghCreate = spawnSync(
-      "gh",
-      ["release", "create", `v${version}`, "--title", `v${version}`, "--notes-file", notesFile, "--latest"],
-      { stdio: "inherit" }
-    );
-
-    if (ghCreate.status !== 0) {
-      warn(`GitHub Release creation failed for v${version}. You can retry manually with gh release create.`);
-    } else {
-      githubReleaseStatus = "created";
-    }
-  } catch (error) {
-    warn(`GitHub Release creation failed for v${version}: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    if (notesFile && existsSync(notesFile)) {
-      unlinkSync(notesFile);
-    }
-  }
-}
-
-if (githubReleaseStatus === "created") {
-  ok(`Released v${version}. Published to npm, tag pushed, GitHub Release created.`);
-} else if (githubReleaseStatus === "missing-gh") {
-  ok(`Released v${version}. Published to npm, tag pushed. GitHub Release skipped (gh CLI not found).`);
-} else {
-  ok(`Released v${version}. Published to npm, tag pushed. GitHub Release was not created (see warnings above).`);
-}
+info("Binary and desktop artifacts are retained by the tag-triggered private workflow artifacts.");
+ok(`Released v${version}. Published to private package registry, tag pushed. Binary artifacts remain in private workflow artifacts.`);

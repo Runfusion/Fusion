@@ -1,9 +1,9 @@
 # Releasing
 
-This project uses [changesets](https://github.com/changesets/changesets) for automated versioning and release management. Releases are distributed through two channels:
+This project uses [changesets](https://github.com/changesets/changesets) for automated versioning and release management. Fusion Pro releases are distributed through private channels:
 
-1. **npm packages** — published automatically via `version.yml` using changesets
-2. **GitHub Release with platform binaries** — built and uploaded via `release.yml` when a version tag is pushed
+1. **Private package registry** — `@runfusion/fusion` is published by `version.yml` to GitHub Packages by default
+2. **Private workflow artifacts** — platform binaries are built by `release.yml` when a version tag is pushed and retained as workflow artifacts
 
 ## How it works
 
@@ -22,9 +22,9 @@ This will prompt you to:
 
 A markdown file will be created in the `.changeset/` directory. Commit this file along with your code changes.
 
-### 2. Version PR is created automatically
+### 2. Version PR is created manually
 
-When changesets are merged to `main`, the `version.yml` workflow automatically opens (or updates) a **"Version Packages"** pull request. This PR:
+Run the manual `version.yml` workflow to open or update a **"Version Packages"** pull request. This PR:
 
 - Consumes all pending changeset files
 - Bumps package versions according to the changeset declarations
@@ -35,20 +35,21 @@ When changesets are merged to `main`, the `version.yml` workflow automatically o
 When you merge the Version Packages PR:
 
 - The `version.yml` workflow detects that all changesets have been consumed
-- It builds all packages and publishes them to **npm** with provenance attestation
-- It creates a git tag `v{version}` based on the `kb` CLI package version
+- It builds all packages and publishes `@runfusion/fusion` to the private package registry
+- It creates a git tag `v{version}` based on the Fusion CLI package version
 - The tag push triggers `release.yml`, which:
-  - Builds platform-specific binaries for Linux x64, macOS x64, macOS arm64, and Windows x64
+  - Builds platform-specific CLI binaries for Linux x64, Linux arm64, macOS arm64, and Windows x64
+  - Builds desktop artifacts for Windows, macOS, and Linux
   - Signs macOS binaries (codesign + notarization) and Windows binaries (Authenticode)
   - Generates SHA256 checksums for all binaries
-  - Creates a **GitHub Release** with all binaries and checksums attached
+  - Uploads the collected binaries and checksums as private workflow artifacts
 
 ## Release channels
 
 | Channel | Workflow | Trigger | Output |
 |---------|----------|---------|--------|
-| npm | `version.yml` | Push to `main` | npm packages with provenance |
-| GitHub Release | `release.yml` | Version tag (`v*`) | Signed platform binaries + checksums |
+| Private package | `version.yml` | Manual workflow | `@runfusion/fusion` in GitHub Packages |
+| Private binaries | `release.yml` | Version tag (`v*`) | Signed platform binaries + checksums as workflow artifacts |
 
 ## Platform binaries
 
@@ -62,7 +63,7 @@ When you merge the Version Packages PR:
 
 ## Testing binary builds
 
-Use the **Test Release** workflow (`test-release.yml`) to manually test binary builds without creating a real release:
+Use the **Test Release** workflow (`test-release.yml`) to manually test binary builds without creating release artifacts:
 
 1. Go to **Actions** → **Test Release** → **Run workflow**
 2. The workflow builds all 4 platform binaries, runs smoke tests, and uploads artifacts
@@ -70,14 +71,24 @@ Use the **Test Release** workflow (`test-release.yml`) to manually test binary b
 
 ## Manual release (fallback)
 
-If you need to release manually, you can still push a version tag directly:
+If you need to build binary artifacts manually, you can still push a version tag directly:
 
 ```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-This will trigger `release.yml` to build binaries and create a GitHub Release. Note: npm publishing is handled separately by `version.yml` and won't be triggered by a manual tag push.
+This will trigger `release.yml` to build binaries and upload private workflow artifacts. Package publishing is handled separately by `version.yml` and is not triggered by a manual tag push.
+
+For a full local release, use the source-of-truth command:
+
+```bash
+FUSION_RELEASE_PACKAGE_REGISTRY=https://npm.pkg.github.com \
+NODE_AUTH_TOKEN=<token-with-package-write> \
+pnpm release --yes
+```
+
+The local script validates the private registry target before versioning, building, committing, tagging, or publishing. It refuses the public npm registry and does not create public Homebrew or GitHub Release distribution side effects.
 
 ## Available scripts
 
@@ -87,7 +98,7 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 | `pnpm changeset status` | Check pending changesets |
 | `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then bumps + builds + publishes + tags |
 | `pnpm release --yes` | Same, but auto-accepts the proposed version and skips the final confirmation |
-| `pnpm release --dry-run` | Preview only — show changesets, proposed version, and prompt for override, then exit before any file/git/npm changes |
+| `pnpm release --dry-run` | Preview only — show changesets, proposed version, private package target, and prompt for override, then exit before any file/git/package changes |
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
 | `pnpm --filter @runfusion/fusion build:exe` | Build binary for current platform |
 | `pnpm --filter @runfusion/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |
@@ -103,7 +114,7 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 
 ## Internal packages
 
-The following packages are **internal** and are **not published to npm**:
+The following packages are **internal** and are **not published as separate packages**:
 
 - `@fusion/core` — Core domain model and task store
 - `@fusion/dashboard` — Web UI and API server
@@ -111,4 +122,4 @@ The following packages are **internal** and are **not published to npm**:
 - `@fusion/plugin-sdk` — Plugin development SDK
 - `@fusion-plugin-examples/*` — Example plugins
 
-These packages have `private: true` in their `package.json` and are listed in the `.changeset/config.json` `ignore` array to prevent accidental publishing. Only the `@runfusion/fusion` package is published to npm.
+These packages have `private: true` in their `package.json` and no public publish access. Only the bundled `@runfusion/fusion` package is published to the configured private package registry.

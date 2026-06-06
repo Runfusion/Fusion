@@ -1,7 +1,6 @@
-# Release workflow: npm publishing via changesets + OIDC
+# Release workflow: private package publishing via changesets
 #
-# Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed.
-# Requires npm 11.5.1+ for OIDC support.
+# Publishes @runfusion/fusion to GitHub Packages by default using GITHUB_TOKEN.
 
 name: Version & Release
 
@@ -12,7 +11,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
+  packages: write
 
 jobs:
   release:
@@ -26,11 +25,8 @@ jobs:
       - name: Setup Node and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
-          registry-url: "https://registry.npmjs.org"
+          registry-url: "https://npm.pkg.github.com"
           skip-install: "true"
-
-      - name: Ensure modern npm (OIDC support)
-        run: npm install -g npm@11.6.4
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -42,7 +38,7 @@ jobs:
         uses: changesets/action@v1
         with:
           version: pnpm release:version
-          publish: pnpm -r publish --provenance --access public
+          publish: pnpm --filter @runfusion/fusion publish --registry https://npm.pkg.github.com --no-git-checks
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

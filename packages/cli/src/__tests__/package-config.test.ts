@@ -88,6 +88,11 @@ describe("CLI package.json publishing config", () => {
     expect(pkg.private).not.toBe(true);
   });
 
+  it("publishes to the private GitHub Packages registry", () => {
+    expect(pkg.publishConfig?.registry).toBe("https://npm.pkg.github.com");
+    expect(pkg.publishConfig?.access).not.toBe("public");
+  });
+
   it("declares ioredis as a runtime dependency for badge pub/sub", () => {
     const deps = Object.keys(pkg.dependencies || {});
     expect(deps).toContain("ioredis");
@@ -208,9 +213,9 @@ describe("Scoped @fusion/* packages publishing config", () => {
     describe(`@fusion/${name}`, () => {
       const pkg = loadPackageJson(name);
 
-      it('has publishConfig with access "public"', () => {
-        expect(pkg.publishConfig).toBeDefined();
-        expect(pkg.publishConfig.access).toBe("public");
+      it("does not declare public publish access", () => {
+        expect(pkg.private).toBe(true);
+        expect(pkg.publishConfig?.access).not.toBe("public");
       });
 
       it('has "files" array', () => {

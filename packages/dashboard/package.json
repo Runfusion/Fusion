@@ -3,14 +3,14 @@
   "version": "0.39.0",
   "license": "MIT",
   "description": "Fusion dashboard: React UI and HTTP API server for monitoring and controlling the Fusion AI coding agent.",
-  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "homepage": "https://github.com/Runfusion/fusion-pro#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Runfusion/Fusion",
+    "url": "https://github.com/Runfusion/fusion-pro",
     "directory": "packages/dashboard"
   },
   "bugs": {
-    "url": "https://github.com/Runfusion/Fusion/issues"
+    "url": "https://github.com/Runfusion/fusion-pro/issues"
   },
   "type": "module",
   "exports": {
@@ -43,9 +43,6 @@
       "types": "./app/plugins/types.ts",
       "import": "./app/plugins/types.ts"
     }
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "dist",

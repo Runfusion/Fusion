@@ -3,9 +3,9 @@
   "version": "0.39.0",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
-  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "homepage": "https://github.com/Runfusion/fusion-pro#readme",
   "bugs": {
-    "url": "https://github.com/Runfusion/Fusion/issues"
+    "url": "https://github.com/Runfusion/fusion-pro/issues"
   },
   "type": "module",
   "keywords": [
@@ -25,7 +25,7 @@
     "image": "https://raw.githubusercontent.com/Runfusion/Fusion/main/demo/screenshot.png"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com"
   },
   "files": [
     "bin.mjs",

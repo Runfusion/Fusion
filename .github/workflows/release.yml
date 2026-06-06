@@ -1,12 +1,12 @@
 # Binary Release workflow
 #
-# This workflow builds platform-specific binaries and creates a GitHub Release
-# when a version tag (v*) is pushed. This is the second release channel —
-# npm publishing is handled separately by version.yml via changesets.
+# This workflow builds platform-specific binaries and retains them as private
+# workflow artifacts when a version tag (v*) is pushed. Package publishing is
+# handled separately by version.yml via changesets.
 #
 # Release channels:
-#   1. npm publish  — handled by version.yml (changesets/action)
-#   2. GitHub Release with binaries — handled by this workflow (release.yml)
+#   1. Private package publish — handled by version.yml (changesets/action)
+#   2. Private binary artifacts — retained by this workflow (release.yml)
 
 name: Binary Release
 
@@ -358,19 +358,12 @@ jobs:
             packages/desktop/dist-electron/Fusion-*-linux-*.tar.gz.asc
             packages/desktop/dist-electron/latest-linux.yml
 
-  # ── Create GitHub Release ─────────────────────────────────────────────
-  github-release:
-    name: Create GitHub Release
+  # ── Collect private workflow artifacts ────────────────────────────────
+  collect:
+    name: Collect Private Release Artifacts
     needs: [build-binaries, build-desktop-windows, build-desktop-macos, build-desktop-linux]
-    # Run as long as the workflow wasn't cancelled, even if some build legs failed,
-    # so a single failing matrix leg doesn't suppress publishing the ones that did
-    # build. Gated to tag pushes only: a workflow_dispatch run on a branch is a
-    # build-only validation (artifacts are still uploaded), and would otherwise try
-    # to create a release tagged with the branch name.
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Download all artifacts
@@ -378,7 +371,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect release files
+      - name: Collect private release files
         id: collect
         run: |
           mkdir release-files
@@ -387,15 +380,13 @@ jobs:
           count=$(find release-files -type f | wc -l | tr -d ' ')
           echo "count=$count" >> "$GITHUB_OUTPUT"
           if [ "$count" -eq 0 ]; then
-            echo "::error::No release artifacts were produced by any build job; skipping release creation." >&2
+            echo "::error::No release artifacts were produced by any build job." >&2
+            exit 1
           fi
 
-      # Only create the release if at least one artifact exists. A failed build leg
-      # yields a partial release rather than none; a total wipeout fails loudly.
-      - name: Create GitHub Release
-        if: ${{ steps.collect.outputs.count != '0' }}
-        uses: softprops/action-gh-release@v2
+      - name: Upload collected private release artifacts
+        uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: release-files/*
+          name: fusion-private-release-artifacts
+          path: release-files/*
+          retention-days: 30

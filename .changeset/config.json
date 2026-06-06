@@ -14,7 +14,7 @@
     "@fusion/plugin-sdk"
   ]],
   "linked": [],
-  "access": "public",
+  "access": "restricted",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": []

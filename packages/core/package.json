@@ -3,14 +3,14 @@
   "version": "0.39.0",
   "license": "MIT",
   "description": "Fusion core: task store, scheduler, settings, and shared domain types backing the Fusion AI coding agent.",
-  "homepage": "https://github.com/Runfusion/Fusion#readme",
+  "homepage": "https://github.com/Runfusion/fusion-pro#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Runfusion/Fusion",
+    "url": "https://github.com/Runfusion/fusion-pro",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/Runfusion/Fusion/issues"
+    "url": "https://github.com/Runfusion/fusion-pro/issues"
   },
   "type": "module",
   "exports": {
@@ -24,9 +24,6 @@
       "source": "./src/gh-cli.ts",
       "import": "./dist/gh-cli.js"
     }
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "dist",

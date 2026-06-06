@@ -6,7 +6,7 @@ const repoRoot = join(import.meta.dirname!, "..", "..", "..", "..");
 
 describe("Changeset configuration", () => {
   // Release guardrail: These tests protect the @runfusion/fusion release pipeline
-  // by ensuring changeset configuration required for npm publishing remains intact.
+  // by ensuring changeset configuration required for private package publishing remains intact.
   // If these tests fail, the automated release workflow will break.
   it("should have a valid .changeset/config.json", () => {
     const configPath = join(repoRoot, ".changeset", "config.json");
@@ -21,6 +21,12 @@ describe("Changeset configuration", () => {
     const configPath = join(repoRoot, ".changeset", "config.json");
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(config.baseBranch).toBe("main");
+  });
+
+  it("should use restricted package access for private releases", () => {
+    const configPath = join(repoRoot, ".changeset", "config.json");
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(config.access).toBe("restricted");
   });
 
   it("should have changeset scripts in root package.json", () => {
@@ -52,7 +58,7 @@ describe("Changeset configuration", () => {
     expect(existsSync(workflowPath)).toBe(true);
 
     const content = readFileSync(workflowPath, "utf-8");
-    // Guardrail: workflow must use changesets/action for npm publishing
+    // Guardrail: workflow must use changesets/action for private package publishing
     expect(content).toContain("changesets/action");
     // Guardrail: workflow must be manually triggered (auto-trigger disabled for safety)
     expect(content).toContain("workflow_dispatch");

@@ -249,6 +249,16 @@ export async function runProjectAdd(
   path?: string,
   options: ProjectAddOptions = {}
 ): Promise<void> {
+  if (!options.interactive && !name) {
+    console.error("Usage: fn project add <name> <path> [--force]");
+    process.exit(1);
+  }
+
+  if (!options.interactive && !path) {
+    console.error("Usage: fn project add <name> <path> [--force]");
+    process.exit(1);
+  }
+
   const central = new CentralCore();
   await central.init();
 

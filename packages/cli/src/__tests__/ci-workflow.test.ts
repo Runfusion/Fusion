@@ -286,32 +286,34 @@ describe("Version & Release workflow (.github/workflows/version.yml)", () => {
     expect(content).toContain("changesets/action");
   });
 
-  it("has publish command for npm", () => {
-    expect(content).toContain("pnpm -r publish");
+  it("has publish command for the private CLI package", () => {
+    expect(content).toContain("pnpm --filter @runfusion/fusion publish");
+    expect(content).toContain("--registry https://npm.pkg.github.com");
+    expect(content).not.toContain("pnpm -r publish");
   });
 
-  it("uses OIDC publishing (no NPM_TOKEN secret)", () => {
+  it("uses GitHub Packages token publishing", () => {
     expect(content).not.toContain("secrets.NPM_TOKEN");
-    expect(workflow.permissions["id-token"]).toBe("write");
+    expect(workflow.permissions["id-token"]).toBeUndefined();
+    expect(content).toContain("NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
   });
 
   it("has required permissions", () => {
     expect(workflow.permissions.contents).toBe("write");
     expect(workflow.permissions["pull-requests"]).toBe("write");
+    expect(workflow.permissions.packages).toBe("write");
   });
 
-  it("has id-token write permission for npm provenance", () => {
-    expect(workflow.permissions["id-token"]).toBe("write");
+  it("does not use public npm provenance publishing", () => {
+    expect(content).not.toContain("--provenance");
+    expect(content).not.toContain("--access public");
+    expect(content).not.toContain("registry.npmjs.org");
   });
 
-  it("publishes with --provenance flag", () => {
-    expect(content).toContain("--provenance");
-  });
-
-  it("configures npm registry-url", () => {
+  it("configures GitHub Packages registry-url", () => {
     const steps = workflow.jobs.release.steps;
     const compositeStep = findCompositeSetupStep(steps);
-    expect(compositeStep?.with?.["registry-url"]).toBe("https://registry.npmjs.org");
+    expect(compositeStep?.with?.["registry-url"]).toBe("https://npm.pkg.github.com");
   });
 });
 
@@ -367,8 +369,10 @@ describe("Binary release workflow (.github/workflows/release.yml)", () => {
     expect(arm64Entry?.binary).toBe("fn-linux-arm64");
   });
 
-  it("uses softprops/action-gh-release", () => {
-    expect(content).toContain("softprops/action-gh-release");
+  it("does not create public GitHub Releases by default", () => {
+    expect(content).not.toContain("softprops/action-gh-release");
+    expect(content).not.toContain("Create GitHub Release");
+    expect(content).toContain("fusion-private-release-artifacts");
   });
 
   it("uses frozen-lockfile install in every matrix job", () => {
@@ -413,8 +417,9 @@ describe("Binary release workflow (.github/workflows/release.yml)", () => {
     expect(workflow.permissions.contents).toBe("write");
   });
 
-  it("has github-release job that depends on build-binaries", () => {
-    expect(workflow.jobs["github-release"].needs).toContain("build-binaries");
+  it("has collect job that depends on build-binaries", () => {
+    expect(workflow.jobs.collect.needs).toContain("build-binaries");
+    expect(content).toContain("retention-days: 30");
   });
 });
 

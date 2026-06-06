@@ -425,7 +425,7 @@ fn skills install firebase/agent-skills               # Install agent skills
 | `@fusion/core` | Domain model — tasks, board columns, SQLite store |
 | `@fusion/dashboard` | Web UI — Express server + kanban board with SSE |
 | `@fusion/engine` | AI engine — planning, execution, scheduling, workflow steps |
-| `@runfusion/fusion` | CLI + extension — published to npm |
+| `@runfusion/fusion` | CLI + extension — published to the private package registry |
 
 ---
 

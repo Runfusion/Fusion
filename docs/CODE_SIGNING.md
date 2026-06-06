@@ -162,7 +162,7 @@ Paste the result as the `WINDOWS_CERTIFICATE_BASE64` secret.
 5. **Windows jobs**: `scripts/sign-windows.ps1` runs Authenticode signing
 6. **Linux desktop jobs**: `scripts/sign-linux.sh` runs `gpg --detach-sign --armor` for each `.AppImage` / `.deb` / `.tar.gz` artifact and verifies each signature with `gpg --verify`
 7. Checksums are generated **after** signing (so they match the signed binaries)
-8. Signed binaries and checksums are uploaded to the GitHub Release
+8. Signed binaries and checksums are uploaded as private workflow artifacts
 
 The test-release workflow (`workflow_dispatch`) includes the same signing steps but guards them with secret-availability checks — signing is skipped if secrets are not configured.
 

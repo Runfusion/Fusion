@@ -1,15 +1,16 @@
 {
   "name": "runfusion.ai",
   "version": "0.39.0",
+  "private": true,
   "license": "MIT",
-  "description": "Launch Fusion with `npx runfusion.ai` — tiny alias for @runfusion/fusion.",
+  "description": "Unpublished Fusion alias package retained for workspace compatibility.",
   "homepage": "https://runfusion.ai",
   "bugs": {
-    "url": "https://github.com/Runfusion/Fusion/issues"
+    "url": "https://github.com/Runfusion/fusion-pro/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Runfusion/Fusion.git",
+    "url": "git+https://github.com/Runfusion/fusion-pro.git",
     "directory": "packages/cli-alias"
   },
   "keywords": [
@@ -31,9 +32,6 @@
     "index.js",
     "README.md"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@runfusion/fusion": "workspace:*"
   }

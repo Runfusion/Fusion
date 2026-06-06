@@ -159,6 +159,9 @@ export function nodeConfigSummary(
     case "end":
     case "split":
     case "merge":
+    case "pr-create":
+    case "pr-respond":
+    case "pr-merge":
     default:
       return "";
   }
