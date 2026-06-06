@@ -99,6 +99,12 @@ flowchart TB
 - R15. Advanced-mode capabilities remain fully functional — gating is a UI-visibility concern, not a feature removal. Existing projects relying on those surfaces keep working after opting into advanced mode.
 - R17. An existing legacy/advanced project can be converted to simple mode on demand — the same conform mapping the upgrade migration uses (columns onto the company template, team seeded), triggered explicitly from settings rather than only at upgrade.
 
+**Integrations**
+
+- R18. When the compound-engineering plugin is installed, "Compound Engineering" is a selectable board type (never the default): Lead structures via ce-plan, Executor executes via ce-work, Reviewer evaluates via ce-code-review, a post-approval Compound column captures learnings via ce-compound before the PR, and PR review feedback is handled by ce-resolve-pr-feedback. Stage artifacts attach to the task and flow column to column.
+- R19. On coding boards with PR merge mode, a passing Reviewer verdict drives the unified PR entity lifecycle (the first-class pr-create / pr-respond / pr-merge workflow nodes), not legacy procedural PR code.
+- R20. Plan review and approval: a per-board "require plan approval" setting (default-on for Compound Engineering boards) parks a task once the Lead finishes structuring it; the user reviews the attached plan from the task on any surface and explicitly approves before the Executor starts — or sends feedback that returns it to the Lead.
+
 ---
 
 ## Key Flows
