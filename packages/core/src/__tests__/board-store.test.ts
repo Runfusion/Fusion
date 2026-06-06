@@ -175,3 +175,74 @@ describe("U1 board→IR resolution through the resolver", () => {
     expect(ir.name).toBe(BUILTIN_CODING_WORKFLOW_IR.name);
   });
 });
+
+describe("U5 Board.requirePlanApproval (R20 plan-approval hold)", () => {
+  const harness = createTaskStoreTestHarness();
+  let store: ReturnType<typeof harness.store>;
+
+  beforeEach(async () => {
+    await harness.beforeEach();
+    store = harness.store();
+  });
+  afterEach(async () => {
+    await harness.afterEach();
+  });
+
+  function rawDb(): { prepare: (s: string) => { run: (...a: unknown[]) => unknown } } {
+    return (store as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => unknown } } }).db;
+  }
+
+  it("persists requirePlanApproval through create/update and defaults to false", () => {
+    const boards = store.getBoardStore();
+    const off = boards.createBoard({ name: "Off", workflowId: "builtin:coding" });
+    expect(off.requirePlanApproval).toBe(false);
+
+    const on = boards.createBoard({ name: "On", workflowId: "builtin:coding", requirePlanApproval: true });
+    expect(on.requirePlanApproval).toBe(true);
+    expect(boards.getBoard(on.id)?.requirePlanApproval).toBe(true);
+
+    const toggled = boards.updateBoard(off.id, { requirePlanApproval: true });
+    expect(toggled.requirePlanApproval).toBe(true);
+    expect(boards.getBoard(off.id)?.requirePlanApproval).toBe(true);
+
+    // An update that omits the field leaves it unchanged.
+    const renamed = boards.updateBoard(off.id, { name: "Off-renamed" });
+    expect(renamed.requirePlanApproval).toBe(true);
+  });
+
+  it("getTaskBoardRequiresPlanApproval reflects the task's board (false without a board)", async () => {
+    const boards = store.getBoardStore();
+    const board = boards.createBoard({ name: "Hold", workflowId: "builtin:coding", requirePlanApproval: true });
+    const task = await store.createTask({ description: "homed" });
+
+    // No board yet → false.
+    expect(store.getTaskBoardRequiresPlanApproval(task.id)).toBe(false);
+
+    rawDb().prepare(`UPDATE tasks SET boardId = ? WHERE id = ?`).run(board.id, task.id);
+    expect(store.getTaskBoardRequiresPlanApproval(task.id)).toBe(true);
+  });
+
+  it("approvePlanForTask releases a company todo hold to in-progress; rejects a non-parked task", async () => {
+    await store.updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
+    const task = await store.createTask({ description: "parked" });
+    await store.moveTask(task.id, "todo", { moveSource: "user" });
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+
+    const released = await store.approvePlanForTask(task.id);
+    expect(released.column).toBe("in-progress");
+    expect((await store.getTask(task.id)).status ?? null).toBeNull();
+
+    // A task that is not awaiting approval is rejected.
+    await expect(store.approvePlanForTask(task.id)).rejects.toThrow(/not awaiting plan approval/);
+  });
+
+  it("approvePlanForTask releases a legacy triage hold to todo", async () => {
+    const task = await store.createTask({ description: "legacy-parked" });
+    // Legacy flow parks in triage with the awaiting-approval marker.
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+    expect((await store.getTask(task.id)).column).toBe("triage");
+
+    const released = await store.approvePlanForTask(task.id);
+    expect(released.column).toBe("todo");
+  });
+});

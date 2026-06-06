@@ -610,6 +610,26 @@ export interface TriageProcessorOptions {
   agentStore?: import("@fusion/core").AgentStore;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
   pluginRunner?: import("./plugin-runner.js").PluginRunner;
+  /**
+   * Company-model U5 (Lead absorbs triage). Resolves the Lead-triage context for a
+   * task: returns non-null ONLY when `companyModel` is on AND the task is on a
+   * company-model board (its IR carries role markers). The processor uses it to
+   * (a) extend its scan to the board's Lead column (`leadColumnId`, the company
+   * template's `todo`) so spec generation fires there instead of on a `triage`
+   * column that no longer exists, (b) attribute the spec session to the Lead agent
+   * (`leadAgentId`), and (c) decide whether the finished spec parks in the R20
+   * plan-approval hold (`requirePlanApproval`) or advances todo→in-progress.
+   *
+   * Best-effort: any resolution failure / flag-off / legacy board yields null so
+   * the legacy `triage`-column flow runs byte-identically (kill-switch parity).
+   */
+  resolveLeadTriageContext?: (
+    task: Task,
+  ) => Promise<{
+    leadColumnId: string;
+    leadAgentId?: string;
+    requirePlanApproval: boolean;
+  } | null>;
 }
 
 /**
@@ -647,6 +667,15 @@ export class TriageProcessor {
   /** Tasks killed by the stuck task detector (to avoid reporting as errors). */
   private stuckAborted = new Set<string>();
   private taskDeletedHandler?: (task: Task) => void;
+  /**
+   * Company-model U5: per-task Lead-triage context, populated during the poll's
+   * eligibility scan and consumed by `specifyTask`/`finalizeApprovedTask` so the
+   * IR is resolved once per discovery. Cleared when a task leaves `processing`.
+   */
+  private leadTriageContext = new Map<
+    string,
+    { leadColumnId: string; leadAgentId?: string; requirePlanApproval: boolean }
+  >();
 
   /**
    * @param store — Task store instance (also used to listen for `settings:updated` events)
@@ -753,8 +782,30 @@ export class TriageProcessor {
       planLog.log(`Startup sweep: clearing stale 'planning' status on ${t.id}`);
       await this.store.updateTask(t.id, { status: null });
     }
-    if (stale.length > 0) {
-      planLog.log(`Startup sweep: cleared ${stale.length} stale planning task(s)`);
+
+    // Company-model U5: company-board Lead-column (`todo`) tasks left in
+    // `planning` by a prior crash are also stale (no Lead agent runs at startup).
+    // Clear only when the resolver confirms the task is a company Lead-column task,
+    // so legacy/non-company todo tasks are never touched. The next poll re-picks
+    // them up (PROMPT.md still absent → `companyTodoTaskNeedsSpec` true), resuming
+    // spec generation — a migrated mid-planning task is NOT restarted from scratch
+    // because its in-flight session/PROMPT.md draft is preserved on disk.
+    let companyCleared = 0;
+    if (this.options.resolveLeadTriageContext) {
+      const todoPlanning = (await this.store.listTasks({ column: "todo", slim: true }))
+        .filter((t) => t.status === "planning" && !this.processing.has(t.id));
+      for (const t of todoPlanning) {
+        const ctx = await this.options.resolveLeadTriageContext(t).catch(() => null);
+        if (!ctx) continue;
+        planLog.log(`Startup sweep: clearing stale 'planning' status on company Lead task ${t.id}`);
+        await this.store.updateTask(t.id, { status: null });
+        companyCleared++;
+      }
+    }
+
+    const total = stale.length + companyCleared;
+    if (total > 0) {
+      planLog.log(`Startup sweep: cleared ${total} stale planning task(s)`);
     }
   }
 
@@ -892,6 +943,7 @@ export class TriageProcessor {
         this.processingSince.delete(taskId);
         this.activeSessions.delete(taskId);
         this.stuckAborted.delete(taskId);
+        this.leadTriageContext.delete(taskId);
         evicted.add(taskId);
       }
     }
@@ -900,11 +952,33 @@ export class TriageProcessor {
   }
 
   /**
+   * Company-model U5: whether a task still NEEDS spec generation by the Lead.
+   * A task needs a spec when its PROMPT.md is missing/empty. This is the contract
+   * that prevents double-processing on a company board: the triage scan picks up a
+   * todo task ONLY when it has no spec yet; once the Lead writes the spec and the
+   * task advances (or the spec already exists from migration mid-planning), the
+   * normal todo dispatch owns it. Status `planning`/`needs-replan` also count as
+   * needing spec (mid-flight or replan-requested), mirroring the legacy gate.
+   */
+  private async companyTodoTaskNeedsSpec(task: Task): Promise<boolean> {
+    if (task.status === "planning" || task.status === "needs-replan") return true;
+    const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+    const written = await readFile(promptPath, "utf-8").catch(() => "");
+    return !written.trim();
+  }
+
+  /**
    * Recover a triage task whose spec was already approved but the final
    * handoff out of `status: "planning"` never completed.
    */
   async recoverApprovedTask(task: Task): Promise<boolean> {
-    if (task.column !== "triage" || task.status !== "planning") {
+    // Company-model U5: on a company board the Lead column is `todo`, so a stuck
+    // approved spec is recovered there too (not just legacy `triage`).
+    const leadCtx = this.options.resolveLeadTriageContext
+      ? await this.options.resolveLeadTriageContext(task).catch(() => null)
+      : null;
+    const recoverableColumn = leadCtx ? task.column === leadCtx.leadColumnId : task.column === "triage";
+    if (!recoverableColumn || task.status !== "planning") {
       return false;
     }
 
@@ -927,10 +1001,14 @@ export class TriageProcessor {
       return false;
     }
 
+    const requirePlanApproval = leadCtx ? leadCtx.requirePlanApproval : settings.requirePlanApproval;
     await this.finalizeApprovedTask(task, written, settings, {
-      recoveryLogAction: settings.requirePlanApproval
+      leadContext: leadCtx,
+      recoveryLogAction: requirePlanApproval
         ? "Auto-recovered approved specification stuck in planning — awaiting manual approval"
-        : "Auto-recovered approved specification stuck in planning — moved to todo",
+        : leadCtx
+          ? "Auto-recovered approved specification stuck in planning — advanced to in-progress"
+          : "Auto-recovered approved specification stuck in planning — moved to todo",
     });
 
     return true;
@@ -996,17 +1074,51 @@ export class TriageProcessor {
       // Fetch all tasks (not just triage) to count active agents across columns.
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const now = Date.now();
+      // Shared eligibility gate for both the legacy `triage` column and the
+      // company-model Lead column: skip in-flight, paused, awaiting-approval (R20
+      // hold), failed, stuck-killed, and backoff-pending tasks.
+      const passesCommonGate = (t: Task): boolean =>
+        !this.processing.has(t.id) && !t.paused
+        && t.status !== "awaiting-approval"
+        && t.status !== "failed"
+        && t.status !== "stuck-killed"
+        && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now);
+
       const eligibleTriageTasks = allTasks.filter(
-        (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
-          // Skip tasks awaiting manual plan approval — they should not be auto-discovered
-          && t.status !== "awaiting-approval"
-          // Skip failed specifications until the user explicitly retries them.
-          && t.status !== "failed"
-          && t.status !== "stuck-killed"
-          // Skip tasks with a recovery backoff that hasn't elapsed yet
-          && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
+        (t) => t.column === "triage" && passesCommonGate(t),
       );
-      const triageTasks = sortTasksByPriorityThenAgeAndId(eligibleTriageTasks).sort((a, b) => {
+
+      // Company-model U5 (R1): the Lead absorbs triage. On flag-on company boards
+      // the `triage` column does not exist; spec generation fires on the board's
+      // Lead column (its `todo`). Scan todo tasks that still NEED a spec and stash
+      // their Lead-triage context. Tasks WITH a spec are left to the normal todo
+      // dispatch (no double-processing). Inert when the resolver is absent / flag
+      // off / the board is legacy (resolver returns null).
+      const companyTriageTasks: Task[] = [];
+      if (this.options.resolveLeadTriageContext) {
+        const todoCandidates = allTasks.filter(
+          (t) => t.column === "todo" && passesCommonGate(t),
+        );
+        for (const t of todoCandidates) {
+          const ctx = await this.options.resolveLeadTriageContext(t).catch(() => null);
+          if (!ctx) {
+            this.leadTriageContext.delete(t.id);
+            continue;
+          }
+          if (!(await this.companyTodoTaskNeedsSpec(t))) {
+            // Has a spec already — owned by the normal todo dispatch.
+            this.leadTriageContext.delete(t.id);
+            continue;
+          }
+          this.leadTriageContext.set(t.id, ctx);
+          companyTriageTasks.push(t);
+        }
+      }
+
+      const triageTasks = sortTasksByPriorityThenAgeAndId([
+        ...eligibleTriageTasks,
+        ...companyTriageTasks,
+      ]).sort((a, b) => {
         const priorityCmp = compareTaskPriority(a.priority, b.priority);
         if (priorityCmp !== 0) {
           return priorityCmp;
@@ -1030,8 +1142,12 @@ export class TriageProcessor {
       // Respect both per-project maxTriageConcurrent and the global semaphore.
       // Only planning tasks count against the triage limit; execution is governed by maxConcurrent.
       const maxTriageConcurrent = settings.maxTriageConcurrent ?? settings.maxConcurrent ?? 2;
+      // Count Lead/triage planning agents across both the legacy `triage` column
+      // and company-model Lead-column (`todo`) tasks currently being specified, so
+      // the concurrency budget is shared (a company todo task mid-spec counts).
       const planning = allTasks.filter(
-        (t) => t.column === "triage" && t.status === "planning" && !t.paused,
+        (t) => t.status === "planning" && !t.paused
+          && (t.column === "triage" || this.leadTriageContext.has(t.id)),
       ).length;
       const activeAgents = planning;
 
@@ -1129,8 +1245,19 @@ export class TriageProcessor {
         // Track subtasks created during triage when breakIntoSubtasks was requested.
         const createdSubtasksRef: { current: string[] } = { current: [] };
 
-        const assignedAgent = task.assignedAgentId && this.options.agentStore
-          ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
+        // Company-model U5: resolve the Lead-triage context (from the poll cache,
+        // or fresh for a direct specifyTask call). On a company board the spec
+        // session is attributed to the board's Lead agent unless the task carries
+        // an explicit advanced per-task agent override (which still wins).
+        let leadCtx = this.leadTriageContext.get(task.id) ?? null;
+        if (!leadCtx && this.options.resolveLeadTriageContext) {
+          leadCtx = await this.options.resolveLeadTriageContext(task).catch(() => null);
+          if (leadCtx) this.leadTriageContext.set(task.id, leadCtx);
+        }
+        const effectiveTriageAgentId = task.assignedAgentId ?? leadCtx?.leadAgentId;
+
+        const assignedAgent = effectiveTriageAgentId && this.options.agentStore
+          ? await this.options.agentStore.getAgent(effectiveTriageAgentId).catch(() => null)
           : null;
 
         const customTools = [
@@ -1673,6 +1800,7 @@ export class TriageProcessor {
           await this.finalizeApprovedTask(task, written, settings, {
             isReplan,
             feedback,
+            leadContext: leadCtx,
           });
           this.options.onSpecifyComplete?.(task);
         } finally {
@@ -1804,6 +1932,7 @@ export class TriageProcessor {
     } finally {
       this.processing.delete(task.id);
       this.processingSince.delete(task.id);
+      this.leadTriageContext.delete(task.id);
     }
   }
 
@@ -2387,6 +2516,16 @@ export class TriageProcessor {
       isReplan?: boolean;
       feedback?: string;
       recoveryLogAction?: string;
+      /**
+       * Company-model U5 Lead-triage context. When present, the task is on a
+       * company-model board whose Lead column is the task's CURRENT column (the
+       * company template's `todo`): a finished spec advances the task forward to
+       * in-progress via the normal sequential transition with the Lead as actor
+       * (U3 permits a Lead forward-move of its own column), instead of the legacy
+       * `moveTask(..., "todo")`. When the board requires plan approval (R20) the
+       * task instead parks IN PLACE (stays todo) with status `awaiting-approval`.
+       */
+      leadContext?: { leadColumnId: string; leadAgentId?: string; requirePlanApproval: boolean } | null;
     } = {},
   ): Promise<void> {
     const dupMatch = written.match(/^DUPLICATE:\s*([A-Z]+-\d+)/i);
@@ -2661,17 +2800,50 @@ export class TriageProcessor {
       planLog.warn(`${task.id}: near-duplicate backstop failed open: ${message}`);
     }
 
-    if (settings.requirePlanApproval) {
+    // Company-model U5: the R20 plan-approval hold is a per-BOARD setting; the
+    // legacy path keeps the effective-settings flag. Either being on parks the task.
+    const requirePlanApproval = options.leadContext
+      ? options.leadContext.requirePlanApproval
+      : settings.requirePlanApproval;
+
+    if (requirePlanApproval) {
       const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };
       if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
         approvalUpdates.title = promptDeclaredTitle;
       }
+      // On a company board the task is ALREADY in its Lead column (todo); it parks
+      // there awaiting approval. On the legacy path it stays in `triage`. Either
+      // way we only stamp the marker — no column move — so the dashboard/route can
+      // read it and `approvePlanForTask` releases it forward.
       await this.store.updateTask(task.id, approvalUpdates);
       await this.store.logEntry(
         task.id,
         options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval",
       );
       planLog.log(`✓ ${task.id} specified and awaiting manual approval`);
+      return;
+    }
+
+    if (options.leadContext) {
+      // Company board, approval off: the task is already in the Lead column (todo).
+      // Advance it forward to in-progress via the normal sequential transition with
+      // the Lead as actor (U3 permits a Lead forward-move of its own column).
+      if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
+        await this.store.updateTask(task.id, { title: promptDeclaredTitle });
+      }
+      const actor = options.leadContext.leadAgentId
+        ? { kind: "agent" as const, agentId: options.leadContext.leadAgentId }
+        : undefined;
+      await this.store.moveTask(task.id, "in-progress", actor ? { actor } : undefined);
+      if (options.recoveryLogAction) {
+        await this.store.logEntry(task.id, options.recoveryLogAction);
+        planLog.log(`✓ ${task.id} recovered and advanced to in-progress (Lead)`);
+      } else if (options.isReplan) {
+        await this.store.logEntry(task.id, "Spec revised by Lead", options.feedback);
+        planLog.log(`✓ ${task.id} re-planned and advanced to in-progress (Lead)`);
+      } else {
+        planLog.log(`✓ ${task.id} specified by Lead and advanced to in-progress`);
+      }
       return;
     }
 

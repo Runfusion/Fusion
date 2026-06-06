@@ -23,6 +23,7 @@ import {
   isCompanyBoardIr,
   resolveWorkflowIrForTask,
   resolveCompanyExecutionAgentId,
+  resolveCompanyRoleColumnId,
 } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
 import { buildPrNodeDeps } from "../pr-nodes.js";
@@ -776,6 +777,34 @@ export class InProcessRuntime
           },
           onSpecifyError: (t, e) => {
             runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
+          },
+          // Company-model U5 (R1, R20): the Lead absorbs triage. Resolves the
+          // Lead-triage context for a task — non-null ONLY when `companyModel` is
+          // on AND the task is on a company-model board (IR carries role markers)
+          // AND the task currently sits in the board's Lead column (its `todo`).
+          // Supplies the Lead's effective agent id (the column agent, via the
+          // shared core resolver) and the board's R20 plan-approval flag. Returns
+          // null for flag-off / legacy boards / non-Lead columns so the legacy
+          // `triage`-column flow runs byte-identically (kill-switch parity).
+          resolveLeadTriageContext: async (task) => {
+            try {
+              const settings = await this.taskStore.getSettings();
+              if (!isCompanyModelEnabled(settings)) return null;
+              const ir = await resolveWorkflowIrForTask(this.taskStore, task.id);
+              if (!ir || !isCompanyBoardIr(ir)) return null;
+              const leadColumnId = resolveCompanyRoleColumnId(ir, "lead");
+              if (!leadColumnId || task.column !== leadColumnId) return null;
+              const hasOwnModelPair = Boolean(task.modelProvider && task.modelId);
+              const leadAgentId = resolveCompanyExecutionAgentId(ir, leadColumnId, {
+                ownAgentId: task.assignedAgentId ?? undefined,
+                ownModelProvider: hasOwnModelPair ? task.modelProvider ?? undefined : undefined,
+                ownModelId: hasOwnModelPair ? task.modelId ?? undefined : undefined,
+              });
+              const requirePlanApproval = this.taskStore.getTaskBoardRequiresPlanApproval(task.id);
+              return { leadColumnId, leadAgentId, requirePlanApproval };
+            } catch {
+              return null;
+            }
           },
         },
       );

@@ -14892,6 +14892,52 @@ ${notificationsSection}`;
   }
 
   /**
+   * Whether the board a task is homed on has the R20 plan-approval hold enabled
+   * (company-model U5). Returns false when the task has no board, the board row
+   * is missing, or the flag column is 0. Read-only; consulted by the triage
+   * (Lead) finalize path to decide whether to park the task awaiting approval.
+   */
+  getTaskBoardRequiresPlanApproval(taskId: string): boolean {
+    const boardId = this.getTaskBoardId(taskId);
+    if (!boardId) return false;
+    const row = this.db
+      .prepare(`SELECT requirePlanApproval FROM boards WHERE id = ?`)
+      .get(boardId) as { requirePlanApproval: number | null } | undefined;
+    return (row?.requirePlanApproval ?? 0) === 1;
+  }
+
+  /**
+   * Release a task parked in the R20 plan-approval hold (company-model U5).
+   * A task with status `awaiting-approval` advances to in-progress (company-model
+   * board, where the Lead's column is `todo`) by clearing the marker and moving
+   * the task forward. Callable from the U12 approval route. The actor is the
+   * board's Lead agent (forward-moves of the Lead's own column are permitted by
+   * U3). On a non-company board (legacy triage flow), the task moves `todo`
+   * exactly like the existing approve-plan route.
+   *
+   * @returns the updated task, or throws if the task is not awaiting approval.
+   */
+  async approvePlanForTask(
+    taskId: string,
+    options: { actorAgentId?: string; targetColumn?: Column } = {},
+  ): Promise<Task> {
+    const task = await this.getTask(taskId);
+    if (task.status !== "awaiting-approval") {
+      throw new Error(`Task ${taskId} is not awaiting plan approval (status=${task.status ?? "null"})`);
+    }
+    await this.logEntry(taskId, "Plan approved by user");
+    // Clear the hold marker first so the move sees a normal task.
+    await this.updateTask(taskId, { status: null });
+    const target = options.targetColumn
+      ?? (task.column === "triage" ? ("todo" as Column) : ("in-progress" as Column));
+    const moveOpts = options.actorAgentId
+      ? { actor: { kind: "agent" as const, agentId: options.actorAgentId } }
+      : undefined;
+    const updated = await this.moveTask(taskId, target, moveOpts);
+    return updated;
+  }
+
+  /**
    * The workflow id a board references (company-model U1), or undefined. Read-only
    * helper consumed by the workflow-IR resolver's board→IR primary path.
    */

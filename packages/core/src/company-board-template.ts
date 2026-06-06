@@ -38,7 +38,7 @@
  * merge step) so the walk is execute → review → end.
  */
 
-import type { WorkflowIr, WorkflowIrColumn } from "./workflow-ir-types.js";
+import type { WorkflowIr, WorkflowIrColumn, WorkflowColumnRole } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 
@@ -160,4 +160,19 @@ export const COMPANY_BOARD_TEMPLATE_NON_CODING_IR = parseWorkflowIr(
 export function isCompanyBoardIr(ir: WorkflowIr): boolean {
   if (ir.version !== "v2") return false;
   return ir.columns.some((c) => c.role !== undefined);
+}
+
+/**
+ * The column id carrying the given company-model role on a board IR, or
+ * undefined when the IR is not a v2 company board or no column holds the role.
+ * Used by U5's Lead-triage path to locate the Lead column (`role === "lead"`,
+ * the company template's `todo`) without hard-coding the literal id, so a future
+ * template rename does not silently break the triage scan or recovery re-target.
+ */
+export function resolveCompanyRoleColumnId(
+  ir: WorkflowIr,
+  role: WorkflowColumnRole,
+): string | undefined {
+  if (ir.version !== "v2") return undefined;
+  return ir.columns.find((c) => c.role === role)?.id;
 }

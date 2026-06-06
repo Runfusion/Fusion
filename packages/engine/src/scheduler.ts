@@ -13,6 +13,7 @@ import {
   type PrInfo,
   type AgentStore,
   type Settings,
+  type Column,
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -37,6 +38,7 @@ import {
   DEFAULT_WORKFLOW_POOL_ID,
   isCompanyModelEnabled,
   isCompanyBoardIr,
+  resolveCompanyRoleColumnId,
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { runHoldReleaseSweep, type SlotReservation } from "./hold-release.js";
@@ -804,9 +806,33 @@ export class Scheduler {
   }
 
   /**
+   * Company-model U5: the column a recovery/staleness path should re-target a
+   * dispatch-blocked task to when its spec is missing/stale. On a company-model
+   * board the `triage` column does not exist — the Lead re-structures the task on
+   * its own column (`todo`), where the TriageProcessor's company scan re-specifies
+   * it. Returns the board's Lead column id for company boards, else `"triage"`
+   * (legacy flag-off behavior, byte-identical). Best-effort: any resolution
+   * failure / flag-off falls back to `"triage"` (kill-switch parity).
+   */
+  private async resolveTriageRecoveryColumn(
+    taskId: string,
+    settings: Settings,
+  ): Promise<Column> {
+    if (!isCompanyModelEnabled(settings)) return "triage";
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, taskId);
+      if (!ir || !isCompanyBoardIr(ir)) return "triage";
+      const leadColumnId = resolveCompanyRoleColumnId(ir, "lead");
+      return (leadColumnId ?? "triage") as Column;
+    } catch {
+      return "triage";
+    }
+  }
+
+  /**
    * Validate that a task's filesystem state is intact.
    * Checks that the task directory exists and PROMPT.md is present and non-empty.
-   * 
+   *
    * @param id - The task ID to validate
    * @returns Object with `valid: true` if checks pass, or `valid: false` with a `reason` string if they fail
    */
@@ -1281,6 +1307,17 @@ export class Scheduler {
         if (t.column !== "todo" || t.paused) return false;
         // Skip tasks with a recovery backoff that hasn't elapsed yet
         if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
+        // Company-model U5: a todo task in a Lead-owned lifecycle state is NOT
+        // dispatch-ready — it is being specified by the Lead (`planning`), parked
+        // in the R20 plan-approval hold (`awaiting-approval`), or queued for
+        // re-spec (`needs-replan`). The TriageProcessor's company scan owns these;
+        // dispatching them would fail filesystem validation every poll and (for an
+        // approval-parked task) is exactly the intentional wait we must not break.
+        // Legacy flag-off todo tasks never carry these statuses (finalize clears
+        // status to null before moving to todo), so this is byte-identical off.
+        if (t.status === "planning" || t.status === "awaiting-approval" || t.status === "needs-replan") {
+          return false;
+        }
         return true;
       });
 
@@ -1497,8 +1534,16 @@ export class Scheduler {
         const validation = await this.validateTaskFilesystem(task.id);
         if (!validation.valid) {
           schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
-          await this.store.moveTask(task.id, "triage");
-          await this.store.logEntry(task.id, "Task moved to triage — filesystem validation failed", validation.reason);
+          // Company-model U5: re-target to the board's Lead column (its `todo`)
+          // instead of a non-existent `triage` column. When the task is ALREADY in
+          // that column (the common company case — a Lead task without a spec yet),
+          // skip the no-op move and just log; the TriageProcessor's company scan
+          // re-specifies it in place.
+          const recoveryColumn = await this.resolveTriageRecoveryColumn(task.id, settings);
+          if (task.column !== recoveryColumn) {
+            await this.store.moveTask(task.id, recoveryColumn);
+          }
+          await this.store.logEntry(task.id, `Task moved to ${recoveryColumn} — filesystem validation failed`, validation.reason);
           continue;
         }
 
@@ -1510,7 +1555,12 @@ export class Scheduler {
         const staleness = await evaluateSpecStaleness({ settings, promptPath, task });
         if (staleness.isStale) {
           schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-          await this.store.moveTask(task.id, "triage");
+          // Company-model U5: re-target staleness re-spec to the Lead column (`todo`),
+          // not a non-existent `triage` column. Skip the no-op move when already there.
+          const recoveryColumn = await this.resolveTriageRecoveryColumn(task.id, settings);
+          if (task.column !== recoveryColumn) {
+            await this.store.moveTask(task.id, recoveryColumn);
+          }
           await this.store.updateTask(task.id, { status: "needs-replan" });
           await this.store.logEntry(task.id, staleness.reason);
           continue;

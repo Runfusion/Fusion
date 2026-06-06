@@ -2241,26 +2241,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  // Approve plan for a task in awaiting-approval status
+  // Approve plan for a task in awaiting-approval status (R20 plan-approval hold).
+  // Legacy boards park the task in `triage`; company-model boards (U5) park it in
+  // the Lead column (`todo`). `approvePlanForTask` releases either forward — to
+  // `todo` from triage, or to `in-progress` from a company Lead column.
   router.post("/tasks/:id/approve-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Verify task is in triage column with awaiting-approval status
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column to approve plan");
-      }
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to approve plan");
       }
 
-      // Log the approval
-      await scopedStore.logEntry(task.id, "Plan approved by user");
-
-      // Move to todo and clear status
-      const updated = await scopedStore.moveTask(task.id, "todo");
-      await scopedStore.updateTask(task.id, { status: undefined });
+      const updated = await scopedStore.approvePlanForTask(task.id);
 
       res.json({ ...updated, status: undefined });
     } catch (err: unknown) {
@@ -2279,18 +2273,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      // Verify task is in triage column with awaiting-approval status
-      if (task.column !== "triage") {
-        throw badRequest("Task must be in 'triage' column to reject plan");
-      }
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to reject plan");
       }
 
-      // Log the rejection
+      // Log the rejection. The task stays in its current column (legacy: triage;
+      // company-model: the Lead column / todo); clearing status returns it to the
+      // Lead/triage scan, which re-specifies after the PROMPT.md is removed below.
       await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
 
-      // Clear status to return to normal triage state
+      // Clear status to return to normal Lead/triage re-spec state
       await scopedStore.updateTask(task.id, { status: undefined });
 
       // Remove PROMPT.md to force regeneration

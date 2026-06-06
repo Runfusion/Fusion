@@ -4107,6 +4107,11 @@ export interface Board {
   workflowId: string;
   /** Sort order within the project's board list (ascending). */
   ordering: number;
+  /** R20 plan-approval hold (company-model U5). When true on a company-model
+   *  board, the Lead's spec generation parks the task in `todo` with
+   *  status=`awaiting-approval` instead of advancing to in-progress; an explicit
+   *  user approval (`approvePlanForTask`) releases it. Defaults to false. */
+  requirePlanApproval: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -4118,6 +4123,8 @@ export interface BoardCreateInput {
   description?: string;
   workflowId: string;
   ordering?: number;
+  /** R20 plan-approval hold; defaults to false when omitted. */
+  requirePlanApproval?: boolean;
 }
 
 /** Partial update for a Board. Only supplied fields are written. */
@@ -4126,6 +4133,8 @@ export interface BoardUpdate {
   description?: string;
   workflowId?: string;
   ordering?: number;
+  /** R20 plan-approval hold (company-model U5). */
+  requirePlanApproval?: boolean;
 }
 
 export interface DistributedTaskIdReserveInput {

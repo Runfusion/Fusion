@@ -110,6 +110,7 @@ export {
   COMPANY_BOARD_TEMPLATE_NON_CODING_IR,
   COMPANY_BOARD_COLUMN_IDS,
   isCompanyBoardIr,
+  resolveCompanyRoleColumnId,
 } from "./company-board-template.js";
 export { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
 export { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";

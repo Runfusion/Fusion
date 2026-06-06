@@ -39,6 +39,7 @@ interface BoardRow {
   description: string;
   workflowId: string;
   ordering: number;
+  requirePlanApproval: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +68,7 @@ export class BoardStore extends EventEmitter<BoardStoreEvents> {
       description: row.description ?? "",
       workflowId: row.workflowId,
       ordering: row.ordering,
+      requirePlanApproval: (row.requirePlanApproval ?? 0) === 1,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -106,13 +108,14 @@ export class BoardStore extends EventEmitter<BoardStoreEvents> {
       description: input.description ?? "",
       workflowId,
       ordering,
+      requirePlanApproval: input.requirePlanApproval ?? false,
       createdAt: now,
       updatedAt: now,
     };
     this.db
       .prepare(
-        `INSERT INTO boards (id, projectId, name, description, workflowId, ordering, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO boards (id, projectId, name, description, workflowId, ordering, requirePlanApproval, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         board.id,
@@ -121,6 +124,7 @@ export class BoardStore extends EventEmitter<BoardStoreEvents> {
         board.description,
         board.workflowId,
         board.ordering,
+        board.requirePlanApproval ? 1 : 0,
         board.createdAt,
         board.updatedAt,
       );
@@ -154,13 +158,14 @@ export class BoardStore extends EventEmitter<BoardStoreEvents> {
       description: updates.description ?? existing.description,
       workflowId: updates.workflowId?.trim() || existing.workflowId,
       ordering: updates.ordering ?? existing.ordering,
+      requirePlanApproval: updates.requirePlanApproval ?? existing.requirePlanApproval,
       updatedAt: new Date().toISOString(),
     };
     this.db
       .prepare(
-        `UPDATE boards SET name = ?, description = ?, workflowId = ?, ordering = ?, updatedAt = ? WHERE id = ?`,
+        `UPDATE boards SET name = ?, description = ?, workflowId = ?, ordering = ?, requirePlanApproval = ?, updatedAt = ? WHERE id = ?`,
       )
-      .run(next.name, next.description, next.workflowId, next.ordering, next.updatedAt, next.id);
+      .run(next.name, next.description, next.workflowId, next.ordering, next.requirePlanApproval ? 1 : 0, next.updatedAt, next.id);
     this.emit("board:updated", next);
     return next;
   }

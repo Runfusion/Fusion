@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 114;
+const SCHEMA_VERSION = 115;
 
 export { SCHEMA_VERSION };
 
@@ -436,6 +436,7 @@ CREATE TABLE IF NOT EXISTS boards (
   description TEXT NOT NULL DEFAULT '',
   workflowId TEXT NOT NULL,
   ordering INTEGER NOT NULL DEFAULT 0,
+  requirePlanApproval INTEGER NOT NULL DEFAULT 0,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
@@ -4560,6 +4561,18 @@ export class Database {
         `);
         this.addColumnIfMissing("tasks", "boardId", "TEXT");
         this.convertLanesToBoards();
+      });
+    }
+
+    // v115 (company-model U5, R20): per-board "require plan approval" hold flag.
+    // When ON for a company-model board, the Lead's spec generation parks the
+    // task in todo with status=awaiting-approval instead of advancing to
+    // in-progress; explicit user approval releases it. Defaults to 0 (off) so
+    // existing boards are unaffected. Idempotent: addColumnIfMissing is a no-op
+    // when the column already exists (fresh DBs created it in the CREATE TABLE).
+    if (version < 115) {
+      this.applyMigration(115, () => {
+        this.addColumnIfMissing("boards", "requirePlanApproval", "INTEGER NOT NULL DEFAULT 0");
       });
     }
 
