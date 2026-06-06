@@ -14852,6 +14852,32 @@ ${notificationsSection}`;
   }
 
   /**
+   * Company-model U2 deletion guard: list every board column that staffs the
+   * given agent via a WorkflowColumnAgent binding. Used by AgentStore.deleteAgent
+   * to reject deleting an agent that is still staffed somewhere (an unguarded
+   * delete would strand a column binding pointing at a non-existent agent).
+   *
+   * Returns one entry per (board, column) the agent staffs. Empty when none.
+   */
+  async findColumnsStaffingAgent(
+    agentId: string,
+  ): Promise<Array<{ boardId: string; boardName: string; columnId: string }>> {
+    const hits: Array<{ boardId: string; boardName: string; columnId: string }> = [];
+    const boards = this.getBoardStore().listBoards();
+    const irCache = new Map<string, WorkflowIr>();
+    for (const board of boards) {
+      const ir = await resolveWorkflowIrById(this, board.workflowId, irCache);
+      if (ir.version !== "v2") continue;
+      for (const col of ir.columns) {
+        if (col.agent?.agentId === agentId) {
+          hits.push({ boardId: board.id, boardName: board.name, columnId: col.id });
+        }
+      }
+    }
+    return hits;
+  }
+
+  /**
    * Get the PluginStore instance for plugin registry operations.
    * Lazily initializes the PluginStore on first access.
    */

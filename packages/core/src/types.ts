@@ -5688,8 +5688,33 @@ export interface AgentHeartbeatRun {
   heartbeatProcedureSource?: "default" | "custom" | "default-no-task-override";
 }
 
-/** Capabilities/roles an agent can have */
-export type AgentCapability = "triage" | "executor" | "reviewer" | "merger" | "scheduler" | "engineer" | "custom";
+/**
+ * Capabilities/roles an agent can have.
+ *
+ * Company-model roles (U2): `lead` and `ceo` are the new first-class roles —
+ * the Lead structures incoming work on a board's Todo column, the CEO is the
+ * project-level global-chat router. Both are seeded by {@link seedBoardTeam}.
+ *
+ * Deprecated aliases (kept for back-compat; role-policy helpers in
+ * `agent-role-policy.ts` treat them as aliases so existing agents keep working):
+ *  - `triage`   — the Lead absorbs triage's spec-generation work; new boards
+ *    have no triage column. Existing triage-role agents still function.
+ *  - `engineer` — superseded by `executor` (the slot is action-shaped, not
+ *    coding-shaped). An `engineer`-role agent counts as an `executor` for
+ *    implementation-task routing.
+ */
+export type AgentCapability =
+  | "lead"
+  | "ceo"
+  | "executor"
+  | "reviewer"
+  | "merger"
+  | "scheduler"
+  | "custom"
+  /** @deprecated The Lead absorbs triage; treated as an alias by role-policy helpers. */
+  | "triage"
+  /** @deprecated Superseded by `executor`; treated as an alias by role-policy helpers. */
+  | "engineer";
 
 /** A configurable agent role prompt template. */
 export interface AgentPromptTemplate {

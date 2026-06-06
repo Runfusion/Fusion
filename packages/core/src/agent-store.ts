@@ -60,6 +60,22 @@ import { normalizeAgentPermissionPolicy, resolveEffectiveAgentPermissionPolicy }
 import { Database } from "./db.js";
 import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
 
+/**
+ * Typed error raised when deleting an agent that is still staffed on one or more
+ * board columns (company-model U2). Carries the offending (board, column) list so
+ * a write surface can tell the user exactly what to re-staff before deleting.
+ */
+export class AgentStaffedError extends Error {
+  constructor(
+    public readonly agentId: string,
+    public readonly columns: ReadonlyArray<{ boardId: string; boardName: string; columnId: string }>,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentStaffedError";
+  }
+}
+
 /** Database row shape returned by SELECT on agentRatings. */
 interface AgentRatingRow {
   id: string;
@@ -1811,6 +1827,26 @@ export class AgentStore extends EventEmitter {
       const agent = await this.getAgent(agentId);
       if (!agent) {
         throw new Error(`Agent ${agentId} not found`);
+      }
+
+      // Company-model U2 staffing guard: an agent bound to any board column must
+      // not be deleted out from under that binding (it would strand a column
+      // pointing at a non-existent agent). Replace the staffing first (re-staff
+      // the column with another agent), then delete. `force` does NOT bypass this
+      // — it only governs the checkout guard below.
+      if (
+        this.taskStore &&
+        typeof (this.taskStore as { findColumnsStaffingAgent?: unknown }).findColumnsStaffingAgent === "function"
+      ) {
+        const staffed = await (
+          this.taskStore as TaskStore & {
+            findColumnsStaffingAgent: NonNullable<TaskStore["findColumnsStaffingAgent"]>;
+          }
+        ).findColumnsStaffingAgent(agentId);
+        if (staffed.length > 0) {
+          const where = staffed.map((s) => `'${s.columnId}' on board '${s.boardName}'`).join(", ");
+          throw new AgentStaffedError(agentId, staffed, `Agent ${agentId} is staffed on ${where}; re-staff those column(s) before deleting`);
+        }
       }
 
       if (this.taskStore && typeof (this.taskStore as { getTasksByAssignedAgent?: unknown }).getTasksByAssignedAgent === "function") {

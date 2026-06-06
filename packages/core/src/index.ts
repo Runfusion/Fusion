@@ -365,11 +365,22 @@ export {
   validateColumnAgentBindings,
   ColumnAgentBindingError,
 } from "./column-agent-binding-validation.js";
-export { AgentStore, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS } from "./agent-store.js";
+export type { ColumnAgentBindingReason } from "./column-agent-binding-validation.js";
+export { AgentStore, AgentStaffedError, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS } from "./agent-store.js";
 export type { AgentStoreEvents } from "./agent-store.js";
+export {
+  seedBoardTeam,
+  seedBoardTeamForBoard,
+  MANDATORY_ROLE_COLUMNS,
+  MANDATORY_ROLE_COLUMN_IDS,
+} from "./board-team-seed.js";
+export type { BoardTeamSeedResult } from "./board-team-seed.js";
 export {
   isImplementationTask,
   isExecutorRoleAgent,
+  isLeadRoleAgent,
+  isReviewerRoleAgent,
+  isCeoRoleAgent,
   canAgentTakeImplementationTask,
   canAgentTakeImplementationTaskForExplicitRouting,
   canAgentTakeImplementationTaskForBacklogPickup,

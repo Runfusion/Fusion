@@ -33,6 +33,8 @@ const CORE_ROLES: AgentCapability[] = ["executor", "triage", "reviewer", "merger
 
 /** Role display label keys for i18n */
 const ROLE_LABEL_KEYS: Record<AgentCapability, { key: string; defaultValue: string }> = {
+  lead: { key: "agentPrompts.roles.lead", defaultValue: "Lead Agent" },
+  ceo: { key: "agentPrompts.roles.ceo", defaultValue: "CEO Agent" },
   executor: { key: "agentPrompts.roles.executor", defaultValue: "Executor Agent" },
   triage: { key: "agentPrompts.roles.triage", defaultValue: "Triage Agent" },
   reviewer: { key: "agentPrompts.roles.reviewer", defaultValue: "Reviewer Agent" },

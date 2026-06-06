@@ -5,13 +5,18 @@ const VALID_PERMISSION_SET = new Set<AgentPermission>(AGENT_PERMISSIONS);
 
 /** Default permission grants by agent role/capability. */
 export const ROLE_DEFAULT_PERMISSIONS: Record<AgentCapability, AgentPermission[]> = {
-  triage: ["tasks:create", "agents:view", "messages:read"],
+  // Company-model roles (U2). Lead absorbs triage (create/structure work); CEO
+  // routes global-chat requests onto boards (create/assign tasks).
+  lead: ["tasks:create", "agents:view", "messages:read", "messages:send"],
+  ceo: ["tasks:create", "tasks:assign", "agents:view", "messages:read", "messages:send"],
   executor: ["tasks:execute", "agents:view", "messages:read", "messages:send"],
   reviewer: ["tasks:review", "agents:view", "messages:read", "messages:send"],
   merger: ["tasks:merge", "agents:view", "messages:read"],
   scheduler: ["tasks:assign", "tasks:create", "tasks:archive", "agents:view", "automations:manage", "missions:manage", "messages:read"],
-  engineer: ["tasks:execute", "tasks:review", "agents:view", "messages:read", "messages:send"],
   custom: [],
+  // Deprecated aliases (kept so legacy agents keep their grants).
+  triage: ["tasks:create", "agents:view", "messages:read"],
+  engineer: ["tasks:execute", "tasks:review", "agents:view", "messages:read", "messages:send"],
 };
 
 /** Type guard for canonical agent permissions. */

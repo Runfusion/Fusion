@@ -62,6 +62,8 @@ export function NewAgentDialog({
 
   const getRoleLabel = (value: AgentCapability): string => {
     const labels: Record<AgentCapability, string> = {
+      lead: t("agents.roleLead", "Lead"),
+      ceo: t("agents.roleCeo", "CEO"),
       triage: t("agents.roleTriage", "Triage"),
       executor: t("agents.roleExecutor", "Executor"),
       reviewer: t("agents.roleReviewer", "Reviewer"),

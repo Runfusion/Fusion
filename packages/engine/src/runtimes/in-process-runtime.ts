@@ -299,6 +299,30 @@ export class InProcessRuntime
         agentStoreForReflection = new AgentStoreClass({ rootDir: this.taskStore.getFusionDir(), taskStore: this.taskStore });
         await agentStoreForReflection.init();
         runtimeLog.log("AgentStore initialized for reflection service");
+
+        // Company-model U2 backfill: with the flag on, ensure the project has its
+        // CEO + per-board Lead/Executor/Reviewer team. Idempotent and flag-gated —
+        // a no-op when the flag is off or the team already exists. Covers projects
+        // created while the flag was off and then flipped on (seed on next start).
+        try {
+          const { seedBoardTeam } = await import("@fusion/core");
+          const result = await seedBoardTeam({
+            taskStore: this.taskStore,
+            agentStore: agentStoreForReflection,
+            settings,
+          });
+          if (!result.skipped) {
+            runtimeLog.log(
+              `Company-model team seeded/backfilled (boards: ${Object.keys(result.boards).length})`,
+            );
+          }
+        } catch (seedErr) {
+          // Non-fatal — a missed seed is recoverable on the next start.
+          runtimeLog.warn(
+            `Board-team seed failed (continuing):`,
+            seedErr instanceof Error ? seedErr.message : seedErr,
+          );
+        }
       } catch (agentErr) {
         runtimeLog.warn(`AgentStore initialization failed (reflection service will be unavailable):`, agentErr instanceof Error ? agentErr.message : agentErr);
       }
