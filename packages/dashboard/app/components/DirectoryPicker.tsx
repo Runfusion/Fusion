@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Folder, FolderOpen, ChevronRight, ChevronUp, Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
-import { browseDirectory, type BrowseDirectoryResult } from "../api";
+import { Folder, FolderOpen, ChevronRight, ChevronUp, Loader2, Eye, EyeOff, AlertCircle, Plus } from "lucide-react";
+import { browseDirectory, createDirectory, type BrowseDirectoryResult } from "../api";
 import { getPathBreadcrumbs } from "../utils/pathDisplay";
 import "./DirectoryPicker.css";
 
@@ -25,6 +25,8 @@ interface BrowserState {
   parentPath: string | null;
   entries: BrowseDirectoryResult["entries"];
   showHidden: boolean;
+  createFolderOpen: boolean;
+  createFolderError: string | null;
 }
 
 export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, nodeId, localNodeId }: DirectoryPickerProps) {
@@ -37,7 +39,10 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
     parentPath: null,
     entries: [],
     showHidden: false,
+    createFolderOpen: false,
+    createFolderError: null,
   });
+  const [newFolderName, setNewFolderName] = useState("");
 
   const fetchEntries = useCallback(async (path?: string, showHidden = false) => {
     setBrowser((prev) => ({ ...prev, loading: true, error: null }));
@@ -69,12 +74,12 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
     });
   }, []);
 
-  // Fetch when browser opens
+  // Fetch when browser opens (only for the initial open before any path has been fetched)
   useEffect(() => {
-    if (browser.isOpen && !browser.loading && browser.entries.length === 0 && !browser.error) {
+    if (browser.isOpen && !browser.loading && !browser.currentPath && !browser.error) {
       fetchEntries(value || undefined, browser.showHidden);
     }
-  }, [browser.isOpen, browser.loading, browser.entries.length, browser.error, value, browser.showHidden, fetchEntries, nodeId, localNodeId]);
+  }, [browser.isOpen, browser.loading, browser.currentPath, browser.error, value, browser.showHidden, fetchEntries, nodeId, localNodeId]);
 
   const handleNavigate = useCallback(
     (path: string) => {
@@ -100,7 +105,62 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
     if (browser.isOpen && browser.currentPath) {
       fetchEntries(browser.currentPath, browser.showHidden);
     }
-  }, [browser.showHidden]);
+  }, [browser.showHidden, fetchEntries]);
+
+  const handleToggleCreateFolder = useCallback(() => {
+    setBrowser((prev) => ({
+      ...prev,
+      createFolderOpen: !prev.createFolderOpen,
+      createFolderError: null,
+    }));
+    setNewFolderName("");
+  }, []);
+
+  const handleCreateFolder = useCallback(async () => {
+    if (!newFolderName.trim() || !browser.currentPath) return;
+
+    // Validate folder name doesn't contain path separators or traversal
+    const trimmedName = newFolderName.trim();
+    if (trimmedName.includes("/") || trimmedName.includes("\\") || trimmedName.includes("..")) {
+      setBrowser((prev) => ({
+        ...prev,
+        createFolderError: t("dirPicker.createFolderError", "Folder name cannot contain path separators or '..'"),
+      }));
+      return;
+    }
+
+    // Normalize path separator for the current platform by using the same
+    // separator already present in currentPath
+    const sep = browser.currentPath.includes("\\") ? "\\" : "/";
+    const folderPath = browser.currentPath.endsWith(sep)
+      ? browser.currentPath + trimmedName
+      : browser.currentPath + sep + trimmedName;
+
+    setBrowser((prev) => ({ ...prev, loading: true, createFolderError: null }));
+    try {
+      await createDirectory(folderPath);
+      setNewFolderName("");
+      setBrowser((prev) => ({ ...prev, createFolderOpen: false }));
+      // Refresh entries to show the new folder
+      await fetchEntries(browser.currentPath, browser.showHidden);
+    } catch (err) {
+      setBrowser((prev) => ({
+        ...prev,
+        loading: false,
+        createFolderError: err instanceof Error ? err.message : "Failed to create folder",
+      }));
+    }
+  }, [newFolderName, browser.currentPath, browser.showHidden, fetchEntries]);
+
+  const handleCreateFolderKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void handleCreateFolder();
+    } else if (e.key === "Escape") {
+      setBrowser((prev) => ({ ...prev, createFolderOpen: false, createFolderError: null }));
+      setNewFolderName("");
+    }
+  }, [handleCreateFolder]);
 
   const breadcrumbs = browser.currentPath ? getPathBreadcrumbs(browser.currentPath) : [];
 
@@ -171,6 +231,16 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
               {browser.showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
               <span>{browser.showHidden ? t("dirPicker.hideHidden", "Hide hidden") : t("dirPicker.showHidden", "Show hidden")}</span>
             </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary directory-picker-create-folder-toggle"
+              onClick={handleToggleCreateFolder}
+              aria-label={t("dirPicker.createFolderAria", "Create new folder")}
+              title={t("dirPicker.createFolderTitle", "Create folder")}
+            >
+              <Plus size={14} />
+              <span>{t("dirPicker.createFolder", "New folder")}</span>
+            </button>
           </div>
 
           {/* Content */}
@@ -205,6 +275,44 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
                     )}
                   </button>
                 ))
+              )}
+            </div>
+          )}
+
+          {/* Create folder input */}
+          {browser.createFolderOpen && (
+            <div className="directory-picker-create-folder">
+              <input
+                type="text"
+                className="input directory-picker-create-folder-input"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={handleCreateFolderKeyDown}
+                placeholder={t("dirPicker.newFolderPlaceholder", "Folder name")}
+                autoFocus
+              />
+              <div className="directory-picker-create-folder-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={handleCreateFolder}
+                  disabled={!newFolderName.trim() || browser.loading || !browser.currentPath}
+                >
+                  {t("dirPicker.createFolderConfirm", "Create")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={handleToggleCreateFolder}
+                >
+                  {t("dirPicker.cancel", "Cancel")}
+                </button>
+              </div>
+              {browser.createFolderError && (
+                <div className="directory-picker-create-folder-error">
+                  <AlertCircle size={14} />
+                  <span>{browser.createFolderError}</span>
+                </div>
               )}
             </div>
           )}

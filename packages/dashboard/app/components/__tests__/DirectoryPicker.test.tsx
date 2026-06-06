@@ -15,17 +15,20 @@ vi.mock("lucide-react", async () => {
     Eye: ({ size, ...props }: any) => <span {...props}>👁</span>,
     EyeOff: ({ size, ...props }: any) => <span {...props}>🙈</span>,
     AlertCircle: ({ size, ...props }: any) => <span {...props}>⚠</span>,
+    Plus: ({ size, ...props }: any) => <span {...props}>+</span>,
   };
 });
 
 // Mock the API
 vi.mock("../../api", () => ({
   browseDirectory: vi.fn(),
+  createDirectory: vi.fn(),
 }));
 
-import { browseDirectory } from "../../api";
+import { browseDirectory, createDirectory } from "../../api";
 
 const mockBrowseDirectory = vi.mocked(browseDirectory);
+const mockCreateDirectory = vi.mocked(createDirectory);
 
 describe("DirectoryPicker", () => {
   beforeEach(() => {
@@ -241,6 +244,119 @@ describe("DirectoryPicker", () => {
 
     await waitFor(() => {
       expect(mockBrowseDirectory).toHaveBeenCalledWith("/home/user/projects", false, "remote-1", "local-1");
+    });
+  });
+
+  it("does not revert to previous folder when navigating into an empty directory (FN-XXXX)", async () => {
+    // First load: home directory with a folder
+    mockBrowseDirectory.mockResolvedValueOnce({
+      currentPath: "/home/user",
+      parentPath: "/home",
+      entries: [
+        { name: "empty-folder", path: "/home/user/empty-folder", hasChildren: false },
+      ],
+    });
+
+    // Second load: the empty folder itself (no subdirectories)
+    mockBrowseDirectory.mockResolvedValueOnce({
+      currentPath: "/home/user/empty-folder",
+      parentPath: "/home/user",
+      entries: [],
+    });
+
+    render(<DirectoryPicker value="" onChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByText("Browse"));
+
+    await waitFor(() => {
+      expect(screen.getByText("empty-folder")).toBeDefined();
+    });
+
+    // Navigate into the empty folder
+    fireEvent.click(screen.getByText("empty-folder"));
+
+    // Should show "No subdirectories" in the empty folder, NOT re-fetch the parent
+    await waitFor(() => {
+      expect(screen.getByText("No subdirectories")).toBeDefined();
+    });
+
+    // The current path should remain the empty folder, not revert to /home/user
+    expect(mockBrowseDirectory).toHaveBeenLastCalledWith(
+      "/home/user/empty-folder",
+      false,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("allows creating a new folder", async () => {
+    mockBrowseDirectory.mockResolvedValue({
+      currentPath: "/home/user",
+      parentPath: "/home",
+      entries: [
+        { name: "projects", path: "/home/user/projects", hasChildren: true },
+      ],
+    });
+
+    mockCreateDirectory.mockResolvedValue({ success: true, path: "/home/user/my-new-folder" });
+
+    render(<DirectoryPicker value="" onChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByText("Browse"));
+
+    await waitFor(() => {
+      expect(screen.getByText("projects")).toBeDefined();
+    });
+
+    // Click "New folder" button
+    fireEvent.click(screen.getByRole("button", { name: "Create new folder" }));
+
+    // Type folder name
+    const input = screen.getByPlaceholderText("Folder name");
+    fireEvent.change(input, { target: { value: "my-new-folder" } });
+
+    // Click Create
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(mockCreateDirectory).toHaveBeenCalledWith("/home/user/my-new-folder");
+    });
+
+    // Should refresh the directory listing
+    await waitFor(() => {
+      expect(mockBrowseDirectory).toHaveBeenLastCalledWith("/home/user", false, undefined, undefined);
+    });
+  });
+
+  it("shows error when creating folder fails", async () => {
+    mockBrowseDirectory.mockResolvedValue({
+      currentPath: "/home/user",
+      parentPath: "/home",
+      entries: [],
+    });
+
+    mockCreateDirectory.mockRejectedValue(new Error("Permission denied"));
+
+    render(<DirectoryPicker value="" onChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByText("Browse"));
+
+    await waitFor(() => {
+      expect(screen.getByText("No subdirectories")).toBeDefined();
+    });
+
+    // Click "New folder" button
+    fireEvent.click(screen.getByRole("button", { name: "Create new folder" }));
+
+    // Type folder name
+    const input = screen.getByPlaceholderText("Folder name");
+    fireEvent.change(input, { target: { value: "test-folder" } });
+
+    // Click Create
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Permission denied")).toBeDefined();
     });
   });
 });
