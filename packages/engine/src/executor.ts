@@ -1132,6 +1132,11 @@ export interface TaskExecutorOptions {
   onAgentText?: (taskId: string, delta: string) => void;
   onAgentTool?: (taskId: string, toolName: string) => void;
   autoRecoveryDispatcher?: AutoRecoveryDispatcher;
+  /** PR-entity node deps (U3): assembled `PrNodeDeps` (store + injected GitHub
+   *  callbacks) for the `pr-create`/`pr-respond`/`pr-merge` workflow nodes. The
+   *  runtime binds the store and threads the CLI-injected ops. Absent → the pr-*
+   *  node kinds fail closed. */
+  prNodes?: import("./pr-nodes.js").PrNodeDeps;
   /**
    * CLI Agent Executor runtime (U7). When present, workflow nodes with
    * `config.executor === "cli-agent"` drive an engine-owned CLI session via the
@@ -3723,6 +3728,9 @@ export class TaskExecutor {
         // Step-inversion (KTD-15, U14): code node runner — esbuild compile +
         // child-process execution with the harness contract.
         runCode: this.buildCodeNodeRunner(),
+        // PR-entity nodes (U3): pr-create/pr-respond/pr-merge handler deps —
+        // engine-owned store + CLI-injected GitHub callbacks. Absent → fail closed.
+        prNodes: this.options.prNodes,
         // Step-inversion (KTD-11, U10): worktree isolation + ordered integration +
         // parallel scheduling. Per-instance worktrees branched off the task's main
         // branch tip; integration rebases each branch in step order; the projection

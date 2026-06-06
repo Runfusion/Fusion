@@ -17,6 +17,8 @@ import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
+import type { PrNodeGithubOps } from "./pr-nodes.js";
+import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
 import { NtfyNotifier } from "./notifier.js";
 import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthValidityLogger } from "./notification/index.js";
@@ -221,6 +223,24 @@ export interface ProjectEngineOptions {
    */
   syncGroupPr?: SyncGroupPrFn;
   /**
+   * PR-entity node GitHub ops (U3): the injected `createPr`/`mergePr`/`respond`
+   * callbacks (+ source resolver + audit) that back the `pr-create`/`pr-respond`/
+   * `pr-merge` workflow nodes. Injected from the CLI layer because they close
+   * over the dashboard `GitHubClient`; the engine must not statically import it
+   * (FN-3049). Mirrors `createGroupPr`/`syncGroupPr`. When absent, the pr-* node
+   * kinds fail closed (value:"pr-nodes-unwired").
+   */
+  prNodeGithubOps?: PrNodeGithubOps;
+  /**
+   * Node-agnostic GitHub reconcile ops (U4): the injected ETag-probe +
+   * deep-fetch callbacks backing {@link PrReconciler}. Injected from the CLI
+   * layer for the same FN-3049 reason as {@link prNodeGithubOps}. When present,
+   * the runtime layer (this engine, NOT the scheduler) starts a per-repo
+   * reconcile that fires the generic external-event hold releases advancing
+   * PR-await cards. When absent, no reconcile runs.
+   */
+  prReconcileGithubOps?: PrReconcileGithubOps;
+  /**
    * Returns the merge blocker reason for a task, or null/undefined if
    * the task is eligible for merge. Imported from @fusion/core.
    */
@@ -257,6 +277,7 @@ export class ProjectEngine {
   private runtime: InProcessRuntime;
   private started = false;
   private prMonitor?: PrMonitor;
+  private prReconciler?: PrReconciler;
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
   private notificationService?: NotificationService;
@@ -364,10 +385,14 @@ export class ProjectEngine {
     centralCore: CentralCore,
     private options: ProjectEngineOptions = {},
   ) {
-    // Pass through externalTaskStore to the runtime config if provided
-    const runtimeConfig: ProjectRuntimeConfig = options.externalTaskStore
-      ? { ...config, externalTaskStore: options.externalTaskStore }
-      : config;
+    // Pass through externalTaskStore + PR node GitHub ops (U3) to the runtime
+    // config. The runtime binds the engine-owned store and hands the assembled
+    // PrNodeDeps to the executor's workflow-graph runner.
+    const runtimeConfig: ProjectRuntimeConfig = {
+      ...config,
+      ...(options.externalTaskStore ? { externalTaskStore: options.externalTaskStore } : {}),
+      ...(options.prNodeGithubOps ? { prNodeGithubOps: options.prNodeGithubOps } : {}),
+    };
     this.runtime = new InProcessRuntime(runtimeConfig, centralCore);
     // Let the runtime's SelfHealingManager re-enqueue tasks directly into our
     // auto-merge queue when it clears a stale `merging` status, instead of
@@ -456,6 +481,19 @@ export class ProjectEngine {
       onClosedPrFeedback: (taskId, prInfo, comments) =>
         this.prCommentHandler!.createFollowUpTask(taskId, prInfo, comments),
     });
+
+    // 2b. Node-agnostic GitHub reconcile (U4). Started HERE in the runtime layer,
+    // NOT in scheduler.ts (R20 invariant: the scheduler stays PR-ignorant). The
+    // reconciler keys on active PR entities, fires generic external-event hold
+    // releases, and persists audit on error. Only runs when the CLI injected the
+    // probe/deep-fetch ops.
+    if (this.options.prReconcileGithubOps) {
+      this.prReconciler = new PrReconciler({
+        store,
+        ops: this.options.prReconcileGithubOps,
+      });
+      this.prReconciler.start();
+    }
 
     // 3. Initialize notification services (unless caller manages them externally)
     if (!this.options.skipNotifier) {
@@ -714,6 +752,8 @@ export class ProjectEngine {
     }
 
     // Stop auxiliary subsystems
+    this.prReconciler?.stopAll();
+    this.prReconciler = undefined;
     this.oauthExpiryMonitor?.stop();
     this.oauthValidityLogger?.stop();
     this.notificationService?.stop();

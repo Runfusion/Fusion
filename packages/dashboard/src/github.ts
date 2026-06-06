@@ -217,6 +217,21 @@ export interface MergePrParams {
   repo?: string;
   number: number;
   method?: "merge" | "squash" | "rebase";
+  /**
+   * When set, the merge only proceeds if the PR head still points at this SHA
+   * (defeats the push/merge race — U2/U6). A mismatch surfaces as
+   * PrStaleHeadError so the pr-merge node can re-evaluate against the new head.
+   */
+  expectedHeadOid?: string;
+}
+
+/** Thrown when a merge is rejected because the PR head moved (expectedHeadOid mismatch). */
+export class PrStaleHeadError extends Error {
+  readonly code = "stale-head" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "PrStaleHeadError";
+  }
 }
 
 export interface UpdatePrParams {
@@ -286,6 +301,39 @@ interface PrReviewDetails {
   reviewDecision: ReviewDecision;
   comments: GhPrViewJson["comments"];
   reviews: GhReviewJson[];
+}
+
+/** A review thread with the U5 review-response fields (see getPrReviewThreadsDetailed). */
+export interface PrReviewThreadDetail {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  viewerCanResolve: boolean;
+  comments: Array<{ author: string; body: string; viewerDidAuthor: boolean }>;
+}
+
+interface GraphQlReviewThreadsPayload {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          nodes?: Array<{
+            id: string;
+            isResolved?: boolean | null;
+            isOutdated?: boolean | null;
+            viewerCanResolve?: boolean | null;
+            comments?: {
+              nodes?: Array<{
+                body?: string | null;
+                author?: { login?: string | null } | null;
+                viewerDidAuthor?: boolean | null;
+              } | null> | null;
+            } | null;
+          } | null> | null;
+        } | null;
+      } | null;
+    } | null;
+  };
 }
 
 interface GraphQlPageInfo {
@@ -1801,6 +1849,9 @@ export class GitHubClient {
       try {
         return await this.mergePrWithGh(params);
       } catch (err) {
+        // A stale-head rejection is a real outcome, not a gh-vs-API fallback
+        // trigger — re-running on the API path would merge the wrong head.
+        if (err instanceof PrStaleHeadError) throw err;
         if (this.token) {
           return this.mergePrWithApi(params);
         }
@@ -1816,32 +1867,219 @@ export class GitHubClient {
 
   private async mergePrWithGh(params: MergePrParams): Promise<PrInfo> {
     const resolved = this.resolveRepo(params.owner, params.repo);
-    runGh([
+    const args = [
       "pr", "merge", String(params.number),
       "--repo", `${resolved.owner}/${resolved.repo}`,
       `--${params.method ?? "squash"}`,
       "--delete-branch",
-    ]);
+    ];
+    if (params.expectedHeadOid) {
+      args.push("--match-head-commit", params.expectedHeadOid);
+    }
+    try {
+      runGh(args);
+    } catch (err) {
+      const message = getGhErrorMessage(err);
+      if (
+        params.expectedHeadOid &&
+        /head.*(changed|modified|match|stale)|not the most recent|base branch was modified/i.test(message)
+      ) {
+        throw new PrStaleHeadError(`PR #${params.number} head moved since ${params.expectedHeadOid}; merge aborted`);
+      }
+      throw err;
+    }
     return this.getPrStatus(resolved.owner, resolved.repo, params.number);
   }
 
   private async mergePrWithApi(params: MergePrParams): Promise<PrInfo> {
     const resolved = this.resolveRepo(params.owner, params.repo);
+    const body: Record<string, string> = { merge_method: params.method ?? "squash" };
+    if (params.expectedHeadOid) body.sha = params.expectedHeadOid;
     const response = await fetch(
       `${this.baseUrl}/repos/${encodeURIComponent(resolved.owner)}/${encodeURIComponent(resolved.repo)}/pulls/${params.number}/merge`,
       {
         method: "PUT",
         headers: this.buildHeaders(),
-        body: JSON.stringify({ merge_method: params.method ?? "squash" }),
+        body: JSON.stringify(body),
       },
     );
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: response.statusText }));
+      // 409 Conflict with a `sha` set means the head moved (stale-head race).
+      if (params.expectedHeadOid && response.status === 409) {
+        throw new PrStaleHeadError(`PR #${params.number} head moved since ${params.expectedHeadOid}; merge aborted`);
+      }
       throw new Error(`GitHub API error: ${response.status} ${error.message || response.statusText}`);
     }
 
     return this.getPrStatus(resolved.owner, resolved.repo, params.number);
+  }
+
+  /**
+   * Reply to a specific review thread (U2). GraphQL only — REST has no
+   * thread-level reply that also carries thread identity. Honors viewerCanReply
+   * by surfacing GitHub's error rather than guessing.
+   */
+  async replyToReviewThread(threadId: string, body: string): Promise<void> {
+    const query = `mutation($threadId: ID!, $body: String!) {
+      addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+        comment { id }
+      }
+    }`;
+    await this.runGraphqlMutation(query, { threadId, body });
+  }
+
+  /** Resolve a review thread (U2). GraphQL only; caller should check viewerCanResolve first. */
+  async resolveReviewThread(threadId: string): Promise<void> {
+    const query = `mutation($threadId: ID!) {
+      resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } }
+    }`;
+    await this.runGraphqlMutation(query, { threadId });
+  }
+
+  /**
+   * The authenticated viewer's login (single-user gh auth). Used by the U5
+   * review-response run for marker authentication (anti-spoof) — a fusion marker
+   * only suppresses a thread when authored by this login.
+   */
+  async getViewerLogin(): Promise<string> {
+    const payload = await this.runGraphqlQuery<{ viewer?: { login?: string | null } | null }>(
+      `query { viewer { login } }`,
+      {},
+    );
+    return payload?.viewer?.login ?? "";
+  }
+
+  /**
+   * Deep-fetch the PR's review threads with the per-thread + per-comment fields
+   * the U5 review-response run needs: isResolved, isOutdated, viewerCanResolve,
+   * and each comment's author + body + viewerDidAuthor. GraphQL only.
+   */
+  async getPrReviewThreadsDetailed(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+  ): Promise<PrReviewThreadDetail[]> {
+    const resolved = this.resolveRepo(owner, repo);
+    const query = `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes {
+              id
+              isResolved
+              isOutdated
+              viewerCanResolve
+              comments(first: 100) {
+                nodes { body author { login } viewerDidAuthor }
+              }
+            }
+          }
+        }
+      }
+    }`;
+    const payload = await this.runGraphqlQuery<GraphQlReviewThreadsPayload["data"]>(query, {
+      owner: resolved.owner,
+      repo: resolved.repo,
+      number,
+    });
+    const nodes = payload?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+    return nodes.filter((n): n is NonNullable<typeof n> => n != null).map((n) => ({
+      id: n.id,
+      isResolved: n.isResolved ?? false,
+      isOutdated: n.isOutdated ?? false,
+      viewerCanResolve: n.viewerCanResolve ?? false,
+      comments: (n.comments?.nodes ?? [])
+        .filter((c): c is NonNullable<typeof c> => c != null)
+        .map((c) => ({
+          author: c.author?.login ?? "",
+          body: c.body ?? "",
+          viewerDidAuthor: c.viewerDidAuthor ?? false,
+        })),
+    }));
+  }
+
+  /** Run a read-only GraphQL query (gh CLI when available, else token/REST). */
+  private async runGraphqlQuery<T>(query: string, variables: Record<string, string | number>): Promise<T | undefined> {
+    if (this.hasGhAuth()) {
+      const args = ["api", "graphql", "-f", `query=${query}`];
+      for (const [key, value] of Object.entries(variables)) {
+        const flag = typeof value === "number" ? "-F" : "-f";
+        args.push(flag, `${key}=${value}`);
+      }
+      const output = await runGhAsync(args);
+      const payload = JSON.parse(output) as { data?: T; errors?: Array<{ message: string }> };
+      if (payload.errors?.length) throw new Error(payload.errors[0].message);
+      return payload.data;
+    }
+    if (this.token) {
+      const response = await fetch(`${this.baseUrl}/graphql`, {
+        method: "POST",
+        headers: { ...this.buildHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ query, variables }),
+      });
+      const payload = (await response.json()) as { data?: T; errors?: Array<{ message: string }> };
+      if (!response.ok || payload.errors?.length) {
+        throw new Error(`GitHub API error: ${response.status} ${payload.errors?.[0]?.message || response.statusText}`);
+      }
+      return payload.data;
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  /**
+   * ETag-conditional change probe (U2/U17). Returns { changed, etag } so the
+   * reconcile can skip the expensive GraphQL deep-fetch when GitHub reports 304
+   * (which does not count against the primary rate limit). Only available on the
+   * REST/token path — gh CLI does not expose conditional requests.
+   */
+  async probePrChanged(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+    etag?: string,
+  ): Promise<{ changed: boolean; etag?: string }> {
+    if (!this.token) {
+      // No conditional-request path without a token; treat as always-changed so
+      // the caller falls back to a full fetch.
+      return { changed: true };
+    }
+    const resolved = this.resolveRepo(owner, repo);
+    const headers: Record<string, string> = { ...this.buildHeaders() };
+    if (etag) headers["If-None-Match"] = etag;
+    const response = await fetch(
+      `${this.baseUrl}/repos/${encodeURIComponent(resolved.owner)}/${encodeURIComponent(resolved.repo)}/pulls/${number}`,
+      { headers },
+    );
+    if (response.status === 304) return { changed: false, etag };
+    return { changed: true, etag: response.headers.get("etag") ?? undefined };
+  }
+
+  private async runGraphqlMutation(query: string, variables: Record<string, string>): Promise<void> {
+    if (this.hasGhAuth()) {
+      const args = ["api", "graphql", "-f", `query=${query}`];
+      for (const [key, value] of Object.entries(variables)) {
+        args.push("-F", `${key}=${value}`);
+      }
+      const output = await runGhAsync(args);
+      const payload = JSON.parse(output) as { errors?: Array<{ message: string }> };
+      if (payload.errors?.length) throw new Error(payload.errors[0].message);
+      return;
+    }
+    if (this.token) {
+      const response = await fetch(`${this.baseUrl}/graphql`, {
+        method: "POST",
+        headers: { ...this.buildHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ query, variables }),
+      });
+      const payload = (await response.json()) as { errors?: Array<{ message: string }> };
+      if (!response.ok || payload.errors?.length) {
+        throw new Error(`GitHub API error: ${response.status} ${payload.errors?.[0]?.message || response.statusText}`);
+      }
+      return;
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
   }
 
   /**

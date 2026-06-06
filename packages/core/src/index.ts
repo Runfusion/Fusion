@@ -85,6 +85,11 @@ export type {
   WorkflowNodeExecutorConfig,
 } from "./workflow-ir-types.js";
 export {
+  DEFAULT_MAX_REWORK_CYCLES,
+  MAX_REWORK_CYCLES_CAP,
+  resolveMaxReworkCycles,
+} from "./workflow-ir-types.js";
+export {
   instanceNodeId,
   parseInstanceNodeId,
   resolveColumnAgentBinding,
@@ -589,6 +594,23 @@ export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,
 } from "./branch-group-completion.js";
+export type {
+  PrEntity,
+  PrEntityCreateInput,
+  PrEntityUpdate,
+  PrEntityState,
+  PrEntitySourceType,
+  PrReviewDecision,
+  PrChecksRollup,
+  PrThreadState,
+  PrThreadOutcome,
+} from "./types.js";
+export {
+  isPrEntityActive,
+  isPrBacked,
+  isPrEntityActionable,
+  isPrEntityAutoMergeReady,
+} from "./pr-entity.js";
 export {
   findVitestProcessIds,
   type FindVitestProcessIdsOptions,

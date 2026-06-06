@@ -1,5 +1,5 @@
 import type { TaskDetail, TaskStep, WorkflowIrEdge, WorkflowIrNode } from "@fusion/core";
-import { WorkflowIrError, instanceNodeId } from "@fusion/core";
+import { WorkflowIrError, instanceNodeId, resolveMaxReworkCycles } from "@fusion/core";
 
 import type { WorkflowNodeOutcome, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import {
@@ -43,10 +43,9 @@ import { schedulerLog } from "./logger.js";
  * is guarded to a clean failure (U10 replaces it).
  */
 
-/** Default rework budget when the foreach config omits `maxReworkCycles`. */
-const DEFAULT_MAX_REWORK_CYCLES = 3;
-/** Defensive cap mirroring core's validation clamp (KTD-5). */
-const MAX_REWORK_CYCLES_CAP = 10;
+// Rework budget default + clamp live in @fusion/core (DEFAULT_MAX_REWORK_CYCLES /
+// MAX_REWORK_CYCLES_CAP / resolveMaxReworkCycles) so the foreach sub-walk and the
+// top-level PR review loop (U6) share one definition and cannot drift.
 /** Default parallel concurrency (KTD-3). */
 const DEFAULT_CONCURRENCY = 2;
 /** Hard cap on parallel concurrency (KTD-3). */
@@ -265,8 +264,7 @@ function resolveForeachConfig(node: WorkflowIrNode): {
   if (!template || !Array.isArray(template.nodes) || !Array.isArray(template.edges)) {
     throw new WorkflowIrError(`foreach node '${node.id}' has no template subgraph`);
   }
-  const raw = typeof cfg.maxReworkCycles === "number" ? cfg.maxReworkCycles : DEFAULT_MAX_REWORK_CYCLES;
-  const maxReworkCycles = Math.max(1, Math.min(MAX_REWORK_CYCLES_CAP, Math.floor(raw)));
+  const maxReworkCycles = resolveMaxReworkCycles(cfg.maxReworkCycles);
   const mode = cfg.mode === "parallel" ? "parallel" : "sequential";
   // Default isolation: worktree for parallel mode, shared for sequential (KTD-3).
   // (Core validation rejects parallel+shared; this default mirrors that intent.)

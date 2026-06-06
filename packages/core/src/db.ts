@@ -149,7 +149,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 112;
+const SCHEMA_VERSION = 113;
 
 export { SCHEMA_VERSION };
 
@@ -876,6 +876,57 @@ CREATE TABLE IF NOT EXISTS branch_groups (
 );
 CREATE INDEX IF NOT EXISTS idxBranchGroupsSource ON branch_groups(sourceType, sourceId);
 CREATE INDEX IF NOT EXISTS idxBranchGroupsBranchName ON branch_groups(branchName);
+
+-- Unified PR entity (PR-lifecycle-as-workflow-nodes, U1). One row per managed
+-- pull request; sourceType+sourceId link to a task or branch_group. GitHub-mirror
+-- columns are written only by the pr-create node and the reconcile (R4).
+CREATE TABLE IF NOT EXISTS pull_requests (
+  id TEXT PRIMARY KEY,
+  sourceType TEXT NOT NULL CHECK (sourceType IN ('task','branch-group')),
+  sourceId TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  headBranch TEXT NOT NULL,
+  baseBranch TEXT,
+  state TEXT NOT NULL DEFAULT 'creating'
+    CHECK (state IN ('creating','open','responding','merged','closed','failed')),
+  prNumber INTEGER,
+  prUrl TEXT,
+  headOid TEXT,
+  mergeable TEXT,
+  checksRollup TEXT,
+  reviewDecision TEXT,
+  autoMerge INTEGER NOT NULL DEFAULT 0,
+  unverified INTEGER NOT NULL DEFAULT 0,
+  failureReason TEXT,
+  responseRounds INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  closedAt INTEGER
+);
+-- Three uniqueness dimensions, each scoped so terminal rows accumulate as history
+-- and reopen/recreate-after-close is permitted (idempotency must cover every
+-- dimension — branch-group name-collision learning).
+CREATE UNIQUE INDEX IF NOT EXISTS idxPullRequestsOpenSource
+  ON pull_requests(sourceType, sourceId)
+  WHERE state NOT IN ('merged','closed','failed');
+CREATE UNIQUE INDEX IF NOT EXISTS idxPullRequestsOpenBranch
+  ON pull_requests(repo, headBranch)
+  WHERE state NOT IN ('merged','closed','failed');
+CREATE UNIQUE INDEX IF NOT EXISTS idxPullRequestsNumber
+  ON pull_requests(repo, prNumber)
+  WHERE prNumber IS NOT NULL;
+
+-- Per-thread response state (R15). Child of pull_requests; keyed by thread id +
+-- head OID so restart never duplicates a fix or silently skips feedback.
+CREATE TABLE IF NOT EXISTS pull_request_thread_state (
+  prEntityId TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+  threadId TEXT NOT NULL,
+  headOid TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('fixed','disagreed','pending')),
+  fixCommitSha TEXT,
+  updatedAt INTEGER NOT NULL,
+  PRIMARY KEY (prEntityId, threadId, headOid)
+);
 
 -- Goals table (strategic intent across mission timelines)
 CREATE TABLE IF NOT EXISTS goals (
@@ -2051,8 +2102,12 @@ export class Database {
   /**
    * Run incremental schema migrations based on the stored schema version.
    *
-   * Each migration block is guarded by a version check and runs inside a
-   * transaction so that a failed migration leaves the database unchanged.
+   * Each migration block is guarded by a version check. NOTE: migration bodies
+   * are NOT transactional — SQLite ALTER cannot run in a transaction, so
+   * `applyMigration` runs the body directly and only bumps the version on
+   * success. A crash mid-body re-runs the ENTIRE body at next boot, so every
+   * migration body must be fully re-runnable (IF NOT EXISTS DDL, INSERT OR
+   * IGNORE / ON CONFLICT for data copies).
    * New migrations should be added as `if (version < N)` blocks before
    * the final version bump, and SCHEMA_VERSION should be incremented to N.
    *
@@ -4402,6 +4457,115 @@ export class Database {
       });
     }
 
+    // Migration 113: Unified PR entity (PR-lifecycle-as-workflow-nodes, U1).
+    // (Authored as 109 on the fixprflow branch; renumbered to 113 because
+    // mainline migrations 109–112 landed first — see the company-model plan's
+    // migration-ordering contract.)
+    // Adds pull_requests + pull_request_thread_state and copies legacy
+    // branch_groups PR fields into entities flagged unverified (R19) — that
+    // legacy state may be fiction (prState:"open" was once written without a
+    // real PR), so it is imported untrusted and reconciled on first poll.
+    //
+    // applyMigration is NOT transactional (ALTER cannot run in a txn here): the
+    // version only bumps after the whole body succeeds, so a crash mid-body
+    // re-runs the entire body at next boot. Every statement below is therefore
+    // re-runnable — IF NOT EXISTS DDL and INSERT OR IGNORE keyed on the same
+    // columns as the partial unique indexes.
+    if (version < 113) {
+      this.applyMigration(113, () => {
+        this.ensurePullRequestsSchemaCompatibility();
+        const now = Date.now();
+        // Copy legacy branch-group PRs (only groups that claim an open/merged PR)
+        // into entities. INSERT OR IGNORE makes the copy idempotent across a
+        // re-run after a partial migration: rows that already landed collide on
+        // the open-source / open-branch / number indexes and are skipped.
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO pull_requests
+               (id, sourceType, sourceId, repo, headBranch, baseBranch, state,
+                prNumber, prUrl, autoMerge, unverified, responseRounds,
+                createdAt, updatedAt)
+             SELECT
+               'pr-bg-' || bg.id,
+               'branch-group',
+               bg.id,
+               '',
+               bg.branchName,
+               NULL,
+               CASE bg.prState
+                 WHEN 'open' THEN 'open'
+                 WHEN 'merged' THEN 'merged'
+                 WHEN 'closed' THEN 'closed'
+                 ELSE 'open'
+               END,
+               bg.prNumber,
+               bg.prUrl,
+               bg.autoMerge,
+               1,
+               0,
+               ?,
+               ?
+             FROM branch_groups bg
+             WHERE bg.prState IN ('open','merged','closed') AND bg.prNumber IS NOT NULL`,
+          )
+          .run(now, now);
+      });
+    }
+
+  }
+
+  /**
+   * Idempotent schema reconciliation for the PR-entity tables. ensureSchema-
+   * Compatibility adds missing *columns* but never indexes, so the partial
+   * unique indexes must be (re)created here as well as in SCHEMA_SQL and the
+   * v113 migration block — a fresh-from-SCHEMA_SQL DB and a migrated DB must
+   * converge on identical constraints. Mirrors ensureEvalTaskResultsSchema-
+   * Compatibility.
+   */
+  private ensurePullRequestsSchemaCompatibility(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pull_requests (
+        id TEXT PRIMARY KEY,
+        sourceType TEXT NOT NULL CHECK (sourceType IN ('task','branch-group')),
+        sourceId TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        headBranch TEXT NOT NULL,
+        baseBranch TEXT,
+        state TEXT NOT NULL DEFAULT 'creating'
+          CHECK (state IN ('creating','open','responding','merged','closed','failed')),
+        prNumber INTEGER,
+        prUrl TEXT,
+        headOid TEXT,
+        mergeable TEXT,
+        checksRollup TEXT,
+        reviewDecision TEXT,
+        autoMerge INTEGER NOT NULL DEFAULT 0,
+        unverified INTEGER NOT NULL DEFAULT 0,
+        failureReason TEXT,
+        responseRounds INTEGER NOT NULL DEFAULT 0,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        closedAt INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idxPullRequestsOpenSource
+        ON pull_requests(sourceType, sourceId)
+        WHERE state NOT IN ('merged','closed','failed');
+      CREATE UNIQUE INDEX IF NOT EXISTS idxPullRequestsOpenBranch
+        ON pull_requests(repo, headBranch)
+        WHERE state NOT IN ('merged','closed','failed');
+      CREATE UNIQUE INDEX IF NOT EXISTS idxPullRequestsNumber
+        ON pull_requests(repo, prNumber)
+        WHERE prNumber IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS pull_request_thread_state (
+        prEntityId TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+        threadId TEXT NOT NULL,
+        headOid TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('fixed','disagreed','pending')),
+        fixCommitSha TEXT,
+        updatedAt INTEGER NOT NULL,
+        PRIMARY KEY (prEntityId, threadId, headOid)
+      );
+    `);
   }
 
   /**

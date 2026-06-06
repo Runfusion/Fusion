@@ -27,7 +27,14 @@ import type { TaskStore } from "@fusion/core";
 import { resolveTaskMergeTarget, getCurrentRepo, isBranchGroupMemberLanded, resolveEffectiveSettings } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
 import { activeSessionRegistry, resolveIntegrationBranch } from "@fusion/engine";
-import type { CreateGroupPrFn, SyncGroupPrFn, WorktreePool } from "@fusion/engine";
+import type {
+  CreateGroupPrFn,
+  SyncGroupPrFn,
+  WorktreePool,
+  PrNodeGithubOps,
+  PrReconcileGithubOps,
+  PrReconcileFetchResult,
+} from "@fusion/engine";
 
 /**
  * Minimal interface for GitHub operations needed by the PR merge workflow.
@@ -43,10 +50,35 @@ interface GitHubOperations {
     mergeReady: boolean;
     blockingReasons: string[];
   }>;
-  mergePr(params: { number: number; method?: "merge" | "squash" | "rebase" }): Promise<PrInfo>;
+  mergePr(params: { number: number; method?: "merge" | "squash" | "rebase"; expectedHeadOid?: string }): Promise<PrInfo>;
   getPrStatus(owner: string, repo: string, number: number): Promise<PrInfo>;
+  /** Reply to a specific review thread (U2). */
+  replyToReviewThread(threadId: string, body: string): Promise<void>;
+  /** Resolve a review thread (U2); caller checks viewerCanResolve first. */
+  resolveReviewThread(threadId: string): Promise<void>;
+  /** Authenticated viewer login — anti-spoof marker authentication (U5). */
+  getViewerLogin(): Promise<string>;
+  /** Deep-fetch review threads with the U5 fields (resolved/outdated/viewer*). */
+  getPrReviewThreadsDetailed(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+  ): Promise<Array<{
+    id: string;
+    isResolved: boolean;
+    isOutdated: boolean;
+    viewerCanResolve: boolean;
+    comments: Array<{ author: string; body: string; viewerDidAuthor: boolean }>;
+  }>>;
   updatePr(params: { owner?: string; repo?: string; number: number; title?: string; body?: string }): Promise<PrInfo>;
   closePr(params: { number: number }): Promise<PrInfo>;
+  /** ETag-conditional change probe (U2/U4); 304 ⇒ unchanged, rate-limit-free. */
+  probePrChanged(
+    owner: string | undefined,
+    repo: string | undefined,
+    number: number,
+    etag?: string,
+  ): Promise<{ changed: boolean; etag?: string }>;
 }
 
 /**
@@ -300,6 +332,195 @@ export function syncGroupPrCallback(
       body: buildGroupPrSyncBody(group, members),
     });
     return { prNumber: updated.number, prUrl: updated.url, prState: toBranchGroupPrState(updated) };
+  };
+}
+
+/** Best-effort resolve the head commit OID for a branch (so `pr-merge` can pass
+ *  `expectedHeadOid`). Returns undefined on any failure — the merge then runs
+ *  without the stale-head guard, which the reconcile still corroborates. */
+async function resolveBranchHeadOid(cwd: string, branch: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync(`git rev-parse "${branch}"`, { cwd, timeout: 30_000 });
+    const oid = stdout.trim();
+    return oid.length > 0 ? oid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Structural detection of the dashboard `PrStaleHeadError` without importing the
+ *  class (task-lifecycle.ts deliberately has no @fusion/dashboard dependency). */
+function isStaleHeadError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "stale-head"
+  );
+}
+
+/**
+ * Build the `prNodeGithubOps` engine callbacks (U3) backing the `pr-create` /
+ * `pr-respond` / `pr-merge` workflow nodes. Closes over a GitHub client so the
+ * engine never imports the dashboard `GitHubClient` (FN-3049). Mirrors
+ * `createGroupPrCallback` / `syncGroupPrCallback`.
+ *
+ * - resolvePrSource: derives the single-task PR source identity (repo from the
+ *   per-process repo, head branch from the task branch-naming convention).
+ * - createPr: pushes the task branch to origin, opens the PR, resolves the head OID.
+ * - mergePr: merges with `expectedHeadOid`; a `PrStaleHeadError` (detected
+ *   structurally) maps to `{ status: "stale-head" }` so the node routes the race.
+ * - respond: omitted in U3 (U5 wires the real review-response run); the node then
+ *   falls back to its inert `disagreed-only` default.
+ */
+export function createPrNodeGithubOps(
+  github: Pick<
+    GitHubOperations,
+    | "createPr"
+    | "mergePr"
+    | "getPrStatus"
+    | "replyToReviewThread"
+    | "resolveReviewThread"
+    | "getViewerLogin"
+    | "getPrReviewThreadsDetailed"
+  >,
+  options: {
+    /**
+     * Resolve the PR-branch worktree path for a task id (the U5 response agent +
+     * git ops run there). Defaults to the process cwd when not supplied (the
+     * single-project daemon/serve case).
+     */
+    getTaskWorktree?: (taskId: string) => string | undefined;
+  } = {},
+): PrNodeGithubOps {
+  const getCwd = (entity: { sourceId: string }): string =>
+    options.getTaskWorktree?.(entity.sourceId) ?? process.cwd();
+
+  return {
+    resolvePrSource: (task) => {
+      const repo = getCurrentRepo();
+      const repoSlug = repo ? `${repo.owner}/${repo.repo}` : "";
+      return {
+        sourceType: "task",
+        sourceId: task.id,
+        repo: repoSlug,
+        headBranch: getTaskBranchName(task.id),
+      };
+    },
+    createPr: async ({ task, entity }) => {
+      const cwd = process.cwd();
+      const headBranch = entity.headBranch || getTaskBranchName(task.id);
+      await pushTaskBranchToOrigin(cwd, headBranch);
+      const created = await github.createPr({
+        title: task.title ?? `Task ${task.id}`,
+        body: task.description ?? "",
+        head: headBranch,
+        base: entity.baseBranch,
+      });
+      const headOid = await resolveBranchHeadOid(cwd, headBranch);
+      return { prNumber: created.number, prUrl: created.url, headOid };
+    },
+    mergePr: async ({ entity }) => {
+      if (entity.prNumber == null) {
+        throw new Error(`pr-merge: entity ${entity.id} has no persisted prNumber`);
+      }
+      try {
+        await github.mergePr({
+          number: entity.prNumber,
+          method: "squash",
+          expectedHeadOid: entity.headOid,
+        });
+        return { status: "merged-requested" };
+      } catch (err) {
+        if (isStaleHeadError(err)) return { status: "stale-head" };
+        throw err;
+      }
+    },
+    // U5: the GitHub-client slice of the review-response run. The engine builds
+    // the git ops + mutating-agent runner from these + its store/settings.
+    respondOps: {
+      getReviewThreads: async (entity) => {
+        if (entity.prNumber == null) return [];
+        const { owner, name } = splitRepoSlug(entity.repo);
+        return github.getPrReviewThreadsDetailed(owner, name, entity.prNumber);
+      },
+      getViewerLogin: () => github.getViewerLogin(),
+      checkPrStillOpen: async (entity) => {
+        if (entity.prNumber == null) return { open: false, headOid: null };
+        const { owner, name } = splitRepoSlug(entity.repo);
+        try {
+          const info = await github.getPrStatus(owner ?? "", name ?? "", entity.prNumber);
+          return { open: info.status === "open" || info.status === "draft", headOid: null };
+        } catch {
+          return { open: false, headOid: null };
+        }
+      },
+      replyToThread: (threadId, body) => github.replyToReviewThread(threadId, body),
+      resolveThread: (threadId) => github.resolveReviewThread(threadId),
+      getCwd,
+      getTaskId: (entity) => entity.sourceId,
+    },
+  };
+}
+
+/**
+ * Parse the entity's `owner/repo` repo slug into its components, tolerating an
+ * empty/single-segment value (returns undefined owner/repo so the client falls
+ * back to its configured repo).
+ */
+function splitRepoSlug(repo: string): { owner: string | undefined; name: string | undefined } {
+  const [owner, name] = repo.split("/");
+  return { owner: owner || undefined, name: name || undefined };
+}
+
+/** Map a GitHub `PrStatus` to the reconcile fetch result's coarse PR state. */
+function mapPrStatusToFetchState(status: PrInfo["status"]): "open" | "merged" | "closed" {
+  if (status === "merged") return "merged";
+  if (status === "closed") return "closed";
+  // "open" and "draft" both reconcile as open.
+  return "open";
+}
+
+/**
+ * Build the `prReconcileGithubOps` engine callbacks (U4) backing the
+ * node-agnostic {@link PrReconciler}. Closes over the dashboard `GitHubClient`
+ * so the engine never imports it (FN-3049), exactly like
+ * {@link createPrNodeGithubOps}. Wired at the same three CLI composition sites.
+ *
+ * - probe: ETag-conditional change probe (304 ⇒ unchanged ⇒ skip deep-fetch).
+ * - fetchPrState: deep-fetch the GitHub-corroborated mirror. A 404 (PR not
+ *   found) maps to `{ exists: false }` so the reconcile clears fictional
+ *   unverified entities (R19).
+ */
+export function createPrReconcileGithubOps(
+  github: Pick<GitHubOperations, "probePrChanged" | "getPrStatus">,
+): PrReconcileGithubOps {
+  return {
+    probe: (repo, prNumber, etag) => {
+      const { owner, name } = splitRepoSlug(repo);
+      return github.probePrChanged(owner, name, prNumber, etag);
+    },
+    fetchPrState: async (repo, prNumber): Promise<PrReconcileFetchResult> => {
+      const { owner, name } = splitRepoSlug(repo);
+      let info: PrInfo;
+      try {
+        info = await github.getPrStatus(owner ?? "", name ?? "", prNumber);
+      } catch (err) {
+        // A 404 / "not found" means there is no PR behind this entity.
+        const message = err instanceof Error ? err.message : String(err);
+        if (/not found|404/i.test(message)) return { exists: false };
+        throw err;
+      }
+      return {
+        exists: true,
+        prState: mapPrStatusToFetchState(info.status),
+        prNumber: info.number,
+        prUrl: info.url,
+        mergeable: info.mergeable,
+        checksRollup: info.checkRollup,
+        reviewDecision: info.lastReviewDecision ?? null,
+      };
+    },
   };
 }
 

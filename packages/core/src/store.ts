@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, CompletionHandoffMarker } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, CompletionHandoffMarker, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrEntityState, PrThreadState, PrThreadOutcome, PrConflictState, PrChecksRollup, PrReviewDecision } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, COLUMNS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
@@ -340,6 +340,38 @@ interface BranchGroupRow {
   createdAt: number;
   updatedAt: number;
   closedAt: number | null;
+}
+
+interface PrEntityRow {
+  id: string;
+  sourceType: "task" | "branch-group";
+  sourceId: string;
+  repo: string;
+  headBranch: string;
+  baseBranch: string | null;
+  state: PrEntityState;
+  prNumber: number | null;
+  prUrl: string | null;
+  headOid: string | null;
+  mergeable: string | null;
+  checksRollup: string | null;
+  reviewDecision: string | null;
+  autoMerge: number;
+  unverified: number;
+  failureReason: string | null;
+  responseRounds: number;
+  createdAt: number;
+  updatedAt: number;
+  closedAt: number | null;
+}
+
+interface PrThreadStateRow {
+  prEntityId: string;
+  threadId: string;
+  headOid: string;
+  outcome: PrThreadOutcome;
+  fixCommitSha: string | null;
+  updatedAt: number;
 }
 
 interface TaskCommitAssociationRow {
@@ -4953,6 +4985,199 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return filterTasksByBranchGroup(tasks, group, groupId).sort((a, b) =>
       a.createdAt.localeCompare(b.createdAt),
     );
+  }
+
+  // --- Unified PR entity (PR-lifecycle-as-workflow-nodes, U1) ---
+
+  private rowToPrEntity(row: PrEntityRow): PrEntity {
+    return {
+      id: row.id,
+      sourceType: row.sourceType,
+      sourceId: row.sourceId,
+      repo: row.repo,
+      headBranch: row.headBranch,
+      baseBranch: row.baseBranch ?? undefined,
+      state: row.state,
+      prNumber: row.prNumber ?? undefined,
+      prUrl: row.prUrl ?? undefined,
+      headOid: row.headOid ?? undefined,
+      mergeable: (row.mergeable as PrConflictState | null) ?? undefined,
+      checksRollup: (row.checksRollup as PrChecksRollup | null) ?? undefined,
+      reviewDecision: (row.reviewDecision as PrReviewDecision) ?? undefined,
+      autoMerge: Boolean(row.autoMerge),
+      unverified: Boolean(row.unverified),
+      failureReason: row.failureReason ?? undefined,
+      responseRounds: row.responseRounds,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      closedAt: row.closedAt ?? undefined,
+    };
+  }
+
+  private generatePrEntityId(): string {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+    return `PR-${timestamp}-${random}`;
+  }
+
+  getPrEntity(id: string): PrEntity | null {
+    const row = this.db.prepare(`SELECT * FROM pull_requests WHERE id = ?`).get(id) as PrEntityRow | undefined;
+    return row ? this.rowToPrEntity(row) : null;
+  }
+
+  /** The single non-terminal entity for a source, if any (matches the partial unique index). */
+  getActivePrEntityBySource(sourceType: PrEntity["sourceType"], sourceId: string): PrEntity | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM pull_requests
+         WHERE sourceType = ? AND sourceId = ? AND state NOT IN ('merged','closed','failed')
+         ORDER BY createdAt DESC LIMIT 1`,
+      )
+      .get(sourceType, sourceId) as PrEntityRow | undefined;
+    return row ? this.rowToPrEntity(row) : null;
+  }
+
+  /** The entity owning a concrete GitHub PR number in a repo, if any. */
+  getPrEntityByNumber(repo: string, prNumber: number): PrEntity | null {
+    const row = this.db
+      .prepare(`SELECT * FROM pull_requests WHERE repo = ? AND prNumber = ?`)
+      .get(repo, prNumber) as PrEntityRow | undefined;
+    return row ? this.rowToPrEntity(row) : null;
+  }
+
+  /**
+   * Create-or-reuse the non-terminal entity for a source. Reuse is keyed on the
+   * source identity (the open-source partial unique index), so re-entry from the
+   * pr-create node never mints a second live entity (AE6 idempotency).
+   */
+  ensurePrEntityForSource(input: PrEntityCreateInput): PrEntity {
+    const existing = this.getActivePrEntityBySource(input.sourceType, input.sourceId);
+    if (existing) return existing;
+    const id = this.generatePrEntityId();
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO pull_requests
+           (id, sourceType, sourceId, repo, headBranch, baseBranch, state,
+            prNumber, prUrl, autoMerge, unverified, responseRounds, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      )
+      .run(
+        id,
+        input.sourceType,
+        input.sourceId,
+        input.repo,
+        input.headBranch,
+        input.baseBranch ?? null,
+        input.state ?? "creating",
+        input.prNumber ?? null,
+        input.prUrl ?? null,
+        input.autoMerge ? 1 : 0,
+        input.unverified ? 1 : 0,
+        now,
+        now,
+      );
+    this.db.bumpLastModified();
+    return this.getPrEntity(id)!;
+  }
+
+  updatePrEntity(id: string, patch: PrEntityUpdate): PrEntity {
+    const current = this.getPrEntity(id);
+    if (!current) throw new Error(`PR entity ${id} not found`);
+    const nextState = patch.state ?? current.state;
+    const now = Date.now();
+    const isTerminal = nextState === "merged" || nextState === "closed";
+    const nextClosedAt =
+      patch.closedAt === null
+        ? null
+        : patch.closedAt ?? (isTerminal && current.closedAt === undefined ? now : current.closedAt ?? null);
+    const orCurrent = <T>(v: T | null | undefined, cur: T | undefined): T | null =>
+      v === null ? null : v ?? cur ?? null;
+    this.db
+      .prepare(
+        `UPDATE pull_requests SET
+           state = ?, prNumber = ?, prUrl = ?, headOid = ?, mergeable = ?,
+           checksRollup = ?, reviewDecision = ?, autoMerge = ?, unverified = ?,
+           failureReason = ?, responseRounds = ?, updatedAt = ?, closedAt = ?
+         WHERE id = ?`,
+      )
+      .run(
+        nextState,
+        orCurrent(patch.prNumber, current.prNumber),
+        orCurrent(patch.prUrl, current.prUrl),
+        orCurrent(patch.headOid, current.headOid),
+        orCurrent(patch.mergeable, current.mergeable),
+        orCurrent(patch.checksRollup, current.checksRollup),
+        patch.reviewDecision === undefined ? current.reviewDecision ?? null : patch.reviewDecision,
+        patch.autoMerge === undefined ? (current.autoMerge ? 1 : 0) : patch.autoMerge ? 1 : 0,
+        patch.unverified === undefined ? (current.unverified ? 1 : 0) : patch.unverified ? 1 : 0,
+        orCurrent(patch.failureReason, current.failureReason),
+        patch.responseRounds ?? current.responseRounds,
+        now,
+        nextClosedAt,
+        id,
+      );
+    this.db.bumpLastModified();
+    return this.getPrEntity(id)!;
+  }
+
+  /** Non-terminal entities (for the reconcile poll set), oldest first. */
+  listActivePrEntities(): PrEntity[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM pull_requests WHERE state NOT IN ('merged','closed','failed') ORDER BY createdAt ASC`)
+      .all() as PrEntityRow[];
+    return rows.map((r) => this.rowToPrEntity(r));
+  }
+
+  // Per-thread response state (R15) — keyed by (entity, threadId, headOid).
+
+  getPrThreadState(prEntityId: string, threadId: string, headOid: string): PrThreadState | null {
+    const row = this.db
+      .prepare(`SELECT * FROM pull_request_thread_state WHERE prEntityId = ? AND threadId = ? AND headOid = ?`)
+      .get(prEntityId, threadId, headOid) as PrThreadStateRow | undefined;
+    return row
+      ? {
+          prEntityId: row.prEntityId,
+          threadId: row.threadId,
+          headOid: row.headOid,
+          outcome: row.outcome,
+          fixCommitSha: row.fixCommitSha ?? undefined,
+          updatedAt: row.updatedAt,
+        }
+      : null;
+  }
+
+  listPrThreadStates(prEntityId: string): PrThreadState[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM pull_request_thread_state WHERE prEntityId = ?`)
+      .all(prEntityId) as PrThreadStateRow[];
+    return rows.map((row) => ({
+      prEntityId: row.prEntityId,
+      threadId: row.threadId,
+      headOid: row.headOid,
+      outcome: row.outcome,
+      fixCommitSha: row.fixCommitSha ?? undefined,
+      updatedAt: row.updatedAt,
+    }));
+  }
+
+  /** Upsert a per-thread outcome. Persisted AFTER GitHub confirms (R15 commit-last). */
+  recordPrThreadOutcome(
+    prEntityId: string,
+    threadId: string,
+    headOid: string,
+    outcome: PrThreadOutcome,
+    fixCommitSha?: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO pull_request_thread_state (prEntityId, threadId, headOid, outcome, fixCommitSha, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (prEntityId, threadId, headOid)
+         DO UPDATE SET outcome = excluded.outcome, fixCommitSha = excluded.fixCommitSha, updatedAt = excluded.updatedAt`,
+      )
+      .run(prEntityId, threadId, headOid, outcome, fixCommitSha ?? null, Date.now());
+    this.db.bumpLastModified();
   }
 
   recordBranchGroupMemberLanded(

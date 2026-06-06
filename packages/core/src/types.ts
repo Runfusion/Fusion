@@ -1864,6 +1864,116 @@ export interface BranchGroupUpdate {
   closedAt?: number | null;
 }
 
+// --- Unified PR entity (feat: PR lifecycle as workflow nodes, U1) ---
+//
+// The single first-class record of a pull request fusion manages, regardless
+// of how the work landed (a lone task or a shared branch group). Its lifecycle
+// is driven by the pr-create / pr-respond / pr-merge workflow nodes; the only
+// writers of the GitHub-mirror fields are the pr-create node (on a confirmed
+// create) and the reconcile (R4: never persist state GitHub has not
+// corroborated).
+
+/** What a PR entity is attached to. */
+export type PrEntitySourceType = "task" | "branch-group";
+
+/**
+ * Lifecycle state. Non-terminal: creating, open, responding. Terminal: merged,
+ * closed. failed is a recorded, retryable creation failure (R4).
+ */
+export type PrEntityState =
+  | "creating"
+  | "open"
+  | "responding"
+  | "merged"
+  | "closed"
+  | "failed";
+
+/** GitHub review decision mirror (matches PrInfo.lastReviewDecision shape). */
+export type PrReviewDecision =
+  | "APPROVED"
+  | "CHANGES_REQUESTED"
+  | "REVIEW_REQUIRED"
+  | null;
+
+/** Aggregate CI rollup mirror (matches PrInfo.checkRollup shape). */
+export type PrChecksRollup = "success" | "failure" | "pending" | "none";
+
+export interface PrEntity {
+  id: string;
+  sourceType: PrEntitySourceType;
+  /** Task id or branch-group id, depending on sourceType. */
+  sourceId: string;
+  repo: string;
+  headBranch: string;
+  baseBranch?: string;
+  state: PrEntityState;
+  /** GitHub-mirror fields — only the create node and reconcile write these. */
+  prNumber?: number;
+  prUrl?: string;
+  headOid?: string;
+  mergeable?: PrConflictState;
+  checksRollup?: PrChecksRollup;
+  reviewDecision?: PrReviewDecision;
+  /** Whether auto-merge is opted in for this entity (R10). */
+  autoMerge: boolean;
+  /**
+   * Imported-from-legacy state that GitHub has not yet corroborated. While true
+   * the entity is a hard gate: excluded from auto-merge + response dispatch and
+   * never advanced on stale state (R19). Cleared on first successful reconcile.
+   */
+  unverified: boolean;
+  /** Classified failure reason when state === "failed" (R4, AE3). */
+  failureReason?: string;
+  /** Rework-cycle counter backing the R8 iteration cap (survives restart). */
+  responseRounds: number;
+  createdAt: number;
+  updatedAt: number;
+  closedAt?: number;
+}
+
+export interface PrEntityCreateInput {
+  sourceType: PrEntitySourceType;
+  sourceId: string;
+  repo: string;
+  headBranch: string;
+  baseBranch?: string;
+  state?: PrEntityState;
+  autoMerge?: boolean;
+  unverified?: boolean;
+  prNumber?: number;
+  prUrl?: string;
+}
+
+export interface PrEntityUpdate {
+  state?: PrEntityState;
+  prNumber?: number | null;
+  prUrl?: string | null;
+  headOid?: string | null;
+  mergeable?: PrConflictState | null;
+  checksRollup?: PrChecksRollup | null;
+  reviewDecision?: PrReviewDecision;
+  autoMerge?: boolean;
+  unverified?: boolean;
+  failureReason?: string | null;
+  responseRounds?: number;
+  closedAt?: number | null;
+}
+
+/** Per-thread response outcome, keyed by thread id + head OID (R15). */
+export type PrThreadOutcome = "fixed" | "disagreed" | "pending";
+
+export interface PrThreadState {
+  prEntityId: string;
+  /** GitHub review-thread node id. */
+  threadId: string;
+  /** Head OID the outcome was produced against (idempotency key with threadId). */
+  headOid: string;
+  outcome: PrThreadOutcome;
+  /** Commit SHA embedded in the agent's reply marker, when a fix was pushed. */
+  fixCommitSha?: string;
+  updatedAt: number;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */

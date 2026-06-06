@@ -1,9 +1,11 @@
 /** Node kinds. v1 kinds (start/prompt/script/gate/end) plus the v2 additions:
- *  `hold` (passive dwell column states), `split`/`join` (parallel fan-out), and
- *  the step-inversion additions (FN step-inversion, KTD-3/4/12/15):
- *  `foreach` (runtime-expanding per-step template region), `step-review`
- *  (per-step review verdicts as outcome edges), `parse-steps` (graph-native
- *  step-list parsing), and `code` (sandboxed TypeScript). */
+ *  `hold` (passive dwell column states), `split`/`join` (parallel fan-out), the
+ *  step-inversion additions (FN step-inversion, KTD-3/4/12/15): `foreach`
+ *  (runtime-expanding per-step template region), `step-review` (per-step review
+ *  verdicts as outcome edges), `parse-steps` (graph-native step-list parsing),
+ *  and `code` (sandboxed TypeScript); and the unified PR-entity additions (U3):
+ *  `pr-create` (open/reuse the PR + write the entity), `pr-respond` (the
+ *  review-response run), and `pr-merge` (tool-side merge with expectedHeadOid). */
 export type WorkflowIrNodeKind =
   | "start"
   | "prompt"
@@ -16,7 +18,10 @@ export type WorkflowIrNodeKind =
   | "foreach"
   | "step-review"
   | "parse-steps"
-  | "code";
+  | "code"
+  | "pr-create"
+  | "pr-respond"
+  | "pr-merge";
 
 export interface WorkflowIrNode {
   id: string;
@@ -70,13 +75,32 @@ export interface WorkflowNodeExecutorConfig {
   cliNotify?: Record<string, unknown>;
 }
 
+/** Default bounded-rework budget when a rework region omits `maxReworkCycles`
+ *  (KTD-5 foreach default; U6 reuses it for the top-level review loop). */
+export const DEFAULT_MAX_REWORK_CYCLES = 3;
+/** Defensive clamp on any rework budget (KTD-5; shared by foreach + U6). */
+export const MAX_REWORK_CYCLES_CAP = 10;
+
+/** Resolve a bounded-rework budget from a config bag, applying the shared
+ *  default + clamp. Used by the foreach sub-walk and the top-level rework loop so
+ *  the bound semantics cannot drift between the two. */
+export function resolveMaxReworkCycles(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : DEFAULT_MAX_REWORK_CYCLES;
+  return Math.max(1, Math.min(MAX_REWORK_CYCLES_CAP, Math.floor(n)));
+}
+
 export interface WorkflowIrEdge {
   from: string;
   to: string;
   condition?: string;
-  /** Step-inversion (KTD-5): `rework` edges are the only legal cycles, scoped to
-   *  one foreach template instance and bounded by the foreach `maxReworkCycles`.
-   *  They are exempt from cycle/parallelism complaints. */
+  /** Step-inversion (KTD-5) + PR review loop (U6): `rework` edges are the only
+   *  legal cycles. Originally scoped to one foreach template instance and bounded
+   *  by the foreach `maxReworkCycles`; U6 generalizes the same mechanism to the
+   *  top-level walk so a PR review region (await-review → pr-respond → back to
+   *  await-review) is a legal bounded cycle too. The bound on a top-level rework
+   *  edge is `maxReworkCycles` on this edge's `from` node config (the loop head),
+   *  defaulting to {@link DEFAULT_MAX_REWORK_CYCLES}. Either way, rework edges are
+   *  exempt from "Cycle detected"; every other back-edge still throws. */
   kind?: "rework";
 }
 

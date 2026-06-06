@@ -82,6 +82,7 @@ export const reviewerLog = createLogger("reviewer");
 
 /** Logger for the PR monitor subsystem. */
 export const prMonitorLog = createLogger("pr-monitor");
+export const prReconcileLog = createLogger("pr-reconcile");
 
 /** Logger for the project runtime subsystem. */
 export const runtimeLog = createLogger("runtime");

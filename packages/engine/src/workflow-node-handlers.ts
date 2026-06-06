@@ -2,6 +2,7 @@ import { WorkflowIrError, getStepParser, instanceNodeId } from "@fusion/core";
 import type { TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 
 import type { WorkflowNodeHandler, WorkflowNodeResult } from "./workflow-graph-executor.js";
+import { createPrNodeHandlers, createAutoMergeGateHandler, type PrNodeDeps } from "./pr-nodes.js";
 
 export type WorkflowSeamName = "planning" | "execute" | "review" | "merge" | "schedule" | "step-execute";
 
@@ -545,6 +546,8 @@ export interface DefaultNodeHandlerDeps {
   parseSteps?: ParseStepsHandlerDeps;
   /** code node runner (U14). When absent, a code node fails cleanly. */
   runCode?: CodeNodeRunner;
+  /** PR node deps (U3). When absent, the three pr-* kinds fail cleanly. */
+  prNodes?: PrNodeDeps;
 }
 
 export function createDefaultNodeHandlers(
@@ -552,7 +555,15 @@ export function createDefaultNodeHandlers(
   runCustomNode?: WorkflowCustomNodeRunner,
   deps?: DefaultNodeHandlerDeps,
 ): Record<
-  "prompt" | "script" | "gate" | "step-review" | "parse-steps" | "code",
+  | "prompt"
+  | "script"
+  | "gate"
+  | "step-review"
+  | "parse-steps"
+  | "code"
+  | "pr-create"
+  | "pr-respond"
+  | "pr-merge",
   WorkflowNodeHandler
 > {
   const promptLike = createPromptLikeHandler(seams, runCustomNode);
@@ -561,13 +572,34 @@ export function createDefaultNodeHandlers(
   const parseSteps: WorkflowNodeHandler = deps?.parseSteps
     ? createParseStepsHandler(deps.parseSteps)
     : async () => ({ outcome: "failure", value: "parse-steps-unwired" });
+  // PR nodes without deps fail closed (mirrors parse-steps): a pr-* node reached
+  // without GitHub wiring must NOT silently succeed — it would route an
+  // unverified PR side effect forward.
+  const prNodes: Record<"pr-create" | "pr-respond" | "pr-merge", WorkflowNodeHandler> = deps?.prNodes
+    ? createPrNodeHandlers(deps.prNodes)
+    : {
+        "pr-create": async () => ({ outcome: "failure", value: "pr-nodes-unwired" }),
+        "pr-respond": async () => ({ outcome: "failure", value: "pr-nodes-unwired" }),
+        "pr-merge": async () => ({ outcome: "failure", value: "pr-nodes-unwired" }),
+      };
+  // Auto-merge gate (U6): a `gate` node carrying `config.gate === "auto-merge"`
+  // routes on live PR-entity state (outcome:auto-on/auto-off) instead of the
+  // generic context/executable gate. Wired only when PR deps are present; absent
+  // them it falls back to the generic gate (fail-closed, no silent auto-merge).
+  const genericGate = createGateHandler(runCustomNode);
+  const autoMergeGate = deps?.prNodes ? createAutoMergeGateHandler(deps.prNodes) : undefined;
+  const gate: WorkflowNodeHandler = autoMergeGate
+    ? (node, ctx) =>
+        node.config?.gate === "auto-merge" ? autoMergeGate(node, ctx) : genericGate(node, ctx)
+    : genericGate;
   return {
     prompt: promptLike,
     script: promptLike,
-    gate: createGateHandler(runCustomNode),
+    gate,
     "step-review": createStepReviewHandler(seams),
     "parse-steps": parseSteps,
     code: createCodeNodeHandler(deps?.runCode),
+    ...prNodes,
   };
 }
 

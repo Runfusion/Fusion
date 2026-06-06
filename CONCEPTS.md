@@ -101,6 +101,12 @@ The status of a Shared branch group member whose work is merge-confirmed onto *i
 ### Group promotion
 The completion-gated, idempotent act of carrying a complete Shared branch group forward: merging the group branch toward the project's integration branch and, in pull-request mode, creating-or-reusing the group's single managed PR. Re-running a promotion never creates a second PR. Under disabled auto-merge, promotion is an explicit user action; member-to-group landing may still proceed without triggering it.
 
+### PR entity
+The single first-class record of a pull request fusion manages, regardless of how the work landed — a lone Task or a Shared branch group each produce one PR entity with one lifecycle (open, responding, approved, merged/closed). It is how the group's "managed PR identity" is actually realized. Every state the entity shows must be corroborated by GitHub; fusion never persists speculative PR state, and a continuous reconciliation absorbs out-of-band changes made directly on GitHub.
+
+### Review-response loop
+The named process by which fusion acts on review feedback arriving on a PR entity: new comments and review threads from humans or bots dispatch an agent that either fixes the issue, pushes to the PR branch, and replies to the thread, or disagrees — posting its reasoning as a PR comment and leaving the thread open. Runs without a human gate between feedback and push; the human checkpoint is merge (unless Auto-merge is enabled).
+
 ## Branching & diff attribution
 
 ### Integration branch

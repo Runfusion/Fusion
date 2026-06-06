@@ -63,6 +63,14 @@ export interface ProjectRuntimeConfig {
    * (falling back to 4040).
    */
   cliAgentHookEndpointUrl?: string;
+  /**
+   * PR-entity node GitHub ops (U3): the injected `createPr`/`mergePr`/`respond`
+   * callbacks (+ source resolver + audit) for the `pr-create`/`pr-respond`/
+   * `pr-merge` workflow nodes. Threaded from the CLI layer; the runtime binds the
+   * engine-owned store and hands the assembled deps to the executor. Absent → the
+   * pr-* node kinds fail closed.
+   */
+  prNodeGithubOps?: import("./pr-nodes.js").PrNodeGithubOps;
 }
 
 /**

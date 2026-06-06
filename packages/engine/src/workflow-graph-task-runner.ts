@@ -15,6 +15,7 @@ import type {
   WorkflowBranchSemaphore,
 } from "./workflow-graph-branches.js";
 import type { ForeachEnvironment, WorkflowStepInstancePersistence } from "./workflow-graph-foreach.js";
+import type { PrNodeDeps } from "./pr-nodes.js";
 // (Both types are also used as values in the side-effect tracking wrappers below.)
 
 /**
@@ -69,6 +70,9 @@ export interface WorkflowGraphTaskRunnerDeps {
   /** Step-inversion (U14, KTD-15): `code` node runner. Additive; a workflow with
    *  no code node never invokes it. */
   runCode?: CodeNodeRunner;
+  /** PR-entity nodes (U3): deps for `pr-create`/`pr-respond`/`pr-merge`. Additive;
+   *  a workflow with no pr-* node never invokes them; absent → they fail closed. */
+  prNodes?: PrNodeDeps;
   /** Step-inversion (KTD-11, U10): worktree-isolation + parallel-scheduling deps.
    *  Additive; a shared-isolation foreach never invokes them. */
   allocateInstanceWorktree?: ForeachEnvironment["allocateInstanceWorktree"];
@@ -192,6 +196,7 @@ export class WorkflowGraphTaskRunner {
         onReworkReset: this.deps.onReworkReset,
         parseStepsDeps: this.deps.parseStepsDeps,
         runCode: this.deps.runCode,
+        prNodes: this.deps.prNodes,
         // Step-inversion (KTD-11, U10): worktree isolation + parallel scheduling.
         allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
         resolveIntegrationBase: this.deps.resolveIntegrationBase,
