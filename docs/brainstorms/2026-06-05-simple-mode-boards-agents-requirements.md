@@ -28,7 +28,7 @@ The fix is not more engine capability — it's an opinionated, legible default e
 
 - **Opinionated layer over the existing engine, not a replacement.** Simple mode is a constrained preset over the workflow-columns + column-agent + trait machinery already built. The graph executor's generality (split/join, hold nodes, custom traits) is retained, gated behind advanced mode.
 - **The board is the container; workflow is board config.** Tasks never select a workflow. A task lands on a board and inherits that board's columns and team. This inverts today's model (task selects workflow → lane derived).
-- **Multi-board replaces multi-lane.** Boards become first-class navigable entities, each with its own team and column config. The lane concept and per-task workflow selection are removed, not kept alongside.
+- **Multi-board replaces multi-lane unconditionally.** Boards become first-class navigable entities, each with its own team and column config — the universal task container in every mode, advanced included. The lane concept and per-task workflow selection are removed outright, with no lane rendering path retained.
 - **Persistent named agents only — ephemeral agents are eliminated entirely under the company model.** Every piece of work, in simple and advanced mode alike, is performed by a named persistent agent; the roster is the mental model. Per-task agent selection disappears from simple mode; advanced mode retains it, choosing from the persistent roster. The legacy flag-off path keeps ephemeral workers untouched; the ephemeral machinery is deleted at flag graduation.
 - **CEO exists from day one, even with one board.** Project creation always creates the CEO. Global chat always talks to the CEO, who delegates to boards. This costs a fourth mandatory agent with little to do in single-board v1, in exchange for a mental model that doesn't shift when boards multiply.
 - **Hard movement constraints chosen for auditability.** Sequential column movement, no skipping, one agent per column, locked endpoint roles. These constraints are what make autonomous agent work legible and trustworthy; flexibility lives in advanced mode.
@@ -91,7 +91,7 @@ flowchart TB
 **Multi-board**
 
 - R12. A project supports multiple boards, each with its own team, columns, and config. Boards can run simultaneously.
-- R13. Multi-lane converts to multi-board: the lane concept is removed from the dashboard, and each existing workflow-in-use becomes a board. Existing tasks migrate to the board derived from their previous workflow; no task data is lost.
+- R13. Multi-lane converts to multi-board and the lane concept is removed entirely — in every mode, advanced included; there is no lane rendering path left. Each existing workflow-in-use becomes a board, boards are the universal task container, and existing tasks migrate to the board derived from their previous workflow; no task data is lost.
 
 **Simple / advanced mode**
 
