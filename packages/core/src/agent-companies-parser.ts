@@ -8,8 +8,6 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 
-import extractZip from "extract-zip";
-import { x as tarExtract } from "tar";
 import { parse as parseYaml } from "yaml";
 
 import type {
@@ -481,6 +479,7 @@ function resolveExtractionRoot(tempDir: string): string {
 }
 
 async function extractTarArchive(archivePath: string, outputDir: string): Promise<void> {
+  const { x: tarExtract } = await import("tar");
   await tarExtract({
     file: archivePath,
     cwd: outputDir,
@@ -530,6 +529,7 @@ export async function parseCompanyArchive(
     if (resolvedArchivePath.endsWith(".tar.gz") || resolvedArchivePath.endsWith(".tgz")) {
       await extractTarArchive(resolvedArchivePath, tempDir);
     } else if (resolvedArchivePath.endsWith(".zip")) {
+      const extractZip = (await import("extract-zip")).default;
       await extractZip(resolvedArchivePath, { dir: tempDir });
     } else {
       throw new AgentCompaniesParseError(

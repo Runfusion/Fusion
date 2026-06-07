@@ -659,6 +659,121 @@ name: Nested Archive CEO
     });
   });
 
+  describe("lazy-load isolation", () => {
+    it("does not load extract-zip or tar for pure manifest helpers", async () => {
+      const extractZipModuleFactory = vi.fn(() => ({
+        default: vi.fn(async () => undefined),
+      }));
+      const tarModuleFactory = vi.fn(() => ({
+        x: vi.fn(async () => undefined),
+      }));
+
+      vi.resetModules();
+      vi.doMock("extract-zip", extractZipModuleFactory);
+      vi.doMock("tar", tarModuleFactory);
+
+      const parserModule = await import("../agent-companies-parser.js");
+
+      const parsed = parserModule.parseYamlFrontmatter(`---
+name: Pure Helper
+---
+Body`);
+      expect(parsed.frontmatter.name).toBe("Pure Helper");
+      expect(parsed.body).toBe("Body");
+
+      const manifest = parserModule.parseAgentManifest(`---
+name: Pure Agent
+skills:
+  - review
+---
+Keep things tidy.`);
+      expect(manifest.name).toBe("Pure Agent");
+
+      const prepared = parserModule.prepareAgentCompaniesImport({
+        company: { name: "Pure Company" },
+        agents: [{ name: "Pure Agent", title: "Reviewer", instructionBody: "Keep things tidy." }],
+        teams: [],
+        projects: [],
+        tasks: [],
+      });
+      expect(prepared.items).toHaveLength(1);
+
+      const converted = parserModule.convertAgentCompanies({
+        company: { name: "Pure Company" },
+        agents: [{ name: "Pure Agent", title: "Reviewer", instructionBody: "Keep things tidy." }],
+        teams: [],
+        projects: [],
+        tasks: [],
+        skills: [],
+      });
+      expect(converted.inputs).toHaveLength(1);
+
+      expect(extractZipModuleFactory).not.toHaveBeenCalled();
+      expect(tarModuleFactory).not.toHaveBeenCalled();
+
+      vi.doUnmock("extract-zip");
+      vi.doUnmock("tar");
+      vi.resetModules();
+    });
+
+    it("dynamically imports extract-zip when parsing zip archives", async () => {
+      const extractZip = vi.fn(async (_archivePath: string, options: { dir: string }) => {
+        writeTextFile(join(options.dir, "zip-company", "COMPANY.md"), `---\nname: Mock Zip Company\n---`);
+        writeTextFile(join(options.dir, "zip-company", "agents", "ceo", "AGENTS.md"), `---\nname: Mock Zip CEO\n---`);
+      });
+      const extractZipModuleFactory = vi.fn(() => ({ default: extractZip }));
+
+      vi.resetModules();
+      vi.doMock("extract-zip", extractZipModuleFactory);
+
+      const parserModule = await import("../agent-companies-parser.js");
+      const root = createTempDir();
+      const archivePath = join(root, "company.zip");
+      writeFileSync(archivePath, Buffer.from("placeholder zip contents"));
+
+      const pkg = await parserModule.parseCompanyArchive(archivePath);
+      expect(pkg.company?.name).toBe("Mock Zip Company");
+      expect(pkg.agents[0]?.name).toBe("Mock Zip CEO");
+      expect(extractZipModuleFactory).toHaveBeenCalledTimes(1);
+      expect(extractZip).toHaveBeenCalledTimes(1);
+      expect(extractZip).toHaveBeenCalledWith(
+        archivePath,
+        expect.objectContaining({ dir: expect.any(String) }),
+      );
+
+      vi.doUnmock("extract-zip");
+      vi.resetModules();
+    });
+
+    it("dynamically imports tar when parsing tgz archives", async () => {
+      const tarExtract = vi.fn(async (options: { file: string; cwd: string }) => {
+        writeTextFile(join(options.cwd, "tar-company", "COMPANY.md"), `---\nname: Mock Tar Company\n---`);
+        writeTextFile(join(options.cwd, "tar-company", "agents", "ceo", "AGENTS.md"), `---\nname: Mock Tar CEO\n---`);
+      });
+      const tarModuleFactory = vi.fn(() => ({ x: tarExtract }));
+
+      vi.resetModules();
+      vi.doMock("tar", tarModuleFactory);
+
+      const parserModule = await import("../agent-companies-parser.js");
+      const root = createTempDir();
+      const archivePath = join(root, "company.tgz");
+      writeFileSync(archivePath, Buffer.from("placeholder tgz contents"));
+
+      const pkg = await parserModule.parseCompanyArchive(archivePath);
+      expect(pkg.company?.name).toBe("Mock Tar Company");
+      expect(pkg.agents[0]?.name).toBe("Mock Tar CEO");
+      expect(tarModuleFactory).toHaveBeenCalledTimes(1);
+      expect(tarExtract).toHaveBeenCalledTimes(1);
+      expect(tarExtract).toHaveBeenCalledWith(
+        expect.objectContaining({ file: archivePath, cwd: expect.any(String) }),
+      );
+
+      vi.doUnmock("tar");
+      vi.resetModules();
+    });
+  });
+
   describe("conversion", () => {
     it("maps AgentManifest to AgentCreateInput", () => {
       const input = agentManifestToAgentCreateInput({

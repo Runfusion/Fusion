@@ -7,6 +7,12 @@ directories:
   buildResources: src/icons
 
 files:
+  # pnpm installs workspace/runtime deps as symlinked package entries backed by the
+  # virtual store. These flat node_modules/X/**/* patterns only work when electron-builder
+  # follows the symlink chain from the published package entry, so every @fusion/core
+  # runtime dependency group that the desktop app can load must be listed here.
+  # If @fusion/core gains a new runtime dependency, add it (and any required leaf deps)
+  # here or packaged desktop builds can fail at startup/runtime with missing-module errors.
   - dist/**/*
   - package.json
   - node_modules/@fusion/core/**/*
@@ -29,6 +35,44 @@ files:
   - node_modules/debug/**/*
   - node_modules/ms/**/*
   - node_modules/sax/**/*
+  # @fusion/core archive parsing deps
+  - node_modules/extract-zip/**/*
+  - node_modules/get-stream/**/*
+  - node_modules/pump/**/*
+  - node_modules/end-of-stream/**/*
+  - node_modules/once/**/*
+  - node_modules/wrappy/**/*
+  - node_modules/yauzl/**/*
+  - node_modules/fd-slicer/**/*
+  - node_modules/pend/**/*
+  - node_modules/buffer-crc32/**/*
+  - node_modules/tar/**/*
+  - node_modules/@isaacs/fs-minipass/**/*
+  - node_modules/chownr/**/*
+  - node_modules/minipass/**/*
+  - node_modules/minizlib/**/*
+  - node_modules/yallist/**/*
+  - node_modules/yaml/**/*
+  # @fusion/core scheduling/automation deps
+  - node_modules/cron-parser/**/*
+  - node_modules/luxon/**/*
+  # @fusion/core discovery/system deps
+  - node_modules/bonjour-service/**/*
+  - node_modules/fast-deep-equal/**/*
+  - node_modules/multicast-dns/**/*
+  - node_modules/dns-packet/**/*
+  - node_modules/thunky/**/*
+  - node_modules/@leichtgewicht/ip-codec/**/*
+  - node_modules/check-disk-space/**/*
+  # @fusion/core optional docker runtime deps
+  - node_modules/dockerode/**/*
+  - node_modules/@balena/dockerignore/**/*
+  - node_modules/@grpc/grpc-js/**/*
+  - node_modules/@grpc/proto-loader/**/*
+  - node_modules/docker-modem/**/*
+  - node_modules/protobufjs/**/*
+  - node_modules/tar-fs/**/*
+  - node_modules/uuid/**/*
 
 asarUnpack:
   - node_modules/better-sqlite3/**/*
