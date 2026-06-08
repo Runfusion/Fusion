@@ -148,6 +148,15 @@ describe("nodeConfigSummary", () => {
     expect(nodeConfigSummary(node("foreach", { mode: "sequential" }))).toBe("sequential · shared");
   });
 
+  it("loop node → exit condition and iteration budget", () => {
+    expect(
+      nodeConfigSummary(node("loop", { exitWhen: { type: "output-contains", value: "DONE" }, maxIterations: 5 })),
+    ).toBe('until contains "DONE" · 5x');
+    expect(
+      nodeConfigSummary(node("loop", { exitWhen: { type: "output-matches", pattern: "READY-\\d+" } })),
+    ).toBe("until matches /READY-\\d+/ · 3x");
+  });
+
   it("step-review node → review type", () => {
     const summary = nodeConfigSummary(node("step-review", { type: "design" }));
     expect(summary).toBe("design review");

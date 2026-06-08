@@ -25,6 +25,7 @@ import {
   type ForeachEnvironment,
   type WorkflowStepInstancePersistence,
 } from "./workflow-graph-foreach.js";
+import { runLoop } from "./workflow-graph-loop.js";
 
 export type WorkflowNodeOutcome = "success" | "failure";
 
@@ -70,6 +71,8 @@ export interface WorkflowGraphExecutorDeps {
   onBranchProgress?: (progress: WorkflowBranchProgress) => void;
   /** Stable identifier for this run, used to key persisted branch state. */
   runId?: string;
+  /** Test seam for bounded loop timeout checks. Defaults to Date.now. */
+  runLoopNowForTests?: () => number;
   /**
    * Step-inversion (KTD-3, U3): fresh `Task.steps[]` accessor used by a `foreach`
    * node at expansion time. Defaults to reading `task.steps` off the run's task.
@@ -332,6 +335,25 @@ export class WorkflowGraphExecutor {
           const result: WorkflowNodeResult = {
             outcome: foreachResult.outcome,
             value: foreachResult.value,
+          };
+          context[`node:${node.id}:outcome`] = result.outcome;
+          if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+          return await traverseChildren(node, result);
+        }
+
+        if (node.kind === "loop") {
+          const loopResult = await runLoop(node, {
+            context,
+            runTemplateNode: (tNode, sig, contextOverride) =>
+              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig),
+            shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
+            signal: this.deps.signal,
+            now: this.deps.runLoopNowForTests,
+          });
+          visitedNodeIds.push(...loopResult.visitedNodeIds);
+          const result: WorkflowNodeResult = {
+            outcome: loopResult.outcome,
+            value: loopResult.value,
           };
           context[`node:${node.id}:outcome`] = result.outcome;
           if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;

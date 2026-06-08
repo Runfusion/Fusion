@@ -9,7 +9,8 @@ import { useWorkflowEditorCatalogs } from "./WorkflowEditorCatalogContext";
  *  step-inversion additions (KTD-3/4/12/15): "foreach" (runtime-expanding
  *  per-step template region, rendered as a React Flow group), "step-review"
  *  (per-step review verdicts as outcome edges), "parse-steps" (graph-native
- *  step-list parsing), and "code" (sandboxed TypeScript). */
+ *  step-list parsing), "loop" (bounded repeated template region), and "code"
+ *  (sandboxed TypeScript). */
 export type WorkflowEditorNodeKind =
   | "start"
   | "end"
@@ -21,6 +22,7 @@ export type WorkflowEditorNodeKind =
   | "split"
   | "join"
   | "foreach"
+  | "loop"
   | "step-review"
   | "parse-steps"
   | "code";
@@ -37,10 +39,10 @@ export interface WorkflowFlowNodeData {
   /** When true, render the shared error-state badge on the node (unplaced node
    *  or seam-in-branch). Set by the editor from validation. */
   errorBadge?: string;
-  /** foreach group only: true when it has no template children (deletion can
+  /** template group only: true when it has no template children (deletion can
    *  empty it even though the palette auto-populates one). */
   templateEmpty?: boolean;
-  /** foreach group only: the localized empty-state hint string. */
+  /** template group only: the localized empty-state hint string. */
   emptyHint?: string;
   [key: string]: unknown;
 }
@@ -56,6 +58,7 @@ const KIND_ICON: Record<WorkflowEditorNodeKind, typeof Play> = {
   split: Split,
   join: Merge,
   foreach: Repeat,
+  loop: Repeat,
   "step-review": ClipboardCheck,
   "parse-steps": ListChecks,
   code: Code2,
@@ -158,6 +161,35 @@ function ForeachGroupNode({ data }: { data: WorkflowFlowNodeData }) {
   );
 }
 
+function LoopGroupNode({ data }: { data: WorkflowFlowNodeData }) {
+  const maxIterations = data.config?.maxIterations as number | undefined;
+  const timeoutMs = data.config?.timeoutMs as number | undefined;
+  const isEmpty = data.templateEmpty === true;
+  return (
+    <div
+      className={`wf-foreach-group wf-loop-group${data.errorBadge ? " wf-node--error" : ""}`}
+      data-testid="wf-node-loop"
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="wf-foreach-header">
+        <span className="wf-node-icon">
+          <Repeat size={14} aria-hidden />
+        </span>
+        <span className="wf-node-label">{data.label || "loop"}</span>
+        <span className="wf-node-badge">{maxIterations ?? 3}x</span>
+        {timeoutMs != null && <span className="wf-node-badge">{timeoutMs}ms</span>}
+      </div>
+      {isEmpty && (
+        <div className="wf-foreach-empty" data-testid="wf-loop-empty">
+          {data.emptyHint || "Drag loop steps here"}
+        </div>
+      )}
+      {data.errorBadge && <WorkflowNodeErrorBadge message={data.errorBadge} />}
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 export const workflowNodeTypes = {
   start: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="start" />,
   end: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="end" />,
@@ -169,6 +201,7 @@ export const workflowNodeTypes = {
   split: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="split" />,
   join: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="join" />,
   foreach: ({ data }: NodeProps) => <ForeachGroupNode data={data as WorkflowFlowNodeData} />,
+  loop: ({ data }: NodeProps) => <LoopGroupNode data={data as WorkflowFlowNodeData} />,
   "step-review": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="step-review" />,
   "parse-steps": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="parse-steps" />,
   code: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="code" />,

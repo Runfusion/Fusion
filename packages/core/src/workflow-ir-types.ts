@@ -3,7 +3,8 @@
  *  step-inversion additions (FN step-inversion, KTD-3/4/12/15): `foreach`
  *  (runtime-expanding per-step template region), `step-review` (per-step review
  *  verdicts as outcome edges), `parse-steps` (graph-native step-list parsing),
- *  and `code` (sandboxed TypeScript); and the unified PR-entity additions (U3):
+ *  `code` (sandboxed TypeScript), and `loop` (bounded repeat-until region);
+ *  and the unified PR-entity additions (U3):
  *  `pr-create` (open/reuse the PR + write the entity), `pr-respond` (the
  *  review-response run), and `pr-merge` (tool-side merge with expectedHeadOid). */
 export type WorkflowIrNodeKind =
@@ -16,6 +17,7 @@ export type WorkflowIrNodeKind =
   | "split"
   | "join"
   | "foreach"
+  | "loop"
   | "step-review"
   | "parse-steps"
   | "code"
@@ -117,6 +119,32 @@ export interface WorkflowForeachConfig {
   mode?: "sequential" | "parallel";
   concurrency?: number;
   isolation?: "shared" | "worktree";
+  template: {
+    nodes: WorkflowIrNode[];
+    edges: WorkflowIrEdge[];
+  };
+}
+
+export type WorkflowLoopExitCondition =
+  | {
+      type: "output-contains";
+      /** Template node id whose result value is inspected. Defaults to template exit node. */
+      nodeId?: string;
+      value: string;
+    }
+  | {
+      type: "output-matches";
+      /** Template node id whose result value is inspected. Defaults to template exit node. */
+      nodeId?: string;
+      pattern: string;
+      flags?: string;
+    };
+
+/** Config for a bounded repeat-until workflow region. */
+export interface WorkflowLoopConfig {
+  maxIterations?: number;
+  timeoutMs?: number;
+  exitWhen: WorkflowLoopExitCondition;
   template: {
     nodes: WorkflowIrNode[];
     edges: WorkflowIrEdge[];

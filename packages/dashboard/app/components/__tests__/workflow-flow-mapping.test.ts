@@ -412,6 +412,100 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
     expect(parse?.config).toMatchObject({ artifact: "PROMPT.md", parser: "step-headings" });
   });
 
+  it("round-trips loop templates through parented group children", () => {
+    const loopIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "bounded-loop",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "retry",
+          kind: "loop",
+          column: "in-progress",
+          config: {
+            maxIterations: 4,
+            timeoutMs: 60000,
+            exitWhen: { type: "output-matches", nodeId: "check", pattern: "DONE|COMPLETE" },
+            template: {
+              nodes: [
+                { id: "try", kind: "prompt", config: { prompt: "try once" } },
+                { id: "check", kind: "gate", config: { prompt: "done?" } },
+              ],
+              edges: [{ from: "try", to: "check", condition: "success" }],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "retry", condition: "success" },
+        { from: "retry", to: "end", condition: "success" },
+      ],
+    };
+    const { nodes, edges } = irToFlow(makeDef(loopIr));
+
+    const group = nodes.find((n) => n.id === "retry");
+    expect(group?.type).toBe("loop");
+    expect(group?.data.kind).toBe("loop");
+    expect(nodes.filter((n) => n.parentId === "retry").map((n) => templateNodeIdFromChild("retry", n.id))).toEqual([
+      "try",
+      "check",
+    ]);
+
+    const { ir: out } = flowToIr("bounded-loop", nodes, edges, columnsOf(makeDef(loopIr)));
+    if (out.version !== "v2") throw new Error("expected v2");
+    const retry = out.nodes.find((n) => n.id === "retry");
+    expect(retry?.kind).toBe("loop");
+    expect(retry?.config).toMatchObject({
+      maxIterations: 4,
+      timeoutMs: 60000,
+      exitWhen: { type: "output-matches", nodeId: "check", pattern: "DONE|COMPLETE" },
+    });
+    const template = retry?.config?.template as { nodes: { id: string }[]; edges: { from: string; to: string }[] };
+    expect(template.nodes.map((n) => n.id)).toEqual(["try", "check"]);
+    expect(template.edges).toEqual([{ from: "try", to: "check", condition: "success" }]);
+  });
+
+  it("inserts loop fragments with their template children intact", () => {
+    const fragment: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "fragment",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start" },
+        {
+          id: "retry",
+          kind: "loop",
+          config: {
+            maxIterations: 2,
+            exitWhen: { type: "output-contains", value: "DONE" },
+            template: {
+              nodes: [{ id: "try", kind: "prompt", config: { prompt: "again" } }],
+              edges: [],
+            },
+          },
+        },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "retry" },
+        { from: "retry", to: "end" },
+      ],
+    };
+    const inserted = insertFragment([], [], parseWorkflowIr(fragment), { x: 10, y: 20 }, {
+      [foreachChildFlowId("retry", "try")]: { x: 86, y: 132 },
+    });
+    const group = inserted.nodes.find((n) => n.data.kind === "loop");
+    const child = inserted.nodes.find((n) => n.parentId === group?.id);
+
+    expect(group).toBeTruthy();
+    expect(group?.type).toBe("loop");
+    expect(child?.position).toEqual({ x: 86, y: 132 });
+    expect(inserted.nodes.filter((n) => n.parentId === group?.id)).toHaveLength(1);
+    expect(inserted.edges).toHaveLength(0);
+  });
+
   it("round-trips a code node config (source + timeoutMs)", () => {
     const codeIr: WorkflowDefinition["ir"] = {
       version: "v1",

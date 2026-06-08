@@ -70,6 +70,8 @@ export type {
   WorkflowJoinBranchFailure,
   // Step-inversion (KTD-3/12/13): foreach / artifacts / custom-field IR types.
   WorkflowForeachConfig,
+  WorkflowLoopConfig,
+  WorkflowLoopExitCondition,
   WorkflowIrArtifact,
   WorkflowFieldDefinition,
   WorkflowFieldType,

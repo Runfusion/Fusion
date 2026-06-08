@@ -91,7 +91,7 @@ A v2 column can optionally name a **permanent agent** from the agent registry, s
 
 **Write-time validation.** Saving a workflow validates agent references: an unknown `agentId` is rejected with a typed 4xx naming the column. Binding an agent whose permission policy is broader than the project default requires an explicit policy-escalation confirmation (`confirmPolicyEscalation`) at save time, so override cannot silently re-key action gates to a more-privileged agent.
 
-### Workflow IR v2 — step inversion (foreach, step-review, parse-steps, code)
+### Workflow IR v2 — step inversion (foreach, loop, step-review, parse-steps, code)
 
 The **step-inversion** track makes task *steps* themselves workflow-modelable. Today the engine owns step policy end-to-end (PROMPT.md parsing, per-step review verdicts, RETHINK/REVISE control flow, merge blocking). Step inversion extracts exactly one new substrate capability — *run one step inside a task's session, and reset one step to its baseline* — and exposes everything else as authored graph structure. It is additive to IR v2 and gated by `experimentalFeatures.workflowGraphExecutor`. The default coding workflow is untouched and byte-identical (it keeps its monolithic `execute` seam and is the parity oracle); inversion is opt-in via custom workflows and a new built-in **stepwise coding workflow**.
 
@@ -118,6 +118,26 @@ The **step-inversion** track makes task *steps* themselves workflow-modelable. T
 - The template has exactly one entry and one exit. A `step-execute` seam node is legal **only** inside a foreach template; `step-execute` may not appear in `split` branches.
 - Expansion happens when the walk reaches the node; the step count is **pinned** at expansion and persisted (PROMPT.md edits afterward do not re-expand — a `pin-mismatch` failure surfaces if the live step list later disagrees on resume).
 - Zero steps → the foreach traverses its `success` edge immediately (no merge blocker, matching today).
+
+#### `loop` node — a bounded repeated template region
+
+`loop` repeats an inline template subgraph until a configured output condition matches or a budget is exhausted. Config:
+
+```ts
+{ template: { nodes, edges },
+  exitWhen: {
+    type: "output-contains", value: string, nodeId?: string
+  } | {
+    type: "output-matches", pattern: string, flags?: string, nodeId?: string
+  },
+  maxIterations?: number,                  // default 3, cap 50
+  timeoutMs?: number }                     // default 300000, cap 3600000
+```
+
+- The template has exactly one entry and one exit. If `exitWhen.nodeId` is omitted, the loop tests the template exit node's output.
+- Loop templates may contain ordinary workflow nodes, but not nested `loop`/`foreach` regions, foreach-only `step-execute` seam nodes, rework edges, or normal cycles. The repeated execution is represented by the loop node itself.
+- Success emits the normal `success` outcome and writes `node:<loopId>:loop` context with `iterations`, `exitReason: "matched"`, `finalValue`, and per-iteration history.
+- Exhausting `maxIterations` emits `failure` with value `loop-iteration-exhausted`; exceeding `timeoutMs` emits `failure` with value `loop-timeout`. Authors can route those via `outcome:loop-iteration-exhausted` or `outcome:loop-timeout` edges.
 
 #### Parallel mode & the `(depends:)` annotation
 

@@ -155,6 +155,8 @@ export type {
   WorkflowColumnAgent,
   // Foreach / artifacts / custom fields (step inversion).
   WorkflowForeachConfig,
+  WorkflowLoopConfig,
+  WorkflowLoopExitCondition,
   WorkflowIrArtifact,
   WorkflowFieldDefinition,
   WorkflowFieldType,

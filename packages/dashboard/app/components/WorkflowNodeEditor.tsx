@@ -200,6 +200,7 @@ const PALETTE: Array<{ kind: WorkflowEditorNodeKind; label: string; icon: typeof
   { kind: "join", label: "Join", icon: Merge, presetConfig: { mode: "all", onBranchFailure: "collect" } },
   // Step-inversion (KTD-3/4/12/15).
   { kind: "foreach", label: "For-each step", icon: Repeat, presetConfig: { source: "task-steps" } },
+  { kind: "loop", label: "Loop", icon: Repeat, presetConfig: { maxIterations: 3, exitWhen: { type: "output-contains", value: "DONE" } } },
   { kind: "step-review", label: "Step review", icon: ClipboardCheck, presetConfig: { type: "code" } },
   { kind: "parse-steps", label: "Parse steps", icon: ListChecks, presetConfig: { artifact: "PROMPT.md", parser: "step-headings" } },
   { kind: "code", label: "Code", icon: Code2, presetConfig: { source: "" } },
@@ -249,6 +250,7 @@ const USER_NODE_KINDS: ReadonlySet<WorkflowEditorNodeKind> = new Set<WorkflowEdi
   "split",
   "join",
   "foreach",
+  "loop",
   "step-review",
   "parse-steps",
   "merge",
@@ -1222,19 +1224,24 @@ function InnerEditor({
       const baseConfig = kind === "gate" ? { gateMode: "gate" } : {};
       const config = presetConfig ? { ...baseConfig, ...presetConfig } : baseConfig;
 
-      if (kind === "foreach") {
-        // A foreach renders as a React Flow group node. It auto-populates ONE
-        // step-execute child (a prompt node with seam=step-execute) so the group
-        // is never confusingly empty (KTD-3 / U8). The group node must precede
-        // its child in the array for React Flow's parent extent to apply.
+      if (kind === "foreach" || kind === "loop") {
+        // Template groups render as React Flow group nodes. Foreach seeds the
+        // required step-execute seam; loop seeds a regular prompt so authors can
+        // wire the repeated body immediately. The group node must precede its
+        // child for React Flow's parent extent to apply.
         const childId = foreachChildFlowId(id, newNodeId());
+        const childLabel =
+          kind === "foreach"
+            ? t("workflowNodes.stepExecuteLabel", "Step execute")
+            : t("workflowNodes.loopStepLabel", "Loop step");
+        const childConfig = kind === "foreach" ? { seam: "step-execute" } : { prompt: "" };
         setNodes((ns) => [
           ...ns,
           {
             id,
-            type: "foreach",
+            type: kind,
             position: { x: 200 + ns.length * 40, y: 240 + (ns.length % 3) * 70 },
-            data: { kind: "foreach", label, config, templateEmpty: false },
+            data: { kind, label, config, templateEmpty: false },
             style: { width: FOREACH_GROUP_WIDTH, height: FOREACH_GROUP_HEIGHT },
             deletable: true,
           },
@@ -1246,8 +1253,8 @@ function InnerEditor({
             extent: "parent",
             data: {
               kind: "prompt",
-              label: t("workflowNodes.stepExecuteLabel", "Step execute"),
-              config: { seam: "step-execute" },
+              label: childLabel,
+              config: childConfig,
             },
             deletable: true,
           },
@@ -1779,21 +1786,25 @@ function InnerEditor({
   // (WorkflowNodeErrorBadge) renders both, keyed off data.errorBadge.
   const nodesForRender = useMemo(() => {
     const unplacedSet = new Set(unplaced);
-    // Count current template children per foreach group so the empty-state hint
-    // (KTD-3 / U8) reflects live deletions even though the palette seeds one.
+    // Count current template children per template group so the empty-state hint
+    // reflects live deletions even though the palette seeds one.
     const childCount = new Map<string, number>();
     for (const n of nodes) {
       if (n.parentId) childCount.set(n.parentId, (childCount.get(n.parentId) ?? 0) + 1);
     }
-    const emptyHint = t("workflowNodes.foreachEmptyHint", "Drag a step-execute node here");
     return nodes.map((n) => {
       let errorBadge: string | undefined;
       if (unplacedSet.has(n.id)) errorBadge = t("workflowColumns.nodeUnplaced", "Not placed in a column");
       if (serverNodeError?.nodeId === n.id) errorBadge = serverNodeError.message;
-      const templateEmpty = n.data.kind === "foreach" ? (childCount.get(n.id) ?? 0) === 0 : undefined;
+      const isTemplateGroup = n.data.kind === "foreach" || n.data.kind === "loop";
+      const emptyHint =
+        n.data.kind === "loop"
+          ? t("workflowNodes.loopEmptyHint", "Drag loop steps here")
+          : t("workflowNodes.foreachEmptyHint", "Drag a step-execute node here");
+      const templateEmpty = isTemplateGroup ? (childCount.get(n.id) ?? 0) === 0 : undefined;
       if (
         errorBadge === n.data.errorBadge &&
-        (n.data.kind !== "foreach" || (templateEmpty === n.data.templateEmpty && n.data.emptyHint === emptyHint))
+        (!isTemplateGroup || (templateEmpty === n.data.templateEmpty && n.data.emptyHint === emptyHint))
       )
         return n;
       return {
@@ -1801,7 +1812,7 @@ function InnerEditor({
         data: {
           ...n.data,
           errorBadge,
-          ...(n.data.kind === "foreach" ? { templateEmpty, emptyHint } : {}),
+          ...(isTemplateGroup ? { templateEmpty, emptyHint } : {}),
         },
       };
     });
@@ -3207,6 +3218,184 @@ function InnerEditor({
                         {t(
                           "workflowNodes.foreachNote",
                           "Expands once per planned step. Drop a step-execute node (and optional step-review) into the region.",
+                        )}
+                      </p>
+                    </>
+                  );
+                })()
+              ) : null}
+
+              {selectedNode.data.kind === "loop" ? (
+                (() => {
+                  const exitWhen =
+                    selectedNode.data.config?.exitWhen &&
+                    typeof selectedNode.data.config.exitWhen === "object"
+                      ? (selectedNode.data.config.exitWhen as Record<string, unknown>)
+                      : { type: "output-contains", value: "DONE" };
+                  const exitType = String(exitWhen.type ?? "output-contains");
+                  const exitText =
+                    exitType === "output-matches"
+                      ? String(exitWhen.pattern ?? "")
+                      : String(exitWhen.value ?? "");
+                  return (
+                    <>
+                      <label className="wf-field">
+                        <span>{t("workflowNodes.loopExitType", "Exit condition")}</span>
+                        <select
+                          value={exitType}
+                          onChange={(e) => {
+                            const nextType = e.target.value;
+                            updateSelectedData({
+                              config: (prev) => {
+                                const current =
+                                  prev.exitWhen && typeof prev.exitWhen === "object"
+                                    ? (prev.exitWhen as Record<string, unknown>)
+                                    : {};
+                                const text =
+                                  nextType === "output-matches"
+                                    ? String(current.pattern ?? current.value ?? "")
+                                    : String(current.value ?? current.pattern ?? "");
+                                const nextExitWhen: Record<string, unknown> = {
+                                  ...current,
+                                  type: nextType,
+                                };
+                                delete nextExitWhen.pattern;
+                                delete nextExitWhen.value;
+                                return {
+                                  ...prev,
+                                  exitWhen:
+                                    nextType === "output-matches"
+                                      ? { ...nextExitWhen, pattern: text }
+                                      : { ...nextExitWhen, value: text },
+                                };
+                              },
+                            });
+                          }}
+                        >
+                          <option value="output-contains">
+                            {t("workflowNodes.loopOutputContains", "Output contains")}
+                          </option>
+                          <option value="output-matches">
+                            {t("workflowNodes.loopOutputMatches", "Output matches regex")}
+                          </option>
+                        </select>
+                      </label>
+
+                      <label className="wf-field">
+                        <span>
+                          {exitType === "output-matches"
+                            ? t("workflowNodes.loopPattern", "Pattern")
+                            : t("workflowNodes.loopValue", "Value")}
+                        </span>
+                        <input
+                          value={exitText}
+                          placeholder={exitType === "output-matches" ? "DONE|COMPLETE" : "DONE"}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            updateSelectedData({
+                              config: (prev) => {
+                                const current =
+                                  prev.exitWhen && typeof prev.exitWhen === "object"
+                                    ? (prev.exitWhen as Record<string, unknown>)
+                                    : {};
+                                return {
+                                  ...prev,
+                                  exitWhen:
+                                    exitType === "output-matches"
+                                      ? { ...current, type: exitType, pattern: value }
+                                      : { ...current, type: exitType, value },
+                                };
+                              },
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label className="wf-field">
+                        <span>{t("workflowNodes.loopNodeId", "Watch node id (optional)")}</span>
+                        <input
+                          value={String(exitWhen.nodeId ?? "")}
+                          placeholder={t("workflowNodes.loopNodeIdPlaceholder", "Template exit node")}
+                          onChange={(e) => {
+                            const nodeId = e.target.value.trim();
+                            updateSelectedData({
+                              config: (prev) => {
+                                const current =
+                                  prev.exitWhen && typeof prev.exitWhen === "object"
+                                    ? (prev.exitWhen as Record<string, unknown>)
+                                    : { type: "output-contains", value: "DONE" };
+                                const next = { ...current };
+                                if (nodeId) next.nodeId = nodeId;
+                                else delete next.nodeId;
+                                return { ...prev, exitWhen: next };
+                              },
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label className="wf-field">
+                        <span>{t("workflowNodes.loopMaxIterations", "Max iterations")}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={50}
+                          placeholder="3"
+                          value={
+                            selectedNode.data.config?.maxIterations != null
+                              ? String(selectedNode.data.config.maxIterations)
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value.trim();
+                            updateSelectedData({
+                              config: (prev) => {
+                                const next = { ...prev };
+                                if (val === "") delete next.maxIterations;
+                                else {
+                                  const num = parseInt(val, 10);
+                                  if (!isNaN(num)) next.maxIterations = num;
+                                }
+                                return next;
+                              },
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label className="wf-field">
+                        <span>{t("workflowNodes.loopTimeoutMs", "Timeout (ms)")}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={3600000}
+                          placeholder="300000"
+                          value={
+                            selectedNode.data.config?.timeoutMs != null
+                              ? String(selectedNode.data.config.timeoutMs)
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value.trim();
+                            updateSelectedData({
+                              config: (prev) => {
+                                const next = { ...prev };
+                                if (val === "") delete next.timeoutMs;
+                                else {
+                                  const num = parseInt(val, 10);
+                                  if (!isNaN(num)) next.timeoutMs = num;
+                                }
+                                return next;
+                              },
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <p className="wf-inspector-note wf-inspector-note--info">
+                        {t(
+                          "workflowNodes.loopNote",
+                          "Repeats the template until the selected output matches, an iteration limit is reached, or the timeout expires.",
                         )}
                       </p>
                     </>

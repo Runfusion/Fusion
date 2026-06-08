@@ -23,6 +23,19 @@ interface WorkflowForeachConfig {
   template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] };
 }
 
+interface WorkflowLoopConfig {
+  maxIterations?: number;
+  timeoutMs?: number;
+  exitWhen?: {
+    type: "output-contains" | "output-matches";
+    nodeId?: string;
+    value?: string;
+    pattern?: string;
+    flags?: string;
+  };
+  template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] };
+}
+
 // WorkflowFieldDefinition is imported from @fusion/core above (KTD-13/14).
 // Re-exported so existing importers that reference WorkflowFieldDefinitionShape
 // can migrate; callers should prefer WorkflowFieldDefinition directly.
@@ -159,6 +172,19 @@ function foreachConfigOf(node: WorkflowIrNode): WorkflowForeachConfig | undefine
   return cfg as WorkflowForeachConfig;
 }
 
+function loopConfigOf(node: WorkflowIrNode): WorkflowLoopConfig | undefined {
+  if (node.kind !== "loop") return undefined;
+  const cfg = node.config as Partial<WorkflowLoopConfig> | undefined;
+  if (!cfg || !cfg.template) return undefined;
+  return cfg as WorkflowLoopConfig;
+}
+
+function groupTemplateConfigOf(
+  node: WorkflowIrNode,
+): WorkflowForeachConfig | WorkflowLoopConfig | undefined {
+  return foreachConfigOf(node) ?? loopConfigOf(node);
+}
+
 /** CSS class for an edge given its condition + rework kind. Rework takes
  *  precedence; failure edges get the distinct failure styling; success and other
  *  conditions get no class (default styling). R2's two-channel rule (label always
@@ -222,9 +248,9 @@ export function irToFlow(def: WorkflowDefinition): {
     // layout exists; otherwise we honor the saved absolute position.
     const fallbackY = colIndex >= 0 ? bandTop(colIndex) + 70 : 120;
 
-    const foreachCfg = foreachConfigOf(node);
-    if (foreachCfg) {
-      const template = foreachCfg.template;
+    const groupCfg = groupTemplateConfigOf(node);
+    if (groupCfg) {
+      const template = groupCfg.template;
       // Render template nodes as children of this group (parentId = group id).
       template.nodes.forEach((inner, innerIdx) => {
         const childFlowId = foreachChildFlowId(node.id, inner.id);
@@ -252,10 +278,10 @@ export function irToFlow(def: WorkflowDefinition): {
       const { template: _t, ...restCfg } = (node.config ?? {}) as Record<string, unknown>;
       return {
         id: node.id,
-        type: "foreach",
+        type: kind,
         position: pos ?? { x: 80 + index * 180, y: fallbackY },
         data: {
-          kind: "foreach",
+          kind,
           label: nodeLabel(node),
           config: { ...restCfg },
           column,
@@ -329,7 +355,9 @@ export function flowToIr(
       childrenByGroup.set(n.parentId, arr);
     }
   }
-  const groupIds = new Set(topNodes.filter((n) => n.data.kind === "foreach").map((n) => n.id));
+  const groupIds = new Set(
+    topNodes.filter((n) => n.data.kind === "foreach" || n.data.kind === "loop").map((n) => n.id),
+  );
   const hasFields = Array.isArray(fields) && fields.length > 0;
   const hasSettings = Array.isArray(settings) && settings.length > 0;
   // Fields and settings are v2-only declarations: a workflow with either but no
@@ -344,7 +372,7 @@ export function flowToIr(
     if (data.kind === "merge") {
       return { id: localId, kind: "prompt", config: { ...(config ?? {}), seam: "merge" } };
     }
-    if (data.kind === "foreach") {
+    if (data.kind === "foreach" || data.kind === "loop") {
       // Reassemble the template from this group's children.
       const children = childrenByGroup.get(node.id) ?? [];
       const templateNodes: WorkflowIrNode[] = children.map((c) => {
@@ -359,7 +387,7 @@ export function flowToIr(
       const baseCfg = (config ?? {}) as Record<string, unknown>;
       return {
         id: localId,
-        kind: "foreach",
+        kind: data.kind,
         config: { ...baseCfg, template: { nodes: templateNodes, edges: templateEdges } },
       };
     }
@@ -466,7 +494,7 @@ function isProtectedFromDelete(node: FlowNode<WorkflowFlowNodeData>): boolean {
  * Delete the requested node and/or edge ids from the flow graph, applying R6's
  * cascade rules:
  *   - Deleting a node removes ALL edges incident to it (no auto-bridging).
- *   - Deleting a `foreach` group node also deletes its template children
+ *   - Deleting a `foreach`/`loop` group node also deletes its template children
  *     (nodes with `parentId === groupId`) and every edge incident to those
  *     children (React Flow does not cascade parents — handled explicitly).
  *   - `start`/`end` nodes and column band nodes are never deleted: they are
@@ -484,14 +512,14 @@ export function cascadeDelete(
   const requested = new Set(ids);
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
-  // Resolve which node ids are actually deletable, expanding foreach groups to
+  // Resolve which node ids are actually deletable, expanding template groups to
   // their template children. Protected nodes are dropped from the request.
   const deleteNodeIds = new Set<string>();
   for (const id of requested) {
     const node = nodeById.get(id);
     if (!node || isProtectedFromDelete(node)) continue;
     deleteNodeIds.add(id);
-    if (node.data.kind === "foreach") {
+    if (node.data.kind === "foreach" || node.data.kind === "loop") {
       for (const child of nodes) {
         if (child.parentId === id) deleteNodeIds.add(child.id);
       }
@@ -518,7 +546,7 @@ export function cascadeDelete(
 
 /** Editor node kinds whose edges expose a success/failure condition select
  *  (KTD-2). step-review uses verdict controls; all other kinds are read-only. */
-const CONDITION_EDITABLE_KINDS = new Set<string>(["prompt", "script", "gate", "code", "foreach"]);
+const CONDITION_EDITABLE_KINDS = new Set<string>(["prompt", "script", "gate", "code", "foreach", "loop"]);
 
 /** Decide what the edge inspector renders for an edge sourced from `sourceKind`:
  *  - "verdicts": step-review verdict select + rework checkbox (existing);
@@ -899,7 +927,7 @@ export function fragmentSeamConflicts(
 
 /** Build a React Flow node from a single IR node at an absolute position — the
  *  same mapping irToFlow applies (kind→type via editorKind, data {kind,label,
- *  config}, deletable). foreach template bodies are remapped by the caller; this
+ *  config}, deletable). Template group bodies are remapped by the caller; this
  *  carries config (including any template) through verbatim. */
 function irNodeToFlowNode(
   node: WorkflowIrNode,
@@ -958,8 +986,8 @@ export function insertFragment(
   const minY = placed.length ? Math.min(...placed.map((p) => p.y)) : 0;
 
   const insertedNodeIds: string[] = [];
-  // foreach template children are expanded into parented child flow nodes (the
-  // same way irToFlow does), so an inserted foreach round-trips its full template
+  // Template group children are expanded into parented child flow nodes (the
+  // same way irToFlow does), so an inserted group round-trips its full template
   // through flowToIr instead of dropping config.template (which flowToIr would
   // otherwise rebuild as an empty template from the absent children).
   const childNodes: FlowNode<WorkflowFlowNodeData>[] = [];
@@ -971,15 +999,21 @@ export function insertFragment(
     const pos = fromLayout
       ? { x: position.x + (fromLayout.x - minX), y: position.y + (fromLayout.y - minY) }
       : { x: position.x + index * 180, y: position.y };
-    const foreachCfg = foreachConfigOf(node);
-    if (foreachCfg) {
-      const template = foreachCfg.template;
+    const groupCfg = groupTemplateConfigOf(node);
+    if (groupCfg) {
+      const template = groupCfg.template;
+      const groupKind = editorKind(node);
       template.nodes.forEach((inner, innerIdx) => {
         const innerKind = editorKind(inner);
+        const childPos =
+          layout?.[foreachChildFlowId(node.id, inner.id)] ?? {
+            x: FOREACH_CHILD_X + innerIdx * FOREACH_CHILD_STEP_X,
+            y: FOREACH_CHILD_Y,
+          };
         childNodes.push({
           id: foreachChildFlowId(id, inner.id),
           type: innerKind,
-          position: { x: FOREACH_CHILD_X + innerIdx * FOREACH_CHILD_STEP_X, y: FOREACH_CHILD_Y },
+          position: childPos,
           parentId: id,
           extent: "parent",
           data: { kind: innerKind, label: nodeLabel(inner), config: { ...(inner.config ?? {}) } },
@@ -993,10 +1027,10 @@ export function insertFragment(
       const { template: _t, ...restCfg } = (node.config ?? {}) as Record<string, unknown>;
       return {
         id,
-        type: "foreach",
+        type: groupKind,
         position: pos,
         data: {
-          kind: "foreach",
+          kind: groupKind,
           label: nodeLabel(node),
           config: { ...restCfg },
           templateEmpty: template.nodes.length === 0,
@@ -1031,11 +1065,11 @@ export function insertFragment(
   };
 }
 
-/** Remap a foreach template's internal node ids + edges to fresh ids. Returns a
+/** Remap a template group's internal node ids + edges to fresh ids. Returns a
  *  new template object; the original is untouched. Template-local ids are scoped
  *  to the template, so a fresh local id space suffices (and keeps config compact
  *  rather than reusing global ids). */
-function copyForeachTemplate(
+function copyGroupTemplate(
   template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] },
   innerMap: Map<string, string>,
 ): { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] } {
@@ -1049,9 +1083,9 @@ function copyForeachTemplate(
   return { nodes, edges };
 }
 
-/** Deep-ish copy of an IR node under a new id, recursing into a foreach
+/** Deep-ish copy of an IR node under a new id, recursing into a template group
  *  template's internal node references so they remain self-consistent. When the
- *  node is a foreach, its template-local id remap is recorded in `templateMaps`
+ *  node is a template group, its template-local id remap is recorded in `templateMaps`
  *  keyed by the node's ORIGINAL id, so the caller can remap namespaced
  *  `${groupId}::${templateNodeId}` layout keys consistently. */
 function copyIrNode(
@@ -1060,10 +1094,10 @@ function copyIrNode(
   templateMaps?: Map<string, Map<string, string>>,
 ): WorkflowIrNode {
   const config = node.config ? { ...node.config } : undefined;
-  const foreach = foreachConfigOf(node);
-  if (foreach && config) {
+  const group = groupTemplateConfigOf(node);
+  if (group && config) {
     const innerMap = new Map<string, string>();
-    config.template = copyForeachTemplate(foreach.template, innerMap);
+    config.template = copyGroupTemplate(group.template, innerMap);
     templateMaps?.set(node.id, innerMap);
   }
   const copy: WorkflowIrNode = { id: newId, kind: node.kind };
@@ -1076,7 +1110,7 @@ function copyIrNode(
  * Full-graph copy with fresh ids (R7): every top-level node id is remapped to a
  * fresh id, edges are rewired, and the layout map's keys are remapped to match.
  * v2 columns/fields/artifacts are preserved untouched (they hold no node id
- * references). foreach template bodies have their internal node ids + edges
+ * references). Template group bodies have their internal node ids + edges
  * remapped consistently too. Returns a NEW ir + layout; inputs are not mutated.
  */
 export function copyIrWithFreshIds(
@@ -1086,7 +1120,7 @@ export function copyIrWithFreshIds(
   const idMap = new Map<string, string>();
   for (const n of ir.nodes) idMap.set(n.id, newNodeId());
 
-  // Per foreach group (by ORIGINAL group id): its template-local id remap, so
+  // Per template group (by ORIGINAL group id): its template-local id remap, so
   // namespaced layout keys `${groupId}::${templateNodeId}` can be remapped to
   // `${newGroupId}::${newTemplateNodeId}` consistently.
   const templateMaps = new Map<string, Map<string, string>>();
