@@ -456,17 +456,6 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
                 </select>
               </label>
             )}
-            {onCreateWorkflow && (
-              <button
-                type="button"
-                className="btn btn-icon btn-sm board-workflow-create-btn"
-                onClick={onCreateWorkflow}
-                title="New workflow"
-                aria-label="New workflow"
-              >
-                <Plus size={15} />
-              </button>
-            )}
             {onOpenWorkflowEditor && (
               <button
                 type="button"
@@ -476,6 +465,17 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
                 aria-label="Edit workflows"
               >
                 <Pencil size={15} />
+              </button>
+            )}
+            {onCreateWorkflow && (
+              <button
+                type="button"
+                className="btn btn-icon btn-sm board-workflow-create-btn"
+                onClick={onCreateWorkflow}
+                title="New workflow"
+                aria-label="New workflow"
+              >
+                <Plus size={15} />
               </button>
             )}
           </div>

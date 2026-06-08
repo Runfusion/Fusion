@@ -921,6 +921,12 @@ describe("Board", () => {
       });
     }
 
+    function workflowToolbarActionNames() {
+      const toolbar = document.querySelector(".board-workflow-toolbar");
+      expect(toolbar).not.toBeNull();
+      return Array.from(toolbar?.querySelectorAll("button") ?? []).map((button) => button.getAttribute("aria-label"));
+    }
+
     it("flag OFF renders the legacy single-lane board byte-identically", async () => {
       fetchBoardWorkflowsMock.mockResolvedValue({
         flagEnabled: false,
@@ -1000,6 +1006,7 @@ describe("Board", () => {
 
       await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
       expect(screen.queryByLabelText("Select workflow")).toBeNull();
+      expect(workflowToolbarActionNames()).toEqual(["Edit workflows", "New workflow"]);
 
       fireEvent.click(screen.getByRole("button", { name: "New workflow" }));
       fireEvent.click(screen.getByRole("button", { name: "Edit workflows" }));
@@ -1007,8 +1014,30 @@ describe("Board", () => {
       expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
     });
 
+    it("preserves workflow toolbar partial action visibility", async () => {
+      const onCreateWorkflow = vi.fn();
+      enableFlag({}, [DEFAULT_WORKFLOW]);
+      const { unmount } = renderBoard({ onCreateWorkflow });
+
+      await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
+      expect(workflowToolbarActionNames()).toEqual(["New workflow"]);
+      fireEvent.click(screen.getByRole("button", { name: "New workflow" }));
+      expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
+      unmount();
+
+      const onOpenWorkflowEditor = vi.fn();
+      enableFlag({}, [DEFAULT_WORKFLOW]);
+      renderBoard({ onOpenWorkflowEditor });
+
+      await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
+      expect(workflowToolbarActionNames()).toEqual(["Edit workflows"]);
+      fireEvent.click(screen.getByRole("button", { name: "Edit workflows" }));
+      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
+    });
+
     it("renders one selected workflow at a time and switches workflows from the dropdown", async () => {
       const onCreateWorkflow = vi.fn();
+      const onOpenWorkflowEditor = vi.fn();
       enableFlag(
         { "FN-1": "builtin:coding", "FN-2": "wf-custom", "FN-3": "wf-custom" },
         [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
@@ -1020,11 +1049,15 @@ describe("Board", () => {
           mkTask({ id: "FN-3", column: "intake" }),
         ],
         onCreateWorkflow,
+        onOpenWorkflowEditor,
       });
       const selector = await screen.findByLabelText("Select workflow") as HTMLSelectElement;
       expect(selector.value).toBe("builtin:coding");
+      expect(workflowToolbarActionNames()).toEqual(["Edit workflows", "New workflow"]);
       fireEvent.click(screen.getByRole("button", { name: "New workflow" }));
+      fireEvent.click(screen.getByRole("button", { name: "Edit workflows" }));
       expect(onCreateWorkflow).toHaveBeenCalledTimes(1);
+      expect(onOpenWorkflowEditor).toHaveBeenCalledTimes(1);
       expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual(["FN-1"]);
       expect(screen.queryByTestId("column-intake")).toBeNull();
 
