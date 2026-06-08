@@ -26,7 +26,7 @@
  * silently rebinding writes. With no active project it shows a requires-project
  * state and no write path.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, AlertTriangle, ChevronRight, ChevronDown, Save, RotateCcw } from "lucide-react";
 import type {
@@ -36,9 +36,11 @@ import type {
   WorkflowSettingRejection,
 } from "../api";
 import {
+  fetchModels,
   fetchWorkflowSettingValues,
   updateWorkflowSettingValues,
   ApiRequestError,
+  type ModelInfo,
   type WorkflowSettingValuesPayload,
 } from "../api";
 import {
@@ -47,6 +49,7 @@ import {
   WORKFLOW_SETTING_GROUP_LABELS,
 } from "./workflow-setting-display";
 import {
+  SettingsFieldRow,
   SettingsToggleRow,
   SettingsNumberRow,
   SettingsSelectRow,
@@ -54,6 +57,7 @@ import {
   SettingsTextareaRow,
 } from "./settings";
 import type { ToastType } from "../hooks/useToast";
+import { CustomModelDropdown } from "./CustomModelDropdown";
 import "./WorkflowSettingsPanel.css";
 
 interface WorkflowSettingsPanelProps {
@@ -487,6 +491,73 @@ function rawValueDisplay(value: unknown): string {
   }
 }
 
+interface WorkflowModelLanePair {
+  id: string;
+  providerId: string;
+  modelId: string;
+  label: string;
+  help: string;
+}
+
+const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
+  {
+    id: "planning",
+    providerId: "planningProvider",
+    modelId: "planningModelId",
+    label: "Plan/Triage Model",
+    help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the default lane.",
+  },
+  {
+    id: "execution",
+    providerId: "executionProvider",
+    modelId: "executionModelId",
+    label: "Executor Model",
+    help: "Provider and model used by task implementation agents. Leave unset to inherit from the default lane.",
+  },
+  {
+    id: "validator",
+    providerId: "validatorProvider",
+    modelId: "validatorModelId",
+    label: "Reviewer Model",
+    help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
+  },
+  {
+    id: "planning-fallback",
+    providerId: "planningFallbackProvider",
+    modelId: "planningFallbackModelId",
+    label: "Planning Fallback Model",
+    help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+  },
+  {
+    id: "validator-fallback",
+    providerId: "validatorFallbackProvider",
+    modelId: "validatorFallbackModelId",
+    label: "Reviewer Fallback Model",
+    help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
+  },
+  {
+    id: "title-summarizer",
+    providerId: "titleSummarizerProvider",
+    modelId: "titleSummarizerModelId",
+    label: "Title Summarizer Model",
+    help: "Provider and model used for title summarization when this workflow declares the lane.",
+  },
+  {
+    id: "title-summarizer-fallback",
+    providerId: "titleSummarizerFallbackProvider",
+    modelId: "titleSummarizerFallbackModelId",
+    label: "Title Summarizer Fallback Model",
+    help: "Fallback provider and model used for title summarization when this workflow declares the lane.",
+  },
+];
+
+function splitModelDropdownValue(value: string): { provider: string; modelId: string } | null {
+  if (!value) return null;
+  const slashIdx = value.indexOf("/");
+  if (slashIdx <= 0 || slashIdx === value.length - 1) return null;
+  return { provider: value.slice(0, slashIdx), modelId: value.slice(slashIdx + 1) };
+}
+
 function ValuesTab({
   workflowId,
   settings,
@@ -510,7 +581,27 @@ function ValuesTab({
   const [rejections, setRejections] = useState<Record<string, WorkflowSettingRejection>>({});
   const [saving, setSaving] = useState(false);
   const [orphanOpen, setOrphanOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const reqSeq = useRef(0);
+  const modelReqSeq = useRef(0);
+
+  const settingsById = useMemo(() => new Map(settings.map((setting) => [setting.id, setting])), [settings]);
+  const modelLanePairs = useMemo(
+    () =>
+      WORKFLOW_MODEL_LANE_CATALOG.filter((pair) => {
+        const provider = settingsById.get(pair.providerId);
+        const model = settingsById.get(pair.modelId);
+        return provider?.type === "string" && model?.type === "string";
+      }),
+    [settingsById],
+  );
+  const modelPairSettingIds = useMemo(
+    () => new Set(modelLanePairs.flatMap((pair) => [pair.providerId, pair.modelId])),
+    [modelLanePairs],
+  );
 
   const staleContext =
     boundProjectId !== undefined && currentProjectId !== undefined && currentProjectId !== boundProjectId;
@@ -536,6 +627,36 @@ function ValuesTab({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (boundProjectId === undefined || modelLanePairs.length === 0) {
+      setAvailableModels([]);
+      setFavoriteProviders([]);
+      setFavoriteModels([]);
+      setModelsLoading(false);
+      return;
+    }
+    const seq = ++modelReqSeq.current;
+    setModelsLoading(true);
+    fetchModels()
+      .then((res) => {
+        if (modelReqSeq.current !== seq) return;
+        setAvailableModels(res.models ?? []);
+        setFavoriteProviders(res.favoriteProviders ?? []);
+        setFavoriteModels(res.favoriteModels ?? []);
+      })
+      .catch(() => {
+        if (modelReqSeq.current === seq) {
+          setAvailableModels([]);
+          setFavoriteProviders([]);
+          setFavoriteModels([]);
+          addToast(t("workflowSettings.modelsLoadFailed", "Failed to load available models"), "error");
+        }
+      })
+      .finally(() => {
+        if (modelReqSeq.current === seq) setModelsLoading(false);
+      });
+  }, [boundProjectId, modelLanePairs.length, addToast, t]);
 
   // No active project bound → requires-project state, no write path.
   if (boundProjectId === undefined) {
@@ -580,6 +701,22 @@ function ValuesTab({
 
   const clearValue = (id: string) => setValue(id, null);
 
+  const setModelPairValue = (pair: WorkflowModelLanePair, value: string) => {
+    const split = splitModelDropdownValue(value);
+    setPending((prev) => ({
+      ...prev,
+      [pair.providerId]: split?.provider ?? null,
+      [pair.modelId]: split?.modelId ?? null,
+    }));
+    setRejections((prev) => {
+      if (!prev[pair.providerId] && !prev[pair.modelId]) return prev;
+      const next = { ...prev };
+      delete next[pair.providerId];
+      delete next[pair.modelId];
+      return next;
+    });
+  };
+
   const dirty = Object.keys(pending).length > 0;
 
   const save = useCallback(async () => {
@@ -610,6 +747,62 @@ function ValuesTab({
       setSaving(false);
     }
   }, [dirty, workflowId, pending, boundProjectId, addToast, t]);
+
+  const valueOfSettingId = (id: string): unknown => {
+    const setting = settingsById.get(id);
+    return setting ? effectiveOf(setting) : undefined;
+  };
+
+  const isCustomizedId = (id: string): boolean => {
+    const setting = settingsById.get(id);
+    return setting ? isCustomized(setting) : false;
+  };
+
+  const renderModelPairControl = (pair: WorkflowModelLanePair) => {
+    const providerValue = valueOfSettingId(pair.providerId);
+    const modelValue = valueOfSettingId(pair.modelId);
+    const value = typeof providerValue === "string" && typeof modelValue === "string" ? `${providerValue}/${modelValue}` : "";
+    const error = rejections[pair.providerId]?.message ?? rejections[pair.modelId]?.message;
+    const customized = isCustomizedId(pair.providerId) || isCustomizedId(pair.modelId);
+    const dropdownDisabled = modelsLoading || availableModels.length === 0;
+    const emptyHelp =
+      !modelsLoading && availableModels.length === 0
+        ? ` ${t("workflowSettings.noModelsAvailable", "No models are available. Configure authentication before selecting a workflow model.")}`
+        : "";
+
+    return (
+      <div key={pair.id} className="wf-settings-value-item" data-testid={`wf-settings-value-${pair.id}`}>
+        <SettingsFieldRow
+          htmlFor={`wf-model-lane-${pair.id}`}
+          label={pair.label}
+          help={`${pair.help}${emptyHelp}`}
+          error={error}
+          scope="project"
+          disabled={modelsLoading}
+          clearable={customized}
+          onClear={() => setModelPairValue(pair, "")}
+        >
+          <CustomModelDropdown
+            id={`wf-model-lane-${pair.id}`}
+            label={pair.label}
+            models={availableModels}
+            value={value}
+            onChange={(next) => setModelPairValue(pair, next)}
+            placeholder={t("workflowSettings.selectModel", "Select a model…")}
+            defaultOptionLabel={t("workflowSettings.useInheritedModel", "Use inherited/default model")}
+            disabled={dropdownDisabled}
+            favoriteProviders={favoriteProviders}
+            favoriteModels={favoriteModels}
+          />
+        </SettingsFieldRow>
+        {customized && (
+          <span className="wf-settings-customized" data-testid={`wf-settings-customized-${pair.id}`}>
+            {t("workflowSettings.customized", "Customized")}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   const renderValueControl = (setting: WorkflowSettingDefinition) => {
     const value = effectiveOf(setting);
@@ -739,23 +932,35 @@ function ValuesTab({
         </p>
       ) : (
         <div className="wf-settings-values-list">
-          {groupWorkflowSettings(settings).map(({ group, settings: groupSettings }) => (
-            <section key={group} className="wf-settings-value-group" data-testid={`wf-settings-group-${group}`}>
-              <h4 className="wf-settings-value-group-title">
-                {t(`workflowSettings.group.${group}`, WORKFLOW_SETTING_GROUP_LABELS[group])}
-              </h4>
-              {groupSettings.map((setting) => (
-                <div key={setting.id} className="wf-settings-value-item" data-testid={`wf-settings-value-${setting.id}`}>
-                  {renderValueControl(setting)}
-                  {isCustomized(setting) && (
-                    <span className="wf-settings-customized" data-testid={`wf-settings-customized-${setting.id}`}>
-                      {t("workflowSettings.customized", "Customized")}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </section>
-          ))}
+          {groupWorkflowSettings(settings).map(({ group, settings: groupSettings }) => {
+            const groupSettingIds = new Set(groupSettings.map((setting) => setting.id));
+            const groupPairs =
+              group === "models"
+                ? modelLanePairs.filter(
+                    (pair) => groupSettingIds.has(pair.providerId) && groupSettingIds.has(pair.modelId),
+                  )
+                : [];
+            const primitiveSettings = groupSettings.filter((setting) => !modelPairSettingIds.has(setting.id));
+
+            return (
+              <section key={group} className="wf-settings-value-group" data-testid={`wf-settings-group-${group}`}>
+                <h4 className="wf-settings-value-group-title">
+                  {t(`workflowSettings.group.${group}`, WORKFLOW_SETTING_GROUP_LABELS[group])}
+                </h4>
+                {groupPairs.map((pair) => renderModelPairControl(pair))}
+                {primitiveSettings.map((setting) => (
+                  <div key={setting.id} className="wf-settings-value-item" data-testid={`wf-settings-value-${setting.id}`}>
+                    {renderValueControl(setting)}
+                    {isCustomized(setting) && (
+                      <span className="wf-settings-customized" data-testid={`wf-settings-customized-${setting.id}`}>
+                        {t("workflowSettings.customized", "Customized")}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </section>
+            );
+          })}
         </div>
       )}
 

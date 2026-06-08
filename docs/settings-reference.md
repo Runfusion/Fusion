@@ -183,9 +183,9 @@ govern that execution belong to the workflow.
 
 **Where to set them.** The common model lanes for a project's default workflow are
 available directly in **Settings → Project Models → Default workflow model lanes**:
-Plan/Triage, Executor, and Reviewer. Those controls still write workflow setting
-values for the active project's default workflow; they do not restore the old
-project settings keys.
+Plan/Triage, Executor, and Reviewer. Those dropdown controls use the shared model
+picker and still write workflow setting values for the active project's default
+workflow; they do not restore the old project settings keys.
 
 For step execution, review/approval policy, fallbacks, title summarization, and
 custom workflow settings, open the **workflow editor** (the workflow node editor in
@@ -194,8 +194,11 @@ the dashboard) and select the **Settings** panel. It has two tabs:
 - **Definitions** — the typed declarations and defaults (read-only for the built-in
   `builtin:coding` workflow; editable for custom workflows).
 - **Values** — the per-project values for the workflow that is open. Values are
-  editable for any workflow, including built-ins. Edits batch and commit through a
-  single **Save** in the Values tab.
+  editable for any workflow, including built-ins. Common provider/model lane pairs
+  (Plan/Triage, Executor, Reviewer, and fallbacks declared by the workflow) use the
+  same model dropdown picker as Project Models so clearing or selecting a model
+  updates both keys together. Advanced/custom non-model settings still use typed
+  controls. Edits batch and commit through a single **Save** in the Values tab.
 
 **How values resolve.** The engine resolves *effective settings* per task as
 `stored value ?? declaration default`. A built-in workflow with no stored value
@@ -231,9 +234,10 @@ These groups moved out of project settings and into workflow settings (built-in
 | **Per-phase model lanes** | `executionProvider`/`executionModelId`, `planningProvider`/`planningModelId` (+ fallbacks), `validatorProvider`/`validatorModelId` (+ fallbacks) |
 
 In the dashboard Settings modal, Project Models now exposes Plan/Triage, Executor,
-and Reviewer controls for the default workflow. Former locations for advanced
-workflow policy still show a short redirect stub linking to the workflow editor
-(for one release).
+and Reviewer dropdown controls for the default workflow. The workflow editor's
+Settings → Values tab uses the same dropdown picker for declared provider/model
+pairs, including fallbacks. Former locations for advanced workflow policy still
+show a short redirect stub linking to the workflow editor (for one release).
 
 > Note: the global baseline model lanes (`executionGlobalProvider` etc.) and
 > integrity guarantees stay where they are — only the per-workflow process policy
@@ -766,7 +770,7 @@ Short-lived token bounds are enforced server-side:
 
 ## Model Selection Hierarchy
 
-Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited from Settings -> Project Models -> Default workflow model lanes.
+Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited with dropdown controls from Settings -> Project Models -> Default workflow model lanes or from workflow editor -> Settings -> Values for declared workflow lanes and fallbacks.
 
 ### Planning model
 

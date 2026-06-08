@@ -16,11 +16,12 @@ import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 expect.extend(jestDomMatchers);
 
 // Keep the real module (type re-exports, ApiRequestError, every other helper)
-// and override only the two value-endpoint functions.
+// and override only the model/value endpoint functions.
 vi.mock("../../api", async () => {
   const actual = await vi.importActual<typeof import("../../api")>("../../api");
   return {
     ...actual,
+    fetchModels: vi.fn(),
     fetchWorkflowSettingValues: vi.fn(),
     updateWorkflowSettingValues: vi.fn(),
   };
@@ -31,6 +32,7 @@ import type { WorkflowSettingDefinition, WorkflowSettingValuesPayload } from "..
 import { ApiRequestError } from "../../api";
 import { WorkflowSettingsPanel } from "../WorkflowSettingsPanel";
 
+const mockFetchModels = vi.mocked(apiModule.fetchModels);
 const mockFetchValues = vi.mocked(apiModule.fetchWorkflowSettingValues);
 const mockUpdateValues = vi.mocked(apiModule.updateWorkflowSettingValues);
 
@@ -70,7 +72,17 @@ function Host({
 const openValues = () => fireEvent.click(screen.getByTestId("wf-settings-tab-values"));
 const openDefinitions = () => fireEvent.click(screen.getByTestId("wf-settings-tab-definitions"));
 
+const modelResponse = {
+  models: [
+    { provider: "openai", id: "gpt-5", name: "GPT-5", reasoning: true, contextWindow: 128000 },
+    { provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet", reasoning: true, contextWindow: 200000 },
+  ],
+  favoriteProviders: [],
+  favoriteModels: [],
+};
+
 beforeEach(() => {
+  mockFetchModels.mockResolvedValue(modelResponse);
   mockFetchValues.mockResolvedValue(payload());
   mockUpdateValues.mockResolvedValue(payload());
 });
@@ -192,7 +204,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(within(screen.getByTestId("wf-settings-group-review")).getByText("Review & Approval")).toBeInTheDocument();
     expect(within(screen.getByTestId("wf-settings-group-steps")).getByText("Step Execution")).toBeInTheDocument();
     expect(within(screen.getByTestId("wf-settings-group-advanced")).getByText("Advanced")).toBeInTheDocument();
-    expect(screen.getByLabelText("Plan/Triage provider")).toBeInTheDocument();
+    expect(screen.getByLabelText("Plan/Triage Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Reviewer provider")).toBeInTheDocument();
   });
 
@@ -311,5 +323,122 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     fireEvent.click(clearBtn);
     fireEvent.click(screen.getByTestId("wf-settings-save-values"));
     await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledWith("wf-1", { "timeout-ms": null }, "proj-1"));
+  });
+
+  const modelDecls: WorkflowSettingDefinition[] = [
+    { id: "planningProvider", name: "Planning provider", type: "string" },
+    { id: "planningModelId", name: "Planning model", type: "string" },
+    { id: "executionProvider", name: "Execution provider", type: "string" },
+    { id: "executionModelId", name: "Execution model", type: "string" },
+    { id: "validatorProvider", name: "Validator provider", type: "string" },
+    { id: "validatorModelId", name: "Validator model", type: "string" },
+    { id: "planningFallbackProvider", name: "Planning fallback provider", type: "string" },
+    { id: "planningFallbackModelId", name: "Planning fallback model", type: "string" },
+    { id: "customModelProvider", name: "Custom model provider", type: "string" },
+  ];
+
+  async function openPlanningDropdown() {
+    const trigger = await screen.findByLabelText("Plan/Triage Model");
+    fireEvent.click(trigger);
+    return trigger;
+  }
+
+  it("renders built-in model lane pairs as dropdowns without raw provider/model text inputs", async () => {
+    mockFetchValues.mockResolvedValue(
+      payload({
+        stored: { planningProvider: "openai", planningModelId: "gpt-5" },
+        effective: { planningProvider: "openai", planningModelId: "gpt-5" },
+      }),
+    );
+    render(<Host initial={modelDecls} readOnly />);
+
+    await waitFor(() => expect(mockFetchModels).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText("Plan/Triage Model")).toHaveTextContent("GPT-5");
+    expect(screen.getByLabelText("Executor Model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Reviewer Model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Planning Fallback Model")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Plan/Triage provider" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Plan/Triage model" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Custom model provider")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-settings-customized-planning")).toBeInTheDocument();
+  });
+
+  it("selecting a workflow model writes provider and model id together", async () => {
+    render(<Host initial={modelDecls} readOnly />);
+    await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
+
+    await openPlanningDropdown();
+    fireEvent.click(await screen.findByRole("option", { name: /Claude Sonnet/i }));
+    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
+
+    await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledTimes(1));
+    expect(mockUpdateValues).toHaveBeenCalledWith(
+      "wf-1",
+      { planningProvider: "anthropic", planningModelId: "claude-sonnet" },
+      "proj-1",
+    );
+  });
+
+  it("clearing a workflow model dropdown writes paired null values", async () => {
+    mockFetchValues.mockResolvedValue(
+      payload({
+        stored: { planningProvider: "openai", planningModelId: "gpt-5" },
+        effective: { planningProvider: "openai", planningModelId: "gpt-5" },
+      }),
+    );
+    render(<Host initial={modelDecls} readOnly />);
+    await waitFor(() => expect(screen.getByTestId("wf-settings-customized-planning")).toBeInTheDocument());
+
+    await openPlanningDropdown();
+    fireEvent.click(await screen.findByRole("option", { name: /Use inherited\/default model/i }));
+    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
+
+    await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledTimes(1));
+    expect(mockUpdateValues).toHaveBeenCalledWith(
+      "wf-1",
+      { planningProvider: null, planningModelId: null },
+      "proj-1",
+    );
+  });
+
+  it("shows inherited/default dropdown state for undefined values without a customized badge", async () => {
+    render(<Host initial={modelDecls} readOnly />);
+    await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
+    expect(screen.getByLabelText("Plan/Triage Model")).toHaveTextContent("Use inherited/default model");
+    expect(screen.queryByTestId("wf-settings-customized-planning")).not.toBeInTheDocument();
+  });
+
+  it("keeps known model lanes dropdown-backed when the model registry is empty", async () => {
+    mockFetchModels.mockResolvedValueOnce({ ...modelResponse, models: [] });
+    render(<Host initial={modelDecls} readOnly />);
+
+    await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
+    const trigger = screen.getByLabelText("Plan/Triage Model");
+    expect(trigger).toBeDisabled();
+    expect(screen.getAllByText(/No models are available/i).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText(/^Plan\/Triage provider$/i)).not.toBeInTheDocument();
+  });
+
+  it("surfaces paired-key rejections on the combined row while preserving pending selection", async () => {
+    mockUpdateValues.mockRejectedValueOnce(
+      new ApiRequestError("rejected", 400, {
+        rejections: [{ code: "type-mismatch", settingId: "planningModelId", message: "model is invalid" }],
+      }),
+    );
+    render(<Host initial={modelDecls} readOnly />);
+    await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
+
+    await openPlanningDropdown();
+    fireEvent.click(await screen.findByRole("option", { name: /Claude Sonnet/i }));
+    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
+
+    const row = await screen.findByTestId("wf-settings-value-planning");
+    expect(within(row).getByRole("alert")).toHaveTextContent("model is invalid");
+    expect(within(row).getByLabelText("Plan/Triage Model")).toHaveTextContent("Claude Sonnet");
+    expect(mockUpdateValues).toHaveBeenCalledWith(
+      "wf-1",
+      { planningProvider: "anthropic", planningModelId: "claude-sonnet" },
+      "proj-1",
+    );
   });
 });
