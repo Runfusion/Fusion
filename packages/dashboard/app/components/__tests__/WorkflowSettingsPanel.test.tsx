@@ -68,6 +68,7 @@ function Host({
 }
 
 const openValues = () => fireEvent.click(screen.getByTestId("wf-settings-tab-values"));
+const openDefinitions = () => fireEvent.click(screen.getByTestId("wf-settings-tab-definitions"));
 
 beforeEach(() => {
   mockFetchValues.mockResolvedValue(payload());
@@ -93,6 +94,7 @@ describe("WorkflowSettingsPanel — Definitions tab", () => {
   it("declares a setting of each supported type", () => {
     let latest: WorkflowSettingDefinition[] = [];
     render(<Host initial={[{ id: "s1", name: "S1", type: "string" }]} onState={(s) => (latest = s)} />);
+    openDefinitions();
     const typeSelect = within(screen.getByTestId("wf-setting-s1")).getByDisplayValue("string");
     for (const ty of ["text", "number", "boolean", "enum", "multi-enum"]) {
       fireEvent.change(typeSelect, { target: { value: ty } });
@@ -103,6 +105,7 @@ describe("WorkflowSettingsPanel — Definitions tab", () => {
   it("seeds options when switching to enum", () => {
     let latest: WorkflowSettingDefinition[] = [];
     render(<Host initial={[{ id: "s1", name: "S1", type: "string" }]} onState={(s) => (latest = s)} />);
+    openDefinitions();
     const typeSelect = within(screen.getByTestId("wf-setting-s1")).getByDisplayValue("string");
     fireEvent.change(typeSelect, { target: { value: "enum" } });
     expect(latest[0].options).toHaveLength(1);
@@ -128,6 +131,7 @@ describe("WorkflowSettingsPanel — Definitions tab", () => {
       );
     }
     render(<H />);
+    openDefinitions();
     const betaItem = screen.getByTestId("wf-setting-beta");
     fireEvent.click(within(betaItem).getByText("Edit id"));
     const idInput = within(betaItem).getByLabelText("Setting id");
@@ -138,6 +142,8 @@ describe("WorkflowSettingsPanel — Definitions tab", () => {
 
   it("built-in workflows render declarations read-only", () => {
     render(<Host initial={[{ id: "s1", name: "S1", type: "string" }]} readOnly />);
+    expect(screen.getByTestId("wf-settings-tab-values")).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByTestId("wf-settings-tab-definitions"));
     expect(screen.getByText(/declarations are read-only/i)).toBeInTheDocument();
     const nameInput = within(screen.getByTestId("wf-setting-s1")).getByLabelText("Setting name");
     expect(nameInput).toBeDisabled();
@@ -163,6 +169,31 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     await waitFor(() => expect(screen.getByTestId("wf-settings-customized-timeout-ms")).toBeInTheDocument());
     // A non-stored key shows no customized indicator.
     expect(screen.queryByTestId("wf-settings-customized-new-sessions")).not.toBeInTheDocument();
+  });
+
+  it("groups built-in workflow settings under visible category headings", async () => {
+    mockFetchValues.mockResolvedValue(payload({ effective: { planningProvider: "openai", planningModelId: "gpt-5" } }));
+    render(
+      <Host
+        readOnly
+        initial={[
+          { id: "planningProvider", name: "Planning provider", type: "string" },
+          { id: "planningModelId", name: "Planning model", type: "string" },
+          { id: "validatorProvider", name: "Validator provider", type: "string" },
+          { id: "requirePlanApproval", name: "Require plan approval", type: "boolean" },
+          { id: "workflowStepTimeoutMs", name: "Step timeout", type: "number" },
+          { id: "customThing", name: "Custom thing", type: "string" },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
+    expect(within(screen.getByTestId("wf-settings-group-models")).getByText("Models")).toBeInTheDocument();
+    expect(within(screen.getByTestId("wf-settings-group-review")).getByText("Review & Approval")).toBeInTheDocument();
+    expect(within(screen.getByTestId("wf-settings-group-steps")).getByText("Step Execution")).toBeInTheDocument();
+    expect(within(screen.getByTestId("wf-settings-group-advanced")).getByText("Advanced")).toBeInTheDocument();
+    expect(screen.getByLabelText("Plan/Triage provider")).toBeInTheDocument();
+    expect(screen.getByLabelText("Reviewer provider")).toBeInTheDocument();
   });
 
   it("batches three field edits into exactly ONE patch on Save values", async () => {

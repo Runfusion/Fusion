@@ -42,6 +42,11 @@ import {
   type WorkflowSettingValuesPayload,
 } from "../api";
 import {
+  getWorkflowSettingDisplay,
+  groupWorkflowSettings,
+  WORKFLOW_SETTING_GROUP_LABELS,
+} from "./workflow-setting-display";
+import {
   SettingsToggleRow,
   SettingsNumberRow,
   SettingsSelectRow,
@@ -609,10 +614,11 @@ function ValuesTab({
     const value = effectiveOf(setting);
     const error = rejections[setting.id]?.message;
     const customized = isCustomized(setting);
+    const display = getWorkflowSettingDisplay(setting);
     const descriptor = {
       key: setting.id,
-      label: setting.name,
-      help: setting.description,
+      label: display.label,
+      help: display.description ?? setting.description,
       scope: "project" as const,
     };
     const clearable = customized;
@@ -732,15 +738,22 @@ function ValuesTab({
         </p>
       ) : (
         <div className="wf-settings-values-list">
-          {settings.map((setting) => (
-            <div key={setting.id} className="wf-settings-value-item" data-testid={`wf-settings-value-${setting.id}`}>
-              {renderValueControl(setting)}
-              {isCustomized(setting) && (
-                <span className="wf-settings-customized" data-testid={`wf-settings-customized-${setting.id}`}>
-                  {t("workflowSettings.customized", "Customized")}
-                </span>
-              )}
-            </div>
+          {groupWorkflowSettings(settings).map(({ group, settings: groupSettings }) => (
+            <section key={group} className="wf-settings-value-group" data-testid={`wf-settings-group-${group}`}>
+              <h4 className="wf-settings-value-group-title">
+                {t(`workflowSettings.group.${group}`, WORKFLOW_SETTING_GROUP_LABELS[group])}
+              </h4>
+              {groupSettings.map((setting) => (
+                <div key={setting.id} className="wf-settings-value-item" data-testid={`wf-settings-value-${setting.id}`}>
+                  {renderValueControl(setting)}
+                  {isCustomized(setting) && (
+                    <span className="wf-settings-customized" data-testid={`wf-settings-customized-${setting.id}`}>
+                      {t("workflowSettings.customized", "Customized")}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </section>
           ))}
         </div>
       )}
@@ -805,7 +818,7 @@ export function WorkflowSettingsPanel({
   addToast,
 }: WorkflowSettingsPanelProps) {
   const { t } = useTranslation("app");
-  const [tab, setTab] = useState<"definitions" | "values">("definitions");
+  const [tab, setTab] = useState<"definitions" | "values">(() => (settings.length > 0 ? "values" : "definitions"));
 
   // Bind the projectId active when the panel first mounted for this workflow.
   // The Values tab uses this bound id; a later change to `projectId` surfaces a

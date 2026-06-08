@@ -2481,6 +2481,8 @@ export function SettingsModal({
             scopeBanner={renderScopeBanner()}
             form={form}
             setForm={setForm}
+            projectId={projectId}
+            addToast={addToast}
             onOpenWorkflowSettings={onOpenWorkflowSettings}
             models={{
               modelLanes: MODEL_LANES,

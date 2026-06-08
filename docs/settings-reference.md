@@ -181,8 +181,15 @@ Some knobs that used to live in this Settings reference as project settings are 
 *how* tasks execute, so the timeouts, review gates, and per-phase model lanes that
 govern that execution belong to the workflow.
 
-**Where to set them.** Open the **workflow editor** (the workflow node editor in the
-dashboard) and select the **Settings** panel. It has two tabs:
+**Where to set them.** The common model lanes for a project's default workflow are
+available directly in **Settings → Project Models → Default workflow model lanes**:
+Plan/Triage, Executor, and Reviewer. Those controls still write workflow setting
+values for the active project's default workflow; they do not restore the old
+project settings keys.
+
+For step execution, review/approval policy, fallbacks, title summarization, and
+custom workflow settings, open the **workflow editor** (the workflow node editor in
+the dashboard) and select the **Settings** panel. It has two tabs:
 
 - **Definitions** — the typed declarations and defaults (read-only for the built-in
   `builtin:coding` workflow; editable for custom workflows).
@@ -223,9 +230,10 @@ These groups moved out of project settings and into workflow settings (built-in
 | **Review / approval** | `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries` |
 | **Per-phase model lanes** | `executionProvider`/`executionModelId`, `planningProvider`/`planningModelId` (+ fallbacks), `validatorProvider`/`validatorModelId` (+ fallbacks), `titleSummarizerProvider`/`titleSummarizerModelId` (+ fallback) |
 
-In the dashboard Settings modal, the former locations now show a short redirect stub
-linking to the workflow editor (for one release). Set these in the workflow editor's
-**Settings → Values** tab for the workflow you want to tune.
+In the dashboard Settings modal, Project Models now exposes Plan/Triage, Executor,
+and Reviewer controls for the default workflow. Former locations for advanced
+workflow policy still show a short redirect stub linking to the workflow editor
+(for one release).
 
 > Note: the global baseline model lanes (`executionGlobalProvider` etc.) and
 > integrity guarantees stay where they are — only the per-workflow process policy
@@ -239,8 +247,9 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 > review/approval, and per-phase model-lane keys listed under
 > [Where did my setting go?](#where-did-my-setting-go) — are no longer project
 > settings. They are documented here for type/default reference only; configure them
-> in the **workflow editor → Settings → Values** tab. They are not writable through
-> `PUT /api/settings`.
+> in **Settings → Project Models** for default-workflow Plan/Triage, Executor, and
+> Reviewer lanes, or in **workflow editor → Settings → Values** for advanced
+> workflow policy. They are not writable through `PUT /api/settings`.
 
 | Setting | Type | Default | Description |
 |---|---|---:|---|
@@ -757,12 +766,12 @@ Short-lived token bounds are enforced server-side:
 
 ## Model Selection Hierarchy
 
-Fusion uses a dual-scope model settings system with five lanes. Global settings provide baseline defaults, and project settings provide per-project overrides.
+Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited from Settings -> Project Models -> Default workflow model lanes.
 
 ### Planning model
 
 1. Per-task `planningModelProvider` + `planningModelId`
-2. Project `planningProvider` + `planningModelId`
+2. Default workflow lane value `planningProvider` + `planningModelId`
 3. Global `planningGlobalProvider` + `planningGlobalModelId`
 4. Project `defaultProviderOverride` + `defaultModelIdOverride`
 5. Global `defaultProvider` + `defaultModelId`
@@ -772,7 +781,7 @@ Fusion uses a dual-scope model settings system with five lanes. Global settings 
 
 1. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when both provider and model ID are set
 2. Per-task `modelProvider` + `modelId`
-3. Project `executionProvider` + `executionModelId`
+3. Default workflow lane value `executionProvider` + `executionModelId`
 4. Global `executionGlobalProvider` + `executionGlobalModelId`
 5. Project `defaultProviderOverride` + `defaultModelIdOverride`
 6. Global `defaultProvider` + `defaultModelId`
@@ -783,7 +792,7 @@ Fusion uses a dual-scope model settings system with five lanes. Global settings 
 Heartbeat sessions for durable agents use this order:
 
 1. Assigned durable agent runtime model (`runtimeConfig.model` or `runtimeConfig.modelProvider` + `runtimeConfig.modelId`) when present
-2. Project `executionProvider` + `executionModelId`
+2. Default workflow lane value `executionProvider` + `executionModelId`
 3. Global `executionGlobalProvider` + `executionGlobalModelId`
 4. Project `defaultProviderOverride` + `defaultModelIdOverride`
 5. Global `defaultProvider` + `defaultModelId`
@@ -794,7 +803,7 @@ When heartbeat has both (1) and (2-5), the runtime model is used as primary and 
 ### Reviewer model
 
 1. Per-task `validatorModelProvider` + `validatorModelId`
-2. Project `validatorProvider` + `validatorModelId`
+2. Default workflow lane value `validatorProvider` + `validatorModelId`
 3. Global `validatorGlobalProvider` + `validatorGlobalModelId`
 4. Project `defaultProviderOverride` + `defaultModelIdOverride`
 5. Global `defaultProvider` + `defaultModelId`
@@ -1370,7 +1379,7 @@ Project-scoped default permission policy for permanent-agent action gates.
 All three lanes (planning / executor / reviewer) follow the same 5-tier precedence:
 
 1. Per-task override (`planningModelProvider`/`Id`, `modelProvider`/`Id`, `validatorModelProvider`/`Id`)
-2. Project lane (`planningProvider`/`Id`, `executionProvider`/`Id`, `validatorProvider`/`Id`)
+2. Default workflow lane value (`planningProvider`/`Id`, `executionProvider`/`Id`, `validatorProvider`/`Id`)
 3. Global lane (`planningGlobalProvider`/`Id`, `executionGlobalProvider`/`Id`, `validatorGlobalProvider`/`Id`)
 4. Project `defaultProviderOverride` / `defaultModelIdOverride`
 5. Global `defaultProvider` / `defaultModelId` → automatic resolution

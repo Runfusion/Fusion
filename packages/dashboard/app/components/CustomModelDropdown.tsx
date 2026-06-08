@@ -18,6 +18,8 @@ export interface CustomModelDropdownProps {
   noChangeValue?: string;
   /** Display label for noChangeValue (defaults to "No change"). */
   noChangeLabel?: string;
+  /** Display label for the inherited/default option (defaults to "Use default"). */
+  defaultOptionLabel?: string;
   /** List of favorite provider names in preferred order */
   favoriteProviders?: string[];
   /** Called when user toggles a provider's favorite status */
@@ -62,10 +64,12 @@ export function CustomModelDropdown({
   onToggleModelFavorite,
   noChangeValue,
   noChangeLabel: noChangeLabelProp,
+  defaultOptionLabel: defaultOptionLabelProp,
 }: CustomModelDropdownProps) {
   const { t } = useTranslation("app");
   const placeholder = placeholderProp ?? t("model.selectPlaceholder", "Select a model…");
   const noChangeLabel = noChangeLabelProp ?? t("model.noChange", "No change");
+  const defaultOptionLabel = defaultOptionLabelProp ?? t("models.useDefault", "Use default");
   const [isOpen, setIsOpen] = useState(false);
   const [localFilter, setLocalFilter] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -143,9 +147,9 @@ export function CustomModelDropdown({
     if (hasNoChangeOption) {
       options.push({ type: "no-change", value: noChangeValue, label: noChangeLabel });
     }
-    options.push({ type: "default", value: "", label: t("models.useDefault", "Use default") });
+    options.push({ type: "default", value: "", label: defaultOptionLabel });
     return options;
-  }, [hasNoChangeOption, noChangeLabel, noChangeValue]);
+  }, [defaultOptionLabel, hasNoChangeOption, noChangeLabel, noChangeValue]);
 
   // Build list of all selectable options (for keyboard navigation)
   // Includes special rows first (optional "No change" + "Use default"),
@@ -183,14 +187,14 @@ export function CustomModelDropdown({
     if (hasNoChangeOption && value === noChangeValue) {
       return noChangeLabel;
     }
-    if (!value) return t("models.useDefault", "Use default");
+    if (!value) return defaultOptionLabel;
     const slashIdx = value.indexOf("/");
     if (slashIdx === -1) return value;
     const provider = value.slice(0, slashIdx);
     const modelId = value.slice(slashIdx + 1);
     const model = models.find((m) => m.provider === provider && m.id === modelId);
     return model?.name || value;
-  }, [hasNoChangeOption, noChangeLabel, noChangeValue, value, models]);
+  }, [defaultOptionLabel, hasNoChangeOption, noChangeLabel, noChangeValue, value, models]);
 
   // Find index of current value in options list
   const currentValueIndex = useMemo(() => {

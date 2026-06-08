@@ -248,7 +248,21 @@
 .wf-settings-values-list {
   display: flex;
   flex-direction: column;
+  gap: var(--space-md);
+}
+
+.wf-settings-value-group {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-xs);
+}
+
+.wf-settings-value-group-title {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .wf-settings-value-item {

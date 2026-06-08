@@ -6,6 +6,7 @@ import { EditorView } from "@codemirror/view";
 import { SettingsModal } from "../SettingsModal";
 import { __test_clearCache as clearPluginUiSlotsCache } from "../../hooks/usePluginUiSlots";
 import type { PluginUiContributionEntry, SettingsExportData, UpdateCheckResponse } from "../../api";
+import { ApiRequestError } from "../../api";
 
 // --- API mocks ---
 const mockFetchSettings = vi.fn();
@@ -20,6 +21,8 @@ const mockCancelProviderLogin = vi.fn();
 const mockSaveApiKey = vi.fn();
 const mockSubmitProviderManualCode = vi.fn();
 const mockFetchModels = vi.fn();
+const mockFetchWorkflowSettingValues = vi.fn();
+const mockUpdateWorkflowSettingValues = vi.fn();
 const mockFetchCustomProviders = vi.fn();
 const mockCreateCustomProvider = vi.fn();
 const mockUpdateCustomProvider = vi.fn();
@@ -80,6 +83,8 @@ vi.mock("../../api", async (importOriginal) => {
     saveApiKey: (...args: unknown[]) => mockSaveApiKey(...args),
     submitProviderManualCode: (...args: unknown[]) => mockSubmitProviderManualCode(...args),
     fetchModels: (...args: unknown[]) => mockFetchModels(...args),
+    fetchWorkflowSettingValues: (...args: unknown[]) => mockFetchWorkflowSettingValues(...args),
+    updateWorkflowSettingValues: (...args: unknown[]) => mockUpdateWorkflowSettingValues(...args),
     fetchCustomProviders: (...args: unknown[]) => mockFetchCustomProviders(...args),
     createCustomProvider: (...args: unknown[]) => mockCreateCustomProvider(...args),
     updateCustomProvider: (...args: unknown[]) => mockUpdateCustomProvider(...args),
@@ -538,6 +543,8 @@ describe("SettingsModal", () => {
     mockFetchAuthStatus.mockResolvedValue({ providers: [] });
     mockConfirm.mockResolvedValue(true);
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
+    mockFetchWorkflowSettingValues.mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
+    mockUpdateWorkflowSettingValues.mockResolvedValue({ stored: {}, effective: {}, orphaned: [] });
     mockFetchCustomProviders.mockResolvedValue({ providers: [] });
     mockCreateCustomProvider.mockResolvedValue({ provider: {} });
     mockUpdateCustomProvider.mockResolvedValue({ provider: {} });
@@ -1519,6 +1526,146 @@ describe("SettingsModal", () => {
         expect(globalPayload).not.toHaveProperty("defaultProviderOverride");
         expect(globalPayload).not.toHaveProperty("defaultModelIdOverride");
       }
+    });
+
+    async function setupWorkflowModelLaneTest({
+      stored = {},
+      effective = {},
+    }: {
+      stored?: Record<string, unknown>;
+      effective?: Record<string, unknown>;
+    } = {}) {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        defaultWorkflowId: "workflow-custom",
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: { defaultWorkflowId: "workflow-custom" },
+      });
+      mockFetchModels.mockResolvedValue({
+        models: MODEL_FIXTURE,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+      mockFetchWorkflowSettingValues.mockResolvedValue({
+        stored,
+        effective,
+        orphaned: [],
+      });
+
+      renderModal({ initialSection: "project-models", projectId: "proj-1" });
+      await waitForSettingsModalReady();
+
+      await waitFor(() => {
+        expect(mockFetchWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", "proj-1");
+      });
+    }
+
+    it.each([
+      ["Plan/Triage Model", { planningProvider: "openai", planningModelId: "gpt-4o" }],
+      ["Executor Model", { executionProvider: "openai", executionModelId: "gpt-4o" }],
+      ["Reviewer Model", { validatorProvider: "openai", validatorModelId: "gpt-4o" }],
+    ])("proxy-edits %s through workflow setting values for the default workflow", async (laneLabel, expectedPatch) => {
+      mockUpdateWorkflowSettingValues.mockResolvedValue({
+        stored: expectedPatch,
+        effective: expectedPatch,
+        orphaned: [],
+      });
+      await setupWorkflowModelLaneTest();
+
+      await userEvent.click(screen.getByLabelText(laneLabel));
+      await userEvent.click(await screen.findByText("GPT-4o"));
+      await userEvent.click(screen.getByTestId("save-workflow-model-lanes"));
+
+      await waitFor(() => {
+        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
+          "workflow-custom",
+          expectedPatch,
+          "proj-1",
+        );
+      });
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+    });
+
+    it("resets workflow model lanes by sending null patches", async () => {
+      await setupWorkflowModelLaneTest({
+        stored: { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
+        effective: { executionProvider: "anthropic", executionModelId: "claude-sonnet-4-5" },
+      });
+
+      const lane = screen.getByTestId("workflow-model-lane-execution");
+      await userEvent.click(within(lane).getByRole("button", { name: "Reset" }));
+      await userEvent.click(screen.getByTestId("save-workflow-model-lanes"));
+
+      await waitFor(() => {
+        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
+          "workflow-custom",
+          { executionProvider: null, executionModelId: null },
+          "proj-1",
+        );
+      });
+    });
+
+    it("falls back to builtin workflow values when the configured default workflow is stale", async () => {
+      mockFetchWorkflowSettingValues
+        .mockRejectedValueOnce(new ApiRequestError("not found", 404))
+        .mockResolvedValueOnce({ stored: {}, effective: {}, orphaned: [] });
+      mockUpdateWorkflowSettingValues.mockResolvedValue({
+        stored: { planningProvider: "openai", planningModelId: "gpt-4o" },
+        effective: { planningProvider: "openai", planningModelId: "gpt-4o" },
+        orphaned: [],
+      });
+      await setupWorkflowModelLaneTest();
+
+      await waitFor(() => {
+        expect(mockFetchWorkflowSettingValues).toHaveBeenLastCalledWith("builtin:coding", "proj-1");
+      });
+
+      await userEvent.click(screen.getByLabelText("Plan/Triage Model"));
+      await userEvent.click(await screen.findByText("GPT-4o"));
+      await userEvent.click(screen.getByTestId("save-workflow-model-lanes"));
+
+      await waitFor(() => {
+        expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
+          "builtin:coding",
+          { planningProvider: "openai", planningModelId: "gpt-4o" },
+          "proj-1",
+        );
+      });
+    });
+
+    it("shows typed workflow model lane rejections without clearing pending edits", async () => {
+      mockUpdateWorkflowSettingValues.mockRejectedValueOnce(
+        new ApiRequestError("rejected", 400, {
+          rejections: [{ code: "unknown-setting", settingId: "planningProvider", message: "planningProvider is not declared" }],
+        }),
+      );
+      await setupWorkflowModelLaneTest();
+
+      await userEvent.click(screen.getByLabelText("Plan/Triage Model"));
+      await userEvent.click(await screen.findByText("GPT-4o"));
+      await userEvent.click(screen.getByTestId("save-workflow-model-lanes"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("workflow-model-lane-error-planning")).toHaveTextContent("planningProvider is not declared");
+      });
+      expect(screen.getByTestId("save-workflow-model-lanes")).not.toBeDisabled();
+    });
+
+    it("does not fetch or write workflow model lanes without an active project", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MODEL_FIXTURE,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
+      renderModal({ initialSection: "project-models" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByText(/Open a project to edit workflow model lanes/i)).toBeInTheDocument();
+      expect(mockFetchWorkflowSettingValues).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("save-workflow-model-lanes")).not.toBeInTheDocument();
     });
   });
 
