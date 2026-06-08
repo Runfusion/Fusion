@@ -1,12 +1,23 @@
-import type { Settings, TaskDetail, WorkflowIr } from "@fusion/core";
-import { resolveWorkflowIrForTask, type WorkflowIrResolverStore } from "@fusion/core";
+import type { Settings, TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
+import {
+  BUILTIN_CODING_WORKFLOW_IR,
+  getBuiltinWorkflow,
+  isBuiltinWorkflowId,
+  parseWorkflowIr,
+  type WorkflowIrResolverStore,
+} from "@fusion/core";
 
 import {
   WorkflowGraphExecutor,
   type WorkflowGraphExecutorDeps,
+  type WorkflowNodeHandler,
   type WorkflowNodeOutcome,
 } from "./workflow-graph-executor.js";
-import type { WorkflowCustomNodeRunner, WorkflowLegacySeams } from "./workflow-node-handlers.js";
+import {
+  createDefaultNodeHandlers,
+  type WorkflowCustomNodeRunner,
+  type WorkflowLegacySeams,
+} from "./workflow-node-handlers.js";
 
 export type WorkflowTaskRuntimeDisposition = "completed" | "failed";
 
@@ -30,7 +41,7 @@ export interface WorkflowTaskRuntimeDeps extends Omit<WorkflowGraphExecutorDeps,
  *
  * It always resolves a task to a workflow IR: explicit selections resolve to
  * their selected workflow, and tasks without a selection resolve to the built-in
- * coding workflow through `resolveWorkflowIrForTask`. This is intentionally
+ * coding workflow. This is intentionally
  * different from `WorkflowGraphTaskRunner`, whose current contract still models
  * "no selection" as legacy fallback.
  */
@@ -51,10 +62,9 @@ export class WorkflowTaskRuntime {
   ): Promise<WorkflowTaskRuntimeResult> {
     this.emit("start", task.id, "resolve-workflow");
 
-    const workflowId = this.resolveWorkflowId(task.id);
-    let ir: WorkflowIr;
+    let target: WorkflowRuntimeTarget;
     try {
-      ir = await resolveWorkflowIrForTask(this.deps.store, task.id);
+      target = await this.resolveRuntimeTarget(task.id);
     } catch (err) {
       const reason = `workflow-resolution-error: ${err instanceof Error ? err.message : String(err)}`;
       this.emit("terminal", task.id, `failed:${reason}`);
@@ -68,25 +78,19 @@ export class WorkflowTaskRuntime {
     }
 
     const invoked: string[] = [];
-    const wrappedSeams = this.wrapSeams(invoked);
-    const wrappedRunCustomNode: WorkflowCustomNodeRunner = (node, nodeTask, context) => {
-      invoked.push(node.id);
-      return this.deps.runCustomNode(node, nodeTask, context);
-    };
     const executor = new WorkflowGraphExecutor({
       ...this.deps,
-      seams: wrappedSeams,
-      runCustomNode: wrappedRunCustomNode,
+      handlers: this.recordingHandlers(invoked),
       // WorkflowTaskRuntime is the execution engine, so internally the graph
       // executor is authoritative even before the old feature flag plumbing is
       // deleted from legacy entry points.
-      runId: this.deps.runId ?? `${task.id}:${workflowId}`,
+      runId: this.deps.runId ?? `${task.id}:${target.workflowId}`,
     });
 
     const runtimeSettings = forceWorkflowGraphExecutor(settings);
     let result: Awaited<ReturnType<WorkflowGraphExecutor["run"]>>;
     try {
-      result = await executor.run(task, runtimeSettings, ir);
+      result = await executor.run(task, runtimeSettings, target.ir);
     } catch (err) {
       const reason = `workflow-execution-error: ${err instanceof Error ? err.message : String(err)}`;
       this.emit("terminal", task.id, `failed:${reason}`);
@@ -108,55 +112,58 @@ export class WorkflowTaskRuntime {
     };
   }
 
-  private resolveWorkflowId(taskId: string): string {
+  private async resolveRuntimeTarget(taskId: string): Promise<WorkflowRuntimeTarget> {
+    let workflowId: string | undefined;
     try {
-      return this.deps.store.getTaskWorkflowSelection(taskId)?.workflowId ?? "builtin:coding";
+      workflowId = this.deps.store.getTaskWorkflowSelection(taskId)?.workflowId;
     } catch {
-      return "builtin:coding";
+      return builtinCodingTarget();
+    }
+
+    if (!workflowId) return builtinCodingTarget();
+
+    if (isBuiltinWorkflowId(workflowId)) {
+      const builtin = getBuiltinWorkflow(workflowId);
+      if (!builtin) return builtinCodingTarget();
+      const ir = typeof builtin.ir === "string" ? parseWorkflowIr(builtin.ir) : builtin.ir;
+      return { workflowId, ir };
+    }
+
+    try {
+      const def = await this.deps.store.getWorkflowDefinition(workflowId);
+      if (!def) return builtinCodingTarget();
+      const ir = typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir;
+      return { workflowId, ir };
+    } catch {
+      return builtinCodingTarget();
     }
   }
 
-  private wrapSeams(invoked: string[]): WorkflowLegacySeams {
-    const seams = this.deps.seams;
-    return {
-      planning: (task, context) => {
-        invoked.push("planning");
-        return seams.planning(task, context);
-      },
-      execute: (task, context) => {
-        invoked.push("execute");
-        return seams.execute(task, context);
-      },
-      review: (task, context) => {
-        invoked.push("review");
-        return seams.review(task, context);
-      },
-      merge: (task, context) => {
-        invoked.push("merge");
-        return seams.merge(task, context);
-      },
-      schedule: (task, context) => {
-        invoked.push("schedule");
-        return seams.schedule(task, context);
-      },
-      ...(seams.stepExecute
-        ? {
-            stepExecute: (task, context) => {
-              invoked.push("step-execute");
-              return seams.stepExecute!(task, context);
-            },
-          }
-        : {}),
-      ...(seams.stepReview
-        ? {
-            stepReview: (task, context, config) => {
-              invoked.push("step-review");
-              return seams.stepReview!(task, context, config);
-            },
-          }
-        : {}),
-    };
+  private recordingHandlers(invoked: string[]): Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>> {
+    const defaultHandlers = createDefaultNodeHandlers(this.deps.seams, this.deps.runCustomNode, {
+      parseSteps: this.deps.parseStepsDeps,
+      runCode: this.deps.runCode,
+      prNodes: this.deps.prNodes,
+    });
+    const handlers = { ...defaultHandlers, ...(this.deps.handlers ?? {}) };
+    const wrapped: Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>> = {};
+    for (const [kind, handler] of Object.entries(handlers) as Array<[WorkflowIrNode["kind"], WorkflowNodeHandler]>) {
+      wrapped[kind] = async (node, context) => {
+        invoked.push(node.id);
+        return handler(node, context);
+      };
+    }
+    return wrapped;
   }
+}
+
+interface WorkflowRuntimeTarget {
+  workflowId: string;
+  ir: WorkflowIr;
+}
+
+function builtinCodingTarget(): WorkflowRuntimeTarget {
+  return { workflowId: "builtin:coding", ir: BUILTIN_CODING_WORKFLOW_IR };
 }
 
 function forceWorkflowGraphExecutor(

@@ -56,9 +56,13 @@ describe("WorkflowTaskRuntime", () => {
 
   it("runs a selected workflow through the graph engine", async () => {
     const calls: string[] = [];
+    let workflowSelectionReads = 0;
     const runtime = new WorkflowTaskRuntime({
       store: {
-        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getTaskWorkflowSelection: () => {
+          workflowSelectionReads += 1;
+          return { workflowId: "WF-001", stepIds: [] };
+        },
         getWorkflowDefinition: async () => ({ ir: selectedIr() }),
       },
       seams: recordingSeams(calls),
@@ -73,6 +77,7 @@ describe("WorkflowTaskRuntime", () => {
     expect(result.disposition).toBe("completed");
     expect(calls).toEqual(["custom:prepare", "execute"]);
     expect(result.visitedNodeIds).toEqual(["start", "prepare", "execute"]);
+    expect(workflowSelectionReads).toBe(1);
   });
 
   it("resolves an unselected task to the built-in coding workflow instead of falling back", async () => {
@@ -96,8 +101,9 @@ describe("WorkflowTaskRuntime", () => {
     expect(result.visitedNodeIds).toEqual(["start", "execute", "review", "merge"]);
   });
 
-  it("turns selected workflow lookup failures into the built-in workflow via the shared resolver", async () => {
+  it("turns selected workflow lookup failures into the built-in workflow target", async () => {
     const calls: string[] = [];
+    const observedRunIds: string[] = [];
     const runtime = new WorkflowTaskRuntime({
       store: {
         getTaskWorkflowSelection: () => ({ workflowId: "WF-MISSING", stepIds: [] }),
@@ -105,16 +111,25 @@ describe("WorkflowTaskRuntime", () => {
       },
       seams: recordingSeams(calls),
       runCustomNode: async () => ({ outcome: "success" }),
+      branchPersistence: {
+        loadBranchStates: (_taskId, runId) => {
+          observedRunIds.push(runId);
+          return [];
+        },
+      },
     });
 
     const result = await runtime.run(task, flagOff);
 
     expect(result.disposition).toBe("completed");
     expect(calls).toEqual(["execute", "review", "merge"]);
+    expect(observedRunIds).toContain("FN-9002:builtin:coding");
+    expect(observedRunIds).not.toContain("FN-9002:WF-MISSING");
   });
 
-  it("turns corrupt selected workflow definitions into the built-in workflow via the shared resolver", async () => {
+  it("turns corrupt selected workflow definitions into the built-in workflow target", async () => {
     const calls: string[] = [];
+    const observedRunIds: string[] = [];
     const runtime = new WorkflowTaskRuntime({
       store: {
         getTaskWorkflowSelection: () => ({ workflowId: "WF-CORRUPT", stepIds: [] }),
@@ -122,12 +137,20 @@ describe("WorkflowTaskRuntime", () => {
       },
       seams: recordingSeams(calls),
       runCustomNode: async () => ({ outcome: "success" }),
+      branchPersistence: {
+        loadBranchStates: (_taskId, runId) => {
+          observedRunIds.push(runId);
+          return [];
+        },
+      },
     });
 
     const result = await runtime.run(task, flagOff);
 
     expect(result.disposition).toBe("completed");
     expect(calls).toEqual(["execute", "review", "merge"]);
+    expect(observedRunIds).toContain("FN-9002:builtin:coding");
+    expect(observedRunIds).not.toContain("FN-9002:WF-CORRUPT");
   });
 
   it("forces only the graph executor flag while preserving other settings", async () => {
@@ -249,19 +272,19 @@ describe("WorkflowTaskRuntime", () => {
     expect(result.reason).toMatch(/workflow-execution-error/);
   });
 
-  it("preserves invoked node ids when the graph throws after side effects", async () => {
+  it("preserves graph node ids when the graph throws after seam and custom side effects", async () => {
     const cyclicIr: WorkflowIr = {
       version: "v1",
       name: "cyclic",
       nodes: [
         { id: "start", kind: "start" },
-        { id: "prepare", kind: "prompt", config: { prompt: "prepare" } },
+        { id: "do-execute", kind: "prompt", config: { seam: "execute" } },
         { id: "loop", kind: "prompt", config: { prompt: "loop" } },
       ],
       edges: [
-        { from: "start", to: "prepare", condition: "success" },
-        { from: "prepare", to: "loop", condition: "success" },
-        { from: "loop", to: "prepare", condition: "success" },
+        { from: "start", to: "do-execute", condition: "success" },
+        { from: "do-execute", to: "loop", condition: "success" },
+        { from: "loop", to: "do-execute", condition: "success" },
       ],
     };
     const runtime = new WorkflowTaskRuntime({
@@ -277,7 +300,7 @@ describe("WorkflowTaskRuntime", () => {
 
     expect(result.disposition).toBe("failed");
     expect(result.reason).toMatch(/workflow-execution-error/);
-    expect(result.visitedNodeIds).toEqual(["prepare", "loop"]);
+    expect(result.visitedNodeIds).toEqual(["do-execute", "loop"]);
   });
 
   it("diagnostic event failures do not affect execution", async () => {
