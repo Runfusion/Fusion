@@ -282,6 +282,160 @@ interface TaskRow {
   allowResurrection: number | null;
 }
 
+type TaskPersistSerializationContext = {
+  lineageId: string;
+};
+
+type TaskColumnDescriptor = {
+  column: keyof TaskRow;
+  sqlIdentifier: string;
+  serialize: (task: Task, context: TaskPersistSerializationContext) => unknown;
+};
+
+function defineTaskColumn(
+  column: keyof TaskRow,
+  serialize: TaskColumnDescriptor["serialize"],
+  sqlIdentifier: string = column,
+): TaskColumnDescriptor {
+  return { column, sqlIdentifier, serialize };
+}
+
+const serializeTaskAutoMerge: TaskColumnDescriptor["serialize"] = (task) => task.autoMerge === undefined ? null : (task.autoMerge ? 1 : 0);
+
+// Keep this descriptor order in lockstep with the named-column INSERT/UPSERT
+// clauses we generate below. SQLite binds by the explicit column list we emit,
+// so this logical persist order does not need to match the table's physical
+// column layout from CREATE TABLE + migrations.
+const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
+  defineTaskColumn("id", (task) => task.id),
+  defineTaskColumn("lineageId", (_task, context) => context.lineageId),
+  defineTaskColumn("title", (task) => task.title ?? null),
+  defineTaskColumn("description", (task) => task.description ?? ""),
+  defineTaskColumn("priority", (task) => normalizeTaskPriority(task.priority)),
+  defineTaskColumn("column", (task) => task.column, '"column"'),
+  defineTaskColumn("status", (task) => task.status ?? null),
+  defineTaskColumn("size", (task) => task.size ?? null),
+  defineTaskColumn("reviewLevel", (task) => task.reviewLevel ?? null),
+  defineTaskColumn("currentStep", (task) => task.currentStep || 0),
+  defineTaskColumn("worktree", (task) => task.worktree ?? null),
+  defineTaskColumn("blockedBy", (task) => task.blockedBy ?? null),
+  defineTaskColumn("overlapBlockedBy", (task) => task.overlapBlockedBy ?? null),
+  defineTaskColumn("paused", (task) => task.paused ? 1 : 0),
+  defineTaskColumn("pausedReason", (task) => task.pausedReason ?? null),
+  defineTaskColumn("userPaused", (task) => task.userPaused ? 1 : 0),
+  defineTaskColumn("baseBranch", (task) => task.baseBranch ?? null),
+  defineTaskColumn("branch", (task) => task.branch ?? null),
+  defineTaskColumn("autoMerge", serializeTaskAutoMerge),
+  defineTaskColumn("executionStartBranch", (task) => task.executionStartBranch ?? null),
+  defineTaskColumn("baseCommitSha", (task) => task.baseCommitSha ?? null),
+  defineTaskColumn("modelPresetId", (task) => task.modelPresetId ?? null),
+  defineTaskColumn("modelProvider", (task) => task.modelProvider ?? null),
+  defineTaskColumn("modelId", (task) => task.modelId ?? null),
+  defineTaskColumn("validatorModelProvider", (task) => task.validatorModelProvider ?? null),
+  defineTaskColumn("validatorModelId", (task) => task.validatorModelId ?? null),
+  defineTaskColumn("planningModelProvider", (task) => task.planningModelProvider ?? null),
+  defineTaskColumn("planningModelId", (task) => task.planningModelId ?? null),
+  defineTaskColumn("mergeRetries", (task) => task.mergeRetries ?? null),
+  defineTaskColumn("workflowStepRetries", (task) => task.workflowStepRetries ?? null),
+  defineTaskColumn("stuckKillCount", (task) => task.stuckKillCount ?? 0),
+  defineTaskColumn("resumeLimboCount", (task) => task.resumeLimboCount ?? 0),
+  defineTaskColumn("resumeLimboTipSha", (task) => task.resumeLimboTipSha ?? null),
+  defineTaskColumn("resumeLimboStepSignature", (task) => task.resumeLimboStepSignature ?? null),
+  defineTaskColumn("postReviewFixCount", (task) => task.postReviewFixCount ?? 0),
+  defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
+  defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),
+  defineTaskColumn("worktreeSessionRetryCount", (task) => task.worktreeSessionRetryCount ?? 0),
+  defineTaskColumn("completionHandoffLimboRecoveryCount", (task) => task.completionHandoffLimboRecoveryCount ?? 0),
+  defineTaskColumn("verificationFailureCount", (task) => task.verificationFailureCount ?? 0),
+  defineTaskColumn("mergeConflictBounceCount", (task) => task.mergeConflictBounceCount ?? 0),
+  defineTaskColumn("mergeAuditBounceCount", (task) => task.mergeAuditBounceCount ?? 0),
+  defineTaskColumn("mergeTransientRetryCount", (task) => task.mergeTransientRetryCount ?? 0),
+  defineTaskColumn("branchConflictRecoveryCount", (task) => task.branchConflictRecoveryCount ?? 0),
+  defineTaskColumn("reviewerContextRetryCount", (task) => task.reviewerContextRetryCount ?? 0),
+  defineTaskColumn("reviewerFallbackRetryCount", (task) => task.reviewerFallbackRetryCount ?? 0),
+  defineTaskColumn("nextRecoveryAt", (task) => task.nextRecoveryAt ?? null),
+  defineTaskColumn("error", (task) => task.error ?? null),
+  defineTaskColumn("summary", (task) => task.summary ?? null),
+  defineTaskColumn("thinkingLevel", (task) => task.thinkingLevel ?? null),
+  defineTaskColumn("executionMode", (task) => task.executionMode ?? null),
+  defineTaskColumn("tokenUsageInputTokens", (task) => task.tokenUsage?.inputTokens ?? null),
+  defineTaskColumn("tokenUsageOutputTokens", (task) => task.tokenUsage?.outputTokens ?? null),
+  defineTaskColumn("tokenUsageCachedTokens", (task) => task.tokenUsage?.cachedTokens ?? null),
+  defineTaskColumn("tokenUsageCacheWriteTokens", (task) => task.tokenUsage?.cacheWriteTokens ?? null),
+  defineTaskColumn("tokenUsageTotalTokens", (task) => task.tokenUsage?.totalTokens ?? null),
+  defineTaskColumn("tokenUsageFirstUsedAt", (task) => task.tokenUsage?.firstUsedAt ?? null),
+  defineTaskColumn("tokenUsageLastUsedAt", (task) => task.tokenUsage?.lastUsedAt ?? null),
+  defineTaskColumn("tokenBudgetSoftAlertedAt", (task) => task.tokenBudgetSoftAlertedAt ?? null),
+  defineTaskColumn("tokenBudgetHardAlertedAt", (task) => task.tokenBudgetHardAlertedAt ?? null),
+  defineTaskColumn("tokenBudgetOverride", (task) => toJsonNullable(task.tokenBudgetOverride)),
+  defineTaskColumn("createdAt", (task) => task.createdAt),
+  defineTaskColumn("updatedAt", (task) => task.updatedAt),
+  defineTaskColumn("columnMovedAt", (task) => task.columnMovedAt ?? null),
+  defineTaskColumn("firstExecutionAt", (task) => task.firstExecutionAt ?? null),
+  defineTaskColumn("cumulativeActiveMs", (task) => task.cumulativeActiveMs ?? null),
+  defineTaskColumn("executionStartedAt", (task) => task.executionStartedAt ?? null),
+  defineTaskColumn("executionCompletedAt", (task) => task.executionCompletedAt ?? null),
+  defineTaskColumn("dependencies", (task) => toJson(task.dependencies || [])),
+  defineTaskColumn("steps", (task) => toJson(task.steps || [])),
+  defineTaskColumn("customFields", (task) => toJson(task.customFields ?? {})),
+  defineTaskColumn("log", (task) => toJson(task.log || [])),
+  defineTaskColumn("attachments", (task) => toJson(task.attachments || [])),
+  defineTaskColumn("steeringComments", (task) => toJson(task.steeringComments || [])),
+  defineTaskColumn("comments", (task) => toJson(task.comments || [])),
+  defineTaskColumn("review", (task) => toJsonNullable(task.review)),
+  defineTaskColumn("reviewState", (task) => toJsonNullable(task.reviewState)),
+  defineTaskColumn("workflowStepResults", (task) => toJson(task.workflowStepResults || [])),
+  defineTaskColumn("prInfo", (task) => toJsonNullable(task.prInfo)),
+  defineTaskColumn("prInfos", (task) => toJson(task.prInfos || [])),
+  defineTaskColumn("issueInfo", (task) => toJsonNullable(task.issueInfo)),
+  defineTaskColumn("githubTracking", (task) => toJsonNullable(task.githubTracking)),
+  defineTaskColumn("sourceIssueProvider", (task) => task.sourceIssue?.provider ?? null),
+  defineTaskColumn("sourceIssueRepository", (task) => task.sourceIssue?.repository ?? null),
+  defineTaskColumn("sourceIssueExternalIssueId", (task) => task.sourceIssue?.externalIssueId ?? null),
+  defineTaskColumn("sourceIssueNumber", (task) => task.sourceIssue?.issueNumber ?? null),
+  defineTaskColumn("sourceIssueUrl", (task) => task.sourceIssue?.url ?? null),
+  defineTaskColumn("mergeDetails", (task) => toJsonNullable(task.mergeDetails)),
+  defineTaskColumn("breakIntoSubtasks", (task) => task.breakIntoSubtasks ? 1 : 0),
+  defineTaskColumn("noCommitsExpected", (task) => task.noCommitsExpected ? 1 : 0),
+  defineTaskColumn("enabledWorkflowSteps", (task) => toJson(task.enabledWorkflowSteps || [])),
+  defineTaskColumn("modifiedFiles", (task) => toJson(task.modifiedFiles || [])),
+  defineTaskColumn("missionId", (task) => task.missionId ?? null),
+  defineTaskColumn("sliceId", (task) => task.sliceId ?? null),
+  defineTaskColumn("scopeOverride", (task) => task.scopeOverride ? 1 : null),
+  defineTaskColumn("scopeOverrideReason", (task) => task.scopeOverrideReason ?? null),
+  defineTaskColumn("scopeAutoWiden", (task) => toJson(task.scopeAutoWiden || [])),
+  defineTaskColumn("assignedAgentId", (task) => task.assignedAgentId ?? null),
+  defineTaskColumn("pausedByAgentId", (task) => task.pausedByAgentId ?? null),
+  defineTaskColumn("assigneeUserId", (task) => task.assigneeUserId ?? null),
+  defineTaskColumn("nodeId", (task) => task.nodeId ?? null),
+  defineTaskColumn("effectiveNodeId", (task) => task.effectiveNodeId ?? null),
+  defineTaskColumn("effectiveNodeSource", (task) => task.effectiveNodeSource ?? null),
+  defineTaskColumn("sourceType", (task) => task.sourceType ?? null),
+  defineTaskColumn("sourceAgentId", (task) => task.sourceAgentId ?? null),
+  defineTaskColumn("sourceRunId", (task) => task.sourceRunId ?? null),
+  defineTaskColumn("sourceSessionId", (task) => task.sourceSessionId ?? null),
+  defineTaskColumn("sourceMessageId", (task) => task.sourceMessageId ?? null),
+  defineTaskColumn("sourceParentTaskId", (task) => task.sourceParentTaskId ?? null),
+  defineTaskColumn("sourceMetadata", (task) => toJsonNullable(task.sourceMetadata)),
+  defineTaskColumn("checkedOutBy", (task) => task.checkedOutBy ?? null),
+  defineTaskColumn("checkedOutAt", (task) => task.checkedOutAt ?? null),
+  defineTaskColumn("checkoutNodeId", (task) => task.checkoutNodeId ?? null),
+  defineTaskColumn("checkoutRunId", (task) => task.checkoutRunId ?? null),
+  defineTaskColumn("checkoutLeaseRenewedAt", (task) => task.checkoutLeaseRenewedAt ?? null),
+  defineTaskColumn("checkoutLeaseEpoch", (task) => task.checkoutLeaseEpoch ?? 0),
+  defineTaskColumn("deletedAt", (task) => task.deletedAt ?? null),
+  defineTaskColumn("allowResurrection", (task) => task.allowResurrection ? 1 : 0),
+];
+
+const TASK_COLUMN_DESCRIPTOR_BY_COLUMN = new Map(
+  TASK_COLUMN_DESCRIPTORS.map((descriptor) => [descriptor.column, descriptor]),
+);
+const TASK_PERSIST_SQL_COLUMNS = TASK_COLUMN_DESCRIPTORS.map((descriptor) => descriptor.sqlIdentifier).join(", ");
+const TASK_UPSERT_SQL_ASSIGNMENTS = TASK_COLUMN_DESCRIPTORS
+  .filter((descriptor) => descriptor.column !== "id")
+  .map((descriptor) => `        ${descriptor.sqlIdentifier} = excluded.${descriptor.sqlIdentifier}`)
+  .join(",\n");
+
 /** Database row shape for the task_documents table. */
 const TASK_BRANCH_CONTEXT_METADATA_KEY = "fusionBranchContext";
 
@@ -2340,128 +2494,23 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return [...columns, limitedLog].join(", ");
   }
 
-  private getTaskPersistValues(task: Task): unknown[] {
-    return [
-      task.id,
-      task.lineageId ?? generateTaskLineageId(),
-      task.title ?? null,
-      task.description ?? "",
-      normalizeTaskPriority(task.priority),
-      task.column,
-      task.status ?? null,
-      task.size ?? null,
-      task.reviewLevel ?? null,
-      task.currentStep || 0,
-      task.worktree ?? null,
-      task.blockedBy ?? null,
-      task.overlapBlockedBy ?? null,
-      task.paused ? 1 : 0,
-      task.pausedReason ?? null,
-      task.userPaused ? 1 : 0,
-      task.baseBranch ?? null,
-      task.branch ?? null,
-      task.autoMerge === undefined ? null : (task.autoMerge ? 1 : 0),
-      task.executionStartBranch ?? null,
-      task.baseCommitSha ?? null,
-      task.modelPresetId ?? null,
-      task.modelProvider ?? null,
-      task.modelId ?? null,
-      task.validatorModelProvider ?? null,
-      task.validatorModelId ?? null,
-      task.planningModelProvider ?? null,
-      task.planningModelId ?? null,
-      task.mergeRetries ?? null,
-      task.workflowStepRetries ?? null,
-      task.stuckKillCount ?? 0,
-      task.resumeLimboCount ?? 0,
-      task.resumeLimboTipSha ?? null,
-      task.resumeLimboStepSignature ?? null,
-      task.postReviewFixCount ?? 0,
-      task.recoveryRetryCount ?? null,
-      task.taskDoneRetryCount ?? 0,
-      task.worktreeSessionRetryCount ?? 0,
-      task.completionHandoffLimboRecoveryCount ?? 0,
-      task.verificationFailureCount ?? 0,
-      task.mergeConflictBounceCount ?? 0,
-      task.mergeAuditBounceCount ?? 0,
-      task.mergeTransientRetryCount ?? 0,
-      task.branchConflictRecoveryCount ?? 0,
-      task.reviewerContextRetryCount ?? 0,
-      task.reviewerFallbackRetryCount ?? 0,
-      task.nextRecoveryAt ?? null,
-      task.error ?? null,
-      task.summary ?? null,
-      task.thinkingLevel ?? null,
-      task.executionMode ?? null,
-      task.tokenUsage?.inputTokens ?? null,
-      task.tokenUsage?.outputTokens ?? null,
-      task.tokenUsage?.cachedTokens ?? null,
-      task.tokenUsage?.cacheWriteTokens ?? null,
-      task.tokenUsage?.totalTokens ?? null,
-      task.tokenUsage?.firstUsedAt ?? null,
-      task.tokenUsage?.lastUsedAt ?? null,
-      task.tokenBudgetSoftAlertedAt ?? null,
-      task.tokenBudgetHardAlertedAt ?? null,
-      toJsonNullable(task.tokenBudgetOverride),
-      task.createdAt,
-      task.updatedAt,
-      task.columnMovedAt ?? null,
-      task.firstExecutionAt ?? null,
-      task.cumulativeActiveMs ?? null,
-      task.executionStartedAt ?? null,
-      task.executionCompletedAt ?? null,
-      toJson(task.dependencies || []),
-      toJson(task.steps || []),
-      toJson(task.customFields ?? {}),
-      toJson(task.log || []),
-      toJson(task.attachments || []),
-      toJson(task.steeringComments || []),
-      toJson(task.comments || []),
-      toJsonNullable(task.review),
-      toJsonNullable(task.reviewState),
-      toJson(task.workflowStepResults || []),
-      toJsonNullable(task.prInfo),
-      toJson(task.prInfos || []),
-      toJsonNullable(task.issueInfo),
-      toJsonNullable(task.githubTracking),
-      task.sourceIssue?.provider ?? null,
-      task.sourceIssue?.repository ?? null,
-      task.sourceIssue?.externalIssueId ?? null,
-      task.sourceIssue?.issueNumber ?? null,
-      task.sourceIssue?.url ?? null,
-      toJsonNullable(task.mergeDetails),
-      task.breakIntoSubtasks ? 1 : 0,
-      task.noCommitsExpected ? 1 : 0,
-      task.autoMerge === undefined ? null : task.autoMerge ? 1 : 0,
-      toJson(task.enabledWorkflowSteps || []),
-      toJson(task.modifiedFiles || []),
-      task.missionId ?? null,
-      task.sliceId ?? null,
-      task.scopeOverride ? 1 : null,
-      task.scopeOverrideReason ?? null,
-      toJson(task.scopeAutoWiden || []),
-      task.assignedAgentId ?? null,
-      task.pausedByAgentId ?? null,
-      task.assigneeUserId ?? null,
-      task.nodeId ?? null,
-      task.effectiveNodeId ?? null,
-      task.effectiveNodeSource ?? null,
-      task.sourceType ?? null,
-      task.sourceAgentId ?? null,
-      task.sourceRunId ?? null,
-      task.sourceSessionId ?? null,
-      task.sourceMessageId ?? null,
-      task.sourceParentTaskId ?? null,
-      toJsonNullable(task.sourceMetadata),
-      task.checkedOutBy ?? null,
-      task.checkedOutAt ?? null,
-      task.checkoutNodeId ?? null,
-      task.checkoutRunId ?? null,
-      task.checkoutLeaseRenewedAt ?? null,
-      task.checkoutLeaseEpoch ?? 0,
-      task.deletedAt ?? null,
-      task.allowResurrection ? 1 : 0,
-    ];
+  private createTaskPersistSerializationContext(
+    task: Task,
+    existingRow?: Pick<TaskRow, "lineageId">,
+  ): TaskPersistSerializationContext {
+    return {
+      lineageId: task.lineageId ?? existingRow?.lineageId ?? generateTaskLineageId(),
+    };
+  }
+
+  private getTaskPersistValues(task: Task, existingRow?: Pick<TaskRow, "lineageId">): unknown[] {
+    const context = this.createTaskPersistSerializationContext(task, existingRow);
+    return TASK_COLUMN_DESCRIPTORS.map((descriptor) => descriptor.serialize(task, context));
+  }
+
+  private readTaskRowFromDb(id: string, options?: { includeDeleted?: boolean }): TaskRow | undefined {
+    const whereClause = options?.includeDeleted ? "id = ?" : `id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`;
+    return this.db.prepare(`SELECT * FROM tasks WHERE ${whereClause}`).get(id) as TaskRow | undefined;
   }
 
   /**
@@ -2472,19 +2521,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const values = this.getTaskPersistValues(task);
     const placeholders = values.map(() => "?").join(", ");
     this.db.prepare(`
-      INSERT INTO tasks (
-        id, lineageId, title, description, priority, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, overlapBlockedBy, paused, pausedReason, userPaused, baseBranch, branch, autoMerge, executionStartBranch, baseCommitSha, modelPresetId, modelProvider,
-        modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergeRetries,
-        workflowStepRetries, stuckKillCount, resumeLimboCount, resumeLimboTipSha, resumeLimboStepSignature, postReviewFixCount, recoveryRetryCount, taskDoneRetryCount, worktreeSessionRetryCount, completionHandoffLimboRecoveryCount, verificationFailureCount, mergeConflictBounceCount, mergeAuditBounceCount, mergeTransientRetryCount, branchConflictRecoveryCount, reviewerContextRetryCount, reviewerFallbackRetryCount, nextRecoveryAt, error,
-        summary, thinkingLevel, executionMode, tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
-        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, tokenBudgetSoftAlertedAt, tokenBudgetHardAlertedAt, tokenBudgetOverride, createdAt, updatedAt, columnMovedAt,
-        firstExecutionAt, cumulativeActiveMs, executionStartedAt, executionCompletedAt,
-        dependencies, steps, customFields, log, attachments, steeringComments,
-        comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
-        sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, autoMerge, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
-      ) VALUES (${placeholders})
+      INSERT INTO tasks (${TASK_PERSIST_SQL_COLUMNS})
+      VALUES (${placeholders})
     `).run(...values);
     this.db.bumpLastModified();
   }
@@ -2499,139 +2537,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const values = this.getTaskPersistValues(task);
     const placeholders = values.map(() => "?").join(", ");
     this.db.prepare(`
-      INSERT INTO tasks (
-        id, lineageId, title, description, priority, "column", status, size, reviewLevel, currentStep,
-        worktree, blockedBy, overlapBlockedBy, paused, pausedReason, userPaused, baseBranch, branch, autoMerge, executionStartBranch, baseCommitSha, modelPresetId, modelProvider,
-        modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergeRetries,
-        workflowStepRetries, stuckKillCount, resumeLimboCount, resumeLimboTipSha, resumeLimboStepSignature, postReviewFixCount, recoveryRetryCount, taskDoneRetryCount, worktreeSessionRetryCount, completionHandoffLimboRecoveryCount, verificationFailureCount, mergeConflictBounceCount, mergeAuditBounceCount, mergeTransientRetryCount, branchConflictRecoveryCount, reviewerContextRetryCount, reviewerFallbackRetryCount, nextRecoveryAt, error,
-        summary, thinkingLevel, executionMode, tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
-        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, tokenBudgetSoftAlertedAt, tokenBudgetHardAlertedAt, tokenBudgetOverride, createdAt, updatedAt, columnMovedAt,
-        firstExecutionAt, cumulativeActiveMs, executionStartedAt, executionCompletedAt,
-        dependencies, steps, customFields, log, attachments, steeringComments,
-        comments, review, reviewState, workflowStepResults, prInfo, prInfos, issueInfo, githubTracking,
-        sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, noCommitsExpected, autoMerge, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, scopeAutoWiden, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch, deletedAt, allowResurrection
-      ) VALUES (${placeholders})
+      INSERT INTO tasks (${TASK_PERSIST_SQL_COLUMNS})
+      VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET
-        lineageId = excluded.lineageId,
-        title = excluded.title,
-        description = excluded.description,
-        priority = excluded.priority,
-        "column" = excluded."column",
-        status = excluded.status,
-        size = excluded.size,
-        reviewLevel = excluded.reviewLevel,
-        currentStep = excluded.currentStep,
-        worktree = excluded.worktree,
-        blockedBy = excluded.blockedBy,
-        overlapBlockedBy = excluded.overlapBlockedBy,
-        paused = excluded.paused,
-        pausedReason = excluded.pausedReason,
-        userPaused = excluded.userPaused,
-        baseBranch = excluded.baseBranch,
-        branch = excluded.branch,
-        autoMerge = excluded.autoMerge,
-        executionStartBranch = excluded.executionStartBranch,
-        baseCommitSha = excluded.baseCommitSha,
-        modelPresetId = excluded.modelPresetId,
-        modelProvider = excluded.modelProvider,
-        modelId = excluded.modelId,
-        validatorModelProvider = excluded.validatorModelProvider,
-        validatorModelId = excluded.validatorModelId,
-        planningModelProvider = excluded.planningModelProvider,
-        planningModelId = excluded.planningModelId,
-        mergeRetries = excluded.mergeRetries,
-        workflowStepRetries = excluded.workflowStepRetries,
-        stuckKillCount = excluded.stuckKillCount,
-        resumeLimboCount = excluded.resumeLimboCount,
-        resumeLimboTipSha = excluded.resumeLimboTipSha,
-        resumeLimboStepSignature = excluded.resumeLimboStepSignature,
-        postReviewFixCount = excluded.postReviewFixCount,
-        recoveryRetryCount = excluded.recoveryRetryCount,
-        taskDoneRetryCount = excluded.taskDoneRetryCount,
-        worktreeSessionRetryCount = excluded.worktreeSessionRetryCount,
-        completionHandoffLimboRecoveryCount = excluded.completionHandoffLimboRecoveryCount,
-        verificationFailureCount = excluded.verificationFailureCount,
-        mergeConflictBounceCount = excluded.mergeConflictBounceCount,
-        mergeAuditBounceCount = excluded.mergeAuditBounceCount,
-        mergeTransientRetryCount = excluded.mergeTransientRetryCount,
-        branchConflictRecoveryCount = excluded.branchConflictRecoveryCount,
-        reviewerContextRetryCount = excluded.reviewerContextRetryCount,
-        reviewerFallbackRetryCount = excluded.reviewerFallbackRetryCount,
-        nextRecoveryAt = excluded.nextRecoveryAt,
-        error = excluded.error,
-        summary = excluded.summary,
-        thinkingLevel = excluded.thinkingLevel,
-        executionMode = excluded.executionMode,
-        tokenUsageInputTokens = excluded.tokenUsageInputTokens,
-        tokenUsageOutputTokens = excluded.tokenUsageOutputTokens,
-        tokenUsageCachedTokens = excluded.tokenUsageCachedTokens,
-        tokenUsageCacheWriteTokens = excluded.tokenUsageCacheWriteTokens,
-        tokenUsageTotalTokens = excluded.tokenUsageTotalTokens,
-        tokenUsageFirstUsedAt = excluded.tokenUsageFirstUsedAt,
-        tokenUsageLastUsedAt = excluded.tokenUsageLastUsedAt,
-        tokenBudgetSoftAlertedAt = excluded.tokenBudgetSoftAlertedAt,
-        tokenBudgetHardAlertedAt = excluded.tokenBudgetHardAlertedAt,
-        tokenBudgetOverride = excluded.tokenBudgetOverride,
-        createdAt = excluded.createdAt,
-        updatedAt = excluded.updatedAt,
-        columnMovedAt = excluded.columnMovedAt,
-        firstExecutionAt = excluded.firstExecutionAt,
-        cumulativeActiveMs = excluded.cumulativeActiveMs,
-        executionStartedAt = excluded.executionStartedAt,
-        executionCompletedAt = excluded.executionCompletedAt,
-        dependencies = excluded.dependencies,
-        steps = excluded.steps,
-        customFields = excluded.customFields,
-        log = excluded.log,
-        attachments = excluded.attachments,
-        steeringComments = excluded.steeringComments,
-        comments = excluded.comments,
-        review = excluded.review,
-        reviewState = excluded.reviewState,
-        workflowStepResults = excluded.workflowStepResults,
-        prInfo = excluded.prInfo,
-        prInfos = excluded.prInfos,
-        issueInfo = excluded.issueInfo,
-        githubTracking = excluded.githubTracking,
-        sourceIssueProvider = excluded.sourceIssueProvider,
-        sourceIssueRepository = excluded.sourceIssueRepository,
-        sourceIssueExternalIssueId = excluded.sourceIssueExternalIssueId,
-        sourceIssueNumber = excluded.sourceIssueNumber,
-        sourceIssueUrl = excluded.sourceIssueUrl,
-        mergeDetails = excluded.mergeDetails,
-        breakIntoSubtasks = excluded.breakIntoSubtasks,
-        noCommitsExpected = excluded.noCommitsExpected,
-        autoMerge = excluded.autoMerge,
-        enabledWorkflowSteps = excluded.enabledWorkflowSteps,
-        modifiedFiles = excluded.modifiedFiles,
-        missionId = excluded.missionId,
-        sliceId = excluded.sliceId,
-        scopeOverride = excluded.scopeOverride,
-        scopeOverrideReason = excluded.scopeOverrideReason,
-        scopeAutoWiden = excluded.scopeAutoWiden,
-        assignedAgentId = excluded.assignedAgentId,
-        pausedByAgentId = excluded.pausedByAgentId,
-        assigneeUserId = excluded.assigneeUserId,
-        nodeId = excluded.nodeId,
-        effectiveNodeId = excluded.effectiveNodeId,
-        effectiveNodeSource = excluded.effectiveNodeSource,
-        sourceType = excluded.sourceType,
-        sourceAgentId = excluded.sourceAgentId,
-        sourceRunId = excluded.sourceRunId,
-        sourceSessionId = excluded.sourceSessionId,
-        sourceMessageId = excluded.sourceMessageId,
-        sourceParentTaskId = excluded.sourceParentTaskId,
-        sourceMetadata = excluded.sourceMetadata,
-        checkedOutBy = excluded.checkedOutBy,
-        checkedOutAt = excluded.checkedOutAt,
-        checkoutNodeId = excluded.checkoutNodeId,
-        checkoutRunId = excluded.checkoutRunId,
-        checkoutLeaseRenewedAt = excluded.checkoutLeaseRenewedAt,
-        checkoutLeaseEpoch = excluded.checkoutLeaseEpoch,
-        deletedAt = excluded.deletedAt,
-        allowResurrection = excluded.allowResurrection
-    `).run(...this.getTaskPersistValues(task));
+${TASK_UPSERT_SQL_ASSIGNMENTS}
+    `).run(...values);
     this.db.bumpLastModified();
   }
 
@@ -2689,31 +2599,118 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
 
-  private upsertTaskWithFtsRecovery(task: Task): void {
+  private runTaskFtsWriteWithRecovery(taskId: string, operation: string, write: () => void): void {
     try {
-      this.upsertTask(task);
+      write();
       return;
     } catch (error) {
       if (!this.db.isFts5CorruptionError(error)) {
         throw error;
       }
 
-      console.warn(`[fusion:store] FTS5 corruption detected during upsert for task ${task.id}; rebuilding index and retrying once`);
+      console.warn(`[fusion:store] FTS5 corruption detected during ${operation} for task ${taskId}; rebuilding index and retrying once`);
 
       try {
         this.db.rebuildFts5Index();
       } catch (rebuildError) {
-        console.warn("[fusion:store] FTS5 rebuild failed; propagating original upsert error", rebuildError);
+        console.warn(`[fusion:store] FTS5 rebuild failed; propagating original ${operation} error`, rebuildError);
         throw error;
       }
 
       try {
-        this.upsertTask(task);
+        write();
       } catch (retryError) {
-        console.warn("[fusion:store] Upsert retry after FTS5 rebuild failed; propagating original upsert error", retryError);
+        console.warn(`[fusion:store] ${operation} retry after FTS5 rebuild failed; propagating original ${operation} error`, retryError);
         throw error;
       }
     }
+  }
+
+  private upsertTaskWithFtsRecovery(task: Task): void {
+    this.runTaskFtsWriteWithRecovery(task.id, "upsert", () => {
+      this.upsertTask(task);
+    });
+  }
+
+  private getTaskPatchDescriptors(changedColumns: Iterable<keyof TaskRow>): TaskColumnDescriptor[] {
+    const descriptors: TaskColumnDescriptor[] = [];
+    for (const column of changedColumns) {
+      const descriptor = TASK_COLUMN_DESCRIPTOR_BY_COLUMN.get(column);
+      if (!descriptor) {
+        throw new Error(`Unknown task column for partial patch: ${String(column)}`);
+      }
+      descriptors.push(descriptor);
+    }
+    return descriptors;
+  }
+
+  private getChangedTaskColumns(existingRow: TaskRow, task: Task): Set<keyof TaskRow> {
+    const nextValues = this.getTaskPersistValues(task, existingRow);
+    const changedColumns = new Set<keyof TaskRow>();
+    for (const [index, descriptor] of TASK_COLUMN_DESCRIPTORS.entries()) {
+      if (descriptor.column === "updatedAt") {
+        continue;
+      }
+      if (!Object.is(existingRow[descriptor.column], nextValues[index])) {
+        changedColumns.add(descriptor.column);
+      }
+    }
+    return changedColumns;
+  }
+
+  private patchTaskRowInTransaction(
+    id: string,
+    task: Task,
+    changedColumns: Iterable<keyof TaskRow>,
+    existingRow?: TaskRow,
+  ): { deletedAt?: string; current?: Task } {
+    const currentRow = existingRow ?? this.readTaskRowFromDb(id, { includeDeleted: true });
+    const deletedAt = this.getSoftDeletedWriteConflict(id, task, currentRow);
+    if (deletedAt) {
+      return { deletedAt };
+    }
+    if (!currentRow || currentRow.deletedAt != null) {
+      this.upsertTaskWithFtsRecovery(task);
+      return { current: this.readTaskFromDb(id) };
+    }
+
+    const patchDescriptors = this.getTaskPatchDescriptors(changedColumns);
+    const context = this.createTaskPersistSerializationContext(task, currentRow);
+    const assignments = patchDescriptors.map((descriptor) => `${descriptor.sqlIdentifier} = ?`);
+    assignments.push("updatedAt = ?");
+    const values = patchDescriptors.map((descriptor) => descriptor.serialize(task, context));
+    values.push(task.updatedAt, id);
+
+    this.runTaskFtsWriteWithRecovery(id, "partial update", () => {
+      this.db.prepare(`
+        UPDATE tasks
+        SET ${assignments.join(", ")}
+        WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}
+      `).run(...values);
+    });
+    this.db.bumpLastModified();
+    return { current: this.readTaskFromDb(id) };
+  }
+
+  private async applyTaskPatch(
+    dir: string,
+    id: string,
+    task: Task,
+    changedColumns: Iterable<keyof TaskRow>,
+    options?: { existingRow?: TaskRow; auditInput?: { agentId?: string; runId?: string; timestamp?: string; operation?: string } },
+  ): Promise<void> {
+    let result: { deletedAt?: string; current?: Task } | undefined;
+    this.db.transactionImmediate(() => {
+      result = this.patchTaskRowInTransaction(id, task, changedColumns, options?.existingRow);
+    });
+    if (result?.deletedAt) {
+      this.throwSoftDeletedWriteBlocked(id, result.deletedAt, options?.auditInput?.operation ?? "applyTaskPatch", {
+        agentId: options?.auditInput?.agentId,
+        runId: options?.auditInput?.runId,
+        timestamp: options?.auditInput?.timestamp,
+      });
+    }
+    await this.writeTaskJsonFile(dir, result?.current ?? task);
   }
 
   /**
@@ -2724,7 +2721,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       ? this.getTaskSelectClauseWithActivityLogLimit(options.activityLogLimit)
       : "*";
     const whereClause = options?.includeDeleted ? "id = ?" : `id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`;
-    const row = this.db.prepare(`SELECT ${selectClause} FROM tasks WHERE ${whereClause}`).get(id) as unknown as TaskRow | undefined;
+    const row = this.db.prepare(`SELECT ${selectClause} FROM tasks WHERE ${whereClause}`).get(id) as TaskRow | undefined;
     if (!row) return undefined;
     return this.rowToTask(row);
   }
@@ -3049,8 +3046,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     );
   }
 
-  private getSoftDeletedWriteConflict(id: string, task: Task): string | undefined {
-    const existing = this.readTaskFromDb(id, { includeDeleted: true });
+  private getSoftDeletedWriteConflict(id: string, task: Task, existingRow?: TaskRow): string | undefined {
+    const existing = existingRow ?? this.readTaskRowFromDb(id, { includeDeleted: true });
     if (!existing?.deletedAt || task.deletedAt !== undefined) {
       return undefined;
     }
@@ -3169,19 +3166,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   private async atomicWriteTaskJson(dir: string, task: Task): Promise<void> {
     const id = this.getTaskIdFromDir(dir);
-    let deletedAt: string | undefined;
+    let result: { deletedAt?: string; current?: Task } | undefined;
     this.db.transactionImmediate(() => {
-      // Soft-delete/restore state is written via direct SQL paths (deleteTask and
-      // future restore flows), so stale task.json upserts must never clear deletedAt.
-      deletedAt = this.getSoftDeletedWriteConflict(id, task);
-      if (deletedAt) return;
-      this.upsertTaskWithFtsRecovery(task);
+      const existingRow = this.readTaskRowFromDb(id, { includeDeleted: true });
+      const changedColumns = existingRow && existingRow.deletedAt == null
+        ? this.getChangedTaskColumns(existingRow, task)
+        : new Set<keyof TaskRow>();
+      result = this.patchTaskRowInTransaction(id, task, changedColumns, existingRow);
     });
-    if (deletedAt) {
-      this.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
+    if (result?.deletedAt) {
+      this.throwSoftDeletedWriteBlocked(id, result.deletedAt, "atomicWriteTaskJson");
     }
-    // Also write to disk for backward compatibility
-    await this.writeTaskJsonFile(dir, task);
+    await this.writeTaskJsonFile(dir, result?.current ?? task);
   }
 
   /**
@@ -3198,29 +3194,28 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     auditInput?: RunAuditEventInput,
   ): Promise<void> {
     const id = this.getTaskIdFromDir(dir);
-    let deletedAt: string | undefined;
+    let result: { deletedAt?: string; current?: Task } | undefined;
     this.db.transactionImmediate(() => {
-      deletedAt = this.getSoftDeletedWriteConflict(id, task);
-      if (deletedAt) return;
+      const existingRow = this.readTaskRowFromDb(id, { includeDeleted: true });
+      const changedColumns = existingRow && existingRow.deletedAt == null
+        ? this.getChangedTaskColumns(existingRow, task)
+        : new Set<keyof TaskRow>();
+      result = this.patchTaskRowInTransaction(id, task, changedColumns, existingRow);
+      if (result?.deletedAt) return;
 
-      // Upsert the task
-      this.upsertTaskWithFtsRecovery(task);
-
-      // Optionally record the audit event in the same transaction
       if (auditInput) {
         this.insertRunAuditEventRow(auditInput);
       }
     });
-    if (deletedAt) {
-      this.throwSoftDeletedWriteBlocked(id, deletedAt, auditInput?.mutationType ?? "atomicWriteTaskJsonWithAudit", {
+    if (result?.deletedAt) {
+      this.throwSoftDeletedWriteBlocked(id, result.deletedAt, auditInput?.mutationType ?? "atomicWriteTaskJsonWithAudit", {
         agentId: auditInput?.agentId,
         runId: auditInput?.runId,
         timestamp: auditInput?.timestamp,
       });
     }
 
-    // File writes are not part of the SQLite transaction
-    await this.writeTaskJsonFile(dir, task);
+    await this.writeTaskJsonFile(dir, result?.current ?? task);
   }
 
   /**
@@ -6161,6 +6156,55 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     return { ok: true, task: post };
+  }
+
+  async renewCheckoutLease(
+    taskId: string,
+    update: {
+      checkoutRunId: string | null;
+      checkoutLeaseRenewedAt: string;
+    },
+  ): Promise<Task> {
+    const dir = this.taskDir(taskId);
+    let deletedAt: string | undefined;
+    let current: Task | undefined;
+    this.db.transactionImmediate(() => {
+      const row = this.readTaskRowFromDb(taskId, { includeDeleted: true });
+      if (row?.deletedAt) {
+        deletedAt = row.deletedAt;
+        return;
+      }
+
+      const result = this.db.prepare(`
+        UPDATE tasks
+        SET checkoutRunId = ?, checkoutLeaseRenewedAt = ?, updatedAt = ?
+        WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}
+      `).run(update.checkoutRunId, update.checkoutLeaseRenewedAt, update.checkoutLeaseRenewedAt, taskId) as { changes: number };
+
+      if (result.changes === 0) {
+        return;
+      }
+
+      this.db.bumpLastModified();
+      current = this.readTaskFromDb(taskId);
+    });
+
+    if (deletedAt) {
+      this.throwSoftDeletedWriteBlocked(taskId, deletedAt, "renewCheckoutLease", {
+        timestamp: update.checkoutLeaseRenewedAt,
+      });
+    }
+
+    if (!current) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    await this.writeTaskJsonFile(dir, current);
+    if (this.isWatching) {
+      this.taskCache.set(taskId, { ...current });
+    }
+    this.emitTaskLifecycleEventSafely("task:updated", [current]);
+    return current;
   }
 
   async selectNextTaskForAgent(

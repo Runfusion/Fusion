@@ -1403,7 +1403,7 @@ export class TaskExecutor {
       );
       return;
     }
-    await this.store.updateTask(taskId, {
+    await this.store.renewCheckoutLease(taskId, {
       checkoutRunId: runId ?? null,
       checkoutLeaseRenewedAt: renewedAt,
     });

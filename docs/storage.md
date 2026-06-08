@@ -139,7 +139,10 @@ Important execution nuance:
 ## FTS5 task-index maintenance (FN-5943 / FN-5976)
 
 - Live task search uses the `tasks_fts` external-content FTS5 table in `fusion.db`; the archive log uses a separate `archived_tasks_fts` table in `archive.db`.
-- `tasks_fts_au` is value-aware: even though hot task writes still upsert full rows, the trigger only fires when indexed text actually changes (`id`, `title`, `description`, `comments`, `deletedAt`). Status/step/worktree churn no longer rewrites the FTS row on every update.
+- `tasks_fts_au` is value-aware and column-scoped. Hot task mutations (`atomicWriteTaskJson` / `atomicWriteTaskJsonWithAudit`) now diff the current row against the incoming task and issue `UPDATE tasks SET <changed cols>, updatedAt = ? WHERE id = ?` instead of rewriting the full task row. Non-text churn (status, steps, leases, scheduler stamps) therefore skips the FTS trigger entirely because those UPDATEs omit the indexed text columns.
+- Full-row task persistence is still intentional for create/restore/replication-class paths: `insertTask` / `atomicCreateTaskJson` remain plain `INSERT`, and direct replication-style upserts (`upsertTaskWithFtsRecovery`, for example task-metadata snapshot application) still use the generated full-row `INSERT ... ON CONFLICT DO UPDATE` form.
+- After a partial SQLite update, Fusion rewrites compatibility `task.json` from a fresh DB read so the disk mirror stays byte-aligned with the authoritative row even on narrow SQL patches.
+- Checkout lease renewal has its own targeted path (`renewCheckoutLease`), updating only `checkoutRunId`, `checkoutLeaseRenewedAt`, and `updatedAt` instead of routing through the broad `updateTask(...)` mutator.
 - `Database.getFtsIndexBytes()` measures index size via `SELECT SUM(LENGTH(block)) FROM tasks_fts_data`. Fusion intentionally does **not** rely on `dbstat`, because node:sqlite builds do not guarantee `SQLITE_ENABLE_DBSTAT_VTAB`.
 - `SelfHealingManager` Batch 1 now runs `fts-maintenance` when `fts5Available === true`:
   - every maintenance tick: incremental `merge` compaction
