@@ -89,10 +89,12 @@ describe("resolveWorkflowIrForTask", () => {
 });
 
 describe("resolveWorkflowIrById", () => {
-  it("resolves builtin:coding to the authored v2 IR with review column traits", async () => {
+  it("resolves builtin:coding to the canonical authored v2 IR with review column traits", async () => {
     const store = makeStore({});
     const ir = await resolveWorkflowIrById(store, "builtin:coding");
 
+    expect(ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(ir).toBe(getBuiltinWorkflow("builtin:coding")!.ir);
     expect(ir.version).toBe("v2");
     if (ir.version !== "v2") throw new Error("expected v2");
     const inReview = ir.columns.find((column) => column.id === "in-review");
@@ -101,6 +103,20 @@ describe("resolveWorkflowIrById", () => {
     expect(inReview!.traits).toEqual(
       expect.arrayContaining([{ trait: "merge-blocker" }, { trait: "human-review" }]),
     );
+  });
+
+  it("resolves an explicit builtin:coding task selection through the canonical IR path", async () => {
+    const store = makeStore({ selection: { workflowId: "builtin:coding", stepIds: [] } });
+    const ir = await resolveWorkflowIrForTask(store, "t1");
+    expect(ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(store.getWorkflowDefinition).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the canonical IR for an unknown built-in id", async () => {
+    const store = makeStore({});
+    const ir = await resolveWorkflowIrById(store, "builtin:missing");
+    expect(ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(store.getWorkflowDefinition).not.toHaveBeenCalled();
   });
 
   it("parses a raw-string IR from the definition", async () => {

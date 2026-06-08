@@ -6,6 +6,7 @@ import {
   WorkflowIrError,
 } from "../workflow-ir.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
+import { getBuiltinWorkflow } from "../builtin-workflows.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 import { DEFAULT_PROJECT_SETTINGS } from "../types.js";
 import type {
@@ -214,6 +215,8 @@ describe("built-in workflow settings parity anchor (U1, R4)", () => {
       expect(declaredIds.has(setting.id)).toBe(true);
     }
     expect(builtin.settings).toEqual(BUILTIN_WORKFLOW_SETTINGS);
+    expect(getBuiltinWorkflow("builtin:coding")!.ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect((getBuiltinWorkflow("builtin:coding")!.ir as WorkflowIrV2).settings).toEqual(BUILTIN_WORKFLOW_SETTINGS);
   });
 
   it("the moved-key catalog has left DEFAULT_PROJECT_SETTINGS (U4 hard-move) and pins its legacy defaults", () => {

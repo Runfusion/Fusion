@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, isBuiltinWorkflowId } from "../builtin-workflows.js";
+import {
+  BUILTIN_WORKFLOWS,
+  defaultEnabledBuiltinWorkflowIds,
+  getBuiltinWorkflow,
+  isBuiltinWorkflowId,
+} from "../builtin-workflows.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 import { resolveColumnFlags } from "../trait-registry.js";
 import { compileWorkflowToSteps } from "../workflow-compiler.js";
 import { DEFAULT_WORKFLOW_COLUMN_IDS, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
@@ -86,6 +92,63 @@ describe("built-in workflows", () => {
     if (BUILTIN_CODING_WORKFLOW_IR.version !== "v2") throw new Error("expected v2");
     expect(BUILTIN_CODING_WORKFLOW_IR.columns.map((c) => c.id)).toEqual([
       ...DEFAULT_WORKFLOW_COLUMN_IDS,
+    ]);
+  });
+
+  it("builtin:coding catalog entry is backed by the canonical coding IR", () => {
+    const coding = getBuiltinWorkflow("builtin:coding");
+    expect(coding).toBeDefined();
+    expect(coding!.id).toBe("builtin:coding");
+    expect(coding!.name).toBe("Coding (built-in)");
+    expect(coding!.description).toContain("standard coding pipeline");
+    expect(coding!.kind).toBe("workflow");
+    expect(coding!.createdAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(coding!.updatedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(coding!.ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(serializeWorkflowIr(coding!.ir)).toBe(serializeWorkflowIr(BUILTIN_CODING_WORKFLOW_IR));
+  });
+
+  it("builtin:coding catalog IR exposes canonical columns, placements, and settings", () => {
+    const coding = getBuiltinWorkflow("builtin:coding")!;
+    const ir = parseWorkflowIr(coding.ir);
+    expect(ir.version).toBe("v2");
+    if (ir.version !== "v2") throw new Error("expected v2");
+
+    expect(ir.columns.map((column) => column.id)).toEqual([
+      "triage",
+      "todo",
+      "in-progress",
+      "in-review",
+      "done",
+      "archived",
+    ]);
+    expect(ir.columns.map((column) => column.traits.map((trait) => trait.trait))).toEqual([
+      ["intake"],
+      ["hold", "reset-on-entry"],
+      ["wip", "abort-on-exit", "timing"],
+      ["merge-blocker", "human-review", "stall-detection", "merge"],
+      ["complete"],
+      ["archived"],
+    ]);
+
+    const byId = new Map(ir.nodes.map((node) => [node.id, node]));
+    expect(byId.get("execute")?.column).toBe("in-progress");
+    expect(byId.get("review")?.column).toBe("in-review");
+    expect(byId.get("merge")?.column).toBe("in-review");
+    expect(ir.settings).toEqual(BUILTIN_WORKFLOW_SETTINGS);
+  });
+
+  it("repeated catalog reads and listings keep builtin:coding in the enabled order", () => {
+    expect(getBuiltinWorkflow("builtin:coding")?.ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(getBuiltinWorkflow("builtin:coding")?.ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(BUILTIN_WORKFLOWS.find((workflow) => workflow.id === "builtin:coding")?.ir).toBe(BUILTIN_CODING_WORKFLOW_IR);
+    expect(defaultEnabledBuiltinWorkflowIds()).toEqual(BUILTIN_WORKFLOWS.map((workflow) => workflow.id));
+    expect(defaultEnabledBuiltinWorkflowIds().slice(0, 5)).toEqual([
+      "builtin:coding",
+      "builtin:quick-fix",
+      "builtin:review-heavy",
+      "builtin:compound-engineering",
+      "builtin:stepwise-coding",
     ]);
   });
 

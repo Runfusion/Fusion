@@ -36,9 +36,11 @@ FN-5766 adds a **flagged-off** interpreter scaffold in `@fusion/engine` (`Workfl
 - Default: **OFF**
 - OFF behavior is strict no-op (no task mutations, no session/git side effects), so the legacy imperative pipeline remains authoritative.
 
-Built-in coding IR currently encodes the legacy lifecycle path as graph stages:
+The default built-in catalog entry `builtin:coding` is backed by the canonical `BUILTIN_CODING_WORKFLOW_IR`, which is also the resolver/runtime fallback for tasks with no workflow selection, an explicit default selection, or a missing/corrupt custom selection. That IR currently encodes the legacy lifecycle path as graph stages:
 
 - `triage` → `execute` → `review` → `merge` → `end`
+
+`builtin:stepwise-coding` is a separate opt-in graph-mode variant backed by `BUILTIN_STEPWISE_CODING_WORKFLOW_IR`; it keeps the same lifecycle columns/traits while modeling per-step parse/execute/review as authored graph structure, and requires the `workflowGraphExecutor` flag at runtime.
 
 #### Interpreter-parity gating criterion
 
