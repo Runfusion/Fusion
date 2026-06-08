@@ -43,6 +43,7 @@ import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useConfirm } from "../hooks/useConfirm";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useAppSettings } from "../hooks/useAppSettings";
+import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { WorkflowEditorCatalogContext } from "./nodes/WorkflowEditorCatalogContext";
 import type { NodeSummaryCatalogs } from "./nodes/node-summary";
@@ -660,9 +661,11 @@ function InnerEditor({
 }: Omit<WorkflowNodeEditorProps, "isOpen"> & { modalRef: React.RefObject<HTMLDivElement | null> }) {
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const viewportMode = useViewportMode();
+  const isMobileViewport = viewportMode === "mobile";
   const [workflowListStageOpen, setWorkflowListStageOpen] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-    return window.matchMedia("(max-width: 768px)").matches;
+    return window.matchMedia(MOBILE_MEDIA_QUERY).matches;
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -969,13 +972,16 @@ function InnerEditor({
     try {
       const data = await fetchWorkflows(projectId);
       setWorkflows(data);
-      setActiveId((prev) => prev ?? data[0]?.id ?? null);
+      setActiveId((prev) => {
+        if (prev && data.some((workflow) => workflow.id === prev)) return prev;
+        return isMobileViewport ? null : data[0]?.id ?? null;
+      });
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to load workflows", "error");
     } finally {
       setLoading(false);
     }
-  }, [projectId, addToast]);
+  }, [projectId, addToast, isMobileViewport]);
 
   useEffect(() => {
     void loadWorkflows();
@@ -1061,6 +1067,7 @@ function InnerEditor({
         const result = await importWorkflow(envelope, projectId);
         await loadWorkflows();
         setActiveId(result.workflow.id);
+        setWorkflowListStageOpen(false);
         addToast(
           t("workflows.imported", 'Imported workflow "{{name}}"', { name: result.workflow.name }),
           "success",
@@ -1567,6 +1574,7 @@ function InnerEditor({
       );
       setWorkflows((ws) => [...ws, created]);
       setActiveId(created.id);
+      setWorkflowListStageOpen(false);
       addToast(t("workflows.created", 'Created workflow "{{name}}"', { name: created.name }), "success");
       closeCreateDialog();
     },
@@ -1599,6 +1607,7 @@ function InnerEditor({
       pendingInterpreterOnlyRef.current = result.interpreterOnly;
       setWorkflows((ws) => [...ws, created]);
       setActiveId(created.id);
+      setWorkflowListStageOpen(false);
       addToast(t("workflows.created", 'Created workflow "{{name}}"', { name: created.name }), "success");
       if (result.strippedApprovalFlags) {
         addToast(
@@ -1627,11 +1636,12 @@ function InnerEditor({
       await deleteWorkflow(activeWorkflow.id, projectId);
       setWorkflows((ws) => ws.filter((w) => w.id !== activeWorkflow.id));
       setActiveId(null);
+      if (isMobileViewport) setWorkflowListStageOpen(true);
       addToast(t("workflows.deleted", "Workflow deleted"), "success");
     } catch (err) {
       addToast(getErrorMessage(err) || t("workflows.deleteFailed", "Failed to delete workflow"), "error");
     }
-  }, [activeWorkflow, projectId, addToast, confirm, t]);
+  }, [activeWorkflow, projectId, addToast, confirm, t, isMobileViewport]);
 
   const handleDuplicate = useCallback(async () => {
     if (!activeWorkflow) return;
@@ -1647,6 +1657,7 @@ function InnerEditor({
       );
       setWorkflows((ws) => [...ws, created]);
       setActiveId(created.id);
+      setWorkflowListStageOpen(false);
       addToast(`Duplicated to "${created.name}" — editable`, "success");
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to duplicate workflow", "error");
@@ -2146,6 +2157,11 @@ function InnerEditor({
                 ))}
               </div>
             )}
+            {isMobileViewport && workflows.length > 0 && !activeWorkflow ? (
+              <div className="wf-editor-select-note" data-testid="wf-mobile-select-note">
+                {t("workflows.mobileSelectNote", "Select a workflow to edit.")}
+              </div>
+            ) : null}
             {loading ? (
               <div className="wf-editor-empty">
                 <Loader2 size={16} className="wf-spin" /> Loading…

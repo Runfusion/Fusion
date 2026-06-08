@@ -82,6 +82,42 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     expect(canvasWrapRule).toMatch(/min-height\s*:\s*0\s*;/);
   });
 
+  it("FN-6033 keeps workflow editor touch target increases mobile-scoped", () => {
+    const baseCss = loadAllAppCssBaseOnly();
+    const editorCss = readComponentCss("WorkflowNodeEditor.css");
+    const mobileBlocks = extractMediaBlocks(editorCss, "(max-width: 768px)");
+
+    const modalRule = findRule(mobileBlocks, /\.wf-editor-modal,\s*\.wf-create-modal\s*\{[^}]*\}/);
+    expect(modalRule).toMatch(/--wf-editor-touch-target\s*:\s*calc\(var\(--space-xl\) \+ var\(--space-lg\) \+ var\(--space-xs\)\)\s*;/);
+
+    const listAndActionRule = findRule(
+      mobileBlocks,
+      /\.wf-editor-list-item,\s*\.wf-editor-new,\s*\.wf-editor-import,[^}]*\.wf-settings-panel button\s*\{[^}]*\}/,
+    );
+    expect(listAndActionRule).toMatch(/min-height\s*:\s*var\(--wf-editor-touch-target\)\s*;/);
+
+    const editorButtonsRule = findRule(
+      mobileBlocks,
+      /\.wf-editor-list-item,\s*\.wf-editor-new,\s*\.wf-editor-import,[^}]*\.wf-ai-toggle\s*\{[^}]*\}/,
+    );
+    expect(editorButtonsRule).toMatch(/padding\s*:\s*var\(--space-sm\) var\(--space-md\)\s*;/);
+
+    const inlineControlsRule = findRule(
+      mobileBlocks,
+      /\.wf-field input,\s*\.wf-field textarea,\s*\.wf-field select,[^}]*\.wf-ai-prompt\s*\{[^}]*\}/,
+    );
+    expect(inlineControlsRule).toMatch(/min-height\s*:\s*var\(--wf-editor-touch-target\)\s*;/);
+    expect(inlineControlsRule).toMatch(/padding\s*:\s*var\(--space-sm\) var\(--space-md\)\s*;/);
+
+    const mobileBackRule = findRule(mobileBlocks, /\.wf-editor-mobile-back\s*\{[^}]*\}/);
+    expect(mobileBackRule).toMatch(/min-height\s*:\s*var\(--wf-editor-touch-target\)\s*;/);
+    expect(mobileBackRule).toMatch(/padding\s*:\s*var\(--space-sm\) var\(--space-md\)\s*;/);
+
+    const desktopListRule = findRule([baseCss], /\.wf-editor-list-item\s*\{[^}]*\}/);
+    expect(desktopListRule).not.toMatch(/min-height\s*:/);
+    expect(editorCss).not.toMatch(/@media \(max-width: 768px\)\s*\{[^}]*\.btn\s*\{/s);
+  });
+
   it("FN-5992 covers create dialog and AI panel mobile overlays", () => {
     const editorCss = readComponentCss("WorkflowNodeEditor.css");
     const mobileBlocks = extractMediaBlocks(editorCss, "(max-width: 768px)");

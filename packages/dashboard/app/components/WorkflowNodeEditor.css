@@ -252,6 +252,15 @@
   font-size: 0.85rem;
 }
 
+.wf-editor-select-note {
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--ws-info) 8%, var(--bg-secondary));
+  border: 1px solid var(--ws-info);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
 .wf-editor-canvas-wrap {
   display: flex;
   flex-direction: column;
@@ -1160,6 +1169,8 @@
 
   .wf-editor-modal,
   .wf-create-modal {
+    --wf-editor-touch-target: calc(var(--space-xl) + var(--space-lg) + var(--space-xs));
+
     width: 100vw;
     min-width: 0;
     max-width: 100vw;
@@ -1228,8 +1239,9 @@
     align-items: center;
     align-self: flex-start;
     gap: var(--space-xs);
+    min-height: var(--wf-editor-touch-target);
     margin: var(--space-sm) var(--space-sm) 0;
-    padding: 5px 8px;
+    padding: var(--space-sm) var(--space-md);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--surface);
@@ -1257,6 +1269,48 @@
   .wf-editor-canvas-wrap {
     flex: 1 1 auto;
     min-height: 0;
+  }
+
+  .wf-editor-list-item,
+  .wf-editor-new,
+  .wf-editor-import,
+  .wf-sidebar-section-toggle,
+  .wf-palette-btn,
+  .wf-editor-action,
+  .wf-editor-delete,
+  .wf-editor-save,
+  .wf-templates-toggle,
+  .wf-templates-entry,
+  .wf-template-option,
+  .wf-ai-toggle,
+  .wf-workflow-name,
+  .wf-workflow-name-input,
+  .wf-column-panel button,
+  .wf-fields-panel button,
+  .wf-settings-panel button {
+    min-height: var(--wf-editor-touch-target);
+  }
+
+  .wf-editor-list-item,
+  .wf-editor-new,
+  .wf-editor-import,
+  .wf-palette-btn,
+  .wf-editor-action,
+  .wf-editor-delete,
+  .wf-editor-save,
+  .wf-templates-toggle,
+  .wf-templates-entry,
+  .wf-ai-toggle {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .wf-field input,
+  .wf-field textarea,
+  .wf-field select,
+  .wf-templates-filter,
+  .wf-ai-prompt {
+    min-height: var(--wf-editor-touch-target);
+    padding: var(--space-sm) var(--space-md);
   }
 
   .wf-template-list {

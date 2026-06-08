@@ -81,12 +81,33 @@ import type { WorkflowStepTemplate } from "@fusion/core";
 import { beforeEach as viBeforeEach } from "vitest";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
+
+function mockWorkflowEditorViewport(mode: "desktop" | "mobile" | "tablet" = "desktop") {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches:
+        (mode === "mobile" && (query === MOBILE_MEDIA_QUERY || query === "(max-width: 768px)")) ||
+        (mode === "tablet" && query === "(min-width: 769px) and (max-width: 1024px)"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
 
 // useAppSettings (threaded into the editor for the column-agent flag gate)
 // fetches config + settings on mount via the mocked api module. Default both to
 // resolved empties for every test so the real hook never rejects; column-agent
 // tests override fetchSettings to flip the flags on. fetchAgents defaults empty.
 viBeforeEach(() => {
+  mockWorkflowEditorViewport("desktop");
   vi.mocked(fetchConfig).mockResolvedValue({ maxConcurrent: 2, rootDir: "." });
   vi.mocked(fetchSettings).mockResolvedValue({} as never);
   vi.mocked(fetchAgents).mockResolvedValue([]);
@@ -297,6 +318,53 @@ describe("WorkflowNodeEditor", () => {
     await waitFor(() => expect(screen.getByText(/No workflows yet/i)).toBeInTheDocument());
     expect(screen.getByText(/No workflow selected/i)).toBeInTheDocument();
     expect(screen.getByTestId("wf-empty-create")).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-mobile-select-note")).not.toBeInTheDocument();
+  });
+
+  it("preselects the first populated workflow on desktop", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
+    expect(screen.queryByTestId("wf-mobile-select-note")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "QA" })[0]).toHaveClass("active");
+  });
+
+  it("opens populated mobile workflows on the list with no preselected workflow", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    expect(await screen.findByTestId("wf-mobile-select-note")).toHaveTextContent("Select a workflow to edit.");
+    expect(screen.getByText(/No workflow selected/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("wf-workflow-name")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "QA" })).not.toHaveClass("active");
+    expect(screen.getByRole("button", { name: "Custom" })).not.toHaveClass("active");
+  });
+
+  it("selects by workflow id on mobile even when workflow names are duplicated", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      { ...def(), id: "WF-DUP-A", name: "QA" },
+      { ...v2Def(), id: "WF-DUP-B", name: "QA" },
+    ]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByTestId("wf-mobile-select-note");
+    const qaButtons = screen.getAllByRole("button", { name: "QA" });
+    expect(qaButtons).toHaveLength(2);
+    expect(qaButtons[0]).not.toHaveClass("active");
+    expect(qaButtons[1]).not.toHaveClass("active");
+
+    fireEvent.click(qaButtons[1]);
+
+    await waitFor(() => expect(qaButtons[1]).toHaveClass("active"));
+    expect(qaButtons[0]).not.toHaveClass("active");
+    expect(screen.queryByTestId("wf-mobile-select-note")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
   });
 
   it("renders nothing when closed", () => {
