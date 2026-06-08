@@ -199,7 +199,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "^/api(?!/.*\\.ts$)(/|$)": {
+      // Keep Vite source modules under app/api* on the dev server while proxying real API endpoints.
+      "^/api(?!/.*\\.[jt]sx?(?:\\?|$))(/|$)": {
         target: `http://localhost:${process.env.FUSION_API_PORT ?? "4040"}`,
         changeOrigin: true,
         ws: true,

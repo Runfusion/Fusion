@@ -167,6 +167,7 @@ export function ProjectModelsSection({
     } catch {
       if (reqSeq.current === seq) {
         setWorkflowPayload(null);
+        setWorkflowPending({});
         setWorkflowRejections({});
         setResolvedWorkflowId(defaultWorkflowId);
         addToast(t("settings.models.workflowLanesLoadFailed", "Failed to load workflow model settings"), "error");
