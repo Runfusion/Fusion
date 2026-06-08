@@ -13,17 +13,65 @@
  * Keys, lane labels, and conditional rendering are preserved verbatim from the
  * original inline JSX.
  */
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { ModelPreset, Settings } from "@fusion/core";
-import type { ModelInfo } from "../../../api";
+import {
+  ApiRequestError,
+  fetchWorkflowSettingValues,
+  updateWorkflowSettingValues,
+  type ModelInfo,
+  type WorkflowSettingRejection,
+  type WorkflowSettingValuesPayload,
+} from "../../../api";
 import { CustomModelDropdown } from "../../CustomModelDropdown";
 import { applyPresetToSelection } from "../../../utils/modelPresets";
 import type { ToastType } from "../../../hooks/useToast";
-import { MovedSettingsStub } from "./MovedSettingsStub";
 import type { ModelLane, SectionBaseProps, SettingsFormState } from "./context";
 
 type LaneStatus = "inherited" | "overridden";
+
+type WorkflowModelPair = {
+  id: "planning" | "execution" | "validator";
+  providerId: string;
+  modelId: string;
+  label: string;
+  help: string;
+};
+
+const DEFAULT_WORKFLOW_ID = "builtin:coding";
+
+const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
+  {
+    id: "planning",
+    providerId: "planningProvider",
+    modelId: "planningModelId",
+    label: "Plan/Triage Model",
+    help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the workflow default.",
+  },
+  {
+    id: "execution",
+    providerId: "executionProvider",
+    modelId: "executionModelId",
+    label: "Executor Model",
+    help: "Provider and model used while executing workflow steps. Leave unset to inherit from the workflow default.",
+  },
+  {
+    id: "validator",
+    providerId: "validatorProvider",
+    modelId: "validatorModelId",
+    label: "Reviewer Model",
+    help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
+  },
+];
+
+function modelPairValue(values: Record<string, unknown>, pair: WorkflowModelPair): string {
+  const provider = values[pair.providerId];
+  const modelId = values[pair.modelId];
+  return typeof provider === "string" && typeof modelId === "string" && provider && modelId
+    ? `${provider}/${modelId}`
+    : "";
+}
 
 export interface ProjectModelsSectionModelProps {
   modelLanes: ModelLane[];
@@ -58,6 +106,7 @@ export function ProjectModelsSection({
   form,
   setForm,
   models,
+  projectId,
   onOpenWorkflowSettings,
 }: ProjectModelsSectionProps) {
   const { t } = useTranslation("app");
@@ -84,6 +133,102 @@ export function ProjectModelsSection({
   const presets = form.modelPresets || [];
   const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
   const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
+  const configuredWorkflowId = typeof form.defaultWorkflowId === "string" && form.defaultWorkflowId.trim()
+    ? form.defaultWorkflowId
+    : DEFAULT_WORKFLOW_ID;
+  const [workflowId, setWorkflowId] = useState(configuredWorkflowId);
+  const [workflowPayload, setWorkflowPayload] = useState<WorkflowSettingValuesPayload | null>(null);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowPending, setWorkflowPending] = useState<Record<string, unknown>>({});
+  const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [workflowRejections, setWorkflowRejections] = useState<Record<string, WorkflowSettingRejection>>({});
+  const workflowReqSeq = useRef(0);
+  const workflowDirty = Object.keys(workflowPending).length > 0;
+
+  useEffect(() => {
+    setWorkflowId(configuredWorkflowId);
+  }, [configuredWorkflowId]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setWorkflowPayload(null);
+      setWorkflowPending({});
+      setWorkflowRejections({});
+      return;
+    }
+    const seq = ++workflowReqSeq.current;
+    setWorkflowLoading(true);
+    fetchWorkflowSettingValues(workflowId, projectId)
+      .then((payload) => {
+        if (workflowReqSeq.current !== seq) return;
+        setWorkflowPayload(payload);
+        setWorkflowPending({});
+        setWorkflowRejections({});
+      })
+      .catch((err) => {
+        if (workflowReqSeq.current !== seq) return;
+        if (err instanceof ApiRequestError && err.status === 404 && workflowId !== DEFAULT_WORKFLOW_ID) {
+          setWorkflowId(DEFAULT_WORKFLOW_ID);
+          return;
+        }
+        setWorkflowPayload({ stored: {}, effective: {}, orphaned: [] });
+      })
+      .finally(() => {
+        if (workflowReqSeq.current === seq) setWorkflowLoading(false);
+      });
+  }, [projectId, workflowId]);
+
+  const effectiveWorkflowValues = useMemo(() => ({
+    ...(workflowPayload?.effective ?? {}),
+    ...Object.fromEntries(Object.entries(workflowPending).filter(([, value]) => value !== null)),
+  }), [workflowPayload, workflowPending]);
+
+  const setWorkflowPairValue = useCallback((pair: WorkflowModelPair, value: string) => {
+    setWorkflowRejections((current) => {
+      const next = { ...current };
+      delete next[pair.providerId];
+      delete next[pair.modelId];
+      return next;
+    });
+    setWorkflowPending((current) => {
+      if (!value) {
+        return { ...current, [pair.providerId]: null, [pair.modelId]: null };
+      }
+      const slashIdx = value.indexOf("/");
+      if (slashIdx <= 0) return current;
+      return {
+        ...current,
+        [pair.providerId]: value.slice(0, slashIdx),
+        [pair.modelId]: value.slice(slashIdx + 1),
+      };
+    });
+  }, []);
+
+  const resetWorkflowPairValue = useCallback((pair: WorkflowModelPair) => {
+    setWorkflowPairValue(pair, "");
+  }, [setWorkflowPairValue]);
+
+  const saveWorkflowLanes = useCallback(async () => {
+    if (!projectId || !workflowDirty) return;
+    setWorkflowSaving(true);
+    try {
+      const payload = await updateWorkflowSettingValues(workflowId, workflowPending, projectId);
+      setWorkflowPayload(payload);
+      setWorkflowPending({});
+      setWorkflowRejections({});
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 400 && err.details) {
+        const rejections = (err.details.rejections as WorkflowSettingRejection[] | undefined) ?? [];
+        if (rejections.length > 0) {
+          setWorkflowRejections(Object.fromEntries(rejections.map((rejection) => [rejection.settingId, rejection])));
+          return;
+        }
+      }
+      throw err;
+    } finally {
+      setWorkflowSaving(false);
+    }
+  }, [projectId, workflowDirty, workflowId, workflowPending]);
 
   // The project DEFAULT lane and restored title-summarizer lane remain editable
   // here. Execution/planning/validator workflow-specific lanes still redirect to
@@ -210,15 +355,95 @@ export function ProjectModelsSection({
         </>
       )}
 
-      {/* --- Per-phase model lanes (MOVED to workflow settings) --- */}
-      <h4 className="settings-section-heading settings-section-heading--spaced">Per-phase model lanes</h4>
-      <MovedSettingsStub
-        message={t(
+      {/* --- Default workflow model lanes --- */}
+      <h4 className="settings-section-heading settings-section-heading--spaced">Default workflow model lanes</h4>
+      <p className="settings-description">
+        {t(
           "settings.movedStub.modelLanes",
           "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.",
-        )}
-        onOpenWorkflowSettings={onOpenWorkflowSettings}
-      />
+        )} These project overrides apply to the active default workflow.
+      </p>
+      {!projectId ? (
+        <div className="settings-empty-state settings-muted">Open a project to edit workflow model lanes.</div>
+      ) : workflowLoading ? (
+        <div className="settings-empty-state">Loading workflow model lanes…</div>
+      ) : availableModels.length === 0 ? (
+        <div className="settings-empty-state settings-muted">
+          No models available. Configure authentication before selecting workflow model lanes.
+        </div>
+      ) : (
+        <>
+          {WORKFLOW_MODEL_PAIRS.map((pair) => {
+            const value = modelPairValue(effectiveWorkflowValues, pair);
+            const customized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
+              ? workflowPending[pair.providerId] !== null
+              : Boolean(workflowPayload?.stored && (
+                Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
+                || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)
+              ));
+            const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message;
+            return (
+              <div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
+                <div className="settings-model-lane-label-row">
+                  <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
+                  <span
+                    className={`settings-lane-badge ${customized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`}
+                    title={customized ? "Explicitly set for this project workflow" : "Inherited from workflow defaults"}
+                  >
+                    {customized ? "Override (Project)" : "Inherited (Workflow)"}
+                  </span>
+                </div>
+                <div className="settings-model-lane-control-row">
+                  <div className="settings-model-lane-control-main">
+                    <CustomModelDropdown
+                      id={`workflow-${pair.id}-model`}
+                      label={pair.label}
+                      models={availableModels}
+                      value={value}
+                      onChange={(next) => setWorkflowPairValue(pair, next)}
+                      placeholder="Use workflow default"
+                      defaultOptionLabel="Use workflow default"
+                      favoriteProviders={favoriteProviders}
+                      onToggleFavorite={onToggleFavorite}
+                      favoriteModels={favoriteModels}
+                      onToggleModelFavorite={onToggleModelFavorite}
+                    />
+                  </div>
+                  {customized && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      title="Reset to inherit from workflow"
+                      onClick={() => resetWorkflowPairValue(pair)}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+                <small>{pair.help}</small>
+                {error ? <small className="settings-error" data-testid={`workflow-model-lane-error-${pair.id}`}>{error}</small> : null}
+              </div>
+            );
+          })}
+          <div className="settings-model-lane-actions" aria-label="Default workflow model lane actions">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              data-testid="save-workflow-model-lanes"
+              onClick={saveWorkflowLanes}
+              disabled={!workflowDirty || workflowSaving}
+            >
+              {workflowSaving ? "Saving…" : "Save workflow models"}
+            </button>
+            {onOpenWorkflowSettings ? (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenWorkflowSettings}>
+                Advanced workflow policy
+              </button>
+            ) : null}
+          </div>
+        </>
+      )}
 
       {/* --- Model Presets --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">Model Presets</h4>

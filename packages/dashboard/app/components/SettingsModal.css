@@ -1675,6 +1675,20 @@
   flex: 1;
 }
 
+.settings-model-lane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-xl) var(--space-lg);
+  margin-block: var(--space-sm) var(--space-lg);
+  border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+.settings-error {
+  color: var(--color-error);
+}
+
 .settings-summarization-actions {
   justify-content: flex-start;
 }
@@ -1922,6 +1936,12 @@
 
   .settings-description {
     padding: 0 var(--space-lg);
+  }
+
+  .settings-model-lane-actions {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: calc(var(--space-md) + var(--space-xs) / 2);
   }
 
   .settings-content .btn,

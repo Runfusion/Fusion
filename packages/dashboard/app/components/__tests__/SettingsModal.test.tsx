@@ -1526,9 +1526,11 @@ describe("SettingsModal", () => {
     async function setupWorkflowModelLaneTest({
       stored = {},
       effective = {},
+      renderProps = {},
     }: {
       stored?: Record<string, unknown>;
       effective?: Record<string, unknown>;
+      renderProps?: Partial<ComponentProps<typeof SettingsModal>>;
     } = {}) {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,
@@ -1549,13 +1551,29 @@ describe("SettingsModal", () => {
         orphaned: [],
       });
 
-      renderModal({ initialSection: "project-models", projectId: "proj-1" });
+      renderModal({ initialSection: "project-models", projectId: "proj-1", ...renderProps });
       await waitForSettingsModalReady();
 
       await waitFor(() => {
         expect(mockFetchWorkflowSettingValues).toHaveBeenCalledWith("workflow-custom", "proj-1");
       });
     }
+
+    it("renders the workflow model save actions inside the default workflow lane section", async () => {
+      const onOpenWorkflowSettings = vi.fn();
+      await setupWorkflowModelLaneTest({ renderProps: { onOpenWorkflowSettings } });
+
+      const workflowHeading = screen.getByRole("heading", { name: "Default workflow model lanes" });
+      const saveButton = screen.getByTestId("save-workflow-model-lanes");
+      const actionRow = saveButton.closest(".settings-model-lane-actions");
+      const presetsHeading = screen.getByRole("heading", { name: "Model Presets" });
+
+      expect(actionRow).toBeInTheDocument();
+      expect(actionRow).toHaveAttribute("aria-label", "Default workflow model lane actions");
+      expect(within(actionRow as HTMLElement).getByRole("button", { name: "Advanced workflow policy" })).toBeInTheDocument();
+      expect(workflowHeading.compareDocumentPosition(actionRow as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect((actionRow as HTMLElement).compareDocumentPosition(presetsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
 
     it.each([
       ["Plan/Triage Model", { planningProvider: "openai", planningModelId: "gpt-4o" }],
