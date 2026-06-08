@@ -6,6 +6,7 @@ import {
 } from "../builtin-traits.js";
 import { TraitRegistry } from "../trait-registry.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
+import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
 import type { WorkflowIrV2 } from "../workflow-ir-types.js";
 
 function freshRegistry(): TraitRegistry {
@@ -111,6 +112,16 @@ describe("default workflow columns validate cleanly", () => {
   it("the default workflow's in-review column resolves review and merge flags", () => {
     const r = freshRegistry();
     const ir = BUILTIN_CODING_WORKFLOW_IR as WorkflowIrV2;
+    const inReview = ir.columns.find((c) => c.id === "in-review")!;
+    const flags = r.resolveColumnFlags(inReview);
+    expect(flags.mergeBlocker).toBe(true);
+    expect(flags.humanReview).toBe(true);
+    expect(flags.mergeOrchestration).toBe(true);
+  });
+
+  it("the stepwise workflow's in-review column resolves review and merge flags", () => {
+    const r = freshRegistry();
+    const ir = BUILTIN_STEPWISE_CODING_WORKFLOW_IR as WorkflowIrV2;
     const inReview = ir.columns.find((c) => c.id === "in-review")!;
     const flags = r.resolveColumnFlags(inReview);
     expect(flags.mergeBlocker).toBe(true);
