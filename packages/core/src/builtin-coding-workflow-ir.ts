@@ -1,6 +1,7 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
+import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 
 /**
  * The built-in default workflow as a v2 IR. Its six columns have ids that are
@@ -46,9 +47,9 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
   ],
   nodes: [
     { id: "start", kind: "start", column: "triage" },
-    { id: "execute", kind: "prompt", column: "in-progress", config: { seam: "execute", name: "Execute" } },
-    { id: "review", kind: "prompt", column: "in-review", config: { seam: "review", name: "Review" } },
-    { id: "merge", kind: "prompt", column: "in-review", config: { seam: "merge", name: "Merge boundary" } },
+    { id: "execute", kind: "prompt", column: "in-progress", config: builtinPromptConfig("execute", "Execute") },
+    { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
+    { id: "merge", kind: "prompt", column: "in-review", config: builtinPromptConfig("merge", "Merge boundary") },
     { id: "end", kind: "end", column: "done" },
   ],
   edges: [

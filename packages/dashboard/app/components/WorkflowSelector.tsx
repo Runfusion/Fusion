@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Workflow as WorkflowIcon } from "lucide-react";
 import type { WorkflowDefinition } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
-import { fetchWorkflows, fetchProjectDefaultWorkflow, setProjectDefaultWorkflow } from "../api";
+import { fetchWorkflow, fetchWorkflows, fetchProjectDefaultWorkflow, setProjectDefaultWorkflow } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 
@@ -49,7 +49,15 @@ export function WorkflowSelector({
     setWorkflows([]);
     setLoading(true);
     fetchWorkflows(projectId)
-      .then((data) => {
+      .then(async (data) => {
+        if (value && !data.some((workflow) => workflow.id === value)) {
+          try {
+            const current = await fetchWorkflow(value, projectId);
+            data = [...data, current];
+          } catch {
+            // The selected workflow may have been deleted; leave the filtered list as-is.
+          }
+        }
         if (!cancelled) setWorkflows(data);
       })
       .catch((err) => {
@@ -62,7 +70,7 @@ export function WorkflowSelector({
     return () => {
       cancelled = true;
     };
-  }, [projectId, addToast]);
+  }, [projectId, addToast, value]);
 
   const handleChange = useCallback(
     async (next: string) => {

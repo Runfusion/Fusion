@@ -140,6 +140,38 @@ describe("built-in workflows", () => {
       expect(await store.getWorkflowDefinition("builtin:coding")).toBeDefined();
     });
 
+    it("filters disabled built-ins from normal listings but keeps direct resolution", async () => {
+      await store.updateSettings({ enabledBuiltinWorkflowIds: ["builtin:coding"] });
+
+      const list = await store.listWorkflowDefinitions();
+      expect(list.filter((workflow) => workflow.id.startsWith("builtin:")).map((workflow) => workflow.id)).toEqual([
+        "builtin:coding",
+      ]);
+      expect(await store.getWorkflowDefinition("builtin:compound-engineering")).toBeDefined();
+    });
+
+    it("can include disabled built-ins for workflow management surfaces", async () => {
+      await store.updateSettings({ enabledBuiltinWorkflowIds: [] });
+
+      const normalList = await store.listWorkflowDefinitions();
+      expect(normalList.some((workflow) => workflow.id.startsWith("builtin:"))).toBe(false);
+
+      const managementList = await store.listWorkflowDefinitions({ includeDisabledBuiltins: true });
+      expect(managementList.some((workflow) => workflow.id === "builtin:coding")).toBe(true);
+      expect(managementList.some((workflow) => workflow.id === "builtin:compound-engineering")).toBe(true);
+    });
+
+    it("shows the built-in seam prompt text in node config", () => {
+      const coding = getBuiltinWorkflow("builtin:coding");
+      const execute = coding?.ir.nodes.find((node) => node.id === "execute");
+      const review = coding?.ir.nodes.find((node) => node.id === "review");
+      const merge = coding?.ir.nodes.find((node) => node.id === "merge");
+
+      expect((execute?.config as { prompt?: string } | undefined)?.prompt).toContain("You are a task execution agent");
+      expect((review?.config as { prompt?: string } | undefined)?.prompt).toContain("You are an independent code and plan reviewer");
+      expect((merge?.config as { prompt?: string } | undefined)?.prompt).toContain("You are a merge agent");
+    });
+
     it("rejects editing or deleting a built-in", async () => {
       await expect(
         store.updateWorkflowDefinition("builtin:coding", { name: "x" }),

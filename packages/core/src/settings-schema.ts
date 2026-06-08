@@ -238,6 +238,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   globalPause: false,
   globalPauseReason: undefined,
   defaultWorkflowId: undefined,
+  enabledBuiltinWorkflowIds: undefined,
   approvedWorkflowCliCommands: undefined,
   approvedCliAutonomyAdapters: undefined,
   enginePaused: false,

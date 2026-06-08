@@ -1,6 +1,7 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
+import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 
 /**
  * The built-in **stepwise** coding workflow (KTD-9) — the demonstration of step
@@ -63,7 +64,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   nodes: [
     { id: "start", kind: "start", column: "triage" },
     // Planning seam: produces PROMPT.md (the declared step-source artifact).
-    { id: "plan", kind: "prompt", column: "in-progress", config: { seam: "planning", name: "Plan" } },
+    { id: "plan", kind: "prompt", column: "in-progress", config: builtinPromptConfig("planning", "Plan") },
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).
     {
@@ -86,7 +87,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
         template: {
           nodes: [
             // KTD-2: run exactly this step inside the task's session/worktree.
-            { id: "step-execute", kind: "prompt", config: { seam: "step-execute", name: "Step execute" } },
+            { id: "step-execute", kind: "prompt", config: builtinPromptConfig("step-execute", "Step execute") },
             // KTD-4: per-step code review; verdicts become outcome edges.
             { id: "step-review", kind: "step-review", config: { type: "code" } },
             // Template exit (the single sink the validator requires): a config-less
@@ -121,8 +122,8 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     },
     // KTD-5: rework exhaustion escalates to a manual hold (a human releases it).
     { id: "rework-hold", kind: "hold", column: "in-progress", config: { release: "manual" } },
-    { id: "review", kind: "prompt", column: "in-review", config: { seam: "review", name: "Review" } },
-    { id: "merge", kind: "prompt", column: "in-review", config: { seam: "merge", name: "Merge boundary" } },
+    { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
+    { id: "merge", kind: "prompt", column: "in-review", config: builtinPromptConfig("merge", "Merge boundary") },
     { id: "end", kind: "end", column: "done" },
   ],
   edges: [

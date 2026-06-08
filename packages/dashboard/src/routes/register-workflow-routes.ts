@@ -275,7 +275,11 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
   router.get("/workflows", async (req, res) => {
     try {
       const { store } = await getProjectContext(req);
-      res.json(await store.listWorkflowDefinitions());
+      res.json(
+        await store.listWorkflowDefinitions({
+          includeDisabledBuiltins: req.query.includeDisabledBuiltins === "true",
+        }),
+      );
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);

@@ -6,8 +6,10 @@ import { WorkflowSelector } from "../WorkflowSelector";
 vi.mock("lucide-react", () => ({ Workflow: () => null }));
 
 const fetchWorkflowsMock = vi.fn();
+const fetchWorkflowMock = vi.fn();
 vi.mock("../../api", () => ({
   fetchWorkflows: (...args: unknown[]) => fetchWorkflowsMock(...args),
+  fetchWorkflow: (...args: unknown[]) => fetchWorkflowMock(...args),
   fetchProjectDefaultWorkflow: vi.fn(),
   setProjectDefaultWorkflow: vi.fn(),
 }));
@@ -18,10 +20,12 @@ vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: mockCon
 beforeEach(() => {
   mockConfirm.mockReset();
   fetchWorkflowsMock.mockReset();
+  fetchWorkflowMock.mockReset();
   fetchWorkflowsMock.mockResolvedValue([
     { id: "wf-a", name: "Workflow A" },
     { id: "wf-b", name: "Workflow B" },
   ]);
+  fetchWorkflowMock.mockResolvedValue({ id: "builtin:hidden", name: "Hidden built-in" });
 });
 
 describe("WorkflowSelector switch-with-active-session confirm (U9)", () => {
@@ -52,5 +56,12 @@ describe("WorkflowSelector switch-with-active-session confirm (U9)", () => {
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "wf-b" } });
     await waitFor(() => expect(onChange).toHaveBeenCalledWith("wf-b"));
     expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it("appends the current workflow when it is hidden from the filtered list", async () => {
+    render(<WorkflowSelector value="builtin:hidden" onChange={vi.fn()} />);
+
+    await waitFor(() => expect(fetchWorkflowMock).toHaveBeenCalledWith("builtin:hidden", undefined));
+    expect(screen.getByRole("option", { name: "Hidden built-in" })).toBeDefined();
   });
 });

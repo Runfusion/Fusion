@@ -24,6 +24,7 @@ describe("scope anchors", () => {
     expect(isGlobalSettingsKey("ntfyTopic")).toBe(true);
     expect(isProjectSettingsKey("maxConcurrent")).toBe(true);
     expect(isProjectSettingsKey("integrationBranch")).toBe(true);
+    expect(isProjectSettingsKey("enabledBuiltinWorkflowIds")).toBe(true);
   });
 
   it("every MODEL_LANE_KEYS entry is a project settings key", () => {
@@ -103,6 +104,17 @@ describe("splitSettingsSave", () => {
     });
 
     expect(projectPatch).toEqual({ maxConcurrent: 7 });
+  });
+
+  it("routes enabled built-in workflow ids as a changed project setting", () => {
+    const { projectPatch } = splitSettingsSave({
+      payload: { enabledBuiltinWorkflowIds: ["builtin:coding"] },
+      initialValues: null,
+      initialScopedValues: { global: {}, project: {} } as never,
+      activeSection: "general",
+    });
+
+    expect(projectPatch).toEqual({ enabledBuiltinWorkflowIds: ["builtin:coding"] });
   });
 
   it("emits null-as-delete when a project override is cleared", () => {

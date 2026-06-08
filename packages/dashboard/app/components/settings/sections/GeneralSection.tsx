@@ -10,9 +10,11 @@
  * cross-field summarizer hint are preserved verbatim from the original inline
  * JSX.
  */
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { WorkflowDefinition } from "@fusion/core";
 import { ProjectDefaultWorkflowField } from "../../WorkflowSelector";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
+import { fetchWorkflows } from "../../../api";
 import type { ToastType } from "../../../hooks/useToast";
 import type { SectionBaseProps } from "./context";
 
@@ -39,6 +41,46 @@ export function GeneralSection({
   projectTrackingRepoLoading,
   projectTrackingRepoError,
 }: GeneralSectionProps) {
+  const [builtinWorkflows, setBuiltinWorkflows] = useState<WorkflowDefinition[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchWorkflows(projectId, { includeDisabledBuiltins: true })
+      .then((workflows) => {
+        if (!cancelled) {
+          setBuiltinWorkflows(workflows.filter((workflow) => workflow.id.startsWith("builtin:")));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBuiltinWorkflows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const enabledBuiltinWorkflowIds = useMemo(() => {
+    const configured = Array.isArray(form.enabledBuiltinWorkflowIds) ? form.enabledBuiltinWorkflowIds : undefined;
+    return new Set(configured ?? builtinWorkflows.map((workflow) => workflow.id));
+  }, [builtinWorkflows, form.enabledBuiltinWorkflowIds]);
+
+  const setBuiltinWorkflowEnabled = (workflowId: string, enabled: boolean) => {
+    setForm((f) => {
+      const allIds = builtinWorkflows.map((workflow) => workflow.id);
+      const current = new Set(Array.isArray(f.enabledBuiltinWorkflowIds) ? f.enabledBuiltinWorkflowIds : allIds);
+      if (enabled) {
+        current.add(workflowId);
+      } else {
+        current.delete(workflowId);
+      }
+      const nextIds = allIds.filter((id) => current.has(id));
+      return {
+        ...f,
+        enabledBuiltinWorkflowIds: nextIds.length === allIds.length ? undefined : nextIds,
+      };
+    });
+  };
+
   return (
     <>
       {scopeBanner}
@@ -67,6 +109,25 @@ export function GeneralSection({
         <ProjectDefaultWorkflowField projectId={projectId} addToast={addToast} />
         <small>New tasks inherit this custom workflow's steps (overridable per task)</small>
       </div>
+      {builtinWorkflows.length > 0 && (
+        <div className="form-group">
+          <label>Built-in workflows</label>
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
+            {builtinWorkflows.map((workflow) => (
+              <label key={workflow.id} htmlFor={`builtin-workflow-${workflow.id}`} className="checkbox-label">
+                <input
+                  id={`builtin-workflow-${workflow.id}`}
+                  type="checkbox"
+                  checked={enabledBuiltinWorkflowIds.has(workflow.id)}
+                  onChange={(e) => setBuiltinWorkflowEnabled(workflow.id, e.target.checked)}
+                />
+                <span>{workflow.name}</span>
+              </label>
+            ))}
+          </div>
+          <small>Disabled built-in workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve.</small>
+        </div>
+      )}
       <div className="form-group">
         <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">
           <input

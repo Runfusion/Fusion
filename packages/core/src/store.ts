@@ -78,7 +78,7 @@ import type {
   WorkflowNodeLayout,
 } from "./workflow-definition-types.js";
 import { compileWorkflowToSteps } from "./workflow-compiler.js";
-import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, isBuiltinWorkflowId } from "./builtin-workflows.js";
+import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, isBuiltinWorkflowEnabled, isBuiltinWorkflowId } from "./builtin-workflows.js";
 import { resolveWorkflowIrById } from "./workflow-ir-resolver.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import {
@@ -13215,11 +13215,25 @@ ${stepsSection}`;
    *  filtered call can never poison an unfiltered consumer (or vice versa).
    */
   async listWorkflowDefinitions(
-    options?: { kind?: WorkflowDefinition["kind"] },
+    options?: { kind?: WorkflowDefinition["kind"]; includeDisabledBuiltins?: boolean },
   ): Promise<WorkflowDefinition[]> {
     const all = await this.readAllWorkflowDefinitions();
-    if (options?.kind) return all.filter((wf) => wf.kind === options.kind);
-    return all;
+    let enabledBuiltinWorkflowIds: readonly string[] | undefined;
+    if (!options?.includeDisabledBuiltins) {
+      try {
+        const settings = await this.getSettings();
+        enabledBuiltinWorkflowIds = Array.isArray(settings.enabledBuiltinWorkflowIds)
+          ? settings.enabledBuiltinWorkflowIds
+          : undefined;
+      } catch {
+        enabledBuiltinWorkflowIds = undefined;
+      }
+    }
+    const visible = options?.includeDisabledBuiltins
+      ? all
+      : all.filter((wf) => isBuiltinWorkflowEnabled(wf.id, enabledBuiltinWorkflowIds));
+    if (options?.kind) return visible.filter((wf) => wf.kind === options.kind);
+    return visible;
   }
 
   /** Read (and cache) the full merged workflow-definition set, oldest first.

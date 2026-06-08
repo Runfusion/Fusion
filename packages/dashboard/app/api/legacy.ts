@@ -5043,8 +5043,9 @@ export type {
 } from "@fusion/core";
 
 /** List all workflow definitions for the project. */
-export function fetchWorkflows(projectId?: string): Promise<import("@fusion/core").WorkflowDefinition[]> {
-  const path = withProjectId("/workflows", projectId);
+export function fetchWorkflows(projectId?: string, options?: { includeDisabledBuiltins?: boolean }): Promise<import("@fusion/core").WorkflowDefinition[]> {
+  const query = options?.includeDisabledBuiltins ? "?includeDisabledBuiltins=true" : "";
+  const path = withProjectId(`/workflows${query}`, projectId);
   return dedupe(path, () => api<import("@fusion/core").WorkflowDefinition[]>(path));
 }
 

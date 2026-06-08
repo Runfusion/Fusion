@@ -3195,6 +3195,9 @@ export interface ProjectSettings {
   /** Default custom workflow (WF-…) applied to newly created tasks when the
    *  caller does not specify enabledWorkflowSteps. Overridable per task. */
   defaultWorkflowId?: string;
+  /** Built-in workflow ids visible/selectable in project workflow pickers.
+   *  Undefined preserves the default of showing every built-in workflow. */
+  enabledBuiltinWorkflowIds?: string[];
   /** Raw CLI commands a user has explicitly approved for workflow CLI nodes
    *  (trust-on-first-use). A node's command must appear here before it runs;
    *  named scripts (settings.scripts) never require approval. */
