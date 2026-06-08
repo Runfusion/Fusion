@@ -2627,7 +2627,7 @@ function InnerEditor({
                       setSelectedEdgeId(null);
                     }}
                     defaultEdgeOptions={{ interactionWidth: WF_EDGE_INTERACTION_WIDTH }}
-                    fitView
+                    defaultViewport={{ x: 0, y: 0, zoom: 1 }}
                   >
                     <Background />
                     <Controls />

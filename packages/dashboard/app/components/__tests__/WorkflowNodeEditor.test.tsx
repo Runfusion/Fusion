@@ -443,6 +443,22 @@ describe("WorkflowNodeEditor — U5 auto-layout", () => {
     });
   });
 
+  it("starts the canvas viewport at the top-left on first open", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    const { container } = render(
+      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />,
+    );
+
+    await screen.findByTestId("wf-node-start");
+
+    await waitFor(() => {
+      const viewport = container.querySelector<HTMLElement>(".react-flow__viewport");
+      expect(viewport).not.toBeNull();
+      expect(viewport?.style.transform).toMatch(/translate\(0px,\s*0px\)/);
+      expect(viewport?.style.transform).toContain("scale(1)");
+    });
+  });
+
   it("clicking auto-layout still works after initial load", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
     render(
