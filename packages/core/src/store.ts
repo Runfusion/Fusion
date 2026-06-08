@@ -1221,6 +1221,7 @@ interface MoveTaskInternalOptions {
   movePolicyPreflight?: {
     fromColumn: string;
     toColumn: string;
+    workflowSignature: string;
   };
 }
 
@@ -6387,6 +6388,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (task.column === toColumn) return undefined;
 
     const workflowIr = this.resolveTaskWorkflowIrSync(id);
+    const workflowSignature = serializeWorkflowIr(workflowIr);
     const bypassGuards = this.resolveWorkflowBypassGuards(moveSource, options);
     const fromColumn = task.column;
     if (this.shouldSkipWorkflowMovePolicies({ fromColumn, toColumn, moveSource, bypassGuards, options })) {
@@ -6409,7 +6411,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       source: options?.workflowMoveSource ?? moveSource,
       metadata: options?.workflowMoveMetadata,
     });
-    return { fromColumn, toColumn };
+    return { fromColumn, toColumn, workflowSignature };
   }
 
   private async evaluateWorkflowMovePolicies(input: WorkflowMovePolicyInput): Promise<void> {
@@ -6615,7 +6617,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (!skipWorkflowMovePolicies) {
         if (
           internal.movePolicyPreflight?.fromColumn !== fromColumn ||
-          internal.movePolicyPreflight?.toColumn !== toColumn
+          internal.movePolicyPreflight?.toColumn !== toColumn ||
+          internal.movePolicyPreflight?.workflowSignature !== serializeWorkflowIr(workflowIr)
         ) {
           throw new TransitionRejectionError(
             makeTransitionRejection(

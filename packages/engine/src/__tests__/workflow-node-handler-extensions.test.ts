@@ -76,7 +76,7 @@ describe("workflow node-handler extensions", () => {
       schemaVersion: WORKFLOW_EXTENSION_SCHEMA_VERSION,
       fallback: "failClosed",
       handle: vi.fn().mockResolvedValue({
-        outcome: "outcome:custom-route",
+        outcome: "outcome:ignored-route",
         value: "needs-human",
       }),
     });
@@ -93,7 +93,7 @@ describe("workflow node-handler extensions", () => {
       edges: [
         { from: "start", to: "decide" },
         { from: "decide", to: "human", condition: "outcome:needs-human" },
-        { from: "decide", to: "default", condition: "outcome:custom-route" },
+        { from: "decide", to: "default", condition: "outcome:ignored-route" },
       ],
     };
     const prompt = vi.fn(async () => ({ outcome: "success" as const }));
