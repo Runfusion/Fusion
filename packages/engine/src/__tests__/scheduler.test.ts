@@ -11,7 +11,7 @@ import {
   getUnmetSchedulingDependencies,
 } from "../scheduler.js";
 import { AgentSemaphore } from "../concurrency.js";
-import type { TaskStore, Task, TaskDetail } from "@fusion/core";
+import { makeTransitionRejection, TransitionRejectionError, type TaskStore, type Task, type TaskDetail } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { schedulerLog } from "../logger.js";
@@ -599,7 +599,10 @@ describe("Scheduler", () => {
         if (column === "in-progress") {
           const inProgressCount = [...tasks.values()].filter((task) => task.column === "in-progress").length;
           if (inProgressCount >= 3) {
-            throw new Error("capacity-exhausted");
+            throw new TransitionRejectionError(
+              makeTransitionRejection("capacity-exhausted", "transition.rejected.capacityExhausted", true),
+              "queued — in-progress column at capacity",
+            );
           }
         }
         const updated = { ...current, column } as Task;
@@ -624,6 +627,7 @@ describe("Scheduler", () => {
       expect([...tasks.values()].filter((task) => task.column === "in-progress")).toHaveLength(3);
       expect(moveTask.mock.calls.filter((call) => call[1] === "in-progress")).toHaveLength(6);
       expect(vi.mocked(store.listTasks).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(vi.mocked(store.listTasks).mock.calls.some(([options]) => options?.startupMemo === false)).toBe(true);
     });
 
     it("flag-OFF: todo dispatch is tagged as scheduler-sourced for redispatch guards", async () => {
@@ -1479,6 +1483,38 @@ describe("Scheduler", () => {
       await scheduler.schedule();
 
       expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("queues capacity-exhausted dispatches and continues to later candidates", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-002", column: "todo", dependencies: [] }),
+      ];
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getTask: vi.fn(async (taskId: string) => tasks.find((task) => task.id === taskId) ?? null),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 5, maxWorktrees: 10 }),
+        moveTask: vi.fn().mockRejectedValue(
+          new TransitionRejectionError(
+            makeTransitionRejection("capacity-exhausted", "transition.rejected.capacityExhausted", true),
+            "queued — in-progress column at capacity",
+          ),
+        ),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(store.updateTask).mock.calls.filter((call) => call[1]?.status === "queued").map((call) => call[0])).toEqual([
+        "FN-001",
+        "FN-002",
+      ]);
+      expect(store.logEntry).toHaveBeenCalledWith("FN-001", expect.stringContaining("queued — in-progress column at capacity"));
     });
 
     it("respects maxWorktrees limit", async () => {

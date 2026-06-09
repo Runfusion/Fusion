@@ -13,6 +13,7 @@ import {
   type PrInfo,
   type AgentStore,
   type Settings,
+  TransitionRejectionError,
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -1225,7 +1226,7 @@ export class Scheduler {
     this.scheduling = true;
 
     try {
-      let tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      let tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false });
       let settings = await this.store.getSettings();
       this.idleSemaphoreLeakCandidateSince = recoverIdleSemaphoreLeak(
         this.options.semaphore,
@@ -1273,7 +1274,7 @@ export class Scheduler {
       // workflow hold handling and the generalized capacity-release path.
       if (isWorkflowColumnsEnabled(settings)) {
         await this.runHoldReleaseSweepPass();
-        tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+        tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false });
         settings = await this.store.getSettings();
       }
 
@@ -2039,11 +2040,21 @@ export class Scheduler {
           effectiveNodeSource: effectiveNode.source,
           mergeRetries: 0,
         });
-        await this.store.moveTask(task.id, "in-progress", {
-          moveSource: "scheduler",
-          allocateWorktree: (reservedNames) =>
-            this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
-        });
+        try {
+          await this.store.moveTask(task.id, "in-progress", {
+            moveSource: "scheduler",
+            allocateWorktree: (reservedNames) =>
+              this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
+          });
+        } catch (error) {
+          if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
+            await this.store.updateTask(task.id, { status: "queued" });
+            const reason = error.message || "queued — in-progress column at capacity";
+            await this.logDispatchQueuedReason(task.id, reason, `capacity-exhausted:${reason}`);
+            continue;
+          }
+          throw error;
+        }
         await this.store.updateTask(task.id, {
           dispatchStormCount: nextDispatchStormCount,
           lastDispatchAt: dispatchTimestamp,
