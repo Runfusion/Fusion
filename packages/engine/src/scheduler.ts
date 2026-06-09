@@ -1277,7 +1277,10 @@ export class Scheduler {
       // When a semaphore is provided, factor in its available slots so we
       // don't schedule more tasks than the global limit allows.
       const semaphoreAvailable = this.options.semaphore
-        ? this.options.semaphore.availableCount
+        ? Math.min(
+          this.options.semaphore.availableCount,
+          this.options.semaphore.limit - agentSlots,
+        )
         : Infinity;
 
       const available = Math.min(
