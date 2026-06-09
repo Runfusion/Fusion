@@ -1418,21 +1418,24 @@ describe("ChatManager.sendMessage", () => {
 
     const chatManager = createChatManager();
 
-    await chatManager.sendMessage("chat-001", "This is a long message that needs to be summarized");
+    vi.useFakeTimers();
+    try {
+      await chatManager.sendMessage("chat-001", "This is a long message that needs to be summarized");
+      await vi.advanceTimersByTimeAsync(100);
 
-    // Wait for the async title generation
-    await new Promise((resolve) => setTimeout(resolve, 100));
+      // Assert - summarizeTitle was called with the message content and model params
+      expect(mockSummarizeTitle).toHaveBeenCalledWith(
+        "This is a long message that needs to be summarized",
+        "/tmp/test",
+        undefined,
+        undefined,
+      );
 
-    // Assert - summarizeTitle was called with the message content and model params
-    expect(mockSummarizeTitle).toHaveBeenCalledWith(
-      "This is a long message that needs to be summarized",
-      "/tmp/test",
-      undefined,
-      undefined,
-    );
-
-    // Assert - session was updated with the generated title
-    expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Short Title" });
+      // Assert - session was updated with the generated title
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "Short Title" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses truncated content when summarizeTitle returns null", async () => {
@@ -1453,16 +1456,19 @@ describe("ChatManager.sendMessage", () => {
     const chatManager = createChatManager();
 
     const longMessage = "A".repeat(300);
-    await chatManager.sendMessage("chat-001", longMessage);
+    vi.useFakeTimers();
+    try {
+      await chatManager.sendMessage("chat-001", longMessage);
+      await vi.advanceTimersByTimeAsync(100);
 
-    // Wait for the async title generation
-    await new Promise((resolve) => setTimeout(resolve, 100));
+      // Assert - summarizeTitle was called
+      expect(mockSummarizeTitle).toHaveBeenCalled();
 
-    // Assert - summarizeTitle was called
-    expect(mockSummarizeTitle).toHaveBeenCalled();
-
-    // Assert - session was updated with truncated content (first 60 chars)
-    expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "A".repeat(60) });
+      // Assert - session was updated with truncated content (first 60 chars)
+      expect(mockChatStore.updateSession).toHaveBeenCalledWith("chat-001", { title: "A".repeat(60) });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not generate title when session already has a title", async () => {
@@ -1487,15 +1493,18 @@ describe("ChatManager.sendMessage", () => {
 
     const chatManager = createChatManager();
 
-    await chatManager.sendMessage("chat-001", "This is a long message");
+    vi.useFakeTimers();
+    try {
+      await chatManager.sendMessage("chat-001", "This is a long message");
+      await vi.advanceTimersByTimeAsync(100);
 
-    // Wait for potential async operations
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Assert - summarizeTitle was NOT called
-    expect(mockSummarizeTitle).not.toHaveBeenCalled();
-    // Assert - updateSession was NOT called
-    expect(mockChatStore.updateSession).not.toHaveBeenCalled();
+      // Assert - summarizeTitle was NOT called
+      expect(mockSummarizeTitle).not.toHaveBeenCalled();
+      // Assert - updateSession was NOT called
+      expect(mockChatStore.updateSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("cancelGeneration returns false when no active generation exists", () => {
@@ -1662,17 +1671,21 @@ describe("ChatManager diagnostics", () => {
     const throwingCallback = vi.fn(() => {
       throw new Error("Broadcast callback failed");
     });
-    chatStreamManager.subscribe("chat-001", throwingCallback);
+    const unsubscribe = chatStreamManager.subscribe("chat-001", throwingCallback);
 
-    expect(() =>
-      chatStreamManager.broadcast("chat-001", { type: "thinking", data: "test" })
-    ).not.toThrow();
+    try {
+      expect(() =>
+        chatStreamManager.broadcast("chat-001", { type: "thinking", data: "test" })
+      ).not.toThrow();
 
-    expect(throwingCallback).toHaveBeenCalledTimes(1);
-    expect(loggedErrors).toContainEqual({
-      message: "Error broadcasting to client for session chat-001:",
-      args: [expect.any(Error)],
-    });
+      expect(throwingCallback).toHaveBeenCalledTimes(1);
+      expect(loggedErrors).toContainEqual({
+        message: "Error broadcasting to client for session chat-001:",
+        args: [expect.any(Error)],
+      });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("logs error diagnostic when sendMessage encounters AI processing failure", async () => {

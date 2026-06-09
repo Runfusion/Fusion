@@ -1,10 +1,4 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
-  "entries": [
-    {
-      "file": "packages/dashboard/src/__tests__/chat-manager.test.ts",
-      "reason": "Flaky: 'old generation finally does not delete a newer generation's slot' times out under full-suite load. Prior fix attempts (FN-4012 on 2026-05-11, FN-5982 on 2026-06-06 which exhausted its stuck-kill budget 10/6 and was manually paused twice) failed to address the underlying generation-slot race. Per standing rule: quarantine on sight, not appease. Rescue requires (a) evidence the test catches real regressions and (b) a root-cause fix for the generation-slot race — not another synchronization tweak.",
-      "quarantinedAt": "2026-06-08"
-    }
-  ]
+  "entries": []
 }

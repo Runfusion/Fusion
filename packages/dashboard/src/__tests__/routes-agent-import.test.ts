@@ -74,6 +74,8 @@ vi.mock("@fusion/core", () => {
     CLI_AGENT_ADAPTER_IDS: ["claude-code", "codex", "droid", "pi", "generic"],
     sanitizeCliAgentSettings: (value: unknown) => value,
     AgentCompaniesParseError: MockAgentCompaniesParseError,
+    CLI_AGENT_ADAPTER_IDS: ["claude-code", "codex", "droid", "pi", "generic"],
+    sanitizeCliAgentSettings: () => undefined,
     isEphemeralAgent: (agent: { metadata?: Record<string, unknown> }) =>
       agent?.metadata?.agentKind === "task-worker",
     deterministicGuardLocks: new Map(),
