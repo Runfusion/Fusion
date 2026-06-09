@@ -377,6 +377,7 @@ export async function isBranchAuthoritativeForTask(
   repoDir: string,
   branch: string,
   taskId: string,
+  _baseSha?: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     await revParse(repoDir, `refs/heads/${branch}`);

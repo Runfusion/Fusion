@@ -1,5 +1,6 @@
 .ce-view {
   display: flex;
+  color: var(--text);
   flex: 1 1 auto;
   flex-direction: column;
   gap: 1rem;
@@ -25,7 +26,7 @@
 
 .ce-view-summary {
   font-size: 0.8rem;
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 
 .ce-loading,
@@ -35,7 +36,7 @@
 }
 
 .ce-view-error {
-  color: var(--color-danger, #d23);
+  color: var(--color-error);
 }
 
 .ce-empty {
@@ -52,7 +53,7 @@
 }
 
 .ce-empty-hint {
-  opacity: 0.7;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
@@ -63,7 +64,7 @@
 }
 
 .ce-group {
-  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   display: flex;
@@ -72,7 +73,7 @@
 }
 
 .ce-group[data-empty="true"] {
-  opacity: 0.65;
+  color: var(--text-muted);
 }
 
 .ce-group-header {
@@ -88,13 +89,13 @@
 
 .ce-group-count {
   font-size: 0.75rem;
-  opacity: 0.6;
+  color: var(--text-dim);
 }
 
 .ce-group-empty {
   margin: 0;
   font-size: 0.8rem;
-  opacity: 0.6;
+  color: var(--text-dim);
 }
 
 .ce-artifact-list {
@@ -132,14 +133,14 @@
 
 .ce-artifact-path {
   font-size: 0.7rem;
-  opacity: 0.55;
+  color: var(--text-dim);
 }
 
 .ce-artifact-open {
   appearance: none;
   background: none;
   border: none;
-  color: var(--color-primary, #2563eb);
+  color: var(--color-info);
   cursor: pointer;
   font: inherit;
   padding: 0;
@@ -148,11 +149,11 @@
 
 .ce-artifact-open:hover,
 .ce-artifact-open:focus-visible {
-  color: var(--color-primary-hover, #1d4ed8);
+  color: var(--color-info);
 }
 
 .ce-artifact-error .ce-artifact-error-msg {
-  color: var(--color-danger, #d23);
+  color: var(--color-error);
   font-size: 0.78rem;
 }
 
@@ -224,7 +225,7 @@
 }
 .ce-flow-status {
   font-size: 0.72rem;
-  opacity: 0.7;
+  color: var(--text-muted);
   text-transform: capitalize;
 }
 .ce-flow-close {
@@ -248,14 +249,14 @@
 .ce-flow-turn-role {
   font-size: 0.65rem;
   text-transform: uppercase;
-  opacity: 0.55;
+  color: var(--text-dim);
 }
 .ce-flow-turn-agent .ce-flow-turn-text {
   white-space: pre-wrap;
 }
 .ce-flow-thinking {
   font-style: italic;
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 .ce-flow-question {
   display: flex;
@@ -268,7 +269,7 @@
 }
 .ce-flow-question-desc {
   font-size: 0.8rem;
-  opacity: 0.75;
+  color: var(--text-muted);
   margin: 0;
 }
 .ce-flow-text {
@@ -308,7 +309,7 @@
 }
 .ce-flow-option-desc {
   font-size: 0.72rem;
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 .ce-flow-checkbox {
   display: flex;
@@ -317,26 +318,26 @@
   cursor: pointer;
 }
 .ce-flow-error {
-  color: var(--color-danger, #d23);
+  color: var(--color-error);
   font-size: 0.82rem;
 }
 
 /* Degraded chat fallback (R8/AE1) — must read as visibly distinct. */
 .ce-flow-degraded {
-  border: 1px dashed var(--color-warning, #c80);
+  border: 1px dashed var(--color-warning);
   border-radius: 6px;
   padding: 0.6rem;
-  background: color-mix(in srgb, var(--color-warning, #c80) 8%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 }
 .ce-flow-degraded-banner {
   margin: 0 0 0.4rem;
   font-size: 0.78rem;
   font-weight: 600;
-  color: var(--color-warning, #a60);
+  color: var(--color-warning);
 }
 .ce-flow-degraded-options {
   font-size: 0.78rem;
-  opacity: 0.8;
+  color: var(--text-muted);
   margin: 0 0 0.4rem;
   padding-left: 1.1rem;
 }
@@ -359,8 +360,8 @@
   gap: 0.5rem;
 }
 .ce-session-row.is-active .ce-session-open {
-  border-color: var(--color-accent, #36c);
-  background: color-mix(in srgb, var(--color-accent, #36c) 8%, transparent);
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 8%, transparent);
 }
 .ce-session-open {
   flex: 1;
@@ -369,7 +370,7 @@
   gap: 0.6rem;
   text-align: left;
   padding: 0.4rem 0.6rem;
-  border: 1px solid var(--color-border, #ddd);
+  border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
   cursor: pointer;
@@ -384,26 +385,26 @@
 .ce-session-status {
   font-size: 0.74rem;
   text-transform: capitalize;
-  opacity: 0.8;
+  color: var(--text-muted);
 }
 .ce-session-status-awaiting_input {
-  color: var(--color-warning, #a60);
+  color: var(--color-warning);
   font-weight: 600;
-  opacity: 1;
 }
+
 .ce-session-status-error,
 .ce-session-status-interrupted {
-  color: var(--color-danger, #d23);
-  opacity: 1;
+  color: var(--color-error);
 }
+
 .ce-session-status-completed {
-  color: var(--color-success, #2a7);
-  opacity: 1;
+  color: var(--color-success);
 }
+
 .ce-session-updated {
   margin-left: auto;
   font-size: 0.72rem;
-  opacity: 0.6;
+  color: var(--text-dim);
 }
 
 /* ── Q&A transcript bubbles ────────────────────────────────────────────── */
@@ -425,18 +426,18 @@
   max-width: 85%;
   padding: 0.45rem 0.65rem;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--color-border, #ddd) 30%, transparent);
+  background: color-mix(in srgb, var(--border) 30%, transparent);
 }
 .ce-flow-turn-user {
   align-self: flex-end;
-  background: color-mix(in srgb, var(--color-accent, #36c) 12%, transparent);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
 }
 .ce-flow-turn-role {
   font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  opacity: 0.55;
+  color: var(--text-dim);
 }
 .ce-flow-turn-text {
   white-space: pre-wrap;
@@ -444,22 +445,25 @@
   font-size: 0.86rem;
 }
 .ce-flow-turn-question {
-  border-left: 3px solid var(--color-accent, #36c);
+  border-left: 3px solid var(--todo);
 }
 .ce-flow-turn-answer.is-steering {
-  border-left: 3px solid var(--color-warning, #c80);
+  border-left: 3px solid var(--color-warning);
 }
 .ce-flow-turn-comment {
   font-size: 0.78rem;
   font-style: italic;
-  opacity: 0.85;
-  border-top: 1px dashed color-mix(in srgb, var(--color-border, #ddd) 60%, transparent);
+  color: var(--text-muted);
+  border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
   padding-top: 0.25rem;
 }
 .ce-flow-turn-done {
   align-self: center;
-  background: color-mix(in srgb, var(--color-success, #2a7) 10%, transparent);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
   font-size: 0.8rem;
+}
+.ce-flow-artifact-path {
+  color: var(--text-dim);
 }
 .ce-flow-turn-activity {
   background: transparent;
@@ -471,7 +475,7 @@
 .ce-flow-activity-details summary {
   cursor: pointer;
   font-size: 0.78rem;
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 .ce-flow-activity {
   display: flex;
@@ -479,9 +483,9 @@
   gap: 0.25rem;
   margin: 0.3rem 0 0;
   padding: 0.5rem 0.6rem;
-  border: 1px solid color-mix(in srgb, var(--color-border, #ddd) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--color-border, #ddd) 12%, transparent);
+  background: color-mix(in srgb, var(--border) 12%, transparent);
   max-height: 16rem;
   overflow-y: auto;
 }
@@ -493,7 +497,7 @@
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 .ce-activity-thinking {
-  opacity: 0.6;
+  color: var(--text-dim);
   font-style: italic;
 }
 .ce-activity-tool {
@@ -501,13 +505,13 @@
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 .ce-activity-tool.is-running .ce-activity-tool-marker {
-  color: var(--color-accent, #36c);
+  color: var(--todo);
 }
 .ce-activity-tool.is-done .ce-activity-tool-marker {
-  color: var(--color-success, #2a7);
+  color: var(--color-success);
 }
 .ce-activity-tool.is-error .ce-activity-tool-marker {
-  color: var(--color-danger, #d23);
+  color: var(--color-error);
 }
 
 /* ── Live working pane ──────────────────────────────────────────────────── */
@@ -520,13 +524,13 @@
   gap: 0.45rem;
   margin: 0 0 0.3rem;
   font-size: 0.82rem;
-  opacity: 0.85;
+  color: var(--text-muted);
 }
 .ce-flow-pulse {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-accent, #36c);
+  background: var(--todo);
   animation: ce-pulse 1.2s ease-in-out infinite;
 }
 @keyframes ce-pulse {
@@ -538,12 +542,12 @@
 .ce-flow-guidance {
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px dashed color-mix(in srgb, var(--color-border, #ddd) 70%, transparent);
+  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
 }
 .ce-flow-guidance-label {
   display: block;
   font-size: 0.74rem;
-  opacity: 0.65;
+  color: var(--text-dim);
   margin-bottom: 0.3rem;
 }
 .ce-flow-guidance-row {
