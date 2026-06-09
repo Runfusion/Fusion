@@ -69,6 +69,36 @@ const detachedSpawnGuard = {
   },
 };
 
+const noPluginViewReexport = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "ban dashboard view re-exports from plugin server entry points",
+    },
+    schema: [],
+  },
+  create(context) {
+    function isViewEntrypointReexportSource(value) {
+      return typeof value === "string"
+        && value.startsWith(".")
+        && /(?:^|\/)[^/]*-view(?:\.(?:js|tsx))?$/.test(value);
+    }
+
+    return {
+      ExportNamedDeclaration(node) {
+        if (!isViewEntrypointReexportSource(node.source?.value)) {
+          return;
+        }
+        context.report({
+          node: node.source,
+          message:
+            "Plugin server entry (src/index.ts) must not re-export dashboard view components. Use a dedicated subpath export (e.g. './dashboard-view') instead — see docs/PLUGIN_AUTHORING.md.",
+        });
+      },
+    };
+  },
+};
+
 /**
  * ESLint Flat Config for Fusion Workspace
  * 
@@ -336,6 +366,23 @@ export default tseslint.config(
       "no-fallthrough": "off",
       // Allow useless escape
       "no-useless-escape": "off",
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────
+  // PLUGIN SERVER ENTRYPOINTS — keep dashboard views out of Node-loaded entries
+  // ─────────────────────────────────────────────────────────────
+  {
+    files: ["plugins/**/src/index.ts", "plugins/examples/**/src/index.ts"],
+    plugins: {
+      fusion: {
+        rules: {
+          "no-plugin-view-reexport": noPluginViewReexport,
+        },
+      },
+    },
+    rules: {
+      "fusion/no-plugin-view-reexport": "error",
     },
   },
 

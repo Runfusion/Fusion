@@ -763,6 +763,7 @@ The host then renders plugin views via `PluginDashboardViewHost` using the compo
 Bundled workspace plugin pattern:
 - Keep plugin package under `plugins/` (for example `plugins/fusion-plugin-roadmap`)
 - Export backend/plugin entry from `src/index.ts` and keep dashboard view exports in the plugin package (for example `./dashboard-view`)
+- Do not re-export dashboard view entrypoints (including `dashboard-view`, `manage-view`, or other `-view` modules) from `src/index.ts`; the `fusion/no-plugin-view-reexport` ESLint guard catches violations because server-side plugin entries must not transitively load CSS
 - Register the lazy dashboard component in host code (currently `packages/dashboard/app/plugins/registerBundledPluginViews.ts`)
 - CLI bundling inlines backend plugin code from workspace packages; dashboard view modules are imported by the dashboard build via the host registry
 
