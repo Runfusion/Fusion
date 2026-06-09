@@ -61,6 +61,11 @@ const multipleRemotes: GitRemote[] = [
   { name: "upstream", owner: "upstream", repo: "kb", url: "https://github.com/upstream/kb.git" },
 ];
 
+const multipleRemotesWithoutOrigin: GitRemote[] = [
+  { name: "upstream", owner: "upstream", repo: "kb", url: "https://github.com/upstream/kb.git" },
+  { name: "fork", owner: "dustinbyrne", repo: "kb", url: "https://github.com/dustinbyrne/kb.git" },
+];
+
 const mockPulls = [
   { number: 1, title: "Test PR", body: "PR body", html_url: "https://github.com/owner/repo/pull/1", headBranch: "feature", baseBranch: "main" },
   { number: 2, title: "Another PR", body: "Another PR body", html_url: "https://github.com/owner/repo/pull/2", headBranch: "bugfix", baseBranch: "main" },
@@ -289,19 +294,7 @@ describe("GitHubImportModal", () => {
       });
     });
 
-    it("disables Load button when no remote is selected", async () => {
-      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
-      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
-
-      await waitFor(() => {
-        expect(screen.getByRole("combobox")).toBeTruthy();
-      });
-
-      const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
-      expect(loadButton.disabled).toBe(true);
-    });
-
-    it("enables Load button and auto-loads after selecting a remote", async () => {
+    it("defaults to origin and auto-loads when multiple remotes include origin", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
       vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
         { number: 1, title: "Auto-loaded from origin", body: "", html_url: "https://github.com/dustinbyrne/kb/issues/1", labels: [] },
@@ -310,19 +303,28 @@ describe("GitHubImportModal", () => {
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
       await waitFor(() => {
-        expect(screen.getByRole("combobox")).toBeTruthy();
-      });
-
-      fireEvent.change(screen.getByRole("combobox"), { target: { value: "origin" } });
-
-      await waitFor(() => {
+        const select = screen.getByRole("combobox") as HTMLSelectElement;
+        expect(select.value).toBe("origin");
         expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
         expect(screen.getByText("Auto-loaded from origin")).toBeTruthy();
       });
 
-      // After loading completes, button should be enabled
       const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
       expect(loadButton.disabled).toBe(false);
+    });
+
+    it("keeps placeholder selected and does not auto-load when multiple remotes omit origin", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotesWithoutOrigin);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        const select = screen.getByRole("combobox") as HTMLSelectElement;
+        expect(select.value).toBe("");
+      });
+
+      const loadButton = screen.getByRole("button", { name: /Load issues/i }) as HTMLButtonElement;
+      expect(loadButton.disabled).toBe(true);
+      expect(apiFetchGitHubIssues).not.toHaveBeenCalled();
     });
 
     it("switches owner/repo and auto-loads when changing remote selection", async () => {
@@ -334,18 +336,13 @@ describe("GitHubImportModal", () => {
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
 
       await waitFor(() => {
-        expect(screen.getByRole("combobox")).toBeTruthy();
-      });
-
-      const select = screen.getByRole("combobox");
-      fireEvent.change(select, { target: { value: "origin" } });
-
-      await waitFor(() => {
+        const select = screen.getByRole("combobox") as HTMLSelectElement;
+        expect(select.value).toBe("origin");
         expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
         expect(screen.getByText("Issue from origin")).toBeTruthy();
       });
 
-      fireEvent.change(select, { target: { value: "upstream" } });
+      fireEvent.change(screen.getByRole("combobox"), { target: { value: "upstream" } });
 
       await waitFor(() => {
         expect(apiFetchGitHubIssues).toHaveBeenLastCalledWith("upstream", "kb", 30, undefined);
@@ -572,6 +569,31 @@ describe("GitHubImportModal", () => {
         value: originalInnerWidth,
       });
       window.dispatchEvent(new Event("resize"));
+    });
+
+    it("defaults to origin and auto-loads on mobile", async () => {
+      Object.defineProperty(window, "innerWidth", {
+        writable: true,
+        configurable: true,
+        value: 640,
+      });
+      window.dispatchEvent(new Event("resize"));
+
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 1, title: "Mobile origin issue", body: "", html_url: "https://github.com/dustinbyrne/kb/issues/1", labels: [] },
+      ]);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        const select = screen.getByRole("combobox") as HTMLSelectElement;
+        expect(select.value).toBe("origin");
+        expect(apiFetchGitHubIssues).toHaveBeenCalledWith("dustinbyrne", "kb", 30, undefined);
+        expect(screen.getByText("Mobile origin issue")).toBeTruthy();
+      });
+
+      expect(screen.getByTestId("github-import-list-pane").classList.contains("mobile")).toBe(true);
     });
 
     it("shows back button in preview header when on mobile", async () => {
@@ -878,6 +900,25 @@ describe("GitHubImportModal", () => {
       fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
 
       // Should auto-load PRs
+      await waitFor(() => {
+        expect(apiFetchGitHubPulls).toHaveBeenCalledWith("dustinbyrne", "kb", 30);
+        expect(screen.getByText("Test PR")).toBeTruthy();
+      });
+    });
+
+    it("uses the default origin remote when switching to Pull Requests", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(multipleRemotes);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(mockPulls);
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        const select = screen.getByRole("combobox") as HTMLSelectElement;
+        expect(select.value).toBe("origin");
+      });
+
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
       await waitFor(() => {
         expect(apiFetchGitHubPulls).toHaveBeenCalledWith("dustinbyrne", "kb", 30);
         expect(screen.getByText("Test PR")).toBeTruthy();

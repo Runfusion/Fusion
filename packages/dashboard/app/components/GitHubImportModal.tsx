@@ -143,14 +143,16 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
           setRemotes(fetchedRemotes);
           setLoadingRemotes(false);
 
-          if (fetchedRemotes.length === 1) {
-            // Single remote: auto-select it
-            const remote = fetchedRemotes[0];
-            setOwner(remote.owner);
-            setRepo(remote.repo);
-            setSelectedRemoteName(remote.name);
+          const defaultRemote = fetchedRemotes.length === 1
+            ? fetchedRemotes[0]
+            : fetchedRemotes.find((remote) => remote.name === "origin");
+
+          if (defaultRemote) {
+            setOwner(defaultRemote.owner);
+            setRepo(defaultRemote.repo);
+            setSelectedRemoteName(defaultRemote.name);
           } else if (fetchedRemotes.length > 1) {
-            // Multiple remotes: don't auto-select, user must choose
+            // Multiple remotes without origin: don't auto-select, user must choose.
             setOwner("");
             setRepo("");
             setSelectedRemoteName("");
