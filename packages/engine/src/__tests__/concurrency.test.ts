@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { AgentSemaphore, PRIORITY_MERGE, PRIORITY_EXECUTE, PRIORITY_SPECIFY } from "../concurrency.js";
+import type { Task } from "@fusion/core";
+import {
+  AgentSemaphore,
+  PRIORITY_MERGE,
+  PRIORITY_EXECUTE,
+  PRIORITY_SPECIFY,
+  recoverIdleSemaphoreLeakCandidate,
+} from "../concurrency.js";
 
 describe("AgentSemaphore", () => {
   it("allows immediate acquire when under limit", async () => {
@@ -180,6 +187,59 @@ describe("AgentSemaphore", () => {
     const result = sem.reconcileActiveCount(3);
 
     expect(result).toEqual({ before: 1, after: 1, changed: false });
+    expect(sem.activeCount).toBe(1);
+    sem.release();
+  });
+
+  it("recovers idle semaphore leaks only after a stable persisted-idle window", async () => {
+    const sem = new AgentSemaphore(2);
+    await sem.acquire();
+    const tasks: Task[] = [];
+
+    const first = recoverIdleSemaphoreLeakCandidate({
+      semaphore: sem,
+      tasks,
+      candidateSinceMs: null,
+      nowMs: 1_000,
+    });
+    expect(first).toEqual({ candidateSinceMs: 1_000 });
+    expect(sem.activeCount).toBe(1);
+
+    const early = recoverIdleSemaphoreLeakCandidate({
+      semaphore: sem,
+      tasks,
+      candidateSinceMs: first.candidateSinceMs,
+      nowMs: 5_000,
+    });
+    expect(early).toEqual({ candidateSinceMs: 1_000 });
+    expect(sem.activeCount).toBe(1);
+
+    const repaired = recoverIdleSemaphoreLeakCandidate({
+      semaphore: sem,
+      tasks,
+      candidateSinceMs: early.candidateSinceMs,
+      nowMs: 6_001,
+    });
+    expect(repaired).toEqual({
+      candidateSinceMs: null,
+      reconciliation: { before: 1, after: 0, changed: true },
+    });
+    expect(sem.activeCount).toBe(0);
+  });
+
+  it("does not recover while callers report in-flight work not yet persisted", async () => {
+    const sem = new AgentSemaphore(2);
+    await sem.acquire();
+
+    const result = recoverIdleSemaphoreLeakCandidate({
+      semaphore: sem,
+      tasks: [],
+      candidateSinceMs: Date.now() - 6_000,
+      inFlightCount: 1,
+      nowMs: Date.now(),
+    });
+
+    expect(result).toEqual({ candidateSinceMs: null });
     expect(sem.activeCount).toBe(1);
     sem.release();
   });

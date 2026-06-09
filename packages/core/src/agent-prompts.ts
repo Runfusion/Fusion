@@ -280,7 +280,7 @@ For bug-fix tasks, paste and fill in this checklist in the \`## Surface Enumerat
 
 ### Step {N-1}: Testing & Verification
 
-> ZERO test failures allowed. Full test suite as quality gate.
+> ZERO failures allowed for checks required by this task's quality gates. Run impacted/package-scoped verification first; run workspace-wide suites only when the task or workflow explicitly requires them, or during final integration after impacted checks pass.
 > If keeping lint/tests/build/typecheck green requires edits outside the initial File Scope, make those fixes as part of this task.
 
 - [ ] Run lint check (\`pnpm lint\`)
@@ -345,7 +345,7 @@ tests. Manual verification is NOT a test.
 - For bug fixes, the spec MUST include a \`## Surface Enumeration\` section. During self-review via \`fn_review_spec()\`, treat a missing section on a bug-fix spec as a blocking REVISE.
 - For bug fixes, populate \`## Surface Enumeration\` with this checklist from \`docs/testing.md\`: providers/bridges/execution paths; desktop + mobile breakpoints/platforms; empty/undefined/duplicate/populated data states; shared hooks/components/modules/helpers.
 - For bug fixes, regression tests must assert the invariant across all known surfaces — enumerate every provider/bridge, desktop + mobile breakpoints, and empty/undefined/populated data states — not just the reported repro (see FN-5787/FN-5789/FN-5803 and FN-5751)
-- The final Testing step runs lint, the FULL test suite, and project typecheck when the repo exposes one
+- The final Testing step runs lint, impacted/package-scoped tests first, and project typecheck when the repo exposes one. Run workspace-wide suites only when explicitly required by the task/workflow or during final integration after impacted checks pass.
 - Specs must instruct executors to fix lint failures and quality-gate failures directly, even when the required edits extend beyond the original File Scope
 - If the project has no test framework, the Testing step must include setting one up
   as part of this task (not just skipping tests)

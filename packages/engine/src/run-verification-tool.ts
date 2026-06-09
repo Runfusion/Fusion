@@ -376,7 +376,7 @@ export async function runVerificationCommand(
       },
       shell: true,
       killGraceMs: SIGKILL_GRACE_MS,
-      maxLifetimeMs: timeoutMs + SIGKILL_GRACE_MS + 1_000,
+      maxLifetimeMs: timeoutMs > 0 ? timeoutMs + SIGKILL_GRACE_MS + 1_000 : undefined,
     });
     const child = supervised.child;
 

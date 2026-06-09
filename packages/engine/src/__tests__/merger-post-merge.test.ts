@@ -149,13 +149,14 @@ import {
 } from "../merger.js";
 import { mergerLog } from "../logger.js";
 import { createFnAgent } from "../pi.js";
-import { execSync, exec } from "node:child_process";
+import { execSync, exec, spawn } from "node:child_process";
 import * as core from "@fusion/core";
 import { type TaskStore, type Task, type MergeResult, DEFAULT_SETTINGS } from "@fusion/core";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedExecSync = vi.mocked(execSync);
 const mockedExec = vi.mocked(exec);
+const mockedSpawn = vi.mocked(spawn);
 const { existsSync: mockedExistsSyncRaw, readFileSync: mockedReadFileSyncRaw } = await import("node:fs");
 const mockedExistsSync = vi.mocked(mockedExistsSyncRaw);
 const mockedReadFileSync = vi.mocked(mockedReadFileSyncRaw);
@@ -707,9 +708,9 @@ describe("aiMergeTask — post-merge workflow steps", () => {
 
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    const scriptExecCall = mockedExec.mock.calls.find((call: any) => String(call[0]) === "pnpm build");
-    expect(scriptExecCall).toBeDefined();
-    expect(scriptExecCall?.[1]?.cwd).toMatch(/\.worktrees\/post-merge-FN-050-[a-z0-9]+/);
+    const scriptSpawnCall = mockedSpawn.mock.calls.find((call: any) => String(call[0]) === "pnpm build");
+    expect(scriptSpawnCall).toBeDefined();
+    expect(scriptSpawnCall?.[2]?.cwd).toMatch(/\.worktrees\/post-merge-FN-050-[a-z0-9]+/);
 
     expect(result.merged).toBe(true);
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
@@ -905,5 +906,4 @@ describe("aiMergeTask — post-merge workflow steps", () => {
 });
 
 // ── Merge Details Collection Tests ─────────────────────────────────────
-
 

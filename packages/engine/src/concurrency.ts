@@ -1,3 +1,5 @@
+import type { Task } from "@fusion/core";
+
 /** Priority level for merge agents — served first. */
 export const PRIORITY_MERGE = 2;
 /** Priority level for execution agents — served after merge, before specify. */
@@ -9,6 +11,59 @@ export const PRIORITY_SPECIFY = 0;
 interface PriorityWaiter {
   priority: number;
   resolve: () => void;
+}
+
+export const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
+
+export function persistedTopLevelAgentSlots(tasks: Task[]): number {
+  return tasks.filter((task) => (
+    task.column === "in-progress"
+    || (task.column === "triage" && task.status === "planning" && !task.paused)
+    || (task.column === "in-review" && ["merging", "reviewing", "fixing"].includes(String(task.status ?? "")))
+  )).length;
+}
+
+export interface IdleSemaphoreLeakRecoveryResult {
+  candidateSinceMs: number | null;
+  reconciliation?: { before: number; after: number; changed: boolean };
+}
+
+export function recoverIdleSemaphoreLeakCandidate(params: {
+  semaphore: AgentSemaphore | undefined;
+  tasks: Task[];
+  candidateSinceMs: number | null;
+  inFlightCount?: number;
+  nowMs?: number;
+  repairAfterMs?: number;
+}): IdleSemaphoreLeakRecoveryResult {
+  const {
+    semaphore,
+    tasks,
+    candidateSinceMs,
+    inFlightCount = 0,
+    nowMs = Date.now(),
+    repairAfterMs = IDLE_SEMAPHORE_LEAK_REPAIR_MS,
+  } = params;
+
+  if (!semaphore) return { candidateSinceMs: null };
+
+  const persistedActive = persistedTopLevelAgentSlots(tasks);
+  if (persistedActive !== 0 || semaphore.activeCount <= 0 || inFlightCount > 0) {
+    return { candidateSinceMs: null };
+  }
+
+  if (candidateSinceMs === null) {
+    return { candidateSinceMs: nowMs };
+  }
+
+  if (nowMs - candidateSinceMs < repairAfterMs) {
+    return { candidateSinceMs };
+  }
+
+  return {
+    candidateSinceMs: null,
+    reconciliation: semaphore.reconcileActiveCount(0),
+  };
 }
 
 /**

@@ -990,13 +990,13 @@ describe("TaskExecutor messaging tools", () => {
       });
 
       // Fast mode should still enforce fn_task_done requirement.
-      // After 3 retries it should fail and requeue.
+      // While retry budget remains, failures requeue instead of becoming terminal.
       expect(onError).toHaveBeenCalled();
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-001",
         expect.objectContaining({
-          status: "failed",
-          error: "Agent finished without calling fn_task_done (after 3 retries)",
+          status: "queued",
+          error: null,
           taskDoneRetryCount: 1,
         }),
       );

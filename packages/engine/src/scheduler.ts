@@ -17,7 +17,7 @@ import {
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentSemaphore } from "./concurrency.js";
+import { recoverIdleSemaphoreLeakCandidate, type AgentSemaphore } from "./concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
@@ -315,38 +315,24 @@ interface ConcurrencyGateDiagnostic {
   perColumnGates?: PerColumnCapacityGate[];
 }
 
-const IDLE_SEMAPHORE_LEAK_REPAIR_MS = 5_000;
-
-function persistedTopLevelAgentSlots(tasks: Task[]): number {
-  return tasks.filter((task) => (
-    task.column === "in-progress"
-    || (task.column === "triage" && task.status === "planning" && !task.paused)
-    || (task.column === "in-review" && ["merging", "reviewing", "fixing"].includes(String(task.status ?? "")))
-  )).length;
-}
-
 function recoverIdleSemaphoreLeak(
   semaphore: AgentSemaphore | undefined,
   tasks: Task[],
   source: string,
   candidateSinceMs: number | null,
 ): number | null {
-  if (!semaphore) return null;
-  const persistedActive = persistedTopLevelAgentSlots(tasks);
-  if (persistedActive !== 0 || semaphore.activeCount <= 0) return null;
-
-  const now = Date.now();
-  if (candidateSinceMs === null) return now;
-  if (now - candidateSinceMs < IDLE_SEMAPHORE_LEAK_REPAIR_MS) return candidateSinceMs;
-
-  const result = semaphore.reconcileActiveCount(0);
-  if (result.changed) {
+  const result = recoverIdleSemaphoreLeakCandidate({
+    semaphore,
+    tasks,
+    candidateSinceMs,
+  });
+  if (result.reconciliation?.changed) {
     schedulerLog.warn(
-      `${source}: recovered stale semaphore active count ${result.before} -> ${result.after} ` +
+      `${source}: recovered stale semaphore active count ${result.reconciliation.before} -> ${result.reconciliation.after} ` +
       "(no persisted in-progress/planning/review agent work)",
     );
   }
-  return null;
+  return result.candidateSinceMs;
 }
 
 function computeConcurrencyGateDiagnostic(params: {
