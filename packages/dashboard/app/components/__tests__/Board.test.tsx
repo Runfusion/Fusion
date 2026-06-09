@@ -48,10 +48,10 @@ const columnRenderCounts: Record<string, number> = {};
 
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: React.memo(({ column, tasks, onToggleCollapse, onQuickCreate, onNewTask, onToggleAutoMerge, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, workflowStepNameLookup }: { column: string; tasks: Task[]; onToggleCollapse?: () => void; onQuickCreate?: unknown; onNewTask?: unknown; onToggleAutoMerge?: () => void; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; isSearchActive?: boolean; workflowStepNameLookup?: ReadonlyMap<string, string> }) => {
+  Column: React.memo(({ column, tasks, collapsed, onToggleCollapse, onQuickCreate, onNewTask, onToggleAutoMerge, onArchiveAllDone, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, workflowStepNameLookup }: { column: string; tasks: Task[]; collapsed?: boolean; onToggleCollapse?: () => void; onQuickCreate?: unknown; onNewTask?: unknown; onToggleAutoMerge?: () => void; onArchiveAllDone?: unknown; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; isSearchActive?: boolean; workflowStepNameLookup?: ReadonlyMap<string, string> }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)}>
         {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
       </div>
     );
@@ -1183,13 +1183,14 @@ describe("Board", () => {
       expect([...selector.options].map((option) => option.value)).toEqual(["builtin:coding", "wf-custom"]);
     });
 
-    it("excludes archived cards from the selected workflow board", async () => {
+    it("renders archived cards in the selected workflow archived column", async () => {
       enableFlag({ "FN-1": "builtin:coding", "FN-9": "builtin:coding" });
       renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-9", column: "archived" })] });
-      await waitFor(() => expect(screen.getByTestId("column-todo")).toBeDefined());
-      const ids = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id);
-      expect(ids).toEqual(["FN-1"]);
-      expect(screen.queryByTestId("column-archived")).toBeNull();
+      await waitFor(() => expect(screen.getByTestId("column-archived")).toBeDefined());
+      const todoIds = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id);
+      expect(todoIds).toEqual(["FN-1"]);
+      const archivedIds = JSON.parse(screen.getByTestId("column-archived").getAttribute("data-tasks") || "[]").map((task: Task) => task.id);
+      expect(archivedIds).toEqual(["FN-9"]);
     });
 
     it("renders selected workflow columns as direct children of the horizontal board", async () => {
@@ -1202,7 +1203,40 @@ describe("Board", () => {
         "column-in-progress",
         "column-in-review",
         "column-done",
+        "column-archived",
       ]);
+    });
+
+    it("archived column is collapsible in workflow mode", async () => {
+      enableFlag({ "FN-9": "builtin:coding" });
+      renderBoard({ tasks: [mkTask({ id: "FN-9", column: "archived" })] });
+
+      const archivedColumn = await screen.findByTestId("column-archived");
+      expect(archivedColumn.getAttribute("data-collapsed")).toBe("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "toggle-archived" }));
+      expect(screen.getByTestId("column-archived").getAttribute("data-collapsed")).toBe("false");
+
+      fireEvent.click(screen.getByRole("button", { name: "toggle-archived" }));
+      expect(screen.getByTestId("column-archived").getAttribute("data-collapsed")).toBe("true");
+    });
+
+    it("workflow without archived column does not render one", async () => {
+      enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [CUSTOM_WORKFLOW]);
+      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })] });
+
+      await waitFor(() => expect(screen.getByTestId("column-intake")).toBeDefined());
+      expect(screen.queryByTestId("column-archived")).toBeNull();
+    });
+
+    it("done column in workflow mode receives onArchiveAllDone prop", async () => {
+      const onArchiveAllDone = vi.fn();
+      enableFlag({ "FN-1": "builtin:coding" });
+      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "done" })], onArchiveAllDone });
+
+      await waitFor(() => expect(screen.getByTestId("column-done")).toBeDefined());
+      expect(screen.getByTestId("column-done").getAttribute("data-has-archive-all")).toBe("yes");
+      expect(screen.getByTestId("column-todo").getAttribute("data-has-archive-all")).toBe("no");
     });
   });
 

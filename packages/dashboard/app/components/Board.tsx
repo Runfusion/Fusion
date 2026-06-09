@@ -391,11 +391,15 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
   const selectedWorkflowTasks = useMemo(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return [];
     return tasks.filter((task) => {
-      if (task.column === "archived") return false;
       const workflowId = boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId;
       return workflowId === selectedWorkflow.id;
     });
   }, [boardWorkflows, selectedWorkflow, tasks, workflowMode]);
+
+  const selectedWorkflowArchivedColumn = useMemo(() => {
+    if (!selectedWorkflow) return null;
+    return selectedWorkflow.columns.find((column) => column.flags.archived) ?? null;
+  }, [selectedWorkflow]);
 
   const selectedWorkflowColumns = useMemo(() => {
     if (!selectedWorkflow) return [];
@@ -584,9 +588,55 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
                 autoMerge={autoMerge}
                 {...(isCreateColumn ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge } : {})}
+                {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
               />
             );
           })}
+          {selectedWorkflowArchivedColumn && (
+            <Column
+              key={selectedWorkflowArchivedColumn.id}
+              column={selectedWorkflowArchivedColumn.id as ColumnType}
+              workflowMode
+              workflowId={selectedWorkflow.id}
+              columnDisplayName={selectedWorkflowArchivedColumn.name}
+              columnFlags={selectedWorkflowArchivedColumn.flags}
+              tasks={selectedWorkflowTasksByColumn[selectedWorkflowArchivedColumn.id] ?? []}
+              allTasks={selectedWorkflowTasks}
+              projectId={projectId}
+              maxConcurrent={maxConcurrent}
+              onMoveTask={onMoveTask}
+              onPromote={handlePromote}
+              canDropTask={(taskId) => canDropTask(taskId, selectedWorkflowArchivedColumn.id, selectedWorkflow.id)}
+              getDraggingTaskId={getDraggingTaskId}
+              onPauseTask={onPauseTask}
+              onOpenDetail={onOpenDetail}
+              onOpenGroupModal={onOpenGroupModal}
+              addToast={addToast}
+              globalPaused={globalPaused}
+              onUpdateTask={onUpdateTask}
+              onRetryTask={onRetryTask}
+              onArchiveTask={onArchiveTask}
+              onUnarchiveTask={onUnarchiveTask}
+              onDeleteTask={onDeleteTask}
+              availableModels={availableModels}
+              onOpenDetailWithTab={onOpenDetailWithTab}
+              favoriteProviders={favoriteProviders}
+              favoriteModels={favoriteModels}
+              onToggleFavorite={onToggleFavorite}
+              onToggleModelFavorite={onToggleModelFavorite}
+              isSearchActive={isSearchActive}
+              taskStuckTimeoutMs={taskStuckTimeoutMs}
+              onOpenMission={onOpenMission}
+              lastFetchTimeMs={lastFetchTimeMs}
+              workflowStepNameLookup={workflowStepNameLookup}
+              taskCardFieldDefs={taskCardFieldDefs}
+              blockerFanoutMap={blockerFanoutMap}
+              prAuthAvailable={prAuthAvailable}
+              autoMerge={autoMerge}
+              collapsed={archivedCollapsed}
+              onToggleCollapse={handleToggleArchivedCollapse}
+            />
+          )}
         </main>
       </div>
     );
