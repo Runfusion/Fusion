@@ -148,6 +148,7 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     expect(reactFlowSurfaceRule).toMatch(/width\s*:\s*100%\s*;/);
     expect(reactFlowSurfaceRule).toMatch(/min-width\s*:\s*0\s*;/);
     expect(reactFlowSurfaceRule).toMatch(/max-width\s*:\s*100%\s*;/);
+    expect(reactFlowSurfaceRule).toMatch(/height\s*:\s*100%\s*;/);
   });
 
   it("FN-6034 preserves mobile staged editor visibility and inspector stacking", () => {
@@ -241,7 +242,10 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     const selectorRule = findRule(selectorMobile, /\.workflow-selector\s*\{[^}]*\}/);
     expect(selectorRule).toMatch(/flex-direction\s*:\s*column\s*;/);
 
-    const manageRule = findRule(selectorMobile, /\.workflow-selector select,\s*\.workflow-selector-manage\s*\{[^}]*\}/);
+    const manageRule = findRule(
+      selectorMobile,
+      /\.workflow-selector select,\s*\.workflow-selector-manage,\s*\.workflow-selector-collapsed-button\s*\{[^}]*\}/,
+    );
     expect(manageRule).toMatch(/width\s*:\s*100%\s*;/);
   });
 });
