@@ -715,8 +715,18 @@ export class NotificationService {
 
     this.notifiedEvents.add(key);
     schedulerLog.log(`NotificationService.maybeNotify dispatching key=${key}`);
-    this.dispatcher.dispatch(eventType, payload).catch(() => {
-      // best effort dispatch
+    this.dispatcher.dispatch(eventType, payload).then((results) => {
+      if (results.some((result) => result.success)) {
+        return;
+      }
+      this.notifiedEvents.delete(key);
+      schedulerLog.log(
+        `NotificationService.maybeNotify no successful providers for key=${key} results=${JSON.stringify(results)}`,
+      );
+    }).catch((error) => {
+      this.notifiedEvents.delete(key);
+      const message = error instanceof Error ? error.message : String(error);
+      schedulerLog.log(`NotificationService.maybeNotify dispatch failed key=${key} error=${message}`);
     });
   }
 }

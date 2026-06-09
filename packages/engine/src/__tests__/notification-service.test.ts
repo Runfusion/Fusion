@@ -87,6 +87,14 @@ function createRoomMessage(overrides: Partial<ChatRoomMessage> = {}): ChatRoomMe
   };
 }
 
+function mockNtfyFetch() {
+  return vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+  } as Response);
+}
+
 describe("NotificationService", () => {
   it("dispatches in-review event to registered provider", async () => {
     const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
@@ -260,6 +268,39 @@ describe("NotificationService", () => {
     await service.start();
     expect(initSpy).not.toHaveBeenCalled();
     initSpy.mockRestore();
+  });
+
+  it("dispatches workflow notify node events through the ntfy provider when enabled", async () => {
+    const fetchMock = mockNtfyFetch();
+    const sendSpy = vi.spyOn(NtfyNotificationProvider.prototype, "sendNotification");
+    const store = createStore({
+      ntfyEnabled: true,
+      ntfyTopic: "workflow-topic",
+      ntfyEvents: ["workflow-notify"] as any,
+    });
+    const service = new NotificationService(store as any, { ntfyBaseUrl: "https://ntfy.example" });
+    await service.start();
+
+    await service.dispatch("workflow-notify", {
+      taskId: "FN-306",
+      taskTitle: "Workflow task",
+      event: "workflow-notify",
+      metadata: { title: "Workflow ping", message: "Workflow node emitted a notification" },
+    });
+
+    await vi.waitFor(() => {
+      expect(sendSpy).toHaveBeenCalledWith("workflow-notify", expect.objectContaining({ taskId: "FN-306" }));
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.example/workflow-topic",
+        expect.objectContaining({
+          method: "POST",
+          body: "Workflow node emitted a notification",
+          headers: expect.objectContaining({ Title: "Workflow ping" }),
+        }),
+      );
+    });
+    sendSpy.mockRestore();
+    fetchMock.mockRestore();
   });
 
   it("reconfigures the ntfy provider when the access token changes without logging the token", async () => {
@@ -750,6 +791,35 @@ describe("NotificationService", () => {
       expect(sendNotification).toHaveBeenCalledWith("merged", expect.objectContaining({ taskId: "FN-303", event: "merged" }));
     });
 
+    it("dispatches the full merge-backed done plus task:merged sequence through the ntfy provider once", async () => {
+      const fetchMock = mockNtfyFetch();
+      const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", ntfyEvents: [] as any });
+      const service = new NotificationService(store as any, { ntfyBaseUrl: "https://ntfy.example" });
+      await service.start();
+
+      const mergedTask = task({ id: "FN-305", column: "done", mergeDetails: { mergeConfirmed: true } as any });
+      store.emit("task:moved", { task: mergedTask, from: "in-review", to: "done" });
+      store.emit("task:merged", {
+        task: mergedTask,
+        branch: "fusion/fn-305",
+        merged: true,
+        worktreeRemoved: false,
+        branchDeleted: false,
+      });
+
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.example/topic",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("has been merged to main"),
+        }),
+      );
+      fetchMock.mockRestore();
+    });
+
     it("honors provider event filtering for task:moved to done terminal notifications", async () => {
       const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
       const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
@@ -877,6 +947,26 @@ describe("NotificationService", () => {
       );
     });
 
+    it("refreshes stale disabled settings before in-review move notifications through ntfy", async () => {
+      const fetchMock = mockNtfyFetch();
+      const store = createStaleLifecycleStore();
+      const service = new NotificationService(store as any, { ntfyBaseUrl: "https://ntfy.example" });
+      await service.start();
+
+      store.emit("task:moved", { task: task({ id: "FN-108" }), from: "in-progress", to: "in-review" });
+
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://ntfy.example/fusion-test",
+          expect.objectContaining({
+            method: "POST",
+            body: expect.stringContaining("ready for review"),
+          }),
+        );
+      });
+      fetchMock.mockRestore();
+    });
+
     it("does not notify for non-in-review/non-terminal moves even after stale-settings refresh", async () => {
       const store = createStaleLifecycleStore();
       const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
@@ -917,6 +1007,81 @@ describe("NotificationService", () => {
           expect.objectContaining({ taskId: "FN-105", event: "in-review" }),
         );
       });
+    });
+
+    it("registers and initializes ntfy after a late settings:updated enable before task:merged", async () => {
+      const fetchMock = mockNtfyFetch();
+      const store = createStore({ ntfyEnabled: false, ntfyTopic: "" });
+      const service = new NotificationService(store as any, { ntfyBaseUrl: "https://ntfy.example" });
+      await service.start();
+
+      store.emit("settings:updated", {
+        settings: {
+          ntfyEnabled: true,
+          ntfyTopic: "fusion-test",
+          ntfyEvents: [] as any,
+          ntfyDashboardHost: "http://localhost:4040",
+        } as Settings,
+        previous: {
+          ntfyEnabled: false,
+          ntfyTopic: "",
+        } as Settings,
+      });
+      store.emit("task:merged", {
+        task: task({ id: "FN-107" }),
+        branch: "fusion/fn-107",
+        merged: true,
+        worktreeRemoved: true,
+        branchDeleted: true,
+      });
+
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://ntfy.example/fusion-test",
+          expect.objectContaining({
+            method: "POST",
+            body: expect.stringContaining("has been merged to main"),
+          }),
+        );
+      });
+      fetchMock.mockRestore();
+    });
+
+    it("refreshes stale disabled settings for workflow notify dispatch", async () => {
+      const fetchMock = mockNtfyFetch();
+      let getSettingsCallCount = 0;
+      const store = createStore({ ntfyEnabled: false, ntfyTopic: "" });
+      store.getSettings.mockImplementation(async () => {
+        getSettingsCallCount += 1;
+        if (getSettingsCallCount === 1) {
+          return { ntfyEnabled: false, ntfyTopic: "" } as Settings;
+        }
+        return {
+          ntfyEnabled: true,
+          ntfyTopic: "workflow-refresh",
+          ntfyEvents: ["workflow-notify"] as any,
+        } as Settings;
+      });
+      const service = new NotificationService(store as any, { ntfyBaseUrl: "https://ntfy.example" });
+      await service.start();
+
+      await service.dispatch("workflow-notify", {
+        taskId: "FN-109",
+        taskTitle: "Workflow refresh",
+        event: "workflow-notify",
+        metadata: { title: "Workflow refresh", message: "settings refreshed before workflow notify" },
+      });
+
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://ntfy.example/workflow-refresh",
+          expect.objectContaining({
+            method: "POST",
+            body: "settings refreshed before workflow notify",
+          }),
+        );
+      });
+      fetchMock.mockRestore();
     });
   });
 

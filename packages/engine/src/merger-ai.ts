@@ -957,6 +957,8 @@ async function finalizeMerged(
     };
     modifiedFiles = landedFiles.length > 0 ? landedFiles : undefined;
     await store.updateTask(taskId, { mergeDetails, modifiedFiles });
+    task.mergeDetails = mergeDetails;
+    task.modifiedFiles = modifiedFiles;
     if (task.lineageId && typeof (store as Partial<TaskStore>).upsertTaskCommitAssociation === "function") {
       await store.upsertTaskCommitAssociation({
         taskLineageId: task.lineageId,
@@ -1003,7 +1005,21 @@ async function finalizeMerged(
 
 /** Move the task to done and emit, mirroring the legacy completeTask. */
 async function finalizeTask(store: TaskStore, taskId: string, result: MergeResult): Promise<MergeResult> {
-  await store.updateTask(taskId, { status: null }).catch(() => undefined);
+  const mergedAt = new Date().toISOString();
+  const mergeDetails: MergeDetails = {
+    ...result.task.mergeDetails,
+    ...(result.commitSha ? { commitSha: result.commitSha } : {}),
+    ...(result.rebaseBaseSha ? { rebaseBaseSha: result.rebaseBaseSha } : {}),
+    ...(result.landedFiles ? { landedFiles: result.landedFiles } : {}),
+    ...(typeof result.filesChanged === "number" ? { filesChanged: result.filesChanged } : {}),
+    ...(typeof result.insertions === "number" ? { insertions: result.insertions } : {}),
+    ...(typeof result.deletions === "number" ? { deletions: result.deletions } : {}),
+    ...(result.mergeCommitMessage ? { mergeCommitMessage: result.mergeCommitMessage } : {}),
+    mergedAt,
+    mergeConfirmed: result.mergeConfirmed === true,
+    ...(result.noOp ? { noOpMerge: true, noOpReason: result.reason } : {}),
+  };
+  await store.updateTask(taskId, { status: null, mergeDetails }).catch(() => undefined);
   const task = await store.moveTask(taskId, "done");
   result.task = task;
   store.emit("task:merged", result);

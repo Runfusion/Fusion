@@ -157,7 +157,7 @@ function ntfyPriorityToInt(priority: NtfyNotificationPriority): number {
 }
 
 export function resolveNtfyEvents(events?: NtfyNotificationEvent[]): NtfyNotificationEvent[] {
-  return events ? [...events] : [...DEFAULT_NTFY_EVENTS];
+  return events && events.length > 0 ? [...events] : [...DEFAULT_NTFY_EVENTS];
 }
 
 export function isNtfyEventEnabled(events: NtfyNotificationEvent[] | undefined, event: NtfyNotificationEvent): boolean {

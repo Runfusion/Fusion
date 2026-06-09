@@ -193,7 +193,14 @@ describe("runAiMerge", () => {
     const landedMsg = git(dir, "log -1 --pretty=%B main");
     expect(landedMsg).toContain("Fusion-Task-Id: FN-1");
     expect(git(dir, "log -1 --pretty=%s main")).toMatch(/^FN-1: /);
-    // Task moved to done + event emitted.
+    // Task marked merge-backed before moving to done, then event emitted.
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-1",
+      expect.objectContaining({
+        status: null,
+        mergeDetails: expect.objectContaining({ mergeConfirmed: true }),
+      }),
+    );
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done");
     expect(emitted.some((e) => e.event === "task:merged")).toBe(true);
   });
