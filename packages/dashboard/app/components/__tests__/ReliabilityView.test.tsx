@@ -34,7 +34,10 @@ const baseResponse = {
 
 function renderInProjectContent() {
   return render(
-    <div data-testid="project-content" style={{ display: "flex", width: "100%" }}>
+    <div
+      data-testid="project-content"
+      style={{ display: "flex", flex: "1 1 auto", height: "100%", minHeight: 0, minWidth: 0, width: "100%", overflow: "hidden" }}
+    >
       <ReliabilityView />
     </div>,
   );
@@ -50,6 +53,9 @@ function expectFlexFill(element: HTMLElement) {
   expect(computed.flexGrow).toBe("1");
   expect(computed.flexShrink).toBe("1");
   expect(computed.flexBasis).toBe("auto");
+  expect(computed.height).not.toBe("");
+  expect(computed.height).not.toBe("0px");
+  expect(computed.height).not.toBe("auto");
   expect(computed.minWidth).toBe("0px");
 }
 
@@ -82,7 +88,7 @@ describe("ReliabilityView", () => {
   it.each([
     ["desktop", 1024],
     ["mobile", 375],
-  ])("fills flex parent width in %s loading state", (_label, width) => {
+  ])("fills flex parent width and height in %s loading state", (_label, width) => {
     setViewportWidth(width);
     vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise<Response>(() => {}));
 
@@ -94,7 +100,7 @@ describe("ReliabilityView", () => {
   it.each([
     ["desktop", 1024],
     ["mobile", 375],
-  ])("fills flex parent width in %s populated state", async (_label, width) => {
+  ])("fills flex parent width and height in %s populated state", async (_label, width) => {
     setViewportWidth(width);
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
 
@@ -107,7 +113,7 @@ describe("ReliabilityView", () => {
   it.each([
     ["desktop", 1024],
     ["mobile", 375],
-  ])("fills flex parent width in %s error state", async (_label, width) => {
+  ])("fills flex parent width and height in %s error state", async (_label, width) => {
     setViewportWidth(width);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network unavailable"));
 

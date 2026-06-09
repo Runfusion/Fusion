@@ -3555,7 +3555,8 @@ input[type="range"]:focus-visible {
      "first" definition for any individual selector. */
   :is(.insights-view, .memory-view, .dev-server-view, .skills-view,
       .documents-view, .roadmaps-view, .nodes-management-overlay,
-      .agents-view, .chat-view, .mission-manager, .mailbox-view) {
+      .agents-view, .chat-view, .mission-manager, .mailbox-view,
+      .reliability-view) {
     min-height: 0;
   }
 
