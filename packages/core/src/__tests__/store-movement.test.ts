@@ -33,6 +33,21 @@ describe("TaskStore", () => {
   const createSourceIssueFixture = () => harness.createSourceIssueFixture();
   const insertLogEntryWithTimestamp = (...args: any[]) => (harness as any).insertLogEntryWithTimestamp(...args);
 
+  describe("slim list memo invalidation", () => {
+    it("returns fresh slim task state after an in-process task move", async () => {
+      const task = await store.createTask({ description: "memo invalidation" });
+      await store.moveTask(task.id, "todo");
+
+      const beforeMove = await store.listTasks({ slim: true, includeArchived: false });
+      expect(beforeMove.find((candidate) => candidate.id === task.id)?.column).toBe("todo");
+
+      await store.moveTask(task.id, "in-progress");
+
+      const afterMove = await store.listTasks({ slim: true, includeArchived: false });
+      expect(afterMove.find((candidate) => candidate.id === task.id)?.column).toBe("in-progress");
+    });
+  });
+
   describe("moveTask — in-progress to triage", () => {
     it("allows moving an in-progress task to triage", async () => {
       const task = await store.createTask({ description: "test in-progress to triage" });

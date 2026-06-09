@@ -3131,6 +3131,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
   }
 
   private async writeTaskJsonFile(dir: string, task: Task): Promise<void> {
+    this.clearStartupSlimListMemo();
     const taskJsonPath = join(dir, "task.json");
     // Use a unique tmp filename per write so concurrent writers to the same task
     // don't race on a shared `task.json.tmp` (one rename consumes it, the other

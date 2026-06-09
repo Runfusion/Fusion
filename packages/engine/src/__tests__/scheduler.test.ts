@@ -624,6 +624,9 @@ describe("Scheduler", () => {
       expect([...tasks.values()].filter((task) => task.column === "in-progress")).toHaveLength(3);
       expect(moveTask.mock.calls.filter((call) => call[1] === "in-progress")).toHaveLength(6);
       expect(vi.mocked(store.listTasks).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(
+        vi.mocked(store.listTasks).mock.calls.some(([options]) => options?.startupMemo === false),
+      ).toBe(true);
     });
 
     it("flag-OFF: todo dispatch is tagged as scheduler-sourced for redispatch guards", async () => {
