@@ -76,12 +76,23 @@ const mod = await import(/* @vite-ignore */ moduleId);
 
 Vite's static analysis cannot trace these imports, so it relies on `resolve.alias` to map the module ID to a filesystem path. Without the alias, Vite falls through to default resolution, which fails because the plugin package is in a sibling `plugins/` directory outside the dashboard's root. The error surfaces through the CSS loader because Vite's fallback resolution path misattributes the failure.
 
+## Related root cause: CSS import via index re-export
+
+The same `Unknown file extension ".css"` symptom can also happen when a plugin's **server-side entry** (`src/index.ts` / `dist/index.js`) re-exports its dashboard view component:
+
+```ts
+export { SomeDashboardView } from "./dashboard-view.js";
+```
+
+Server-side plugin loading uses Node.js `import()` against the plugin entry. If that entry re-exports a React dashboard view, Node follows the chain into the view and any imported `.css` files before Vite is involved, then crashes because the Node ESM loader does not handle CSS. The fix is to keep dashboard view components out of the server entry: preserve the `dashboardViews` manifest metadata (`componentPath: "./dashboard-view"`) and load the view client-side through `registerBundledPluginViews.ts` plus the Vite alias.
+
 ## Prevention
 
 - **When adding a bundled plugin with a dashboard view, grep for an existing plugin alias** in `packages/dashboard/vite.config.ts` and mirror the pattern for the new plugin
+- **Do not re-export dashboard view components from the plugin's server-side `index.ts`** — the server entry must stay free of React/CSS view imports; `dashboardViews` metadata is enough for registration
 - **Verify the alias in both dev and production builds** — the alias must resolve correctly for Vite's dev server and its production bundler
 - **Consider a consistency test** that asserts every plugin registered in `registerBundledPluginViews.ts` has a corresponding Vite alias (similar to the existing `lazy-loaded-views-docs.test.ts` that keeps the AGENTS.md view inventory in sync)
-- **Watch for the misleading `.css` error** — when Vite reports an unknown file extension for a file that clearly exists, suspect module resolution failure before investigating loaders
+- **Watch for the misleading `.css` error** — when Vite reports an unknown file extension for a file that clearly exists, suspect module resolution failure before investigating loaders; when Node reports it while enabling a plugin, suspect a server-entry re-export of the dashboard view
 
 ## Related Issues
 

@@ -9,7 +9,6 @@ import { reconcileCePipelines } from "./sync/reconciler.js";
 import { settingsSchema } from "./settings.js";
 import { getReconcileOnHooks } from "./settings.js";
 
-export { CompoundEngineeringDashboardView } from "./dashboard-view.js";
 export { COMPOUND_ENGINEERING_SKILLS } from "./skills.js";
 export {
   installBundledCeSkills,

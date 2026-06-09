@@ -29,7 +29,7 @@ The four registration points:
 3. **CLI startup** — `BUNDLED_PLUGIN_IDS` in `packages/cli/src/plugins/bundled-plugin-install.ts` (auto-install/upgrade of bundled plugins)
 4. **Build staging** — `packages/cli/tsup.config.ts` (`bundlePluginEntry` or a copy block staging the plugin into `dist/plugins/<id>/` so packaged installs have a copy at all)
 
-A plugin with a dashboard view additionally needs client-side view registration in `packages/dashboard/app/plugins/registerBundledPluginViews.ts`.
+A plugin with a dashboard view additionally needs client-side view registration in `packages/dashboard/app/plugins/registerBundledPluginViews.ts`. Its dashboard view component must **not** be re-exported from the plugin's server-side `src/index.ts`; keep only the `dashboardViews` manifest metadata there so Node-side plugin loading does not chase React/CSS imports.
 
 ## Symptoms
 
@@ -78,7 +78,7 @@ The Settings card sends a relative `./plugins/<id>` path. The server resolves it
 
 ## Prevention
 
-- **When adding a bundled plugin, grep for an existing one** (e.g. `rg -l "fusion-plugin-roadmap" packages/` ) and mirror every hit — that surfaces all four lists plus view registration.
+- **When adding a bundled plugin, grep for an existing one** (e.g. `rg -l "fusion-plugin-roadmap" packages/` ) and mirror every hit — that surfaces all four lists plus view registration. If the plugin has a dashboard view, keep the view load path client-only and do not re-export the view component from the server entry.
 - Route tests must force the fallback: mock fs so the cwd-relative path **misses** and only `dist/plugins/<id>` exists (see "installs bundled compound engineering plugin when relative path misses cwd" in `packages/dashboard/src/__tests__/plugin-routes.test.ts`). A mock that matches any path containing the plugin id tests nothing.
 - **Pin assertions to the exact contract, not substring containment.** `stringContaining(pluginId)` passed for both the correct entry-file path and the buggy directory path — when a mock or matcher can satisfy both the correct and the buggy value, the test proves nothing. Route tests now assert the registered path ends in an entry-file suffix, cover the `dist/index.js` and `src/index.ts` fallbacks, and the 400 no-entry branch.
 - When duplicating a helper is forced by test infrastructure (fs mocks vs externalized deps), add a real-fs drift-guard test that runs every copy against the same on-disk fixtures and asserts identical output.
