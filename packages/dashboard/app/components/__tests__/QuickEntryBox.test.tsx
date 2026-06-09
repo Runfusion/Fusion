@@ -323,6 +323,93 @@ describe("QuickEntryBox", () => {
     innerWidthSpy.mockRestore();
   });
 
+  describe("button focus preservation (FN-6122)", () => {
+    const newlyCoveredActionButtons = [
+      ["Deps", "quick-entry-deps"],
+      ["Attach", "quick-entry-attach"],
+      ["Models", "quick-entry-models"],
+      ["Node", "quick-entry-node-button"],
+      ["Agent", "quick-entry-agent-button"],
+      ["Priority", "quick-entry-priority-button"],
+    ] as const;
+
+    const allActionButtons = [
+      ["Plan", "plan-button"],
+      ["Subtask", "subtask-button"],
+      ["Refine", "refine-button"],
+      ...newlyCoveredActionButtons,
+      ["Fast", "quick-entry-fast-toggle"],
+      ["GitHub", "quick-entry-github-toggle"],
+      ["Save", "quick-entry-save"],
+    ] as const;
+
+    function focusTextareaWithValue(value: string) {
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+      textarea.focus();
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value } });
+      textarea.focus();
+      expect(document.activeElement).toBe(textarea);
+      return textarea;
+    }
+
+    async function clickActionButtonWithoutStealingFocus(
+      button: HTMLElement,
+      textarea: HTMLElement,
+      { allowsPortalAutoFocus = false }: { allowsPortalAutoFocus?: boolean } = {},
+    ) {
+      expect(fireEvent.mouseDown(button)).toBe(false);
+      expect(document.activeElement).toBe(textarea);
+      await act(async () => {
+        fireEvent.click(button);
+      });
+      if (allowsPortalAutoFocus) {
+        expect(document.activeElement).not.toBe(button);
+        return;
+      }
+      expect(document.activeElement).toBe(textarea);
+    }
+
+    it.each(newlyCoveredActionButtons)("keeps textarea focused when clicking %s", async (_label, testId) => {
+      mockDesktopViewport();
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = focusTextareaWithValue("Focus-preserving quick-entry action");
+
+      await clickActionButtonWithoutStealingFocus(screen.getByTestId(testId), textarea, {
+        allowsPortalAutoFocus: testId === "quick-entry-deps",
+      });
+    });
+
+    it("keeps textarea focused for every quick-entry action button", async () => {
+      mockDesktopViewport();
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        githubTrackingEnabledByDefault: true,
+      } as any);
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-entry-github-toggle")).not.toBeDisabled();
+      });
+
+      const actionsContainer = screen.getByTestId("quick-entry-actions");
+      for (const [_label, testId] of allActionButtons) {
+        const textarea = focusTextareaWithValue(`Focus preserved for ${testId}`);
+        const button = screen.getByTestId(testId);
+        expect(actionsContainer.contains(button)).toBe(true);
+        await clickActionButtonWithoutStealingFocus(button, textarea, {
+          allowsPortalAutoFocus: testId === "quick-entry-deps",
+        });
+        if (testId === "quick-entry-save") {
+          await waitFor(() => {
+            expect(document.activeElement).toBe(textarea);
+          });
+        }
+      }
+    });
+  });
+
   it("textarea spans full container width (FN-1608)", () => {
     mockDesktopViewport();
     renderQuickEntryBox({});

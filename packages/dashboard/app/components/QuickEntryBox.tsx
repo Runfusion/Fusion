@@ -1507,6 +1507,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               <button
                 type="button"
                 className={`btn btn-sm refine-button ${isRefining ? "refine-button--loading" : ""}`}
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   setIsRefineMenuOpen((prev) => {
                     const next = !prev;
@@ -1578,6 +1579,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               <button
                 ref={depTriggerRef}
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 className="btn btn-sm dep-trigger"
                 data-testid="quick-entry-deps"
                 onClick={() => {
@@ -1667,6 +1669,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               className="btn btn-sm"
               data-testid="quick-entry-attach"
               onClick={() => fileInputRef.current?.click()}
@@ -1678,6 +1681,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             <button
               ref={modelTriggerRef}
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               className="btn btn-sm"
               data-testid="quick-entry-models"
               onClick={() => {
@@ -1700,6 +1704,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             <div className="node-trigger-wrap" ref={nodePickerRef}>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 className="btn btn-sm dep-trigger"
                 data-testid="quick-entry-node-button"
                 onClick={() => {
@@ -1788,6 +1793,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             <div className="agent-trigger-wrap" ref={agentPickerRef}>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 className="btn btn-sm dep-trigger"
                 onClick={() => {
                   if (showAgentPicker) {
@@ -1862,6 +1868,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             <div className="priority-trigger-wrap" ref={priorityPickerRef}>
               <button
                 type="button"
+                onMouseDown={(e) => e.preventDefault()}
                 className="btn btn-sm dep-trigger"
                 data-testid="quick-entry-priority-button"
                 onClick={() => {
