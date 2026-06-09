@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 
 const execMock = vi.fn();
@@ -40,6 +40,10 @@ describe("reliability interactions: stale cached-base branch reclaim", () => {
     execMock.mockReset();
     execMock.mockResolvedValue("");
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("restart recovery + reclaim sweep ends with todo and nulled cached branch metadata", async () => {

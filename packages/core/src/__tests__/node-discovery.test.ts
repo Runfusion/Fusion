@@ -85,11 +85,13 @@ describe("NodeDiscovery", () => {
     publishMock.mockReturnValue(publishService);
     findMock.mockReturnValue(browser);
     destroyMock.mockReturnValue(undefined);
-    BonjourMock.mockImplementation(() => ({
-      publish: publishMock,
-      find: findMock,
-      destroy: destroyMock,
-    }));
+    BonjourMock.mockImplementation(function () {
+      return {
+        publish: publishMock,
+        find: findMock,
+        destroy: destroyMock,
+      };
+    });
   });
 
   afterEach(() => {

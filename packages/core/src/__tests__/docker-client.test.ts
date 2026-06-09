@@ -6,11 +6,13 @@ const { execMock, readFileMock, pingMock, versionMock, inspectMock, dockerCtor, 
   const pingMock = vi.fn();
   const versionMock = vi.fn();
   const inspectMock = vi.fn();
-  const dockerCtor = vi.fn().mockImplementation(() => ({
+  const dockerCtor = vi.fn().mockImplementation(function () {
+    return {
     ping: pingMock,
     version: versionMock,
     getContainer: vi.fn(() => ({ inspect: inspectMock, logs: vi.fn().mockResolvedValue(Buffer.from("logs")) })),
-  }));
+    };
+  });
   const dockerodeModuleFactoryMock = vi.fn(() => ({ default: dockerCtor }));
   return { execMock, readFileMock, pingMock, versionMock, inspectMock, dockerCtor, dockerodeModuleFactoryMock };
 });

@@ -51,10 +51,12 @@ vi.mock("@fusion/core", async (importOriginal) => {
 
 vi.mock("../cron-runner.js", () => {
   return {
-    CronRunner: vi.fn().mockImplementation(() => ({
-      start: mocks.cronRunnerStart,
-      stop: mocks.cronRunnerStop,
-    })),
+    CronRunner: vi.fn().mockImplementation(function () {
+      return {
+        start: mocks.cronRunnerStart,
+        stop: mocks.cronRunnerStop,
+      };
+    }),
     createAiPromptExecutor: mocks.createAiPromptExecutor,
   };
 });
@@ -72,40 +74,54 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 vi.mock("../pr-monitor.js", () => ({
-  PrMonitor: vi.fn().mockImplementation(() => ({
-    onNewComments: vi.fn(),
-  })),
+  PrMonitor: vi.fn().mockImplementation(function () {
+    return {
+      onNewComments: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("../pr-comment-handler.js", () => ({
-  PrCommentHandler: vi.fn().mockImplementation(() => ({
-    handleNewComments: vi.fn(),
-    createFollowUpTask: mocks.prHandlerCreateFollowUpTask,
-  })),
+  PrCommentHandler: vi.fn().mockImplementation(function () {
+    return {
+      handleNewComments: vi.fn(),
+      createFollowUpTask: mocks.prHandlerCreateFollowUpTask,
+    };
+  }),
 }));
 
 vi.mock("../notifier.js", () => ({
-  NtfyNotifier: vi.fn().mockImplementation(() => ({
-    start: mocks.notifierStart,
-    stop: mocks.notifierStop,
-    notifyGridlock: mocks.notifierNotifyGridlock,
-  })),
+  NtfyNotifier: vi.fn().mockImplementation(function () {
+    return {
+      start: mocks.notifierStart,
+      stop: mocks.notifierStop,
+      notifyGridlock: mocks.notifierNotifyGridlock,
+    };
+  }),
 }));
 
 vi.mock("../notification/index.js", () => ({
-  NotificationService: vi.fn().mockImplementation(() => ({
-    start: mocks.notificationServiceStart,
-    stop: mocks.notificationServiceStop,
-  })),
-  OAuthAlertStateStore: vi.fn().mockImplementation(() => ({})),
-  OAuthExpiryMonitor: vi.fn().mockImplementation(() => ({
-    start: mocks.oauthExpiryMonitorStart,
-    stop: mocks.oauthExpiryMonitorStop,
-  })),
-  OAuthValidityLogger: vi.fn().mockImplementation(() => ({
-    start: mocks.oauthValidityLoggerStart,
-    stop: mocks.oauthValidityLoggerStop,
-  })),
+  NotificationService: vi.fn().mockImplementation(function () {
+    return {
+      start: mocks.notificationServiceStart,
+      stop: mocks.notificationServiceStop,
+    };
+  }),
+  OAuthAlertStateStore: vi.fn().mockImplementation(function () {
+    return {};
+  }),
+  OAuthExpiryMonitor: vi.fn().mockImplementation(function () {
+    return {
+      start: mocks.oauthExpiryMonitorStart,
+      stop: mocks.oauthExpiryMonitorStop,
+    };
+  }),
+  OAuthValidityLogger: vi.fn().mockImplementation(function () {
+    return {
+      start: mocks.oauthValidityLoggerStart,
+      stop: mocks.oauthValidityLoggerStop,
+    };
+  }),
 }));
 
 vi.mock("../auth-storage.js", () => ({
@@ -118,19 +134,21 @@ vi.mock("../auth-storage.js", () => ({
 }));
 
 vi.mock("../runtimes/in-process-runtime.js", () => ({
-  InProcessRuntime: vi.fn().mockImplementation(() => ({
-    start: mocks.runtimeStart,
-    stop: mocks.runtimeStop,
-    resumeAfterUnpause: mocks.runtimeResumeAfterUnpause,
-    getTaskStore: () => mocks.currentStore,
-    getAgentStore: vi.fn(),
-    getMessageStore: vi.fn(),
-    getRoutineStore: vi.fn(),
-    getRoutineRunner: vi.fn(),
-    getHeartbeatMonitor: vi.fn(),
-    getTriggerScheduler: vi.fn(),
-    configurePrMonitoring: mocks.runtimeConfigurePrMonitoring,
-  })),
+  InProcessRuntime: vi.fn().mockImplementation(function () {
+    return {
+      start: mocks.runtimeStart,
+      stop: mocks.runtimeStop,
+      resumeAfterUnpause: mocks.runtimeResumeAfterUnpause,
+      getTaskStore: () => mocks.currentStore,
+      getAgentStore: vi.fn(),
+      getMessageStore: vi.fn(),
+      getRoutineStore: vi.fn(),
+      getRoutineRunner: vi.fn(),
+      getHeartbeatMonitor: vi.fn(),
+      getTriggerScheduler: vi.fn(),
+      configurePrMonitoring: mocks.runtimeConfigurePrMonitoring,
+    };
+  }),
 }));
 
 type SettingsHandlerPayload = {

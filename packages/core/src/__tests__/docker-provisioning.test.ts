@@ -51,10 +51,12 @@ const {
 });
 
 vi.mock("../docker-client.js", () => ({
-  DockerClientService: vi.fn().mockImplementation(() => ({
-    getDockerInstance: getDockerInstanceMock,
-    getContainerInfo: vi.fn(),
-  })),
+  DockerClientService: vi.fn().mockImplementation(function () {
+    return {
+      getDockerInstance: getDockerInstanceMock,
+      getContainerInfo: vi.fn(),
+    };
+  }),
 }));
 
 import { DockerProvisioningService } from "../docker-provisioning";

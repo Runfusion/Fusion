@@ -9,12 +9,14 @@ const mockStreamEvents = vi.hoisted(() => vi.fn());
 const mockPollPendingAssignments = vi.hoisted(() => vi.fn());
 
 vi.mock("../../runtimes/remote-node-client.js", () => ({
-  RemoteNodeClient: vi.fn().mockImplementation(() => ({
-    health: mockHealth,
-    getMetrics: mockGetMetrics,
-    streamEvents: mockStreamEvents,
-    pollPendingAssignments: mockPollPendingAssignments,
-  })),
+  RemoteNodeClient: vi.fn().mockImplementation(function () {
+    return {
+      health: mockHealth,
+      getMetrics: mockGetMetrics,
+      streamEvents: mockStreamEvents,
+      pollPendingAssignments: mockPollPendingAssignments,
+    };
+  }),
 }));
 
 const NOW = "2026-05-16T00:00:00.000Z";

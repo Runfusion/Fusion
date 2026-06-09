@@ -22,17 +22,19 @@ vi.mock("../../merger.js", async (importOriginal) => {
 });
 
 vi.mock("../../runtimes/in-process-runtime.js", () => ({
-  InProcessRuntime: vi.fn().mockImplementation(() => ({
-    start: vi.fn(async () => undefined),
-    stop: vi.fn(async () => undefined),
-    getTaskStore: () => testState.currentStore,
-    getAgentStore: vi.fn(),
-    getMessageStore: vi.fn(),
-    getRoutineStore: vi.fn(),
-    getRoutineRunner: vi.fn(),
-    getHeartbeatMonitor: vi.fn(),
-    getTriggerScheduler: vi.fn(),
-  })),
+  InProcessRuntime: vi.fn().mockImplementation(function () {
+    return {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      getTaskStore: () => testState.currentStore,
+      getAgentStore: vi.fn(),
+      getMessageStore: vi.fn(),
+      getRoutineStore: vi.fn(),
+      getRoutineRunner: vi.fn(),
+      getHeartbeatMonitor: vi.fn(),
+      getTriggerScheduler: vi.fn(),
+    };
+  }),
 }));
 
 import { ProjectEngine } from "../../project-engine.js";

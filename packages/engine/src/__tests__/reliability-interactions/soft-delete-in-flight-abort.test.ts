@@ -25,40 +25,42 @@ vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return { ...actual, execFile: projectEngineMocks.execFile };
 });
-vi.mock("../../pr-monitor.js", () => ({ PrMonitor: vi.fn().mockImplementation(() => ({ onNewComments: vi.fn() })) }));
-vi.mock("../../pr-comment-handler.js", () => ({ PrCommentHandler: vi.fn().mockImplementation(() => ({ handleNewComments: vi.fn() })) }));
+vi.mock("../../pr-monitor.js", () => ({ PrMonitor: vi.fn().mockImplementation(function () { return { onNewComments: vi.fn() }; }) }));
+vi.mock("../../pr-comment-handler.js", () => ({ PrCommentHandler: vi.fn().mockImplementation(function () { return { handleNewComments: vi.fn() }; }) }));
 vi.mock("../../auth-storage.js", () => ({
   createFusionAuthStorage: vi.fn(() => ({ reload: vi.fn(), getOAuthProviders: vi.fn(() => []), get: vi.fn(() => undefined) })),
   getFusionOAuthAlertStatePath: vi.fn(() => "/tmp/oauth-alert-state.json"),
 }));
-vi.mock("../../notifier.js", () => ({ NtfyNotifier: vi.fn().mockImplementation(() => ({ start: vi.fn(), stop: vi.fn() })) }));
+vi.mock("../../notifier.js", () => ({ NtfyNotifier: vi.fn().mockImplementation(function () { return { start: vi.fn(), stop: vi.fn() }; }) }));
 vi.mock("../../notification/index.js", () => ({
-  NotificationService: vi.fn().mockImplementation(() => ({ start: vi.fn(), stop: vi.fn() })),
-  OAuthAlertStateStore: vi.fn().mockImplementation(() => ({})),
-  OAuthExpiryMonitor: vi.fn().mockImplementation(() => ({ start: vi.fn(), stop: vi.fn() })),
-  OAuthValidityLogger: vi.fn().mockImplementation(() => ({ start: vi.fn(), stop: vi.fn() })),
+  NotificationService: vi.fn().mockImplementation(function () { return { start: vi.fn(), stop: vi.fn() }; }),
+  OAuthAlertStateStore: vi.fn().mockImplementation(function () { return {}; }),
+  OAuthExpiryMonitor: vi.fn().mockImplementation(function () { return { start: vi.fn(), stop: vi.fn() }; }),
+  OAuthValidityLogger: vi.fn().mockImplementation(function () { return { start: vi.fn(), stop: vi.fn() }; }),
 }));
 vi.mock("../../cron-runner.js", () => ({
-  CronRunner: vi.fn().mockImplementation(() => ({ start: vi.fn(), stop: vi.fn() })),
+  CronRunner: vi.fn().mockImplementation(function () { return { start: vi.fn(), stop: vi.fn() }; }),
   createAiPromptExecutor: vi.fn(async () => vi.fn()),
 }));
 vi.mock("../../runtimes/in-process-runtime.js", () => ({
-  InProcessRuntime: vi.fn().mockImplementation(() => ({
-    start: projectEngineMocks.runtimeStart,
-    stop: projectEngineMocks.runtimeStop,
-    resumeAfterUnpause: projectEngineMocks.runtimeResumeAfterUnpause,
-    getTaskStore: () => projectEngineMocks.currentStore,
-    getAgentStore: vi.fn(),
-    getMessageStore: vi.fn(),
-    getRoutineStore: vi.fn(),
-    getRoutineRunner: vi.fn(),
-    getHeartbeatMonitor: vi.fn(),
-    getTriggerScheduler: vi.fn(),
-    configurePrMonitoring: projectEngineMocks.runtimeConfigurePrMonitoring,
-    setActiveMergeTaskIdProvider: vi.fn(),
-    setMergeEnqueuer: vi.fn(),
-    setMergeActiveClearer: vi.fn(),
-  })),
+  InProcessRuntime: vi.fn().mockImplementation(function () {
+    return {
+      start: projectEngineMocks.runtimeStart,
+      stop: projectEngineMocks.runtimeStop,
+      resumeAfterUnpause: projectEngineMocks.runtimeResumeAfterUnpause,
+      getTaskStore: () => projectEngineMocks.currentStore,
+      getAgentStore: vi.fn(),
+      getMessageStore: vi.fn(),
+      getRoutineStore: vi.fn(),
+      getRoutineRunner: vi.fn(),
+      getHeartbeatMonitor: vi.fn(),
+      getTriggerScheduler: vi.fn(),
+      configurePrMonitoring: projectEngineMocks.runtimeConfigurePrMonitoring,
+      setActiveMergeTaskIdProvider: vi.fn(),
+      setMergeEnqueuer: vi.fn(),
+      setMergeActiveClearer: vi.fn(),
+    };
+  }),
 }));
 
 type Listener = (...args: any[]) => void | Promise<void>;

@@ -15,21 +15,23 @@ vi.mock("../engine-singleton-lock.js", () => ({
 vi.mock("../project-engine.js", () => {
   return {
      
-    ProjectEngine: vi.fn().mockImplementation((config: any) => ({
-      start: vi.fn().mockResolvedValue(undefined),
-      stop: vi.fn().mockResolvedValue(undefined),
-      getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
-      getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
-      getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
-      getAutomationStore: vi.fn().mockReturnValue(undefined),
-      getRuntime: vi.fn().mockReturnValue({
-        getMissionAutopilot: vi.fn().mockReturnValue(undefined),
-        getMissionExecutionLoop: vi.fn().mockReturnValue(undefined),
-      }),
-      getWorkingDirectory: vi.fn().mockReturnValue(config.workingDirectory),
-      onMerge: vi.fn().mockResolvedValue(undefined),
-      _config: config,
-    })),
+    ProjectEngine: vi.fn().mockImplementation(function (config: any) {
+      return {
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+        getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
+        getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
+        getAutomationStore: vi.fn().mockReturnValue(undefined),
+        getRuntime: vi.fn().mockReturnValue({
+          getMissionAutopilot: vi.fn().mockReturnValue(undefined),
+          getMissionExecutionLoop: vi.fn().mockReturnValue(undefined),
+        }),
+        getWorkingDirectory: vi.fn().mockReturnValue(config.workingDirectory),
+        onMerge: vi.fn().mockResolvedValue(undefined),
+        _config: config,
+      };
+    }),
   };
 });
 
@@ -148,15 +150,17 @@ describe("ProjectEngineManager", () => {
       let callCount = 0;
       (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
          
-        (config: any) => ({
-          start: vi.fn().mockImplementation(async () => {
+        function (config: any) {
+          return {
+            start: vi.fn().mockImplementation(async () => {
             callCount++;
             if (callCount === 1) throw new Error("transient failure");
-          }),
-          stop: vi.fn().mockResolvedValue(undefined),
-          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
-          _config: config,
-        }),
+            }),
+            stop: vi.fn().mockResolvedValue(undefined),
+            getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+            _config: config,
+          };
+        },
       );
 
       await expect(manager.ensureEngine("proj_aaa")).rejects.toThrow("transient failure");
@@ -554,18 +558,20 @@ describe("ProjectEngineManager", () => {
       // Make starts fail on the first 3 calls (one per project in the first tick)
       (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (config: any) => ({
-          start: vi.fn().mockImplementation(async () => {
+        function (config: any) {
+          return {
+            start: vi.fn().mockImplementation(async () => {
             startCallCount++;
             // Fail only the first 3 calls (one per project in first reconciliation tick)
             if (startCallCount <= 3) {
               throw new Error("transient failure");
             }
-          }),
-          stop: vi.fn().mockResolvedValue(undefined),
-          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
-          _config: config,
-        }),
+            }),
+            stop: vi.fn().mockResolvedValue(undefined),
+            getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+            _config: config,
+          };
+        },
       );
 
       // Start reconciliation (runs immediate tick which fails all 3)
@@ -593,12 +599,14 @@ describe("ProjectEngineManager", () => {
       // Reset mock for other tests
       (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (config: any) => ({
-          start: vi.fn().mockResolvedValue(undefined),
-          stop: vi.fn().mockResolvedValue(undefined),
-          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
-          _config: config,
-        }),
+        function (config: any) {
+          return {
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
+            getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+            _config: config,
+          };
+        },
       );
     });
 
@@ -639,12 +647,14 @@ describe("ProjectEngineManager", () => {
       vi.clearAllMocks();
       (ProjectEngine as unknown as ReturnType<typeof vi.fn>).mockImplementation(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (config: any) => ({
-          start: vi.fn().mockResolvedValue(undefined),
-          stop: vi.fn().mockResolvedValue(undefined),
-          getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
-          _config: config,
-        }),
+        function (config: any) {
+          return {
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
+            getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
+            _config: config,
+          };
+        },
       );
 
       // Advance more time - no new engines should be started

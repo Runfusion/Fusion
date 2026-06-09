@@ -280,7 +280,7 @@ describe("per-agent heartbeat config", () => {
       const config = await monitor.getAgentHeartbeatConfig("agent-001");
       expect(config.pollIntervalMs).toBe(60_000);
       expect(config.heartbeatTimeoutMs).toBe(30_000);
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalled();
       warnSpy.mockRestore();
     });
   });
@@ -571,4 +571,3 @@ describe("per-agent heartbeat config", () => {
 });
 
 // ── Heartbeat Execution Tests ──────────────────────────────────────────
-

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 import * as branchConflicts from "../branch-conflicts.js";
@@ -27,6 +27,10 @@ describe("self-healing reclaim paused review", () => {
     store = createStore();
     manager = new SelfHealingManager(store, { rootDir: "/tmp/test" });
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("reclaims paused in-review branch conflict, clears paused state, and requeues to todo with audit metadata", async () => {

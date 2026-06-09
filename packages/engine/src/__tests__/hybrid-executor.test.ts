@@ -22,7 +22,7 @@ const mockProjectManagerInstances: Array<{
 }> = [];
 
 vi.mock("../project-manager.js", () => ({
-  ProjectManager: vi.fn().mockImplementation(() => {
+  ProjectManager: vi.fn().mockImplementation(function () {
     const instance = {
       addProject: vi.fn().mockImplementation((config: ProjectRuntimeConfig) => {
         const runtime = {
@@ -93,7 +93,7 @@ const mockNodeHealthMonitorInstances: Array<{
 }> = [];
 
 vi.mock("../node-health-monitor.js", () => ({
-  NodeHealthMonitor: vi.fn().mockImplementation(() => {
+  NodeHealthMonitor: vi.fn().mockImplementation(function () {
     const instance = {
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),

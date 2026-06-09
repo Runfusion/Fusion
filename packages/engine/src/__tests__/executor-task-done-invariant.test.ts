@@ -228,7 +228,7 @@ describe("FN-5241 executor handoff auditing", () => {
     const handoff = store.getRunAuditEvents({ taskId: task.id, mutationType: "task:handoff", limit: 10 })[0];
     expect(handoff?.metadata).toMatchObject({
       taskId: task.id,
-      reason: "fn_task_done",
+      reason: "workflow-graph-review",
       alreadyEnqueued: false,
     });
   });

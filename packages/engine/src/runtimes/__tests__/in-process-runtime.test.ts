@@ -137,7 +137,7 @@ vi.mock("../../worktree-pool.js", async () => {
 // Mock the scheduler
 vi.mock("../../scheduler.js", async () => {
   return {
-    Scheduler: vi.fn().mockImplementation(() => {
+    Scheduler: vi.fn().mockImplementation(function () {
       const self = {} as Record<string, unknown>;
       self.start = vi.fn();
       self.stop = vi.fn();
@@ -150,7 +150,7 @@ vi.mock("../../scheduler.js", async () => {
 
 vi.mock("../../self-healing.js", async () => {
   return {
-    SelfHealingManager: vi.fn().mockImplementation((_store, opts) => {
+    SelfHealingManager: vi.fn().mockImplementation(function (_store, opts) {
       mockSelfHealingCtor(opts);
       return {
         start: mockSelfHealingStart,
@@ -164,28 +164,32 @@ vi.mock("../../self-healing.js", async () => {
 
 vi.mock("../../restart-recovery-coordinator.js", async () => {
   return {
-    RestartRecoveryCoordinator: vi.fn().mockImplementation(() => ({
-      recoverInterruptedRuns: mockRecoverInterruptedRuns,
-    })),
+    RestartRecoveryCoordinator: vi.fn().mockImplementation(function () {
+      return {
+        recoverInterruptedRuns: mockRecoverInterruptedRuns,
+      };
+    }),
   };
 });
 
 // Mock the plugin runner
 vi.mock("../../plugin-runner.js", async () => {
   return {
-    PluginRunner: vi.fn().mockImplementation(() => ({
-      init: vi.fn().mockResolvedValue(undefined),
-      shutdown: vi.fn().mockResolvedValue(undefined),
-      getPluginTools: vi.fn().mockReturnValue([]),
-      getPluginRoutes: vi.fn().mockReturnValue([]),
-    })),
+    PluginRunner: vi.fn().mockImplementation(function () {
+      return {
+        init: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+        getPluginTools: vi.fn().mockReturnValue([]),
+        getPluginRoutes: vi.fn().mockReturnValue([]),
+      };
+    }),
   };
 });
 
 // Mock the executor
 vi.mock("../../executor.js", async () => {
   return {
-    TaskExecutor: vi.fn().mockImplementation((_store, _rootDir, options) => {
+    TaskExecutor: vi.fn().mockImplementation(function (_store, _rootDir, options) {
       mockExecutorCtor(options);
       const self = {} as Record<string, unknown>;
       self.resumeOrphaned = mockResumeOrphaned;

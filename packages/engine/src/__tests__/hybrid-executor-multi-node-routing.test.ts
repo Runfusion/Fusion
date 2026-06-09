@@ -16,7 +16,8 @@ const nodeHealthState = vi.hoisted(() => ({
 }));
 
 vi.mock("../project-manager.js", () => ({
-  ProjectManager: vi.fn().mockImplementation(() => ({
+  ProjectManager: vi.fn().mockImplementation(function () {
+    return {
     on: vi.fn(),
     addProject: vi.fn().mockImplementation(async ({ projectId }: { projectId: string }) => {
       projectManagerState.projectIds.push(projectId);
@@ -39,11 +40,13 @@ vi.mock("../project-manager.js", () => ({
     releaseGlobalSlot: vi.fn().mockResolvedValue(undefined),
     removeProject: vi.fn().mockResolvedValue(undefined),
     stopAll: projectManagerState.stopAll,
-  })),
+    };
+  }),
 }));
 
 vi.mock("../node-health-monitor.js", () => ({
-  NodeHealthMonitor: vi.fn().mockImplementation((centralCore: CentralCore) => ({
+  NodeHealthMonitor: vi.fn().mockImplementation(function (centralCore: CentralCore) {
+    return {
     start: vi.fn().mockImplementation(async () => {
       const nodes = await centralCore.listNodes();
       nodeHealthState.nodes.clear();
@@ -53,7 +56,8 @@ vi.mock("../node-health-monitor.js", () => ({
     }),
     stop: vi.fn().mockResolvedValue(undefined),
     getNodeHealth: vi.fn().mockImplementation((nodeId: string) => nodeHealthState.nodes.get(nodeId)),
-  })),
+    };
+  }),
 }));
 
 describe("HybridExecutor multi-node routing", () => {

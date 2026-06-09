@@ -6,10 +6,12 @@ import { tmpdir } from "node:os";
 import { TaskStore, resolveTaskGithubTracking, setTaskCreatedHook } from "@fusion/core";
 import { createDelegateTaskTool, createTaskCreateTool } from "../agent-tools.js";
 
-const githubTrackingHookEntry = "../../../dashboard/src/github-tracking-hook.js";
-const githubTrackingEntry = "../../../dashboard/src/github-tracking.js";
-const githubTrackingHookModulePromise: Promise<any> = import(/* @vite-ignore */ githubTrackingHookEntry);
-const githubTrackingModulePromise: Promise<any> = import(/* @vite-ignore */ githubTrackingEntry);
+const githubTrackingHookModulePromise: Promise<any> = import(
+  new URL("../../../dashboard/src/github-tracking-hook.js", import.meta.url).href
+);
+const githubTrackingModulePromise: Promise<any> = import(
+  new URL("../../../dashboard/src/github-tracking.js", import.meta.url).href
+);
 
 function makeTmpDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

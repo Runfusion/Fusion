@@ -43,10 +43,12 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   createFindTool: vi.fn(() => ({ name: "find" })),
   createLsTool: vi.fn(() => ({ name: "ls" })),
   createExtensionRuntime: vi.fn(),
-  DefaultResourceLoader: vi.fn().mockImplementation(() => ({
-    reload: vi.fn().mockResolvedValue(undefined),
-    skillsOverride: undefined,
-  })),
+  DefaultResourceLoader: vi.fn().mockImplementation(function () {
+    return {
+      reload: vi.fn().mockResolvedValue(undefined),
+      skillsOverride: undefined,
+    };
+  }),
   DefaultPackageManager: vi.fn(),
   discoverAndLoadExtensions: vi.fn().mockResolvedValue({ errors: [], runtime: { pendingProviderRegistrations: [] } }),
   getAgentDir: vi.fn(() => "/test/agent-dir"),

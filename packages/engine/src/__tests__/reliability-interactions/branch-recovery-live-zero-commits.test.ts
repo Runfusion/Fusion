@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 
 const execMock = vi.fn();
@@ -41,6 +41,10 @@ describe("reliability interactions: live-zero reclaim", () => {
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
     execMock.mockReset();
     execMock.mockResolvedValue("");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("restart recovery and reclaim sweep converge to todo + null worktree for live-zero case", async () => {

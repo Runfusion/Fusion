@@ -10,7 +10,7 @@ const mockStreamEvents = vi.hoisted(() => vi.fn());
 const mockPollPendingAssignments = vi.hoisted(() => vi.fn());
 
 vi.mock("../remote-node-client.js", () => ({
-  RemoteNodeClient: vi.fn().mockImplementation((options: unknown) => {
+  RemoteNodeClient: vi.fn().mockImplementation(function (options: unknown) {
     mockClientConstructor(options);
     return {
       health: mockHealth,

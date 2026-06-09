@@ -8,7 +8,8 @@ import type { ProjectRuntimeConfig } from "../project-runtime.js";
 
 // Mock the runtimes
 vi.mock("../runtimes/in-process-runtime.js", () => ({
-  InProcessRuntime: vi.fn().mockImplementation(() => ({
+  InProcessRuntime: vi.fn().mockImplementation(function () {
+    return {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockReturnValue("active"),
@@ -20,11 +21,13 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
       lastActivityAt: new Date().toISOString(),
     }),
     on: vi.fn().mockReturnThis(),
-  })),
+    };
+  }),
 }));
 
 vi.mock("../runtimes/child-process-runtime.js", () => ({
-  ChildProcessRuntime: vi.fn().mockImplementation(() => ({
+  ChildProcessRuntime: vi.fn().mockImplementation(function () {
+    return {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockReturnValue("active"),
@@ -40,11 +43,13 @@ vi.mock("../runtimes/child-process-runtime.js", () => ({
       lastActivityAt: new Date().toISOString(),
     }),
     on: vi.fn().mockReturnThis(),
-  })),
+    };
+  }),
 }));
 
 vi.mock("../runtimes/remote-node-runtime.js", () => ({
-  RemoteNodeRuntime: vi.fn().mockImplementation(() => ({
+  RemoteNodeRuntime: vi.fn().mockImplementation(function () {
+    return {
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockReturnValue("active"),
@@ -60,7 +65,8 @@ vi.mock("../runtimes/remote-node-runtime.js", () => ({
       lastActivityAt: new Date().toISOString(),
     }),
     on: vi.fn().mockReturnThis(),
-  })),
+    };
+  }),
 }));
 
 describe("ProjectManager", () => {

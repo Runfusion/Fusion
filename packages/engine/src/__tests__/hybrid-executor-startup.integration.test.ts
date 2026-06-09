@@ -9,21 +9,25 @@ const projectManagerState = vi.hoisted(() => ({
 }));
 
 vi.mock("../project-manager.js", () => ({
-  ProjectManager: vi.fn().mockImplementation(() => ({
+  ProjectManager: vi.fn().mockImplementation(function () {
+    return {
     on: vi.fn(),
     addProject: vi.fn().mockImplementation(async (config: { projectId: string }) => {
       projectManagerState.projectIds.push(config.projectId);
     }),
     getProjectIds: vi.fn().mockImplementation(() => [...projectManagerState.projectIds]),
     stopAll: projectManagerState.stopAll,
-  })),
+    };
+  }),
 }));
 
 vi.mock("../node-health-monitor.js", () => ({
-  NodeHealthMonitor: vi.fn().mockImplementation(() => ({
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-  })),
+  NodeHealthMonitor: vi.fn().mockImplementation(function () {
+    return {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 function createCentralCore(overrides?: {

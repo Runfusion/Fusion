@@ -2065,42 +2065,44 @@ describe("StepSessionExecutor integration", () => {
   it("persists tokenUsage incrementally during step execution before in-review transition", async () => {
     const { store } = createTokenUsageStepSessionStore();
 
-    mockedStepSessionExecutor.mockImplementationOnce(((options: any) => ({
-      executeAll: vi.fn(async () => {
-        options.onStepComplete(0, {
-          stepIndex: 0,
-          success: true,
-          retries: 0,
-          tokenUsage: { inputTokens: 20, outputTokens: 10, cachedTokens: 2, totalTokens: 32 },
-        });
-        await Promise.resolve();
-
-        options.onStepComplete(1, {
-          stepIndex: 1,
-          success: true,
-          retries: 0,
-          tokenUsage: { inputTokens: 30, outputTokens: 5, cachedTokens: 1, totalTokens: 36 },
-        });
-        await Promise.resolve();
-
-        return [
-          {
+    mockedStepSessionExecutor.mockImplementationOnce(function (options: any) {
+      return {
+        executeAll: vi.fn(async () => {
+          options.onStepComplete(0, {
             stepIndex: 0,
             success: true,
             retries: 0,
             tokenUsage: { inputTokens: 20, outputTokens: 10, cachedTokens: 2, totalTokens: 32 },
-          },
-          {
+          });
+          await Promise.resolve();
+
+          options.onStepComplete(1, {
             stepIndex: 1,
             success: true,
             retries: 0,
             tokenUsage: { inputTokens: 30, outputTokens: 5, cachedTokens: 1, totalTokens: 36 },
-          },
-        ];
-      }),
-      terminateAllSessions: mockTerminateAllSessions,
-      cleanup: mockCleanup,
-    })) as any);
+          });
+          await Promise.resolve();
+
+          return [
+            {
+              stepIndex: 0,
+              success: true,
+              retries: 0,
+              tokenUsage: { inputTokens: 20, outputTokens: 10, cachedTokens: 2, totalTokens: 32 },
+            },
+            {
+              stepIndex: 1,
+              success: true,
+              retries: 0,
+              tokenUsage: { inputTokens: 30, outputTokens: 5, cachedTokens: 1, totalTokens: 36 },
+            },
+          ];
+        }),
+        terminateAllSessions: mockTerminateAllSessions,
+        cleanup: mockCleanup,
+      };
+    } as any);
 
     const executor = new TaskExecutor(store, "/tmp/test", {});
     await executor.execute(createTaskWithSteps());
@@ -2831,4 +2833,3 @@ describe("FN-5256 awaitAbortInFlightTaskWork pause synchronization", () => {
     expect((executor as any).activeSessions.has("FN-PAUSE-3")).toBe(false);
   });
 });
-

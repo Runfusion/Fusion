@@ -1411,6 +1411,34 @@ describe("Scheduler", () => {
       expect(store.moveTask).not.toHaveBeenCalled();
     });
 
+    it("caps in-progress dispatch by the global semaphore limit even before executors acquire slots", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const semaphore = new AgentSemaphore(3);
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-002", column: "in-progress" }),
+        createMockTask({ id: "FN-003", column: "in-progress" }),
+        createMockTask({ id: "FN-004", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-005", column: "todo", dependencies: [] }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getTask: vi.fn(async (taskId: string) => tasks.find((task) => task.id === taskId) ?? null),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 5, maxWorktrees: 10 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store, { semaphore });
+      scheduler.start();
+      await scheduler.schedule();
+
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
     it("respects maxWorktrees limit", async () => {
       const tasks = [
         createMockTask({ id: "FN-001", column: "in-progress" }),
