@@ -14,10 +14,10 @@ import "./PluginManager.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Package, Settings, Trash2, Plus, X, RefreshCw, RotateCcw, ExternalLink, Shield } from "lucide-react";
-import { fetchPlugins, installPlugin, enablePlugin, disablePlugin, uninstallPlugin, fetchPluginSettings, updatePluginSettings, reloadPlugin, fetchPluginSetupStatus, installPluginSetup, updatePlugin, rescanPlugin } from "../api";
+import { fetchPlugins, fetchPluginRegistry, installPlugin, enablePlugin, disablePlugin, uninstallPlugin, fetchPluginSettings, updatePluginSettings, reloadPlugin, fetchPluginSetupStatus, installPluginSetup, updatePlugin, rescanPlugin } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
 import type { PluginInstallation, PluginState, PluginSettingSchema } from "@fusion/core";
-import type { PluginSetupStatusResponse } from "../api";
+import type { PluginSetupStatusResponse, RegistryPluginEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { subscribeSse } from "../sse-bus";
@@ -108,7 +108,7 @@ const AGENT_BROWSER_LABEL_KEYS: Record<string, string> = {
   "Skill Exposure": "plugins.agentBrowser.labelSkillExposure",
 };
 
-const BUILTIN_PLUGINS: BuiltinPlugin[] = [
+export const BUILTIN_PLUGINS: BuiltinPlugin[] = [
   {
     id: "fusion-plugin-hermes-runtime",
     name: "Hermes Runtime",
@@ -259,6 +259,12 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const [pluginSettings, setPluginSettings] = useState<Record<string, unknown>>({});
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [installingBuiltinPluginId, setInstallingBuiltinPluginId] = useState<string | null>(null);
+  const [registryEntries, setRegistryEntries] = useState<RegistryPluginEntry[]>([]);
+  const [registryLoading, setRegistryLoading] = useState(true);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [registrySearchQuery, setRegistrySearchQuery] = useState("");
+  const [installingRegistryId, setInstallingRegistryId] = useState<string | null>(null);
+  const registrySearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [builtinSetupStatusById, setBuiltinSetupStatusById] = useState<Record<string, PluginSetupStatusResponse>>({});
   const [loadingBuiltinSetupId, setLoadingBuiltinSetupId] = useState<string | null>(null);
   const [installingBuiltinSetupId, setInstallingBuiltinSetupId] = useState<string | null>(null);
@@ -276,9 +282,39 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
     }
   }, [projectId, addToast]);
 
+  const loadRegistry = useCallback(async (query = registrySearchQuery) => {
+    try {
+      setRegistryLoading(true);
+      setRegistryError(null);
+      const entries = await fetchPluginRegistry(query, undefined, projectId);
+      setRegistryEntries(entries);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRegistryError(message);
+    } finally {
+      setRegistryLoading(false);
+    }
+  }, [projectId, registrySearchQuery]);
+
   useEffect(() => {
     loadPlugins();
   }, [loadPlugins]);
+
+  useEffect(() => {
+    if (registrySearchTimerRef.current) {
+      clearTimeout(registrySearchTimerRef.current);
+    }
+
+    registrySearchTimerRef.current = setTimeout(() => {
+      void loadRegistry(registrySearchQuery);
+    }, 300);
+
+    return () => {
+      if (registrySearchTimerRef.current) {
+        clearTimeout(registrySearchTimerRef.current);
+      }
+    };
+  }, [loadRegistry, registrySearchQuery]);
 
   useEffect(() => {
     const installedBuiltinsWithSetup = BUILTIN_PLUGINS.filter((builtinPlugin) => (
@@ -341,6 +377,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
           case "enabled":
           case "disabled":
           case "settings-updated":
+            void loadRegistry(registrySearchQuery);
             // Update existing plugin or add if new
             setPlugins((prev) => {
               const existingIndex = prev.findIndex((p) => p.id === payload.pluginId);
@@ -382,6 +419,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
           case "uninstalled":
             // Remove plugin from list
             setPlugins((prev) => prev.filter((p) => p.id !== payload.pluginId));
+            void loadRegistry(registrySearchQuery);
             break;
 
           case "error":
@@ -412,9 +450,10 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
         // Re-sync plugin list after a forced reconnect — any events that
         // occurred while disconnected would otherwise be missed.
         void loadPlugins();
+        void loadRegistry(registrySearchQuery);
       },
     });
-  }, [projectId, loadPlugins]);
+  }, [projectId, loadPlugins, loadRegistry, registrySearchQuery]);
 
   const handleInstall = async () => {
     if (!installPath.trim()) {
@@ -452,6 +491,25 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
       addToast(t("plugins.builtinInstallFailed", "Failed to install {{name}}: {{error}}", { name: plugin.name, error: err instanceof Error ? err.message : String(err) }), "error");
     } finally {
       setInstallingBuiltinPluginId(null);
+    }
+  };
+
+  const handleInstallRegistryPlugin = async (entry: RegistryPluginEntry) => {
+    if (!entry.path) {
+      addToast(t("plugins.registryNotInstallable", "{{name}} is not available for one-click install yet", { name: entry.name }), "warning");
+      return;
+    }
+
+    try {
+      setInstallingRegistryId(entry.id);
+      await installPlugin({ path: entry.path }, projectId);
+      addToast(t("plugins.registryInstalled", "{{name}} installed and enabled", { name: entry.name }), "success");
+      await loadPlugins();
+      await loadRegistry(registrySearchQuery);
+    } catch (err) {
+      addToast(t("plugins.registryInstallFailed", "Failed to install {{name}}: {{error}}", { name: entry.name, error: err instanceof Error ? err.message : String(err) }), "error");
+    } finally {
+      setInstallingRegistryId(null);
     }
   };
 
@@ -870,6 +928,101 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const installedPluginsById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
   const installedPlugins = plugins;
 
+  const renderRegistryPluginSection = () => (
+    <section className="plugin-registry-section" aria-label={t("plugins.browseRegistry", "Browse Registry")}>
+      <div className="plugin-registry-header">
+        <div className="plugin-registry-heading-copy">
+          <h4 className="plugin-registry-heading">{t("plugins.browseRegistry", "Browse Registry")}</h4>
+          <p className="plugin-registry-description">
+            {t("plugins.registryDescription", "Discover curated runtimes and integrations that can be added to this Fusion workspace.")}
+          </p>
+        </div>
+        <label className="plugin-registry-search-label">
+          <span className="sr-only">{t("plugins.searchRegistry", "Search registry")}</span>
+          <input
+            className="input plugin-registry-search-input"
+            type="search"
+            value={registrySearchQuery}
+            onChange={(event) => setRegistrySearchQuery(event.target.value)}
+            placeholder={t("plugins.searchRegistryPlaceholder", "Search registry plugins")}
+          />
+        </label>
+      </div>
+
+      {registryLoading ? (
+        <div className="plugin-registry-state" role="status">
+          <RefreshCw size={14} className="spin" />
+          {t("plugins.registryLoading", "Loading registry...")}
+        </div>
+      ) : registryError ? (
+        <div className="plugin-registry-state plugin-registry-state--error" role="alert">
+          <span>{t("plugins.registryLoadFailed", "Failed to load registry: {{error}}", { error: registryError })}</span>
+          <button className="btn btn-secondary btn-sm plugin-registry-retry" onClick={() => void loadRegistry(registrySearchQuery)}>
+            {t("plugins.retry", "Retry")}
+          </button>
+        </div>
+      ) : registryEntries.length === 0 ? (
+        <div className="plugin-registry-state">
+          {registrySearchQuery.trim()
+            ? t("plugins.registryEmptySearch", "No registry plugins match your search.")
+            : t("plugins.registryEmpty", "No registry plugins are available.")}
+        </div>
+      ) : (
+        <div className="plugin-registry-list" aria-label={t("plugins.registryPluginResults", "Registry plugin results")}>
+          {registryEntries.map((entry) => {
+            const installedPlugin = installedPluginsById.get(entry.id);
+            const isInstalling = installingRegistryId === entry.id;
+            return (
+              <div key={entry.id} className="plugin-registry-item">
+                <div className="plugin-registry-meta">
+                  <div className="plugin-registry-title-row">
+                    <span className="plugin-registry-name">{entry.name}</span>
+                    <span className="plugin-registry-version">v{entry.version}</span>
+                    <span className="plugin-registry-badge">{entry.category}</span>
+                    {entry.installed && (
+                      <span className="plugin-registry-status plugin-registry-status--installed">
+                        {t("plugins.statusInstalled", "Installed")}
+                        {entry.installedVersion && entry.installedVersion !== entry.version ? ` · v${entry.installedVersion}` : ""}
+                      </span>
+                    )}
+                  </div>
+                  <span className="plugin-registry-description-text">{entry.description}</span>
+                  <span className="plugin-registry-author">{t("plugins.registryByAuthor", "By {{author}}", { author: entry.author })}</span>
+                </div>
+                <div className="plugin-registry-actions">
+                  {entry.installed ? (
+                    <button
+                      className="btn btn-secondary btn-sm plugin-registry-action"
+                      onClick={() => {
+                        if (installedPlugin) {
+                          void handleSelectPlugin(installedPlugin);
+                        } else {
+                          void loadPlugins();
+                        }
+                      }}
+                    >
+                      {t("plugins.manage", "Manage")}
+                    </button>
+                  ) : entry.canInstall ? (
+                    <button
+                      className="btn btn-primary btn-sm plugin-registry-action"
+                      onClick={() => void handleInstallRegistryPlugin(entry)}
+                      disabled={isInstalling}
+                    >
+                      {isInstalling ? t("plugins.installing", "Installing...") : t("plugins.installFromRegistry", "Install")}
+                    </button>
+                  ) : (
+                    <span className="plugin-registry-coming-soon">{t("plugins.registryComingSoon", "Coming Soon")}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+
   const renderBuiltinPluginSection = () => (
     <section className="plugin-builtins-section" aria-label={t("plugins.builtinPlugins", "Built-in Plugins")}>
       <div className="plugin-builtins-header">
@@ -1094,6 +1247,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
             </div>
           )}
           {renderBuiltinPluginSection()}
+          {renderRegistryPluginSection()}
         </>
       )}
     </div>

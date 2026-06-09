@@ -19,10 +19,13 @@ import { Router, type Request, type Response } from "express";
 import { access, stat, readFile } from "node:fs/promises";
 import { join, isAbsolute, dirname, basename } from "node:path";
 import { emitPluginCustomSseEvent } from "./sse.js";
+import registryManifest from "./registry-manifest.json";
 import type {
+  PluginInstallation,
   PluginLoader,
   PluginStore,
   PluginContext,
+  PluginState,
 } from "@fusion/core";
 import { resolvePluginEntryPath, validatePluginManifest } from "@fusion/core";
 import {
@@ -51,6 +54,102 @@ interface PluginRunner {
   uninstallPluginSetup?(pluginId: string): Promise<{ success: boolean; error?: string }>;
   getPluginSetupInfo?(): Array<{ pluginId: string; manifest: import("@fusion/core").PluginSetupManifest; hooks: import("@fusion/core").PluginSetupHooks }>;
   getPluginRoutes(): Array<{ pluginId: string; route: import("@fusion/core").PluginRouteDefinition }>;
+}
+
+export interface RegistryManifestEntry {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  category: "runtime" | "integration";
+  npmPackage?: string;
+  path?: string;
+  homepage?: string;
+  tags?: string[];
+}
+
+export interface RegistryPluginEntry extends RegistryManifestEntry {
+  installed: boolean;
+  state?: PluginState;
+  installedVersion?: string;
+  canInstall: boolean;
+}
+
+interface RegistryManifestShape {
+  plugins?: unknown;
+}
+
+function normalizeRegistryManifestEntries(manifest: RegistryManifestShape): RegistryManifestEntry[] {
+  if (!manifest || !Array.isArray(manifest.plugins)) {
+    return [];
+  }
+
+  return manifest.plugins.filter((entry): entry is RegistryManifestEntry => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return false;
+    }
+    const candidate = entry as Partial<RegistryManifestEntry>;
+    return typeof candidate.id === "string"
+      && typeof candidate.name === "string"
+      && typeof candidate.description === "string"
+      && typeof candidate.version === "string"
+      && typeof candidate.author === "string"
+      && (candidate.category === "runtime" || candidate.category === "integration");
+  });
+}
+
+function registryEntryMatchesSearch(entry: RegistryManifestEntry, query: string): boolean {
+  if (!query) {
+    return true;
+  }
+
+  const haystack = [
+    entry.name,
+    entry.description,
+    entry.author,
+    ...(entry.tags ?? []),
+  ].join(" ").toLowerCase();
+  return haystack.includes(query);
+}
+
+async function annotateRegistryEntry(
+  entry: RegistryManifestEntry,
+  store: Pick<PluginStore, "getPlugin">,
+): Promise<RegistryPluginEntry> {
+  let installedPlugin: PluginInstallation | null = null;
+  try {
+    installedPlugin = await store.getPlugin(entry.id);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      const message = err instanceof Error ? err.message : "";
+      if (!message.toLowerCase().includes("not found")) {
+        throw err;
+      }
+    }
+  }
+
+  return {
+    ...entry,
+    installed: Boolean(installedPlugin),
+    state: installedPlugin?.state,
+    installedVersion: installedPlugin?.version,
+    canInstall: typeof entry.path === "string" && entry.path.trim().length > 0,
+  };
+}
+
+export async function buildRegistryPluginEntries(
+  manifest: RegistryManifestShape,
+  store: Pick<PluginStore, "getPlugin">,
+  filters: { q?: string; category?: string } = {},
+): Promise<RegistryPluginEntry[]> {
+  const query = filters.q?.trim().toLowerCase() ?? "";
+  const category = filters.category?.trim().toLowerCase() ?? "";
+  const entries = normalizeRegistryManifestEntries(manifest)
+    .filter((entry) => !category || entry.category === category)
+    .filter((entry) => registryEntryMatchesSearch(entry, query));
+
+  return Promise.all(entries.map((entry) => annotateRegistryEntry(entry, store)));
 }
 
 // ── Install-Source Resolution Helpers ──────────────────────────────────
@@ -217,6 +316,22 @@ export function createPluginRouter(
   router.get("/", catchHandler(async (_req: Request, res: Response) => {
     const plugins = await pluginStore.listPlugins();
     res.json(plugins);
+  }));
+
+  /**
+   * GET /plugins/registry
+   * List curated registry plugin metadata with installed-state annotations.
+   */
+  router.get("/registry", catchHandler(async (req: Request, res: Response) => {
+    const q = typeof req.query.q === "string" ? req.query.q : undefined;
+    const category = typeof req.query.category === "string" ? req.query.category : undefined;
+    const projectId = typeof req.query.projectId === "string" && req.query.projectId.trim()
+      ? req.query.projectId
+      : undefined;
+    const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : null;
+    const store = scopedStore?.getPluginStore?.() ?? pluginStore;
+    const plugins = await buildRegistryPluginEntries(registryManifest, store, { q, category });
+    res.json({ plugins });
   }));
 
   /**

@@ -480,6 +480,165 @@
   text-transform: uppercase;
 }
 
+.plugin-registry-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-registry-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.plugin-registry-heading-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plugin-registry-heading {
+  margin: 0;
+  font-size: var(--font-size-md, 0.95rem);
+}
+
+.plugin-registry-description {
+  margin: 0;
+  font-size: var(--font-size-sm, 0.85rem);
+  color: var(--text-muted);
+}
+
+.plugin-registry-search-label {
+  display: flex;
+  min-width: min(100%, 18rem);
+}
+
+.plugin-registry-search-input {
+  width: 100%;
+}
+
+.plugin-registry-search-input:focus-visible,
+.plugin-registry-action:focus-visible,
+.plugin-registry-retry:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.plugin-registry-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  max-height: min(60vh, 34rem);
+  overflow-y: auto;
+}
+
+.plugin-registry-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plugin-registry-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plugin-registry-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  row-gap: var(--space-xs);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.plugin-registry-name {
+  color: var(--text);
+  font-size: var(--font-size-base, 0.9rem);
+  font-weight: 500;
+}
+
+.plugin-registry-version,
+.plugin-registry-author,
+.plugin-registry-description-text {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 0.85rem);
+}
+
+.plugin-registry-description-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.plugin-registry-badge,
+.plugin-registry-status,
+.plugin-registry-coming-soon {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-2xs, 0.75rem);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.plugin-registry-badge {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+
+.plugin-registry-status--installed {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+
+.plugin-registry-coming-soon {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+
+.plugin-registry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.plugin-registry-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm, 0.85rem);
+  text-align: center;
+}
+
+.plugin-registry-state--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--border));
+}
+
 .plugin-bundled-runtime-list {
   width: 100%;
   display: flex;
@@ -651,9 +810,33 @@
   }
 
   .plugin-builtins-item,
-  .plugin-bundled-runtime-item {
+  .plugin-bundled-runtime-item,
+  .plugin-registry-item {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .plugin-registry-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .plugin-registry-search-label {
+    min-width: 0;
+  }
+
+  .plugin-registry-list {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .plugin-registry-actions {
+    justify-content: stretch;
+  }
+
+  .plugin-registry-action,
+  .plugin-registry-retry {
+    min-height: 36px;
   }
 
   .plugin-builtins-item .btn,

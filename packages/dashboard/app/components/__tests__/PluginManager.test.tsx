@@ -40,6 +40,7 @@ const mockPlugins: PluginInstallation[] = [
 // Mock API module - must be defined inline in vi.mock
 vi.mock("../../api", () => ({
   fetchPlugins: vi.fn(() => Promise.resolve([])),
+  fetchPluginRegistry: vi.fn(() => Promise.resolve([])),
   installPlugin: vi.fn(() => Promise.resolve({
     id: "plugin-a",
     name: "Test Plugin A",
@@ -205,7 +206,7 @@ beforeEach(() => {
     onmessage: null,
   };
   
-  const MockEventSource = vi.fn((url: string) => {
+  const MockEventSource = vi.fn(function MockEventSource(url: string) {
     eventSourceInstance.url = url;
     return eventSourceInstance;
   }) as unknown as typeof EventSource;

@@ -1,0 +1,143 @@
+{
+  "plugins": [
+    {
+      "id": "fusion-plugin-hermes-runtime",
+      "name": "Hermes Runtime",
+      "description": "Runtime provider for Hermes CLI-backed execution.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "runtime",
+      "path": "./plugins/fusion-plugin-hermes-runtime",
+      "tags": ["runtime", "cli", "hermes"]
+    },
+    {
+      "id": "fusion-plugin-paperclip-runtime",
+      "name": "Paperclip Runtime",
+      "description": "Runtime provider for Paperclip agent connections.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "runtime",
+      "path": "./plugins/fusion-plugin-paperclip-runtime",
+      "tags": ["runtime", "agent"]
+    },
+    {
+      "id": "fusion-plugin-openclaw-runtime",
+      "name": "OpenClaw Runtime",
+      "description": "Runtime provider for OpenClaw execution.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "runtime",
+      "path": "./plugins/fusion-plugin-openclaw-runtime",
+      "tags": ["runtime", "openclaw"]
+    },
+    {
+      "id": "fusion-plugin-droid-runtime",
+      "name": "Droid Runtime",
+      "description": "Runtime provider for Droid CLI execution.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "runtime",
+      "path": "./plugins/fusion-plugin-droid-runtime",
+      "tags": ["runtime", "cli", "droid"]
+    },
+    {
+      "id": "fusion-plugin-dependency-graph",
+      "name": "Dependency Graph",
+      "description": "Dashboard plugin for task dependency graph visualization.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-dependency-graph",
+      "tags": ["dashboard", "visualization", "dependencies"]
+    },
+    {
+      "id": "fusion-plugin-reports",
+      "name": "Reports",
+      "description": "View report history, compare runs side-by-side, and export standalone HTML summaries.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-reports",
+      "tags": ["dashboard", "reports", "exports"]
+    },
+    {
+      "id": "fusion-plugin-whatsapp-chat",
+      "name": "WhatsApp Chat",
+      "description": "Pairs to WhatsApp Web (multi-device) with QR or pairing code, then bridges direct chats to a Fusion agent.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-whatsapp-chat",
+      "tags": ["chat", "whatsapp", "bridge"]
+    },
+    {
+      "id": "fusion-plugin-cli-printing-press",
+      "name": "CLI Printing Press",
+      "description": "Guided wizard for drafting external service CLI definitions.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-cli-printing-press",
+      "tags": ["cli", "wizard", "definitions"]
+    },
+    {
+      "id": "fusion-plugin-compound-engineering",
+      "name": "Compound Engineering",
+      "description": "A dedicated dashboard surface for compound-engineering artifacts and interactive ce-* sessions.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-compound-engineering",
+      "tags": ["dashboard", "compound-engineering"]
+    },
+    {
+      "id": "fusion-plugin-roadmap",
+      "name": "Roadmaps",
+      "description": "Standalone roadmap planning plugin.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-roadmap",
+      "tags": ["planning", "roadmap"]
+    },
+    {
+      "id": "fusion-plugin-agent-browser",
+      "name": "Agent Browser",
+      "description": "Built-in integration metadata. Package install support lands in FN-3101.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "tags": ["browser", "agents", "setup"]
+    },
+    {
+      "id": "fusion-plugin-slack-bridge",
+      "name": "Slack Bridge",
+      "description": "Connect Slack workspaces to Fusion agents for monitored support and triage workflows.",
+      "version": "0.1.0",
+      "author": "Fusion Labs",
+      "category": "integration",
+      "homepage": "https://runfusion.ai/plugins/slack-bridge",
+      "tags": ["chat", "slack", "bridge"]
+    },
+    {
+      "id": "fusion-plugin-github-insights",
+      "name": "GitHub Insights",
+      "description": "Summarize repository activity, pull request trends, and engineering risk signals inside Fusion.",
+      "version": "0.1.0",
+      "author": "Fusion Labs",
+      "category": "integration",
+      "homepage": "https://runfusion.ai/plugins/github-insights",
+      "tags": ["github", "insights", "reports"]
+    },
+    {
+      "id": "fusion-plugin-local-llm-runtime",
+      "name": "Local LLM Runtime",
+      "description": "Runtime provider for local model servers with configurable routing and health checks.",
+      "version": "0.1.0",
+      "author": "Fusion Labs",
+      "category": "runtime",
+      "homepage": "https://runfusion.ai/plugins/local-llm-runtime",
+      "tags": ["runtime", "local", "llm"]
+    }
+  ]
+}

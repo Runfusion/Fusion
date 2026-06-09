@@ -20,6 +20,7 @@ import type {
   WorkflowStepResult,
   PluginInstallation,
   PluginSetupCheckResult,
+  PluginState,
   PluginUiSlotDefinition,
   PluginUiContributionDefinition,
   PluginDashboardViewDefinition,
@@ -9073,9 +9074,44 @@ export function resetAgentBudget(agentId: string, projectId?: string): Promise<v
 
 // ── Plugin Management ────────────────────────────────────────────────────────
 
+export interface RegistryPluginEntry {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  category: "runtime" | "integration";
+  npmPackage?: string;
+  path?: string;
+  homepage?: string;
+  tags?: string[];
+  installed: boolean;
+  state?: PluginState;
+  installedVersion?: string;
+  canInstall: boolean;
+}
+
 /** Fetch all installed plugins */
 export async function fetchPlugins(projectId?: string): Promise<PluginInstallation[]> {
   return api<PluginInstallation[]>(withProjectId("/plugins", projectId));
+}
+
+/** Fetch curated registry plugins with installed-state metadata */
+export async function fetchPluginRegistry(
+  query?: string,
+  category?: string,
+  projectId?: string,
+): Promise<RegistryPluginEntry[]> {
+  const params = new URLSearchParams();
+  if (query?.trim()) {
+    params.set("q", query.trim());
+  }
+  if (category?.trim()) {
+    params.set("category", category.trim());
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  const response = await api<{ plugins: RegistryPluginEntry[] }>(withProjectId(`/plugins/registry${suffix}`, projectId));
+  return response.plugins;
 }
 
 /** Fetch a single plugin by ID */

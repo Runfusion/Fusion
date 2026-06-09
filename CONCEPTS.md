@@ -186,6 +186,12 @@ A Bundled Plugin must be registered in several independently maintained surfaces
 ### Plugin Entry
 The single loadable file persisted as a plugin's path and dynamically imported by the loader. The contract is strict: a package directory is never a valid entry (ESM cannot import directories), so every install surface must resolve a concrete file before persisting, preferring the shipped bundle, then a prebuilt output, then raw workspace source. Legacy registrations that stored a directory are healed in place — re-pointed at a resolved entry — the next time the plugin is enabled or auto-installed.
 
+### Plugin Registry Entry
+A dashboard discovery record served from `GET /api/plugins/registry` and shown in Settings → Plugins → Browse Registry. It is metadata-first (`id`, `name`, `description`, `category`, optional version/author/homepage) and may include a concrete Plugin Entry `path`.
+
+### Registry Installability
+The server-derived `canInstall` flag for a Plugin Registry Entry. `canInstall: true` means the manifest entry has a concrete `path` and the dashboard can call the normal plugin install flow; `canInstall: false` means the entry is discovery-only and should be presented as Coming Soon instead of attempting installation.
+
 ### Workflow Extension
 A plugin-contributed workflow capability registered through the engine rather than hardcoded into core workflow logic: column metadata, movement policies, column work engines, workflow node handlers, task verdict providers, or merge-routing facts. A Workflow Extension is opt-in by workflow metadata and must degrade or park by an explicit fallback policy when its plugin is disabled or missing, preserving the Default workflow baseline when no extension is active.
 

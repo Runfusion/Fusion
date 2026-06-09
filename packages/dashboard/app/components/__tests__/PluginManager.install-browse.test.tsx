@@ -14,6 +14,7 @@ import type { PluginInstallation } from "@fusion/core";
 // ── Mock API ──────────────────────────────────────────────────────
 vi.mock("../../api", () => ({
   fetchPlugins: vi.fn(() => Promise.resolve([])),
+  fetchPluginRegistry: vi.fn(() => Promise.resolve([])),
   installPlugin: vi.fn(() =>
     Promise.resolve({
       id: "browsed-plugin",
@@ -69,7 +70,9 @@ beforeEach(() => {
     onopen: null,
     onmessage: null,
   };
-  const MockES = vi.fn(() => esInstance) as unknown as typeof EventSource;
+  const MockES = vi.fn(function MockEventSource() {
+    return esInstance;
+  }) as unknown as typeof EventSource;
   (MockES as unknown as { CONNECTING: number; OPEN: number; CLOSED: number }).CONNECTING = 0;
   (MockES as unknown as { CONNECTING: number; OPEN: number; CLOSED: number }).OPEN = 1;
   (MockES as unknown as { CONNECTING: number; OPEN: number; CLOSED: number }).CLOSED = 2;

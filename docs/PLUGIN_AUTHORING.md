@@ -1239,6 +1239,29 @@ Or by copying to the plugins directory:
 cp -r fusion-plugin-my-plugin ~/.fusion/plugins/
 ```
 
+### Dashboard registry manifest
+
+The dashboard **Browse Registry** surface is backed by the static manifest at `packages/dashboard/src/registry-manifest.json`. Each entry describes a plugin that may appear in Settings → Plugins before it is installed.
+
+Manifest entries use this shape:
+
+```json
+{
+  "id": "fusion-plugin-my-plugin",
+  "name": "My Plugin",
+  "description": "What the plugin adds to Fusion.",
+  "category": "Runtime",
+  "version": "0.1.0",
+  "author": "Fusion Team",
+  "homepage": "https://example.com/plugin",
+  "path": "plugins/fusion-plugin-my-plugin/dist/index.js"
+}
+```
+
+Required fields are `id`, `name`, `description`, and `category`. Optional metadata (`version`, `author`, `homepage`) is displayed when present. `path` is optional: entries with a `path` are installable from the registry; entries without one are discovery-only and render as Coming Soon (`canInstall: false`) until a loadable plugin entry path is available.
+
+When adding a bundled plugin, mirror the existing bundled-plugin registration surfaces and then add a registry manifest entry whose `path` points at a concrete loadable file, not a package directory. Use stable ids because installed-state annotation matches registry entries to installed plugins by id.
+
 ---
 
 ## 14. Example Plugins
