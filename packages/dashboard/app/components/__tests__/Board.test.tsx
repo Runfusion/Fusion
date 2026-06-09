@@ -934,7 +934,9 @@ describe("Board", () => {
     function workflowToolbarActionNames() {
       const toolbar = document.querySelector(".board-workflow-toolbar");
       expect(toolbar).not.toBeNull();
-      return Array.from(toolbar?.querySelectorAll("button") ?? []).map((button) => button.getAttribute("aria-label"));
+      return Array.from(toolbar?.querySelectorAll("button") ?? [])
+        .filter((button) => !button.classList.contains("board-workflow-collapse-toggle"))
+        .map((button) => button.getAttribute("aria-label"));
     }
 
     it("flag OFF renders the legacy single-lane board byte-identically", async () => {

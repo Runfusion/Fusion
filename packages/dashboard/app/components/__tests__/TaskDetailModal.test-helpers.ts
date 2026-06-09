@@ -81,6 +81,7 @@ vi.mock("lucide-react", () => ({
   ClipboardCheck: () => null,
   ListChecks: () => null,
   Code2: () => null,
+  Bell: () => null,
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({
