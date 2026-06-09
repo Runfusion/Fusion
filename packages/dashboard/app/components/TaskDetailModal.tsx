@@ -1,7 +1,7 @@
 import "./TaskDetailModal.css";
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -22,7 +22,7 @@ import {
   resolveTaskValidatorModel,
 } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, recoverBranchBinding, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, api } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, recoverBranchBinding, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, api } from "../api";
 import type { RecoverBranchBindingOutcome, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { ApiRequestError } from "../api";
 import { TaskFieldsSection } from "./TaskFieldsSection";
@@ -787,6 +787,7 @@ export function TaskDetailContent({
   const [editSourceIssueUrl, setEditSourceIssueUrl] = useState(task.sourceIssue?.url ?? "");
   const [editPendingImages, setEditPendingImages] = useState<PendingImage[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSummarizingTitle, setIsSummarizingTitle] = useState(false);
   const [inlinePriority, setInlinePriority] = useState<TaskPriority>(normalizeTaskPriorityValue(task.priority));
   const [isSavingInlinePriority, setIsSavingInlinePriority] = useState(false);
   const [inlineExecutionMode, setInlineExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
@@ -1222,6 +1223,37 @@ export function TaskDetailContent({
   const showGithubTrackingSpinner = !githubTrackedIssue && (isSavingGithubTracking || githubTrackingDetailPending);
   const effectiveGithubRepoDefault = resolveEffectiveGithubRepoDefault(settings ?? null, globalSettings);
   const githubRepoOverrideTrimmed = githubRepoOverrideDraft.trim();
+  const hasDescriptionForTitleSummary = (task.description ?? "").trim().length > 0;
+  const showSummarizeTitleButton = !isEditing && canEdit && hasDescriptionForTitleSummary;
+
+  const handleSummarizeTitle = useCallback(async () => {
+    if (isSummarizingTitle || isSaving || !hasDescriptionForTitleSummary) return;
+    const requestTaskId = task.id;
+    setIsSummarizingTitle(true);
+    try {
+      const generatedTitle = await summarizeTitle(task.description || "", undefined, undefined, projectId);
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
+      const updatedTask = await updateTask(task.id, { title: generatedTitle }, projectId);
+      if (activeTaskIdRef.current !== requestTaskId) {
+        return;
+      }
+      setFullDetail((prev) => prev
+        ? ({ ...prev, ...updatedTask } as TaskDetail)
+        : (updatedTask as TaskDetail));
+      onTaskUpdated?.(updatedTask);
+      addToast(t("taskDetail.title.summarizeSuccess", "Title updated from description"), "success");
+    } catch (err) {
+      if (activeTaskIdRef.current === requestTaskId) {
+        addToast(t("taskDetail.title.summarizeFailed", "Failed to summarize title: {{error}}", { error: getErrorMessage(err) }), "error");
+      }
+    } finally {
+      if (mountedRef.current && activeTaskIdRef.current === requestTaskId) {
+        setIsSummarizingTitle(false);
+      }
+    }
+  }, [addToast, hasDescriptionForTitleSummary, isSaving, isSummarizingTitle, onTaskUpdated, projectId, t, task.description, task.id]);
 
   const handleToggleGithubTracking = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;
@@ -2730,9 +2762,23 @@ export function TaskDetailContent({
                 const shouldTruncate = !descriptionExpanded && displayText.length > DESCRIPTION_TRUNCATE_LENGTH;
                 return (
                   <>
-                    <h2 className="detail-title">
-                      {shouldTruncate ? displayText.slice(0, DESCRIPTION_TRUNCATE_LENGTH) + "…" : displayText}
-                    </h2>
+                    <div className="detail-heading-row">
+                      <h2 className="detail-title">
+                        {shouldTruncate ? displayText.slice(0, DESCRIPTION_TRUNCATE_LENGTH) + "…" : displayText}
+                      </h2>
+                      {showSummarizeTitleButton && (
+                        <button
+                          type="button"
+                          className="detail-summarize-title-btn"
+                          onClick={() => void handleSummarizeTitle()}
+                          disabled={isSummarizingTitle || isSaving}
+                          data-testid="summarize-title-btn"
+                        >
+                          {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
+                          <span>{t("taskDetail.title.summarize", "Summarize as title")}</span>
+                        </button>
+                      )}
+                    </div>
                     {displayText.length > DESCRIPTION_TRUNCATE_LENGTH && (
                       <button
                         className="detail-description-toggle"

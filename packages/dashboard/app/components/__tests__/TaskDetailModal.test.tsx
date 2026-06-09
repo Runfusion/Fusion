@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import {
   makeTask,
@@ -18,6 +19,150 @@ vi.mock("../BranchGroupCard", () => ({
 }));
 
 setupTaskDetailModalHooks();
+
+function renderSummarizeTitleModal(overrides: Parameters<typeof makeTask>[0] = {}, props: Partial<ComponentProps<typeof TaskDetailModal>> = {}) {
+  const addToast = props.addToast ?? vi.fn();
+  const onTaskUpdated = props.onTaskUpdated ?? vi.fn();
+  const task = makeTask({
+    id: "FN-6059",
+    column: "triage" as any,
+    title: "Existing title",
+    description: "This task description should be summarized into a concise task title.",
+    prompt: "# Prompt",
+    ...overrides,
+  });
+
+  const result = render(
+    <TaskDetailModal
+      task={task}
+      onClose={noop}
+      onMoveTask={noopMove}
+      onDeleteTask={noopDelete}
+      onMergeTask={noopMerge}
+      onOpenDetail={noopOpenDetail}
+      addToast={addToast}
+      onTaskUpdated={onTaskUpdated}
+      {...props}
+    />,
+  );
+
+  return { ...result, addToast, onTaskUpdated, task };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("TaskDetailModal summarize title action", () => {
+  it("renders when the task is editable and has a description", () => {
+    renderSummarizeTitleModal({ column: "todo" as any });
+
+    expect(screen.getByTestId("summarize-title-btn")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Summarize as title" })).toBeEnabled();
+  });
+
+  it("hides while the task is in edit mode", async () => {
+    const user = userEvent.setup();
+    renderSummarizeTitleModal();
+
+    expect(screen.getByTestId("summarize-title-btn")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit task" }));
+
+    expect(screen.queryByTestId("summarize-title-btn")).not.toBeInTheDocument();
+  });
+
+  it("hides for non-editable columns", () => {
+    renderSummarizeTitleModal({ column: "in-progress" as any });
+
+    expect(screen.queryByTestId("summarize-title-btn")).not.toBeInTheDocument();
+  });
+
+  it("hides when the task has no description", () => {
+    renderSummarizeTitleModal({ description: "" });
+
+    expect(screen.queryByTestId("summarize-title-btn")).not.toBeInTheDocument();
+  });
+
+  it("summarizes the description, saves the generated title, and reports success", async () => {
+    const user = userEvent.setup();
+    const { summarizeTitle, updateTask } = await import("../../api");
+    const addToast = vi.fn();
+    const onTaskUpdated = vi.fn();
+    const updatedTask = makeTask({ id: "FN-6059", column: "triage" as any, title: "Generated Title" });
+    vi.mocked(summarizeTitle).mockReset();
+    vi.mocked(updateTask).mockReset();
+    vi.mocked(summarizeTitle).mockResolvedValueOnce("Generated Title");
+    vi.mocked(updateTask).mockResolvedValueOnce(updatedTask);
+
+    const { task } = renderSummarizeTitleModal({}, { addToast, onTaskUpdated, projectId: "project-1" });
+
+    await user.click(screen.getByTestId("summarize-title-btn"));
+
+    await waitFor(() => {
+      expect(summarizeTitle).toHaveBeenCalledWith(task.description, undefined, undefined, "project-1");
+      expect(updateTask).toHaveBeenCalledWith("FN-6059", { title: "Generated Title" }, "project-1");
+      expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+      expect(addToast).toHaveBeenCalledWith("Title updated from description", "success");
+    });
+    expect(screen.getByTestId("sparkles-icon")).toBeInTheDocument();
+    expect(screen.getByTestId("summarize-title-btn")).toBeEnabled();
+  });
+
+  it("shows a disabled loading state while summarization is pending", async () => {
+    const user = userEvent.setup();
+    const { summarizeTitle, updateTask } = await import("../../api");
+    const deferred = createDeferred<string>();
+    vi.mocked(summarizeTitle).mockReset();
+    vi.mocked(updateTask).mockReset();
+    vi.mocked(summarizeTitle).mockReturnValueOnce(deferred.promise);
+    vi.mocked(updateTask).mockResolvedValueOnce(makeTask({ id: "FN-6059", title: "Generated Title" }));
+
+    renderSummarizeTitleModal();
+    await user.click(screen.getByTestId("summarize-title-btn"));
+
+    expect(screen.getByTestId("summarize-title-btn")).toBeDisabled();
+    expect(screen.getByTestId("loader2-icon")).toBeInTheDocument();
+
+    deferred.resolve("Generated Title");
+    await waitFor(() => expect(screen.getByTestId("summarize-title-btn")).toBeEnabled());
+    expect(screen.getByTestId("sparkles-icon")).toBeInTheDocument();
+  });
+
+  it("shows an error toast and re-enables the button when summarization fails", async () => {
+    const user = userEvent.setup();
+    const { summarizeTitle, updateTask } = await import("../../api");
+    const addToast = vi.fn();
+    vi.mocked(summarizeTitle).mockReset();
+    vi.mocked(updateTask).mockReset();
+    vi.mocked(summarizeTitle).mockRejectedValueOnce(new Error("description is too short"));
+
+    renderSummarizeTitleModal({}, { addToast });
+    await user.click(screen.getByTestId("summarize-title-btn"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Failed to summarize title: description is too short", "error");
+    });
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(screen.getByTestId("summarize-title-btn")).toBeEnabled();
+  });
+
+  it("remains visible and accessible on mobile viewports", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+
+    renderSummarizeTitleModal({ column: "todo" as any });
+
+    const button = screen.getByTestId("summarize-title-btn");
+    expect(button).toBeVisible();
+    expect(button).toHaveAccessibleName("Summarize as title");
+  });
+});
 
 describe("TaskDetailModal GitHub tracking CTA", () => {
   it("disables create tracking issue when task has no usable title", async () => {

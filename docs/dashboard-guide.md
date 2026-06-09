@@ -621,6 +621,7 @@ For related global/project configuration behavior, see [Settings reference](./se
 
 Inspect task definition, logs, review feedback, comments, documents, workflow outcomes, model overrides, and task routing from a single modal.
 
+- Editable tasks with descriptions show **Summarize as title** beside the read-mode title; it asks AI to generate a concise title from the description and saves it without opening the edit form.
 - The priority chip in task metadata is an inline picker: you can change priority directly without entering full edit mode.
 - Execution mode has a read-mode inline lightning-bolt toggle for Fast mode on/off without opening the full edit form.
 - These two metadata controls share matched sizing/alignment in read mode (including mobile wrapping) so they behave like a single polished control group.

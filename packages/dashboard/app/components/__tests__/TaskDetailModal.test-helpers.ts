@@ -15,6 +15,7 @@ vi.mock("../../api", async (importOriginal) => {
     uploadAttachment: vi.fn(),
     deleteAttachment: vi.fn(),
     updateTask: vi.fn().mockResolvedValue({}),
+    summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
     fetchAgentLogs: vi.fn().mockResolvedValue([]),
     requestSpecRevision: vi.fn().mockResolvedValue({}),
@@ -47,7 +48,7 @@ vi.mock("../../api", async (importOriginal) => {
 // Mock lucide-react icons used by TaskDetailModal, TaskForm, PrPanel, CustomModelDropdown
 vi.mock("lucide-react", () => ({
   Pencil: () => null,
-  Sparkles: () => null,
+  Sparkles: (props: any) => React.createElement("svg", { "data-testid": "sparkles-icon", ...props }),
   Globe: () => null,
   GitPullRequest: () => null,
   ExternalLink: () => null,
@@ -62,7 +63,7 @@ vi.mock("lucide-react", () => ({
   X: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
-  Loader2: () => null,
+  Loader2: (props: any) => React.createElement("svg", { "data-testid": "loader2-icon", ...props }),
   Bot: () => null,
   CircleDot: () => null,
   XCircle: () => null,
