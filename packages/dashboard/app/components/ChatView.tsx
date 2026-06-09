@@ -1708,7 +1708,11 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     }
 
     const captureForRefetch = () => {
+      const wasPinnedBefore = !isUserScrollingRef.current;
       captureScrollSnapshot();
+      if (wasPinnedBefore && isMobile && messagesContainerRef.current) {
+        scrollToBottom("visibility-restore");
+      }
     };
 
     const onVisibilityChange = () => {
@@ -1725,7 +1729,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pageshow", captureForRefetch);
     };
-  }, [isMobile, activeSession, roomThreadActive, captureScrollSnapshot]);
+  }, [isMobile, activeSession, roomThreadActive, captureScrollSnapshot, scrollToBottom]);
 
   useEffect(() => {
     if (roomThreadActive) {

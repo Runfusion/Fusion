@@ -4577,9 +4577,10 @@ describe("ChatView mobile behavior", () => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
       fireEvent(document, new Event("visibilitychange"));
 
-      await waitFor(() => {
-        expect(scrollTopValue).toBe(1180);
-      });
+      // Regression guard: visibility restore must explicitly re-anchor when pinned.
+      // Without that, this only passed when leftover anchorToBottom rAF callbacks
+      // happened to run after the visibility event.
+      expect(scrollTopValue).toBe(1180);
     } finally {
       restoreMatchMedia.mockRestore();
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });

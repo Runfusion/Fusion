@@ -1,10 +1,4 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
-  "entries": [
-    {
-      "file": "packages/dashboard/app/components/__tests__/ChatView.rooms.test.tsx",
-      "reason": "FN-6103 workspace pnpm test observed flaky mobile visibility restore assertion: expected scrollTop 1180, received 300 in ChatView.rooms.test.tsx:805; unrelated to CSS-only composer button sizing change.",
-      "quarantinedAt": "2026-06-09"
-    }
-  ]
+  "entries": []
 }

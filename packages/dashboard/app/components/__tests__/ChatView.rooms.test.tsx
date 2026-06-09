@@ -801,9 +801,10 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
       fireEvent(document, new Event("visibilitychange"));
 
-      await waitFor(() => {
-        expect(metrics.getScrollTop()).toBe(1180);
-      });
+      // Regression guard: visibility restore must explicitly re-anchor when pinned.
+      // This previously passed only when an old anchorToBottom rAF happened to run
+      // after the visibility event and masked that the handler only captured a snapshot.
+      expect(metrics.getScrollTop()).toBe(1180);
     } finally {
       metrics.restore();
       restoreMatchMedia.mockRestore();
@@ -826,9 +827,9 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
       metrics.setScrollTop(300);
       fireEvent(window, new Event("pageshow"));
 
-      await waitFor(() => {
-        expect(metrics.getScrollTop()).toBe(1180);
-      });
+      // Regression guard: pageshow shares the visibility restore path and must not
+      // depend on leftover rAF callbacks from the initial mount anchor.
+      expect(metrics.getScrollTop()).toBe(1180);
     } finally {
       metrics.restore();
       restoreMatchMedia.mockRestore();
@@ -851,9 +852,7 @@ describe("ChatView — rooms (FN-3805..FN-3811 contract)", () => {
       Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
       fireEvent(document, new Event("visibilitychange"));
 
-      await waitFor(() => {
-        expect(metrics.getScrollTop()).toBe(300);
-      });
+      expect(metrics.getScrollTop()).toBe(300);
     } finally {
       metrics.restore();
       restoreMatchMedia.mockRestore();
