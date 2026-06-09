@@ -1437,6 +1437,7 @@
   }
 
   .card-promote-action.card-send-back-btn {
+    opacity: 1;
     margin-left: auto;
   }
 

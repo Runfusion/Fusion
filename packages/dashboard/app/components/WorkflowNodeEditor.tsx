@@ -15,7 +15,7 @@ import {
   type Edge as FlowEdge,
 } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles } from "lucide-react";
+import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2 } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -1879,6 +1879,16 @@ function InnerEditor({
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
+  const [isPromptExpanded, setIsPromptExpanded] = useState(false);
+  const handleTogglePromptExpand = useCallback(() => {
+    setIsPromptExpanded((prev) => !prev);
+  }, []);
+  const handlePromptFullscreenKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isPromptExpanded || e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsPromptExpanded(false);
+  }, [isPromptExpanded]);
   const selectedNodePromptValue =
     selectedNode && (selectedNode.data.kind === "prompt" || selectedNode.data.kind === "gate")
       ? String(
@@ -3134,14 +3144,44 @@ function InnerEditor({
               </label>
 
               {selectedNode.data.kind === "prompt" || selectedNode.data.kind === "gate" ? (
-                <label className="wf-field">
-                  <span>Prompt</span>
-                  <textarea
-                    rows={5}
-                    value={selectedNodePromptValue}
-                    onChange={(e) => updateSelectedData({ config: { prompt: e.target.value } })}
-                  />
-                </label>
+                <div
+                  className={`wf-prompt-editor${isPromptExpanded ? " wf-prompt-editor--fullscreen" : ""}`}
+                  onKeyDown={handlePromptFullscreenKeyDown}
+                >
+                  {isPromptExpanded && (
+                    <div className="wf-prompt-fullscreen-header">
+                      <span>{t("workflowEditor.editingPrompt", "Editing Prompt")}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm wf-prompt-expand-btn"
+                        onClick={handleTogglePromptExpand}
+                        aria-label={t("workflowEditor.collapsePrompt", "Collapse prompt editor")}
+                        title={t("workflowEditor.collapsePrompt", "Collapse prompt editor")}
+                      >
+                        <Minimize2 size={14} />
+                      </button>
+                    </div>
+                  )}
+                  <label className="wf-field">
+                    <span>Prompt</span>
+                    <textarea
+                      rows={isPromptExpanded ? undefined : 5}
+                      value={selectedNodePromptValue}
+                      onChange={(e) => updateSelectedData({ config: { prompt: e.target.value } })}
+                    />
+                  </label>
+                  {!isPromptExpanded && (
+                    <button
+                      type="button"
+                      className="btn btn-sm wf-prompt-expand-btn wf-prompt-expand-btn--inline"
+                      onClick={handleTogglePromptExpand}
+                      aria-label={t("workflowEditor.expandPrompt", "Expand prompt editor")}
+                      title={t("workflowEditor.expandPrompt", "Expand prompt editor")}
+                    >
+                      <Maximize2 size={14} />
+                    </button>
+                  )}
+                </div>
               ) : null}
 
               {selectedNode.data.kind === "prompt" ? (

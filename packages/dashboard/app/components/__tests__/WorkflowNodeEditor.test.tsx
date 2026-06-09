@@ -241,6 +241,35 @@ function def(): WorkflowDefinition {
   };
 }
 
+function scriptDef(): WorkflowDefinition {
+  return {
+    id: "WF-SCRIPT",
+    kind: "workflow",
+    name: "Script workflow",
+    description: "",
+    ir: {
+      version: "v2",
+      name: "Script workflow",
+      columns: [
+        { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "triage" },
+        { id: "run", kind: "script", column: "triage", config: { scriptName: "test" } },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "run", condition: "success" },
+        { from: "run", to: "end", condition: "success" },
+      ],
+    },
+    layout: { start: { x: 0, y: 20 }, run: { x: 120, y: 60 }, end: { x: 360, y: 240 } },
+    createdAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+  };
+}
+
 describe("workflow-flow-mapping", () => {
   it("round-trips IR through flow and back, preserving structure and layout", () => {
     const original = def();
@@ -486,6 +515,79 @@ describe("WorkflowNodeEditor", () => {
     const inspector = await screen.findByTestId("wf-node-inspector");
     expect(within(inspector).getByLabelText("Name")).toBeInTheDocument();
     expect(screen.getByTestId("wf-inspector-toggle")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows a prompt expand button and toggles fullscreen for prompt nodes", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(await screen.findByTestId("wf-node-prompt"));
+
+    const expand = await screen.findByRole("button", { name: "Expand prompt editor" });
+    expect(expand).toBeInTheDocument();
+
+    const promptEditor = expand.closest(".wf-prompt-editor");
+    expect(promptEditor).not.toBeNull();
+    expect(promptEditor).not.toHaveClass("wf-prompt-editor--fullscreen");
+
+    fireEvent.click(expand);
+
+    expect(promptEditor).toHaveClass("wf-prompt-editor--fullscreen");
+    expect(screen.getByRole("button", { name: "Collapse prompt editor" })).toBeVisible();
+    expect(screen.getByLabelText("Prompt")).not.toHaveAttribute("rows");
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse prompt editor" }));
+
+    expect(promptEditor).not.toHaveClass("wf-prompt-editor--fullscreen");
+    expect(screen.getByRole("button", { name: "Expand prompt editor" })).toBeInTheDocument();
+  });
+
+  it("collapses the fullscreen prompt editor on Escape", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(await screen.findByTestId("wf-node-prompt"));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand prompt editor" }));
+
+    const promptEditor = screen.getByRole("button", { name: "Collapse prompt editor" }).closest(".wf-prompt-editor");
+    expect(promptEditor).not.toBeNull();
+    expect(promptEditor).toHaveClass("wf-prompt-editor--fullscreen");
+
+    fireEvent.keyDown(promptEditor!, { key: "Escape" });
+
+    expect(promptEditor).not.toHaveClass("wf-prompt-editor--fullscreen");
+    expect(screen.getByRole("button", { name: "Expand prompt editor" })).toBeInTheDocument();
+  });
+
+  it("shows the prompt expand button for gate nodes with an empty prompt", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "QA" }));
+    fireEvent.click(await screen.findByTestId("wf-node-gate"));
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).getByLabelText("Prompt")).toHaveValue("");
+    expect(within(inspector).getByRole("button", { name: "Expand prompt editor" })).toBeInTheDocument();
+  });
+
+  it("does not show the prompt expand button for non-prompt nodes", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([scriptDef()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(await screen.findByTestId("wf-node-script"));
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).getByLabelText("Script name")).toBeInTheDocument();
+    expect(within(inspector).queryByRole("button", { name: "Expand prompt editor" })).not.toBeInTheDocument();
   });
 
   it("renders nothing when closed", () => {

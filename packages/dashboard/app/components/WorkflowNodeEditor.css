@@ -665,6 +665,79 @@
   box-shadow: var(--focus-ring);
 }
 
+/* ── Prompt fullscreen editor ─────────────────────────────────── */
+.wf-prompt-editor {
+  position: relative;
+}
+
+.wf-prompt-editor--fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: var(--surface);
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0))
+           max(var(--space-lg), env(safe-area-inset-right, 0))
+           max(var(--space-lg), env(safe-area-inset-bottom, 0))
+           max(var(--space-lg), env(safe-area-inset-left, 0));
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-prompt-editor--fullscreen .wf-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.wf-prompt-editor--fullscreen textarea {
+  flex: 1;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.wf-prompt-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.wf-prompt-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.wf-prompt-expand-btn--inline {
+  position: absolute;
+  top: calc(var(--space-xs) + 1.2em + var(--space-xs));
+  right: var(--space-xs);
+  z-index: 2;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
+}
+
+.wf-prompt-expand-btn--inline:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+
+.wf-prompt-editor:not(.wf-prompt-editor--fullscreen) textarea {
+  padding-right: calc(var(--space-xl) + var(--space-md));
+}
+
 .wf-inspector-note {
   margin: 0;
   font-size: 0.78rem;
@@ -1242,6 +1315,10 @@
 }
 
 @media (max-width: 768px) {
+  .wf-prompt-editor--fullscreen {
+    padding: var(--space-sm);
+  }
+
   .modal-overlay:has(.wf-editor-modal),
   .modal-overlay:has(.wf-create-modal) {
     padding-top: 0;
