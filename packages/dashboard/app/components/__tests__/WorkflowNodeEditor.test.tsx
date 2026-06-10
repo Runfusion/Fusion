@@ -1108,7 +1108,7 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     // cold-transform shard load (observed intermittently in CI-like runs).
     await waitFor(() => expect(screen.getByTestId("wf-node-foreach")).toBeInTheDocument(), { timeout: 5000 });
     // The foreach inspector shows the Mode select (KTD-3).
-    expect(screen.getByText("Mode")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Mode")).toBeInTheDocument());
     // No empty-state hint because the palette seeded a step-execute child.
     expect(screen.queryByTestId("wf-foreach-empty")).not.toBeInTheDocument();
 
@@ -1269,10 +1269,10 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     expect(await screen.findByTestId("wf-column-panel")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Code").closest("button")!);
     await waitFor(() => expect(screen.getByTestId("wf-node-code")).toBeInTheDocument(), { timeout: 5000 });
-    const source = screen.getByText("Source (TypeScript)").parentElement!.querySelector("textarea")! as HTMLTextAreaElement;
+    const source = (await screen.findByText("Source (TypeScript)")).parentElement!.querySelector("textarea")! as HTMLTextAreaElement;
     fireEvent.change(source, { target: { value: "export default async()=>({outcome:'success'})" } });
     expect(source.value).toContain("outcome:'success'");
-    const timeout = screen.getByText("Timeout (ms)").parentElement!.querySelector("input")! as HTMLInputElement;
+    const timeout = (await screen.findByText("Timeout (ms)")).parentElement!.querySelector("input")! as HTMLInputElement;
     fireEvent.change(timeout, { target: { value: "12000" } });
     expect(timeout.value).toBe("12000");
   });
