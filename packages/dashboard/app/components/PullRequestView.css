@@ -129,7 +129,7 @@
 
 .pr-action--merge-confirm {
   background: var(--accent, #2f81f7);
-  color: #fff;
+  color: var(--cta-text);
 }
 
 .pr-action--close {

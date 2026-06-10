@@ -1545,7 +1545,7 @@
 .card-field-badge--boolean {
   background: var(--accent, #4f7cff);
   border-color: var(--accent, #4f7cff);
-  color: #fff;
+  color: var(--cta-text);
 }
 
 .card-field-badge--multi {

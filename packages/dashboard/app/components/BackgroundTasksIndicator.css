@@ -26,7 +26,7 @@
 
 .background-tasks-indicator__pill--attention {
   background: var(--triage);
-  color: #fff;
+  color: var(--cta-text);
   border-color: var(--triage);
 }
 

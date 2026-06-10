@@ -83,7 +83,7 @@
 .task-field-chip.is-active {
   background: var(--accent, #4f7cff);
   border-color: var(--accent, #4f7cff);
-  color: #fff;
+  color: var(--cta-text);
 }
 
 .task-field-chip:disabled {
