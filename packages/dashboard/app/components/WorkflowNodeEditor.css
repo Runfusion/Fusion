@@ -1705,4 +1705,21 @@
     border-top: 1px solid var(--border);
     overflow-y: auto;
   }
+
+  .wf-editor-body--mobile-node-detail .wf-editor-canvas-wrap {
+    display: none;
+    min-height: 0;
+  }
+
+  .wf-editor-body--mobile-node-detail .wf-editor-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    border-left: none;
+    border-top: none;
+    overflow-y: auto;
+  }
 }

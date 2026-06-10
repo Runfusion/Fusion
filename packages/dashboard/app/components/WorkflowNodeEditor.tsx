@@ -1879,6 +1879,11 @@ function InnerEditor({
   }, [nodes, unplaced, serverNodeError, t]);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
+  const selectedNodeHasInspector =
+    selectedNode !== null &&
+    selectedNode.data.kind !== "start" &&
+    selectedNode.data.kind !== "end";
+  const mobileNodeDetailStage = isMobileViewport && selectedNodeHasInspector && !inspectorCollapsed;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
   const handleTogglePromptExpand = useCallback(() => {
@@ -2210,6 +2215,7 @@ function InnerEditor({
         <div
           className={`wf-editor-body${workflowListStageOpen ? " wf-editor-body--list-stage" : " wf-editor-body--editor-stage"}${
             simpleLayoutEnabled ? " wf-editor-body--simple-layout" : ""
+          }${mobileNodeDetailStage ? " wf-editor-body--mobile-node-detail" : ""
           }`}
         >
           <aside className="wf-editor-sidebar">
@@ -2508,6 +2514,7 @@ function InnerEditor({
                           onSelectNode={(id) => {
                             setSelectedNodeId(id);
                             setSelectedEdgeId(null);
+                            setInspectorCollapsed(false);
                           }}
                           onSelectEdge={(id) => {
                             setSelectedEdgeId(id);
@@ -3101,6 +3108,7 @@ function InnerEditor({
                     onNodeClick={(_, node) => {
                       setSelectedNodeId(node.id);
                       setSelectedEdgeId(null);
+                      setInspectorCollapsed(false);
                     }}
                     onEdgeClick={(_, edge) => {
                       setSelectedEdgeId(edge.id);
@@ -3143,9 +3151,7 @@ function InnerEditor({
             )}
           </section>
 
-          {selectedNode &&
-            selectedNode.data.kind !== "start" &&
-            selectedNode.data.kind !== "end" &&
+          {selectedNodeHasInspector &&
             !(isMobileViewport && inspectorCollapsed) &&
             !(compactLayoutEnabled && !isMobileViewport) && (
             <aside className="wf-editor-inspector" data-testid="wf-node-inspector">
@@ -3157,7 +3163,13 @@ function InnerEditor({
                     className="wf-inspector-toggle wf-inspector-toggle--expanded"
                     data-testid="wf-inspector-toggle"
                     aria-expanded="true"
-                    onClick={() => setInspectorCollapsed(true)}
+                    onClick={() => {
+                      if (simpleLayoutEnabled) {
+                        setSelectedNodeId(null);
+                      } else {
+                        setInspectorCollapsed(true);
+                      }
+                    }}
                   >
                     <ChevronDown size={13} />
                     <span>{t("workflowNodes.collapseInspector", "Collapse")}</span>

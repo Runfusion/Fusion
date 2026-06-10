@@ -499,18 +499,20 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "QA" }));
-    fireEvent.click(await screen.findByTestId("wf-node-gate"));
+    const mobileGateRow = await screen.findByTestId("mobile-wf-node-lint");
+    fireEvent.click(within(mobileGateRow).getByRole("button"));
 
     const inspector = await screen.findByTestId("wf-node-inspector");
     expect(within(inspector).getByLabelText("Prompt")).toBeInTheDocument();
+    expect(inspector.closest(".wf-editor-body")).toHaveClass("wf-editor-body--mobile-node-detail");
 
     fireEvent.click(screen.getByTestId("wf-inspector-toggle"));
 
     await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
     expect(screen.queryByLabelText("Prompt")).not.toBeInTheDocument();
-    expect(screen.getByTestId("wf-inspector-toggle")).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByTestId("mobile-wf-graph")).toBeVisible();
 
-    fireEvent.click(screen.getByTestId("wf-inspector-toggle"));
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-lint")).getByRole("button"));
 
     expect(await screen.findByTestId("wf-node-inspector")).toBeInTheDocument();
     expect(screen.getByTestId("wf-inspector-toggle")).toHaveAttribute("aria-expanded", "true");
@@ -523,13 +525,13 @@ describe("WorkflowNodeEditor", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "QA" }));
-    fireEvent.click(await screen.findByTestId("wf-node-gate"));
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-lint")).getByRole("button"));
     expect(await screen.findByTestId("wf-node-inspector")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("wf-inspector-toggle"));
     await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
 
-    fireEvent.click(await screen.findByTestId("wf-node-merge"));
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-merge")).getByRole("button"));
 
     const inspector = await screen.findByTestId("wf-node-inspector");
     expect(within(inspector).getByLabelText("Name")).toBeInTheDocument();
