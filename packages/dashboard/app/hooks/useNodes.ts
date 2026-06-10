@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { persistNodeProjectPathMappings } from "../api-node";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 export interface UseNodesResult {
   nodes: NodeInfo[];
@@ -45,6 +46,16 @@ export function useNodes(): UseNodesResult {
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
+  const nodesRef = useRef(nodes);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return nodesRef.current.length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   const refresh = useCallback(async () => {
     try {
@@ -52,10 +63,13 @@ export function useNodes(): UseNodesResult {
       const data = await fetchNodes();
       setNodes(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("nodes.errorFetching", "Failed to fetch nodes"));
+      const errorMessage = err instanceof Error ? err.message : t("nodes.errorFetching", "Failed to fetch nodes");
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
       // Keep stale data visible if polling refresh fails
     }
-  }, [t]);
+  }, [shouldSuppressVisibilityResumeError, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,8 +83,9 @@ export function useNodes(): UseNodesResult {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : t("nodes.errorFetching", "Failed to fetch nodes"));
+        const errorMessage = err instanceof Error ? err.message : t("nodes.errorFetching", "Failed to fetch nodes");
+        if (!cancelled && !shouldSuppressVisibilityResumeError(errorMessage)) {
+          setError(errorMessage);
         }
       } finally {
         if (!cancelled) {
@@ -116,7 +131,7 @@ export function useNodes(): UseNodesResult {
       cancelled = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refresh]);
+  }, [refresh, shouldSuppressVisibilityResumeError, t]);
 
   useEffect(() => {
     if (loading) return;

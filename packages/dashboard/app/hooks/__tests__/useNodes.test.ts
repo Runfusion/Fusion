@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, fireEvent } from "@testing-library/react";
 import { useNodes } from "../useNodes";
+import { useManagedDockerNodes } from "../useManagedDockerNodes";
+import { useMeshState } from "../useMeshState";
 import * as api from "../../api";
 import * as nodeApi from "../../api-node";
-import type { NodeInfo, NodeOnboardingInput } from "../../api";
+import type { ManagedDockerNodeInfo, NodeInfo, NodeOnboardingInput } from "../../api";
+import type { NodeMeshState } from "@fusion/core";
 
 vi.mock("../../api", () => ({
   fetchNodes: vi.fn(),
@@ -11,6 +14,11 @@ vi.mock("../../api", () => ({
   updateNode: vi.fn(),
   unregisterNode: vi.fn(),
   checkNodeHealth: vi.fn(),
+  fetchMeshState: vi.fn(),
+  fetchManagedDockerNodes: vi.fn(),
+  fetchManagedDockerNodeContainerStatus: vi.fn(),
+  fetchDockerNodeLogs: vi.fn(),
+  createManagedDockerNode: vi.fn(),
 }));
 
 vi.mock("../../api-node", () => ({
@@ -22,6 +30,8 @@ const mockRegisterNode = vi.mocked(api.registerNode);
 const mockUpdateNode = vi.mocked(api.updateNode);
 const mockUnregisterNode = vi.mocked(api.unregisterNode);
 const mockCheckNodeHealth = vi.mocked(api.checkNodeHealth);
+const mockFetchMeshState = vi.mocked(api.fetchMeshState);
+const mockFetchManagedDockerNodes = vi.mocked(api.fetchManagedDockerNodes);
 const mockPersistNodeProjectPathMappings = vi.mocked(nodeApi.persistNodeProjectPathMappings);
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
@@ -38,19 +48,70 @@ function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   };
 }
 
+function makeMeshNode(overrides: Partial<NodeMeshState> = {}): NodeMeshState {
+  return {
+    id: "node_local",
+    name: "Local Node",
+    type: "local",
+    status: "online",
+    capabilities: ["executor"],
+    maxConcurrent: 2,
+    activeTasks: 0,
+    queuedTasks: 0,
+    lastHeartbeat: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  } as NodeMeshState;
+}
+
+function makeDockerNode(overrides: Partial<ManagedDockerNodeInfo> = {}): ManagedDockerNodeInfo {
+  return {
+    id: "docker-1",
+    name: "Docker Node",
+    nodeId: "node-docker-1",
+    status: "running",
+    hostConfig: { type: "local" },
+    volumeMounts: [],
+    ...overrides,
+  } as ManagedDockerNodeInfo;
+}
+
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
 
+function setVisibilityState(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => state,
+  });
+}
+
+async function simulateHiddenToVisibleResume(): Promise<void> {
+  setVisibilityState("hidden");
+  act(() => {
+    fireEvent(document, new Event("visibilitychange"));
+    vi.advanceTimersByTime(1100);
+  });
+
+  setVisibilityState("visible");
+  await act(async () => {
+    fireEvent(document, new Event("visibilitychange"));
+    await flushPromises();
+  });
+}
+
 describe("useNodes", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibilityState("visible");
     mockFetchNodes.mockReset();
     mockRegisterNode.mockReset();
     mockUpdateNode.mockReset();
     mockUnregisterNode.mockReset();
     mockCheckNodeHealth.mockReset();
+    mockFetchMeshState.mockReset();
+    mockFetchManagedDockerNodes.mockReset();
     mockPersistNodeProjectPathMappings.mockReset();
   });
 
@@ -277,6 +338,26 @@ describe("useNodes", () => {
     expect(result.current.nodes[0].name).toBe("After Refresh");
   });
 
+  it("suppresses visibility-resume suspension errors when nodes already exist", async () => {
+    mockFetchNodes
+      .mockResolvedValueOnce([makeNode({ name: "Initial" })])
+      .mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useNodes());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.nodes[0].name).toBe("Initial");
+    expect(result.current.error).toBeNull();
+
+    await simulateHiddenToVisibleResume();
+
+    expect(result.current.nodes[0].name).toBe("Initial");
+    expect(result.current.error).toBeNull();
+  });
+
   it("refetches when visibility changes back to visible", async () => {
     const originalVisibilityState = Object.getOwnPropertyDescriptor(document, "visibilityState");
     mockFetchNodes
@@ -317,5 +398,69 @@ describe("useNodes", () => {
     if (originalVisibilityState) {
       Object.defineProperty(document, "visibilityState", originalVisibilityState);
     }
+  });
+});
+
+describe("useMeshState", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibilityState("visible");
+    mockFetchMeshState.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("suppresses visibility-resume suspension errors when mesh state already exists", async () => {
+    mockFetchMeshState
+      .mockResolvedValueOnce({ nodes: [makeMeshNode({ name: "Initial Mesh" })] })
+      .mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useMeshState());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.meshState[0].name).toBe("Initial Mesh");
+    expect(result.current.error).toBeNull();
+
+    await simulateHiddenToVisibleResume();
+
+    expect(result.current.meshState[0].name).toBe("Initial Mesh");
+    expect(result.current.error).toBeNull();
+  });
+});
+
+describe("useManagedDockerNodes", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibilityState("visible");
+    mockFetchManagedDockerNodes.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("suppresses visibility-resume suspension errors when docker nodes already exist", async () => {
+    mockFetchManagedDockerNodes
+      .mockResolvedValueOnce([makeDockerNode({ name: "Initial Docker" })])
+      .mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useManagedDockerNodes());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.dockerNodes[0].name).toBe("Initial Docker");
+    expect(result.current.error).toBeNull();
+
+    await simulateHiddenToVisibleResume();
+
+    expect(result.current.dockerNodes[0].name).toBe("Initial Docker");
+    expect(result.current.error).toBeNull();
   });
 });

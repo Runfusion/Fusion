@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, fireEvent } from "@testing-library/react";
 import { useProjects } from "../useProjects";
 import * as api from "../../api";
 import * as swrCache from "../../utils/swrCache";
@@ -40,9 +40,17 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
 }
 
+function setVisibilityState(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => state,
+  });
+}
+
 describe("useProjects", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    setVisibilityState("visible");
     mockFetchProjectsAcrossNodes.mockReset();
     mockRegisterProject.mockReset();
     mockUpdateProject.mockReset();
@@ -169,6 +177,68 @@ describe("useProjects", () => {
         available: true,
       },
     ]);
+  });
+
+  it("suppresses visibility-resume suspension errors when projects already exist", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes
+      .mockResolvedValueOnce([makeProject({ id: "proj-1" })])
+      .mockResolvedValueOnce([makeProject({ id: "proj-1" })])
+      .mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("proj-1");
+    expect(result.current.error).toBeNull();
+
+    setVisibilityState("hidden");
+    act(() => {
+      fireEvent(document, new Event("visibilitychange"));
+      vi.advanceTimersByTime(1100);
+    });
+
+    setVisibilityState("visible");
+    await act(async () => {
+      fireEvent(document, new Event("visibilitychange"));
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("proj-1");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps connection errors visible when no projects exist", async () => {
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockRejectedValueOnce(new Error("Failed to fetch"));
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects).toEqual([]);
+    expect(result.current.error).toBe("Failed to fetch");
+  });
+
+  it("suppresses initial revalidation suspension errors when cache has projects", async () => {
+    mockReadCache.mockReturnValueOnce([makeProject({ id: "cached-project" })]);
+    mockHasNodeMappingsSupport.mockReturnValue(false);
+    mockFetchProjectsAcrossNodes.mockRejectedValueOnce(new Error("Failed to fetch"));
+    setVisibilityState("hidden");
+
+    const { result } = renderHook(() => useProjects());
+
+    await act(async () => {
+      await flushPromises();
+    });
+
+    expect(result.current.projects[0]?.id).toBe("cached-project");
+    expect(result.current.error).toBeNull();
   });
 
   it("refreshes projects using the same normalization", async () => {

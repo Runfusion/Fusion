@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { NodeMeshState } from "@fusion/core";
 import { fetchMeshState } from "../api";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 10000;
 const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
@@ -21,6 +22,16 @@ export function useMeshState(): UseMeshStateResult {
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
+  const meshStateRef = useRef(meshState);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  useEffect(() => {
+    meshStateRef.current = meshState;
+  }, [meshState]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return meshStateRef.current.length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   const refresh = useCallback(async () => {
     try {
@@ -28,9 +39,12 @@ export function useMeshState(): UseMeshStateResult {
       const data = await fetchMeshState();
       setMeshState(data.nodes);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("mesh.failedToFetchMeshState", "Failed to fetch mesh state"));
+      const errorMessage = err instanceof Error ? err.message : t("mesh.failedToFetchMeshState", "Failed to fetch mesh state");
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
     }
-  }, [t]);
+  }, [shouldSuppressVisibilityResumeError, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,8 +58,9 @@ export function useMeshState(): UseMeshStateResult {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : t("mesh.failedToFetchMeshState", "Failed to fetch mesh state"));
+        const errorMessage = err instanceof Error ? err.message : t("mesh.failedToFetchMeshState", "Failed to fetch mesh state");
+        if (!cancelled && !shouldSuppressVisibilityResumeError(errorMessage)) {
+          setError(errorMessage);
         }
       } finally {
         if (!cancelled) {
@@ -87,7 +102,7 @@ export function useMeshState(): UseMeshStateResult {
       cancelled = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refresh]);
+  }, [refresh, shouldSuppressVisibilityResumeError, t]);
 
   useEffect(() => {
     if (loading) return;

@@ -10,6 +10,7 @@ import {
 import { AlertTriangle, Clock, Folder, Pause, Play, Zap } from "lucide-react";
 import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 import { useExecutorStats } from "../hooks/useExecutorStats";
+import { isLikelyTabSuspensionError } from "../hooks/visibilitySuspension";
 import type { ExecutorState, AiSessionSummary } from "../api";
 import { BackgroundTasksIndicator } from "./BackgroundTasksIndicator";
 
@@ -124,6 +125,17 @@ export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs, staleH
   if (hideWhenKeyboardOpen) return null;
 
   if (error) {
+    if (isLikelyTabSuspensionError(error)) {
+      return (
+        <div className="executor-status-bar executor-status-bar--connecting" role="status" aria-label={t("executor.status", "Executor status")}>
+          <span className="executor-status-bar__connecting">
+            <span className="executor-status-bar__indicator executor-status-bar__indicator--connecting executor-status-bar__indicator--active" aria-hidden="true" />
+            {t("executor.connecting", "Connecting…")}
+          </span>
+        </div>
+      );
+    }
+
     return (
       <div className="executor-status-bar executor-status-bar--error" role="status" aria-label={t("executor.status", "Executor status")}>
         <span className="executor-status-bar__error">

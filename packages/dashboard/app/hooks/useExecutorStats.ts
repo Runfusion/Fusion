@@ -3,6 +3,7 @@ import type { Task } from "@fusion/core";
 import { fetchExecutorStats } from "../api";
 import type { ExecutorStats, ExecutorState } from "../api";
 import { isTaskStuck } from "../utils/taskStuck";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds - different from useProjectHealth's 10s
 
@@ -117,6 +118,12 @@ export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTim
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const hasFetchedStatsRef = useRef(false);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return hasFetchedStatsRef.current && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   const refresh = useCallback(async () => {
     // Cancel any in-flight requests
@@ -129,17 +136,21 @@ export function useExecutorStats(tasks: Task[], projectId?: string, taskStuckTim
       setLoading(true);
       setError(null);
       const data = await fetchExecutorStats(projectId);
+      hasFetchedStatsRef.current = true;
       setApiData(data);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         // Ignore abort errors
         return;
       }
-      setError(err instanceof Error ? err.message : "Failed to fetch executor stats");
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch executor stats";
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, shouldSuppressVisibilityResumeError]);
 
   // Initial fetch
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getErrorMessage } from "@fusion/core";
 import { fetchUsageData, type ProviderUsage } from "../api";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 interface UsageDataState {
   providers: ProviderUsage[];
@@ -40,6 +41,16 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const stateRef = useRef(state);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return stateRef.current.hasFetched && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   const fetchData = useCallback(async (isManual = false) => {
     // Cancel any in-flight request
@@ -65,14 +76,23 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
       // Don't update state if the request was aborted
       if (err instanceof Error && err.name === "AbortError") return;
 
+      const errorMessage = getErrorMessage(err) || "Failed to fetch usage data";
+      if (shouldSuppressVisibilityResumeError(errorMessage)) {
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+        }));
+        return;
+      }
+
       setState((prev) => ({
         ...prev,
         loading: false,
-        error: getErrorMessage(err) || "Failed to fetch usage data",
+        error: errorMessage,
         hasFetched: true,
       }));
     }
-  }, []);
+  }, [shouldSuppressVisibilityResumeError]);
 
   // Initial fetch
   useEffect(() => {

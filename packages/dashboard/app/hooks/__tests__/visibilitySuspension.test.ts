@@ -2,6 +2,7 @@ import { act, fireEvent, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   isLikelyTabSuspensionError,
+  isVisibilityResumeError,
   lastVisibilityTransition,
   useTabVisibilitySuspension,
 } from "../visibilitySuspension";
@@ -21,6 +22,18 @@ describe("visibilitySuspension", () => {
   it("rejects unrelated backend errors", () => {
     expect(isLikelyTabSuspensionError("Request failed: 500")).toBe(false);
     expect(isLikelyTabSuspensionError("Validation error: missing key")).toBe(false);
+  });
+
+  it("matches visibility-resume errors when recently hidden and suspension-like", () => {
+    expect(isVisibilityResumeError("Failed to fetch", true)).toBe(true);
+  });
+
+  it("rejects visibility-resume errors when not recently hidden", () => {
+    expect(isVisibilityResumeError("Failed to fetch", false)).toBe(false);
+  });
+
+  it("rejects visibility-resume errors for unrelated failures", () => {
+    expect(isVisibilityResumeError("Request failed: 500", true)).toBe(false);
   });
 
   it("tracks recently hidden window", () => {

@@ -29,6 +29,7 @@
   background: var(--executor-status-error-bg);
 }
 
+.executor-status-bar--connecting,
 .executor-status-bar--loading {
   background: var(--surface);
 }
@@ -100,6 +101,14 @@
 
 .executor-status-bar__indicator--fanout {
   background: var(--color-error);
+}
+
+.executor-status-bar__indicator--connecting {
+  background: var(--color-warning);
+}
+
+.executor-status-bar__indicator--connecting.executor-status-bar__indicator--active {
+  animation: executor-pulse 1.5s ease-in-out infinite;
 }
 
 /* Numeric count display */
@@ -251,11 +260,19 @@
 }
 
 /* Error message */
-.executor-status-bar__error {
+.executor-status-bar__error,
+.executor-status-bar__connecting {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.executor-status-bar__error {
   color: var(--color-error);
+}
+
+.executor-status-bar__connecting {
+  color: var(--color-warning);
 }
 
 /* Loading message */

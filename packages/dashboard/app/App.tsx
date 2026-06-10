@@ -77,6 +77,7 @@ import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
 import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
+import { isLikelyTabSuspensionError } from "./hooks/visibilitySuspension";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import { FileBrowserProvider } from "./context/FileBrowserContext";
 import { ShellProvider } from "./context/ShellContext";
@@ -257,7 +258,14 @@ function AppInner() {
 
   // Project management hooks - MUST be called before any conditional logic
   const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects } = useProjects();
+  const hasEverLoadedProjectsRef = useRef(projects.length > 0);
   const { nodes } = useNodes();
+
+  useEffect(() => {
+    if (projects.length > 0) {
+      hasEverLoadedProjectsRef.current = true;
+    }
+  }, [projects.length]);
 
   // Node context for local/remote node switching - must be called before useCurrentProject
   const { currentNode, currentNodeId, isRemote, setCurrentNode, clearCurrentNode } = useNodeContext();
@@ -1396,12 +1404,18 @@ function AppInner() {
     }
   }, [shellState]);
 
+  const isSuppressedProjectResumeError =
+    Boolean(projectsError) &&
+    isLikelyTabSuspensionError(projectsError ?? "") &&
+    hasEverLoadedProjectsRef.current;
+
   const showBackendConnectionErrorPage =
     !projectsLoading &&
     !currentProjectLoading &&
     projects.length === 0 &&
     !currentProject &&
-    Boolean(projectsError);
+    Boolean(projectsError) &&
+    !isSuppressedProjectResumeError;
 
   // Render main content based on view mode
   const renderMainContent = () => {

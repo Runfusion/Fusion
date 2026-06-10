@@ -20,6 +20,10 @@ export function isLikelyTabSuspensionError(message: string): boolean {
   return SUSPENSION_ERROR_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
+export function isVisibilityResumeError(errorMessage: string, wasRecentlyHiddenResult: boolean): boolean {
+  return wasRecentlyHiddenResult && isLikelyTabSuspensionError(errorMessage);
+}
+
 export function lastVisibilityTransition(): { hiddenAt: number | null; visibleAt: number | null } {
   return {
     hiddenAt: lastHiddenAt,

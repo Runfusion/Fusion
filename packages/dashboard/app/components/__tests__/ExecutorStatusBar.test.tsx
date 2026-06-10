@@ -285,15 +285,31 @@ describe("ExecutorStatusBar", () => {
       vi.mocked(mockUseExecutorStats).mockReturnValue({
         stats: defaultStats,
         loading: false,
-        error: "Failed to fetch stats",
+        error: "Stats unavailable",
         refresh: vi.fn(),
       });
 
       render(<ExecutorStatusBar tasks={emptyTasks} />);
 
       const statusBar = screen.getByRole("status");
-      expect(statusBar).toHaveTextContent("Failed to fetch stats");
+      expect(statusBar).toHaveTextContent("Stats unavailable");
       expect(statusBar).toHaveClass("executor-status-bar--error");
+    });
+
+    it("shows connecting state instead of suspension error text", () => {
+      vi.mocked(mockUseExecutorStats).mockReturnValue({
+        stats: defaultStats,
+        loading: false,
+        error: "Failed to fetch",
+        refresh: vi.fn(),
+      });
+
+      render(<ExecutorStatusBar tasks={emptyTasks} />);
+
+      const statusBar = screen.getByRole("status");
+      expect(statusBar).toHaveTextContent("Connecting…");
+      expect(statusBar).not.toHaveTextContent("Failed to fetch");
+      expect(statusBar).toHaveClass("executor-status-bar--connecting");
     });
 
     it("does not show stat segments when error is present", () => {

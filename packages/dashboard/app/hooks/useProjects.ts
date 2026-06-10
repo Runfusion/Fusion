@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, clearCache, readCache, writeCache } from "../utils/swrCache";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 export interface UseProjectsResult {
   /** List of all registered projects (local + remote) */
@@ -91,6 +92,16 @@ export function useProjects(): UseProjectsResult {
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
+  const projectsRef = useRef(projects);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return projectsRef.current.length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   const refresh = useCallback(async () => {
     try {
@@ -100,10 +111,13 @@ export function useProjects(): UseProjectsResult {
       setProjects(normalizedData);
       writeCache(SWR_CACHE_KEYS.PROJECTS, normalizedData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch projects");
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch projects";
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
       // Don't clear existing projects on error - keep showing stale data
     }
-  }, []);
+  }, [shouldSuppressVisibilityResumeError]);
 
   // Initial fetch and visibility change handler
   useEffect(() => {
@@ -127,9 +141,10 @@ export function useProjects(): UseProjectsResult {
         }
       } catch (err) {
         const elapsed = Math.round(performance.now() - t0);
-        console.warn(`[useProjects] initial fetch failed after ${elapsed}ms: ${err instanceof Error ? err.message : String(err)}`);
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to fetch projects");
+        const errorMessage = err instanceof Error ? err.message : "Failed to fetch projects";
+        console.warn(`[useProjects] initial fetch failed after ${elapsed}ms: ${errorMessage}`);
+        if (!cancelled && !shouldSuppressVisibilityResumeError(errorMessage)) {
+          setError(errorMessage);
         }
       } finally {
         if (!cancelled) {
@@ -175,7 +190,7 @@ export function useProjects(): UseProjectsResult {
       cancelled = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [projects.length, refresh]);
+  }, [projects.length, refresh, shouldSuppressVisibilityResumeError]);
 
   // Polling for updates
   useEffect(() => {

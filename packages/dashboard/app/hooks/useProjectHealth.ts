@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { ProjectHealth } from "../api";
 import { fetchProjectHealth } from "../api";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 export interface UseMultiProjectHealthResult {
   /** Map of project ID to health data */
@@ -36,8 +37,18 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const healthMapRef = useRef(healthMap);
+  const visibilitySuspension = useTabVisibilitySuspension();
   // Track if we've completed the initial load
   const initialLoadCompleteRef = useRef(false);
+
+  useEffect(() => {
+    healthMapRef.current = healthMap;
+  }, [healthMap]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return Object.keys(healthMapRef.current).length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   /**
    * Refresh health data for all projects.
@@ -105,13 +116,16 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
         // Ignore abort errors
         return;
       }
-      setError(err instanceof Error ? err.message : "Failed to fetch health data");
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch health data";
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
       // Mark initial load complete even on error so we don't stay in loading state
       initialLoadCompleteRef.current = true;
     } finally {
       setLoading(false);
     }
-  }, [projectIds]);
+  }, [projectIds, shouldSuppressVisibilityResumeError]);
 
   const refreshProject = useCallback(async (projectId: string) => {
     try {

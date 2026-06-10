@@ -8,6 +8,7 @@ import {
   fetchManagedDockerNodes,
 } from "../api";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
 export interface UseManagedDockerNodesResult {
   dockerNodes: ManagedDockerNodeInfo[];
@@ -28,6 +29,16 @@ export function useManagedDockerNodes(): UseManagedDockerNodesResult {
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
+  const dockerNodesRef = useRef(dockerNodes);
+  const visibilitySuspension = useTabVisibilitySuspension();
+
+  useEffect(() => {
+    dockerNodesRef.current = dockerNodes;
+  }, [dockerNodes]);
+
+  const shouldSuppressVisibilityResumeError = useCallback((errorMessage: string): boolean => {
+    return dockerNodesRef.current.length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
+  }, [visibilitySuspension]);
 
   const refresh = useCallback(async () => {
     try {
@@ -35,9 +46,12 @@ export function useManagedDockerNodes(): UseManagedDockerNodesResult {
       const data = await fetchManagedDockerNodes();
       setDockerNodes(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch managed Docker nodes");
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch managed Docker nodes";
+      if (!shouldSuppressVisibilityResumeError(errorMessage)) {
+        setError(errorMessage);
+      }
     }
-  }, []);
+  }, [shouldSuppressVisibilityResumeError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,8 +65,9 @@ export function useManagedDockerNodes(): UseManagedDockerNodesResult {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to fetch managed Docker nodes");
+        const errorMessage = err instanceof Error ? err.message : "Failed to fetch managed Docker nodes";
+        if (!cancelled && !shouldSuppressVisibilityResumeError(errorMessage)) {
+          setError(errorMessage);
         }
       } finally {
         if (!cancelled) {
@@ -98,7 +113,7 @@ export function useManagedDockerNodes(): UseManagedDockerNodesResult {
       cancelled = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refresh]);
+  }, [refresh, shouldSuppressVisibilityResumeError]);
 
   useEffect(() => {
     if (loading) {
