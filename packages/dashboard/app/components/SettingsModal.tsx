@@ -189,8 +189,10 @@ function useGitHubStarCount(): number | null {
  *
  * Group headers (isGroupHeader: true) are non-clickable labels that visually group sections.
  * The sidebar is organized into three groups:
- *   - Account: Scope-less sections (authentication)
- *   - Global: Global-scoped sections (appearance, notifications, node-sync, global-models)
+ *   - Global: User-level/shared sections (global-general, authentication, appearance,
+ *     notifications, node-sync, global-models)
+ *   - Runtimes: Global-scoped plugin runtime sections (hermes-runtime, openclaw-runtime,
+ *     paperclip-runtime)
  *   - Project: Project-scoped sections (project-models, general, scheduling, node-routing,
  *     worktrees, commands, merge, memory, experimental, prompts, backups, plugins)
  *
@@ -212,13 +214,10 @@ const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
 const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
-  // Account group (scope-less items — independent of settings storage)
-  { id: "__account_header", label: "Account", labelKey: "settings.nav.accountHeader", scope: undefined, isGroupHeader: true },
-  { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe },
-
   // Global group (shared across all Fusion projects)
   { id: "__global_header", label: "Global", labelKey: "settings.nav.globalHeader", scope: undefined, isGroupHeader: true },
   { id: "global-general", label: "General", labelKey: "settings.nav.globalGeneral", scope: "global" },
+  { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe },
   { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global" },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global" },
   { id: "node-sync", label: "Node Sync", labelKey: "settings.nav.nodeSync", scope: "global" },
