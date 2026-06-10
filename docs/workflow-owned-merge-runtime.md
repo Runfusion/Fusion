@@ -5,8 +5,11 @@ parallel with the legacy queue while slices are reviewed.
 
 ## Implemented Runtime Surfaces
 
-- `workflow_work_items` persists runnable, running, retrying, held, manual,
-  recovery, succeeded, failed, cancelled, and exhausted workflow work.
+- `workflow_work_items` persists workflow work item states: `runnable`,
+  `running`, `held`, `retrying`, `manual-required`, `succeeded`, `failed`,
+  `cancelled`, and `exhausted`.
+- Workflow work item kinds are `task`, `merge`, `retry`, `manual-hold`, and
+  `recovery`.
 - `TaskStore.projectMergeRequestToWorkflowWorkItem` projects legacy merge request
   rows onto workflow work items.
 - Completion handoff creates workflow merge work at `merge-gate`; `autoMerge:false`
