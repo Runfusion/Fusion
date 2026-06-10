@@ -115,6 +115,17 @@ describe("PWA configuration", () => {
     expect(swSource).toContain('[sw] navigation cache put failed');
   });
 
+  it("service worker revalidates built assets so stale bundles cannot blank the app", () => {
+    const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
+
+    expect(swSource).toContain('url.pathname.startsWith("/assets/")');
+    expect(swSource).toContain('request.destination === "script"');
+    expect(swSource).toContain('request.destination === "style"');
+    expect(swSource).toContain('if (isBuiltAssetRequest) {');
+    expect(swSource).toContain('[sw] asset cache put failed');
+    expect(swSource).toContain('[sw] asset cache lookup failed');
+  });
+
   it("service worker activates updated code immediately", () => {
     const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
 

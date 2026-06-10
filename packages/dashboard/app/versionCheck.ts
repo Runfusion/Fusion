@@ -4,6 +4,7 @@ declare const __BUILD_VERSION__: string;
 
 const RELOAD_FLAG = "fusion:version-reload";
 const VERSION_UPDATE_FLAG = "fusion:version-update";
+const RELOADED_REMOTE_VERSION_FLAG = "fusion:version-reloaded-remote";
 
 /**
  * Module-level guard for auto-reload behavior.
@@ -30,6 +31,11 @@ export function _resetState(): void {
   lastCheckTime = 0;
   checkInFlight = false;
   autoReloadEnabled = true;
+  try {
+    sessionStorage.removeItem(RELOADED_REMOTE_VERSION_FLAG);
+  } catch {
+    // ignore
+  }
   if (pollIntervalId !== null) {
     window.clearInterval(pollIntervalId);
     pollIntervalId = null;
@@ -63,6 +69,30 @@ export function reloadOnce(reason: string): void {
   }
   console.info("[versionCheck] reloading:", reason);
   window.location.reload();
+}
+
+function getReloadedRemoteVersion(): string | null {
+  try {
+    return sessionStorage.getItem(RELOADED_REMOTE_VERSION_FLAG);
+  } catch {
+    return null;
+  }
+}
+
+function setReloadedRemoteVersion(version: string): void {
+  try {
+    sessionStorage.setItem(RELOADED_REMOTE_VERSION_FLAG, version);
+  } catch {
+    // ignore
+  }
+}
+
+function clearReloadedRemoteVersion(): void {
+  try {
+    sessionStorage.removeItem(RELOADED_REMOTE_VERSION_FLAG);
+  } catch {
+    // ignore
+  }
 }
 
 export function isStaleChunkError(error: unknown): boolean {
@@ -165,6 +195,7 @@ export async function checkVersion(trigger: VersionCheckTrigger = "initial"): Pr
 
     if (remote === __BUILD_VERSION__) {
       lastMismatchedRemote = null;
+      clearReloadedRemoteVersion();
       return;
     }
 
@@ -193,10 +224,24 @@ export async function checkVersion(trigger: VersionCheckTrigger = "initial"): Pr
       trigger,
       elapsedMs: Date.now() - lastMismatchAt,
     });
+
+    if (getReloadedRemoteVersion() === remote) {
+      pushTrace("versionCheck", "reload-suppressed", {
+        remote,
+        trigger,
+        reason: "already-reloaded-remote-version",
+      });
+      console.info("[versionCheck] reload already attempted for remote version", remote);
+      return;
+    }
+
     try {
       sessionStorage.setItem(VERSION_UPDATE_FLAG, "1");
     } catch {
       // ignore
+    }
+    if (autoReloadEnabled) {
+      setReloadedRemoteVersion(remote);
     }
     reloadOnce(`build version changed: ${__BUILD_VERSION__} -> ${remote}`);
   } finally {

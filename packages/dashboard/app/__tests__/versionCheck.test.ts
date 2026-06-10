@@ -218,6 +218,34 @@ describe("checkVersion cooldown + mismatch gating", () => {
     vi.useRealTimers();
   });
 
+  it("does not reload repeatedly for the same remote version after returning to the tab", async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: () => Promise.resolve({ version: "different-version" }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await checkVersion("initial");
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("visibilitychange");
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+    window.sessionStorage.removeItem("fusion:version-reload");
+
+    vi.advanceTimersByTime(MIN_CHECK_INTERVAL_MS + 1);
+    await checkVersion("focus");
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    const suppressedTrace = getTraces().find((entry) => entry.event === "reload-suppressed");
+    expect(suppressedTrace?.detail).toMatchObject({
+      remote: "different-version",
+      reason: "already-reloaded-remote-version",
+    });
+    vi.useRealTimers();
+  });
+
   it("mismatch then match resets gating", async () => {
     vi.useFakeTimers();
     const fetchSpy = vi.fn()
