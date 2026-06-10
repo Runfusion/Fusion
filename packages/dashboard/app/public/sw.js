@@ -1,4 +1,4 @@
-const CACHE_NAME = "fusion-cache-v2";
+const CACHE_NAME = "fusion-cache-v3";
 const APP_SHELL_URLS = [
   "/",
   "/index.html",
@@ -61,6 +61,11 @@ self.addEventListener("fetch", (event) => {
     request.destination === "document" ||
     url.pathname === "/" ||
     url.pathname === "/index.html";
+  const isBuiltAssetRequest =
+    url.pathname.startsWith("/assets/") ||
+    request.destination === "script" ||
+    request.destination === "style" ||
+    request.destination === "font";
 
   // EventSource requests stay open indefinitely. Waiting on cache.put() for an
   // infinite response body prevents the browser from ever receiving the stream
@@ -114,6 +119,36 @@ self.addEventListener("fetch", (event) => {
           }
         } catch (cacheError) {
           console.warn("[sw] api cache lookup failed", cacheError);
+        }
+        throw networkError;
+      }
+    })());
+    return;
+  }
+
+  // Built assets are content-hashed, but an already-controlled browser can
+  // keep old entries in this named cache across local rebuilds. Prefer the
+  // server response so tabs cannot stay on stale JS/CSS and render a blank
+  // shell after an update. The cache remains an offline fallback.
+  if (isBuiltAssetRequest) {
+    event.respondWith((async () => {
+      try {
+        const networkResponse = await fetch(request);
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(request, networkResponse.clone());
+        } catch (cacheError) {
+          console.warn("[sw] asset cache put failed", cacheError);
+        }
+        return networkResponse;
+      } catch (networkError) {
+        try {
+          const cachedResponse = await caches.match(request);
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+        } catch (cacheError) {
+          console.warn("[sw] asset cache lookup failed", cacheError);
         }
         throw networkError;
       }

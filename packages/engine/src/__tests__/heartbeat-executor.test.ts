@@ -3216,6 +3216,7 @@ describe("executeHeartbeat", () => {
         dependencies: undefined,
         column: "triage",
         priority: undefined,
+        summarize: true,
         source: expect.objectContaining({
           sourceType: "agent_heartbeat",
           sourceAgentId: "agent-001",
@@ -3225,7 +3226,7 @@ describe("executeHeartbeat", () => {
             contentFingerprint: expect.any(String),
           }),
         }),
-      }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+      }), { settings: {} });
     });
 
     it("forwards explicit priority when fn_task_create tool is called", async () => {

@@ -201,12 +201,17 @@ describe("createHeartbeatTools", () => {
       dependencies: undefined,
       column: "triage",
       priority: undefined,
+      summarize: true,
       source: expect.objectContaining({
         sourceType: "agent_heartbeat",
         sourceAgentId: "agent-001",
         sourceRunId: undefined,
+        sourceParentTaskId: "FN-001",
+        sourceMetadata: expect.objectContaining({
+          contentFingerprint: expect.any(String),
+        }),
       }),
-    }), expect.objectContaining({ settings: { autoSummarizeTitles: false } }));
+    }), { settings: {} });
 
     const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";
     expect(responseText).toContain("Created FN-100");
