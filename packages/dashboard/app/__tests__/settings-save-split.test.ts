@@ -117,6 +117,30 @@ describe("splitSettingsSave", () => {
     expect(projectPatch).toEqual({ enabledBuiltinWorkflowIds: ["builtin:coding"] });
   });
 
+  it("excludes customProviders from both global and project patches", () => {
+    expect(isGlobalSettingsKey("customProviders")).toBe(true);
+
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: {
+        customProviders: [
+          {
+            id: "x",
+            name: "Provider X",
+            baseUrl: "https://example.test/v1",
+            apiKey: "secret",
+            models: [{ id: "model-x", name: "Model X" }],
+          },
+        ],
+      },
+      initialValues: { customProviders: [] } as never,
+      initialScopedValues: { global: { customProviders: [] }, project: {} } as never,
+      activeSection: "authentication",
+    });
+
+    expect("customProviders" in globalPatch).toBe(false);
+    expect("customProviders" in projectPatch).toBe(false);
+  });
+
   it("emits null-as-delete when a project override is cleared", () => {
     const initialScopedValues = {
       global: {},

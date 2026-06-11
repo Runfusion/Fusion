@@ -76,6 +76,9 @@ export function splitSettingsSave({
     if (key === "persistAgentThinkingLog") {
       continue;
     }
+    if (key === "customProviders") {
+      continue;
+    }
     if (isGlobalSettingsKey(key)) {
       // null-as-delete: explicit clear is sent as null, plain undefined dropped.
       const initialValue = initialValues?.[key as keyof GlobalSettings];
@@ -90,6 +93,7 @@ export function splitSettingsSave({
   const projectPatch: Partial<Settings> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only
+    if (key === "customProviders") continue;
     if (key === "githubTrackingDefaultRepo" && activeSection === "global-general") continue;
     if (!isProjectSettingsKey(key)) continue;
 
