@@ -3644,6 +3644,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         globalCount: 0,
         projectCount: 0,
         authCount: 0,
+        workflowSettingsCount: 0,
         error: `Unsupported settings sync version: ${payload.version}`,
       };
     }
@@ -3653,6 +3654,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       global: payload.global,
       projects: payload.projects,
       providerAuth: payload.providerAuth,
+      workflowSettings: payload.workflowSettings,
       exportedAt: payload.exportedAt,
       version: payload.version,
     };
@@ -3666,6 +3668,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         globalCount: 0,
         projectCount: 0,
         authCount: 0,
+        workflowSettingsCount: 0,
         error: "Checksum mismatch - payload may have been corrupted",
       };
     }
@@ -3713,14 +3716,20 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       }
     }
 
-    // Provider auth is transported but NOT applied here
-    // The caller (dashboard route) handles auth application
+    // Provider auth is transported but NOT applied here.
+    // Workflow setting values are also transported in the checksum-protected
+    // payload but NOT applied here; dashboard sync routes write them through
+    // TaskStore so validation, project scoping, and cache/listener behavior stay
+    // consistent. Cross-node settings sync expects both peers to run the same
+    // payload shape: a new node sending workflowSettings to a pre-FN-6208 node
+    // can checksum-mismatch, which is acceptable for mixed-version peers.
 
     return {
       success: true,
       globalCount,
       projectCount,
       authCount,
+      workflowSettingsCount: 0,
     };
   }
 

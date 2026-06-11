@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { CentralCore } from "../central-core.js";
 import { NodeDiscovery } from "../node-discovery.js";
 import { NodeConnection, type ConnectionResult } from "../node-connection.js";
@@ -2875,6 +2876,7 @@ describe("CentralCore", () => {
         expect(result.globalCount).toBe(1);
         expect(result.projectCount).toBe(0);
         expect(result.authCount).toBe(0);
+        expect(result.workflowSettingsCount).toBe(0);
         expect(result.error).toBeUndefined();
       });
 
@@ -2888,6 +2890,7 @@ describe("CentralCore", () => {
         const result = await central.applyRemoteSettings(payload);
 
         expect(result.success).toBe(false);
+        expect(result.workflowSettingsCount).toBe(0);
         expect(result.error).toContain("Unsupported settings sync version");
       });
 
@@ -2901,6 +2904,7 @@ describe("CentralCore", () => {
         const result = await central.applyRemoteSettings(payload);
 
         expect(result.success).toBe(false);
+        expect(result.workflowSettingsCount).toBe(0);
         expect(result.error).toContain("Checksum mismatch");
       });
 
@@ -2958,7 +2962,39 @@ describe("CentralCore", () => {
 
         expect(result.success).toBe(true);
         expect(result.authCount).toBe(2); // Both entries counted
+        expect(result.workflowSettingsCount).toBe(0);
         // Auth is not applied - that's the caller's responsibility
+      });
+
+      it("should accept payloads with workflowSettings without applying them in CentralCore", async () => {
+        const payloadWithoutChecksum = {
+          global: { themeMode: "dark" as const },
+          workflowSettings: { "builtin:coding": { workflowStepTimeoutMs: 240000 } },
+          exportedAt: new Date().toISOString(),
+          version: 1 as const,
+        };
+        const checksum = createHash("sha256").update(JSON.stringify(payloadWithoutChecksum)).digest("hex");
+
+        const result = await central.applyRemoteSettings({ ...payloadWithoutChecksum, checksum });
+
+        expect(result.success).toBe(true);
+        expect(result.globalCount).toBe(1);
+        expect(result.workflowSettingsCount).toBe(0);
+      });
+
+      it("should handle payloads without workflowSettings gracefully", async () => {
+        const payloadWithoutChecksum = {
+          global: { themeMode: "dark" as const },
+          exportedAt: new Date().toISOString(),
+          version: 1 as const,
+        };
+        const checksum = createHash("sha256").update(JSON.stringify(payloadWithoutChecksum)).digest("hex");
+
+        const result = await central.applyRemoteSettings({ ...payloadWithoutChecksum, checksum });
+
+        expect(result.success).toBe(true);
+        expect(result.globalCount).toBe(1);
+        expect(result.workflowSettingsCount).toBe(0);
       });
 
       it("should handle empty payload gracefully", async () => {
@@ -2971,6 +3007,7 @@ describe("CentralCore", () => {
         expect(result.globalCount).toBeGreaterThanOrEqual(0);
         expect(result.projectCount).toBe(0);
         expect(result.authCount).toBe(0);
+        expect(result.workflowSettingsCount).toBe(0);
       });
     });
 

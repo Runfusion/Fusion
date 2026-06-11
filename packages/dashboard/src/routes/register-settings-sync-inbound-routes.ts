@@ -5,6 +5,59 @@ import { getFusionAuthPath } from "../auth-paths.js";
 import { readStoredAuthProvidersFromDisk, toProviderAuthEntries } from "./register-settings-sync-helpers.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
+type WorkflowSettingsSyncSection = Record<string, Record<string, unknown>>;
+type WorkflowSettingsSyncStore = {
+  getWorkflowSettingsProjectId(): string;
+  updateWorkflowSettingValues(workflowId: string, projectId: string, patch: Record<string, unknown>): Promise<Record<string, unknown>>;
+};
+
+function extractRejectedSettingIds(err: unknown): string[] {
+  if (!err || typeof err !== "object") return [];
+  const rejections = (err as { rejections?: unknown }).rejections;
+  if (!Array.isArray(rejections)) return [];
+  const ids: string[] = [];
+  for (const rejection of rejections) {
+    if (rejection && typeof rejection === "object" && typeof (rejection as { settingId?: unknown }).settingId === "string") {
+      ids.push((rejection as { settingId: string }).settingId);
+    }
+  }
+  return ids;
+}
+
+async function applyWorkflowSettingsSection(
+  store: WorkflowSettingsSyncStore,
+  section: WorkflowSettingsSyncSection,
+): Promise<{ count: number; keys: string[] }> {
+  const projectId = store.getWorkflowSettingsProjectId();
+  let count = 0;
+  const keys: string[] = [];
+
+  for (const [workflowId, rawValues] of Object.entries(section)) {
+    if (!rawValues || typeof rawValues !== "object" || Array.isArray(rawValues)) continue;
+    const patch: Record<string, unknown> = { ...rawValues };
+
+    while (Object.keys(patch).length > 0) {
+      try {
+        await store.updateWorkflowSettingValues(workflowId, projectId, patch);
+        const appliedKeys = Object.entries(patch)
+          .filter(([, value]) => value !== null)
+          .map(([key]) => key);
+        count += appliedKeys.length;
+        keys.push(...appliedKeys);
+        break;
+      } catch (err) {
+        const rejectedIds = extractRejectedSettingIds(err);
+        if (rejectedIds.length === 0) break;
+        for (const settingId of rejectedIds) {
+          delete patch[settingId];
+        }
+      }
+    }
+  }
+
+  return { count, keys };
+}
+
 export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, store, emitAuthSyncAuditLog, rethrowAsApiError } = ctx;
 
@@ -82,13 +135,24 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
 
+      let workflowSettingsCount = 0;
+      let appliedWorkflowSettingKeys: string[] = [];
+      if (result.success && payload.workflowSettings && typeof payload.workflowSettings === "object" && !Array.isArray(payload.workflowSettings)) {
+        const workflowApplyResult = await applyWorkflowSettingsSection(store, payload.workflowSettings as WorkflowSettingsSyncSection);
+        workflowSettingsCount = workflowApplyResult.count;
+        appliedWorkflowSettingKeys = workflowApplyResult.keys;
+      }
+
       // Build applied/skipped field lists. Moved keys are excluded so the reported
       // applied set matches what actually persisted (the store + applyRemoteSettings
-      // both drop them).
+      // both drop them). Workflow setting values sync in their own section.
       const appliedFields = [
-        ...Object.keys(payload.global || {}),
-        ...Object.keys(payload.projects || {}),
-      ].filter((key) => !isMovedSettingsKey(key));
+        ...[
+          ...Object.keys(payload.global || {}),
+          ...Object.keys(payload.projects || {}),
+        ].filter((key) => !isMovedSettingsKey(key)),
+        ...appliedWorkflowSettingKeys,
+      ];
       const skippedFields = result.error ? appliedFields : [];
 
       await central.close();
@@ -97,6 +161,7 @@ export const registerSettingsSyncInboundRoutes: ApiRouteRegistrar = (ctx) => {
         success: result.success,
         appliedFields,
         skippedFields,
+        workflowSettingsCount,
         error: result.error,
       });
     } catch (err: unknown) {

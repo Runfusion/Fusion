@@ -4781,6 +4781,8 @@ export interface SettingsSyncPayload {
    *  Values contain the credential type and key. Only transmitted over authenticated
    *  node connections. */
   providerAuth?: Record<string, ProviderAuthEntry>;
+  /** Per-project workflow setting values keyed `workflowId → { settingKey: value }`. */
+  workflowSettings?: Record<string, Record<string, unknown>>;
   /** ISO timestamp when this snapshot was generated. */
   exportedAt: string;
   /** Checksum of the settings data for change detection (SHA-256 hex of JSON). */
@@ -4817,6 +4819,8 @@ export interface SettingsSyncResult {
   projectCount: number;
   /** Number of provider auth entries synced. */
   authCount: number;
+  /** Number of workflow setting values applied by the caller. */
+  workflowSettingsCount: number;
   /** Whether the sync was successful. */
   success: boolean;
   /** Error message if sync failed. */

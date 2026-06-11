@@ -4,6 +4,7 @@ import { request, get } from "../test-request.js";
 import { createServer } from "../server.js";
 import { resetRuntimeLogSink, setRuntimeLogSink, type RuntimeLogContext } from "../runtime-logger.js";
 import { MISSING_REMOTE_NODE_API_KEY_MESSAGE } from "../routes/register-settings-sync-helpers.js";
+import { computeSettingsDiff } from "../routes/register-settings-sync-routes.js";
 import { MOVED_SETTINGS_KEYS } from "@fusion/core";
 
 // Mock node:fs for auth.json reading
@@ -36,6 +37,7 @@ const mockGetSettingsForSync = vi.fn();
 const mockGetAuthMaterialSnapshot = vi.fn();
 const mockApplyAuthMaterialSnapshot = vi.fn();
 const mockStoreUpdateGlobalSettings = vi.fn().mockResolvedValue({});
+const mockUpdateWorkflowSettingValues = vi.fn().mockResolvedValue({});
 const mockChatStoreInit = vi.fn().mockResolvedValue(undefined);
 const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
 const mockAgentStoreGetAgent = vi.fn().mockResolvedValue(null);
@@ -90,6 +92,10 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
 // ── Mock Store ────────────────────────────────────────────────────────
 
 class MockStore extends EventEmitter {
+  workflowSettings: Record<string, Record<string, unknown>> = {
+    "builtin:coding": { workflowStepTimeoutMs: 120000 },
+  };
+
   getRootDir(): string {
     return "/tmp/fn-1821-test";
   }
@@ -127,6 +133,18 @@ class MockStore extends EventEmitter {
   async updateGlobalSettings(patch: Record<string, unknown>) {
     return mockStoreUpdateGlobalSettings(patch);
   }
+
+  listWorkflowSettingValuesForProject(): Record<string, Record<string, unknown>> {
+    return this.workflowSettings;
+  }
+
+  getWorkflowSettingsProjectId(): string {
+    return "project-local-001";
+  }
+
+  async updateWorkflowSettingValues(workflowId: string, projectId: string, patch: Record<string, unknown>) {
+    return mockUpdateWorkflowSettingValues(workflowId, projectId, patch);
+  }
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────
@@ -163,6 +181,36 @@ function createMockLocalNode(overrides: Record<string, unknown> = {}) {
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
+describe("computeSettingsDiff", () => {
+  it("diffs workflow settings per workflow while filtering moved flat keys", () => {
+    const movedKey = MOVED_SETTINGS_KEYS[0];
+    const diff = computeSettingsDiff(
+      {
+        global: { defaultProvider: "openai", [movedKey]: "remote" },
+        project: { maxConcurrent: 3, [movedKey]: 123 },
+        workflowSettings: {
+          "builtin:coding": { workflowStepTimeoutMs: 120000, reviewModel: "claude" },
+          "WF-remote": { executionModel: "gpt-5" },
+        },
+      },
+      { defaultProvider: "anthropic", [movedKey]: "local" },
+      { maxConcurrent: 2, [movedKey]: 456 },
+      {
+        "builtin:coding": { workflowStepTimeoutMs: 120000, reviewModel: "gpt-4" },
+        "WF-local": { executionModel: "claude" },
+      },
+    );
+
+    expect(diff.global).toEqual(["defaultProvider"]);
+    expect(diff.project).toEqual(["maxConcurrent"]);
+    expect(diff.workflowSettings).toEqual({
+      "builtin:coding": ["reviewModel"],
+      "WF-remote": ["executionModel"],
+      "WF-local": ["executionModel"],
+    });
+  });
+});
+
 interface RuntimeEvent {
   level: "info" | "warn" | "error";
   scope: string;
@@ -185,8 +233,9 @@ describe("Node settings sync routes", () => {
     mockGetLocalPeerInfo.mockResolvedValue({ nodeId: "node-local-001", nodeName: "Local Node" });
     mockGetSettingsSyncState.mockResolvedValue(null);
     mockUpdateSettingsSyncState.mockResolvedValue({});
-    mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0 });
+    mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0, workflowSettingsCount: 0 });
     mockStoreUpdateGlobalSettings.mockReset();
+    mockUpdateWorkflowSettingValues.mockReset().mockResolvedValue({});
     mockGetSettingsForSync.mockResolvedValue({});
     mockGetAuthMaterialSnapshot.mockReturnValue({
       version: 1,
@@ -312,6 +361,11 @@ describe("Node settings sync routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.syncedFields).toContain("defaultProvider");
+      expect(res.body.syncedFields).toContain("workflowStepTimeoutMs");
+      const [, pushOptions] = mockFetch.mock.calls[0] as [string, { body?: string }];
+      expect(JSON.parse(pushOptions.body ?? "{}").workflowSettings).toEqual({
+        "builtin:coding": { workflowStepTimeoutMs: 120000 },
+      });
       expect(mockFetch).toHaveBeenCalledWith(
         "http://192.168.1.100:3001/api/settings/sync-receive",
         expect.objectContaining({
@@ -420,6 +474,36 @@ describe("Node settings sync routes", () => {
       expect(mockApplyRemoteSettings).toHaveBeenCalled();
     });
 
+    it("applies remote workflow settings locally with last-write-wins", async () => {
+      const remoteNode = createMockRemoteNode();
+      mockGetNode.mockResolvedValue(remoteNode);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          global: { defaultProvider: "openai" },
+          project: { maxConcurrent: 3 },
+          workflowSettings: { "builtin:coding": { workflowStepTimeoutMs: 240000 } },
+        }),
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/nodes/node-remote-001/settings/pull",
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.appliedFields).toContain("workflowStepTimeoutMs");
+      expect(res.body.workflowSettingsCount).toBe(1);
+      expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
+        "builtin:coding",
+        "project-local-001",
+        { workflowStepTimeoutMs: 240000 },
+      );
+    });
+
     it("returns diff without applying when conflictResolution is manual", async () => {
       const remoteNode = createMockRemoteNode();
       mockGetNode.mockResolvedValue(remoteNode);
@@ -441,8 +525,13 @@ describe("Node settings sync routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.diff).toBeDefined();
+      expect(res.body.diff.workflowSettings).toEqual({
+        "builtin:coding": ["workflowStepTimeoutMs"],
+      });
       expect(res.body.remoteSettings).toBeDefined();
-      expect(res.body.localSettings).toBeDefined();
+      expect(res.body.localSettings.workflowSettings).toEqual({
+        "builtin:coding": { workflowStepTimeoutMs: 120000 },
+      });
       expect(mockApplyRemoteSettings).not.toHaveBeenCalled();
     });
 
@@ -716,6 +805,9 @@ describe("Node settings sync routes", () => {
       expect(res.body.lastSyncAt).toBe("2026-04-14T10:00:00.000Z");
       expect(res.body.remoteReachable).toBe(true);
       expect(res.body.diff).toBeDefined();
+      expect(res.body.diff.workflowSettings).toEqual({
+        "builtin:coding": ["workflowStepTimeoutMs"],
+      });
     });
 
     it("returns remoteReachable false with empty diff when remote is down", async () => {
@@ -1077,7 +1169,90 @@ describe("Node settings sync routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect(res.body.workflowSettingsCount).toBe(0);
       expect(mockApplyRemoteSettings).toHaveBeenCalled();
+    });
+
+    it("applies inbound workflow settings through the workflow settings write path", async () => {
+      const localNode = createMockLocalNode();
+      mockListNodes.mockResolvedValue([localNode]);
+      mockApplyRemoteSettings.mockResolvedValue({
+        success: true,
+        globalCount: 0,
+        projectCount: 0,
+        authCount: 0,
+      });
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/settings/sync-receive",
+        JSON.stringify({
+          sourceNodeId: "node-remote-001",
+          exportedAt: "2026-04-14T10:00:00.000Z",
+          checksum: "abc123",
+          version: 1,
+          workflowSettings: { "builtin:coding": { workflowStepTimeoutMs: 240000 } },
+        }),
+        { "content-type": "application/json", "Authorization": `Bearer ${localNode.apiKey}` },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.appliedFields).toContain("workflowStepTimeoutMs");
+      expect(res.body.workflowSettingsCount).toBe(1);
+      expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
+        "builtin:coding",
+        "project-local-001",
+        { workflowStepTimeoutMs: 240000 },
+      );
+    });
+
+    it("drops invalid inbound workflow settings without failing the sync", async () => {
+      const localNode = createMockLocalNode();
+      mockListNodes.mockResolvedValue([localNode]);
+      mockApplyRemoteSettings.mockResolvedValue({
+        success: true,
+        globalCount: 0,
+        projectCount: 0,
+        authCount: 0,
+      });
+      mockUpdateWorkflowSettingValues
+        .mockRejectedValueOnce(Object.assign(new Error("bad setting"), {
+          rejections: [{ settingId: "invalidSetting" }],
+        }))
+        .mockResolvedValueOnce({});
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/settings/sync-receive",
+        JSON.stringify({
+          sourceNodeId: "node-remote-001",
+          exportedAt: "2026-04-14T10:00:00.000Z",
+          checksum: "abc123",
+          version: 1,
+          workflowSettings: {
+            "builtin:coding": {
+              workflowStepTimeoutMs: 240000,
+              invalidSetting: "bad",
+            },
+          },
+        }),
+        { "content-type": "application/json", "Authorization": `Bearer ${localNode.apiKey}` },
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.appliedFields).toContain("workflowStepTimeoutMs");
+      expect(res.body.appliedFields).not.toContain("invalidSetting");
+      expect(res.body.workflowSettingsCount).toBe(1);
+      expect(mockUpdateWorkflowSettingValues).toHaveBeenNthCalledWith(
+        2,
+        "builtin:coding",
+        "project-local-001",
+        { workflowStepTimeoutMs: 240000 },
+      );
     });
 
     it("applies inbound global settings via store.updateGlobalSettings when local values are unset", async () => {
@@ -1559,6 +1734,7 @@ describe("Node settings sync routes", () => {
       expect(postedBody).toEqual(expect.objectContaining({
         global: expect.any(Object),
         projects: expect.any(Object),
+        workflowSettings: { "builtin:coding": { workflowStepTimeoutMs: 120000 } },
         exportedAt: expect.any(String),
         version: 1,
         checksum: expect.any(String),
@@ -1571,6 +1747,7 @@ describe("Node settings sync routes", () => {
         .update(JSON.stringify({
           global: postedBody.global,
           projects: postedBody.projects,
+          workflowSettings: postedBody.workflowSettings,
           exportedAt: postedBody.exportedAt,
           version: postedBody.version,
         }))
@@ -1638,7 +1815,7 @@ describe("Node settings sync routes", () => {
         expect(res.body.error).toBe(MISSING_REMOTE_NODE_API_KEY_MESSAGE);
       } else {
         expect(res.body.remoteReachable).toBe(false);
-        expect(res.body.diff).toEqual({ global: [], project: [] });
+        expect(res.body.diff).toEqual({ global: [], project: [], workflowSettings: {} });
       }
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -1704,7 +1881,7 @@ describe("Node settings sync routes", () => {
 
       const localNode = createMockLocalNode();
       mockListNodes.mockResolvedValue([localNode]);
-      mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0 });
+      mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0, workflowSettingsCount: 0 });
 
       const inboundRes = await request(
         app,
@@ -1729,7 +1906,7 @@ describe("Node settings sync routes", () => {
         project: { defaultProvider: "openai" },
       };
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(remotePayload) });
-      mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0 });
+      mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0, workflowSettingsCount: 0 });
 
       const res = await request(
         app,
@@ -1974,7 +2151,7 @@ describe("Node settings sync routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.remoteReachable).toBe(false);
       expect(res.body.actionableDenialReason).toBe("missing-remote-api-key");
-      expect(res.body.diff).toEqual({ global: [], project: [] });
+      expect(res.body.diff).toEqual({ global: [], project: [], workflowSettings: {} });
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -2233,7 +2410,7 @@ describe("Node settings sync routes", () => {
     it("accepts POST /api/settings/sync-receive with correct bearer and applies remote settings", async () => {
       const localNode = createMockLocalNode();
       mockListNodes.mockResolvedValue([localNode]);
-      mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0 });
+      mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0, workflowSettingsCount: 0 });
       const payload = { sourceNodeId: "node-remote-001", exportedAt: "2026-05-17T00:00:00.000Z", global: { theme: "dark" }, projects: { kb: { model: "gpt-5" } } };
 
       const res = await request(

@@ -1940,14 +1940,17 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   /**
    * GET /api/settings/scopes
-   * Returns settings separated by scope: { global, project }.
+   * Returns settings separated by scope: { global, project, workflowSettings }.
    * Useful for the UI to show which scope each setting comes from.
    */
   router.get("/settings/scopes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const scopes = await scopedStore.getSettingsByScopeFast();
-      res.json(scopes);
+      res.json({
+        ...scopes,
+        workflowSettings: scopedStore.listWorkflowSettingValuesForProject(),
+      });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

@@ -58,6 +58,7 @@ export async function fetchRemoteNodeProjectHealth(
 export interface NodeSettingsScopes {
   global: Record<string, unknown>;
   project: Record<string, unknown>;
+  workflowSettings?: Record<string, Record<string, unknown>>;
 }
 
 /** Result from settings push/pull operations */
@@ -66,6 +67,7 @@ export interface NodeSettingsSyncResult {
   syncedFields?: string[];
   appliedFields?: string[];
   skippedFields?: string[];
+  workflowSettingsCount?: number;
   error?: string;
 }
 
@@ -78,6 +80,7 @@ export interface NodeSettingsSyncStatus {
   diff: {
     global: string[];
     project: string[];
+    workflowSettings: Record<string, string[]>;
   };
   /** Overall auth credential sync state: "match" if credentials match between local and remote,
    *  "differs" if they differ, "not-synced" if auth sync has never been performed. */

@@ -516,7 +516,7 @@ describe("NodesView", () => {
         lastSyncDirection: "push",
         localUpdatedAt: new Date().toISOString(),
         remoteReachable: true,
-        diff: { global: [], project: [] },
+        diff: { global: [], project: [], workflowSettings: {} },
       };
 
       mockUseNodeSettingsSync.mockReturnValue({
@@ -554,7 +554,7 @@ describe("NodesView", () => {
         lastSyncDirection: "push",
         localUpdatedAt: new Date().toISOString(),
         remoteReachable: true,
-        diff: { global: ["theme"], project: [] },
+        diff: { global: ["theme"], project: [], workflowSettings: {} },
       };
 
       mockUseNodeSettingsSync.mockReturnValue({
@@ -591,7 +591,7 @@ describe("NodesView", () => {
         lastSyncDirection: "push",
         localUpdatedAt: new Date().toISOString(),
         remoteReachable: true,
-        diff: { global: [], project: [] },
+        diff: { global: [], project: [], workflowSettings: {} },
       };
 
       mockUseNodeSettingsSync.mockReturnValue({
@@ -630,7 +630,7 @@ describe("NodesView", () => {
         lastSyncDirection: "push",
         localUpdatedAt: new Date().toISOString(),
         remoteReachable: true,
-        diff: { global: [], project: [] },
+        diff: { global: [], project: [], workflowSettings: {} },
       };
 
       mockUseNodeSettingsSync.mockReturnValue({

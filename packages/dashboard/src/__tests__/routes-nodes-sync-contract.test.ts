@@ -113,6 +113,18 @@ class MockStore extends EventEmitter {
       },
     };
   }
+
+  listWorkflowSettingValuesForProject(): Record<string, Record<string, unknown>> {
+    return {};
+  }
+
+  getWorkflowSettingsProjectId(): string {
+    return "project-local-001";
+  }
+
+  async updateWorkflowSettingValues(_workflowId: string, _projectId: string, patch: Record<string, unknown>) {
+    return patch;
+  }
 }
 
 function createMockRemoteNode(overrides: Record<string, unknown> = {}) {
@@ -192,7 +204,7 @@ describe("Node settings/auth sync contract matrix", () => {
     mockGetLocalPeerInfo.mockResolvedValue({ nodeId: "node-local-001", nodeName: "Local Node" });
     mockGetSettingsSyncState.mockResolvedValue(null);
     mockUpdateSettingsSyncState.mockResolvedValue({});
-    mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0 });
+    mockApplyRemoteSettings.mockResolvedValue({ success: true, globalCount: 1, projectCount: 1, authCount: 0, workflowSettingsCount: 0 });
     mockGetSettingsForSync.mockResolvedValue({});
     mockGetAuthMaterialSnapshot.mockReturnValue({
       version: 1,
@@ -294,7 +306,7 @@ describe("Node settings/auth sync contract matrix", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.remoteReachable).toBe(false);
-    expect(res.body.diff).toEqual({ global: [], project: [] });
+    expect(res.body.diff).toEqual({ global: [], project: [], workflowSettings: {} });
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -306,7 +318,7 @@ describe("Node settings/auth sync contract matrix", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.remoteReachable).toBe(false);
-    expect(res.body.diff).toEqual({ global: [], project: [] });
+    expect(res.body.diff).toEqual({ global: [], project: [], workflowSettings: {} });
     expect(mockFetch).not.toHaveBeenCalled();
   });
 

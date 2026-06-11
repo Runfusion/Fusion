@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { useNodeSettingsSync } from "../useNodeSettingsSync";
+import { computeSyncState, useNodeSettingsSync } from "../useNodeSettingsSync";
 import * as apiNode from "../../api-node";
 import type { NodeSettingsSyncStatus, NodeSettingsSyncResult, NodeAuthSyncResult } from "../../api-node";
 
@@ -22,7 +22,7 @@ function makeSyncStatus(overrides: Partial<NodeSettingsSyncStatus> = {}): NodeSe
     lastSyncDirection: "sync",
     localUpdatedAt: "2026-04-01T00:00:00.000Z",
     remoteReachable: true,
-    diff: { global: [], project: [] },
+    diff: { global: [], project: [], workflowSettings: {} },
     ...overrides,
   };
 }
@@ -41,6 +41,35 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+describe("computeSyncState", () => {
+  it("counts workflow setting diffs in the derived diff count", () => {
+    const status = makeSyncStatus({
+      diff: {
+        global: ["theme"],
+        project: ["maxConcurrent"],
+        workflowSettings: {
+          "builtin:coding": ["workflowStepTimeoutMs", "reviewModel"],
+          "WF-123": ["executionModel"],
+        },
+      },
+    });
+
+    expect(computeSyncState(status)).toEqual({
+      syncState: "diff",
+      lastSyncAt: "2026-04-01T00:00:00.000Z",
+      diffCount: 5,
+    });
+  });
+
+  it("treats an empty workflow settings diff as synced", () => {
+    expect(computeSyncState(makeSyncStatus())).toEqual({
+      syncState: "synced",
+      lastSyncAt: "2026-04-01T00:00:00.000Z",
+      diffCount: 0,
+    });
+  });
+});
 
 describe("useNodeSettingsSync", () => {
   beforeEach(() => {

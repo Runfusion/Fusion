@@ -32,7 +32,9 @@ export interface ComputedNodeSyncStatus {
  */
 export function computeSyncState(status: NodeSettingsSyncStatus): ComputedNodeSyncStatus {
   const { lastSyncAt, remoteReachable, diff } = status;
-  const diffCount = diff.global.length + diff.project.length;
+  const workflowDiffCount = Object.values(diff.workflowSettings ?? {})
+    .reduce((total, keys) => total + keys.length, 0);
+  const diffCount = diff.global.length + diff.project.length + workflowDiffCount;
 
   if (lastSyncAt === null) {
     return { syncState: "never-synced", lastSyncAt, diffCount: 0 };

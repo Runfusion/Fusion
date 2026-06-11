@@ -405,7 +405,7 @@ describe("api-node", () => {
         lastSyncDirection: "sync",
         localUpdatedAt: "2026-04-01T00:00:00.000Z",
         remoteReachable: true,
-        diff: { global: ["theme"], project: [] },
+        diff: { global: ["theme"], project: [], workflowSettings: {} },
       };
       mockApi.mockResolvedValueOnce(mockStatus);
 
@@ -422,7 +422,7 @@ describe("api-node", () => {
         lastSyncDirection: null,
         localUpdatedAt: "2026-04-01T00:00:00.000Z",
         remoteReachable: false,
-        diff: { global: [], project: [] },
+        diff: { global: [], project: [], workflowSettings: {} },
       });
 
       await fetchNodeSettingsSyncStatus("node/abc+def");
