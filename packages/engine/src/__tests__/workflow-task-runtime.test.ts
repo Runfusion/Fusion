@@ -32,7 +32,7 @@ function recordingPrimitives(
   overrides: Partial<Record<"prepare" | "execute" | "workflowStep", WorkflowNodeResult>> & {
     prepareData?: PreparedWorktree | null;
   } = {},
-  observed: { prepared?: PreparedWorktree } = {},
+  observed: { prepared?: PreparedWorktree; mergeAttempt?: number } = {},
 ): WorkflowRuntimePrimitives {
   const prepared: PreparedWorktree = { worktreePath: "/tmp/fusion-worktree" };
   return {
@@ -92,8 +92,9 @@ function recordingPrimitives(
       calls.push("schedule");
       return { outcome: "success" };
     },
-    requestMerge: async () => {
+    requestMerge: async (ctx) => {
       calls.push("merge");
+      observed.mergeAttempt = ctx.node.attempt;
       return { outcome: "success", value: "merged", data: { status: "merged" } };
     },
     abortRun: async () => ({ outcome: "success" }),
@@ -498,6 +499,81 @@ describe("WorkflowTaskRuntime", () => {
         state: "manual-required",
         patch: { leaseOwner: null, leaseExpiresAt: null, lastError: "manual-required" },
       },
+    ]);
+  });
+
+  it("returns failed without persisting when work item store transitions are unwired", async () => {
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+    const workItem = {
+      id: "work-unwired",
+      runId: "run-unwired",
+      taskId: task.id,
+      nodeId: "merge-gate",
+      kind: "merge",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+
+    await expect(runtime.runWorkItem(workItem, flagOff)).resolves.toEqual(expect.objectContaining({
+      disposition: "failed",
+      reason: "workflow-work-item-store-unwired",
+    }));
+  });
+
+  it("threads work item attempt into merge primitive context", async () => {
+    const observed: { mergeAttempt?: number } = {};
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-merge-attempt",
+      runId: "run-merge-attempt",
+      taskId: task.id,
+      nodeId: "merge-attempt",
+      kind: "merge",
+      state: "running",
+      attempt: 3,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives([], {}, observed),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await runtime.runWorkItem(workItem, flagOff);
+
+    expect(result.disposition).toBe("completed");
+    expect(result.context["workflow:work-item-attempt"]).toBe(3);
+    expect(observed.mergeAttempt).toBe(3);
+    expect(transitions).toEqual([
+      expect.objectContaining({ id: "work-merge-attempt", state: "succeeded" }),
     ]);
   });
 

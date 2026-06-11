@@ -125,11 +125,19 @@ export class WorkflowTaskRuntime {
     workItem: WorkflowWorkItem,
     settings: (Pick<Settings, "experimentalFeatures"> & Partial<Settings>) | undefined,
   ): Promise<WorkflowTaskRuntimeResult> {
+    if (!this.deps.store.getTask || !this.deps.store.transitionWorkflowWorkItem) {
+      const reason = "workflow-work-item-store-unwired";
+      this.emit("terminal", workItem.taskId, `work-item:failed:${reason}`);
+      return {
+        disposition: "failed",
+        outcome: "failure",
+        visitedNodeIds: [],
+        context: {},
+        reason,
+      };
+    }
     if (workItem.state !== "running") {
       return this.failWorkItem(workItem, `workflow-work-item-not-running:${workItem.state}`);
-    }
-    if (!this.deps.store.getTask || !this.deps.store.transitionWorkflowWorkItem) {
-      return this.failWorkItem(workItem, "workflow-work-item-store-unwired");
     }
 
     let task: TaskDetail;
@@ -163,6 +171,7 @@ export class WorkflowTaskRuntime {
     let context: Record<string, unknown> = {
       "workflow:work-item-id": workItem.id,
       "workflow:work-item-kind": workItem.kind,
+      "workflow:work-item-attempt": workItem.attempt,
     };
 
     try {
@@ -204,7 +213,7 @@ export class WorkflowTaskRuntime {
   }
 
   private failWorkItem(workItem: WorkflowWorkItem, reason: string): WorkflowTaskRuntimeResult {
-    this.deps.store.transitionWorkflowWorkItem?.(workItem.id, "failed", {
+    this.deps.store.transitionWorkflowWorkItem!(workItem.id, "failed", {
       leaseOwner: null,
       leaseExpiresAt: null,
       lastError: reason,

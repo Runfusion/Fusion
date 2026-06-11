@@ -935,7 +935,10 @@ export function createDefaultNodeHandlers(
     },
     "merge-attempt": async (_node, ctx) => {
       if (!deps?.primitives) return { outcome: "failure", value: "merge-primitives-unwired" };
-      const result = await deps.primitives.requestMerge(primitiveContextForNode(_node, ctx.task, ctx.context), ctx.task);
+      const attempt = typeof ctx.context["workflow:work-item-attempt"] === "number"
+        ? ctx.context["workflow:work-item-attempt"]
+        : undefined;
+      const result = await deps.primitives.requestMerge(primitiveContextForNode(_node, ctx.task, ctx.context, attempt), ctx.task);
       return { outcome: result.outcome, value: result.value, contextPatch: result.contextPatch };
     },
     "manual-merge-hold": async () => ({ outcome: "failure", value: "manual-required" }),
