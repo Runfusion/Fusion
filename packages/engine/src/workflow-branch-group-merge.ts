@@ -19,6 +19,14 @@ export function decideBranchGroupMemberIntegration(input: BranchGroupWorkflowInp
   const assignmentMode = input.task.branchContext?.assignmentMode;
   const isSharedMember = assignmentMode === "shared";
   if (!isSharedMember) {
+    if (input.settings.autoMerge === false) {
+      return {
+        stage: "member-integration",
+        allowed: false,
+        outcome: "manual-required",
+        reason: "global-auto-merge-disabled",
+      };
+    }
     return { stage: "member-integration", allowed: true, outcome: "success" };
   }
   return { stage: "member-integration", allowed: true, outcome: "success" };

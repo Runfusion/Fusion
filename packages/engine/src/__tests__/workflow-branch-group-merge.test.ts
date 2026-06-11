@@ -16,6 +16,18 @@ describe("workflow branch-group merge subgraphs", () => {
     });
   });
 
+  it("gates non-shared member integration when global auto-merge is off", () => {
+    expect(decideBranchGroupMemberIntegration({
+      task: { id: "FN-MEMBER", branchContext: { assignmentMode: "exclusive", branchName: "feature/fn" } as any },
+      settings: { autoMerge: false },
+    })).toEqual({
+      stage: "member-integration",
+      allowed: false,
+      outcome: "manual-required",
+      reason: "global-auto-merge-disabled",
+    });
+  });
+
   it("keeps group promotion gated by global and group auto-merge", () => {
     const input = {
       task: { id: "FN-GROUP", branchContext: { assignmentMode: "shared", branchName: "shared/fn" } as any },
