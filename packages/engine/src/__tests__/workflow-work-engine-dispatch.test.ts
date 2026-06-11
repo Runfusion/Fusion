@@ -8,9 +8,11 @@ import {
   workflowExtensionRegistryId,
   type Task,
   type TaskDetail,
+  type WorkflowWorkItem,
   type WorkflowIr,
 } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
+import { claimDueWorkflowWorkItem } from "../workflow-work-scheduler.js";
 
 describe("workflow work-engine dispatch", () => {
   afterEach(() => {
@@ -80,5 +82,73 @@ describe("workflow work-engine dispatch", () => {
       metadata: expect.objectContaining({ extensionId: extensionKey, pluginId: "engine-plugin" }),
     }));
     expect(store.updateTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("workflow work scheduler claims", () => {
+  function workItem(input: Partial<WorkflowWorkItem> & Pick<WorkflowWorkItem, "id" | "taskId" | "nodeId">): WorkflowWorkItem {
+    return {
+      runId: "run-1",
+      kind: "task",
+      state: "runnable",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+      ...input,
+    };
+  }
+
+  it("claims the first due workflow work item without reading task columns", () => {
+    const item = workItem({ id: "work-1", taskId: "FN-1", nodeId: "node-a" });
+    const store = {
+      listDueWorkflowWorkItems: vi.fn(() => [item]),
+      acquireWorkflowWorkItemLease: vi.fn(() => ({ ...item, state: "running", leaseOwner: "scheduler-a" })),
+    };
+
+    const dispatch = claimDueWorkflowWorkItem(store, {
+      now: "2026-06-09T00:00:00.000Z",
+      leaseOwner: "scheduler-a",
+      leaseDurationMs: 60_000,
+      kinds: ["task"],
+    });
+
+    expect(store.listDueWorkflowWorkItems).toHaveBeenCalledWith({
+      now: "2026-06-09T00:00:00.000Z",
+      limit: 25,
+      kinds: ["task"],
+    });
+    expect(store.acquireWorkflowWorkItemLease).toHaveBeenCalledWith("work-1", "scheduler-a", {
+      now: "2026-06-09T00:00:00.000Z",
+      leaseDurationMs: 60_000,
+    });
+    expect(dispatch).toMatchObject({
+      runId: "run-1",
+      taskId: "FN-1",
+      nodeId: "node-a",
+      workItem: { state: "running", leaseOwner: "scheduler-a" },
+    });
+  });
+
+  it("skips contenders whose lease was already acquired", () => {
+    const first = workItem({ id: "work-1", taskId: "FN-1", nodeId: "node-a" });
+    const second = workItem({ id: "work-2", taskId: "FN-2", nodeId: "node-b" });
+    const store = {
+      listDueWorkflowWorkItems: vi.fn(() => [first, second]),
+      acquireWorkflowWorkItemLease: vi.fn((id: string) => (id === "work-2" ? { ...second, state: "running" } : null)),
+    };
+
+    const dispatch = claimDueWorkflowWorkItem(store, {
+      now: "2026-06-09T00:00:00.000Z",
+      leaseOwner: "scheduler-a",
+      leaseDurationMs: 60_000,
+    });
+
+    expect(dispatch?.workItem.id).toBe("work-2");
+    expect(store.acquireWorkflowWorkItemLease).toHaveBeenCalledTimes(2);
   });
 });

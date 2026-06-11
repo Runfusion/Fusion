@@ -141,6 +141,12 @@ export {
 } from "./workflow-task-runtime.js";
 export { collectTaskEvaluationEvidence } from "./evaluator-evidence.js";
 export { Scheduler, type SchedulerOptions } from "./scheduler.js";
+export {
+  claimDueWorkflowWorkItem,
+  type ClaimWorkflowWorkOptions,
+  type WorkflowWorkDispatch,
+  type WorkflowWorkSchedulerStore,
+} from "./workflow-work-scheduler.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
