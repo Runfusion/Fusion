@@ -119,6 +119,7 @@ export {
   GitRepositoryInitializationError,
 } from "./git-repository.js";
 export {
+  hasAuthoritativeWorkflowWork,
   projectWorkflowWorkStatus,
   type WorkflowWorkProjection,
   type WorkflowWorkProjectionStatus,

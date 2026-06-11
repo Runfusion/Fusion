@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectWorkflowWorkStatus } from "../workflow-work-projection.js";
+import { hasAuthoritativeWorkflowWork, projectWorkflowWorkStatus } from "../workflow-work-projection.js";
 import type { Task, WorkflowWorkItem } from "../types.js";
 
 const task = { id: "FN-PROJECT", mergeRetries: 4, status: "legacy status" } as Task;
@@ -76,5 +76,35 @@ describe("workflow work projection", () => {
       source: "legacy",
       attempt: 0,
     }));
+  });
+
+  it("treats legacy retry counters as display-only when workflow work exists", () => {
+    const workflowItems = [
+      item({ id: "work-1", kind: "retry", state: "retrying", attempt: 1, retryAfter: "2026-06-09T00:05:00.000Z" }),
+    ];
+
+    expect(hasAuthoritativeWorkflowWork(workflowItems)).toBe(true);
+    expect(projectWorkflowWorkStatus({ ...task, mergeRetries: 99 }, workflowItems)).toEqual(expect.objectContaining({
+      source: "workflow",
+      status: "retrying",
+      attempt: 1,
+      retryAfter: "2026-06-09T00:05:00.000Z",
+    }));
+  });
+
+  it("keeps authoritative gate aligned with projection source selection", () => {
+    expect(hasAuthoritativeWorkflowWork([
+      item({ id: "cancelled", kind: "merge", state: "cancelled" }),
+    ])).toBe(false);
+    expect(projectWorkflowWorkStatus(task, [
+      item({ id: "cancelled", kind: "merge", state: "cancelled" }),
+    ])).toEqual(expect.objectContaining({ source: "legacy" }));
+
+    expect(hasAuthoritativeWorkflowWork([
+      item({ id: "task-work", kind: "task", state: "runnable" }),
+    ])).toBe(true);
+    expect(projectWorkflowWorkStatus(task, [
+      item({ id: "task-work", kind: "task", state: "runnable" }),
+    ])).toEqual(expect.objectContaining({ source: "workflow", workItemId: "task-work" }));
   });
 });
