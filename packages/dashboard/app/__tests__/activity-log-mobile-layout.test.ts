@@ -42,12 +42,18 @@ describe("activity-log-mobile-layout.css", () => {
 
   // ── Modal sizing ────────────────────────────────────────────────────
 
-  it("uses modal-lg base class for consistent wide sizing", () => {
-    // The activity-log-modal should NOT set its own max-width; modal-lg handles width
+  it("keeps desktop modal width within the viewport", () => {
     const modalBlock = cssContent.match(/\.activity-log-modal\s*\{[^}]*\}/)?.[0];
     expect(modalBlock).toBeTruthy();
-    // Should NOT contain max-width (handled by modal-lg base class)
-    expect(modalBlock).not.toMatch(/max-width:\s*\d+px/);
+    expect(modalBlock).toContain("width: min(95vw, 640px);");
+    expect(modalBlock).toContain("max-width: 95vw;");
+  });
+
+  it("keeps desktop modal height inside the visible viewport", () => {
+    const modalBlock = cssContent.match(/\.activity-log-modal\s*\{[^}]*\}/)?.[0];
+    expect(modalBlock).toBeTruthy();
+    expect(modalBlock).toMatch(/max-height:\s*calc\(100dvh - var\(--overlay-padding-top,\s*10vh\) - 16px\);/);
+    expect(modalBlock).toContain("overflow: hidden;");
   });
 
   // ── Close button ────────────────────────────────────────────────────
