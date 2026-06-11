@@ -1942,6 +1942,38 @@ describe("SelfHealingManager", () => {
       mgr.stop();
     });
 
+    it("still re-enqueues when workflow recovery event publication fails", async () => {
+      const transientStore = setupTransientRecoveryStore({
+        tasks: [
+          {
+            id: "FN-5629",
+            column: "in-review",
+            paused: false,
+            status: "failed",
+            mergeRetries: 3,
+            error: "Merge handoff refused (lease-handoff-failed): target-not-queued",
+            mergeDetails: undefined,
+          },
+        ],
+      });
+      Object.assign(transientStore, {
+        upsertWorkflowWorkItem: vi.fn(() => {
+          throw new Error("terminal recovery item");
+        }),
+      });
+      const requeueForAutoMerge = vi.fn();
+      const mgr = new SelfHealingManager(transientStore, {
+        rootDir: "/tmp/test-project",
+        requeueForAutoMerge,
+      });
+
+      const recovered = await mgr.recoverTransientMergeFailures();
+
+      expect(recovered).toBe(1);
+      expect(requeueForAutoMerge).toHaveBeenCalledWith("FN-5629");
+      mgr.stop();
+    });
+
     it("recovers same-SHA spurious concurrent-advance failures (pre-FN-5627 legacy)", async () => {
       const transientStore = setupTransientRecoveryStore({
         tasks: [
