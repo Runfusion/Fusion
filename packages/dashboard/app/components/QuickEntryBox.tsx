@@ -105,6 +105,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const touchButtonRef = useRef<HTMLButtonElement | null>(null);
+  const suppressRefocusRef = useRef(false);
   const justResetRef = useRef(false);
   const previousProjectIdRef = useRef(projectId);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -736,6 +737,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, []);
 
   const handleFocus = useCallback(() => {
+    if (suppressRefocusRef.current) {
+      textareaRef.current?.blur();
+      return;
+    }
+
     // Auto-expand on focus when autoExpand prop is true (default)
     if (autoExpand) {
       setIsExpanded(true);
@@ -1487,15 +1493,24 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               if (!(target instanceof Element)) return;
               const button = target.closest("button");
               if (button && !button.disabled) {
-                e.preventDefault();
+                if (document.activeElement === textareaRef.current) {
+                  e.preventDefault();
+                }
                 touchButtonRef.current = button;
+                suppressRefocusRef.current = true;
               }
             }}
             onTouchEnd={() => {
               touchButtonRef.current = null;
+              window.setTimeout(() => {
+                suppressRefocusRef.current = false;
+              }, 150);
             }}
             onTouchCancel={() => {
               touchButtonRef.current = null;
+              window.setTimeout(() => {
+                suppressRefocusRef.current = false;
+              }, 150);
             }}
           >
             <button
