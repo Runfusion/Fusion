@@ -170,6 +170,13 @@ export {
   type WorkflowRecoveryEventKind,
   type WorkflowRecoveryEventStore,
 } from "./workflow-recovery-events.js";
+export {
+  decideBranchGroupMemberIntegration,
+  decideBranchGroupPromotion,
+  type BranchGroupWorkflowDecision,
+  type BranchGroupWorkflowInput,
+  type BranchGroupWorkflowStage,
+} from "./workflow-branch-group-merge.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
