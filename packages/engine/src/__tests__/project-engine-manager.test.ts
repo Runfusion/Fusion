@@ -550,7 +550,7 @@ describe("ProjectEngineManager", () => {
     // Flake under full reliability-suite load: 30s timeout, but passes in ~46ms
     // standalone. Setinterval-driven reconciliation appears to race with vitest
     // fake-timer contention when other reliability-pool files are co-resident.
-    it.skip("retries failed project starts on subsequent reconciliation ticks", async () => {
+    it("retries failed project starts on subsequent reconciliation ticks", async () => {
       // Track how many times start() is called to fail only the FIRST set
       let startCallCount = 0;
       const manager = new ProjectEngineManager(centralCore);

@@ -157,7 +157,7 @@ describe("assertSquashOverlapsFileScope", () => {
   // (which reports staged files unrelated to the test scope and trips the
   // FileScopeViolationError). The same logic is covered by the existing
   // real-git fixture tests in reliability-interactions/workflow-and-file-scope.
-  it.skip("accepts declared scope as a single changeset file when staged matches exactly", async () => {
+  it("accepts declared scope as a single changeset file when staged matches exactly", async () => {
     const store = createInvariantStore([".changeset/fn-4767-pr-flow.md"]);
     mockStagedFiles([".changeset/fn-4767-pr-flow.md"]);
 
@@ -170,7 +170,7 @@ describe("assertSquashOverlapsFileScope", () => {
   });
 
   // Skipped: same flake mode as the test above.
-  it.skip("accepts declared scope as a changeset glob when staged file matches", async () => {
+  it("accepts declared scope as a changeset glob when staged file matches", async () => {
     const store = createInvariantStore([".changeset/*.md"]);
     mockStagedFiles([".changeset/fn-4767-pr-flow.md"]);
 
