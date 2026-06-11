@@ -26,6 +26,13 @@ pnpm build             # build workspace packages (excludes desktop/mobile)
 pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (NOT the merge gate)
 ```
 
+Workflow-owned merge/retry/recovery migration guard tests live in
+`packages/engine/src/__tests__/workflow-*-deletion.test.ts` and
+`packages/engine/src/__tests__/workflow-cutover-matrix.test.ts`. Run the relevant
+targeted file when touching `workflow-work-scheduler.ts`,
+`workflow-work-processor.ts`, `workflow-recovery-events.ts`, or workflow merge
+node capability code.
+
 `pnpm test:full` runs each package's default test script with capped worker fanout (`FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=2 pnpm -r --workspace-concurrency=2 test`). Do not casually raise worker counts; dashboard/jsdom and integration-heavy packages destabilize when oversubscribed. Use `VITEST_MAX_WORKERS=<n>` only for targeted package-level investigation.
 
 ## Fresh-worktree dist bootstrap

@@ -85,6 +85,9 @@ The authoritative task lifecycle runtime. It resolves a Task to workflow IR, wal
 ### Runtime Primitive
 A named, injected operation a workflow node can call to perform side effects without depending on `executor.ts` lifecycle branches. Examples include planning session, coding session, step execution/reset, review, verification, workflow step, transition, merge request, abort, and audit. Primitives are the boundary between workflow policy and engine substrate.
 
+### Workflow Work Item
+A persisted unit of workflow-owned work that a scheduler can claim and run independently of the Task's board state. It carries enough identity, lifecycle state, retry timing, ownership, and diagnostic facts to resume or observe workflow lifecycle work without re-entering legacy queues.
+
 ### Built-in Lifecycle Node
 A node in a built-in workflow that expresses default Fusion behavior, such as planning, execute, review, merge, parse-steps, step-review, or PR lifecycle actions. Built-in lifecycle nodes are the compatibility layer for existing behavior: changing default execution means changing the built-in workflow and its primitive wiring, not adding hidden imperative branches.
 
@@ -143,6 +146,9 @@ The post-merge step that rebases locally-landed merge commits onto the upstream 
 
 ### Contamination
 Foreign commits — work attributed to other Tasks — appearing on a Task's branch beyond its recorded Fork point. Contamination checks must compute their reference base fresh from the Integration branch rather than reuse the Task's stored base, since a stale stored base makes every legitimately merged commit look foreign.
+
+### Stacked PR
+A pull request whose branch intentionally bases on another open pull request branch rather than directly on the Integration branch. A Stacked PR inherits the behavioral contract of every earlier branch in the stack, so fixes to shared invariants must land on the earliest affected branch and be rebased forward through descendants.
 
 ## Chat
 

@@ -19,6 +19,12 @@ At a high level, Fusion is split into:
 - **Mobile shell** (`@fusion/mobile`)
 - **Terminal dashboard** (part of `@runfusion/fusion` — see `packages/cli/src/commands/dashboard-tui/`)
 
+The workflow-owned merge runtime is documented in
+[`workflow-owned-merge-runtime.md`](./workflow-owned-merge-runtime.md). It covers
+the durable work-item store, merge/retry/recovery node capabilities, and cutover
+guards that keep scheduler/project-engine/self-healing policy out of the new
+workflow-owned path.
+
 Native shells expose a shared host-neutral bridge at `window.fusionShell` for first-run shell onboarding, connection profile persistence, and active shell mode/profile state. The dashboard consumes `window.fusionShell` when present and degrades cleanly in plain web/PWA mode.
 
 The dashboard also has a canonical host-context bootstrap layer (`packages/dashboard/app/shell-host.ts`) that normalizes launch metadata into one discriminated union:
