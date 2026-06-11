@@ -2,6 +2,58 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.41.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.41.0
+- @fusion/engine@0.41.0
+- @fusion/i18n@0.39.3
+- @fusion-plugin-examples/cli-printing-press@0.1.20
+- @fusion-plugin-examples/compound-engineering@0.1.3
+- @fusion-plugin-examples/dependency-graph@0.1.34
+- @fusion-plugin-examples/roadmap@0.1.22
+- @fusion-plugin-examples/cursor-runtime@0.1.22
+- @fusion-plugin-examples/droid-runtime@0.1.29
+- @fusion-plugin-examples/hermes-runtime@0.2.53
+- @fusion-plugin-examples/openclaw-runtime@0.2.53
+- @fusion-plugin-examples/paperclip-runtime@0.2.53
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- @fusion/core@0.41.0
+- @fusion/dashboard@0.41.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.41.0
+- @fusion/pi-claude-cli@0.41.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.41.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 4151a19: Bump `@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai` from `^0.78.0` to `^0.79.1`. This adds **Claude Fable 5** (`claude-fable-5`) model support on the Anthropic and Amazon Bedrock providers, with adaptive thinking and `xhigh` effort. Fable now appears automatically in the registry-driven model picker for users with Anthropic (or Claude CLI) auth configured. See the upstream pi coding agent changelog for [`0.79.1` (2026-06-09)](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md).
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [4151a19]
+  - @runfusion/fusion@0.41.0
+
 ## 0.40.1
 
 ### @fusion/dashboard
@@ -8648,6 +8700,14 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.3
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.41.0
+
 ## 0.39.2
 
 ### @fusion/i18n
@@ -8663,6 +8723,14 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.29
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.29
 
 ## 0.11.28
 
