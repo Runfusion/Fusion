@@ -118,6 +118,11 @@ export {
   ensureGitRepositoryForProjectPath,
   GitRepositoryInitializationError,
 } from "./git-repository.js";
+export {
+  projectWorkflowWorkStatus,
+  type WorkflowWorkProjection,
+  type WorkflowWorkProjectionStatus,
+} from "./workflow-work-projection.js";
 export type {
   GitRepositoryCommandResult,
   GitRepositoryCommandRunner,
