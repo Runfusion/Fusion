@@ -164,6 +164,12 @@ export {
   type WorkflowRetryPolicyInput,
   type WorkflowRetryState,
 } from "./workflow-node-retry-policy.js";
+export {
+  publishWorkflowRecoveryEvent,
+  type WorkflowRecoveryEventInput,
+  type WorkflowRecoveryEventKind,
+  type WorkflowRecoveryEventStore,
+} from "./workflow-recovery-events.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
