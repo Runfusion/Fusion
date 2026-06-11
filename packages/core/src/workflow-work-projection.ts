@@ -60,7 +60,7 @@ export function projectWorkflowWorkStatus(
 }
 
 export function hasAuthoritativeWorkflowWork(workItems: WorkflowWorkItem[]): boolean {
-  return workItems.some((item) => item.kind === "merge" || item.kind === "retry" || item.kind === "manual-hold" || item.kind === "recovery");
+  return workItems.some((item) => item.state !== "cancelled");
 }
 
 function workflowProjection(item: WorkflowWorkItem, status: WorkflowWorkProjectionStatus): WorkflowWorkProjection {

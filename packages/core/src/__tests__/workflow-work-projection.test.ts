@@ -91,4 +91,20 @@ describe("workflow work projection", () => {
       retryAfter: "2026-06-09T00:05:00.000Z",
     }));
   });
+
+  it("keeps authoritative gate aligned with projection source selection", () => {
+    expect(hasAuthoritativeWorkflowWork([
+      item({ id: "cancelled", kind: "merge", state: "cancelled" }),
+    ])).toBe(false);
+    expect(projectWorkflowWorkStatus(task, [
+      item({ id: "cancelled", kind: "merge", state: "cancelled" }),
+    ])).toEqual(expect.objectContaining({ source: "legacy" }));
+
+    expect(hasAuthoritativeWorkflowWork([
+      item({ id: "task-work", kind: "task", state: "runnable" }),
+    ])).toBe(true);
+    expect(projectWorkflowWorkStatus(task, [
+      item({ id: "task-work", kind: "task", state: "runnable" }),
+    ])).toEqual(expect.objectContaining({ source: "workflow", workItemId: "task-work" }));
+  });
 });
