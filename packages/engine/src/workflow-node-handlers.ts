@@ -10,6 +10,7 @@ import {
   type WorkflowRuntimePrimitives,
 } from "./runtime-primitives.js";
 import { runWorkflowMergeAttemptNode } from "./workflow-merge-nodes.js";
+import { nextWorkflowRetryState, workflowRetryContextPatch } from "./workflow-node-retry-policy.js";
 
 export type WorkflowSeamName =
   | "planning"
@@ -946,7 +947,25 @@ export function createDefaultNodeHandlers(
       );
     },
     "manual-merge-hold": async () => ({ outcome: "failure", value: "manual-required" }),
-    "retry-backoff": async () => ({ outcome: "success" }),
+    "retry-backoff": async (node, ctx) => {
+      const retry = nextWorkflowRetryState({
+        runId: typeof ctx.context["workflow:run-id"] === "string" ? ctx.context["workflow:run-id"] : ctx.task.id,
+        taskId: ctx.task.id,
+        nodeId: node.id,
+        attempt: typeof ctx.context[`workflow:retry:${node.id}:attempt`] === "number"
+          ? ctx.context[`workflow:retry:${node.id}:attempt`] as number
+          : 0,
+        maxAttempts: typeof node.config?.maxAttempts === "number" ? node.config.maxAttempts : 3,
+        baseDelayMs: typeof node.config?.baseDelayMs === "number" ? node.config.baseDelayMs : undefined,
+        now: typeof ctx.context["workflow:now"] === "string" ? ctx.context["workflow:now"] : undefined,
+        lastError: typeof ctx.context["workflow:last-error"] === "string" ? ctx.context["workflow:last-error"] : null,
+      });
+      return {
+        outcome: retry.exhausted ? "failure" : "success",
+        value: retry.exhausted ? "retry-exhausted" : "retry-scheduled",
+        contextPatch: workflowRetryContextPatch(retry),
+      };
+    },
     "recovery-router": async (_node, ctx) => ({
       outcome: "success",
       value: typeof ctx.context.recoveryOutcome === "string" ? ctx.context.recoveryOutcome : "wake-merge",

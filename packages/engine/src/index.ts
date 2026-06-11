@@ -158,6 +158,12 @@ export {
   type WorkflowWorkProcessorOptions,
   type WorkflowWorkProcessorResult,
 } from "./workflow-work-processor.js";
+export {
+  nextWorkflowRetryState,
+  workflowRetryContextPatch,
+  type WorkflowRetryPolicyInput,
+  type WorkflowRetryState,
+} from "./workflow-node-retry-policy.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
