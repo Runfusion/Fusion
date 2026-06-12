@@ -180,6 +180,8 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     archiveTaskAndCleanup: vi.fn().mockResolvedValue({} as Task),
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
+    parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+    getCompletionHandoffAcceptedMarker: vi.fn().mockReturnValue(null),
     createTask: vi.fn().mockResolvedValue({ id: "FN-RESCUE", lineageId: "lin-rescue" }),
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getRunAuditEvents: vi.fn().mockReturnValue([]),
@@ -8353,7 +8355,7 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
       const files = readdirSync(recoveryDir);
       const patchName = files.find((entry) => entry.startsWith("fn-504-") && entry.endsWith(".patch"));
       expect(patchName).toBeTruthy();
-      expect(existsSync(join(recoveryDir, patchName ?? ""))).toBe(true);
+      expect(files).toContain(patchName);
       expect(mockedExecSync).toHaveBeenCalledWith("git diff HEAD --binary", expect.any(Object));
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
@@ -9008,6 +9010,174 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     expect(result).toBe(0);
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-NOOP", "todo", expect.anything());
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:finalize-no-op-review-no-action" }));
+  });
+
+  describe("reconcileDependencyBlockingLeases — FN-6292", () => {
+    const makeTask = (overrides: Partial<Task>): Task => ({
+      id: "FN-T",
+      description: "test",
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-06-12T00:00:00.000Z",
+      updatedAt: "2026-06-12T00:00:00.000Z",
+      prompt: "",
+      ...overrides,
+    } as Task);
+
+    const setup = (initialTasks: Task[], scopes: Record<string, string[]>, settings: Partial<Settings> = {}) => {
+      const tasks = new Map(initialTasks.map((task) => [task.id, task]));
+      const store = createMockStore({
+        getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 1_000, ...settings } as any),
+        listTasks: vi.fn(async () => [...tasks.values()]),
+        parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? []),
+        moveTask: vi.fn(async (taskId: string, column: Task["column"]) => {
+          const current = tasks.get(taskId);
+          if (!current) throw new Error(`missing ${taskId}`);
+          const updated = { ...current, column } as Task;
+          tasks.set(taskId, updated);
+          return updated;
+        }),
+        updateTask: vi.fn(async (taskId: string, updates: Partial<Task>) => {
+          const current = tasks.get(taskId);
+          if (!current) throw new Error(`missing ${taskId}`);
+          const updated = { ...current, ...updates } as Task;
+          if (updates.overlapBlockedBy === null) updated.overlapBlockedBy = undefined;
+          tasks.set(taskId, updated);
+          return updated;
+        }),
+      });
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      return { store, manager, tasks };
+    };
+
+    it("rebounds a stale dependency-blocking lease and is idempotent", async () => {
+      const { store, manager, tasks } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"], worktree: "/tmp/wt-h" }),
+        makeTask({ id: "FN-D", column: "todo", status: "queued", overlapBlockedBy: "FN-H" }),
+      ], {
+        "FN-H": ["packages/engine/src/scheduler.ts"],
+        "FN-D": ["packages/engine/src/scheduler.ts"],
+      });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test", metadata: {} });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H", "todo", expect.objectContaining({
+        preserveProgress: true,
+        preserveWorktree: true,
+        preserveResumeState: true,
+        moveSource: "engine",
+        recoveryRehome: true,
+      }));
+      expect(tasks.get("FN-H")?.userPaused).not.toBe(true);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
+      expect(store.logEntry).toHaveBeenCalledWith("FN-H", expect.stringContaining("FN-6292"));
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-dependency-blocking-lease",
+        target: "FN-H",
+      }));
+
+      vi.clearAllMocks();
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      manager.stop();
+    });
+
+    it("rebounds an overlapping todo dependency even before a stale blocker marker is stamped", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
+        makeTask({ id: "FN-D", column: "todo" }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["a.ts"] });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test", metadata: {} });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H", "todo", expect.objectContaining({ moveSource: "engine", recoveryRehome: true }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
+      manager.stop();
+    });
+
+    it("does not rebound met dependencies", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-D", column: "done" }),
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["a.ts"] });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, metadata: {} });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      manager.stop();
+    });
+
+    it("does not rebound non-overlapping unmet dependencies without a stale blocker marker", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
+        makeTask({ id: "FN-D", column: "todo" }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["b.ts"] });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, metadata: {} });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      manager.stop();
+    });
+
+    it.each([{ userPaused: true }, { paused: true }])("does not rebound operator-paused holders: %o", async (pauseState) => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"], ...pauseState }),
+        makeTask({ id: "FN-D", column: "todo", overlapBlockedBy: "FN-H" }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["a.ts"] });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, metadata: {} });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      manager.stop();
+    });
+
+    it("uses merge-shadow dependency marker options during deadlock scans", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
+        makeTask({ id: "FN-D", column: "todo", overlapBlockedBy: "FN-H" }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["a.ts"] }, { mergeRequestContractShadowEnabled: true });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: false, stalenessMs: 0, reason: "test", metadata: {} });
+      vi.mocked(store.getCompletionHandoffAcceptedMarker as any).mockReturnValue({ acceptedAt: "2026-06-12T00:00:00.000Z" });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.getCompletionHandoffAcceptedMarker).toHaveBeenCalledWith("FN-D");
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-dependency-blocking-lease-no-action",
+        target: "FN-H",
+      }));
+      manager.stop();
+    });
+
+    it.each([{ globalPause: true }, { enginePaused: true }])("short-circuits while paused: %o", async (pausedSettings) => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
+        makeTask({ id: "FN-D", column: "todo", overlapBlockedBy: "FN-H" }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["a.ts"] }, pausedSettings);
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.listTasks).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+      manager.stop();
+    });
+
+    it("emits no-action audit and does not rebound when triple-proof fails", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
+        makeTask({ id: "FN-D", column: "todo", overlapBlockedBy: "FN-H" }),
+      ], { "FN-H": ["a.ts"], "FN-D": ["a.ts"] });
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: false, stalenessMs: 0, reason: "active", metadata: { reason: "active" } });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-dependency-blocking-lease-no-action",
+        target: "FN-H",
+      }));
+      manager.stop();
+    });
   });
 
 });

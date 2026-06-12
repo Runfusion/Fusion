@@ -65,6 +65,7 @@ import {
 } from "./notifier.js";
 import type { GhostBugDecision } from "./triage-preflight.js";
 import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
+import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap } from "./scheduler.js";
 
 const log = createLogger("self-healing");
 const worktreeMetadataReconcileLog = createLogger("worktree-metadata-reconcile");
@@ -1043,6 +1044,7 @@ export class SelfHealingManager {
       { name: "reconcile-soft-delete-column-drift", fn: () => this.reconcileSoftDeletedColumnDrift().then(() => undefined) },
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
       { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies().then(() => undefined) },
+      { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases().then(() => undefined) },
       { name: "reconcile-dependency-cycles", fn: () => this.reconcileDependencyCycles().then(() => undefined) },
       { name: "reclaim-pr-conflicts", fn: () => this.reclaimPrConflicts().then(() => undefined) },
       { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts().then(() => undefined) },
@@ -1999,6 +2001,7 @@ export class SelfHealingManager {
           // only; a no-op when there are no markers).
           { name: "recover-stale-transition-pending", fn: () => this.runStaleTransitionPendingSweep() },
           { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies() },
+          { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases() },
           { name: "reconcile-dependency-cycles", fn: () => this.reconcileDependencyCycles().then(() => undefined) },
           { name: "reclaim-pr-conflicts", fn: () => this.reclaimPrConflicts() },
           { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts() },
@@ -4583,6 +4586,135 @@ export class SelfHealingManager {
       log.error(`Stale blockedBy sweep failed: ${errorMessage}`);
       return 0;
     }
+  }
+
+  async reconcileDependencyBlockingLeases(): Promise<number> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return 0;
+
+    let tasks: Task[] = [];
+    try {
+      tasks = await this.store.listTasks({ includeArchived: false, slim: true });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`reconcileDependencyBlockingLeases: failed to list tasks: ${errorMessage}`);
+      return 0;
+    }
+
+    const byId = new Map(tasks.map((task) => [task.id, task]));
+    const markerAcceptedByTaskId = new Map<string, boolean>();
+    if (settings.mergeRequestContractShadowEnabled === true) {
+      const dependencyIds = new Set(tasks.flatMap((task) => task.dependencies));
+      for (const depId of dependencyIds) {
+        markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+      }
+    }
+    const dependencyOptions = settings.mergeRequestContractShadowEnabled === true
+      ? { markerAcceptedByTaskId }
+      : undefined;
+    const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
+    const filteredScopeByTaskId = new Map<string, string[]>();
+    const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
+      const cached = filteredScopeByTaskId.get(taskId);
+      if (cached) return cached;
+      const scope = await this.store.parseFileScopeFromPrompt(taskId);
+      const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
+      filteredScopeByTaskId.set(taskId, filteredScope);
+      return filteredScope;
+    };
+
+    let recovered = 0;
+    for (const holder of tasks) {
+      if (holder.column !== "in-progress") continue;
+      if (holder.paused === true || holder.userPaused === true) continue;
+
+      const unmetDeps = getUnmetSchedulingDependencies(holder, tasks, dependencyOptions);
+      if (unmetDeps.length === 0) continue;
+
+      const holderScope = await getFilteredFileScope(holder.id);
+      if (holderScope.length === 0 || isCoordinationOnlyTask(holder, holderScope)) continue;
+
+      let deadlockingDependency: Task | undefined;
+      let deadlockEvidence: "stale-overlap-blocker" | "overlapping-todo-dependency" | undefined;
+      for (const depId of unmetDeps) {
+        const dependency = byId.get(depId);
+        if (!dependency) continue;
+        if (dependency.overlapBlockedBy === holder.id) {
+          deadlockingDependency = dependency;
+          deadlockEvidence = "stale-overlap-blocker";
+          break;
+        }
+        if (dependency.column !== "todo") continue;
+        const dependencyScope = await getFilteredFileScope(dependency.id);
+        if (dependencyScope.length === 0 || isCoordinationOnlyTask(dependency, dependencyScope)) continue;
+        if (pathsOverlap(holderScope, dependencyScope)) {
+          deadlockingDependency = dependency;
+          deadlockEvidence = "overlapping-todo-dependency";
+          break;
+        }
+      }
+      if (!deadlockingDependency || !deadlockEvidence) continue;
+
+      const graceMs = settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS;
+      const proof = await this.evaluateBackwardMoveTripleProof(holder, {
+        stage: "reconcile-dependency-blocking-lease",
+        graceMs,
+        stalenessAnchor: holder.executionStartedAt ?? holder.updatedAt,
+        reason: "dependency-blocking-file-scope-lease",
+        extra: {
+          holderId: holder.id,
+          dependencyId: deadlockingDependency.id,
+          unmetDeps,
+          deadlockEvidence,
+          holderScope,
+          dependencyOverlapBlockedBy: deadlockingDependency.overlapBlockedBy ?? null,
+        },
+      });
+      if (!proof.ok) {
+        await this.emitBackwardMoveNoAction(
+          holder,
+          "reconcile-dependency-blocking-lease",
+          "task:reconcile-dependency-blocking-lease-no-action",
+          proof,
+        );
+        continue;
+      }
+
+      await this.store.moveTask(holder.id, "todo", {
+        preserveProgress: true,
+        preserveWorktree: true,
+        preserveResumeState: true,
+        moveSource: "engine",
+        recoveryRehome: true,
+      });
+      if (deadlockingDependency.overlapBlockedBy === holder.id) {
+        await this.store.updateTask(deadlockingDependency.id, { overlapBlockedBy: null, status: null });
+      }
+      await this.store.logEntry(
+        holder.id,
+        `Auto-rebounded (FN-6292): released dependency-blocking file-scope lease; dependency ${deadlockingDependency.id} can run before this task resumes`,
+      );
+      await createRunAuditor(this.store, {
+        runId: generateSyntheticRunId("fn6292-dependency-blocking-lease", holder.id),
+        agentId: "self-healing",
+        taskId: holder.id,
+        taskLineageId: holder.lineageId,
+        phase: "reconcile-dependency-blocking-lease",
+      }).database({
+        type: "task:reconcile-dependency-blocking-lease" as DatabaseMutationType,
+        target: holder.id,
+        metadata: {
+          holderId: holder.id,
+          dependencyId: deadlockingDependency.id,
+          unmetDeps,
+          deadlockEvidence,
+          clearedOverlapBlockedBy: deadlockingDependency.overlapBlockedBy === holder.id,
+        },
+      });
+      recovered++;
+    }
+
+    return recovered;
   }
 
   async reconcileSelfDefeatingDependencies(): Promise<number> {

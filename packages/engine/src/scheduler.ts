@@ -1334,6 +1334,23 @@ export class Scheduler {
         );
       }
 
+      const mergeShadowEnabled = settings.mergeRequestContractShadowEnabled === true;
+      const markerAcceptedByTaskId = new Map<string, boolean>();
+      if (mergeShadowEnabled) {
+        const dependencyIds = new Set(tasks.flatMap((candidate) => candidate.dependencies));
+        for (const depId of dependencyIds) {
+          markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+        }
+      }
+      const schedulingDependencyOptions = mergeShadowEnabled
+        ? {
+          markerAcceptedByTaskId,
+          onParityDiff: (diff: SchedulingDependencyParityDiff) => {
+            this.emitDependencyParityDiff(diff);
+          },
+        }
+        : undefined;
+
       /**
        * Pre-compute file scopes for all currently active tasks (in-progress
        * AND in-review with unmerged worktrees) so that todo tasks are never
@@ -1373,7 +1390,11 @@ export class Scheduler {
         for (const t of inProgress) {
           const filteredScope = await getFilteredFileScope(t.id);
           if (isCoordinationOnlyTask(t, filteredScope)) continue;
-          if (filteredScope.length > 0) setActiveScopeLease(t.id, filteredScope, "in-progress");
+          if (filteredScope.length === 0) continue;
+          // FN-6292: a holder waiting on scheduling deps must not lease files
+          // that can block its own dependency and create a circular wait.
+          if (getUnmetSchedulingDependencies(t, tasks, schedulingDependencyOptions).length > 0) continue;
+          setActiveScopeLease(t.id, filteredScope, "in-progress");
         }
         // Only live in-review tasks with a worktree belong in activeScopes.
         // Paused in-review tasks (e.g., failed-merge tasks awaiting human triage) cannot
@@ -1442,14 +1463,6 @@ export class Scheduler {
 
       // Resolve dependency order among todo tasks
       const ordered = resolveDependencyOrder(todo);
-      const mergeShadowEnabled = settings.mergeRequestContractShadowEnabled === true;
-      const markerAcceptedByTaskId = new Map<string, boolean>();
-      if (mergeShadowEnabled) {
-        const dependencyIds = new Set(todo.flatMap((candidate) => candidate.dependencies));
-        for (const depId of dependencyIds) {
-          markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
-        }
-      }
       let started = 0;
       let loggedMissingAgentStoreThisPass = false;
 
@@ -1471,14 +1484,7 @@ export class Scheduler {
         }
 
         // Check all deps are satisfied (done, in-review, or archived)
-        const unmetDeps = getUnmetSchedulingDependencies(task, tasks, mergeShadowEnabled
-          ? {
-            markerAcceptedByTaskId,
-            onParityDiff: (diff) => {
-              this.emitDependencyParityDiff(diff);
-            },
-          }
-          : undefined);
+        const unmetDeps = getUnmetSchedulingDependencies(task, tasks, schedulingDependencyOptions);
 
         if (unmetDeps.length > 0) {
           await this.store.updateTask(task.id, {
@@ -2037,15 +2043,34 @@ export class Scheduler {
         return filteredScope;
       };
 
+      const mergeShadowEnabled = settings.mergeRequestContractShadowEnabled === true;
+      const markerAcceptedByTaskId = new Map<string, boolean>();
+      if (mergeShadowEnabled) {
+        const dependencyIds = new Set(tasks.flatMap((candidate) => candidate.dependencies));
+        for (const depId of dependencyIds) {
+          markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+        }
+      }
+      const schedulingDependencyOptions = mergeShadowEnabled
+        ? {
+          markerAcceptedByTaskId,
+          onParityDiff: (diff: SchedulingDependencyParityDiff) => {
+            this.emitDependencyParityDiff(diff);
+          },
+        }
+        : undefined;
+
       if (settings.groupOverlappingFiles) {
         for (const task of tasks) {
           if (task.column !== "in-progress") continue;
           const filteredScope = await getFilteredFileScope(task.id);
           if (isCoordinationOnlyTask(task, filteredScope)) continue;
-          if (filteredScope.length > 0) {
-            activeScopes.set(task.id, filteredScope);
-            activeScopeColumns.set(task.id, task.column);
-          }
+          if (filteredScope.length === 0) continue;
+          // FN-6292: do not let a task with unmet deps lease files that can
+          // keep those deps queued behind their own dependent.
+          if (getUnmetSchedulingDependencies(task, tasks, schedulingDependencyOptions).length > 0) continue;
+          activeScopes.set(task.id, filteredScope);
+          activeScopeColumns.set(task.id, task.column);
         }
 
         const inReviewWithWorktree = tasks.filter(

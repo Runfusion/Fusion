@@ -679,6 +679,114 @@ describe("Scheduler", () => {
       expect(schedulerLog.log).toHaveBeenCalledWith(expect.stringContaining("no reservable slot"));
     });
 
+    it("FN-6292: does not let an in-progress task with unmet deps block its own dependency by file-scope lease", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = new Map<string, Task>([
+        ["FN-H", createMockTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] })],
+        ["FN-D", createMockTask({ id: "FN-D", column: "todo", dependencies: [] })],
+      ]);
+      const moveTask = vi.fn(async (taskId: string, column: Task["column"]) => {
+        const current = tasks.get(taskId);
+        if (!current) throw new Error(`missing task ${taskId}`);
+        const updated = { ...current, column } as Task;
+        tasks.set(taskId, updated);
+        return updated;
+      });
+      const updateTask = vi.fn(async (taskId: string, updates: Partial<Task>) => {
+        const current = tasks.get(taskId);
+        if (!current) throw new Error(`missing task ${taskId}`);
+        const updated = { ...current, ...updates } as Task;
+        tasks.set(taskId, updated);
+        return updated;
+      });
+      const store = createMockStore({
+        listTasks: vi.fn(async () => [...tasks.values()]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 10, groupOverlappingFiles: true }),
+        parseFileScopeFromPrompt: vi.fn(async () => ["packages/engine/src/scheduler.ts"]),
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      await scheduler.schedule();
+
+      expect(updateTask).not.toHaveBeenCalledWith("FN-D", { status: "queued", blockedBy: null, overlapBlockedBy: "FN-H" });
+      expect(moveTask).toHaveBeenCalledWith("FN-D", "in-progress", expect.anything());
+    });
+
+    it("FN-6292: workflow-column hold sweep does not lease unmet-dependency in-progress holders", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = new Map<string, Task>([
+        ["FN-H", createMockTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] })],
+        ["FN-D", createMockTask({ id: "FN-D", column: "todo", dependencies: [] })],
+      ]);
+      const updateTask = vi.fn(async (taskId: string, updates: Partial<Task>) => {
+        const current = tasks.get(taskId);
+        if (!current) throw new Error(`missing task ${taskId}`);
+        const updated = { ...current, ...updates } as Task;
+        tasks.set(taskId, updated);
+        return updated;
+      });
+      const moveTask = vi.fn(async (taskId: string, column: Task["column"]) => {
+        const current = tasks.get(taskId);
+        if (!current) throw new Error(`missing task ${taskId}`);
+        const updated = { ...current, column } as Task;
+        tasks.set(taskId, updated);
+        return updated;
+      });
+      const store = createMockStore({
+        listTasks: vi.fn(async () => [...tasks.values()]),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxWorktrees: 10,
+          groupOverlappingFiles: true,
+          experimentalFeatures: { workflowColumns: true },
+        }),
+        parseFileScopeFromPrompt: vi.fn(async () => ["packages/engine/src/scheduler.ts"]),
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      await scheduler.schedule();
+
+      expect(updateTask).not.toHaveBeenCalledWith("FN-D", { status: "queued", blockedBy: null, overlapBlockedBy: "FN-H" });
+      expect(moveTask).toHaveBeenCalledWith("FN-D", "in-progress", expect.anything());
+    });
+
+    it("FN-6292: keeps file-scope leases for in-progress tasks whose dependencies are met", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-DEP", column: "done" }),
+        createMockTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-DEP"] }),
+        createMockTask({ id: "FN-D", column: "todo", dependencies: [] }),
+      ];
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 10, groupOverlappingFiles: true }),
+        parseFileScopeFromPrompt: vi.fn(async (taskId: string) => taskId === "FN-DEP" ? [] : ["packages/engine/src/scheduler.ts"]),
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      await scheduler.schedule();
+
+      expect(updateTask).toHaveBeenCalledWith("FN-D", { status: "queued", blockedBy: null, overlapBlockedBy: "FN-H" });
+      expect(moveTask).not.toHaveBeenCalledWith("FN-D", "in-progress", expect.anything());
+    });
+
     it("holds workflow-column releases when file scopes overlap active work", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
