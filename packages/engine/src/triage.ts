@@ -22,6 +22,7 @@ import {
   resolveAgentMemoryInclusionMode,
   extractIntentSignature,
   findNearDuplicates,
+  applyFrontendUxCriteria,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -64,7 +65,7 @@ import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector } from "./stuck-task-detector.js";
 import { exec } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -2150,7 +2151,7 @@ export class TriageProcessor {
 
   private async finalizeApprovedTask(
     task: Task,
-    written: string,
+    writtenInput: string,
     settings: Settings,
     options: {
       isReplan?: boolean;
@@ -2158,6 +2159,7 @@ export class TriageProcessor {
       recoveryLogAction?: string;
     } = {},
   ): Promise<void> {
+    let written = writtenInput;
     const dupMatch = written.match(/^DUPLICATE:\s*([A-Z]+-\d+)/i);
 
     if (dupMatch) {
@@ -2257,6 +2259,19 @@ export class TriageProcessor {
     } catch {
       // Fail open on persisted PROMPT.md parsing and keep using the in-memory parse.
     }
+
+    const promptWithFrontendUxCriteria = applyFrontendUxCriteria(written, parsedFileScope);
+    if (promptWithFrontendUxCriteria !== written) {
+      const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      try {
+        await writeFile(promptPath, promptWithFrontendUxCriteria, "utf-8");
+        written = promptWithFrontendUxCriteria;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        planLog.warn(`${task.id}: failed to write Frontend UX Criteria to PROMPT.md (${message})`);
+      }
+    }
+
     let taskIntentSignature: ReturnType<typeof extractIntentSignature> = {
       routePaths: [],
       filePaths: [],
