@@ -173,7 +173,6 @@ function isSameKindEditorNodeKind(
 function editorKind(node: WorkflowIr["nodes"][number]): WorkflowEditorNodeKind {
   const seam = node.config?.seam;
   if (seam === "merge") return "merge";
-
   const mapped = GRAPH_ONLY_EDITOR_KIND[node.kind];
   if (mapped) return mapped;
 
