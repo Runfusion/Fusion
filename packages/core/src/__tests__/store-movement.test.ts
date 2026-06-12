@@ -7,6 +7,7 @@ import * as projectMemory from "../project-memory.js";
 import { AgentStore } from "../agent-store.js";
 import { CentralDatabase } from "../central-db.js";
 import { TaskStore, TaskHasDependentsError } from "../store.js";
+import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../task-merge.js";
 import { buildResearchDocumentKey, type Task } from "../types.js";
 import { createTaskStoreTestHarness, makeTmpDir } from "./store-test-helpers.js";
 
@@ -60,36 +61,58 @@ describe("TaskStore", () => {
   });
 
 
-  describe("moveTask — autoMerge snapshot on in-review", () => {
-    it("snapshots global autoMerge=true when task override is undefined", async () => {
+  describe("moveTask — autoMerge follows live settings on in-review", () => {
+    async function createInProgressTask(description: string): Promise<Task> {
+      const task = await store.createTask({ description });
+      await store.moveTask(task.id, "todo");
+      return store.moveTask(task.id, "in-progress");
+    }
+
+    it("does not snapshot global autoMerge=true when task override is undefined", async () => {
       await store.updateSettings({ autoMerge: true });
-      const task = await store.createTask({ description: "snapshot true" });
-      await store.moveTask(task.id, "todo");
-      await store.moveTask(task.id, "in-progress");
+      const task = await createInProgressTask("no snapshot true");
 
       const moved = await store.moveTask(task.id, "in-review");
-      expect(moved.autoMerge).toBe(true);
+
+      expect(moved.autoMerge).toBeUndefined();
+      expect(allowsAutoMergeProcessing(moved, { autoMerge: true })).toBe(true);
+      expect(allowsAutoMergeProcessing(moved, { autoMerge: false })).toBe(false);
     });
 
-    it("snapshots global autoMerge=false when task override is undefined", async () => {
+    it("does not snapshot global autoMerge=false when task override is undefined", async () => {
       await store.updateSettings({ autoMerge: false });
-      const task = await store.createTask({ description: "snapshot false" });
-      await store.moveTask(task.id, "todo");
-      await store.moveTask(task.id, "in-progress");
+      const task = await createInProgressTask("no snapshot false");
 
       const moved = await store.moveTask(task.id, "in-review");
-      expect(moved.autoMerge).toBe(false);
+
+      expect(moved.autoMerge).toBeUndefined();
+      expect(resolveEffectiveAutoMerge(moved, { autoMerge: false })).toBe(false);
+      expect(resolveEffectiveAutoMerge(moved, { autoMerge: true })).toBe(true);
     });
 
-    it("preserves explicit task autoMerge override when entering in-review", async () => {
-      await store.updateSettings({ autoMerge: false });
-      const task = await store.createTask({ description: "explicit override" });
-      await store.updateTask(task.id, { autoMerge: true });
-      await store.moveTask(task.id, "todo");
-      await store.moveTask(task.id, "in-progress");
+    it("tracks live global toggles for undefined while preserving explicit overrides", async () => {
+      await store.updateSettings({ autoMerge: true });
+      const inherited = await createInProgressTask("inherits live global");
+      const inheritedMoved = await store.moveTask(inherited.id, "in-review");
 
-      const moved = await store.moveTask(task.id, "in-review");
-      expect(moved.autoMerge).toBe(true);
+      expect(inheritedMoved.autoMerge).toBeUndefined();
+      expect(allowsAutoMergeProcessing(inheritedMoved, { autoMerge: false })).toBe(false);
+      expect(allowsAutoMergeProcessing(inheritedMoved, { autoMerge: true })).toBe(true);
+
+      const explicitTrue = await createInProgressTask("explicit true override");
+      await store.updateTask(explicitTrue.id, { autoMerge: true });
+      const explicitTrueMoved = await store.moveTask(explicitTrue.id, "in-review");
+      expect(explicitTrueMoved.autoMerge).toBe(true);
+      expect(allowsAutoMergeProcessing(explicitTrueMoved, { autoMerge: false })).toBe(true);
+      expect(resolveEffectiveAutoMerge(explicitTrueMoved, { autoMerge: false })).toBe(true);
+
+      const explicitFalse = await createInProgressTask("explicit false override");
+      await store.updateTask(explicitFalse.id, { autoMerge: false });
+      const explicitFalseMoved = await store.moveTask(explicitFalse.id, "in-review");
+      expect(explicitFalseMoved.autoMerge).toBe(false);
+      expect(allowsAutoMergeProcessing(explicitFalseMoved, { autoMerge: false })).toBe(false);
+      expect(resolveEffectiveAutoMerge(explicitFalseMoved, { autoMerge: false })).toBe(false);
+      expect(resolveEffectiveAutoMerge(explicitFalseMoved, { autoMerge: true })).toBe(false);
     });
   });
 

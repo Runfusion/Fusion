@@ -2,9 +2,10 @@
  * Default-workflow trait hook implementations (U4).
  *
  * The legacy per-column side effects of `moveTaskInternal` — timing /
- * `cumulativeActiveMs` accounting, reopen field/step resets, autoMerge stamping
- * + merge-queue enqueue, and abort-on-exit (hard-cancel incl. `userPaused` only
- * for user-source moves) — become the default workflow's trait hook
+ * `cumulativeActiveMs` accounting, reopen field/step resets, in-review
+ * auto-merge handoff preparation + merge-queue enqueue, and abort-on-exit
+ * (hard-cancel incl. `userPaused` only for user-source moves) — become the
+ * default workflow's trait hook
  * implementations, registered through U2's DI seam (`registerTraitHookImpl`).
  *
  * IMPORTANT (per U4): this is the FLAG-ON path. The legacy inline code in
@@ -73,7 +74,11 @@ export interface DefaultWorkflowMoveContext {
   /** True when guards + abort-on-exit are bypassed (engine/recovery, KTD-9). */
   bypassGuards: boolean;
   movedAt: string;
-  /** Settings snapshot for autoMerge stamping (only read when entering review). */
+  /**
+   * Settings snapshot available to move effects that need it. Review entry must
+   * not copy global `autoMerge` onto the task; an undefined task value follows
+   * the live global setting at processing time.
+   */
   settings: Pick<Settings, "autoMerge"> | undefined;
   /** Move options that influence reopen/timing semantics. */
   options: {
@@ -165,15 +170,16 @@ export function applyResetOnEntryEffects(ctx: DefaultWorkflowMoveContext): void 
   }
 }
 
-/** `merge` trait onEnter (in-review): autoMerge stamping + scheduler-state
- *  clearing. The queue enqueue itself is in-txn and store-owned (handoff path);
- *  the field effects mirror the legacy in-review block. */
+/** `merge` trait onEnter (in-review): scheduler-state clearing while
+ *  preserving explicit per-task autoMerge overrides. The queue enqueue itself is
+ *  in-txn and store-owned (handoff path); the field effects mirror the legacy
+ *  in-review block. Keep this flag-ON path in sync with the flag-OFF inline
+ *  block in store.ts. */
 export function applyInReviewEnterEffects(ctx: DefaultWorkflowMoveContext): void {
-  const { task, toColumn, settings } = ctx;
+  const { task, toColumn } = ctx;
   if (toColumn !== "in-review") return;
-  if (task.autoMerge === undefined && settings) {
-    task.autoMerge = settings.autoMerge;
-  }
+  // Do not snapshot the global autoMerge setting here. Undefined means "follow
+  // the live global setting"; only an explicit task value should stay sticky.
   task.recoveryRetryCount = undefined;
   task.nextRecoveryAt = undefined;
   if (task.status === "queued") {

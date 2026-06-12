@@ -9,7 +9,7 @@
 //   - merge-blocker on in-review → done (user source)
 //   - userPaused set only for user-source in-progress → todo
 //   - reopen field/step resets on in-review/done → todo|triage
-//   - autoMerge stamping on → in-review
+//   - autoMerge live-global inheritance on → in-review
 //   - timing fields (cumulativeActiveMs / executionStartedAt) on in-progress
 //
 // It runs GREEN against the unmodified store first, then runs forever against
@@ -17,11 +17,13 @@
 // Any divergence between the two flag states is a U4 parity FAILURE.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../task-merge.js";
 import { VALID_TRANSITIONS } from "../types.js";
 import type { Column, Task } from "../types.js";
 import { createTaskStoreTestHarness } from "./store-test-helpers.js";
 
 const ALL_COLUMNS: Column[] = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
+const MOVE_SOURCES = ["user", "engine", "scheduler"] as const;
 
 // Flag states the characterization runs against. OFF is the legacy path; ON is
 // the workflow-resolved path. The default workflow MUST reproduce identical
@@ -83,7 +85,7 @@ for (const flag of flagStates) {
     describe("transition allow/reject matrix (every from×to×moveSource)", () => {
       for (const from of ALL_COLUMNS) {
         for (const to of ALL_COLUMNS) {
-          for (const moveSource of ["user", "engine"] as const) {
+          for (const moveSource of MOVE_SOURCES) {
             const allowed = from === to || VALID_TRANSITIONS[from].includes(to);
             const label = `${from} → ${to} [${moveSource}] should ${allowed ? "ALLOW" : "REJECT"}`;
             it(label, async () => {
@@ -170,15 +172,45 @@ for (const flag of flagStates) {
       });
     });
 
-    describe("autoMerge stamping (→ in-review)", () => {
-      it("stamps autoMerge from settings when undefined", async () => {
-        await store.updateSettings({ autoMerge: true });
-        const task = await seedInColumn("in-progress");
-        const result = await store.moveTask(task.id, "in-review", {
-          moveSource: "user",
+    describe("autoMerge live-global inheritance (→ in-review)", () => {
+      for (const moveSource of MOVE_SOURCES) {
+        it(`leaves undefined autoMerge to follow live settings for ${moveSource}-source moves`, async () => {
+          await store.updateSettings({ autoMerge: true });
+          const task = await seedInColumn("in-progress");
+          const result = await store.moveTask(task.id, "in-review", {
+            moveSource,
+            allowDirectInReviewMove: true,
+          });
+
+          expect(result.autoMerge).toBeUndefined();
+          expect(allowsAutoMergeProcessing(result, { autoMerge: false })).toBe(false);
+          expect(allowsAutoMergeProcessing(result, { autoMerge: true })).toBe(true);
+          expect(resolveEffectiveAutoMerge(result, { autoMerge: false })).toBe(false);
+          expect(resolveEffectiveAutoMerge(result, { autoMerge: true })).toBe(true);
+        });
+      }
+
+      it("preserves explicit task autoMerge overrides", async () => {
+        await store.updateSettings({ autoMerge: false });
+        const explicitTrue = await seedInColumn("in-progress");
+        await store.updateTask(explicitTrue.id, { autoMerge: true });
+        const trueResult = await store.moveTask(explicitTrue.id, "in-review", {
+          moveSource: "engine",
           allowDirectInReviewMove: true,
         });
-        expect(result.autoMerge).toBe(true);
+        expect(trueResult.autoMerge).toBe(true);
+        expect(allowsAutoMergeProcessing(trueResult, { autoMerge: false })).toBe(true);
+
+        await store.updateSettings({ autoMerge: true });
+        const explicitFalse = await seedInColumn("in-progress");
+        await store.updateTask(explicitFalse.id, { autoMerge: false });
+        const falseResult = await store.moveTask(explicitFalse.id, "in-review", {
+          moveSource: "scheduler",
+          allowDirectInReviewMove: true,
+        });
+        expect(falseResult.autoMerge).toBe(false);
+        expect(resolveEffectiveAutoMerge(falseResult, { autoMerge: true })).toBe(false);
+        expect(resolveEffectiveAutoMerge(falseResult, { autoMerge: false })).toBe(false);
       });
     });
 

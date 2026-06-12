@@ -45,6 +45,13 @@ describe("resolveEffectiveAutoMerge", () => {
   it("falls back to global false when task value is undefined", () => {
     expect(resolveEffectiveAutoMerge({ autoMerge: undefined }, { autoMerge: false })).toBe(false);
   });
+
+  it("tracks live global toggles while task value remains undefined", () => {
+    const task = { autoMerge: undefined };
+    expect(resolveEffectiveAutoMerge(task, { autoMerge: true })).toBe(true);
+    expect(resolveEffectiveAutoMerge(task, { autoMerge: false })).toBe(false);
+    expect(resolveEffectiveAutoMerge(task, { autoMerge: true })).toBe(true);
+  });
 });
 
 describe("allowsAutoMergeProcessing", () => {
@@ -53,7 +60,10 @@ describe("allowsAutoMergeProcessing", () => {
   });
 
   it("blocks tasks without an explicit override when the global setting is off", () => {
-    expect(allowsAutoMergeProcessing({ autoMerge: undefined }, { autoMerge: false })).toBe(false);
+    const task = { autoMerge: undefined };
+    expect(allowsAutoMergeProcessing(task, { autoMerge: true })).toBe(true);
+    expect(allowsAutoMergeProcessing(task, { autoMerge: false })).toBe(false);
+    expect(allowsAutoMergeProcessing(task, { autoMerge: true })).toBe(true);
     expect(allowsAutoMergeProcessing({ autoMerge: false }, { autoMerge: false })).toBe(false);
   });
 

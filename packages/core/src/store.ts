@@ -6832,11 +6832,6 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       }
     }
 
-    const settingsForInReview =
-      toColumn === "in-review" && task.autoMerge === undefined
-        ? await this.getSettingsFast()
-        : undefined;
-
     const movedAt = internal.now ?? new Date().toISOString();
     task.column = toColumn;
     task.columnMovedAt = movedAt;
@@ -6854,7 +6849,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         moveSource,
         bypassGuards,
         movedAt,
-        settings: settingsForInReview,
+        settings: undefined,
         options: {
           preserveStatus: options?.preserveStatus,
           preserveResumeState: options?.preserveResumeState,
@@ -6958,9 +6953,9 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       }
 
       if (toColumn === "in-review") {
-        if (task.autoMerge === undefined && settingsForInReview) {
-          task.autoMerge = settingsForInReview.autoMerge;
-        }
+        // Keep this flag-OFF inline path in sync with applyInReviewEnterEffects.
+        // Do not snapshot global autoMerge: undefined follows the live setting,
+        // while explicit per-task true/false overrides remain sticky.
         task.recoveryRetryCount = undefined;
         task.nextRecoveryAt = undefined;
         // Clear scheduler-side dispatch state: `queued`, `blockedBy`, and
