@@ -17,8 +17,8 @@
       "quarantinedAt": "2026-06-10"
     },
     {
-      "file": "packages/engine/src/__tests__/merger-ai-cleanup.test.ts",
-      "reason": "Flake observed during FN-6206 verification: `pruneExistingAiMergeWorktrees skips active-session paths` failed in full `pnpm --filter @fusion/engine test` runs while the file passed standalone, indicating suite-order/concurrency sensitivity. Follow-up FN-6207.",
+      "file": "packages/engine/src/__tests__/merger-ai-cleanup-active-session.test.ts",
+      "reason": "Flake: pruneExistingAiMergeWorktrees skips active-session paths — active-session temp AI merge dir was unexpectedly pruned during pnpm --filter @fusion/engine test in FN-6206 verification, while the same file passed standalone. Root cause suspected: realpathSync resolution mismatch or readdirSync mock interaction with activeSessionRegistry singleton under concurrent engine suite load. Discovered during FN-6206.",
       "quarantinedAt": "2026-06-10"
     }
   ]

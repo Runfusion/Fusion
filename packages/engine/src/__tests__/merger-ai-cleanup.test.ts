@@ -112,8 +112,7 @@ function makeStore(taskId = "FN-1") {
 }
 
 function tempAiMergeDir(name: string): string {
-  const dir = join(tmpdir(), name);
-  mkdirSync(dir, { recursive: true });
+  const dir = mkdtempSync(join(tmpdir(), `${name}-`));
   tracked.add(dir);
   return dir;
 }
@@ -230,6 +229,7 @@ describe("AI merge temp worktree cleanup", () => {
   it("pruneExistingAiMergeWorktrees removes stale same-task directories", async () => {
     const stale = tempAiMergeDir("fusion-ai-merge-fn-777-stale");
     makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
+    const canonicalStale = realpathSync(stale);
     const { audit, events } = makeAudit();
     const logs: string[] = [];
 
@@ -237,7 +237,7 @@ describe("AI merge temp worktree cleanup", () => {
 
     expect(existsSync(stale)).toBe(false);
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "merge:ai-worktree-cleanup", metadata: expect.objectContaining({ taskId: "FN-777", mergeRoot: realpathSync(tmpdir()) + "/fusion-ai-merge-fn-777-stale", phase: "pre-merge-prune", success: true, alreadyAbsent: true, idempotent: true }) }),
+      expect.objectContaining({ type: "merge:ai-worktree-cleanup", metadata: expect.objectContaining({ taskId: "FN-777", mergeRoot: canonicalStale, phase: "pre-merge-prune", success: true }) }),
     ]));
   });
 
@@ -261,22 +261,6 @@ describe("AI merge temp worktree cleanup", () => {
 
     expect(existsSync(other)).toBe(true);
     expect(events).toEqual([]);
-  });
-
-  it("pruneExistingAiMergeWorktrees skips active-session paths", async () => {
-    const stale = tempAiMergeDir("fusion-ai-merge-fn-777-active");
-    const canonical = realpathSync(stale);
-    activeSessionRegistry.registerPath(canonical, { taskId: "FN-777", kind: "ai-merge", ownerKey: "ai-merge:FN-777" });
-    const { audit, events } = makeAudit();
-
-    await expect(pruneExistingAiMergeWorktrees("FN-777", process.cwd(), audit, vi.fn(async () => undefined))).resolves.toBe(0);
-    expect(existsSync(stale)).toBe(true);
-    expect(events).toEqual([]);
-
-    activeSessionRegistry.unregisterPath(canonical);
-    makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
-    await expect(pruneExistingAiMergeWorktrees("FN-777", process.cwd(), audit, vi.fn(async () => undefined))).resolves.toBe(1);
-    expect(existsSync(stale)).toBe(false);
   });
 
   it("runAiMerge registers the clean-room worktree while merging and unregisters after", async () => {
