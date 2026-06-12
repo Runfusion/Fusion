@@ -77,7 +77,7 @@ export class ResearchOrchestrator {
     const run = this.store.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
 
-    const config = (run.providerConfig ?? {}) as unknown as ResearchOrchestrationConfig;
+    const config = this.normalizeConfig(run.providerConfig);
     const controller = new AbortController();
     if (options.abortSignal) {
       options.abortSignal.addEventListener("abort", () => controller.abort(options.abortSignal?.reason), { once: true });
@@ -540,6 +540,53 @@ export class ResearchOrchestrator {
   private computeTotalSteps(config: ResearchOrchestrationConfig): number {
     const providers = Math.max(1, config.providers.length);
     return 1 + providers + Math.max(1, config.maxSources) + Math.max(1, config.maxSynthesisRounds) + 1;
+  }
+
+  private normalizeConfig(rawConfig: ResearchRun["providerConfig"]): ResearchOrchestrationConfig {
+    const raw = (rawConfig ?? {}) as Record<string, unknown>;
+    const rawProviders = Array.isArray(raw.providers) ? raw.providers : [];
+    const providers = rawProviders
+      .map((provider): ResearchOrchestrationConfig["providers"][number] | null => {
+        if (typeof provider === "string") {
+          const type = provider.trim();
+          return type && type !== "llm-synthesis" ? { type } : null;
+        }
+        if (provider && typeof provider === "object") {
+          const candidate = provider as { type?: unknown; config?: unknown };
+          if (typeof candidate.type === "string" && candidate.type.trim() && candidate.type !== "llm-synthesis") {
+            return {
+              type: candidate.type.trim(),
+              config: candidate.config && typeof candidate.config === "object"
+                ? candidate.config as ResearchOrchestrationConfig["providers"][number]["config"]
+                : undefined,
+            };
+          }
+        }
+        return null;
+      })
+      .filter((provider): provider is ResearchOrchestrationConfig["providers"][number] => Boolean(provider));
+
+    const maxSources = this.positiveNumber(raw.maxSources) ?? this.positiveNumber(raw.maxResults) ?? 20;
+    const maxSynthesisRounds = this.positiveNumber(raw.maxSynthesisRounds) ?? 2;
+
+    return {
+      providers: providers.length ? providers : [{ type: "web-search" }],
+      maxSources,
+      maxSynthesisRounds,
+      phaseTimeoutMs: this.positiveNumber(raw.phaseTimeoutMs),
+      stepTimeoutMs: this.positiveNumber(raw.stepTimeoutMs),
+      rateLimitPerMinute: this.positiveNumber(raw.rateLimitPerMinute),
+      synthesisModel: raw.synthesisModel && typeof raw.synthesisModel === "object"
+        ? raw.synthesisModel as ResearchOrchestrationConfig["synthesisModel"]
+        : undefined,
+      metadata: raw.metadata && typeof raw.metadata === "object"
+        ? raw.metadata as Record<string, unknown>
+        : undefined,
+    };
+  }
+
+  private positiveNumber(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
   }
 
   private statusToPhase(status: ResearchRun["status"]): ResearchOrchestrationPhase {

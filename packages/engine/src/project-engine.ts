@@ -9,6 +9,9 @@ import type {
   AutomationStore as AutomationStoreType,
   ScheduledTask,
   AutomationRunResult,
+  ResearchModelSettings,
+  ResearchSynthesisRequest,
+  ResearchSynthesisResult,
 } from "@fusion/core";
 import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, normalizeMergerMode, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
@@ -36,6 +39,7 @@ import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchRunDispatcher } from "./research-dispatcher.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
+import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import {
   computeVerificationFailureSignature,
@@ -457,9 +461,26 @@ export class ProjectEngine {
     const settings = await store.getSettings();
 
     if (typeof (store as { getResearchStore?: () => unknown }).getResearchStore === "function") {
+      const registry = new ResearchProviderRegistry(settings, cwd);
+      const providers = registry.getAvailableProviders()
+        .map((type) => registry.getProvider(type))
+        .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
+      const synthesisProvider = registry.getProvider("llm-synthesis") as ({
+        synthesize?: (
+          request: ResearchSynthesisRequest,
+          modelSelection: { provider?: string; modelId?: string },
+          signal?: AbortSignal,
+        ) => Promise<ResearchSynthesisResult>;
+      } | undefined);
+      const synthesisRunner = typeof synthesisProvider?.synthesize === "function"
+        ? (request: ResearchSynthesisRequest, _modelSettings: ResearchModelSettings, signal?: AbortSignal) => synthesisProvider.synthesize!(request, {
+          provider: settings.researchGlobalDefaults?.synthesisProvider ?? settings.defaultProvider,
+          modelId: settings.researchGlobalDefaults?.synthesisModelId ?? settings.defaultModelId,
+        }, signal)
+        : undefined;
       this.researchOrchestrator = new ResearchOrchestrator({
         store: store.getResearchStore(),
-        stepRunner: new ResearchStepRunner(),
+        stepRunner: new ResearchStepRunner({ providers, synthesisRunner }),
         maxConcurrentRuns: settings.researchMaxConcurrentRuns ?? 3,
       });
       this.researchDispatcher = new ResearchRunDispatcher({

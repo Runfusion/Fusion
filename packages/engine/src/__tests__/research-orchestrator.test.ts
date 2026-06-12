@@ -113,6 +113,35 @@ describe("ResearchOrchestrator", () => {
     expect(status.phase).toBe("completed");
   });
 
+  it("normalizes dashboard string provider configs before searching", async () => {
+    const { store, stepRunner } = createHarness();
+    const orchestrator = new ResearchOrchestrator({
+      store: store as never,
+      stepRunner: stepRunner as never,
+      maxConcurrentRuns: 2,
+    });
+
+    const run = store.createRun({
+      query: "dashboard research",
+      providerConfig: {
+        providers: ["web-search", "page-fetch", "llm-synthesis"],
+        maxResults: 3,
+      },
+    });
+
+    const completed = await orchestrator.startRun(run.id, "dashboard research");
+    expect(completed.status).toBe("completed");
+    expect(stepRunner.runSourceQuery).toHaveBeenCalledTimes(2);
+    expect(stepRunner.runSourceQuery).toHaveBeenNthCalledWith(1, "dashboard research", "web-search", undefined, expect.anything());
+    expect(stepRunner.runSourceQuery).toHaveBeenNthCalledWith(2, "dashboard research", "page-fetch", undefined, expect.anything());
+    expect(store.addEvent).toHaveBeenCalledWith(
+      run.id,
+      expect.objectContaining({
+        message: "Search with web-search started",
+      }),
+    );
+  });
+
   it("cancels a running run", async () => {
     const { store, stepRunner } = createHarness();
     stepRunner.runSourceQuery.mockImplementation(
