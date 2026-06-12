@@ -86,7 +86,6 @@ export default defineConfig({
           exclude: [
             "node_modules/**",
             "dist/**",
-            "src/__tests__/merger-file-scope-invariant.test.ts",
           ],
         },
       },
@@ -103,8 +102,6 @@ export default defineConfig({
             "src/**/*.slow.test.ts",
             "node_modules/**",
             "dist/**",
-            "src/__tests__/merger-file-scope-invariant.test.ts",
-            "src/__tests__/project-engine-manager.test.ts",
             "src/__tests__/merger-ai-cleanup-active-session.test.ts",
             "src/__tests__/merger-ai-cleanup.test.ts",
             "src/__tests__/merger-ai.test.ts",

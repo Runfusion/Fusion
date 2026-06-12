@@ -4969,18 +4969,31 @@ export class FileScopeViolationError extends Error {
   }
 }
 
+export type StagedFilesReader = (cwd: string) => Promise<string[]>;
+
+async function readStagedFileNames(cwd: string): Promise<string[]> {
+  const { stdout } = await execAsync("git diff --cached --name-only", {
+    cwd,
+    encoding: "utf-8",
+  });
+  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
 export async function assertSquashOverlapsFileScope(params: {
   store: TaskStore;
   taskId: string;
   rootDir: string;
   task: Task;
+  /** Test seam for deterministic file-scope invariant coverage. Production
+   * callers use the default real-git staged-file reader. */
+  stagedFilesReader?: StagedFilesReader;
   /** U7 (R10): when the merge trait's `fileScope: "custom"` mode is active,
    *  these glob/path rules replace the task's File Scope section as the
    *  declared scope. `scopeOverride` is a documented no-op only under
    *  `fileScope: "off"` (handled by the caller, which skips this assert). */
   customScopeRules?: string[];
 }): Promise<void> {
-  const { store, taskId, rootDir, task, customScopeRules } = params;
+  const { store, taskId, rootDir, task, customScopeRules, stagedFilesReader = readStagedFileNames } = params;
   const hasCustomRules = Array.isArray(customScopeRules) && customScopeRules.length > 0;
 
   if (!hasCustomRules && task.scopeOverride === true) {
@@ -5011,11 +5024,7 @@ export async function assertSquashOverlapsFileScope(params: {
     return;
   }
 
-  const { stdout } = await execAsync("git diff --cached --name-only", {
-    cwd: rootDir,
-    encoding: "utf-8",
-  });
-  const stagedFiles = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  const stagedFiles = await stagedFilesReader(rootDir);
   const hasOverlap = stagedFiles.some((file) => matchesScope(file, declaredScope));
   if (!hasOverlap) {
     throw new FileScopeViolationError(taskId, stagedFiles, declaredScope);
@@ -5039,6 +5048,7 @@ export async function enforceSquashFileScopeInvariant(params: {
   rootDir: string;
   task: Task;
   resetLabel: string;
+  stagedFilesReader?: StagedFilesReader;
   auditor?: RunAuditor;
 }): Promise<void> {
   // U7 (R10): resolve the file-scope enforcement mode from the merge trait

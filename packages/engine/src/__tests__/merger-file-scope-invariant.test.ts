@@ -49,20 +49,17 @@ function createMergeResult(): MergeResult {
   };
 }
 
+let stagedFilesReader: (cwd: string) => Promise<string[]> = vi.fn(async () => []);
+
+function mockStagedFiles(files: string[]) {
+  stagedFilesReader = vi.fn(async (_cwd: string) => files);
+}
+
 describe("assertSquashOverlapsFileScope", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStagedFiles([]);
   });
-
-  function mockStagedFiles(files: string[]) {
-    mockedExecSync.mockImplementation((cmd: any) => {
-      const cmdStr = String(cmd);
-      if (cmdStr === "git diff --cached --name-only") {
-        return files.join("\n");
-      }
-      return "";
-    });
-  }
 
   it("passes without logging when no declared scope exists", async () => {
     const store = createInvariantStore([]);
@@ -72,6 +69,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
 
@@ -86,6 +84,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
 
@@ -103,6 +102,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
   });
@@ -115,6 +115,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).rejects.toMatchObject({
       name: "FileScopeViolationError",
@@ -132,6 +133,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
   });
@@ -144,6 +146,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).rejects.toMatchObject({
       name: "FileScopeViolationError",
@@ -151,12 +154,6 @@ describe("assertSquashOverlapsFileScope", () => {
     } satisfies Partial<FileScopeViolationError>);
   });
 
-  // Skipped: flakes under workspace-concurrent runs because the
-  // vi.mock("node:child_process") implementation occasionally doesn't take
-  // effect, letting `git diff --cached --name-only` reach the real git binary
-  // (which reports staged files unrelated to the test scope and trips the
-  // FileScopeViolationError). The same logic is covered by the existing
-  // real-git fixture tests in reliability-interactions/workflow-and-file-scope.
   it("accepts declared scope as a single changeset file when staged matches exactly", async () => {
     const store = createInvariantStore([".changeset/fn-4767-pr-flow.md"]);
     mockStagedFiles([".changeset/fn-4767-pr-flow.md"]);
@@ -165,11 +162,11 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
   });
 
-  // Skipped: same flake mode as the test above.
   it("accepts declared scope as a changeset glob when staged file matches", async () => {
     const store = createInvariantStore([".changeset/*.md"]);
     mockStagedFiles([".changeset/fn-4767-pr-flow.md"]);
@@ -178,6 +175,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
   });
@@ -190,6 +188,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
 
@@ -214,6 +213,7 @@ describe("assertSquashOverlapsFileScope", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
     })).resolves.toBeUndefined();
 
@@ -230,6 +230,7 @@ describe("assertSquashOverlapsFileScope", () => {
 describe("enforceSquashFileScopeInvariant audit emission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStagedFiles(["packages/core/src/store.ts"]);
   });
 
   it("emits run_audit event on file-scope violation but continues", async () => {
@@ -245,6 +246,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
       auditor: auditor as any,
@@ -281,6 +283,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
       auditor: auditor as any,
@@ -302,6 +305,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
       auditor: auditor as any,
@@ -328,6 +332,7 @@ describe("enforceSquashFileScopeInvariant audit emission", () => {
       store: store as never,
       taskId: "FN-4073",
       rootDir: "/tmp/root",
+      stagedFilesReader,
       task: await (store as any).getTask("FN-4073"),
       resetLabel: "file-scope invariant violation",
     })).resolves.toBeUndefined();
