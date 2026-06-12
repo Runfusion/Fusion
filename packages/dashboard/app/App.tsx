@@ -63,7 +63,7 @@ import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
 import { useMobileKeyboard } from "./hooks/useMobileKeyboard";
-import { isIOS, useMobileScrollLock } from "./hooks/useMobileScrollLock";
+import { isIOS, useMobileKeyboardViewportLock } from "./hooks/useMobileScrollLock";
 import { computeMobileBarKeyboardFlags } from "./utils/mobileBarKeyboardFlags";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
@@ -541,7 +541,7 @@ function AppInner() {
   // shift the document or visualViewport, and so the dashboard snaps back
   // into place when the keyboard dismisses. Modals manage their own lock
   // via useMobileScrollLock — the reference-counted hook handles overlap.
-  useMobileScrollLock(mobileKeyboardOpen);
+  useMobileKeyboardViewportLock(mobileKeyboardOpen);
 
   // App-level mailbox/chat unread state (used for header/mobile nav badges)
   const [mailboxUnreadCount, setMailboxUnreadCount] = useState(0);

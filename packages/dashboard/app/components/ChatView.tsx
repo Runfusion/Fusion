@@ -43,7 +43,7 @@ import { useModelsCache } from "../hooks/useModelsCache";
 import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
-import { useMobileScrollLock, isIOS } from "../hooks/useMobileScrollLock";
+import { useMobileKeyboardViewportLock, isIOS } from "../hooks/useMobileScrollLock";
 import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
@@ -1588,9 +1588,12 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
   }, [keyboardOverlap, scrollToBottom]);
 
   // Lock body scroll on mobile while the keyboard is up so iOS can't shift
-  // the visual viewport (offsetTop > 0). Shared hook also restores
+  // the visual viewport (offsetTop > 0). Uses the overflow-only keyboard
+  // lock (NOT position:fixed): the composer is focused before the lock
+  // applies, and pinning body to position:fixed afterwards blurs the input
+  // on iOS, collapsing the keyboard the instant it opens. Restores
   // window.scrollTo(0, 0) on cleanup to recover from any iOS drift.
-  useMobileScrollLock(isMobile && keyboardOpen);
+  useMobileKeyboardViewportLock(isMobile && keyboardOpen);
 
   // FN-5365: mirror QuickChatFAB keyboard handling by writing visualViewport
   // metrics directly to .chat-thread, avoiding React commit lag/jitter.

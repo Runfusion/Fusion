@@ -124,6 +124,74 @@ function releaseLock(): void {
 export function _resetLockState(): void {
   lockCount = 0;
   savedStyles = null;
+  kbLockCount = 0;
+  kbSavedStyles = null;
+}
+
+// --- Keyboard viewport lock (non-blurring variant) -------------------------
+//
+// The `position: fixed` lock above is correct for fullscreen overlays whose
+// input is focused AFTER the lock is applied (modals). It is WRONG for the
+// inline chat composer: there the input is focused FIRST (the tap raises the
+// keyboard), and pinning `body { position: fixed }` a beat later — once
+// `keyboardOpen` flips true — makes iOS Safari blur the focused textarea and
+// collapse the keyboard the instant it opens (no visible jump, because the
+// dashboard's base layout is already at scrollY 0).
+//
+// This variant mirrors the QuickChat overlay's proven approach: lock
+// `overflow: hidden` on <html>/<body> and snap scroll to the top, WITHOUT
+// touching `position`. No position change → iOS keeps the input focused, so
+// the keyboard stays up. Independent ref-count from the modal lock so the two
+// never interfere.
+let kbLockCount = 0;
+let kbSavedStyles: {
+  htmlOverflow: string;
+  bodyOverflow: string;
+} | null = null;
+
+function applyKeyboardLock(): void {
+  if (typeof window === "undefined") return;
+  if (kbLockCount > 0) {
+    kbLockCount += 1;
+    return;
+  }
+  const html = document.documentElement;
+  const body = document.body;
+  kbSavedStyles = {
+    htmlOverflow: html.style.overflow,
+    bodyOverflow: body.style.overflow,
+  };
+  window.scrollTo(0, 0);
+  html.style.overflow = "hidden";
+  body.style.overflow = "hidden";
+  kbLockCount = 1;
+}
+
+function releaseKeyboardLock(): void {
+  if (typeof window === "undefined") return;
+  if (kbLockCount === 0) return;
+  kbLockCount -= 1;
+  if (kbLockCount > 0 || !kbSavedStyles) return;
+  document.documentElement.style.overflow = kbSavedStyles.htmlOverflow;
+  document.body.style.overflow = kbSavedStyles.bodyOverflow;
+  kbSavedStyles = null;
+  window.scrollTo(0, 0);
+}
+
+/**
+ * Pin the mobile viewport while the soft keyboard is up for an INLINE
+ * (non-overlay) focused input — chat composer, inline edits. Uses an
+ * overflow-only lock that does not change `position`, so iOS does not blur
+ * the already-focused input. iOS-only; no-op on desktop/Android.
+ */
+export function useMobileKeyboardViewportLock(enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled || !isMobileDevice() || !isIOS()) return;
+    applyKeyboardLock();
+    return () => {
+      releaseKeyboardLock();
+    };
+  }, [enabled]);
 }
 
 /**
