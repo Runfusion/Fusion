@@ -109,6 +109,17 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     expect(mobileDetailInspectorRule).toMatch(/min-height\s*:\s*0\s*;/);
     expect(mobileDetailInspectorRule).toMatch(/max-height\s*:\s*none\s*;/);
 
+    const mobileEdgeDetailCanvasRule = findRule(mobileBlocks, /\.wf-editor-body--mobile-edge-detail \.wf-editor-canvas-wrap\s*\{[^}]*\}/);
+    expect(mobileEdgeDetailCanvasRule).toMatch(/display\s*:\s*none\s*;/);
+
+    const mobileEdgeDetailInspectorRule = findRule(mobileBlocks, /\.wf-editor-body--mobile-edge-detail \.wf-editor-inspector\s*\{[^}]*\}/);
+    expect(mobileEdgeDetailInspectorRule).toMatch(/display\s*:\s*flex\s*;/);
+    expect(mobileEdgeDetailInspectorRule).toMatch(/flex\s*:\s*1 1 auto\s*;/);
+    expect(mobileEdgeDetailInspectorRule).toMatch(/max-height\s*:\s*none\s*;/);
+
+    const mobileTabsRule = findRule(mobileBlocks, /\.wf-mobile-tabs\s*\{[^}]*\}/);
+    expect(mobileTabsRule).toMatch(/flex\s*:\s*0 0 auto\s*;/);
+
     const collapsedToggleRule = findRule([editorCss], /\.wf-inspector-toggle--collapsed\s*\{[^}]*\}/);
     expect(collapsedToggleRule).toMatch(/position\s*:\s*absolute\s*;/);
     expect(collapsedToggleRule).toMatch(/bottom\s*:\s*var\(--space-sm\)\s*;/);

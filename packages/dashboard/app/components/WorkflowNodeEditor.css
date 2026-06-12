@@ -1470,9 +1470,11 @@
 
   .wf-mobile-tabs {
     display: flex;
+    flex: 0 0 auto;
     gap: var(--space-xs);
     padding: var(--space-sm);
     overflow-x: auto;
+    overflow-y: visible;
     border-bottom: 1px solid var(--border);
   }
 
@@ -1712,6 +1714,23 @@
   }
 
   .wf-editor-body--mobile-node-detail .wf-editor-inspector {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    border-left: none;
+    border-top: none;
+    overflow-y: auto;
+  }
+
+  .wf-editor-body--mobile-edge-detail .wf-editor-canvas-wrap {
+    display: none;
+    min-height: 0;
+  }
+
+  .wf-editor-body--mobile-edge-detail .wf-editor-inspector {
     display: flex;
     flex: 1 1 auto;
     width: 100%;

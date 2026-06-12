@@ -518,6 +518,37 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getByTestId("wf-inspector-toggle")).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("opens selected edge details as a dismissible full-screen mobile stage", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Custom" }));
+    await screen.findByText("Save");
+    await screen.findByTestId("mobile-wf-graph");
+
+    const mobileEdgeChip = await screen.findByTestId("mobile-wf-edge-e-step-end-1");
+    fireEvent.click(mobileEdgeChip);
+
+    const edgeInspector = await screen.findByTestId("wf-edge-inspector");
+    const editorBody = edgeInspector.closest(".wf-editor-body");
+    expect(editorBody).toHaveClass("wf-editor-body--mobile-edge-detail");
+    expect(editorBody).not.toHaveClass("wf-editor-body--mobile-node-detail");
+    expect(within(edgeInspector).getByRole("button", { name: /delete edge/i })).toBeInTheDocument();
+    expect(screen.getByTestId("wf-mobile-shell").closest(".wf-editor-canvas-wrap")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("wf-edge-inspector-close"));
+    await waitFor(() => expect(screen.queryByTestId("wf-edge-inspector")).not.toBeInTheDocument());
+    expect(await screen.findByTestId("mobile-wf-graph")).toBeVisible();
+
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-step")).getByRole("button"));
+
+    const nodeInspector = await screen.findByTestId("wf-node-inspector");
+    expect(nodeInspector.closest(".wf-editor-body")).toHaveClass("wf-editor-body--mobile-node-detail");
+    expect(nodeInspector.closest(".wf-editor-body")).not.toHaveClass("wf-editor-body--mobile-edge-detail");
+  });
+
   it("auto-expands the mobile inspector when selecting another node", async () => {
     mockWorkflowEditorViewport("mobile");
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);

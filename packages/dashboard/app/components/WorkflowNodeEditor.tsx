@@ -1878,8 +1878,9 @@ function InnerEditor({
     selectedNode !== null &&
     selectedNode.data.kind !== "start" &&
     selectedNode.data.kind !== "end";
-  const mobileNodeDetailStage = isMobileMode && selectedNodeHasInspector && !inspectorCollapsed;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
+  const mobileNodeDetailStage = isMobileMode && selectedNodeHasInspector && !inspectorCollapsed;
+  const mobileEdgeDetailStage = isMobileMode && selectedEdge !== null;
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
   const handleTogglePromptExpand = useCallback(() => {
     setIsPromptExpanded((prev) => !prev);
@@ -2210,7 +2211,8 @@ function InnerEditor({
         <div
           className={`wf-editor-body${workflowListStageOpen ? " wf-editor-body--list-stage" : " wf-editor-body--editor-stage"}${
             simpleLayoutEnabled ? " wf-editor-body--simple-layout" : ""
-          }${mobileNodeDetailStage ? " wf-editor-body--mobile-node-detail" : ""
+          }${mobileNodeDetailStage ? " wf-editor-body--mobile-node-detail" : ""}${
+            mobileEdgeDetailStage ? " wf-editor-body--mobile-edge-detail" : ""
           }`}
         >
           <aside className="wf-editor-sidebar">
@@ -4118,7 +4120,21 @@ function InnerEditor({
 
           {selectedEdge && (
             <aside className="wf-editor-inspector" data-testid="wf-edge-inspector">
-              <h3>{t("workflowNodes.edgeInspector", "Edge")}</h3>
+              <div className="wf-inspector-heading">
+                <h3>{t("workflowNodes.edgeInspector", "Edge")}</h3>
+                {isMobileMode && (
+                  <button
+                    type="button"
+                    className="wf-inspector-toggle wf-inspector-toggle--expanded"
+                    data-testid="wf-edge-inspector-close"
+                    aria-expanded="true"
+                    onClick={() => setSelectedEdgeId(null)}
+                  >
+                    <ChevronDown size={13} />
+                    <span>{t("workflowNodes.collapseInspector", "Collapse")}</span>
+                  </button>
+                )}
+              </div>
               <fieldset className="wf-inspector-fields" disabled={isBuiltin}>
                 {selectedEdgeEditability === "verdicts" ? (
                   <>
