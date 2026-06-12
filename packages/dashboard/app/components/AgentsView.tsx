@@ -1852,11 +1852,11 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         return (
                           <>
                             <span className="agent-heartbeat-last text-secondary" title={lastAt.toLocaleString()}>
-                              {t("agents.lastHeartbeat", "Last: {{time}}", { time: lastAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) })}
+                              {t("agents.lastHeartbeatAt", "Last: {{time}}", { time: lastAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) })}
                             </span>
                             {isTicking && (
                               <span className="agent-heartbeat-next text-secondary" title={nextAt.toLocaleString()}>
-                                {t("agents.nextHeartbeat", "Next: {{time}}", { time: nextAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) })}
+                                {t("agents.nextHeartbeatAt", "Next: {{time}}", { time: nextAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) })}
                               </span>
                             )}
                           </>

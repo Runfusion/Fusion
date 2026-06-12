@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import i18next from "i18next";
 import { AgentsView } from "../AgentsView";
 import { loadAllAppCss } from "../../test/cssFixture";
 import type { Agent, AgentCapability, AgentState } from "../../api";
@@ -149,6 +150,10 @@ describe("AgentsView mobile adaptations", () => {
     vi.mocked(fetchOrgTree).mockResolvedValue([]);
   });
 
+  afterEach(() => {
+    i18next.removeResourceBundle("en", "app");
+  });
+
   it("renders board view grid and board cards", async () => {
     const { container } = render(<AgentsView addToast={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Agents")).toBeTruthy());
@@ -161,7 +166,14 @@ describe("AgentsView mobile adaptations", () => {
     });
   });
 
-  it("renders list view cards", async () => {
+  it("renders list view cards with interpolated heartbeat badges", async () => {
+    i18next.addResourceBundle(
+      "en",
+      "app",
+      { agents: { lastHeartbeat: "Last heartbeat", nextHeartbeat: "Next heartbeat in {{elapsed}}" } },
+      true,
+      true,
+    );
     const { container } = render(<AgentsView addToast={vi.fn()} />);
     await waitFor(() => expect(screen.getByText("Agents")).toBeTruthy());
 
@@ -171,6 +183,13 @@ describe("AgentsView mobile adaptations", () => {
       expect(container.querySelector(".agent-list")).toBeTruthy();
       expect(container.querySelectorAll(".agent-card").length).toBeGreaterThan(0);
     });
+
+    const lastBadge = container.querySelector(".agent-heartbeat-last");
+    const nextBadge = container.querySelector(".agent-heartbeat-next");
+    expect(lastBadge?.textContent).toMatch(/Last: .*\d/);
+    expect(lastBadge?.textContent).not.toBe("Last heartbeat");
+    expect(nextBadge?.textContent).toMatch(/Next: .*\d/);
+    expect(nextBadge?.textContent).not.toContain("{{");
 
     // Token-stats panel now lives in the controls popup; open it before
     // asserting on the panel content.

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import i18next from "i18next";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { AgentsView } from "../AgentsView";
 import * as apiModule from "../../api";
@@ -182,6 +183,10 @@ describe("AgentsView", () => {
     mockFetchOrgTree.mockResolvedValue([]);
     mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
     mockUpdateSettings.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    i18next.removeResourceBundle("en", "app");
   });
 
   const openControlsPanel = async () => {
@@ -817,7 +822,14 @@ describe("AgentsView", () => {
       expect(options).not.toContain("1m");
     });
 
-    it("renders Last/Next heartbeat timestamps without seconds", async () => {
+    it("renders Last/Next heartbeat timestamps without seconds when old catalog keys collide", async () => {
+      i18next.addResourceBundle(
+        "en",
+        "app",
+        { agents: { lastHeartbeat: "Last heartbeat", nextHeartbeat: "Next heartbeat in {{elapsed}}" } },
+        true,
+        true,
+      );
       const lastHeartbeatAt = "2026-05-04T14:23:45.000Z";
       mockFetchAgents.mockResolvedValueOnce([
         {
@@ -828,7 +840,7 @@ describe("AgentsView", () => {
       ]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: { active: 1 }, byRole: { triage: 1 } });
 
-      render(<AgentsView addToast={mockAddToast} />);
+      const { container } = render(<AgentsView addToast={mockAddToast} />);
 
       const lastAt = new Date(lastHeartbeatAt);
       const nextAt = new Date(lastAt.getTime() + 300000);
@@ -840,6 +852,13 @@ describe("AgentsView", () => {
         expect(screen.getByText(expectedNext)).toBeTruthy();
       });
 
+      const lastBadge = container.querySelector(".agent-heartbeat-last");
+      const nextBadge = container.querySelector(".agent-heartbeat-next");
+      expect(lastBadge?.textContent).toMatch(/Last: .*\d/);
+      expect(lastBadge?.textContent).not.toBe("Last heartbeat");
+      expect(nextBadge?.textContent).toMatch(/Next: .*\d/);
+      expect(nextBadge?.textContent).not.toContain("{{");
+      expect(nextBadge?.textContent).not.toContain("{{elapsed}}");
       expect(screen.queryByText(/Last: .*:\d{2}:\d{2}/)).toBeNull();
       expect(screen.queryByText(/Next: .*:\d{2}:\d{2}/)).toBeNull();
     });
