@@ -2368,6 +2368,8 @@ export interface Task {
   sourceMessageId?: string;
   sourceParentTaskId?: string;
   sourceMetadata?: Record<string, unknown>;
+  /** Reconstructed task prompt content when available on in-memory execution tasks. */
+  prompt?: string;
   /** Explicitly assigned user ID for task-user linking. Used during review handoff to indicate
    *  which user should review the task. The sentinel value "requesting-user" indicates the
    *  user who created or steered the task. */

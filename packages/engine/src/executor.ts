@@ -257,7 +257,11 @@ function promptLooksCoordinationOnly(prompt: string): boolean {
   const assessment = prompt.match(/^\*\*Assessment:\*\*\s*([^\n]+)/im)?.[1] ?? "";
   const coordinationText = `${titleMatch}\n${mission}\n${assessment}`.toLowerCase();
   const hasCoordinationIntent = /\b(coordination|routing|route|handoff|assign(?:ment)?|owner|triage|select exactly one|record (?:the )?intentional block)\b/.test(coordinationText);
-  const hasImplementationDirective = /\b(implement|fix|add|change|modify|refactor|build|create|delete|remove)\b/.test(mission.toLowerCase()) && !/record (?:the )?intentional block/.test(mission.toLowerCase());
+  const missionLower = mission.toLowerCase()
+    .replace(/do\s+not\s+(?:edit|modify|change)\s+(?:product\s+)?source/g, "")
+    .replace(/should\s+not\s+change\s+(?:product\s+)?source/g, "")
+    .replace(/must\s+not\s+(?:edit|modify|change)\s+(?:product\s+)?(?:source|code)/g, "");
+  const hasImplementationDirective = /\b(implement|fix|add|change|modify|refactor|build|create|delete|remove)\b/.test(missionLower);
   return hasCoordinationIntent && !hasImplementationDirective;
 }
 
@@ -268,13 +272,13 @@ function promptFileScopeIsBoardOnly(prompt: string): boolean {
   const sourcePathPattern = /(?:^|[\s`'"(])(?:packages|src|source|sources|app|apps|lib|libs|components|scripts|docs|\.github|config|test|tests|__tests__)\//m;
   const sourceExtensionPattern = /\.(?:ts|tsx|js|jsx|mjs|cjs|swift|kt|java|py|go|rs|rb|php|cs|cpp|c|h|hpp|json|ya?ml|toml|mdx?|css|scss|html|sql|sh)\b/m;
   if (sourcePathPattern.test(normalized) || sourceExtensionPattern.test(normalized)) return false;
-  const allowedBoardOnlyPattern = /\b(task[- ]?board|board task|task document|task documents|task metadata|task logs|fusion task tools|fn_task_|\.fusion\/tasks|attachments?)\b/;
+  const allowedBoardOnlyPattern = /(?:^|[^\w/])(?:task[- ]?board|board task|task document|task documents|task metadata|task logs|fusion task tools|fn_task_[\w-]*|\.fusion\/tasks|attachments?)(?=$|[^\w/-])/;
   return allowedBoardOnlyPattern.test(normalized);
 }
 
 function getNoCommitEligibilityReason(task: Task): "explicit noCommitsExpected=true" | "prompt-derived coordination-only no-source scope" | null {
   if (task.noCommitsExpected === true) return "explicit noCommitsExpected=true";
-  const rawPrompt = (task as { prompt?: unknown }).prompt;
+  const rawPrompt = task.prompt;
   const prompt = typeof rawPrompt === "string" ? rawPrompt : "";
   if (!prompt.trim()) return null;
   if (

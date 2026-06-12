@@ -191,6 +191,48 @@ Atlas Notes task-board artifacts only:
     expect(store.handoffToReview).not.toHaveBeenCalled();
   });
 
+  it("FN-350 refuses contradictory implementation plus coordination fallback prompts", async () => {
+    const prompt = `# Task: FN-350 - Route Ready Swift Tasks to Executor Owner
+
+## Review Level: 1 (Plan Only)
+
+**Assessment:** This is a coordination/routing task that should not change product source.
+
+## Mission
+Implement the source fix if possible, or record the intentional block if no safe candidate exists. Do not change product source.
+
+## File Scope
+
+- FN-350 task document \`docs\` via \`fn_task_document_write\`
+
+## Steps
+
+### Step 1: Decide
+- [x] Decision recorded.
+`;
+    const { store, tool } = await setup({
+      id: "FN-350",
+      title: "Route Ready Swift Tasks to Executor Owner",
+      description: "Coordination/routing task with task-document evidence only.",
+      prompt,
+      branch: "fusion/fn-350",
+      noCommitsExpected: undefined,
+      steps: [{ name: "Decide", status: "done" as const }],
+    });
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/swift-falcon\n");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-350\n");
+      if (cmd.includes("rev-list --count")) return Buffer.from("0\n");
+      if (cmd.includes("rev-parse HEAD")) return Buffer.from("def456\n");
+      return Buffer.from("");
+    });
+
+    const result = await tool.execute("id", {});
+
+    expect(result.content[0].text).toContain("fn_task_done refused: no_commits");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-350", "todo", { preserveProgress: true });
+  });
+
   it("FN-4114 still refuses source-changing implementation tasks with zero commits and no explicit no-commit contract", async () => {
     const implementationPrompt = `# Task: FN-4114 - Implement source change
 
