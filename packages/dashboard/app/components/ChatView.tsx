@@ -48,13 +48,6 @@ import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import {
-  CHAT_INPUT_MAX_HEIGHT_PX,
-  TABLET_INPUT_MAX_HEIGHT_PX,
-  clampChatInputHeight,
-  resolveChatInputOverflowY,
-} from "../utils/chatInputAutosize";
-export { clampChatInputHeight, resolveChatInputOverflowY } from "../utils/chatInputAutosize";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
@@ -64,9 +57,27 @@ export interface ChatViewProps {
   experimentalFeatures?: Record<string, boolean>;
 }
 
+// Keep a generous cap so pasted multi-paragraph text stays visible while
+// still preventing the composer from overtaking the message pane on short viewports.
+const CHAT_INPUT_MAX_HEIGHT_PX = 640;
+const TABLET_INPUT_MAX_HEIGHT_PX = 200;
 /** Canonical definition lives in packages/dashboard/src/chat.ts (ROOM_SKIP_SENTINEL). */
 const ROOM_SKIP_SENTINEL = "__SKIP__";
 let chatViewWasPreviouslyInactive = false;
+
+export function resolveChatInputOverflowY(
+  scrollHeight: number,
+  maxHeight: number = CHAT_INPUT_MAX_HEIGHT_PX,
+): "auto" | "hidden" {
+  return scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
+export function clampChatInputHeight(scrollHeight: number, maxHeight: number = CHAT_INPUT_MAX_HEIGHT_PX): number {
+  // Floor matches QuickChat (clampQuickChatInputHeight) and the CSS min-height,
+  // so a 0-scrollHeight measurement (e.g. before layout) still yields a
+  // sensible inline height instead of collapsing the composer to 0.
+  return Math.max(40, Math.min(scrollHeight, maxHeight));
+}
 
 function formatRelativeTime(dateStr: string, t: TFunction<"app">): string {
   const date = new Date(dateStr);
@@ -1077,6 +1088,9 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
   // visualViewport shrink samples do not jerk the chat thread/composer.
   const suppressVvShrinkRef = useRef(false);
   const suppressVvShrinkTimeoutRef = useRef<number | null>(null);
+  // Deferred drift-reset scheduled on blur; cancelled on the next focus so a
+  // quick re-tap never scrolls the document while iOS is raising the keyboard.
+  const blurScrollResetTimeoutRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
@@ -2281,6 +2295,31 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
         suppressVvShrinkRef.current = false;
         suppressVvShrinkTimeoutRef.current = null;
       }, 450);
+
+      // Undo iOS layout-viewport drift HERE, on blur, not on the next focus.
+      // After a keyboard dismiss iOS can leave window.scrollY > 0; if that
+      // residual scroll is still present on the next focus, the keyboard
+      // lock's scrollTo(0,0) fires a *real* scroll while iOS is raising the
+      // keyboard and dismisses it (the "second tap dismisses" regression).
+      // Resetting on blur — when the keyboard is already closing, so there is
+      // nothing to dismiss — means the next focus starts at scrollY 0 and the
+      // lock's scroll is a no-op. We reset immediately and once more after the
+      // dismiss animation settles (iOS can re-drift mid-animation). The
+      // deferred reset is cancelled on focus so a fast re-tap can't scroll
+      // mid-raise.
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (blurScrollResetTimeoutRef.current !== null) {
+        window.clearTimeout(blurScrollResetTimeoutRef.current);
+      }
+      blurScrollResetTimeoutRef.current = window.setTimeout(() => {
+        blurScrollResetTimeoutRef.current = null;
+        if (document.activeElement?.tagName === "TEXTAREA") return;
+        if (window.scrollY !== 0 || window.scrollX !== 0) {
+          window.scrollTo(0, 0);
+        }
+      }, 350);
     }
 
     if (hideSkillMenuTimeoutRef.current !== null) {
@@ -2308,28 +2347,28 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       window.clearTimeout(hideSkillMenuTimeoutRef.current);
       hideSkillMenuTimeoutRef.current = null;
     }
-    // iOS quirk: after the keyboard has been dismissed once, re-focusing
-    // an input leaves window.scrollY > 0 *and* visualViewport.offsetTop
-    // > 0 — the layout viewport drifts up, and the position:fixed
-    // useMobileScrollLock applies to a body that is no longer at the
-    // top of the document. Result: the message thread anchors above
-    // the visible viewport with a large blank area below it. Forcing
-    // scroll back to (0,0) on the focus event neutralizes the drift
-    // before lock applies. Done in a microtask so iOS finishes its
-    // own scroll-into-view first.
-    if (typeof window !== "undefined" && window.innerWidth <= 768) {
-      queueMicrotask(() => {
-        if (window.scrollY !== 0 || window.scrollX !== 0) {
-          window.scrollTo(0, 0);
-        }
-      });
+    // Cancel any deferred blur drift-reset: it would scroll the document while
+    // iOS is raising the keyboard for THIS focus and dismiss it.
+    if (blurScrollResetTimeoutRef.current !== null) {
+      window.clearTimeout(blurScrollResetTimeoutRef.current);
+      blurScrollResetTimeoutRef.current = null;
     }
+    // NOTE: deliberately no window.scrollTo(0,0) here. Scrolling on the focus
+    // event fires while iOS is still raising the soft keyboard, and iOS treats
+    // a programmatic scroll mid-raise as a reason to abort it — the keyboard
+    // opens then immediately dismisses, so the input can't be typed in. This
+    // mirrors QuickChatFAB's handleInputFocus, which does not scroll and works.
+    // Drift is instead reset on blur (see handleInputBlur), so by the time this
+    // focus runs the document is already at scrollY 0.
   }, []);
 
   useEffect(() => {
     return () => {
       if (suppressVvShrinkTimeoutRef.current !== null) {
         window.clearTimeout(suppressVvShrinkTimeoutRef.current);
+      }
+      if (blurScrollResetTimeoutRef.current !== null) {
+        window.clearTimeout(blurScrollResetTimeoutRef.current);
       }
     };
   }, []);

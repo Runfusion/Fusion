@@ -44,13 +44,19 @@
     bottom: var(--icb-bottom-offset, 0px);
   }
 
-  /* When the on-screen keyboard is open, ignore the visualViewport
-     compensation that would otherwise push the bar up by the keyboard
-     height (iOS shrinks vv.height; bottomOffset becomes ~keyboard height).
-     Pin the nav to the page bottom so the keyboard simply covers it. */
+  /* When the on-screen keyboard is open, hide the nav outright instead of
+     pinning it to bottom:0 and trusting the keyboard to cover it. On iOS the
+     layout viewport does NOT shrink, so a bottom:0 bar stays on screen and
+     overlaps the composer that has lifted above the keyboard. Sliding it fully
+     off the bottom edge guarantees it's gone while typing. Safe for the
+     keyboard: the nav is a sibling of the chat input, not an ancestor, so the
+     transform does not establish a containing block over the focused field
+     (which is what would otherwise make iOS collapse the keyboard). */
   .mobile-nav-bar.mobile-nav-bar--keyboard-open,
   .mobile-nav-bar.mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
     bottom: 0;
+    transform: translateY(100%);
+    pointer-events: none;
   }
 
   /* Content padding: mobile nav only (no footer). Mirrors the visible fixed stack,
