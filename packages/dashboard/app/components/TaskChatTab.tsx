@@ -28,7 +28,14 @@ interface AgentLogGroup {
   entries: AgentLogEntry[];
 }
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
+const STEERING_BLOCKED_STATUSES = new Set([
+  "paused",
+  "awaiting-user-input",
+  "awaiting-cli-approval",
+  "awaiting-user-review",
+  "failed",
+  "needs-replan",
+]);
 const REVIEW_STEERABLE_STATUSES = new Set(["reviewing", "merging", "merging-fix", "fixing"]);
 const BOTTOM_FOLLOW_THRESHOLD = 48;
 
@@ -81,7 +88,8 @@ function groupEntriesByAgent(entries: AgentLogEntry[]): AgentLogGroup[] {
 
 function isActiveAgentSession(task: Task | TaskDetail): boolean {
   const hasAssignedAgent = Boolean(task.assignedAgentId || task.checkedOutBy);
-  const statusAllowsProgressSteering = !task.status || ACTIVE_STATUSES.has(task.status);
+  const statusBlocksProgressSteering = task.status ? STEERING_BLOCKED_STATUSES.has(task.status) : false;
+  const statusAllowsProgressSteering = !statusBlocksProgressSteering;
   const statusAllowsReviewSteering = !task.status || REVIEW_STEERABLE_STATUSES.has(task.status);
   const columnAllowsSteering = (task.column === "in-progress" && statusAllowsProgressSteering)
     || (task.column === "in-review" && statusAllowsReviewSteering);
@@ -253,7 +261,7 @@ export function TaskChatTab({ task, projectId, active, addToast }: TaskChatTabPr
       <form className="task-chat-composer card" onSubmit={handleSubmit}>
         {!activeSession ? (
           <div className="task-chat-session-hint" role="status">
-            No active assigned agent session is available. An active, assigned agent session is required to send guidance.
+            No active assigned agent session is available. An active, assigned, non-paused agent session is required to send guidance.
           </div>
         ) : null}
         <div className="task-chat-composer-row">
@@ -261,7 +269,7 @@ export function TaskChatTab({ task, projectId, active, addToast }: TaskChatTabPr
             ref={textareaRef}
             className="input task-chat-input"
             value={draft}
-            placeholder={activeSession ? "Message the active agent session…" : "Active assigned agent session required"}
+            placeholder={activeSession ? "Message the active agent session…" : "Active non-paused agent session required"}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
             disabled={!activeSession || sending}

@@ -153,6 +153,27 @@ describe("TaskChatTab", () => {
     expect(input).toHaveValue("");
   });
 
+  it.each([
+    ["queued", "Please continue after dispatch"],
+    [undefined, "Please continue with a cleared status"],
+  ])("enables in-progress steering for realistic %s status", async (status, message) => {
+    const user = userEvent.setup();
+    mockedAddSteeringComment.mockResolvedValue(makeTask({ status }));
+    render(<TaskChatTab task={makeTask({ column: "in-progress", assignedAgentId: "agent-1", status })} projectId="project-1" active addToast={vi.fn()} />);
+
+    expect(screen.queryByText(/No active assigned agent session/)).not.toBeInTheDocument();
+    const input = screen.getByLabelText("Message active agent session");
+    expect(input).not.toBeDisabled();
+    await user.type(input, message);
+    const sendButton = screen.getByRole("button", { name: "Send" });
+    expect(sendButton).not.toBeDisabled();
+    await user.click(sendButton);
+
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).toHaveBeenCalledWith("FN-001", message, "project-1");
+    });
+  });
+
   it.each(["reviewing", "merging", "merging-fix", "fixing"])(
     "enables in-review steering while %s with an assigned agent",
     async (status) => {
@@ -207,9 +228,9 @@ describe("TaskChatTab", () => {
     render(<TaskChatTab task={task} active addToast={vi.fn()} />);
 
     expect(screen.getByText(/No active assigned agent session/)).toBeTruthy();
-    expect(screen.getByText(/active, assigned agent session is required/i)).toBeTruthy();
+    expect(screen.getByText(/active, assigned, non-paused agent session is required/i)).toBeTruthy();
     expect(screen.getByLabelText("Message active agent session")).toBeDisabled();
-    expect(screen.getByPlaceholderText("Active assigned agent session required")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Active non-paused agent session required")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
