@@ -137,6 +137,19 @@ function editorKind(node: WorkflowIr["nodes"][number]): WorkflowEditorNodeKind {
   // (Dedicated PR-node editor rendering is a follow-up, not part of this work.)
   if (node.kind === "pr-merge") return "merge";
   if (node.kind === "pr-create" || node.kind === "pr-respond") return "prompt";
+  // Workflow-owned merge/retry/recovery nodes are executable IR kinds, but the
+  // dashboard editor does not expose dedicated palette/renderers for each one.
+  // Preserve rendering by mapping them to the closest existing editor shape.
+  if (node.kind === "merge-gate") return "gate";
+  if (node.kind === "manual-merge-hold" || node.kind === "retry-backoff") return "hold";
+  if (node.kind === "recovery-router") return "split";
+  if (
+    node.kind === "merge-attempt" ||
+    node.kind === "branch-group-member-integration" ||
+    node.kind === "branch-group-promotion"
+  ) {
+    return "merge";
+  }
   return node.kind;
 }
 

@@ -344,7 +344,7 @@ describe("workflow-flow-mapping", () => {
     const failuresToEnd = edges.filter((edge) => edge.target === "end" && edge.data?.condition === "failure");
     expect(failuresToEnd.map((edge) => edge.source).sort()).toEqual([
       "execute",
-      "merge",
+      "merge-attempt",
       "planning",
       "review",
       "workflow-step",

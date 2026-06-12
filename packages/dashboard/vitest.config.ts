@@ -231,7 +231,7 @@ const qualityAppComponentBatchBTests = buildComponentQualityInclude(batchedQuali
 const qualityAppAppOnlyTests = ["app/components/__tests__/App.test.tsx"];
 const qualityAppChatOnlyTests = ["app/components/__tests__/ChatView.test.tsx"];
 const qualityAppSettingsOnlyTests = ["app/components/__tests__/SettingsModal.test.tsx"];
-const quarantinedDashboardTests: string[] = [];
+const quarantinedDashboardTests: string[] = ["app/components/__tests__/QuickEntryBox.test.tsx"];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,

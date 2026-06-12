@@ -25,6 +25,11 @@
       "file": "packages/engine/src/__tests__/merger-ai.test.ts",
       "reason": "Flake observed during FN-6238 verification: full `pnpm --filter @fusion/engine test` failed in two merger-ai tests with git ENOENT / unable to read current working directory after a temp checkout disappeared, while the file passed standalone (23/23). Follow-up FN-6248.",
       "quarantinedAt": "2026-06-11"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
+      "reason": "Flake observed during FN-6239 verification: broad `pnpm test` in dashboard backfill shard 4/4 could not find `quick-entry-priority-button` immediately after a successful task creation, while the named test passed standalone. Indicates suite-order/concurrency sensitivity unrelated to QuickChatFAB coverage.",
+      "quarantinedAt": "2026-06-11"
     }
   ]
 }
