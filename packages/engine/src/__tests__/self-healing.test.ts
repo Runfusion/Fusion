@@ -1943,6 +1943,107 @@ describe("SelfHealingManager", () => {
       mgr.stop();
     });
 
+    it("recovers spawn ENOTDIR process-spawn failures", async () => {
+      const transientStore = setupTransientRecoveryStore({
+        tasks: [
+          {
+            id: "FN-6210",
+            column: "in-review",
+            paused: false,
+            status: "failed",
+            mergeRetries: 3,
+            error: "spawn ENOTDIR",
+            mergeDetails: undefined,
+          },
+        ],
+      });
+      const requeueForAutoMerge = vi.fn();
+      const mgr = new SelfHealingManager(transientStore, {
+        rootDir: "/tmp/test-project",
+        requeueForAutoMerge,
+      });
+
+      const recovered = await mgr.recoverTransientMergeFailures();
+
+      expect(recovered).toBe(1);
+      expect(requeueForAutoMerge).toHaveBeenCalledTimes(1);
+      expect(requeueForAutoMerge).toHaveBeenCalledWith("FN-6210");
+      const updateCalls = (transientStore.updateTask as ReturnType<typeof vi.fn>).mock.calls as unknown as Array<[string, Partial<Task>]>;
+      const recoveryCall = updateCalls.find((call) => call[0] === "FN-6210" && call[1].status === null);
+      expect(recoveryCall).toBeDefined();
+      expect(recoveryCall![1].mergeRetries).toBe(0);
+      expect(recoveryCall![1].error).toBeNull();
+      expect((recoveryCall![1] as { mergeDetails?: { transientRecoveryCount?: number } }).mergeDetails?.transientRecoveryCount).toBe(1);
+
+      mgr.stop();
+    });
+
+    it("recovers spawn git ENOENT process-spawn failures", async () => {
+      const transientStore = setupTransientRecoveryStore({
+        tasks: [
+          {
+            id: "FN-6210-ENOENT",
+            column: "in-review",
+            paused: false,
+            status: "failed",
+            mergeRetries: 3,
+            error: "spawn git ENOENT",
+            mergeDetails: { transientRecoveryCount: 1 },
+          },
+        ],
+      });
+      const requeueForAutoMerge = vi.fn();
+      const mgr = new SelfHealingManager(transientStore, {
+        rootDir: "/tmp/test-project",
+        requeueForAutoMerge,
+      });
+
+      const recovered = await mgr.recoverTransientMergeFailures();
+
+      expect(recovered).toBe(1);
+      expect(requeueForAutoMerge).toHaveBeenCalledTimes(1);
+      expect(requeueForAutoMerge).toHaveBeenCalledWith("FN-6210-ENOENT");
+      const updateCalls = (transientStore.updateTask as ReturnType<typeof vi.fn>).mock.calls as unknown as Array<[string, Partial<Task>]>;
+      const recoveryCall = updateCalls.find((call) => call[0] === "FN-6210-ENOENT" && call[1].status === null);
+      expect(recoveryCall).toBeDefined();
+      expect(recoveryCall![1].mergeRetries).toBe(0);
+      expect(recoveryCall![1].error).toBeNull();
+      expect((recoveryCall![1] as { mergeDetails?: { transientRecoveryCount?: number } }).mergeDetails?.transientRecoveryCount).toBe(2);
+
+      mgr.stop();
+    });
+
+    it("parks process-spawn failures once the transient recovery budget is exhausted", async () => {
+      const transientStore = setupTransientRecoveryStore({
+        tasks: [
+          {
+            id: "FN-spawn-exhausted",
+            column: "in-review",
+            paused: false,
+            status: "failed",
+            mergeRetries: 3,
+            error: "spawn ENOTDIR",
+            mergeDetails: { transientRecoveryCount: 2 },
+          },
+        ],
+      });
+      const requeueForAutoMerge = vi.fn();
+      const mgr = new SelfHealingManager(transientStore, {
+        rootDir: "/tmp/test-project",
+        requeueForAutoMerge,
+      });
+
+      const recovered = await mgr.recoverTransientMergeFailures();
+
+      expect(recovered).toBe(0);
+      expect(requeueForAutoMerge).not.toHaveBeenCalled();
+      const updateCalls = (transientStore.updateTask as ReturnType<typeof vi.fn>).mock.calls as unknown as Array<[string, Partial<Task>]>;
+      const markerCall = updateCalls.find((call) => call[0] === "FN-spawn-exhausted" && typeof call[1].error === "string" && (call[1].error as string).includes("[transient-recovery-budget-exhausted]"));
+      expect(markerCall).toBeDefined();
+
+      mgr.stop();
+    });
+
     it("recovers same-SHA spurious concurrent-advance failures (pre-FN-5627 legacy)", async () => {
       const transientStore = setupTransientRecoveryStore({
         tasks: [

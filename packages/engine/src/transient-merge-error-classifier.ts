@@ -33,11 +33,22 @@
  *        the safety-fallback auto-prerebase (`merger-auto-prerebase.ts`,
  *        FN-5627) rebases the task branch onto current main, so the retry
  *        succeeds.
+ *
+ *  - `process-spawn-failure`: Node/OS process launch failed while the merger
+ *    was operating from an integration cwd (`spawn ENOTDIR`, `spawn git ENOENT`,
+ *    `spawn ENOENT`). These indicate the command could not even start because
+ *    the cwd/entrypoint was missing or file-shadowed (for example a stale temp
+ *    merge checkout), not that the task branch's code failed. A fresh merge
+ *    attempt gets a fresh/revalidated worktree, so the self-healing sweep can
+ *    recover these within its bounded retry budget.
  */
 export function classifyTransientMergeError(error: string | null | undefined): string | null {
   if (!error) return null;
   if (/lease-handoff-failed[^a-z]+target-not-queued/i.test(error)) {
     return "lease-handoff-target-not-queued";
+  }
+  if (/\bspawn(?:\s+\S+)?\s+ENO(?:TDIR|ENT)\b/i.test(error)) {
+    return "process-spawn-failure";
   }
   const sameSha = error.match(/advanced concurrently \(expected ([0-9a-f]{7,40}),\s+observed ([0-9a-f]{7,40})\)/i);
   if (sameSha && sameSha[1].toLowerCase() === sameSha[2].toLowerCase()) {
