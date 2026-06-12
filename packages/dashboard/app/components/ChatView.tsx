@@ -1675,43 +1675,23 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     };
   }, [isMobile, keyboardOpen]);
 
-  // On page restore, if iOS thinks the keyboard is up but the textarea
-  // isn't actually focused (or vice versa), the visualViewport metrics get
-  // stuck in a half-state — composer pushed up or covered by a blank pane.
-  // Force a blur+refocus on the textarea to make iOS resync.
+  // NOTE: a previous iOS-only "resync" effect here force-blurred and
+  // re-focused the active textarea on visibilitychange/pageshow to nudge
+  // iOS out of a stuck visualViewport half-state (composer pushed up /
+  // blank pane). It was removed because it was the cause of the iOS
+  // "keyboard won't stay up" bug: the effect only ever ran while the
+  // composer was already focused (its `document.activeElement !== ta`
+  // guard), and on iOS a programmatic focus() fired from setTimeout has
+  // no user-gesture context, so it cannot re-raise the keyboard after the
+  // blur(). In practice it never resynced the keyboard up — it only
+  // dismissed it whenever iOS emitted a visibilitychange (Control Center,
+  // notification banners, app switches, etc.) mid-session.
   //
-  // This is an iOS-only quirk fix and must stay iOS-only: on Android a
-  // programmatic focus() after blur() does NOT re-raise the soft keyboard
-  // (Android only opens the keyboard from a real user gesture), so running
-  // this there permanently collapses the keyboard whenever a spurious
-  // visibilitychange fires — including the ones Android browsers emit
-  // mid-keyboard-transition while the user is typing. We also only resync
-  // when the document is actually becoming visible; visibilitychange also
-  // fires on hide, where a blur+refocus is pointless and disruptive. Only
-  // runs when ChatView holds the active session (avoids stealing focus
-  // from other views).
-  useEffect(() => {
-    if (!isMobile || !activeSession || !isIOS()) return;
-    const resync = () => {
-      const ta = inputRef.current;
-      if (!ta) return;
-      if (document.activeElement !== ta) return; // only if it was focused
-      ta.blur();
-      window.setTimeout(() => {
-        ta.focus({ preventScroll: true });
-      }, 0);
-    };
-    const resyncOnVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      resync();
-    };
-    document.addEventListener("visibilitychange", resyncOnVisible);
-    window.addEventListener("pageshow", resync);
-    return () => {
-      document.removeEventListener("visibilitychange", resyncOnVisible);
-      window.removeEventListener("pageshow", resync);
-    };
-  }, [isMobile, activeSession]);
+  // The visualViewport half-state it targeted is now owned by
+  // useMobileKeyboard, which re-snapshots vv metrics on
+  // visibilitychange/pageshow via its settle tail + rAF stability poll —
+  // without ever touching textarea focus. Do not reintroduce a
+  // blur()+focus() resync here.
 
   useEffect(() => {
     const previousScope = previousChatScopeRef.current;
