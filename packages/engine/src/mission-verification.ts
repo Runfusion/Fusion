@@ -81,6 +81,50 @@ export interface VerificationProof {
   testFilePath: string;
 }
 
+/**
+ * Which evidence channel(s) confirm a behavioral assertion.
+ *
+ * - `test`: code-level behavior, confirmed by running the suite / a regression
+ *   test against a disposable checkout (U3 test-execution channel).
+ * - `app`: UI/bug behavior, confirmed by driving a running app instance
+ *   (U4 isolated launch + U8 driver).
+ * - `both`: an assertion that is only confirmed when BOTH channels confirm it.
+ *
+ * Defaults conservatively to `test` when unspecified — the existing
+ * test-execution behavior — so callers that do not classify an assertion keep
+ * working unchanged.
+ */
+export type VerificationChannel = "test" | "app" | "both";
+
+/**
+ * Describes the observable UI behavior an app-driving verification must check.
+ *
+ * The driver navigates to `path` (relative to the isolated app's base URL) and
+ * observes `selector`. `expectation` declares what a PASS looks like:
+ *
+ * - `present`: the assertion claims a feature/element should be present, so an
+ *   `observe`→`found` is a PASS and an `observe`→`absent` is a FAIL.
+ * - `absent`: the assertion claims a bug no longer reproduces, so an
+ *   `observe`→`absent` is a PASS and an `observe`→`found` is a FAIL.
+ *
+ * In both cases a driver `inconclusive` (unavailable / un-exercisable) maps to
+ * an inconclusive verdict, never pass/fail.
+ */
+export interface UiAssertionSpec {
+  /** Path relative to the isolated app base URL, e.g. "/board". */
+  path: string;
+  /** Selector whose presence/absence encodes the behavior. */
+  selector: string;
+  /**
+   * What a PASS looks like:
+   * - `present`: element should be there (feature present).
+   * - `absent`: element should be gone (bug no longer reproduces).
+   */
+  expectation: "present" | "absent";
+  /** Optional per-operation timeout override. */
+  timeoutMs?: number;
+}
+
 /** Input describing a single behavioral assertion to verify. */
 export interface VerificationRequest {
   assertionId: string;
@@ -88,6 +132,18 @@ export interface VerificationRequest {
   assertion: string;
   /** Board task id associated with the feature, used for verification-command logging. */
   taskId?: string;
+  /**
+   * Which evidence channel(s) confirm this assertion. Defaults to `test`
+   * (the existing test-execution behavior) when unspecified.
+   */
+  channel?: VerificationChannel;
+  /**
+   * The UI behavior the app-driving channel must reproduce. Required when
+   * `channel` is `app` or `both`; absent for `test`. When the channel needs app
+   * driving but this is missing, the app channel resolves to inconclusive
+   * (structurally un-exercisable), never a default pass/fail.
+   */
+  ui?: UiAssertionSpec;
   /**
    * The trusted revision (integration SHA) whose checkout the implementation is
    * verified against. When absent, verification is inconclusive (cannot
@@ -512,4 +568,367 @@ export class TestExecutionVerificationCapability implements VerificationCapabili
   private inconclusive(assertionId: string, reason: string): VerificationOutcome {
     return { verdict: "inconclusive", assertionId, reason };
   }
+}
+
+// ── App-driving verification channel (U5: U4 launch + U8 driver) ───────────────
+//
+// UI/bug assertions are confirmed by driving a running app instance rather than
+// running a test suite. This channel launches the isolated app (U4) and a
+// browser driver (U8), navigates to the assertion's surface, observes the
+// encoding selector, and maps the observation to a verdict.
+//
+// ENGINE↔PLUGIN WIRING (why a structural injected seam, not a direct import):
+// the U8 driver lives in `@fusion-plugin-examples/agent-browser`, on which the
+// engine has NO package dependency (the plugin depends on plugin-sdk, not the
+// reverse). A direct `import` would invert that and couple the engine to a
+// bundled plugin. Instead this channel takes an injected `AppDrivingDeps` seam
+// whose method shapes match `launchIsolatedApp` (U4) and `launchBrowserDriver`
+// (U8) STRUCTURALLY — so the real wiring (constructed where the loop is built)
+// passes the plugin's `launchBrowserDriver` + the harness's `launchIsolatedApp`,
+// while merge-gate tests pass a mock. This mirrors the `CheckoutMaterializer` /
+// `backendFactory` injection already used by the test-execution channel and the
+// `createFnAgent` injection pattern, and keeps the engine decoupled + testable.
+
+/**
+ * The slice of the U8 driver session this channel uses. Declared structurally so
+ * the engine does not import the plugin; the real session (from
+ * `launchBrowserDriver`) satisfies it.
+ */
+export interface AppDriverSession {
+  navigate(
+    url: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<{ status: "ok"; url: string } | { status: "inconclusive"; reason: string; detail: string }>;
+  observe(
+    selector: string,
+    opts?: { timeoutMs?: number; expectAbsent?: boolean },
+  ): Promise<
+    | { status: "found"; text: string; url: string }
+    | { status: "absent"; url: string }
+    | { status: "inconclusive"; reason: string; detail: string }
+  >;
+  dispose(): Promise<void>;
+}
+
+/** Result of attempting to acquire a driver session (structural mirror of U8's `DriverLaunchResult`). */
+export type AppDriverLaunchResult =
+  | { status: "ready"; session: AppDriverSession }
+  | { status: "inconclusive"; reason: string; detail: string };
+
+/** A launched isolated app instance (structural mirror of U4's `IsolatedApp`). */
+export interface IsolatedAppInstance {
+  baseUrl: string;
+  dispose(): Promise<void>;
+}
+
+/**
+ * Injected dependencies for the app-driving channel. The real implementation
+ * wires `launchApp` → U4 `launchIsolatedApp` and `launchDriver` → U8
+ * `launchBrowserDriver`; tests inject mocks so no real app/browser is launched.
+ */
+export interface AppDrivingDeps {
+  /** Launch an isolated app instance (R11/R13: disposable, isolated, fresh bundle). */
+  launchApp(signal?: AbortSignal): Promise<IsolatedAppInstance>;
+  /** Acquire a driver session targeting the isolated instance. */
+  launchDriver(baseUrl: string, signal?: AbortSignal): Promise<AppDriverLaunchResult>;
+}
+
+export interface AppDrivingVerificationOptions {
+  deps: AppDrivingDeps;
+}
+
+/**
+ * The app-driving channel of the verification run.
+ *
+ * Outcome mapping (R21) — the load-bearing table:
+ *
+ *  | driver result            | expectation=`present`        | expectation=`absent`         |
+ *  | ------------------------ | ---------------------------- | ---------------------------- |
+ *  | observe → `found`        | PASS (feature present)       | FAIL (bug still reproduces)  |
+ *  | observe → `absent`       | FAIL (feature missing)       | PASS (bug no longer repros)  |
+ *  | observe → `inconclusive` | INCONCLUSIVE                 | INCONCLUSIVE                 |
+ *  | driver launch failed     | INCONCLUSIVE                 | INCONCLUSIVE                 |
+ *  | app launch failed        | INCONCLUSIVE                 | INCONCLUSIVE                 |
+ *  | navigate → `inconclusive`| INCONCLUSIVE                 | INCONCLUSIVE                 |
+ *  | no `ui` spec supplied    | INCONCLUSIVE (un-exercisable)| INCONCLUSIVE (un-exercisable)|
+ *
+ * A driver `inconclusive` is ALWAYS inconclusive (never a default pass, never an
+ * auto-fail). Only a real `found`/`absent` observation produces pass/fail.
+ */
+export class AppDrivingVerificationCapability implements VerificationCapability {
+  private readonly deps: AppDrivingDeps;
+
+  constructor(options: AppDrivingVerificationOptions) {
+    this.deps = options.deps;
+  }
+
+  async verifyBehavioralAssertion(request: VerificationRequest): Promise<VerificationOutcome> {
+    const { assertionId } = request;
+    const spec = request.ui;
+    if (!spec) {
+      return {
+        verdict: "inconclusive",
+        assertionId,
+        reason: "app-driving channel selected but no UI assertion spec was supplied (structurally un-exercisable)",
+      };
+    }
+
+    let app: IsolatedAppInstance | undefined;
+    let session: AppDriverSession | undefined;
+    try {
+      // R11/R13: drive the isolated instance, never the user's live app.
+      try {
+        app = await this.deps.launchApp(request.signal);
+      } catch (err) {
+        return {
+          verdict: "inconclusive",
+          assertionId,
+          reason: `isolated app launch failed: ${errMessage(err)}`,
+        };
+      }
+
+      const launch = await this.deps.launchDriver(app.baseUrl, request.signal);
+      if (launch.status !== "ready") {
+        return {
+          verdict: "inconclusive",
+          assertionId,
+          reason: `app driver unavailable (${launch.reason})`,
+          detail: launch.detail,
+        };
+      }
+      session = launch.session;
+
+      const url = joinUrl(app.baseUrl, spec.path);
+      const nav = await session.navigate(url, { timeoutMs: spec.timeoutMs });
+      if (nav.status !== "ok") {
+        return {
+          verdict: "inconclusive",
+          assertionId,
+          reason: `navigation to the assertion surface failed (${nav.reason})`,
+          detail: nav.detail,
+        };
+      }
+
+      const observation = await session.observe(spec.selector, {
+        timeoutMs: spec.timeoutMs,
+        expectAbsent: spec.expectation === "absent",
+      });
+
+      if (observation.status === "inconclusive") {
+        // Driver inconclusive is ALWAYS inconclusive (R21).
+        return {
+          verdict: "inconclusive",
+          assertionId,
+          reason: `driver could not reach a definitive observation (${observation.reason})`,
+          detail: observation.detail,
+        };
+      }
+
+      // A definitive observation (`found` | `absent`) maps to pass/fail per the
+      // expectation. This is the one place a real negative (`absent`) becomes a
+      // PASS — for a "bug no longer reproduces" assertion.
+      const present = observation.status === "found";
+      if (spec.expectation === "present") {
+        return present
+          ? { verdict: "pass", assertionId, reason: `expected element present at ${spec.path} (${spec.selector})` }
+          : { verdict: "fail", assertionId, reason: `expected element ABSENT at ${spec.path} (${spec.selector}); feature not observed` };
+      }
+      // expectation === "absent" (bug should no longer reproduce)
+      return present
+        ? {
+            verdict: "fail",
+            assertionId,
+            reason: `defect still reproduces: element still present at ${spec.path} (${spec.selector})`,
+            detail: observation.status === "found" ? observation.text : undefined,
+          }
+        : { verdict: "pass", assertionId, reason: `defect no longer reproduces: element absent at ${spec.path} (${spec.selector})` };
+    } catch (err) {
+      // Any unexpected driver/setup error is infra, not behavioral → inconclusive.
+      return {
+        verdict: "inconclusive",
+        assertionId,
+        reason: `app-driving run could not complete: ${errMessage(err)}`,
+      };
+    } finally {
+      await session?.dispose().catch((err) => verifyLog.warn("driver dispose failed:", err));
+      await app?.dispose().catch((err) => verifyLog.warn("isolated app dispose failed:", err));
+    }
+  }
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function joinUrl(baseUrl: string, pathPart: string): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  if (!pathPart) return base;
+  return `${base}/${pathPart.replace(/^\/+/, "")}`;
+}
+
+// ── Determinism contract (R20) ────────────────────────────────────────────────
+
+/**
+ * Wrap a verification capability so a verdict is only authoritative when it
+ * agrees across N runs. A result that DIFFERS across runs is flaky and resolves
+ * to `inconclusive` — never `fail` (R20). N is small and configurable.
+ *
+ * Semantics:
+ * - All N runs return the SAME verdict (pass/fail/inconclusive) → that verdict.
+ * - Verdicts differ across runs → `inconclusive` (flaky), with a reason naming
+ *   the disagreement. In particular a run that passes then fails is flaky, NOT a
+ *   fail — this is the exact false-fail class R20 removes.
+ * - Short-circuit: once an `inconclusive` appears we still complete the runs is
+ *   unnecessary; an early `inconclusive` already means non-authoritative, so we
+ *   return inconclusive immediately to bound cost.
+ *
+ * The wrapper is channel-agnostic: it wraps the app-driving channel (the new,
+ * fragile surface) and can wrap any capability. The test-execution channel can
+ * also be wrapped, but the dispatcher applies it to app-driving by default since
+ * that is where flakiness lives.
+ */
+export const DEFAULT_VERIFICATION_RUNS = 2;
+
+export interface DeterministicVerificationOptions {
+  inner: VerificationCapability;
+  /** Number of agreeing runs required for an authoritative verdict. Default {@link DEFAULT_VERIFICATION_RUNS}. */
+  runs?: number;
+}
+
+export class DeterministicVerificationCapability implements VerificationCapability {
+  private readonly inner: VerificationCapability;
+  private readonly runs: number;
+
+  constructor(options: DeterministicVerificationOptions) {
+    this.inner = options.inner;
+    this.runs = Math.max(1, options.runs ?? DEFAULT_VERIFICATION_RUNS);
+  }
+
+  async verifyBehavioralAssertion(request: VerificationRequest): Promise<VerificationOutcome> {
+    const first = await this.inner.verifyBehavioralAssertion(request);
+    // An early inconclusive is already non-authoritative; bound cost.
+    if (first.verdict === "inconclusive" || this.runs === 1) return first;
+
+    for (let i = 1; i < this.runs; i += 1) {
+      const next = await this.inner.verifyBehavioralAssertion(request);
+      if (next.verdict === "inconclusive") {
+        return {
+          verdict: "inconclusive",
+          assertionId: request.assertionId,
+          reason: `verification non-deterministic: run ${i + 1} was inconclusive after an initial ${first.verdict}`,
+        };
+      }
+      if (next.verdict !== first.verdict) {
+        // Flaky: differs across runs → inconclusive, NEVER fail (R20).
+        return {
+          verdict: "inconclusive",
+          assertionId: request.assertionId,
+          reason: `verification flaky: result differed across ${this.runs} runs (${first.verdict} then ${next.verdict}); resolving to inconclusive rather than ${[first.verdict, next.verdict].includes("fail") ? "fail" : "pass"}`,
+        };
+      }
+    }
+    // All runs agreed → authoritative verdict (this is the only path to an
+    // authoritative `fail`, satisfying "fail requires N-run agreement").
+    return first;
+  }
+}
+
+// ── Dispatching capability: route by assertion shape (U5 goal) ─────────────────
+
+export interface DispatchingVerificationOptions {
+  /** The U3 test-execution channel. */
+  testChannel: VerificationCapability;
+  /**
+   * The app-driving channel. Optional: when absent, an `app`/`both` assertion
+   * resolves to inconclusive (the channel is unavailable) rather than a default
+   * pass/fail — preserving the fail-closed posture.
+   */
+  appChannel?: VerificationCapability;
+}
+
+/**
+ * Routes a verification request to the right evidence channel(s) by assertion
+ * shape, then combines outcomes:
+ *
+ * - `test` → test-execution channel only.
+ * - `app`  → app-driving channel only.
+ * - `both` → BOTH channels; the assertion passes ONLY when both pass.
+ *   - any `fail` → `fail` (with the failing channel's reason);
+ *   - else any `inconclusive` → `inconclusive`;
+ *   - else (both pass) → `pass`.
+ *
+ * Channel defaults to `test` when unspecified (existing behavior).
+ */
+export class DispatchingVerificationCapability implements VerificationCapability {
+  private readonly testChannel: VerificationCapability;
+  private readonly appChannel?: VerificationCapability;
+
+  constructor(options: DispatchingVerificationOptions) {
+    this.testChannel = options.testChannel;
+    this.appChannel = options.appChannel;
+  }
+
+  async verifyBehavioralAssertion(request: VerificationRequest): Promise<VerificationOutcome> {
+    const channel: VerificationChannel = request.channel ?? "test";
+
+    if (channel === "test") {
+      return this.testChannel.verifyBehavioralAssertion(request);
+    }
+
+    if (channel === "app") {
+      return this.runApp(request);
+    }
+
+    // channel === "both": passes only when both confirm.
+    const [testOutcome, appOutcome] = await Promise.all([
+      this.testChannel.verifyBehavioralAssertion(request),
+      this.runApp(request),
+    ]);
+    return combineBoth(request.assertionId, testOutcome, appOutcome);
+  }
+
+  private runApp(request: VerificationRequest): Promise<VerificationOutcome> {
+    if (!this.appChannel) {
+      return Promise.resolve({
+        verdict: "inconclusive",
+        assertionId: request.assertionId,
+        reason: "app-driving channel not available in this verification run",
+      });
+    }
+    return this.appChannel.verifyBehavioralAssertion(request);
+  }
+}
+
+/**
+ * Combine the two channels for a `both` assertion. Any fail dominates; absent a
+ * fail, any inconclusive dominates; only two passes confirm.
+ */
+export function combineBoth(
+  assertionId: string,
+  testOutcome: VerificationOutcome,
+  appOutcome: VerificationOutcome,
+): VerificationOutcome {
+  const fail = [testOutcome, appOutcome].find((o) => o.verdict === "fail");
+  if (fail) {
+    return {
+      verdict: "fail",
+      assertionId,
+      reason: `combined verification failed: ${fail.reason}`,
+      detail: fail.detail,
+    };
+  }
+  const inconclusive = [testOutcome, appOutcome].find((o) => o.verdict === "inconclusive");
+  if (inconclusive) {
+    return {
+      verdict: "inconclusive",
+      assertionId,
+      reason: `combined verification inconclusive: ${inconclusive.reason}`,
+      detail: inconclusive.detail,
+    };
+  }
+  return {
+    verdict: "pass",
+    assertionId,
+    reason: "both the test-execution and app-driving channels confirmed the behavior",
+  };
 }
