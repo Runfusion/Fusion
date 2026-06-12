@@ -292,7 +292,7 @@ Assign or route exactly one ready implementation task to an eligible active owne
       title: "Assign ready implementation task to active owner",
       description: "Operational routing task with no expected product-source changes; record routing evidence or no-route state.",
       reviewLevel: 1,
-      prompt: fn416Prompt,
+      prompt: fn416Prompt.replace("# Task: FN-416", "# Task: FN-418"),
       sourceMetadata: { fileScope: ["FN-418 task document docs via fn_task_document_write"] },
       log: [],
       steps: [{ name: "Route or record no-route", status: "in-progress" as const }],
@@ -311,10 +311,12 @@ Assign or route exactly one ready implementation task to an eligible active owne
   });
 
   it("FN-416 refuses mixed no-source text with source-changing scope entries", async () => {
-    const mixedScopePrompt = fn416Prompt.replace(
-      "- FN-416 task document docs via fn_task_document_write",
-      "- No source changes expected, but inspect packages/engine/src/executor.ts",
-    );
+    const mixedScopePrompt = fn416Prompt
+      .replace("# Task: FN-416", "# Task: FN-419")
+      .replace(
+        "- FN-416 task document docs via fn_task_document_write",
+        "- No source changes expected, but inspect packages/engine/src/executor.ts",
+      );
     const { store, tool } = await setup({
       id: "FN-419",
       branch: "fusion/fn-419",

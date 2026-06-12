@@ -583,8 +583,19 @@ export function parseReviewLevelFromPrompt(prompt: string): number {
 
 function extractPromptSection(prompt: string, heading: string): string {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^##\\s+${escaped}\\s*:?\\s*$([\\s\\S]*?)(?=^##\\s+|\\s*$)`, "im");
-  return pattern.exec(prompt)?.[1]?.trim() ?? "";
+  const headingPattern = new RegExp(`^##\\s+${escaped}\\s*:?\\s*$`, "i");
+  const nextHeadingPattern = /^##\s+/;
+  const lines = prompt.split(/\r?\n/);
+  const start = lines.findIndex((line) => headingPattern.test(line.trim()));
+  if (start === -1) return "";
+
+  const sectionLines: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (nextHeadingPattern.test(line.trim())) break;
+    sectionLines.push(line);
+  }
+  return sectionLines.join("\n").trim();
 }
 
 function extractPromptListEntries(section: string): string[] {
