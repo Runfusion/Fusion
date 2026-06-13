@@ -114,6 +114,10 @@ class MockStore extends EventEmitter {
     };
   }
 
+  async updateGlobalSettings(patch: Record<string, unknown>) {
+    return patch;
+  }
+
   listWorkflowSettingValuesForProject(): Record<string, Record<string, unknown>> {
     return {};
   }

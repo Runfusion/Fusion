@@ -38,7 +38,7 @@ describe("TaskStore merge request record + completion handoff marker", () => {
       .all() as Array<{ name: string }>;
 
     expect(tableRows).toEqual([{ name: "completion_handoff_markers" }, { name: "merge_requests" }]);
-    expect(db.getSchemaVersion()).toBe(117);
+    expect(db.getSchemaVersion()).toBe(118);
   });
 
   it("upserts merge request records", async () => {

@@ -361,7 +361,9 @@ describe("Node settings sync routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.syncedFields).toContain("defaultProvider");
-      expect(res.body.syncedFields).toContain("workflowStepTimeoutMs");
+      // Workflow-sourced fields are qualified with their workflowId so duplicate
+      // setting ids across workflows stay distinguishable.
+      expect(res.body.syncedFields).toContain("builtin:coding.workflowStepTimeoutMs");
       const [, pushOptions] = mockFetch.mock.calls[0] as [string, { body?: string }];
       expect(JSON.parse(pushOptions.body ?? "{}").workflowSettings).toEqual({
         "builtin:coding": { workflowStepTimeoutMs: 120000 },
@@ -495,7 +497,8 @@ describe("Node settings sync routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(res.body.appliedFields).toContain("workflowStepTimeoutMs");
+      // Pull qualifies workflow-sourced fields with their workflowId.
+      expect(res.body.appliedFields).toContain("builtin:coding.workflowStepTimeoutMs");
       expect(res.body.workflowSettingsCount).toBe(1);
       expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
         "builtin:coding",

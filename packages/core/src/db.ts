@@ -162,7 +162,7 @@ export function isFts5CorruptionError(error: unknown): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 117;
+const SCHEMA_VERSION = 118;
 
 const TASKS_FTS_AUTOMERGE = 8;
 const TASKS_FTS_CRISISMERGE = 16;
@@ -1388,6 +1388,7 @@ export const MIGRATION_ONLY_TABLE_SCHEMAS: Record<string, Record<string, string>
     title: "TEXT NOT NULL",
     assertion: "TEXT NOT NULL",
     status: "TEXT NOT NULL DEFAULT 'pending'",
+    type: "TEXT NOT NULL DEFAULT 'static'",
     orderIndex: "INTEGER NOT NULL DEFAULT 0",
     sourceFeatureId: "TEXT",
     createdAt: "TEXT NOT NULL",
@@ -4702,6 +4703,18 @@ export class Database {
     if (version < 117) {
       this.applyMigration(117, () => {
         this.addColumnIfMissing("tasks", "autoMergeProvenance", "TEXT");
+      });
+    }
+
+    if (version < 118) {
+      this.applyMigration(118, () => {
+        // FN: behavioral verification — classify contract assertions so the
+        // validator can scope the default-to-fail / verification posture to
+        // behavioral/bug assertions. Existing rows default to 'static' to
+        // preserve legacy read-only judging (no sudden mass-fail).
+        if (this.hasTable("mission_contract_assertions")) {
+          this.addColumnIfMissing("mission_contract_assertions", "type", "TEXT NOT NULL DEFAULT 'static'");
+        }
       });
     }
 

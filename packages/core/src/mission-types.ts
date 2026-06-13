@@ -544,6 +544,29 @@ export const MISSION_ASSERTION_STATUSES = ["pending", "passed", "failed", "block
 export type MissionAssertionStatus = (typeof MISSION_ASSERTION_STATUSES)[number];
 
 /**
+ * Classification of a contract assertion's evidence requirement.
+ *
+ * - `static`: judgeable by inspecting the implementation (e.g. "documented in
+ *   the README"). Retains the legacy read-only AI-judge path.
+ * - `behavioral`: truth is observable only by exercising the code (bug fixes,
+ *   UI behavior). Defaults to fail unless a verification run confirms it.
+ *
+ * `static` is the conservative default for existing/lazily-derived rows so the
+ * data-model migration preserves current behavior — only assertions explicitly
+ * typed `behavioral` take the stricter default-to-fail posture.
+ */
+export const MISSION_ASSERTION_TYPES = ["static", "behavioral"] as const;
+export type MissionAssertionType = (typeof MISSION_ASSERTION_TYPES)[number];
+
+/** The conservative default assertion type (preserves legacy static judging). */
+export const DEFAULT_MISSION_ASSERTION_TYPE: MissionAssertionType = "static";
+
+/** Normalize an arbitrary stored value to a valid assertion type, defaulting conservatively. */
+export function normalizeMissionAssertionType(value: unknown): MissionAssertionType {
+  return value === "behavioral" ? "behavioral" : DEFAULT_MISSION_ASSERTION_TYPE;
+}
+
+/**
  * Validation states for a milestone's contract coverage.
  *
  * The validation state is computed from the milestone's assertions and is
@@ -585,6 +608,8 @@ export interface MissionContractAssertion {
   assertion: string;
   /** Current validation status */
   status: MissionAssertionStatus;
+  /** Evidence requirement: `static` (inspect) or `behavioral` (exercise). */
+  type: MissionAssertionType;
   /** Order index for sorting within the milestone (0-based) */
   orderIndex: number;
   /** ISO-8601 timestamp of creation */
@@ -643,6 +668,8 @@ export interface ContractAssertionCreateInput {
   assertion: string;
   /** Initial status, defaults to "pending" */
   status?: MissionAssertionStatus;
+  /** Evidence requirement, defaults to `static` (conservative). */
+  type?: MissionAssertionType;
   /** Feature ID when this assertion is store-managed for a specific feature */
   sourceFeatureId?: string;
 }
@@ -657,6 +684,8 @@ export interface ContractAssertionUpdateInput {
   assertion?: string;
   /** Validation status */
   status?: MissionAssertionStatus;
+  /** Evidence requirement */
+  type?: MissionAssertionType;
 }
 
 /** Payload for assertion:created event */

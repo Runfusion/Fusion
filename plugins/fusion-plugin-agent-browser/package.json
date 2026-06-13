@@ -15,7 +15,8 @@
     "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
-    "@fusion/plugin-sdk": "workspace:*"
+    "@fusion/plugin-sdk": "workspace:*",
+    "playwright-core": "^1.60.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

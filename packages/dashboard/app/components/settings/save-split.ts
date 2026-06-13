@@ -76,6 +76,11 @@ export function splitSettingsSave({
     if (key === "persistAgentThinkingLog") {
       continue;
     }
+    // customProviders is a global key, but it is NOT written through the
+    // save-split form. It is persisted via its own REST routes
+    // (register-custom-provider-routes.ts -> store.updateGlobalSettings) which
+    // mask API keys on read (sanitizeProvider). Routing it through this patch
+    // would write the masked keys back and clobber the real credentials.
     if (key === "customProviders") {
       continue;
     }
@@ -93,7 +98,7 @@ export function splitSettingsSave({
   const projectPatch: Partial<Settings> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only
-    if (key === "customProviders") continue;
+    if (key === "customProviders") continue; // persisted via dedicated routes, not save-split (see global branch above)
     if (key === "githubTrackingDefaultRepo" && activeSection === "global-general") continue;
     if (!isProjectSettingsKey(key)) continue;
 

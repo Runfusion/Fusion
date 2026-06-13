@@ -60,7 +60,7 @@ describe("TaskStore merge queue", () => {
       expect.arrayContaining(["idx_mergeQueue_lease_ready", "idx_mergeQueue_leaseExpiresAt"]),
     );
 
-    expect(store.getDatabase().getSchemaVersion()).toBe(117);
+    expect(store.getDatabase().getSchemaVersion()).toBe(118);
   });
 
   it("migrates a legacy v88 database and preserves task rows", async () => {

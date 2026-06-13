@@ -458,6 +458,7 @@ function makeAssertions(count: number): MissionContractAssertion[] {
     title: `Assertion ${i + 1}`,
     assertion: `Should do thing ${i + 1}`,
     status: "pending" as const,
+    type: "static" as const,
     orderIndex: i,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1687,6 +1688,7 @@ describe("MissionExecutionLoop", () => {
           title: "Test assertion",
           assertion: "Should work",
           status: "pending",
+          type: "static",
           orderIndex: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -1736,11 +1738,13 @@ describe("MissionExecutionLoop", () => {
         expect.any(String),
       );
 
-      // createGeneratedFixFeature called
+      // createGeneratedFixFeature called (U6: now also receives the
+      // observed-vs-expected failure reason as a 4th argument, R6).
       expect(missionStore.createGeneratedFixFeature).toHaveBeenCalledWith(
         "F-001",
         expect.any(String),
         expect.arrayContaining(["CA-1"]),
+        expect.any(String),
       );
 
       // triageFeature called for the fix feature
@@ -1768,6 +1772,7 @@ describe("MissionExecutionLoop", () => {
           title: "Test assertion",
           assertion: "Should work",
           status: "pending",
+          type: "static",
           orderIndex: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -1834,6 +1839,7 @@ describe("MissionExecutionLoop", () => {
           title: "Test assertion",
           assertion: "Should work",
           status: "pending",
+          type: "static",
           orderIndex: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2021,6 +2027,7 @@ describe("MissionExecutionLoop", () => {
           title: "Test assertion",
           assertion: "Should work",
           status: "pending",
+          type: "static",
           orderIndex: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2082,6 +2089,7 @@ describe("MissionExecutionLoop", () => {
           title: "Test assertion",
           assertion: "Should work",
           status: "pending",
+          type: "static",
           orderIndex: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

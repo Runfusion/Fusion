@@ -75,6 +75,16 @@ Instead, features are routed through validator execution after lazy assertion en
    - Backfill pre-restores missing managed assertions for visibility/reporting.
    - Runtime behavior is unchanged because lazy ensure already guarantees validator-backed enforcement.
 
+4. **Feature has a behavioral / bug-fix assertion**
+   - The read-only AI judge produces an *advisory* verdict only.
+   - The assertion defaults to fail unless a bounded, **non-mutating verification run** confirms the observable behavior by exercising the code (test suite / agent-supplied regression test against a disposable checkout under an isolating sandbox).
+   - A genuine behavioral failure → `fail` → Fix Feature with a recorded observed-vs-expected reason.
+   - Verification that cannot run or conclude (no isolating backend, timeout, isolation-setup failure, rejected proof, detected flakiness) → `inconclusive` → needs-attention, **no Fix Feature**, never a default pass.
+   - The verification run creates no board task, mutates no mission/board row, and leaves the source tree git-clean.
+
+5. **Static assertion (e.g. "documented in README")**
+   - Keeps the existing read-only static judging path; no verification run is invoked and no added strictness applies.
+
 ## UI contract
 
 MissionManager must present mission criteria as **AI-validated** rather than informational:
@@ -91,4 +101,6 @@ For any mission feature that reaches validation trigger points:
 - a validator run must occur,
 - the feature must not auto-pass due to missing assertion links,
 - milestone acceptance text must be visible to the validator when present,
+- a behavioral/bug assertion must not pass on the read-only judge's advisory verdict alone — it requires a confirming non-mutating verification run,
+- a non-passing verification must resolve to `fail` or `inconclusive`, never a default pass,
 - advancement decisions must derive from validator outcomes only.

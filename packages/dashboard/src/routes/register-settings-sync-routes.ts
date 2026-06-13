@@ -3,6 +3,7 @@ import { isMovedSettingsKey } from "@fusion/core";
 import { basename } from "node:path";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { getFusionAuthPath } from "../auth-paths.js";
+import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import {
   classifySyncStatusDenialReason,
   fetchFromRemoteNode,
@@ -58,7 +59,10 @@ async function applyWorkflowSettingsSection(
           .filter(([, value]) => value !== null)
           .map(([key]) => key);
         count += appliedKeys.length;
-        keys.push(...appliedKeys);
+        // Qualify workflow-sourced keys with their workflowId so callers can tell
+        // which workflow changed when two workflows share a setting id (e.g.
+        // "builtin:coding.workflowStepTimeoutMs" vs "builtin:review.workflowStepTimeoutMs").
+        keys.push(...appliedKeys.map((key) => `${workflowId}.${key}`));
         break;
       } catch (err) {
         const rejectedIds = extractRejectedSettingIds(err);
@@ -228,7 +232,11 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       const syncedFields = [
         ...Object.keys(globalSettings),
         ...Object.keys(projectSettings.project),
-        ...Object.values(workflowSettings).flatMap((values) => Object.keys(values)),
+        // Qualify workflow-sourced keys with their workflowId so duplicate setting
+        // ids across workflows remain distinguishable in the surfaced field list.
+        ...Object.entries(workflowSettings).flatMap(
+          ([workflowId, values]) => Object.keys(values).map((key) => `${workflowId}.${key}`),
+        ),
       ];
 
       res.json({ success: true, syncedFields });
@@ -326,6 +334,18 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       const workflowApplyResult = result.success
         ? await applyWorkflowSettingsSection(store, remoteSettings.workflowSettings)
         : { count: 0, keys: [] };
+
+      // applyRemoteSettings() only validates/strips the global payload; it does NOT
+      // write the local global settings store. Persist the pulled global settings
+      // through the dashboard store (last-write-wins overwrites local values) so
+      // process-local caches and settings listeners stay consistent and the keys
+      // reported in appliedFields actually take effect — mirroring the inbound
+      // /settings/sync-receive path. The store's updateGlobalSettings() already
+      // strips moved (tombstoned) keys (KTD-8).
+      if (result.success && remoteSettings.global && typeof remoteSettings.global === "object") {
+        await store.updateGlobalSettings(remoteSettings.global);
+        invalidateAllGlobalSettingsCaches();
+      }
 
       // Record sync
       await central.updateSettingsSyncState(node.id, {

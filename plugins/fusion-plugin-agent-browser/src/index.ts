@@ -65,3 +65,27 @@ const plugin: FusionPlugin = definePlugin({
 });
 
 export default plugin;
+
+// ── Verification-scoped app/browser driver (U8) ───────────────────────────────
+//
+// The navigate/interact/observe driver is exported as a typed capability the
+// engine imports DIRECTLY inside the verification run (U5). It is intentionally
+// NOT added to `plugin.tools` — the engine only exposes `plugin.tools` to
+// coding-agent sessions (`pluginLoader.getPluginTools()`), so keeping the driver
+// out of that array is what scopes it to verification and keeps it unreachable
+// from normal coding sessions. `browser_fetch_metadata` remains the only
+// coding-agent-facing tool.
+export {
+  launchBrowserDriver,
+  createPlaywrightClient,
+  type BrowserDriverSession,
+  type BrowserAutomationClient,
+  type DriverLaunchResult,
+  type NavigateOutcome,
+  type InteractOutcome,
+  type ObserveOutcome,
+  type OperationInconclusive,
+  type InconclusiveReason,
+  type LaunchDriverOptions,
+} from "./driver.js";
+export { probeBrowserExecutable, type BrowserExecutableProbeResult } from "./probe.js";

@@ -484,8 +484,18 @@ On task completion, the scheduler calls `MissionExecutionLoop.processTaskOutcome
 1. Find the feature linked to the completed task
 2. If assertions are linked, keep feature completion gated until validation passes
 3. Transition feature to `validating` state
-4. Fire AI validator agent against contract assertions
-5. Record `MissionValidatorRun` metadata for the validation attempt (per-assertion failures are stored separately in `MissionAssertionFailureRecord` rows)
+4. Fire the AI validator agent (read-only judge) against contract assertions
+5. Apply the **behavioral-verification posture** (see below): static assertions keep the judge's verdict; behavioral/bug assertions default to fail until a bounded, non-mutating verification run confirms them
+6. Record `MissionValidatorRun` metadata for the validation attempt (per-assertion failures are stored separately in `MissionAssertionFailureRecord` rows)
+
+**Behavioral-verification posture (adversarial default-to-fail).** A Contract Assertion now carries a `type` (`static` | `behavioral`). The validator no longer grades a Feature "done" purely from the diff's apparent intent:
+
+- **Static assertions** (e.g. "documented in README") keep today's read-only static judging — no added cost or strictness.
+- **Behavioral / bug-fix assertions** *default to fail*. The read-only judge's "pass" on a behavioral assertion is **advisory, not authoritative**; an authoritative pass requires a separate, bounded **verification run** that exercises the implemented code (running the test suite / an agent-supplied regression test against a disposable checkout) and confirms the observable behavior. An agent's narrative claim is not evidence on its own.
+
+**The verification run is not read-only and is not part of the judge session.** The AI judge session stays `tools: "readonly"` (no `bash`/`edit`/`write`/task-mutation). The verification run is a *separate*, side-effecting execution that runs against an isolating sandbox backend (fail-closed when none is available) and a disposable checkout at a trusted revision — never the live worktree, never the repo root. Its effects are confined to that disposable surface: it creates no board task, mutates no mission/board row, and leaves the source tree that feeds diff/merge byte-identical (git-clean) after the run. Verification is therefore no longer "purely read-only/static" — but it is *non-mutating to mission/board state*, which is the invariant the recovery sweep and reaper depend on (see Surface Enumeration).
+
+**Inconclusive is a first-class verdict, distinct from fail.** Verification yields `pass` / `fail` / `inconclusive`. A real behavioral failure (`fail`) spawns a Fix Feature with a recorded observed-vs-expected reason. An **inconclusive** verdict — verification could not run or conclude (no isolating backend, timeout, isolation-setup failure, rejected proof, detected flakiness) — routes the feature to a blocked/needs-attention state with a persisted `verification_inconclusive` mission event and **spawns no Fix Feature**, so a fragile verification surface cannot manufacture remediation churn. A non-passing verification never resolves to a default pass.
 
 Mission validation resolves its model from the validator lane before session creation: assigned agent runtime model (when the linked task has an assigned durable agent) → per-task `validatorModelProvider`/`validatorModelId` → project `validatorProvider`/`validatorModelId` → global `validatorGlobalProvider`/`validatorGlobalModelId` → project `defaultProviderOverride`/`defaultModelIdOverride` → global `defaultProvider`/`defaultModelId`. In `testMode`, validation is forced to `mock/scripted` instead of falling through to provider auto-detection.
 
@@ -513,7 +523,9 @@ interface MissionValidatorRun {
 
 **Validation timeout:** 10 minutes (`VALIDATION_TIMEOUT_MS = 10 * 60 * 1000`). If session creation, auth/credit checks, prompting, or timeout fails, the run is marked `error` and emits a surfaced `validation_error` mission event instead of silently spawning a fix feature.
 
-**Stale validator-run reaper:** startup recovery and periodic self-healing also sweep `MissionValidatorRun` rows stuck in `status="running"` longer than `VALIDATOR_RUN_STALE_MAX_AGE_MS` (currently 6 hours). Ownerless stale runs are reaped to terminal `status="error"`, their reap reason is stored in `summary`, and active mission features are moved to `loopState="needs_fix"` with `lastValidatorStatus="error"` so the loop can re-trigger. Runs whose parent mission is already `complete`/`archived` are still terminated, but their feature state is left untouched. Each successful reap emits a run-audit event with `mutationType: "mission:validator-run-reaped"`.
+**Stale validator-run reaper:** startup recovery and periodic self-healing also sweep `MissionValidatorRun` rows stuck in `status="running"` longer than `VALIDATOR_RUN_STALE_MAX_AGE_MS` (currently 6 hours). Runs still owned by the live process (tracked in `activeValidations`) are skipped, so a slow-but-legitimate verification is never reaped while its session is in-flight. Ownerless stale runs are reaped to terminal `status="error"`, their reap reason is stored in `summary`, and live (non-`done`) mission features are moved to `loopState="needs_fix"` with `lastValidatorStatus="error"` so the loop can re-trigger. A *done* feature's loop state is intentionally left untouched (it keeps the `loopState="validating"` set when the run started) so the reaper does not rewrite a feature that already finished its task. Runs whose parent mission is already `complete`/`archived` are likewise terminated without touching feature state. Each successful reap emits a run-audit event with `mutationType: "mission:validator-run-reaped"`.
+
+**Verification wall-clock is bounded under the reaper window.** The aggregate verification budget — checkout materialization plus the test-suite command (`VERIFICATION_COMMAND_TIMEOUT_MS`, 10 min), including the optional pre-fix baseline run — is provably far shorter than the 6-hour reaper stale window, so a legitimate verification run completes long before it would be eligible for reaping. The reaper's `activeValidations` skip is the second line of defense: an in-flight run is never reaped regardless of wall-clock.
 
 ### Phase 5: Fix-Feature Retries
 
@@ -545,6 +557,23 @@ A feature transitions to `blocked` when:
 - The feature remains in `blocked` state until operator intervention
 
 On engine restart, `recoverActiveMissions()` re-enqueues features in `validating` or `needs_fix` states, ensuring no validation work is lost. It also re-triggers `implementing` features whose linked task is already `done`/`archived` and whose assertion validation has not passed yet. When the stale-run reaper has already converted an abandoned validator run into `needs_fix`, `processTaskOutcome()` promotes the feature back through `implementing` and re-validates instead of skipping it. The same recovery path is replayed during periodic self-heal maintenance, so historically stranded `implementing` features can self-heal without requiring an engine restart.
+
+**Reaper → slice deadlock closure (P0).** A *task-less, done, assertion-linked* feature is the dangerous case: it carries no board task to re-drive from, and `computeSliceStatus` refuses to count it complete until its validator passes. When the reaper terminates such a feature's stale run, the feature is left stranded in `loopState="validating"` (the reaper's done-guard, above) — a state the `validating`/`needs_fix` recovery branches (which only re-drive features that carry a `taskId`) never re-validate, while default-to-fail would otherwise re-drive it forever to a non-terminal `error`. `recoverActiveMissions()` closes this with a **stranded-done catch-all**: any task-less, done feature in `loopState` `implementing` *or* `validating` (or `needs_fix` + `lastValidatorStatus="error"`) that has not reached a passing validator status and is not currently being validated is re-driven directly through `runFeatureValidation()`. Because the verification run is bounded and non-mutating, this reaches a terminal `pass` / `fail` / `inconclusive` (and the slice can finally resolve) instead of livelocking on `validating`/`error`.
+
+#### Surface Enumeration — validation re-drive entry points (R15)
+
+Now that the verification step has side effects (on a disposable, isolated surface — never mission/board state), every site that re-drives validation must remain correct: after a run the source tree feeding diff/merge is git-clean, no duplicate Fix Feature is minted, and a terminal verdict is reached without an `error`-state slice deadlock. The complete set of re-drive entry points, each gated by an adversarial reliability test in `packages/engine/src/__tests__/reliability-interactions/mission-verification-redrive-surface.test.ts`:
+
+| Entry point | Trigger | Post-conditions asserted |
+| --- | --- | --- |
+| `processTaskOutcome()` | Normal task-completion validation | terminal verdict; one Fix Feature on fail (idempotent on re-drive); no validation-created board task |
+| `recoverActiveMissionValidations` → **validating** branch | Restart with a feature stranded mid-validation (has taskId) | re-driven to terminal verdict; git-clean; no duplicate Fix Feature |
+| → **needs_fix** branch | Reaped/abandoned run on a feature with a `taskId` | promoted via `processTaskOutcome`; terminal verdict |
+| → **implementing + taskId** branch | Feature left implementing while its task already finished | re-triggered to terminal verdict |
+| → **stranded-done catch-all** (`implementing`/`validating`/`needs_fix`+`error`, no taskId) | Orphaned or reaped task-less done feature (the P0 deadlock) | re-driven directly; terminal verdict, never indefinitely re-driven `error`; slice resolves |
+| `reapStaleMissionValidatorRuns` | Stale ownerless run | run → terminal `error`; live feature → `needs_fix`; done feature loopState untouched; in-flight runs skipped |
+
+Each path is verified to leave **zero mission/board residue from the verification run itself** — the only board task a failed verdict legitimately creates is the auto-triaged Fix Feature, and an inconclusive verdict creates none.
 
 For features with missing linked assertions, the completion path is now validator-first: the loop lazily restores the store-managed per-feature assertion just before validation, then runs the AI validator instead of auto-passing. Milestone `acceptanceCriteria` is threaded into the validator prompt for every feature in that milestone, so all mission criteria are AI-evaluated. Contract details are defined in [Mission Completion Gate Contract](./missions-completion-contract.md).
 
