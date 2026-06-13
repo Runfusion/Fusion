@@ -22,7 +22,14 @@ export interface DetectExternalIntegrationEvidenceOptions {
   detectorOverrides?: ExternalIntegrationDetectorOverrides;
 }
 
-const SECTION_NAMES = ["Mission", "Steps", "File Scope", "Context to Read First"];
+const SECTION_NAMES = [
+  "Mission",
+  "Steps",
+  "File Scope",
+  "Context to Read First",
+  "External Integration Evidence",
+  "External-Integration Evidence",
+];
 const DEFAULT_TRIGGER_TOKENS = [
   "third-party",
   "third party",
@@ -57,10 +64,40 @@ function hasLikelyCliName(text: string): boolean {
   for (const match of codeMatches) {
     const idx = match.index ?? -1;
     if (idx < 0) continue;
-    const window = text.slice(Math.max(0, idx - 80), Math.min(text.length, idx + (match[0]?.length ?? 0) + 80));
+    const window = text.slice(
+      Math.max(0, idx - 80),
+      Math.min(text.length, idx + (match[0]?.length ?? 0) + 80),
+    );
     if (/\b(?:probe|invoke|run|spawn|which|where)\b/i.test(window)) return true;
+    const leadingText = text.slice(Math.max(0, idx - 80), idx);
+    if (/\b(?:(?:binary|cli)(?:\s*\/\s*|\s+or\s+)?(?:cli\s+)?name|cli\s+name)\s*:?\s*$/i.test(leadingText)) return true;
   }
   return false;
+}
+
+function collectHttpUrls(text: string): string[] {
+  return Array.from(text.matchAll(/https:\/\/[^\s)\]`"']+/gi)).map((m) =>
+    m[0].replace(/[),.;:!?]+$/, ""),
+  );
+}
+
+function hasLabeledUrl(text: string, labelPattern: RegExp, urlPattern: RegExp = /https:\/\//i): boolean {
+  return text
+    .split(/\r?\n/)
+    .some((line) => labelPattern.test(line) && collectHttpUrls(line).some((url) => urlPattern.test(url)));
+}
+
+function isReleaseOrDownloadUrl(url: string): boolean {
+  return (
+    /https:\/\/github\.com\/[^\s)\]`"']*releases\/[^\s)\]`"']+/i.test(url) ||
+    /https:\/\/[^\s)\]`"']*download[^\s)\]`"']*/i.test(url) ||
+    /https:\/\/registry\.npmjs\.org\/[^\s)\]`"']+\/-\/[^\s)\]`"']+\.tgz(?:$|[?#])/i.test(url) ||
+    /\.(?:tgz|tar\.gz)(?:$|[?#])/i.test(url)
+  );
+}
+
+function isLikelyDocsUrl(url: string): boolean {
+  return !/^https:\/\/github\.com\//i.test(url) && !isReleaseOrDownloadUrl(url);
 }
 
 function hasCanonicalGithubRepoUrl(text: string): boolean {
@@ -93,9 +130,17 @@ export function detectExternalIntegrationEvidenceGaps(
   const hints = collectHints(text, integrationPattern);
   const findingHints = hints.length > 0 ? hints : ["external-integration"];
 
-  const hasDocsUrl = /https:\/\/(?!github\.com\/)[^\s)\]`"']+/i.test(text);
-  const hasReleaseUrl = /https:\/\/github\.com\/[^\s)\]`"']*releases\/[^\s)\]`"']+/i.test(text) || /https:\/\/[^\s)\]`"']*download[^\s)\]`"']*/i.test(text);
-  const hasChecksumMarker = /\bsha256\b|pinned manifest|validateExternalIntegrationManifest|WORKTRUNK_PINNED_RELEASE|upstream-pending-verification/i.test(text);
+  const urls = collectHttpUrls(text);
+  const hasDocsUrl =
+    hasLabeledUrl(text, /\b(?:docs?|homepage)\b(?:\s*(?:\/|or)\s*\b(?:docs?|homepage)\b)?(?:\s+url)?\s*:/i) ||
+    urls.some(isLikelyDocsUrl);
+  const hasReleaseUrl =
+    hasLabeledUrl(text, /\b(?:release|download)\b(?:\s*(?:\/|or)\s*\b(?:release|download)\b)?(?:\s+url)?\s*:/i) ||
+    urls.some(isReleaseOrDownloadUrl);
+  const hasChecksumMarker =
+    /\bsha\d+\b|pinned manifest|validateExternalIntegrationManifest|WORKTRUNK_PINNED_RELEASE|upstream-pending-verification/i.test(
+      text,
+    );
   const hasCliName = hasLikelyCliName(text);
   const hasCanonicalRepo = hasCanonicalGithubRepoUrl(text);
 
@@ -119,7 +164,9 @@ export function formatExternalIntegrationEvidenceDiagnostic(
   const lines = ["REVISE — External-integration evidence gaps in PROMPT.md:"];
   for (const finding of findings) {
     lines.push(`  - ${finding.integrationHint}: missing ${finding.missing.join(", ")}`);
-    lines.push("    Fix: add canonical upstream repo/docs/release URL evidence, CLI name in backticks, and checksum or explicit upstream-pending-verification marker.");
+    lines.push(
+      "    Fix: add canonical upstream repo/docs/release URL evidence, CLI name in backticks, and checksum or explicit upstream-pending-verification marker.",
+    );
   }
   return lines.join("\n");
 }
