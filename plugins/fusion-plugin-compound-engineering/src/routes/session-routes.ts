@@ -1,5 +1,6 @@
 import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/core";
 import { CeOrchestrator } from "../session/orchestrator.js";
+import { recoverStaleSessionsForContext } from "../session/session-recovery.js";
 import { asCeSessionStatus, getCeSessionStore } from "../session/session-store.js";
 import { getCePipelineStore } from "../sync/pipeline-store.js";
 import { asString } from "./route-helpers.js";
@@ -121,6 +122,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       description: "Get current session state, including in-flight working output (liveActivity).",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const id = (req as RouteRequest).params.id;
+        recoverStaleSessionsForContext(ctx, { reason: "route" });
         const session = getCeSessionStore(ctx).get(id);
         if (!session) return { status: 404, body: { error: `Session ${id} not found` } };
         // Attach the orchestrator's transient mid-turn buffer so a polling
@@ -137,6 +139,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       path: "/sessions",
       description: "List CE sessions (optionally filtered by status/stage).",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
+        recoverStaleSessionsForContext(ctx, { reason: "route" });
         const query = (req as RouteRequest).query ?? {};
         const status = asCeSessionStatus(typeof query.status === "string" ? query.status : undefined);
         const stage = typeof query.stage === "string" ? query.stage : undefined;

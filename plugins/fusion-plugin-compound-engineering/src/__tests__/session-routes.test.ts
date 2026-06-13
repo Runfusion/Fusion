@@ -117,6 +117,53 @@ describe("session routes (polling transport)", () => {
     expect(sessions.map((s) => s.stage).sort()).toEqual(["brainstorm", "plan"]);
   });
 
+  it("GET /sessions recovers stale active rows that have no live route handle", async () => {
+    const { getCeSessionStore } = await import("../session/session-store.js");
+    const store = getCeSessionStore(h.ctx);
+    const zombie = store.create({ stage: "strategy", turnIntervalMs: 1 });
+    store.update(zombie.id, {
+      status: "active",
+      currentQuestion: null,
+      lastActivityAt: Date.now() - 10_000,
+    });
+
+    const res = await call("GET", "/sessions", { params: {}, query: {} }, h.ctx);
+
+    expect(res.status).toBe(200);
+    const sessions = (res.body as { sessions: Array<{ id: string; status: string; error: string | null }> }).sessions;
+    expect(sessions.find((s) => s.id === zombie.id)).toMatchObject({
+      status: "interrupted",
+      error: "Session interrupted — progress preserved, resume to continue",
+    });
+    expect(store.get(zombie.id)).toMatchObject({
+      status: "interrupted",
+      error: "Session interrupted — progress preserved, resume to continue",
+    });
+  });
+
+  it("GET /sessions/:id recovers a stale active row before returning it", async () => {
+    const { getCeSessionStore } = await import("../session/session-store.js");
+    const store = getCeSessionStore(h.ctx);
+    const zombie = store.create({ stage: "strategy", turnIntervalMs: 1 });
+    store.update(zombie.id, {
+      status: "active",
+      currentQuestion: null,
+      lastActivityAt: Date.now() - 10_000,
+    });
+
+    const res = await call("GET", "/sessions/:id", { params: { id: zombie.id } }, h.ctx);
+
+    expect(res.status).toBe(200);
+    expect((res.body as { session: { status: string; error: string | null } }).session).toMatchObject({
+      status: "interrupted",
+      error: "Session interrupted — progress preserved, resume to continue",
+    });
+    expect(store.get(zombie.id)).toMatchObject({
+      status: "interrupted",
+      error: "Session interrupted — progress preserved, resume to continue",
+    });
+  });
+
   it("POST /sessions requires a stage", async () => {
     const res = await call("POST", "/sessions", { body: {} }, h.ctx);
     expect(res.status).toBe(400);
