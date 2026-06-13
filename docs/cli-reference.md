@@ -591,6 +591,8 @@ Create a pull request for a task with `fn pr create <task-id>`.
 
 Alias: `fn task pr-create <task-id>`
 
+Maintenance: `fn pr automerge-cleanup` performs a dry run of legacy auto-merge stamps left by older `in-review` task behavior and prints affected task IDs/columns. Add `--apply` to clear those stamps after reviewing the list, and `--json` for machine-readable output.
+
 Flags:
 - `--title <title>`: Set the PR title.
 - `--base <branch>`: Target base branch (default from repo/CLI settings).
@@ -605,6 +607,8 @@ Default behavior: PR title/body are AI-generated unless both `--title` and `--bo
 fn pr create FN-001
 fn pr create FN-001 --draft --reviewer octocat --reviewer hubot --base main
 fn task pr-create FN-001 --title "Fix login race" --body "Prevents duplicate session refresh." --base main
+fn pr automerge-cleanup --json
+fn pr automerge-cleanup --apply
 fn task import owner/repo --labels bug --limit 10
 fn task import owner/repo --interactive
 ```

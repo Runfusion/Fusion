@@ -47,6 +47,7 @@ const commandMocks = vi.hoisted(() => ({
   runPrMerge: vi.fn(),
   runPrClose: vi.fn(),
   runPrAutomerge: vi.fn(),
+  runPrAutomergeCleanup: vi.fn(),
 
   runSettingsShow: vi.fn(),
   runSettingsSet: vi.fn(),
@@ -194,6 +195,7 @@ vi.mock("../commands/pr.js", () => ({
   runPrMerge: commandMocks.runPrMerge,
   runPrClose: commandMocks.runPrClose,
   runPrAutomerge: commandMocks.runPrAutomerge,
+  runPrAutomergeCleanup: commandMocks.runPrAutomergeCleanup,
 }));
 
 vi.mock("../commands/settings.js", () => ({
@@ -921,6 +923,14 @@ describe("bin command routing and fallbacks", () => {
       .rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith("Unknown subcommand: pr ");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Try: fn pr create <task-id>"));
+  });
+
+  it("routes pr automerge-cleanup flags", async () => {
+    await runBin(["pr", "automerge-cleanup", "--apply", "--json", "--project", "ops"]);
+    expect(commandMocks.runPrAutomergeCleanup).toHaveBeenCalledWith(
+      { apply: true, json: true },
+      "ops",
+    );
   });
 
   it("routes task delete with allow-resurrection flag", async () => {

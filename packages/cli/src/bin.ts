@@ -120,7 +120,7 @@ async function loadCommandHandlers() {
   const { runDaemon } = await import("./commands/daemon.js");
   const { runDesktop } = await import("./commands/desktop.js");
   const { runTaskCreate, runTaskList, runTaskMove, runTaskMerge, runTaskUpdate, runTaskDeps, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskDuplicate, runTaskArchive, runTaskUnarchive, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskComment, runTaskComments, runTaskSteer, runTaskSetNode, runTaskClearNode } = await import("./commands/task.js");
-  const { runPrCreate, runPrShow, runPrList, runPrRespond, runPrApprove, runPrRetry, runPrMerge, runPrClose, runPrAutomerge } = await import("./commands/pr.js");
+  const { runPrCreate, runPrShow, runPrList, runPrRespond, runPrApprove, runPrRetry, runPrMerge, runPrClose, runPrAutomerge, runPrAutomergeCleanup } = await import("./commands/pr.js");
   const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
   const { runSettingsExport } = await import("./commands/settings-export.js");
   const { runSettingsImport } = await import("./commands/settings-import.js");
@@ -186,6 +186,7 @@ async function loadCommandHandlers() {
     runPrMerge,
     runPrClose,
     runPrAutomerge,
+    runPrAutomergeCleanup,
     runSettingsShow,
     runSettingsSet,
     runSettingsExport,
@@ -331,6 +332,8 @@ PR:
   fn pr merge <pr-id>                 Force-merge the PR via its merge release
   fn pr close <pr-id>                 Close the PR terminally
   fn pr automerge <pr-id> [on|off]    Toggle auto-merge for the PR
+  fn pr automerge-cleanup [--apply] [--json]
+                                      Dry-run or apply legacy auto-merge stamp cleanup
   fn research create --query <text> [--wait] [--max-wait-ms <ms>] [--json]
                                       Create and optionally wait for a cited-research run (search/fetch/synthesis)
   fn research list | ls [--status <status>] [--limit <n>] [--json]
@@ -667,6 +670,7 @@ async function main() {
     runPrMerge,
     runPrClose,
     runPrAutomerge,
+    runPrAutomergeCleanup,
     runSettingsShow,
     runSettingsSet,
     runSettingsExport,
@@ -901,9 +905,15 @@ async function main() {
             await runPrAutomerge(args[2], enabled, projectName);
             break;
           }
+          case "automerge-cleanup":
+            await runPrAutomergeCleanup({
+              apply: args.includes("--apply"),
+              json: args.includes("--json"),
+            }, projectName);
+            break;
           default:
             console.error(`Unknown subcommand: pr ${subcommand || ""}`);
-            console.error("Try: fn pr create <task-id> | list | show <id> | approve <id> | respond <id> | retry <id> | merge <id> | close <id> | automerge <id> [on|off]");
+            console.error("Try: fn pr create <task-id> | list | show <id> | approve <id> | respond <id> | retry <id> | merge <id> | close <id> | automerge <id> [on|off] | automerge-cleanup [--apply] [--json]");
             process.exit(1);
         }
         break;

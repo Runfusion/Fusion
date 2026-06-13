@@ -11,10 +11,34 @@
  * original inline JSX.
  */
 import type { ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Settings } from "@fusion/core";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import type { SectionBaseProps } from "./context";
+
+interface LegacyAutoMergeStampCandidate {
+  taskId: string;
+  column: string;
+  cleared: boolean;
+}
+
+interface LegacyAutoMergeStampListResponse {
+  candidates: LegacyAutoMergeStampCandidate[];
+  count: number;
+}
+
+interface LegacyAutoMergeStampApplyResponse {
+  cleared: LegacyAutoMergeStampCandidate[];
+  count: number;
+}
+
+async function readLegacyAutoMergeStampResponse(response: Response): Promise<LegacyAutoMergeStampListResponse> {
+  if (!response.ok) {
+    throw new Error(await response.text() || "Failed to load legacy auto-merge stamps");
+  }
+  return response.json() as Promise<LegacyAutoMergeStampListResponse>;
+}
 
 export interface MergeSectionProps extends SectionBaseProps {
   scopeBanner: ReactNode;
@@ -34,6 +58,54 @@ export function MergeSection({
   onOpenWorkflowSettings,
 }: MergeSectionProps) {
   const { t } = useTranslation("app");
+  const [legacyStampCandidates, setLegacyStampCandidates] = useState<LegacyAutoMergeStampCandidate[]>([]);
+  const [legacyStampLoading, setLegacyStampLoading] = useState(true);
+  const [legacyStampApplying, setLegacyStampApplying] = useState(false);
+  const [legacyStampError, setLegacyStampError] = useState<string | null>(null);
+  const [legacyStampSuccess, setLegacyStampSuccess] = useState<string | null>(null);
+
+  const loadLegacyAutoMergeStamps = useCallback(async () => {
+    setLegacyStampLoading(true);
+    setLegacyStampError(null);
+    try {
+      const data = await readLegacyAutoMergeStampResponse(
+        await fetch("/api/maintenance/legacy-automerge-stamps"),
+      );
+      setLegacyStampCandidates(Array.isArray(data.candidates) ? data.candidates : []);
+    } catch (err) {
+      setLegacyStampError(err instanceof Error ? err.message : "Failed to load legacy auto-merge stamps");
+    } finally {
+      setLegacyStampLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLegacyAutoMergeStamps();
+  }, [loadLegacyAutoMergeStamps]);
+
+  const applyLegacyAutoMergeStampCleanup = async () => {
+    const confirmed = window.confirm(
+      "Apply cleanup for legacy auto-merge stamps? This clears only legacy non-override in-review stamps returned by the store and never touches genuine per-task overrides.",
+    );
+    if (!confirmed) return;
+    setLegacyStampApplying(true);
+    setLegacyStampError(null);
+    setLegacyStampSuccess(null);
+    try {
+      const response = await fetch("/api/maintenance/legacy-automerge-stamps/apply", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(await response.text() || "Failed to apply legacy auto-merge stamp cleanup");
+      }
+      const data = await response.json() as LegacyAutoMergeStampApplyResponse;
+      setLegacyStampSuccess(`Cleared ${data.count} legacy auto-merge stamp${data.count === 1 ? "" : "s"}.`);
+      await loadLegacyAutoMergeStamps();
+    } catch (err) {
+      setLegacyStampError(err instanceof Error ? err.message : "Failed to apply legacy auto-merge stamp cleanup");
+    } finally {
+      setLegacyStampApplying(false);
+    }
+  };
+
   return (
     <>
       {scopeBanner}
@@ -54,6 +126,43 @@ export function MergeSection({
           <summary>More details</summary>
           <small>When enabled, tasks that pass review are automatically merged into the main branch</small>
         </details>
+      </div>
+      <div className="form-group" data-testid="legacy-automerge-stamp-cleanup-panel">
+        <h5 className="settings-section-heading">Legacy auto-merge stamp cleanup</h5>
+        <small>
+          Finds in-review tasks whose auto-merge value came from the legacy review-entry stamp.
+          Dry-run is automatic; applying delegates to the store cleanup and preserves genuine
+          per-task overrides.
+        </small>
+        {legacyStampLoading ? (
+          <small aria-live="polite">Checking for legacy auto-merge stamps…</small>
+        ) : legacyStampCandidates.length === 0 ? (
+          <small data-testid="legacy-automerge-stamp-empty-state">
+            No legacy auto-merge stamps to clean up.
+          </small>
+        ) : (
+          <>
+            <small>{legacyStampCandidates.length} legacy auto-merge stamp{legacyStampCandidates.length === 1 ? "" : "s"} ready to clean up.</small>
+            <ul>
+              {legacyStampCandidates.map((candidate) => (
+                <li key={candidate.taskId} data-testid="legacy-automerge-stamp-candidate-row">
+                  <strong>{candidate.taskId}</strong> — {candidate.column}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="btn"
+              onClick={applyLegacyAutoMergeStampCleanup}
+              disabled={legacyStampApplying}
+              data-testid="legacy-automerge-stamp-apply-button"
+            >
+              {legacyStampApplying ? "Applying cleanup…" : "Apply cleanup"}
+            </button>
+          </>
+        )}
+        {legacyStampSuccess ? <small className="settings-success" aria-live="polite">{legacyStampSuccess}</small> : null}
+        {legacyStampError ? <small className="settings-error" role="alert">{legacyStampError}</small> : null}
       </div>
       <div className="form-group">
         <label htmlFor="mergerMode">AI merge</label>

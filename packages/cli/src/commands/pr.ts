@@ -374,3 +374,44 @@ export async function runPrAutomerge(id: string, enabled: boolean | undefined, p
   const updated = store.updatePrEntity(id, { autoMerge: next });
   console.log(`\n  ✓ Auto-merge ${updated.autoMerge ? "enabled" : "disabled"} for ${id} (${autoMergeGateReason(updated)})\n`);
 }
+
+export interface PrAutomergeCleanupOptions {
+  apply?: boolean;
+  json?: boolean;
+}
+
+export async function runPrAutomergeCleanup(options: PrAutomergeCleanupOptions = {}, projectName?: string) {
+  const { store } = await getPrContext(projectName);
+  const results = options.apply
+    ? await store.reconcileLegacyAutoMergeStamps({ apply: true })
+    : await store.reconcileLegacyAutoMergeStamps();
+
+  if (options.json) {
+    console.log(JSON.stringify({
+      mode: options.apply ? "apply" : "dry-run",
+      count: results.length,
+      candidates: options.apply ? undefined : results,
+      cleared: options.apply ? results : undefined,
+    }, null, 2));
+    return;
+  }
+
+  if (results.length === 0) {
+    console.log("\n  ✓ No legacy auto-merge stamps to clean up.\n");
+    return;
+  }
+
+  if (options.apply) {
+    console.log(`\n  ✓ Cleared ${results.length} legacy auto-merge stamp${results.length === 1 ? "" : "s"}:`);
+  } else {
+    console.log(`\n  Legacy auto-merge stamp candidate${results.length === 1 ? "" : "s"} (${results.length}):`);
+  }
+  for (const result of results) {
+    console.log(`  - ${result.taskId} (${result.column})`);
+  }
+  if (!options.apply) {
+    console.log("\n  Re-run with --apply to clear these legacy non-override stamps. Genuine per-task overrides are preserved.\n");
+  } else {
+    console.log("");
+  }
+}

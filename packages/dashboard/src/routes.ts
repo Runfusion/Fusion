@@ -1638,6 +1638,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  // ── Maintenance Routes ─────────────────────────────────────────────
+
+  /**
+   * GET /api/maintenance/legacy-automerge-stamps
+   * Dry-run the legacy auto-merge stamp cleanup and list candidates.
+   */
+  router.get("/maintenance/legacy-automerge-stamps", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const candidates = await scopedStore.reconcileLegacyAutoMergeStamps();
+      res.json({ candidates, count: candidates.length });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to list legacy auto-merge stamps");
+    }
+  });
+
+  /**
+   * POST /api/maintenance/legacy-automerge-stamps/apply
+   * Apply the legacy auto-merge stamp cleanup via the store-owned reconcile API.
+   */
+  router.post("/maintenance/legacy-automerge-stamps/apply", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const cleared = await scopedStore.reconcileLegacyAutoMergeStamps({ apply: true });
+      res.json({ cleared, count: cleared.length });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to apply legacy auto-merge stamp cleanup");
+    }
+  });
+
   // ── Backup Routes ─────────────────────────────────────────────────
 
   /**

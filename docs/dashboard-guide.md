@@ -710,6 +710,12 @@ Inspect task definition, logs, review feedback, comments, documents, workflow ou
 - For shared `branch_groups` (tasks with `branchContext.groupId`), PR merge mode opens and tracks one group-level PR from the group integration branch to the project default branch; member tasks share that PR state.
 - In direct/non-PR auto-merge mode, Review renders normalized reviewer-agent feedback (verdict/step/timestamp/detail) with dedicated loading/error/empty states; it does not require users to read raw agent logs.
 
+### Legacy auto-merge stamp cleanup
+
+Settings → Merge includes **Legacy auto-merge stamp cleanup** for operators auditing tasks that inherited historical in-review `autoMerge` stamps. The panel loads a dry-run candidate list, shows task IDs and current columns, and only reveals the destructive **Clear legacy stamps** action when candidates exist. Applying the cleanup requires the browser confirmation prompt, calls the maintenance apply endpoint, and then refreshes the dry-run list so cleared tasks disappear.
+
+Use this panel when upgrading a project with pre-FN-6245/FN-6277 in-review rows before relying on per-task auto-merge overrides. It only targets stamps tagged as legacy provenance; explicit user overrides remain intact.
+
 ### Identifying high-impact blockers
 
 Use blocker fan-out signals on task cards and in the footer status bar to spot blockers with high downstream impact:
