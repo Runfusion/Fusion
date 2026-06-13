@@ -34,7 +34,18 @@ import {
   type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { customProviderRegistryKey, getEnabledPiExtensionPaths, getFusionAgentDir, getLegacyPiAgentDir, getProjectRootFromWorktree, reconcileClaudeCliPaths, reconcileDroidCliPaths, resolvePiExtensionProjectRoot } from "@fusion/core";
+import {
+  customProviderRegistryKey,
+  getEnabledPiExtensionPaths,
+  getFusionAgentDir,
+  getLegacyPiAgentDir,
+  getProjectRootFromWorktree,
+  reconcileClaudeCliPaths,
+  reconcileDroidCliPaths,
+  resolvePiExtensionProjectRoot,
+  ZAI_PROVIDER_ID,
+  ZAI_PROVIDER_REGISTRATION,
+} from "@fusion/core";
 import type {
   AgentPermissionPolicyActionCategory,
   PermanentAgentActionCategory,
@@ -1353,6 +1364,13 @@ function resolveVendoredDroidCliEntry(): string | null {
 }
 
 async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegistry): Promise<void> {
+  try {
+    modelRegistry.registerProvider(ZAI_PROVIDER_ID, ZAI_PROVIDER_REGISTRATION);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    extensionsLog.warn(`Failed to register built-in ${ZAI_PROVIDER_ID} provider: ${message}`);
+  }
+
   try {
     const agentDir = getPackageManagerAgentDir();
     const packageManager = new DefaultPackageManager({

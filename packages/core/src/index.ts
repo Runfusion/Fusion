@@ -20,6 +20,8 @@ export { redactSecrets } from "./redact-secrets.js";
 export * from "./frontend-ux-policy.js";
 export { MOCK_PROVIDER_ID } from "./mock-provider-constants.js";
 export type { MockProviderId, MockSessionPurpose } from "./mock-provider-constants.js";
+export { ZAI_PROVIDER_ID, ZAI_PROVIDER_REGISTRATION } from "./zai-provider.js";
+export type { ZaiProviderRegistration } from "./zai-provider.js";
 export {
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,

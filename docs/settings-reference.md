@@ -801,6 +801,8 @@ Short-lived token bounds are enforced server-side:
 
 Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited with dropdown controls from Settings -> Project Models -> Default workflow model lanes (persisted by the Settings modal's primary Save) or from workflow editor -> Settings -> Values for declared workflow lanes and fallbacks.
 
+Z.ai's built-in provider uses the existing `zai` auth entry / `ZAI_API_KEY` environment variable and includes `zai/glm-5.2` as a selectable model in the same dropdowns and workflow lane controls as the other built-in GLM models.
+
 ### Planning model
 
 1. Per-task `planningModelProvider` + `planningModelId`

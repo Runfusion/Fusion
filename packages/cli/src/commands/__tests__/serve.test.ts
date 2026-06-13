@@ -752,6 +752,17 @@ describe("runServe", () => {
     await runServe(4040, {});
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
   });
+
+  it("registers built-in zai GLM-5.2 before refreshing models", async () => {
+    await runServe(0, {});
+
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith("zai", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
+    }));
+    expect(mocks.modelRegistry.refresh).toHaveBeenCalled();
+
+    await triggerSignal("SIGINT");
+  });
   const originalCwd = process.cwd;
   const originalOn = process.on;
   const originalExit = process.exit;

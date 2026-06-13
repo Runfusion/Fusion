@@ -832,9 +832,22 @@ async function runDashboard(...args: Parameters<typeof runDashboardImpl>): Retur
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("runDashboard — startup model sync", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("invokes shared startup model sync", async () => {
     await runDashboard(0, { open: false });
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers built-in zai GLM-5.2 before refreshing models", async () => {
+    await runDashboard(0, { open: false });
+
+    expect(mockModelRegistry.registerProvider).toHaveBeenCalledWith("zai", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
+    }));
+    expect(mockModelRegistry.refresh).toHaveBeenCalled();
   });
 });
 
