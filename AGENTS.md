@@ -19,6 +19,20 @@ Any task integrating a third-party tool (CLI, daemon, downloadable binary, insta
 
 Missing evidence is a blocking REVISE. Never invent release URLs, binary names, or hashes.
 
+Example evidence section shape:
+
+```markdown
+## External Integration Evidence
+
+- Canonical upstream repo URL: https://github.com/max-sixty/worktrunk
+- Docs / homepage URL: https://worktrunk.dev/
+- Release / download URL: https://github.com/max-sixty/worktrunk/releases/latest/download/wt-linux-x64.tar.gz
+- Binary / CLI name: `wt`
+- Checksum: `sha256-<digest>` (or `upstream-pending-verification` until the checksum is pinned)
+```
+
+See `docs/contributing.md` for the fuller spec-authoring guidance and accepted labeled layout variants.
+
 ### Finalizing Changes
 
 When a change affects published `@runfusion/fusion`, add a changeset (example: `.changeset/<name>.md` with `"@runfusion/fusion": patch`).

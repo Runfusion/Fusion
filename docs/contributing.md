@@ -112,6 +112,34 @@ Fusion tests must run against disposable test data, never live local state:
 
 If you add or change test entrypoints, keep this isolation guard path intact and ensure guard + test execution share the same disposable HOME so changed/full/cached paths stay consistent.
 
+## Spec authoring: provenance evidence for outside tooling
+
+Any task that wires in an outside command-line program, daemon, separately-fetched program, or package-managed dependency must include provenance evidence in its `PROMPT.md`. The deterministic spec-validation gate (`detectExternalIntegrationEvidenceGaps`) REVISEs specs that mention this kind of outside tooling without enough provenance to audit where it comes from and what command or artifact is expected.
+
+Use a dedicated `## External Integration Evidence` or `## External-Integration Evidence` section when possible. The gate accepts semantically labeled bullets; labels may include or omit a trailing `URL`/`name`, may use `/` or `:` separators (for example `Docs / homepage URL:` or `Docs/homepage:`), and URLs may be bare or backtick-wrapped.
+
+Include all five evidence fields:
+
+1. Canonical upstream repo URL — a GitHub URL with distinct owner/repo; duplicate owner/owner placeholders are rejected.
+2. Docs / homepage URL — a distinct non-GitHub, non-artifact URL.
+3. Release / download URL — a GitHub `…/releases/…` URL, a generic `…download…` URL, an npm `registry.npmjs.org/<pkg>/-/<name>-<ver>.tgz` URL, or any `.tgz`/`.tar.gz` artifact URL.
+4. Binary / CLI name — the command name in backticks, such as `` `wt` ``.
+5. Checksum — a `sha256`/`sha512` digest, a pinned-manifest token, or the literal `upstream-pending-verification` marker. The marker is accepted for the checksum field only; never use it in place of source, docs, or artifact URLs.
+
+Never fabricate source URLs, command names, release locations, or checksums. Cite real provenance, or use `upstream-pending-verification` only for the checksum field while the digest is being pinned.
+
+<!-- evidence-example:start -->
+```markdown
+## External Integration Evidence
+
+- Canonical upstream repo URL: https://github.com/max-sixty/worktrunk
+- Docs / homepage URL: https://worktrunk.dev/
+- Release / download URL: https://github.com/max-sixty/worktrunk/releases/latest/download/wt-linux-x64.tar.gz
+- Binary / CLI name: `wt`
+- Checksum: `sha256-<digest>` (or `upstream-pending-verification` until the checksum is pinned)
+```
+<!-- evidence-example:end -->
+
 ## Quality Gate Checklist
 
 Before submitting changes, verify:
