@@ -44,6 +44,23 @@ function isMergeRegionKind(node: WorkflowIrNode): boolean {
  *  not emitted as steps. */
 const SEAM_NAMES = new Set(["planning", "execute", "workflow-step", "review", "merge"]);
 
+const ENGINE_PRIMITIVE_NODE_KINDS = new Set<WorkflowIrNode["kind"]>([
+  "merge-gate",
+  "merge-attempt",
+  "manual-merge-hold",
+  "retry-backoff",
+  "recovery-router",
+  "branch-group-member-integration",
+  "branch-group-promotion",
+  "pr-create",
+  "pr-respond",
+  "pr-merge",
+]);
+
+function isEnginePrimitive(node: WorkflowIrNode): boolean {
+  return ENGINE_PRIMITIVE_NODE_KINDS.has(node.kind);
+}
+
 function seamOf(node: WorkflowIrNode): string | undefined {
   const seam = node.config?.seam;
   return typeof seam === "string" && SEAM_NAMES.has(seam) ? seam : undefined;
@@ -98,6 +115,9 @@ export function validateLinearity(ir: WorkflowIr): WorkflowCompileError | null {
     const outs = outgoing.get(node.id) ?? [];
     if (node.kind === "end") {
       if (outs.length > 0) return new WorkflowCompileError("end node must have no outgoing edges");
+      continue;
+    }
+    if (isEnginePrimitive(node)) {
       continue;
     }
 
@@ -179,7 +199,7 @@ export function validateLinearity(ir: WorkflowIr): WorkflowCompileError | null {
       seenSeams.add(seam);
       nextExpectedSeamIndex += 1;
     }
-    if (cursor === endNode.id) {
+    if (cursor === endNode.id || (node && isEnginePrimitive(node))) {
       reachedTerminal = true;
       break;
     }
@@ -188,9 +208,7 @@ export function validateLinearity(ir: WorkflowIr): WorkflowCompileError | null {
   if (!reachedTerminal) {
     return new WorkflowCompileError("workflow main path does not reach the end node");
   }
-  const unreached = ir.nodes.filter(
-    (node) => !visited.has(node.id) && node.kind !== "end" && !isMergeRegionKind(node),
-  );
+  const unreached = ir.nodes.filter((node) => !visited.has(node.id) && node.kind !== "end" && !isEnginePrimitive(node));
   if (unreached.length > 0) {
     return new WorkflowCompileError(
       `node '${unreached[0].id}' is not on the main path — disconnected nodes ${WORKFLOW_INTERPRETER_DEFERRED_SUFFIX}`,
@@ -283,6 +301,10 @@ export function compileWorkflowToSteps(ir: WorkflowIr): WorkflowStepInput[] {
     }
 
     const seam = seamOf(node);
+    if (isEnginePrimitive(node)) {
+      break;
+    }
+
     if (seam === "merge") {
       phase = "post-merge";
     } else if (!seam && node.kind !== "start" && node.kind !== "end") {

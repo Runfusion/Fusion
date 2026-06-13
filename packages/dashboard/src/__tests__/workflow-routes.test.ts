@@ -230,6 +230,28 @@ describe("workflow routes (U4)", () => {
     expect(list.some((w) => isBuiltinWorkflowId(w.id))).toBe(true);
   });
 
+  it("GET /workflows/:id/optional-steps resolves declared optional steps", async () => {
+    const builtin = await get("/api/workflows/builtin%3Acoding/optional-steps");
+    expect(builtin.status).toBe(200);
+    expect(builtin.body).toEqual([
+      expect.objectContaining({
+        templateId: "browser-verification",
+        name: "Browser Verification",
+        icon: "globe",
+        defaultOn: false,
+      }),
+    ]);
+
+    const custom = await post("/api/workflows", { name: "A", ir: linearIr() });
+    const customId = (custom.body as { id: string }).id;
+    const customSteps = await get(`/api/workflows/${customId}/optional-steps`);
+    expect(customSteps.status).toBe(200);
+    expect(customSteps.body).toEqual([]);
+
+    const missing = await get("/api/workflows/WF-404/optional-steps");
+    expect(missing.status).toBe(404);
+  });
+
   it("GET /traits returns the registry trait catalog (built-ins, with flags + schema)", async () => {
     const res = await get("/api/traits");
     expect(res.status).toBe(200);

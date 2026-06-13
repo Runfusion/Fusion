@@ -2508,8 +2508,6 @@
   "inline": {
     "agent": "에이전트",
     "breakDownSubtasks": "AI 생성 하위 작업으로 분해",
-    "browserVerify": "브라우저 검증",
-    "browserVerifyChecked": "브라우저 검증 ✓",
     "clearSelection": "선택 취소",
     "collapse": "접기",
     "collapseDescription": "설명 접기",
@@ -2518,7 +2516,6 @@
     "custom": "사용자 정의",
     "deps": "의존성",
     "editingDescription": "설명 편집 중",
-    "enableBrowserVerification": "브라우저 검증 워크플로 단계 활성화",
     "enterDescriptionFirst": "먼저 설명을 입력하세요.",
     "expand": "펼치기",
     "expandDescription": "설명 펼치기",

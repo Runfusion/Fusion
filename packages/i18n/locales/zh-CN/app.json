@@ -2508,8 +2508,6 @@
   "inline": {
     "agent": "代理",
     "breakDownSubtasks": "分解为 AI 生成的子任务",
-    "browserVerify": "浏览器验证",
-    "browserVerifyChecked": "浏览器验证 ✓",
     "clearSelection": "清除选择",
     "collapse": "折叠",
     "collapseDescription": "折叠描述",
@@ -2518,7 +2516,6 @@
     "custom": "自定义",
     "deps": "依赖",
     "editingDescription": "编辑描述",
-    "enableBrowserVerification": "启用浏览器验证工作流步骤",
     "enterDescriptionFirst": "先输入描述",
     "expand": "展开",
     "expandDescription": "展开描述",

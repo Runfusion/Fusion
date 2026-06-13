@@ -2508,8 +2508,6 @@
   "inline": {
     "agent": "代理",
     "breakDownSubtasks": "分解為 AI 生成的子工作",
-    "browserVerify": "瀏覽器驗證",
-    "browserVerifyChecked": "瀏覽器驗證 ✓",
     "clearSelection": "清除選擇",
     "collapse": "折疊",
     "collapseDescription": "折疊說明",
@@ -2518,7 +2516,6 @@
     "custom": "自訂",
     "deps": "相依性",
     "editingDescription": "編輯說明",
-    "enableBrowserVerification": "啟用瀏覽器驗證工作流程步驟",
     "enterDescriptionFirst": "先輸入說明",
     "expand": "展開",
     "expandDescription": "展開說明",

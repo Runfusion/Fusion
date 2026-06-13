@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { InlineCreateCard } from "../InlineCreateCard";
 import type { Task, Column } from "@fusion/core";
-import { fetchModels, fetchSettings, fetchAgents, checkDuplicateTasks, fetchWorkflows } from "../../api";
+import { fetchModels, fetchSettings, fetchAgents, checkDuplicateTasks, fetchWorkflows, fetchWorkflowOptionalSteps } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import type { ModelInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -127,6 +127,16 @@ vi.mock("../../api", () => ({
   updateGlobalSettings: vi.fn(),
   fetchAgents: vi.fn().mockResolvedValue([]),
   selectTaskWorkflow: vi.fn().mockResolvedValue({ workflowId: null, enabledWorkflowSteps: [] }),
+  fetchWorkflowOptionalSteps: vi.fn().mockResolvedValue([
+    {
+      templateId: "browser-verification",
+      name: "Browser Verification",
+      description: "Verify web application functionality using browser automation",
+      icon: "globe",
+      phase: "pre-merge",
+      defaultOn: false,
+    },
+  ]),
   fetchWorkflows: vi.fn().mockResolvedValue([]),
   fetchProjectDefaultWorkflow: vi.fn().mockResolvedValue({ workflowId: null }),
   setProjectDefaultWorkflow: vi.fn().mockResolvedValue({ workflowId: null }),
@@ -238,6 +248,16 @@ beforeEach(() => {
   vi.mocked(fetchWorkflows).mockResolvedValue([
     { id: "wf-a", name: "Workflow A" },
     { id: "wf-b", name: "Workflow B" },
+  ]);
+  vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([
+    {
+      templateId: "browser-verification",
+      name: "Browser Verification",
+      description: "Verify web application functionality using browser automation",
+      icon: "globe",
+      phase: "pre-merge",
+      defaultOn: false,
+    },
   ]);
 });
 
@@ -1020,6 +1040,18 @@ describe("InlineCreateCard button visibility when collapsed", () => {
     expect(document.getElementById("inline-create-controls")).toBeTruthy();
   });
 
+  it("renders no optional-step shell when workflow has no optional steps", async () => {
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValueOnce([]);
+    renderCard([]);
+    expandCard();
+
+    await waitFor(() => {
+      expect(fetchWorkflowOptionalSteps).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("inline-create-browser-verification-toggle")).not.toBeInTheDocument();
+    expect(document.querySelector(".inline-create-optional-steps")).toBeNull();
+  });
+
   it("submits with enabledWorkflowSteps undefined", async () => {
     const mockOnSubmit = vi.fn().mockResolvedValue(createMockTask());
     renderCard([], { onSubmit: mockOnSubmit });
@@ -1047,7 +1079,12 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       target: { value: "Verify login flow in browser" },
     });
 
-    fireEvent.click(screen.getByTestId("inline-create-browser-verification-toggle"));
+    const toggle = await screen.findByTestId("inline-create-browser-verification-toggle");
+    expect(toggle).toHaveTextContent("Browser Verification");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByTestId("save-button"));
 
     await waitFor(() => {

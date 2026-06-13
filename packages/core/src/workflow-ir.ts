@@ -13,6 +13,7 @@ import type {
   WorkflowFieldType,
   WorkflowSettingDefinition,
   WorkflowSettingType,
+  WorkflowOptionalStep,
 } from "./workflow-ir-types.js";
 import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
@@ -1070,6 +1071,29 @@ function validateSettings(settings: WorkflowSettingDefinition[] | undefined): vo
   }
 }
 
+function validateOptionalSteps(optionalSteps: WorkflowOptionalStep[] | undefined): void {
+  if (optionalSteps === undefined) return;
+  if (!Array.isArray(optionalSteps)) {
+    throw new WorkflowIrError("Workflow IR optionalSteps must be an array");
+  }
+  for (const optionalStep of optionalSteps) {
+    if (!optionalStep || typeof optionalStep !== "object" || Array.isArray(optionalStep)) {
+      throw new WorkflowIrError("Workflow optional step must be an object");
+    }
+    if (typeof optionalStep.templateId !== "string" || optionalStep.templateId === "") {
+      throw new WorkflowIrError("Workflow optional step must have a non-empty templateId");
+    }
+    if (
+      optionalStep.defaultOn !== undefined &&
+      typeof optionalStep.defaultOn !== "boolean"
+    ) {
+      throw new WorkflowIrError(
+        `Workflow optional step '${optionalStep.templateId}' defaultOn must be a boolean`,
+      );
+    }
+  }
+}
+
 function validateColumns(ir: WorkflowIrV2): void {
   if (!Array.isArray(ir.columns)) {
     throw new WorkflowIrError("Workflow IR v2 columns must be an array");
@@ -1231,6 +1255,7 @@ function validateV2(ir: WorkflowIrV2): void {
   validateNotifyNodes(ir.nodes);
   validateFields(ir.fields);
   validateSettings(ir.settings);
+  validateOptionalSteps(ir.optionalSteps);
 
   // Rework edges are legal intra-template (foreach, KTD-5) and — since U6
   // generalized the bounded-rework mechanism to the top-level walk — for a
@@ -1338,12 +1363,13 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
     if (!V1_NODE_KINDS.has(node.kind)) return ir;
   }
 
-  // Step-inversion declarations (artifacts/fields) and workflow settings (U1)
-  // are v2-only features.
+  // Step-inversion declarations (artifacts/fields), workflow settings (U1), and
+  // optional workflow-step declarations are v2-only features.
   if (
     (ir.artifacts && ir.artifacts.length > 0) ||
     (ir.fields && ir.fields.length > 0) ||
-    (ir.settings && ir.settings.length > 0)
+    (ir.settings && ir.settings.length > 0) ||
+    (ir.optionalSteps && ir.optionalSteps.length > 0)
   ) {
     return ir;
   }

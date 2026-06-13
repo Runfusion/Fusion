@@ -2508,8 +2508,6 @@
   "inline": {
     "agent": "Agent",
     "breakDownSubtasks": "Décomposer en sous-tâches générées par l'IA",
-    "browserVerify": "Vérification du navigateur",
-    "browserVerifyChecked": "Vérification du navigateur ✓",
     "clearSelection": "Effacer la sélection",
     "collapse": "Réduire",
     "collapseDescription": "Décrire la description",
@@ -2518,7 +2516,6 @@
     "custom": "Personnalisé",
     "deps": "Dépendances",
     "editingDescription": "Description d'édition",
-    "enableBrowserVerification": "Activer l'étape de flux de vérification du navigateur",
     "enterDescriptionFirst": "Entrez d'abord une description",
     "expand": "Développer",
     "expandDescription": "Développer la description",

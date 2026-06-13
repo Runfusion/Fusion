@@ -1,5 +1,5 @@
 import type { WorkflowDefinition, WorkflowDefinitionKind, WorkflowIr, WorkflowIrNode, WorkflowSettingDefinition, TaskStore } from "@fusion/core";
-import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowCompileError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, compileWorkflowToSteps, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings } from "@fusion/core";
+import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowCompileError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, compileWorkflowToSteps, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps } from "@fusion/core";
 import { createFnAgent as engineCreateFnAgent, validateCodeNodeSources } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
 import { emitWorkflowSseEvent } from "../sse.js";
@@ -308,6 +308,20 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       if (err instanceof ColumnTraitValidationError) {
         throw badRequest(err.message, { violations: err.violations });
       }
+      rethrowAsApiError(err);
+    }
+  });
+
+  // GET /api/workflows/:id/optional-steps — resolved optional step metadata.
+  router.get("/workflows/:id/optional-steps", async (req, res) => {
+    try {
+      const { store } = await getProjectContext(req);
+      const workflowId = req.params.id;
+      await assertWorkflowExists(store, workflowId);
+      const ir = await resolveWorkflowIrById(store, workflowId);
+      res.json(resolveWorkflowOptionalSteps(ir));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);
     }
   });

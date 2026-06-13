@@ -75,6 +75,51 @@ describe("parseWorkflowIr — v2 columns & placement", () => {
   });
 });
 
+describe("parseWorkflowIr — optionalSteps", () => {
+  const columns = DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id, traits: [] }));
+  const base = (): WorkflowIrV2 => v2(
+    columns,
+    [
+      { id: "start", kind: "start", column: "todo" },
+      { id: "end", kind: "end", column: "todo" },
+    ],
+    [{ from: "start", to: "end" }],
+  );
+
+  it("parses and serializes optionalSteps deterministically", () => {
+    const ir: WorkflowIrV2 = {
+      ...base(),
+      optionalSteps: [
+        { templateId: "browser-verification" },
+        { templateId: "plugin:example:step", defaultOn: true },
+      ],
+    };
+
+    const parsed = parseWorkflowIr(ir);
+    expect(parsed).toEqual(ir);
+    expect(JSON.parse(serializeWorkflowIr(parsed))).toEqual(ir);
+  });
+
+  it("rejects malformed optionalSteps", () => {
+    expect(() => parseWorkflowIr({ ...base(), optionalSteps: "nope" } as unknown as WorkflowIr)).toThrow(WorkflowIrError);
+    expect(() => parseWorkflowIr({ ...base(), optionalSteps: [{}] } as unknown as WorkflowIr)).toThrow(/non-empty templateId/);
+    expect(() => parseWorkflowIr({ ...base(), optionalSteps: [{ templateId: "" }] } as unknown as WorkflowIr)).toThrow(/non-empty templateId/);
+    expect(() => parseWorkflowIr({ ...base(), optionalSteps: [{ templateId: "browser-verification", defaultOn: "yes" }] } as unknown as WorkflowIr)).toThrow(/defaultOn must be a boolean/);
+  });
+
+  it("upgrades v1 graphs without optionalSteps", () => {
+    const parsed = parseWorkflowIr({
+      version: "v1",
+      name: "legacy",
+      nodes: startEnd,
+      edges: [{ from: "start", to: "end" }],
+    });
+    expect(parsed.version).toBe("v2");
+    if (parsed.version !== "v2") throw new Error("expected v2");
+    expect(parsed.optionalSteps).toBeUndefined();
+  });
+});
+
 describe("parseWorkflowIr — v1 upgrade", () => {
   const v1: WorkflowIrV1 = {
     version: "v1",

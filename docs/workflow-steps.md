@@ -167,6 +167,14 @@ Notification delivery is intentionally best-effort: a missing/unconfigured notif
 
 Workflows declare typed task fields via IR `fields: [{ id, name, type, required?, default?, options?, render? }]` (`type ∈ string | text | number | boolean | enum | multi-enum | date | url`; `options` for enum kinds; `render.placement ∈ card | detail | detail-section`, `render.widget`, `render.badge`). Values live in `tasks.customFields` and are validated through a single store authority (`updateTaskCustomFields`) with typed rejections (offending `fieldId` + `code`). Editing or switching a workflow **orphans** (never destroys) values for removed/incompatible fields — orphans are retained and shown under a detail disclosure. The task UI renders the schema dynamically (detail-form widgets by type, up to 3 card badges by placement). Agents read/write fields via `fn_task_update`'s `custom_fields` patch; authors set them via `fn_workflow_create/update`. Field values are surfaced in task/session context.
 
+#### Workflow-declared optional steps
+
+Workflows can advertise optional workflow-step templates with `optionalSteps: [{ templateId, defaultOn? }]`. This IR facet is execution-inert: the graph executor does not run or route on `optionalSteps` directly. Instead, the create and task-detail workflow UIs resolve each `templateId` against built-in and plugin-contributed `WorkflowStepTemplate` metadata, show toggleable rows, and persist the selected template ids through the existing per-task `enabledWorkflowSteps` contract.
+
+`defaultOn` is optional and seeds the UI toggle when a task is created or edited before the task has made its own selection. Unknown or removed template ids are skipped during resolution so stale declarations do not render blank controls or break workflow loading.
+
+The built-in coding workflow (`builtin:coding`) declares `browser-verification` as an optional step. It remains opt-in by default, so browser verification only runs for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
+
 ## What They Are
 
 A workflow step is a reusable check (AI prompt or script) that can be enabled on tasks.

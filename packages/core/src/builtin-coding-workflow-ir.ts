@@ -120,6 +120,7 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
   // Workflow-settings (U1, R4): declare the full moved-key catalog with defaults
   // byte-equal to today's DEFAULT_PROJECT_SETTINGS literals. Inert until U3.
   settings: BUILTIN_WORKFLOW_SETTINGS,
+  optionalSteps: [{ templateId: "browser-verification" }],
 };
 
 export const BUILTIN_CODING_WORKFLOW_IR = parseWorkflowIr(RAW_BUILTIN_CODING_WORKFLOW_IR);

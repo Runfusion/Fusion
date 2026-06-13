@@ -2501,8 +2501,6 @@ export default interface Resources {
     "inline": {
       "agent": "Agent",
       "breakDownSubtasks": "Break down into AI-generated subtasks",
-      "browserVerify": "Browser Verify",
-      "browserVerifyChecked": "Browser Verify ✓",
       "clearSelection": "Clear selection",
       "collapse": "Collapse",
       "collapseDescription": "Collapse description",
@@ -2511,7 +2509,6 @@ export default interface Resources {
       "custom": "Custom",
       "deps": "Deps",
       "editingDescription": "Editing Description",
-      "enableBrowserVerification": "Enable browser verification workflow step",
       "enterDescriptionFirst": "Enter a description first",
       "expand": "Expand",
       "expandDescription": "Expand description",
@@ -2525,6 +2522,8 @@ export default interface Resources {
       "noExistingTasks": "No existing tasks",
       "node": "Node",
       "openPlanningMode": "Open planning mode with current description",
+      "optionalWorkflowStepChecked": "{{name}} ✓",
+      "optionalWorkflowSteps": "Optional workflow steps",
       "plan": "Plan",
       "preset": "Preset",
       "priority": "Priority",
@@ -2536,6 +2535,7 @@ export default interface Resources {
       "selectAgent": "Select agent",
       "selectExecutionNode": "Select execution node",
       "subtask": "Subtask",
+      "toggleOptionalWorkflowStep": "Toggle optional workflow step: {{name}}",
       "useDefault": "Use default",
       "whatNeedsToBeDone": "What needs to be done?"
     },

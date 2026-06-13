@@ -153,6 +153,18 @@
   margin-left: auto;
 }
 
+.inline-create-optional-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.inline-create-optional-step[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .inline-create-hint {
   font-size: 11px;
   color: var(--text-dim);
@@ -300,6 +312,14 @@
   .inline-create-controls .btn {
     min-height: 36px;
     font-size: 12px;
+  }
+
+  .inline-create-optional-steps {
+    width: 100%;
+  }
+
+  .inline-create-optional-step {
+    flex: 1 1 auto;
   }
 
   .inline-create-priority-select {

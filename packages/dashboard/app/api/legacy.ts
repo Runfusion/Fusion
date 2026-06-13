@@ -5111,6 +5111,16 @@ export function fetchWorkflow(id: string, projectId?: string): Promise<import("@
   return api<import("@fusion/core").WorkflowDefinition>(withProjectId(`/workflows/${encodeURIComponent(id)}`, projectId));
 }
 
+/** Fetch resolved optional step declarations for a workflow. */
+export function fetchWorkflowOptionalSteps(
+  workflowId: string,
+  projectId?: string,
+): Promise<import("@fusion/core").ResolvedWorkflowOptionalStep[]> {
+  return api<import("@fusion/core").ResolvedWorkflowOptionalStep[]>(
+    withProjectId(`/workflows/${encodeURIComponent(workflowId)}/optional-steps`, projectId),
+  );
+}
+
 /** Create a workflow definition. */
 export function createWorkflow(
   input: import("@fusion/core").WorkflowDefinitionInput,

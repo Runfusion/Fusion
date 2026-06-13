@@ -211,7 +211,7 @@ Expand the creation panel (▼) to access additional controls:
 - **Agent** — Assign an agent to the task
 - **Branch settings** (`branch` / `baseBranch`) remain available in full task forms and task detail editing (not in Quick Entry)
 - **Review** — Set review rigor level (None, Plan Only, Plan and Code, Full)
-- **Browser Verify** — Enable browser verification workflow step
+- **Optional workflow steps** — Enable workflow-declared optional steps for the selected workflow. The built-in coding workflow exposes **Browser Verification** here and keeps it opt-in by default.
 
 ### 6) CLI creation
 

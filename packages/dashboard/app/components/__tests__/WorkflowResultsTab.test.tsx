@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { WorkflowResultsTab } from "../WorkflowResultsTab";
-import { fetchWorkflow, fetchWorkflows, fetchWorkflowSteps } from "../../api";
+import { fetchWorkflow, fetchWorkflows, fetchWorkflowSteps, fetchWorkflowOptionalSteps } from "../../api";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import type { AgentLogEntry, Settings, Task, WorkflowDefinition, WorkflowStep, WorkflowStepResult } from "@fusion/core";
@@ -12,6 +12,7 @@ vi.mock("../../api", () => ({
   selectTaskWorkflow: vi.fn().mockResolvedValue({ workflowId: "WF-001", enabledWorkflowSteps: [] }),
   fetchWorkflows: vi.fn().mockResolvedValue([]),
   fetchWorkflow: vi.fn(),
+  fetchWorkflowOptionalSteps: vi.fn(),
   submitTaskWorkflowInput: vi.fn().mockResolvedValue({ ok: true }),
   approveTaskWorkflowCli: vi.fn().mockResolvedValue({ approved: "ok" }),
 }));
@@ -32,6 +33,7 @@ vi.mock("../../hooks/useAgentLogs", () => ({
 const mockedFetchWorkflowSteps = vi.mocked(fetchWorkflowSteps);
 const mockedFetchWorkflow = vi.mocked(fetchWorkflow);
 const mockedFetchWorkflows = vi.mocked(fetchWorkflows);
+const mockedFetchWorkflowOptionalSteps = vi.mocked(fetchWorkflowOptionalSteps);
 const mockedUseAgentLogs = vi.mocked(useAgentLogs);
 
 describe("WorkflowResultsTab", () => {
@@ -133,6 +135,17 @@ describe("WorkflowResultsTab", () => {
     mockedFetchWorkflow.mockResolvedValue(selectedWorkflow);
     mockedFetchWorkflows.mockReset();
     mockedFetchWorkflows.mockResolvedValue([selectedWorkflow]);
+    mockedFetchWorkflowOptionalSteps.mockReset();
+    mockedFetchWorkflowOptionalSteps.mockResolvedValue([
+      {
+        templateId: "browser-verification",
+        name: "Browser Verification",
+        description: "Verify web application functionality using browser automation",
+        icon: "globe",
+        phase: "pre-merge",
+        defaultOn: false,
+      },
+    ]);
     mockedUseAgentLogs.mockReset();
     mockedUseAgentLogs.mockReturnValue({
       entries: [],
@@ -1017,6 +1030,49 @@ describe("WorkflowResultsTab", () => {
 
       expect(screen.queryByTestId("browser-verification-checkbox")).not.toBeInTheDocument();
       expect(within(editor).getAllByText("Browser Verification")).toHaveLength(1);
+    });
+
+    it("renders workflow-declared optional steps when not materialized", async () => {
+      mockedFetchWorkflowSteps.mockResolvedValueOnce(mockWorkflowSteps.filter((step) => step.id !== "WS-103"));
+      const onWorkflowStepsChange = vi.fn();
+
+      render(
+        <WorkflowResultsTab
+          taskId="FN-001"
+          results={[]}
+          canEdit
+          enabledWorkflowSteps={[]}
+          onWorkflowStepsChange={onWorkflowStepsChange}
+        />,
+      );
+
+      fireEvent.click(await screen.findByTestId("workflow-steps-edit-toggle"));
+      const checkbox = await screen.findByTestId("workflow-step-checkbox-browser-verification");
+
+      expect(within(checkbox).getByText("Browser Verification")).toBeInTheDocument();
+      fireEvent.click(within(checkbox).getByRole("checkbox"));
+      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["browser-verification"]);
+    });
+
+    it("disabling a workflow-declared optional step removes its template id", async () => {
+      mockedFetchWorkflowSteps.mockResolvedValueOnce(mockWorkflowSteps.filter((step) => step.id !== "WS-103"));
+      const onWorkflowStepsChange = vi.fn();
+
+      render(
+        <WorkflowResultsTab
+          taskId="FN-001"
+          results={[]}
+          canEdit
+          enabledWorkflowSteps={["WS-101", "browser-verification"]}
+          onWorkflowStepsChange={onWorkflowStepsChange}
+        />,
+      );
+
+      fireEvent.click(await screen.findByTestId("workflow-steps-edit-toggle"));
+      const checkbox = await screen.findByTestId("workflow-step-checkbox-browser-verification");
+      fireEvent.click(within(checkbox).getByRole("checkbox"));
+
+      expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-101"]);
     });
 
     it("fetches workflow step definitions when canEdit and projectId are provided", async () => {

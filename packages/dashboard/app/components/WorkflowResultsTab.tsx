@@ -6,9 +6,9 @@ import { Check, ChevronDown, ChevronRight, ChevronUp, Maximize2, Pencil, X } fro
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
-import type { AgentLogEntry, Settings, Task, TaskDetail, WorkflowDefinition, WorkflowStep, WorkflowStepResult } from "@fusion/core";
+import type { AgentLogEntry, Settings, Task, TaskDetail, WorkflowDefinition, WorkflowStep, WorkflowStepResult, ResolvedWorkflowOptionalStep } from "@fusion/core";
 import { getErrorMessage, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
-import { approveTaskWorkflowCli, fetchWorkflow, fetchWorkflows, fetchWorkflowSteps, fetchTaskWorkflow, selectTaskWorkflow, submitTaskWorkflowInput } from "../api";
+import { approveTaskWorkflowCli, fetchWorkflow, fetchWorkflows, fetchWorkflowSteps, fetchTaskWorkflow, fetchWorkflowOptionalSteps, selectTaskWorkflow, submitTaskWorkflowInput } from "../api";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { ProviderIcon } from "./ProviderIcon";
@@ -323,6 +323,7 @@ export function WorkflowResultsTab({
   const [submitted, setSubmitted] = useState(false);
   const [expandedViewStepId, setExpandedViewStepId] = useState<string | null>(null);
   const [allWorkflowSteps, setAllWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [optionalWorkflowSteps, setOptionalWorkflowSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
@@ -435,16 +436,48 @@ export function WorkflowResultsTab({
     };
   }, [projectId]);
 
+  const effectiveOptionalStepsWorkflowId = selectedWorkflowId || "builtin:coding";
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchWorkflowOptionalSteps(effectiveOptionalStepsWorkflowId, projectId)
+      .then((steps) => {
+        if (!cancelled) setOptionalWorkflowSteps(steps);
+      })
+      .catch(() => {
+        if (!cancelled) setOptionalWorkflowSteps([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveOptionalStepsWorkflowId, projectId]);
+
   const selectedWorkflowSteps = enabledWorkflowSteps ?? [];
 
   const workflowStepOptions = useMemo<WorkflowStepOption[]>(() => {
-    return allWorkflowSteps.map((step) => ({
+    const options: WorkflowStepOption[] = allWorkflowSteps.map((step) => ({
       id: step.id,
       name: step.name,
       description: step.description,
       phase: (step.phase || "pre-merge") as "pre-merge" | "post-merge",
     }));
-  }, [allWorkflowSteps]);
+    const seen = new Set<string>();
+    for (const step of allWorkflowSteps) {
+      seen.add(step.id);
+      if (step.templateId) seen.add(step.templateId);
+    }
+    for (const step of optionalWorkflowSteps) {
+      if (seen.has(step.templateId)) continue;
+      seen.add(step.templateId);
+      options.push({
+        id: step.templateId,
+        name: step.name,
+        description: step.description,
+        phase: step.phase,
+      });
+    }
+    return options;
+  }, [allWorkflowSteps, optionalWorkflowSteps]);
 
   const workflowStepLookup = useMemo(() => {
     return new Map(workflowStepOptions.map((step) => [step.id, step]));
@@ -840,7 +873,8 @@ export function WorkflowResultsTab({
     </button>
   ) : null;
 
-  const showConfiguredStepsState = !loading && !hasResults && hasConfiguredSteps;
+  const hasEditableStepOptions = workflowStepOptions.length > 0;
+  const showConfiguredStepsState = !loading && !hasResults && (hasConfiguredSteps || (canEdit && hasEditableStepOptions));
   const showEditHeaderForResults = canEdit && hasResults;
 
   const isAwaitingInput = taskStatus === "awaiting-user-input";

@@ -14890,6 +14890,9 @@ ${stepsSection}`;
       if (isBuiltinWorkflowId(workflowId) && isInterpreterDeferredWorkflowCompileError(err)) return undefined;
       throw err;
     }
+    if (isBuiltinWorkflowId(workflowId) && inputs.length === 0) {
+      return undefined;
+    }
     const stepIds = await this.materializeWorkflowSteps(workflowId, inputs);
     return { workflowId, stepIds };
   }
