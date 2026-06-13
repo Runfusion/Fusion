@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { TaskChatTab } from "../TaskChatTab";
+import { isCliSessionLive, type CliSessionSummaryRecord } from "../TaskDetailModal";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { addSteeringComment } from "../../api";
 
@@ -37,6 +38,17 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     status: undefined,
     ...overrides,
   } as Task;
+}
+
+function makeCliSession(agentState: CliSessionSummaryRecord["agentState"]): CliSessionSummaryRecord {
+  return {
+    id: "session-1",
+    taskId: "FN-001",
+    projectId: "project-1",
+    adapterId: "claude",
+    agentState,
+    terminationReason: null,
+  };
 }
 
 function makeEntry(overrides: Partial<AgentLogEntry>): AgentLogEntry {
@@ -594,7 +606,7 @@ describe("TaskChatTab", () => {
     mockedAddSteeringComment.mockResolvedValue(makeTask({ status }));
     render(<TaskChatTab task={makeTask({ column: "in-progress", assignedAgentId: "agent-1", status })} projectId="project-1" active addToast={vi.fn()} />);
 
-    expect(screen.queryByText(/No active assigned agent session/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No active steerable agent session/)).not.toBeInTheDocument();
     const input = screen.getByLabelText("Message active agent session");
     expect(input).not.toBeDisabled();
     await user.type(input, message);
@@ -607,12 +619,67 @@ describe("TaskChatTab", () => {
     });
   });
 
+  it.each(["starting", "ready", "busy", "waitingOnInput"] as const)(
+    "enables steering for a live %s CLI session when static task fields are not steerable",
+    async (agentState) => {
+      const user = userEvent.setup();
+      mockedAddSteeringComment.mockResolvedValue(makeTask({ column: "in-review", status: "queued" }));
+      render(
+        <TaskChatTab
+          task={makeTask({ column: "in-review", status: "queued", assignedAgentId: undefined, checkedOutBy: undefined })}
+          projectId="project-1"
+          active
+          addToast={vi.fn()}
+          sessionLive={isCliSessionLive(makeCliSession(agentState))}
+        />,
+      );
+
+      expect(screen.queryByText(/No active steerable agent session/)).not.toBeInTheDocument();
+      const input = screen.getByLabelText("Message active agent session");
+      expect(input).not.toBeDisabled();
+      await user.type(input, `Please continue ${agentState}`);
+      const sendButton = screen.getByRole("button", { name: "Send" });
+      expect(sendButton).not.toBeDisabled();
+      await user.click(sendButton);
+
+      await waitFor(() => {
+        expect(mockedAddSteeringComment).toHaveBeenCalledWith("FN-001", `Please continue ${agentState}`, "project-1");
+      });
+    },
+  );
+
+  it("enables steering for a live CLI session in a terminal column that static task fields reject", () => {
+    render(
+      <TaskChatTab
+        task={makeTask({ column: "todo", status: undefined, assignedAgentId: undefined, checkedOutBy: undefined })}
+        active
+        addToast={vi.fn()}
+        sessionLive={true}
+      />,
+    );
+
+    expect(screen.queryByText(/No active steerable agent session/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message active agent session")).not.toBeDisabled();
+  });
+
+  it.each(["busy", "ready", "starting", "waitingOnInput"] as const)("treats %s CLI sessions as live", (agentState) => {
+    expect(isCliSessionLive(makeCliSession(agentState))).toBe(true);
+  });
+
+  it.each(["done", "dead", "needsAttention"] as const)("treats %s CLI sessions as not live", (agentState) => {
+    expect(isCliSessionLive(makeCliSession(agentState))).toBe(false);
+  });
+
+  it("treats a missing CLI session as not live", () => {
+    expect(isCliSessionLive(null)).toBe(false);
+  });
+
   it.each([undefined, null, "queued", "planning", "merging", "merging-fix"])(
     "enables in-progress steering for assigned agents with %s status",
     (status) => {
       render(<TaskChatTab task={makeTask({ column: "in-progress", assignedAgentId: "agent-1", status })} active addToast={vi.fn()} />);
 
-      expect(screen.queryByText(/No active assigned agent session/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/No active steerable agent session/)).not.toBeInTheDocument();
       expect(screen.getByLabelText("Message active agent session")).not.toBeDisabled();
     },
   );
@@ -699,10 +766,23 @@ describe("TaskChatTab", () => {
   ])("disables the composer and shows a hint for %s", (_label, task) => {
     render(<TaskChatTab task={task} active addToast={vi.fn()} />);
 
-    expect(screen.getByText(/No active assigned agent session/)).toBeTruthy();
-    expect(screen.getByText(/active, assigned, non-paused agent session is required/i)).toBeTruthy();
+    expect(screen.getByText(/No active steerable agent session/)).toBeTruthy();
+    expect(screen.getByText(/active assigned task agent or live, non-paused CLI session is required/i)).toBeTruthy();
     expect(screen.getByLabelText("Message active agent session")).toBeDisabled();
-    expect(screen.getByPlaceholderText("Active non-paused agent session required")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Active steerable agent session required")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it.each([
+    ["paused in-progress task with a live session", makeTask({ column: "in-progress", status: "queued", paused: true })],
+    ["user-paused in-progress task with a live session", makeTask({ column: "in-progress", status: "queued", userPaused: true })],
+    ["paused in-review task with a live session", makeTask({ column: "in-review", status: "reviewing", paused: true })],
+    ["user-paused in-review task with a live session", makeTask({ column: "in-review", status: "reviewing", userPaused: true })],
+  ])("disables the composer for %s", (_label, task) => {
+    render(<TaskChatTab task={task} active addToast={vi.fn()} sessionLive={true} />);
+
+    expect(screen.getByText(/No active steerable agent session/)).toBeTruthy();
+    expect(screen.getByLabelText("Message active agent session")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
@@ -711,7 +791,7 @@ describe("TaskChatTab", () => {
     (status) => {
       render(<TaskChatTab task={makeTask({ column: "in-progress", assignedAgentId: "agent-1", status })} active addToast={vi.fn()} />);
 
-      expect(screen.getByText(/No active assigned agent session/)).toBeTruthy();
+      expect(screen.getByText(/No active steerable agent session/)).toBeTruthy();
       expect(screen.getByLabelText("Message active agent session")).toBeDisabled();
       expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     },

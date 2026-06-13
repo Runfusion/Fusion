@@ -18,6 +18,7 @@ interface TaskChatTabProps {
   projectId?: string;
   active: boolean;
   addToast: (msg: string, type?: ToastType) => void;
+  sessionLive?: boolean;
 }
 
 type AgentLogRole = AgentRole | undefined;
@@ -95,7 +96,10 @@ function groupEntriesByAgent(entries: AgentLogEntry[]): AgentLogGroup[] {
   }, []);
 }
 
-function isActiveAgentSession(task: Task | TaskDetail): boolean {
+function isActiveAgentSession(task: Task | TaskDetail, opts: { sessionLive?: boolean } = {}): boolean {
+  if (task.paused || task.userPaused) return false;
+  if (opts.sessionLive) return true;
+
   const hasAssignedAgent = Boolean(task.assignedAgentId || task.checkedOutBy);
   const statusBlocksProgressSteering = task.status ? STEERING_BLOCKED_STATUSES.has(task.status) : false;
   const statusAllowsProgressSteering = !statusBlocksProgressSteering;
@@ -103,9 +107,7 @@ function isActiveAgentSession(task: Task | TaskDetail): boolean {
   const columnAllowsSteering = (task.column === "in-progress" && statusAllowsProgressSteering)
     || (task.column === "in-review" && statusAllowsReviewSteering);
   return columnAllowsSteering
-    && hasAssignedAgent
-    && !task.paused
-    && !task.userPaused;
+    && hasAssignedAgent;
 }
 
 function isToolLikeEntry(entry: AgentLogEntry): boolean {
@@ -331,7 +333,7 @@ function TaskChatSegmentView({ segment }: { segment: TaskChatSegment }) {
   return <TaskChatTextEntry entry={segment.entry} />;
 }
 
-export function TaskChatTab({ task, projectId, active, addToast }: TaskChatTabProps) {
+export function TaskChatTab({ task, projectId, active, addToast, sessionLive }: TaskChatTabProps) {
   const { entries, loading } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -343,7 +345,7 @@ export function TaskChatTab({ task, projectId, active, addToast }: TaskChatTabPr
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const groups = useMemo(() => groupEntriesByAgent(entries), [entries]);
-  const activeSession = isActiveAgentSession(task);
+  const activeSession = isActiveAgentSession(task, { sessionLive });
   const canSend = activeSession && draft.trim().length > 0 && !sending;
 
   const resizeComposer = useCallback(() => {
@@ -523,7 +525,7 @@ export function TaskChatTab({ task, projectId, active, addToast }: TaskChatTabPr
       <form className="task-chat-composer card" onSubmit={handleSubmit}>
         {!activeSession ? (
           <div className="task-chat-session-hint" role="status">
-            No active assigned agent session is available. An active, assigned, non-paused agent session is required to send guidance.
+            No active steerable agent session is available. An active assigned task agent or live, non-paused CLI session is required to send guidance.
           </div>
         ) : null}
         <div className="task-chat-composer-row">
@@ -531,7 +533,7 @@ export function TaskChatTab({ task, projectId, active, addToast }: TaskChatTabPr
             ref={textareaRef}
             className="input task-chat-input"
             value={draft}
-            placeholder={activeSession ? "Message the active agent session…" : "Active non-paused agent session required"}
+            placeholder={activeSession ? "Message the active agent session…" : "Active steerable agent session required"}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
             disabled={!activeSession || sending}

@@ -322,17 +322,19 @@ type CliTabVisibility =
  *  - dead/needsAttention (PTY reaped) → replay "session ended"
  *  - no recorded session → hidden
  */
+export function isCliSessionLive(session: CliSessionSummaryRecord | null): boolean {
+  return session?.agentState === "starting"
+    || session?.agentState === "ready"
+    || session?.agentState === "busy"
+    || session?.agentState === "waitingOnInput";
+}
+
 export function deriveCliTabVisibility(
   session: CliSessionSummaryRecord | null,
   opts: { oneShot?: boolean; genericIdle?: boolean } = {},
 ): CliTabVisibility {
   if (!session) return { kind: "hidden" };
-  const live =
-    session.agentState === "starting" ||
-    session.agentState === "ready" ||
-    session.agentState === "busy" ||
-    session.agentState === "waitingOnInput";
-  if (live) {
+  if (isCliSessionLive(session)) {
     return {
       kind: "live",
       readOnly: Boolean(opts.oneShot),
@@ -3123,7 +3125,13 @@ export function TaskDetailContent({
             </div>
           ) : activeTab === "chat" ? (
             <div className="detail-section">
-              <TaskChatTab task={task} projectId={projectId} active={activeTab === "chat"} addToast={addToast} />
+              <TaskChatTab
+                task={task}
+                projectId={projectId}
+                active={activeTab === "chat"}
+                addToast={addToast}
+                sessionLive={isCliSessionLive(cliSession)}
+              />
             </div>
           ) : activeTab === "logs" ? (
             <div className={`detail-section${logSubview === "agent-log" ? " detail-section--agent-log" : ""}`}>
