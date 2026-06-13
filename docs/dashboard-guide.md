@@ -728,7 +728,7 @@ Recommended workflow: ordinary chains stay as `Blocks N` so noise stays low, hig
 
 ### Logs → Agent Log view
 
-The **Chat** tab sits between Definition and Logs and presents a live, chat-styled transcript of task agent output. Consecutive entries are grouped by role and labeled as Planner, Executor, Reviewer, or Merger; legacy log rows without an agent role use the neutral Agent fallback. The transcript follows new live output when you are already near the bottom, but it preserves your scroll position when you review older messages. For active assigned agent sessions in `in-progress` or `in-review` (reviewing/merging/fixing) tasks, the composer sends guidance to the running agent through the same steering path used by comments; when no active session is available, the composer is disabled with an explanatory hint.
+The **Chat** tab sits between Definition and Logs and presents a live, chat-styled transcript of task agent output. Consecutive entries are grouped by role and labeled as Planner, Executor, Reviewer, or Merger; legacy log rows without an agent role use the neutral Agent fallback. The transcript follows new live output when you are already near the bottom, but it preserves your scroll position when you review older messages. For active, assigned, non-paused agent sessions in `in-progress` or `in-review` (reviewing/merging/fixing) tasks, the composer sends guidance to the running agent through the same steering path used by comments; when no active session is available, the composer is disabled with an explanatory hint.
 
 The **Logs** tab includes an **Agent Log** subview designed for debugging long-running and tool-heavy sessions:
 
