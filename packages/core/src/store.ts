@@ -14912,6 +14912,8 @@ ${stepsSection}`;
     // default falls back cleanly with nothing written. Interpreter-deferred
     // built-ins are valid selectable workflows but not lowerable to legacy
     // WorkflowStep rows, so default materialization falls back to legacy defaults.
+    // Built-ins that compile to zero steps still record a stepless selection,
+    // mirroring explicit workflow materialization.
     let inputs: import("./types.js").WorkflowStepInput[];
     try {
       inputs = compileWorkflowToSteps(def.ir);
@@ -14920,7 +14922,7 @@ ${stepsSection}`;
       throw err;
     }
     if (isBuiltinWorkflowId(workflowId) && inputs.length === 0) {
-      return undefined;
+      return { workflowId, stepIds: [] };
     }
     const stepIds = await this.materializeWorkflowSteps(workflowId, inputs);
     return { workflowId, stepIds };

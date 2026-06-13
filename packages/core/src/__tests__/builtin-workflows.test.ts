@@ -380,10 +380,24 @@ describe("built-in workflows", () => {
       expect((await store.getTask(codingTask.id)).enabledWorkflowSteps ?? []).toEqual([]);
       expect(store.getTaskWorkflowSelection(codingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: [] });
 
+      const reservedCodingTask = await store.createTaskWithReservedId(
+        { description: "reserved default builtin coding" },
+        { taskId: "reserved-default-builtin-coding" },
+      );
+      expect((await store.getTask(reservedCodingTask.id)).enabledWorkflowSteps ?? []).toEqual([]);
+      expect(store.getTaskWorkflowSelection(reservedCodingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: [] });
+
       await store.setDefaultWorkflowId("builtin:stepwise-coding");
       const stepwiseTask = await store.createTask({ description: "default builtin stepwise" });
       expect((await store.getTask(stepwiseTask.id)).enabledWorkflowSteps ?? []).toEqual([]);
       expect(store.getTaskWorkflowSelection(stepwiseTask.id)).toBeUndefined();
+
+      const reservedStepwiseTask = await store.createTaskWithReservedId(
+        { description: "reserved default builtin stepwise" },
+        { taskId: "reserved-default-builtin-stepwise" },
+      );
+      expect((await store.getTask(reservedStepwiseTask.id)).enabledWorkflowSteps ?? []).toEqual([]);
+      expect(store.getTaskWorkflowSelection(reservedStepwiseTask.id)).toBeUndefined();
     });
 
     it("rejects selecting the PR lifecycle fragment for a task", async () => {
