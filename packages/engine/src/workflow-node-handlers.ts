@@ -9,6 +9,7 @@ import {
   type WorkflowPrimitiveContext,
   type WorkflowRuntimePrimitives,
 } from "./runtime-primitives.js";
+import { runWorkflowMergeAttemptNode } from "./workflow-merge-nodes.js";
 
 export type WorkflowSeamName =
   | "planning"
@@ -938,8 +939,11 @@ export function createDefaultNodeHandlers(
       const attempt = typeof ctx.context["workflow:work-item-attempt"] === "number"
         ? ctx.context["workflow:work-item-attempt"]
         : undefined;
-      const result = await deps.primitives.requestMerge(primitiveContextForNode(_node, ctx.task, ctx.context, attempt), ctx.task);
-      return { outcome: result.outcome, value: result.value, contextPatch: result.contextPatch };
+      return runWorkflowMergeAttemptNode(
+        { primitives: deps.primitives },
+        primitiveContextForNode(_node, ctx.task, ctx.context, attempt),
+        ctx.task,
+      );
     },
     "manual-merge-hold": async () => ({ outcome: "failure", value: "manual-required" }),
     "retry-backoff": async () => ({ outcome: "success" }),

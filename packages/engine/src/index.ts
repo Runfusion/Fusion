@@ -147,6 +147,11 @@ export {
   type WorkflowWorkDispatch,
   type WorkflowWorkSchedulerStore,
 } from "./workflow-work-scheduler.js";
+export {
+  classifyMergePrimitiveResult,
+  runWorkflowMergeAttemptNode,
+  type WorkflowMergeNodeDeps,
+} from "./workflow-merge-nodes.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
