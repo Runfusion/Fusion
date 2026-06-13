@@ -2,7 +2,7 @@
 
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, renameSync, mkdtempSync, rmSync, realpathSync, globSync, existsSync } from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { cpus, tmpdir } from "node:os";
@@ -10,6 +10,10 @@ import { createRequire } from "node:module";
 import { ensureTestArtifacts } from "./ensure-test-artifacts.mjs";
 import { isSkillSyncCheckCached } from "./sync-fusion-skill-tools.mjs";
 import { computeContentHash, createRepoContentSnapshot } from "./lib/content-hash.mjs";
+import { deriveBudgetMs, runWithWatchdog } from "./lib/run-vitest-watchdog.mjs";
+
+/** Generous local full-suite budget (60min): far above a real full run, far below an infinite hang. */
+const FULL_SUITE_BUDGET_MS = 60 * 60 * 1000;
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFilePath);
@@ -288,13 +292,41 @@ export function pruneFusionTestWorkers(maxEntries = PRUNE_MAX_ENTRIES, retryOpti
   pruneFusionTestRoots("fusion-test-workers-", maxEntries, retryOptions);
 }
 
-function runMaybeIsolated(command, commandArgs, options = {}) {
+// Run a test invocation under the L2 wall-clock watchdog (async). Throws on
+// failure/timeout/signal with an `.exitCode` — same shape as `run` — so the
+// caller's catch and the `finally` cleanup below behave identically. On a
+// watchdog kill the child group is already dead, and the `finally` prune +
+// isolation post-check then reap any leaked isolated HOME (no leak slips past
+// the guard).
+async function runWatchedTest(command, commandArgs, { env, budgetMs, label } = {}) {
+  const { code, signal, timedOut } = await runWithWatchdog({
+    command,
+    args: commandArgs,
+    env: env ?? process.env,
+    // Preserve the original `run`'s fixed working directory; pnpm must execute
+    // from the repo root regardless of where test-changed was invoked.
+    cwd: rootDir,
+    budgetMs,
+    label: label ?? `${command} ${commandArgs.join(" ")}`,
+    log: console.error,
+    spawn,
+  });
+  if (timedOut || signal || code !== 0) {
+    const reason = timedOut ? "watchdog timeout" : signal ? `signal ${signal}` : `exit code ${code}`;
+    const error = new Error(`${command} ${commandArgs.join(" ")} failed (${reason})`);
+    error.exitCode = timedOut ? 124 : signal ? 1 : code ?? 1;
+    throw error;
+  }
+}
+
+async function runMaybeIsolated(command, commandArgs, options = {}) {
   const enabled = shouldRunIsolationGuard();
   const env = options.env ?? process.env;
-  const { onBeforeAfterCheck, ...spawnOptions } = options;
+  const { onBeforeAfterCheck, budgetMs, label, ...spawnOptions } = options;
+  void spawnOptions; // cwd/stdio defaults live in the watchdog/spawn path now
   if (enabled) runIsolationCheck(true, env, /* fastBefore */ true);
   try {
-    run(command, commandArgs, spawnOptions);
+    await runWatchedTest(command, commandArgs, { env, budgetMs, label });
   } finally {
     if (typeof onBeforeAfterCheck === "function") {
       onBeforeAfterCheck();
@@ -1160,7 +1192,7 @@ export function normalizeForwardedArgs(argv) {
   return normalized;
 }
 
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   // The full suite is explicit opt-in ONLY (--full / FUSION_TEST_FULL=1).
   // CI no longer routes through this script (the gate job runs `pnpm
   // test:gate`; the demoted tier runs `test:ci:shard` in full-suite.yml), so
@@ -1291,9 +1323,11 @@ export function main(argv = process.argv.slice(2)) {
 
   if (plan.mode === "full") {
     // Explicit opt-in only ("forced": --full / FUSION_TEST_FULL=1).
-    runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
+    await runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
       env: isolatedHomeEnv,
       onBeforeAfterCheck: cleanupIsolatedHome,
+      budgetMs: FULL_SUITE_BUDGET_MS,
+      label: "test:full (-r)",
     });
     return;
   }
@@ -1312,9 +1346,11 @@ export function main(argv = process.argv.slice(2)) {
     }
     console.log("[test-changed] need the full sweep instead? run `pnpm test:full` (explicit opt-in).");
 
-    runMaybeIsolated("pnpm", ["test:gate"], {
+    await runMaybeIsolated("pnpm", ["test:gate"], {
       env: isolatedHomeEnv,
       onBeforeAfterCheck: cleanupIsolatedHome,
+      budgetMs: deriveBudgetMs({ klass: "changed" }),
+      label: "test:gate",
     });
     return;
   }
@@ -1327,7 +1363,11 @@ export function main(argv = process.argv.slice(2)) {
   // Run the gate under the same isolation guard as the affected set — a gate
   // suite leak must trip the checker, not silently become the "before" state
   // of the later run.
-  runMaybeIsolated("pnpm", ["test:gate"], { env: isolatedHomeEnv });
+  await runMaybeIsolated("pnpm", ["test:gate"], {
+    env: isolatedHomeEnv,
+    budgetMs: deriveBudgetMs({ klass: "changed" }),
+    label: "test:gate (pre-affected)",
+  });
 
   const filterArgs = activePackages.flatMap((pkg) => ["--filter", pkg]);
   console.log(`[test-changed] running tests for changed packages: ${activePackages.join(", ")}`);
@@ -1335,9 +1375,14 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`[test-changed] skipping cached packages: ${cachedPackages.join(", ")}`);
   }
 
-  runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
+  await runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
     env: isolatedHomeEnv,
     onBeforeAfterCheck: cleanupIsolatedHome,
+    // Affected sets can include dashboard (13 inner-watchdog'd lanes); use the
+    // generous full-suite backstop rather than the tight changed ceiling so a
+    // legitimately long local run is never false-killed.
+    budgetMs: FULL_SUITE_BUDGET_MS,
+    label: `affected: ${activePackages.join(", ")}`,
   });
 
   // Tests passed — record in cache (never cache failures; process.exit on failure above).
@@ -1353,12 +1398,11 @@ export function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     if (error?.exitCode) {
       process.exit(error.exitCode);
     }
-    throw error;
-  }
+    console.error(error);
+    process.exit(1);
+  });
 }

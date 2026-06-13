@@ -147,8 +147,11 @@ async function spawnWrapperTreeUntilTimeout() {
       stdio: "pipe",
       env: {
         ...process.env,
-        FUSION_RUN_VITEST_TIMEOUT_MS: "100",
-        FUSION_RUN_VITEST_KILL_GRACE_MS: "50",
+        // Budget must outlast the stub child's startup so the test can observe
+        // it alive before the watchdog reaps it; the contract under test is
+        // "timeout -> exit 124 + group reaped", not the exact budget value.
+        FUSION_RUN_VITEST_TIMEOUT_MS: "2000",
+        FUSION_RUN_VITEST_KILL_GRACE_MS: "200",
         FUSION_RUN_VITEST_SPAWN_OVERRIDE: JSON.stringify({
           command: process.execPath,
           args: [childPath, pidFile, grandchildPath],
@@ -230,16 +233,17 @@ afterEach(async () => {
 describe("run-vitest-with-heap", () => {
   it("reaps the spawned process group on SIGTERM", async () => {
     const { stderr } = await spawnWrapperTree("SIGTERM");
-    expect(stderr).toContain("[dashboard-vitest] received SIGTERM; forwarding to vitest process group");
+    expect(stderr).toContain("[watchdog] received SIGTERM; forwarding to group");
   });
 
   it("reaps the spawned process group on SIGINT", async () => {
     const { stderr } = await spawnWrapperTree("SIGINT");
-    expect(stderr).toContain("[dashboard-vitest] received SIGINT; forwarding to vitest process group");
+    expect(stderr).toContain("[watchdog] received SIGINT; forwarding to group");
   });
 
   it("times out and reaps the spawned process group", async () => {
     const { stderr } = await spawnWrapperTreeUntilTimeout();
-    expect(stderr).toContain("[dashboard-vitest] timeout after 100ms");
+    expect(stderr).toContain("[watchdog] HANG:");
+    expect(stderr).toContain("exceeded budget 2000ms");
   });
 });

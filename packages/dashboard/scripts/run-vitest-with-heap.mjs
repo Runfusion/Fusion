@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-/* global clearInterval, clearTimeout, console, process, setInterval, setTimeout */
+/* global console, process */
 
 import { spawn } from "node:child_process";
+
+import { runWithWatchdog } from "../../../scripts/lib/run-vitest-watchdog.mjs";
 
 const rawArgs = process.argv.slice(2);
 const heapArg = rawArgs.find((arg) => arg.startsWith("--heap="));
@@ -16,8 +18,21 @@ if (vitestArgs.length === 0) {
 const nodeOptions = [`--max-old-space-size=${heapMb}`, process.env.NODE_OPTIONS || ""]
   .join(" ")
   .trim();
-const timeoutMs = Number.parseInt(process.env.FUSION_RUN_VITEST_TIMEOUT_MS || "900000", 10);
-const forceKillGraceMs = Number.parseInt(process.env.FUSION_RUN_VITEST_KILL_GRACE_MS || "5000", 10);
+// Clamp to the default on a missing/malformed value. A bad env value must never
+// produce NaN — the watchdog only arms when budgetMs is finite and > 0, so a
+// NaN here would silently disable the killer and bring back the very hang this
+// wrapper exists to prevent.
+function positiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  console.error(`[dashboard-vitest] ignoring invalid ${name}=${JSON.stringify(raw)}; using ${fallback}`);
+  return fallback;
+}
+
+const timeoutMs = positiveIntEnv("FUSION_RUN_VITEST_TIMEOUT_MS", 900000);
+const graceMs = positiveIntEnv("FUSION_RUN_VITEST_KILL_GRACE_MS", 5000);
 
 function resolveSpawnCommand() {
   const override = process.env.FUSION_RUN_VITEST_SPAWN_OVERRIDE;
@@ -43,110 +58,30 @@ function resolveSpawnCommand() {
 }
 
 const { command, args } = resolveSpawnCommand();
-// process-supervisor-allowlist: foreground wrapper signals the entire vitest process group on death/timeout; not a background daemon
-const child = spawn(command, args, {
-  detached: true,
-  stdio: "inherit",
+const label = vitestArgs.join(" ");
+
+// Dashboard lanes keep their historical fixed budget (default 15min) rather than
+// the timings-derived bands the shard/changed runners use — heap pressure, not
+// duration, is what wedges a lane, so a flat generous budget is correct here.
+runWithWatchdog({
+  command,
+  args,
   env: { ...process.env, NODE_OPTIONS: nodeOptions },
-});
-
-const heartbeat = setInterval(() => {
-  console.log(`[dashboard-vitest] still running: ${vitestArgs.join(" ")}`);
-}, 5_000);
-let timeoutExitCode = null;
-let forceKillTimer = null;
-let lastForwardedSignal = null;
-let lastForwardReason = null;
-const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
-  ? setTimeout(() => {
-      timeoutExitCode = 124;
-      console.error(`[dashboard-vitest] timeout after ${timeoutMs}ms: ${vitestArgs.join(" ")}`);
-      forwardSignal("SIGTERM", "timeout");
-      forceKillTimer = setTimeout(() => {
-        forwardSignal("SIGKILL", "timeout-grace-expired");
-      }, Math.max(1, forceKillGraceMs));
-      forceKillTimer.unref();
-    }, timeoutMs)
-  : null;
-timeout?.unref();
-
-function clearHeartbeat() {
-  clearInterval(heartbeat);
-}
-
-function clearTimers() {
-  clearHeartbeat();
-  if (timeout) clearTimeout(timeout);
-  if (forceKillTimer) clearTimeout(forceKillTimer);
-}
-
-function forwardSignal(signal, reason = "external-signal") {
-  clearHeartbeat();
-  lastForwardedSignal = signal;
-  lastForwardReason = reason;
-
-  try {
-    process.kill(-child.pid, signal);
-    return;
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error)) {
-      throw error;
+  budgetMs: timeoutMs,
+  graceMs,
+  label,
+  log: console.error,
+  spawn,
+})
+  .then(({ code, signal, timedOut }) => {
+    if (signal) {
+      // Re-raise the child's terminating signal so the wrapper exits the same way.
+      process.kill(process.pid, signal);
+      return;
     }
-
-    if (error.code !== "ESRCH" && error.code !== "EPERM") {
-      throw error;
-    }
-  }
-
-  try {
-    child.kill(signal);
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
-      throw error;
-    }
-  }
-}
-
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    console.error(`[dashboard-vitest] received ${signal}; forwarding to vitest process group: ${vitestArgs.join(" ")}`);
-    forwardSignal(signal, "wrapper-received-signal");
+    process.exit(code ?? (timedOut ? 124 : 1));
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
   });
-}
-
-process.on("exit", () => {
-  clearTimers();
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch (error) {
-    if (
-      !(error instanceof Error) ||
-      !("code" in error) ||
-      (error.code !== "ESRCH" && error.code !== "EPERM")
-    ) {
-      throw error;
-    }
-  }
-});
-
-child.on("error", (error) => {
-  clearTimers();
-  console.error(error);
-  process.exit(1);
-});
-
-child.on("close", (code, signal) => {
-  clearTimers();
-  if (timeoutExitCode !== null) {
-    process.exit(timeoutExitCode);
-  }
-  if (signal) {
-    const forwardedContext = lastForwardedSignal
-      ? ` after forwarding ${lastForwardedSignal} (${lastForwardReason ?? "unknown-reason"})`
-      : " without a wrapper-forwarded signal";
-    console.error(`[dashboard-vitest] child exited via ${signal}${forwardedContext}: ${vitestArgs.join(" ")}`);
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 1);
-});
