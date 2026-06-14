@@ -190,6 +190,12 @@ function mapChatMessageToInfo(message: ChatMessage): ChatMessageInfo {
   };
 }
 
+// Backstop delay before a still-pending queued message is re-confirmed and
+// force-delivered. Long enough to let the targeted flush paths (pre-session
+// activation, stream completion) deliver first; short enough that a stranded
+// message reaches the agent quickly.
+const QUEUED_MESSAGE_DELIVERY_WATCHDOG_MS = 1500;
+
 /**
  * Hook for the QuickChatFAB component.
  * Provides chat session management and SSE streaming for real-time AI responses.
@@ -1115,6 +1121,56 @@ export function useQuickChat(
 
     flushPendingMessage();
   }, [activeSession, flushPendingMessage]);
+
+  // Delivery backstop for queued messages. The targeted flush triggers
+  // (pre-session activation, stream onDone/onError, send-time stale recovery)
+  // each fire once on a specific transition. If the relevant one bails — a
+  // lingering stream ref at session activation, or a stream that looked healthy
+  // when we chose to wait for its onDone but then died without firing it — the
+  // queued message strands in the composer forever: shown locally but never
+  // sent to the agent or persisted (so also absent from regular chat). Whenever
+  // a message stays pending under an active session, re-confirm after a short
+  // delay and deliver it if no generation is actually in flight server-side.
+  useEffect(() => {
+    const sessionId = activeSession?.id;
+    if (!sessionId || pendingMessage.trim().length === 0) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled || pendingMessageRef.current.trim().length === 0) {
+        return;
+      }
+      void fetchChatSession(sessionId, projectId)
+        .then(({ session: refreshed }) => {
+          if (
+            cancelled ||
+            // A real generation is in flight: its stream will flush the queue.
+            refreshed.isGenerating ||
+            // A live stream reconnected while we waited: defer to it.
+            streamRef.current?.isConnected() ||
+            activeSessionRef.current?.id !== sessionId ||
+            pendingMessageRef.current.trim().length === 0
+          ) {
+            return;
+          }
+          if (streamRef.current) {
+            streamRef.current.close();
+            streamRef.current = null;
+          }
+          setIsStreaming(false);
+          isStreamingRef.current = false;
+          flushPendingMessage();
+        })
+        .catch(() => {
+          // Keep the queued message; a later trigger can still deliver it.
+        });
+    }, QUEUED_MESSAGE_DELIVERY_WATCHDOG_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeSession?.id, pendingMessage, projectId, flushPendingMessage]);
 
   // Cleanup on unmount
   useEffect(() => {

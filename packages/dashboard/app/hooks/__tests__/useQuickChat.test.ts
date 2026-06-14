@@ -195,6 +195,54 @@ describe("useQuickChat", () => {
     expect(result.current.pendingMessage).toBe("");
   });
 
+  it("delivers a queued message via the watchdog when a stream stalls after the send was queued", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession({ id: "session-001", agentId: "agent-001" });
+      mockFetchResumeChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      // Server confirms nothing is generating: the stream died after we queued.
+      mockFetchChatSession.mockResolvedValue({
+        session: { ...session, isGenerating: false },
+      });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      // First send attaches a stream that is connected at send time but never
+      // completes (onDone/onError never fire).
+      let connected = true;
+      mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => connected });
+      await act(async () => {
+        void result.current.sendMessage("First");
+      });
+
+      // Second send while streaming: queued. The send-time recovery sees the
+      // stream still connected, so it correctly leaves the message queued to be
+      // flushed by the stream's onDone — which never arrives.
+      await act(async () => {
+        void result.current.sendMessage("Second");
+      });
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+
+      // The stream goes dead. The watchdog re-confirms after its delay and, since
+      // the server reports no generation in flight, delivers the queued message.
+      connected = false;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
+      expect(mockStreamChatResponse.mock.calls[1]?.[1]).toBe("Second");
+      expect(result.current.pendingMessage).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sendMessage returns a promise that resolves on stream completion", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchResumeChatSession.mockResolvedValue({ session });
