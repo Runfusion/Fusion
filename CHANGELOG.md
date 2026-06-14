@@ -2,6 +2,109 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.43.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.43.0
+- @fusion/engine@0.43.0
+- @fusion/i18n@0.39.5
+- @fusion-plugin-examples/cli-printing-press@0.1.22
+- @fusion-plugin-examples/compound-engineering@0.1.5
+- @fusion-plugin-examples/dependency-graph@0.1.36
+- @fusion-plugin-examples/roadmap@0.1.24
+- @fusion-plugin-examples/cursor-runtime@0.1.24
+- @fusion-plugin-examples/droid-runtime@0.1.31
+- @fusion-plugin-examples/hermes-runtime@0.2.55
+- @fusion-plugin-examples/openclaw-runtime@0.2.55
+- @fusion-plugin-examples/paperclip-runtime@0.2.55
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- @fusion/core@0.43.0
+- @fusion/dashboard@0.43.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.43.0
+- @fusion/pi-claude-cli@0.43.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.43.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 9149121: Enable Z.ai GLM-5.2 model selection.
+- 64de883: Make the built-in compound-engineering workflow run the CE way end-to-end:
+
+  - **Execute** stage invokes the `compound-engineering:ce-work` skill in coding mode instead of the generic executor prompt.
+  - **Merge** stage adds `ce-commit-push-pr` and `ce-resolve-pr-feedback` skill steps (CE owns commit/push/PR + feedback; Fusion's merge seam still owns the board-state merge). The plugin now bundles `ce-commit`, `ce-commit-push-pr`, and `ce-resolve-pr-feedback`.
+  - **Planning questions reach a human:** workflow-step sessions carry a `FUSION_WORKFLOW_STEP` signal; in that mode the CE skills emit an await-input sentinel instead of calling a blocking tool with no listener. The executor parks the task `awaiting-user-input` with the question, and a new task-card **"Answer questions"** button opens the workflow tab where the existing input banner captures the answer and resumes the step.
+  - **Subagents work in workflow steps:** `fn_spawn_agent` gains an optional `systemPromptOverride`; the plugin installs the 43 `ce-*` persona definitions plugin-locally and exposes their directory via `FUSION_CE_AGENTS_DIR`, so the CE skills read a persona def and spawn it as a real subagent (falling back to inline single-agent work when unavailable).
+
+- e8c2d51: Add a one-click dashboard Update now action for installing available Fusion updates.
+
+#### Patch Changes
+
+- 740c712: Inline the private `@fusion/core` types into the published `@runfusion/fusion/plugin-sdk` declaration entry so standalone external plugins created with `fn plugin new` can typecheck and `pnpm build` cleanly against released Fusion. Human spot-check: `npx @runfusion/fusion@0.42.0 plugin new proof-point-plugin && cd proof-point-plugin && pnpm install && pnpm build`.
+- b1ba87e: Ensure `zai/glm-5.2` reliably appears in the model list after user Z.ai provider extensions load.
+- 65a4c51: Recover stale Compound Engineering sessions on plugin load and session reads so persisted active rows without live agent handles no longer leave the dashboard stuck waiting for work that is not running.
+- 20aad56: Fix "Couldn't start local Fusion" on the Linux AppImage (and any packaged build launched from a desktop launcher). The embedded local runtime now roots its data at the user's home directory (`~/.fusion`) instead of `process.cwd()`, which was `/` or the read-only AppImage mount point and caused database creation to fail with EACCES/EROFS. Set `FUSION_HOME` to override the location.
+- 066c919: Preserve the original corrupt project database at `fusion.db` when startup recovery fails after moving it aside.
+- 0d75725: Fixed unreliable horizontal scrolling when swiping across task cards on the mobile board. Native HTML5 drag is now disabled on touch-primary devices (where it never worked anyway), so the browser no longer hijacks swipe-to-scroll gestures that start on a card.
+- 67ae2be: Fix two mobile chat send failures. The regular chat send button was dead to touch because the action only ran on `onClick`, which iOS suppresses after `preventDefault()` in the touch sequence — it now fires from pointerdown/touchstart with a dedupe latch. Quick chat messages could strand in the composer (shown locally but never sent to the agent or persisted) when a queued message's delivery trigger bailed — a dropped stream leaving the streaming flag stuck `true`, or a stream that looked healthy when queued but then stalled. A queued send now detects a stale flag at send time via the stream's connection state and the server's generation status, and a delivery watchdog re-confirms any message that stays pending and force-delivers it once no generation is actually in flight.
+- fd6caaa: Fix sporadic quick chat send failures on mobile (notably the first message after a response). A real touch tap dispatches both `pointerdown` and `touchstart`, and the quick chat send button ran its action on each — firing `handleSendMessage` twice per tap. Because React had not yet flushed the composer clear between the two events, both reads saw the same text and sent, and the hook's second send closed the first's freshly-opened stream and re-POSTed, which could drop the response. The send and stop buttons now claim a single action per tap so only the first of the paired events fires.
+- 9eeaaa7: Fix the quick chat stop button rendering too narrow. It borrowed ChatView's `.chat-input-stop` styling, which sizes itself with `--chat-input-control-size` — a variable scoped to ChatView's composer and undefined in the quick chat DOM — collapsing the button toward its icon width. It is now pinned to the send button's square dimensions.
+- ee6d7ac: Workflow step execution now surfaces task attachment locations in the context-recovery prompt path and no longer tells autonomous agents to ask for context.
+- 14ed177: Restored horizontal swiping on mobile kanban board columns while preserving page-level horizontal pan containment.
+- df01ab7: Fix Create Pull Request conflict preflight to derive `conflictsWithBase` from `git merge-tree --write-tree` exit codes instead of non-empty output, and treat no-op PR conflict resolution merges as successful without attempting an empty commit.
+- 96773dd: Fix standalone installs of the published CLI crashing with `ERR_MODULE_NOT_FOUND` for `@earendil-works/pi-coding-agent`. `@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai` are now plain required dependencies instead of also being optional peers, so clean npm and pnpm installs resolve the pi runtime packages.
+- 67d4d51: Move task-card timing badges from the top metadata cluster into the bottom-right footer chip cluster so timers align with retry and GitHub footer badges.
+- 7b83906: Run the configured or inferred dependency install inside temporary standalone AI-merge clean-room worktrees before merge/review verification.
+- be2773b: Fix scheduler concurrency diagnostics and semaphore slot accounting so queued tasks are not held behind contradictory or negative capacity readings.
+- 3cc82bd: Fix mobile board horizontal overflow that caused iOS Safari to zoom-out/cut-off the board and let the whole page pan off-screen. Screen-reader-only `.visually-hidden` spans were `position: absolute` with no offsets, so inside the horizontally-scrolled kanban columns they rendered off-screen-right and ballooned the document's scroll width. Pinning the utility to its containing block's origin keeps the document locked to the viewport on mobile.
+- aa71ace: Refresh expired Claude OAuth access tokens from Fusion auth storage instead of requiring repeated manual re-login.
+- 417183d: Send task-detail Chat composer messages on plain Enter while preserving Shift+Enter newlines and Cmd/Ctrl+Enter sending.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [9149121]
+- Updated dependencies [740c712]
+- Updated dependencies [b1ba87e]
+- Updated dependencies [65a4c51]
+- Updated dependencies [64de883]
+- Updated dependencies [20aad56]
+- Updated dependencies [066c919]
+- Updated dependencies [0d75725]
+- Updated dependencies [67ae2be]
+- Updated dependencies [fd6caaa]
+- Updated dependencies [9eeaaa7]
+- Updated dependencies [ee6d7ac]
+- Updated dependencies [e8c2d51]
+- Updated dependencies [14ed177]
+- Updated dependencies [df01ab7]
+- Updated dependencies [96773dd]
+- Updated dependencies [67d4d51]
+- Updated dependencies [7b83906]
+- Updated dependencies [be2773b]
+- Updated dependencies [3cc82bd]
+- Updated dependencies [aa71ace]
+- Updated dependencies [417183d]
+  - @runfusion/fusion@0.43.0
+
 ## 0.42.0
 
 ### @fusion/dashboard
@@ -8895,6 +8998,14 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.5
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.43.0
+
 ## 0.39.4
 
 ### @fusion/i18n
@@ -8926,6 +9037,14 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.31
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.31
 
 ## 0.11.30
 
