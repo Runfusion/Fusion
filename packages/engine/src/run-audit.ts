@@ -171,6 +171,7 @@ export type GitMutationType =
   | "merge:ai-review-landed-with-concerns"
   | "merge:ai-local-sync"
   | "merge:ai-landed"
+  | "merge:ai-deps-sync"
   /**
    * Metadata shape:
    * ```ts

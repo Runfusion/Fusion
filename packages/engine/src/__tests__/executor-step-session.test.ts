@@ -475,7 +475,10 @@ describe("Workflow Steps Execution", () => {
     expect(secondCall[0].tools).toBe("readonly");
     expect(secondCall[0].systemPrompt).toContain("Docs Review");
     expect(secondCall[0].systemPrompt).toContain("Review all docs and verify they are complete.");
-    expect(secondCall[0].taskEnv).toEqual(mockedCreateFnAgent.mock.calls[0][0].taskEnv);
+    expect(secondCall[0].taskEnv).toEqual({
+      ...mockedCreateFnAgent.mock.calls[0][0].taskEnv,
+      FUSION_WORKFLOW_STEP: "1",
+    });
 
     // Task should move to in-review
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");

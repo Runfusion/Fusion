@@ -53,6 +53,16 @@ export {
 import { existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import {
+  computeLockfileHash,
+  getConfiguredWorktreeInitCommand,
+  getDependencySyncCommand,
+  hasInstallState,
+  installWorktreeDependencies,
+  INSTALL_MARKER_RELPATH,
+  readInstallMarker,
+  writeInstallMarker,
+} from "./merge-dependency-sync.js";
 import { resolveTaskWorktreePath } from "./worktree-paths.js";
 import { resolveTaskWorkingBranch } from "./worktree-names.js";
 import {
@@ -499,9 +509,15 @@ export async function getStagedFiles(cwd: string): Promise<string[]> {
   }
 }
 
-export function hasInstallState(rootDir: string): boolean {
-  return existsSync(join(rootDir, "node_modules")) || existsSync(join(rootDir, ".pnp.cjs"));
-}
+export {
+  computeLockfileHash,
+  getConfiguredWorktreeInitCommand,
+  getDependencySyncCommand,
+  hasInstallState,
+  INSTALL_MARKER_RELPATH,
+  readInstallMarker,
+  writeInstallMarker,
+};
 
 export function shouldSyncDependenciesForMerge(
   stagedFiles: string[],
@@ -513,23 +529,6 @@ export function shouldSyncDependenciesForMerge(
   return stagedFiles.some((file) =>
     DEPENDENCY_SYNC_TRIGGER_PATTERNS.some((pattern) => matchGlob(file, pattern)),
   );
-}
-
-function getConfiguredWorktreeInitCommand(settings?: Pick<Settings, "worktreeInitCommand"> | null): string | null {
-  const trimmed = settings?.worktreeInitCommand?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function getDependencySyncCommand(rootDir: string, settings?: Settings | null): string | null {
-  const configuredCommand = getConfiguredWorktreeInitCommand(settings);
-  if (configuredCommand) return configuredCommand;
-  if (existsSync(join(rootDir, "pnpm-lock.yaml"))) return "pnpm install --frozen-lockfile";
-  if (existsSync(join(rootDir, "package-lock.json"))) return "npm install";
-  if (existsSync(join(rootDir, "yarn.lock"))) return "yarn install --frozen-lockfile";
-  if (existsSync(join(rootDir, "bun.lock")) || existsSync(join(rootDir, "bun.lockb"))) {
-    return "bun install --frozen-lockfile";
-  }
-  return null;
 }
 
 type MergeWorktreeCommandResult = Awaited<ReturnType<typeof runConfiguredMergeWorktreeCommand>>;
@@ -570,40 +569,6 @@ function formatPostMergeInitFailureOutcome(initResult: MergeWorktreeCommandResul
   return fallback.length > 0 ? fallback : "Command failed";
 }
 
-const INSTALL_MARKER_RELPATH = join("node_modules", ".fusion-install-marker");
-const LOCKFILE_CANDIDATES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "bun.lock"];
-
-function computeLockfileHash(rootDir: string): string | null {
-  for (const name of LOCKFILE_CANDIDATES) {
-    const p = join(rootDir, name);
-    if (existsSync(p)) {
-      try {
-        return createHash("sha256").update(readFileSync(p)).digest("hex");
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
-function readInstallMarker(rootDir: string): string | null {
-  try {
-    const value = readFileSync(join(rootDir, INSTALL_MARKER_RELPATH), "utf-8").trim();
-    return value || null;
-  } catch {
-    return null;
-  }
-}
-
-function writeInstallMarker(rootDir: string, hash: string): void {
-  try {
-    writeFileSync(join(rootDir, INSTALL_MARKER_RELPATH), hash);
-  } catch {
-    // Best-effort: a missing marker just means the next merge re-runs install.
-  }
-}
-
 async function syncDependenciesForMerge(
   store: TaskStore,
   rootDir: string,
@@ -611,44 +576,15 @@ async function syncDependenciesForMerge(
   settings?: Settings | null,
   signal?: AbortSignal,
 ): Promise<void> {
-  const configuredCommand = getConfiguredWorktreeInitCommand(settings);
-  const installCommand = getDependencySyncCommand(rootDir, settings);
-  if (!installCommand) return;
-
-  const shouldUseInstallMarker = configuredCommand === null;
-
-  // Skip the install if node_modules is present and the lockfile content
-  // matches the hash recorded after the last successful install. Caller's
-  // shouldSyncDependenciesForMerge gate already filters most no-ops; this
-  // covers the case where package.json (but not the lockfile) is staged, and
-  // the case where multiple merge attempts hit the same worktree in a row.
-  const lockHash = shouldUseInstallMarker ? computeLockfileHash(rootDir) : null;
-  if (lockHash && hasInstallState(rootDir) && readInstallMarker(rootDir) === lockHash) {
-    mergerLog.log(`${taskId}: skipping dependency sync (lockfile unchanged since last install)`);
-    await store.logEntry(
-      taskId,
-      `Skipping dependency sync: lockfile hash matches last successful ${installCommand}`,
-    );
-    return;
-  }
-
-  throwIfAborted(signal, taskId);
-  mergerLog.log(`${taskId}: syncing dependencies before merge verification`);
-  await store.logEntry(taskId, `Syncing dependencies before merge verification: ${installCommand}`);
-  try {
-    await execAsync(installCommand, {
-      cwd: rootDir,
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 300_000,
-    });
-    throwIfAborted(signal, taskId);
-    if (lockHash) writeInstallMarker(rootDir, lockHash);
-  } catch (error: any) {
-    throwIfAborted(signal, taskId);
-    const details = error?.stderr || error?.stdout || error?.message || String(error);
-    throw new Error(`Dependency sync failed for ${taskId}: ${details}`.trim());
-  }
+  await installWorktreeDependencies({
+    cwd: rootDir,
+    settings,
+    taskId,
+    signal,
+    context: "before merge verification",
+    logger: mergerLog,
+    log: async (message) => { await store.logEntry(taskId, message); },
+  });
 }
 
 // ── Default test command inference ────────────────────────────────────

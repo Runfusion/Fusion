@@ -373,7 +373,7 @@ Sandbox backend precedence is:
 
 | `pushAfterMerge` | `boolean` | `false` | Auto-push to remote after successful direct merge. Includes pulling latest and AI conflict resolution. |
 | `pushRemote` | `string` | `"origin"` | Git remote (and optional branch) to push to after merge. |
-| `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation and again to bootstrap the merge worktree before AI merge verification. Useful for project-specific setup beyond package install (for example `pnpm install --frozen-lockfile`, `cp .env.local .env`, or codegen/bootstrap scripts). |
+| `worktreeInitCommand` | `string` | `undefined` | Shell command run after task worktree creation and in temporary merge worktrees before merge/review verification. In standalone AI merge, this runs inside each fresh `fusion-ai-merge-*` clean-room worktree after `git worktree add`; when unset, Fusion infers a package-manager install from the lockfile and may skip only when the install marker matches. Useful for project-specific setup beyond package install (for example `pnpm install --frozen-lockfile`, `cp .env.local .env`, or codegen/bootstrap scripts). |
 | `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
 | `buildCommand` | `string` | `undefined` | Merge-time build command (hard gate). |
 | `recycleWorktrees` | `boolean` | `false` | Default: off (opt-in). Reuse worktrees from a pool for faster startup. |

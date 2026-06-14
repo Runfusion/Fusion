@@ -63,6 +63,7 @@ import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
 import { createLogger } from "./logger.js";
 import { captureSingleCommitLandedMetadata, type MergerOptions } from "./merger.js";
+import { installWorktreeDependencies } from "./merge-dependency-sync.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
 import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "./self-healing.js";
 import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "./worktree-paths.js";
@@ -1079,6 +1080,36 @@ export async function runAiMerge(
       }
       await audit.git({ type: "merge:ai-clean-room", target: integrationBranch, metadata: { taskId, tipSha, mergeRoot } });
       await log(`AI merge: merging ${branch} into ${integrationBranch} (clean room at ${short(tipSha)})${advanceRetries ? ` — retry ${advanceRetries} after concurrent advance` : ""}`);
+
+      /*
+       * FNXC:AIMerge 2026-06-13-20:32:
+       * The detached AI-merge clean room is rebuilt from the integration tip and starts without workspace dependencies. Hard-fail configured or inferred install failures so verification cannot silently run against an uninstalled checkout; aborts propagate before merge agents run.
+       */
+      const depsSyncStartedAt = Date.now();
+      const depsSyncResult = await installWorktreeDependencies({
+        cwd: canonicalMergeRoot,
+        settings,
+        taskId,
+        signal: options.signal,
+        context: "for AI merge clean room",
+        logger: aiMergeLog,
+        log,
+      });
+      await audit.git({
+        type: "merge:ai-deps-sync",
+        target: integrationBranch,
+        metadata: {
+          taskId,
+          tipSha,
+          mergeRoot: canonicalMergeRoot,
+          installCommand: depsSyncResult.installCommand,
+          configured: depsSyncResult.configured,
+          skipped: depsSyncResult.skipped,
+          skipReason: depsSyncResult.skipReason,
+          durationMs: depsSyncResult.durationMs,
+        },
+      });
+      await log(`[timing] AI merge dependency sync completed in ${Date.now() - depsSyncStartedAt}ms${depsSyncResult.installCommand ? ` (${depsSyncResult.skipped ? "skipped" : "ran"}: ${depsSyncResult.installCommand})` : " (no command)"}`);
 
       // 2 + 3. Merge + review loop (corrective passes).
       const squashSha = await mergeAndReview({
