@@ -222,4 +222,145 @@ describe("TaskStore merge request record + completion handoff marker", () => {
       lastError: "cancelled-by-user-hard-cancel",
     });
   });
+
+  it("creates idempotent workflow merge work during completion handoff", async () => {
+    const taskId = await createTask();
+    await store.moveTask(taskId, "todo");
+    await store.moveTask(taskId, "in-progress");
+
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-handoff", agentId: "agent-test" },
+      now: "2026-05-30T00:00:00.000Z",
+    });
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-handoff", agentId: "agent-test" },
+      now: "2026-05-30T00:00:01.000Z",
+    });
+
+    expect(store.listWorkflowWorkItemsForTask(taskId, { kinds: ["merge"] })).toEqual([
+      expect.objectContaining({
+        runId: "run-handoff",
+        taskId,
+        nodeId: "merge-gate",
+        kind: "merge",
+        state: "runnable",
+      }),
+    ]);
+  });
+
+  it("cancels previous active handoff work when a re-handoff uses a new run id", async () => {
+    const taskId = await createTask();
+    await store.moveTask(taskId, "todo");
+    await store.moveTask(taskId, "in-progress");
+
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-handoff-1", agentId: "agent-test" },
+      now: "2026-05-30T00:00:00.000Z",
+    });
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-handoff-2", agentId: "agent-test" },
+      now: "2026-05-30T00:00:01.000Z",
+    });
+
+    expect(store.listWorkflowWorkItemsForTask(taskId, { kinds: ["merge"] })).toEqual([
+      expect.objectContaining({
+        runId: "run-handoff-1",
+        state: "cancelled",
+        lastError: "superseded-by-completion-handoff",
+      }),
+      expect.objectContaining({
+        runId: "run-handoff-2",
+        state: "runnable",
+      }),
+    ]);
+  });
+
+  it("cancels opposite handoff kind when autoMerge flips between handoffs", async () => {
+    const taskId = await createTask();
+    await store.moveTask(taskId, "todo");
+    await store.moveTask(taskId, "in-progress");
+
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-merge", agentId: "agent-test" },
+      now: "2026-05-30T00:00:00.000Z",
+    });
+    await store.updateTask(taskId, { autoMerge: false });
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-manual", agentId: "agent-test" },
+      now: "2026-05-30T00:00:01.000Z",
+    });
+
+    expect(store.listWorkflowWorkItemsForTask(taskId)).toEqual([
+      expect.objectContaining({
+        runId: "run-merge",
+        kind: "merge",
+        state: "cancelled",
+        lastError: "superseded-by-completion-handoff",
+      }),
+      expect.objectContaining({
+        runId: "run-manual",
+        kind: "manual-hold",
+        state: "manual-required",
+      }),
+    ]);
+  });
+
+  it("does not reset running handoff work to runnable on same-run replay", async () => {
+    const taskId = await createTask();
+    await store.moveTask(taskId, "todo");
+    await store.moveTask(taskId, "in-progress");
+
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-handoff", agentId: "agent-test" },
+      now: "2026-05-30T00:00:00.000Z",
+    });
+    const [mergeWork] = store.listWorkflowWorkItemsForTask(taskId, { kinds: ["merge"] });
+    store.transitionWorkflowWorkItem(mergeWork.id, "running", {
+      leaseOwner: "worker-a",
+      leaseExpiresAt: "2026-05-30T00:05:00.000Z",
+      now: "2026-05-30T00:00:01.000Z",
+    });
+
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-handoff", agentId: "agent-test" },
+      now: "2026-05-30T00:00:02.000Z",
+    });
+
+    expect(store.getWorkflowWorkItem(mergeWork.id)).toMatchObject({
+      state: "running",
+      leaseOwner: "worker-a",
+      leaseExpiresAt: "2026-05-30T00:05:00.000Z",
+    });
+  });
+
+  it("creates manual hold workflow work instead of merge work when autoMerge is false", async () => {
+    const taskId = await createTask();
+    await store.updateTask(taskId, { autoMerge: false });
+    await store.moveTask(taskId, "todo");
+    await store.moveTask(taskId, "in-progress");
+
+    await store.handoffToReview(taskId, {
+      ownerAgentId: "agent-test",
+      evidence: { reason: "fn_task_done", runId: "run-manual", agentId: "agent-test" },
+    });
+
+    expect(store.listWorkflowWorkItemsForTask(taskId)).toEqual([
+      expect.objectContaining({
+        runId: "run-manual",
+        taskId,
+        nodeId: "merge-manual-hold",
+        kind: "manual-hold",
+        state: "manual-required",
+        blockedReason: "autoMerge:false",
+      }),
+    ]);
+  });
 });

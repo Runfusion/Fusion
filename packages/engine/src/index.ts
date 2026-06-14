@@ -152,6 +152,12 @@ export {
   runWorkflowMergeAttemptNode,
   type WorkflowMergeNodeDeps,
 } from "./workflow-merge-nodes.js";
+export {
+  processDueWorkflowWorkItem,
+  workflowMergeWorkKinds,
+  type WorkflowWorkProcessorOptions,
+  type WorkflowWorkProcessorResult,
+} from "./workflow-work-processor.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";

@@ -6625,6 +6625,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
             },
           });
           this.enqueueMergeQueue(id, { priority: task.priority, now: internal.now });
+          this.createCompletionHandoffWorkflowWork(task, {
+            runId: internal.runContext?.runId,
+            now: internal.now,
+            source: internal.evidence?.reason,
+          });
           this.insertRunAuditEventRow({
             taskId: id,
             agentId: internal.runContext?.agentId,
@@ -7092,6 +7097,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       if (internal.fromHandoff) {
         alreadyEnqueued = Boolean(this.db.prepare("SELECT 1 FROM mergeQueue WHERE taskId = ?").get(id));
         this.enqueueMergeQueue(id, { priority: task.priority, now: internal.now });
+        this.createCompletionHandoffWorkflowWork(task, {
+          runId: internal.runContext?.runId,
+          now: internal.now,
+          source: internal.evidence?.reason,
+        });
         this.insertRunAuditEventRow({
           taskId: id,
           agentId: internal.runContext?.agentId,
@@ -8849,6 +8859,10 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     return state === "succeeded" || state === "failed" || state === "cancelled" || state === "exhausted";
   }
 
+  private isActiveWorkflowWorkItemState(state: WorkflowWorkItemState): boolean {
+    return state === "runnable" || state === "running" || state === "held" || state === "retrying" || state === "manual-required";
+  }
+
   private workflowStateForMergeRequestState(state: MergeRequestState): WorkflowWorkItemState {
     const states: Record<MergeRequestState, WorkflowWorkItemState> = {
       queued: "runnable",
@@ -9007,6 +9021,79 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     });
   }
 
+  createCompletionHandoffWorkflowWork(
+    task: Pick<Task, "id" | "autoMerge" | "priority">,
+    opts: { runId?: string; now?: string; source?: string } = {},
+  ): WorkflowWorkItem {
+    const autoMerge = task.autoMerge !== false;
+    const runId = opts.runId ?? `completion-handoff:${task.id}:${randomUUID()}`;
+    const nodeId = autoMerge ? "merge-gate" : "merge-manual-hold";
+    const kind: WorkflowWorkItemKind = autoMerge ? "merge" : "manual-hold";
+    const existing = this.getWorkflowWorkItemByIdentity(runId, task.id, nodeId, kind);
+    if (existing && this.isActiveWorkflowWorkItemState(existing.state)) {
+      this.cancelActiveWorkflowWorkItemsForTask(task.id, {
+        kinds: ["merge", "manual-hold"],
+        excludeIds: [existing.id],
+        now: opts.now,
+        lastError: "superseded-by-completion-handoff",
+      });
+      this.insertCompletionHandoffWorkflowWorkAudit(task, existing, autoMerge, opts.source);
+      return existing;
+    }
+
+    this.cancelActiveWorkflowWorkItemsForTask(task.id, {
+      kinds: ["merge", "manual-hold"],
+      now: opts.now,
+      lastError: "superseded-by-completion-handoff",
+    });
+    const item = this.upsertWorkflowWorkItem({
+      runId,
+      taskId: task.id,
+      nodeId,
+      kind,
+      state: autoMerge ? "runnable" : "manual-required",
+      blockedReason: autoMerge ? null : "autoMerge:false",
+      now: opts.now,
+    });
+    this.insertCompletionHandoffWorkflowWorkAudit(task, item, autoMerge, opts.source);
+    return item;
+  }
+
+  private getWorkflowWorkItemByIdentity(
+    runId: string,
+    taskId: string,
+    nodeId: string,
+    kind: WorkflowWorkItemKind,
+  ): WorkflowWorkItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM workflow_work_items WHERE runId = ? AND taskId = ? AND nodeId = ? AND kind = ?")
+      .get(runId, taskId, nodeId, kind) as WorkflowWorkItemRow | undefined;
+    return row ? this.rowToWorkflowWorkItem(row) : null;
+  }
+
+  private insertCompletionHandoffWorkflowWorkAudit(
+    task: Pick<Task, "id">,
+    item: WorkflowWorkItem,
+    autoMerge: boolean,
+    source?: string,
+  ): void {
+    this.insertRunAuditEventRow({
+      taskId: task.id,
+      runId: item.runId,
+      domain: "database",
+      mutationType: "workflowWorkItem:completion-handoff",
+      target: item.id,
+      metadata: {
+        taskId: task.id,
+        autoMerge,
+        source: source ?? "completion-handoff",
+        workItemId: item.id,
+        nodeId: item.nodeId,
+        state: item.state,
+      },
+    });
+  }
+
   upsertWorkflowWorkItem(input: WorkflowWorkItemUpsertInput): WorkflowWorkItem {
     return this.db.transactionImmediate(() => {
       const existing = this.db
@@ -9148,11 +9235,13 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
   cancelActiveWorkflowWorkItemsForTask(
     taskId: string,
-    opts: { kinds?: WorkflowWorkItemKind[]; now?: string; lastError?: string | null } = {},
+    opts: { kinds?: WorkflowWorkItemKind[]; now?: string; lastError?: string | null; excludeIds?: string[] } = {},
   ): WorkflowWorkItem[] {
     return this.db.transactionImmediate(() => {
-      const activeStates: WorkflowWorkItemState[] = ["runnable", "running", "held", "retrying", "manual-required"];
-      const items = this.listWorkflowWorkItemsForTask(taskId, opts).filter((item) => activeStates.includes(item.state));
+      const excludeIds = new Set(opts.excludeIds ?? []);
+      const items = this.listWorkflowWorkItemsForTask(taskId, opts).filter((item) =>
+        this.isActiveWorkflowWorkItemState(item.state) && !excludeIds.has(item.id)
+      );
       return items.map((item) =>
         this.transitionWorkflowWorkItem(item.id, "cancelled", {
           now: opts.now,
