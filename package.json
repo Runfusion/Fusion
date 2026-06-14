@@ -14,9 +14,9 @@
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "pretest": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs",
-    "pretest:full": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs",
-    "test:gate": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && pnpm --filter @fusion/engine test:core && pnpm --filter @runfusion/fusion test:ci-shape",
+    "pretest": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-test-timeout-appeasement.mjs",
+    "pretest:full": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-test-timeout-appeasement.mjs",
+    "test:gate": "node scripts/check-no-nohup.mjs && node scripts/check-no-kill-4040.mjs && node scripts/check-no-test-timeout-appeasement.mjs && pnpm --filter @fusion/engine test:core && pnpm --filter @runfusion/fusion test:ci-shape",
     "smoke:boot": "node scripts/boot-smoke.mjs",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",
