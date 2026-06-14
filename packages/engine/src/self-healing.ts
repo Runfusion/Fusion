@@ -1211,7 +1211,7 @@ export class SelfHealingManager {
    * Terminal contract for stuck-loop exhaustion and no-progress churn:
    * - `STUCK_LOOP_EXHAUSTED`: increments the kill budget until exhausted. Once
    *   exhausted, tasks with incomplete steps are moved back to `todo` with
-   *   progress preserved and pause metadata reapplied for manual resume or
+   *   progress preserved, marked failed, and paused for manual resume or
    *   decomposition; tasks with only terminal steps keep the legacy failed
    *   `in-review` handoff path.
    * - `STUCK_NO_PROGRESS_CHURN`: skips the budget entirely and terminalizes on
@@ -1315,8 +1315,28 @@ export class SelfHealingManager {
             return false;
           }
 
-          log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}, reason=${reason}) with incomplete steps — re-queueing in todo with progress preserved`);
-          await this.store.updateTask(taskId, { stuckKillCount: newCount });
+          log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}, reason=${reason}) with incomplete steps — parking in todo with progress preserved`);
+          const exhaustedError =
+            `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}) after last reason=${reason}. ` +
+            "Progress was preserved; manually retry, decompose, or rescope before execution resumes.";
+          const parkUpdate = {
+            stuckKillCount: newCount,
+            status: "failed",
+            error: exhaustedError,
+            paused: true,
+            pausedReason: "stuck-loop-exhausted-manual-intervention-required",
+            pausedByAgentId: "self-healing",
+            assignedAgentId: null,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutNodeId: null,
+            checkoutRunId: null,
+            checkoutLeaseRenewedAt: null,
+            checkoutLeaseEpoch: 0,
+            nextRecoveryAt: null,
+          } satisfies Parameters<typeof this.store.updateTask>[1];
+
+          await this.store.updateTask(taskId, parkUpdate);
           try {
             await this.store.moveTask(taskId, "todo", {
               preserveProgress: true,
@@ -1327,34 +1347,29 @@ export class SelfHealingManager {
             });
           } catch (moveErr: unknown) {
             const moveErrMessage = moveErr instanceof Error ? moveErr.message : String(moveErr);
-            log.warn(`${taskId} moveTask(todo) failed (${moveErrMessage}) after incomplete STUCK_LOOP_EXHAUSTED terminalization — falling back to executor stuck-kill requeue`);
+            log.warn(`${taskId} moveTask(todo) failed (${moveErrMessage}) after incomplete STUCK_LOOP_EXHAUSTED terminalization — marking failed/paused in place`);
+            await this.store.updateTask(taskId, parkUpdate);
             await this.store.logEntry(
               taskId,
-              `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); falling back to executor stuck-kill requeue.`,
+              `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); task was marked failed/paused in place and will not be automatically retried.`,
             );
-            return true;
+            return false;
           }
 
-          const requeueUpdate = {
-            stuckKillCount: newCount,
-            paused: false,
-            pausedReason: null,
-            status: "queued",
-          } satisfies Parameters<typeof this.store.updateTask>[1];
           try {
-            await this.store.updateTask(taskId, requeueUpdate);
-          } catch (patchErr: unknown) {
-            const patchErrMessage = patchErr instanceof Error ? patchErr.message : String(patchErr);
-            log.warn(`${taskId} post-move requeue patch failed after incomplete STUCK_LOOP_EXHAUSTED terminalization: ${patchErrMessage}`);
+            await this.store.updateTask(taskId, parkUpdate);
             await this.store.logEntry(
               taskId,
-              `STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move requeue patch failed (${patchErrMessage}); scheduler retry may wait for the next state repair pass.`,
+              `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.`,
+            );
+          } catch (patchErr: unknown) {
+            const patchErrMessage = patchErr instanceof Error ? patchErr.message : String(patchErr);
+            log.warn(`${taskId} post-move park patch failed after incomplete STUCK_LOOP_EXHAUSTED terminalization: ${patchErrMessage}`);
+            await this.store.logEntry(
+              taskId,
+              `STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move park patch failed (${patchErrMessage}); operator repair is required before retry.`,
             );
           }
-          await this.store.logEntry(
-            taskId,
-            `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Re-queued in todo with progress preserved; scheduler may retry without manual unpause.`,
-          );
           return false;
         }
 
