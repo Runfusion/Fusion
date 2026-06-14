@@ -561,6 +561,37 @@ describe("SelfHealingManager", () => {
       );
     });
 
+    it("does not requeue when in-place park succeeds but success logging fails", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-001",
+        column: "in-progress",
+        stuckKillCount: 6,
+        steps: [
+          { name: "Preflight", status: "done" },
+          { name: "Delivery", status: "in-progress" },
+        ],
+      } as unknown as Task);
+      (store.moveTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("database is busy"));
+      (store.logEntry as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("log unavailable"));
+
+      manager.start();
+
+      const result = await manager.checkStuckBudget("FN-001", "loop");
+
+      expect(result).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        stuckKillCount: 7,
+        status: "failed",
+        paused: true,
+        pausedReason: "stuck-loop-exhausted-manual-intervention-required",
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        paused: false,
+        status: "queued",
+      }));
+      expect(store.handoffToReview).not.toHaveBeenCalled();
+    });
+
     it("logs in-place park patch failures after todo move failure without executor fallback", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "FN-001",

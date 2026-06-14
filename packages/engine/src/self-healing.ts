@@ -1361,10 +1361,15 @@ export class SelfHealingManager {
               );
               return false;
             }
-            await this.store.logEntry(
-              taskId,
-              `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); task was marked failed/paused in place and will not be automatically retried.`,
-            );
+            try {
+              await this.store.logEntry(
+                taskId,
+                `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); task was marked failed/paused in place and will not be automatically retried.`,
+              );
+            } catch (logErr: unknown) {
+              const logErrMessage = logErr instanceof Error ? logErr.message : String(logErr);
+              log.warn(`${taskId} failed to log in-place stuck-loop park success after moveTask(todo) failure: ${logErrMessage}`);
+            }
             return false;
           }
 

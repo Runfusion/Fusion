@@ -317,6 +317,7 @@ describe("FN-5941 reliability interactions: todo/in-progress flapping", () => {
     expect(task.status).toBe("failed");
     expect(task.paused).toBe(true);
     expect(task.pausedReason).toBe("stuck-loop-exhausted-manual-intervention-required");
+    expect(task.error).toContain("STUCK_LOOP_EXHAUSTED");
     expect(task.userPaused).not.toBe(true);
 
     manager.stop();
