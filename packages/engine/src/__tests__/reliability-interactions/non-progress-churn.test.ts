@@ -190,7 +190,7 @@ describe("reliability interactions: non-progress churn", () => {
     manager.stop();
   });
 
-  it("re-queues incomplete STUCK_LOOP_EXHAUSTED tasks in todo when the churn signal does not fire", async () => {
+  it("parks incomplete STUCK_LOOP_EXHAUSTED tasks in todo when the churn signal does not fire", async () => {
     const task = baseTask({ id: "FN-5168-LOOP", stuckKillCount: 6 });
     const store = createStore(task);
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
@@ -210,19 +210,19 @@ describe("reliability interactions: non-progress churn", () => {
 
     await detector.killAndRetry(task.id, 60_000);
 
-    expect(task.error).toBeNull();
-    expect(task.status).toBe("queued");
+    expect(task.error).toContain("STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget");
+    expect(task.status).toBe("failed");
     expect(task.column).toBe("todo");
-    expect(task.paused).toBe(false);
+    expect(task.paused).toBe(true);
     // FN-6252 / Move-Task contract: engine rebounds do not write userPaused,
     // so a never-user-paused task remains undefined while still not user-paused.
     expect(task.userPaused).not.toBe(true);
-    expect(task.pausedReason).toBeNull();
+    expect(task.pausedReason).toBe("stuck-loop-exhausted-manual-intervention-required");
     expect(task.stuckKillCount).toBe(7);
     expect(task.steps).toEqual([{ name: "Implement", status: "in-progress" }]);
-    expect(task.log?.some((entry) => entry.action.includes("incomplete task exhausted stuck kill budget"))).toBe(true);
+    expect(task.log?.some((entry) => entry.action.includes("Parked in todo with progress preserved"))).toBe(true);
     expect(store.handoffToReview).not.toHaveBeenCalled();
-    expect(isRunnableQueuedOverlapCandidate(task, [task])).toBe(true);
+    expect(isRunnableQueuedOverlapCandidate(task, [task])).toBe(false);
 
     manager.stop();
   });

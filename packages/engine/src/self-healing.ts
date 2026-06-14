@@ -1214,6 +1214,10 @@ export class SelfHealingManager {
    *   progress preserved, marked failed, and paused for manual resume or
    *   decomposition; tasks with only terminal steps keep the legacy failed
    *   `in-review` handoff path.
+   *
+   * FNXC:SelfHealing 2026-06-14-10:51:
+   * Incomplete stuck-loop exhaustion must park work in a failed/paused state before moving columns, because a post-move patch failure must not leave the task scheduler-runnable.
+   * Engine-owned recovery must not mutate `userPaused`; user intent stays authoritative across races.
    * - `STUCK_NO_PROGRESS_CHURN`: skips the budget entirely and terminalizes on
    *   the first trigger with operator guidance to decompose or rescope.
    *
@@ -1316,9 +1320,7 @@ export class SelfHealingManager {
           }
 
           log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}, reason=${reason}) with incomplete steps — parking in todo with progress preserved`);
-          const exhaustedError =
-            `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}) after last reason=${reason}. ` +
-            "Progress was preserved; manually retry, decompose, or rescope before execution resumes.";
+          const exhaustedError = `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}) after last reason=${reason}. Progress was preserved; manually retry, decompose, or rescope before execution resumes.`;
           const parkUpdate = {
             stuckKillCount: newCount,
             status: "failed",
