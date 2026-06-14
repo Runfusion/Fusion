@@ -1071,6 +1071,10 @@ export function QuickChatFAB({
   const shouldAutoFocusComposerRef = useRef(false);
   const handledMobileActionRef = useRef(false);
   const handledMobileActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dedupe pointerdown vs touchstart within a single tap: a real touch fires
+  // both, and each handler runs its action before React flushes the input
+  // clear, so without this the action runs twice per tap.
+  const touchActionGestureRef = useRef(false);
   const preserveComposerFocusRef = useRef(false);
   // Always-mounted offscreen input used to claim the iOS soft keyboard
   // synchronously inside the FAB click gesture, before the real composer
@@ -1990,6 +1994,22 @@ export function QuickChatFAB({
       handledMobileActionRef.current = false;
       handledMobileActionTimerRef.current = null;
     }, 700);
+  }, []);
+
+  // Claim a touch gesture for a single action. A real touch tap dispatches both
+  // pointerdown and touchstart, and each handler runs before React flushes the
+  // composer-clear, so both would otherwise fire the action (double send, or a
+  // second send that aborts the first's freshly-opened stream). The first event
+  // of the tap claims; the second bails. The claim auto-clears after the current
+  // input task so a later tap — or a different button (e.g. stop right after
+  // send) — starts fresh, unlike the 700ms onClick latch above.
+  const beginTouchActionGesture = useCallback(() => {
+    if (touchActionGestureRef.current) return false;
+    touchActionGestureRef.current = true;
+    setTimeout(() => {
+      touchActionGestureRef.current = false;
+    }, 0);
+    return true;
   }, []);
 
   // If a mobile handler already ran this gesture's action, consume the latch
@@ -3086,6 +3106,7 @@ export function QuickChatFAB({
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
                       if (event.pointerType && event.pointerType !== "mouse") {
+                        if (!beginTouchActionGesture()) return;
                         markHandledMobileAction();
                         stopStreaming();
                       }
@@ -3093,6 +3114,7 @@ export function QuickChatFAB({
                     onTouchStart={(event) => {
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
+                      if (!beginTouchActionGesture()) return;
                       markHandledMobileAction();
                       stopStreaming();
                     }}
@@ -3117,6 +3139,7 @@ export function QuickChatFAB({
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
                       if (event.pointerType && event.pointerType !== "mouse") {
+                        if (!beginTouchActionGesture()) return;
                         markHandledMobileAction();
                         markPreserveComposerFocus();
                         focusComposerInput();
@@ -3126,6 +3149,7 @@ export function QuickChatFAB({
                     onTouchStart={(event) => {
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
+                      if (!beginTouchActionGesture()) return;
                       markHandledMobileAction();
                       markPreserveComposerFocus();
                       focusComposerInput();
