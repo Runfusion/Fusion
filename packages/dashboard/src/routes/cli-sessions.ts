@@ -10,6 +10,7 @@
  *                                               session-scoped attach ticket
  * - POST /api/cli-sessions/:id/inject           inject text onto the session FIFO
  * - POST /api/cli-sessions/:id/confirm-advance  generic-tier R20 affordance
+ * - POST /api/cli-sessions/:id/relaunch         re-enqueue task for a fresh CLI run
  *
  * Attach tickets (KTD — attach auth): the long-lived daemon token never
  * authorizes PTY write access by itself. A surface mints a ticket here (gated by
@@ -24,6 +25,7 @@ import {
   type AttachTicketStore,
   type CliInputAttributionLog,
   type CliConfirmAdvanceRegistry,
+  type CliRelaunchRegistry,
   type CliSessionTransportDeps,
   isReadOnlySession,
 } from "../cli-session-transport.js";
@@ -32,6 +34,7 @@ export interface CliSessionRoutesOptions extends CliSessionTransportDeps {
   ticketStore: AttachTicketStore;
   attributionLog: CliInputAttributionLog;
   confirmAdvance: CliConfirmAdvanceRegistry;
+  relaunch: CliRelaunchRegistry;
   /** Max inject body length (chars). Bounds a hostile body. */
   maxInjectChars?: number;
 }
@@ -53,7 +56,7 @@ function assertProjectScope(sessionProjectId: string, requested: unknown): void 
 }
 
 export function createCliSessionsRouter(options: CliSessionRoutesOptions): Router {
-  const { manager, store, ticketStore, attributionLog, confirmAdvance } = options;
+  const { manager, store, ticketStore, attributionLog, confirmAdvance, relaunch } = options;
   const maxInjectChars = options.maxInjectChars ?? DEFAULT_MAX_INJECT_CHARS;
   const router = Router();
 
@@ -155,6 +158,27 @@ export function createCliSessionsRouter(options: CliSessionRoutesOptions): Route
       }
       confirmAdvance.record(session.id, session.projectId, decisionRaw);
       res.json({ ok: true, decision: decisionRaw });
+    }),
+  );
+
+  // ── Relaunch (resume-exhausted task-bound CLI session) ─────────────────────
+  router.post(
+    "/:id/relaunch",
+    catchHandler(async (req: Request, res: Response) => {
+      const session = store.getSession(paramId(req.params.id));
+      if (!session) throw notFound("Session not found");
+      assertProjectScope(session.projectId, req.body?.projectId ?? req.query.projectId);
+
+      if (!session.taskId) {
+        /*
+         * FNXC:CliRelaunch 2026-06-14-20:16:
+         * Relaunch is a task lifecycle action: chat, validator, and other one-shot CLI sessions have no owning task to re-enqueue, so the route records no intent and returns a deterministic 400 instead of emitting an orphan relaunch event.
+         */
+        throw badRequest("Session is not task-bound — cannot relaunch");
+      }
+
+      relaunch.record(session.id, session.projectId, session.taskId);
+      res.json({ ok: true, taskId: session.taskId });
     }),
   );
 

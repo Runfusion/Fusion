@@ -16,7 +16,7 @@
  */
 
 import express from "express";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -28,8 +28,10 @@ import {
   AttachTicketStore,
   CliInputAttributionLog,
   CliConfirmAdvanceRegistry,
+  CliRelaunchRegistry,
 } from "../cli-session-transport.js";
 import { createCliSessionsRouter } from "../routes/cli-sessions.js";
+import { wireCliRelaunchListener } from "../server.js";
 import { request } from "../test-request.js";
 
 function mockPty(): typeof import("node-pty") {
@@ -104,6 +106,7 @@ describe("cli-agent runtime server wiring", () => {
       ticketStore: new AttachTicketStore(),
       attributionLog: new CliInputAttributionLog(),
       confirmAdvance: new CliConfirmAdvanceRegistry(),
+      relaunch: new CliRelaunchRegistry(),
     };
 
     const app = express();
@@ -118,5 +121,49 @@ describe("cli-agent runtime server wiring", () => {
     expect(res.status).toBe(200);
     const sessions = res.body.sessions as Array<{ taskId?: string }>;
     expect(sessions.some((s) => s.taskId === "FN-1")).toBe(true);
+  });
+
+  it("wires relaunch events to clear resume linkage and re-enqueue the task", async () => {
+    const relaunch = new CliRelaunchRegistry();
+    const updateSession = vi.fn();
+    const taskStore = {
+      getTask: vi.fn().mockResolvedValue({ id: "FN-6464", column: "in-progress" }),
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      moveTask: vi.fn().mockResolvedValue({ id: "FN-6464", column: "todo" }),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    };
+
+    wireCliRelaunchListener({
+      relaunch,
+      cliSessionStore: { updateSession } as never,
+      engine: {
+        getProjectId: () => "proj-a",
+        getTaskStore: () => taskStore,
+      } as never,
+    });
+
+    relaunch.record("cli-dead", "proj-a", "FN-6464");
+    await vi.waitFor(() => expect(taskStore.moveTask).toHaveBeenCalled());
+
+    expect(updateSession).toHaveBeenCalledWith("cli-dead", {
+      agentState: "dead",
+      terminationReason: "killed",
+      nativeSessionId: null,
+      resumeAttempts: 2,
+    });
+    expect(taskStore.logEntry).toHaveBeenCalledWith(
+      "FN-6464",
+      expect.stringContaining("fresh executor run"),
+    );
+    expect(taskStore.updateTask).toHaveBeenCalledWith("FN-6464", {
+      paused: false,
+      status: null,
+      error: null,
+    });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-6464", "todo", {
+      preserveProgress: true,
+      moveSource: "engine",
+      recoveryRehome: true,
+    });
   });
 });

@@ -724,6 +724,13 @@ export function retryTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
 }
 
+export function relaunchCliSession(sessionId: string, projectId?: string): Promise<{ ok: boolean; taskId?: string }> {
+  return api<{ ok: boolean; taskId?: string }>(
+    withProjectId(`/cli-sessions/${encodeURIComponent(sessionId)}/relaunch`, projectId),
+    { method: "POST" },
+  );
+}
+
 export function recoverBranchBinding(id: string, projectId?: string): Promise<RecoverBranchBindingOutcome> {
   return api<RecoverBranchBindingOutcome>(withProjectId(`/tasks/${id}/recover-branch-binding`, projectId), { method: "POST" });
 }

@@ -405,19 +405,55 @@ describe("SessionNotificationBanner — cli-agent (U11)", () => {
     expect(screen.getByText("Retry")).toBeInTheDocument();
   });
 
-  it("resume-exhausted renders Relaunch fresh / Cancel task", () => {
+  it.each(["desktop", "mobile"] as const)(
+    "resume-exhausted renders an enabled Relaunch fresh action at the %s breakpoint",
+    (breakpoint) => {
+      const onCliAction = vi.fn();
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: breakpoint === "mobile" ? 390 : 1280,
+      });
+      window.dispatchEvent(new Event("resize"));
+
+      render(
+        <SessionNotificationBanner
+          sessions={[buildCliSession({ status: "needs_attention", cliVariant: "resume-exhausted" })]}
+          onResumeSession={vi.fn()}
+          onDismissSession={vi.fn()}
+          onDismissAll={vi.fn()}
+          onCliAction={onCliAction}
+        />,
+      );
+      expect(screen.getByText("Couldn't resume the session")).toBeInTheDocument();
+      const relaunchButton = screen.getByRole("button", { name: "Relaunch fresh" });
+      expect(relaunchButton).not.toBeDisabled();
+      expect(relaunchButton).not.toHaveAttribute("aria-disabled");
+      expect(relaunchButton).not.toHaveAttribute("data-cli-action-disabled");
+      fireEvent.click(relaunchButton);
+      expect(onCliAction).toHaveBeenCalledWith(expect.objectContaining({ id: "cli-1" }), "relaunch");
+      expect(screen.getByText("Cancel task")).toBeInTheDocument();
+    },
+  );
+
+  it("renders relaunch disabled when the host reports a missing CLI session id", () => {
+    const onCliAction = vi.fn();
     render(
       <SessionNotificationBanner
-        sessions={[buildCliSession({ status: "needs_attention", cliVariant: "resume-exhausted" })]}
+        sessions={[buildCliSession({ status: "needs_attention", cliVariant: "resume-exhausted", cliSessionId: undefined })]}
         onResumeSession={vi.fn()}
         onDismissSession={vi.fn()}
         onDismissAll={vi.fn()}
-        onCliAction={vi.fn()}
+        onCliAction={onCliAction}
+        getCliActionDisabledReason={(session, action) =>
+          action === "relaunch" && !session.cliSessionId ? "CLI session id is missing." : null
+        }
       />,
     );
-    expect(screen.getByText("Couldn't resume the session")).toBeInTheDocument();
-    expect(screen.getByText("Relaunch fresh")).toBeInTheDocument();
-    expect(screen.getByText("Cancel task")).toBeInTheDocument();
+
+    const relaunchButton = screen.getByRole("button", { name: /Relaunch fresh unavailable: CLI session id is missing/i });
+    expect(relaunchButton).toBeDisabled();
+    fireEvent.click(relaunchButton);
+    expect(onCliAction).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -436,9 +472,7 @@ describe("SessionNotificationBanner — cli-agent (U11)", () => {
           onDismissSession={onDismissSession}
           onDismissAll={vi.fn()}
           onCliAction={onCliAction}
-          getCliActionDisabledReason={(_session, candidate) =>
-            candidate === "relaunch" ? "Relaunch is not supported by the dashboard yet." : null
-          }
+          getCliActionDisabledReason={() => null}
         />,
       );
 

@@ -20,6 +20,7 @@ import {
   AttachTicketStore,
   CliInputAttributionLog,
   CliConfirmAdvanceRegistry,
+  CliRelaunchRegistry,
   type CliSessionManagerLike,
 } from "../cli-session-transport.js";
 
@@ -68,6 +69,7 @@ function buildApp(opts: {
   ticketStore: AttachTicketStore;
   attributionLog: CliInputAttributionLog;
   confirmAdvance: CliConfirmAdvanceRegistry;
+  relaunch: CliRelaunchRegistry;
 }): express.Express {
   const app = express();
   app.use(express.json());
@@ -79,6 +81,7 @@ function buildApp(opts: {
       ticketStore: opts.ticketStore,
       attributionLog: opts.attributionLog,
       confirmAdvance: opts.confirmAdvance,
+      relaunch: opts.relaunch,
     }),
   );
   return app;
@@ -91,6 +94,7 @@ describe("cli-sessions routes", () => {
   let ticketStore: AttachTicketStore;
   let attributionLog: CliInputAttributionLog;
   let confirmAdvance: CliConfirmAdvanceRegistry;
+  let relaunch: CliRelaunchRegistry;
   let app: express.Express;
 
   beforeEach(() => {
@@ -112,7 +116,8 @@ describe("cli-sessions routes", () => {
     ticketStore = new AttachTicketStore();
     attributionLog = new CliInputAttributionLog();
     confirmAdvance = new CliConfirmAdvanceRegistry();
-    app = buildApp({ store, manager, ticketStore, attributionLog, confirmAdvance });
+    relaunch = new CliRelaunchRegistry();
+    app = buildApp({ store, manager, ticketStore, attributionLog, confirmAdvance, relaunch });
   });
 
   afterEach(() => {
@@ -207,5 +212,48 @@ describe("cli-sessions routes", () => {
       decision: "maybe",
     });
     expect(res.status).toBe(400);
+  });
+
+  it("records and emits a task-bound relaunch request", async () => {
+    const seen: string[] = [];
+    relaunch.on((info) => seen.push(`${info.sessionId}:${info.projectId}:${info.taskId}`));
+
+    const res = await postJson(app, "/api/cli-sessions/cli-1/relaunch", {
+      projectId: "proj-a",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, taskId: "FN-1" });
+    expect(relaunch.getLatest("cli-1")).toEqual({
+      sessionId: "cli-1",
+      projectId: "proj-a",
+      taskId: "FN-1",
+    });
+    expect(seen).toContain("cli-1:proj-a:FN-1");
+  });
+
+  it("404s relaunch for an unknown session", async () => {
+    const res = await postJson(app, "/api/cli-sessions/nope/relaunch", {});
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects relaunch across projects", async () => {
+    const res = await postJson(app, "/api/cli-sessions/cli-1/relaunch", {
+      projectId: "proj-b",
+    });
+    expect(res.status).toBe(403);
+    expect(relaunch.getLatest("cli-1")).toBeUndefined();
+  });
+
+  it("rejects relaunch for non-task-bound CLI sessions", async () => {
+    store._map.set("cli-chat", makeSession({ id: "cli-chat", taskId: null, chatSessionId: "chat-1" }));
+
+    const res = await postJson(app, "/api/cli-sessions/cli-chat/relaunch", {
+      projectId: "proj-a",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not task-bound/i);
+    expect(relaunch.getLatest("cli-chat")).toBeUndefined();
   });
 });

@@ -80,11 +80,12 @@ export {
 
 // CLI Agent Executor transport dependencies — re-exported so the CLI boot
 // (packages/cli dashboard command) can construct the per-session attach-ticket
-// store, input-attribution log, and confirm-advance registry that the
+// store, input-attribution log, and confirm-advance/relaunch registries that the
 // cli-sessions transport routes require, then thread them into ServerOptions.
 export {
   AttachTicketStore,
   CliInputAttributionLog,
   CliConfirmAdvanceRegistry,
+  CliRelaunchRegistry,
   type CliSessionTransportDeps,
 } from "./cli-session-transport.js";

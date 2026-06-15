@@ -62,6 +62,7 @@ import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
 import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
+import type { CliRelaunchRegistry } from "./cli-session-transport.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
 import {
@@ -249,6 +250,7 @@ export interface ServerOptions {
     ticketStore: import("./cli-session-transport.js").AttachTicketStore;
     attributionLog: import("./cli-session-transport.js").CliInputAttributionLog;
     confirmAdvance: import("./cli-session-transport.js").CliConfirmAdvanceRegistry;
+    relaunch: import("./cli-session-transport.js").CliRelaunchRegistry;
     extraAllowedOrigins?: string[];
   };
   /** Optional MissionAutopilot for autonomous mission progression */
@@ -567,6 +569,77 @@ export function loadTlsCredentialsFromEnv(
       : undefined;
 
   return { cert, key, ca };
+}
+
+type CliRelaunchSessionStore = ServerOptions["cliSessionTransport"] extends infer T
+  ? T extends { store: infer S }
+    ? S & {
+        updateSession?: (id: string, input: {
+          agentState?: "dead";
+          terminationReason?: "killed";
+          nativeSessionId?: string | null;
+          resumeAttempts?: number;
+        }) => unknown;
+      }
+    : never
+  : never;
+
+interface CliRelaunchTaskStoreLike {
+  getTask(taskId: string): Promise<Task | null>;
+  updateTask(taskId: string, patch: Record<string, unknown>): Promise<unknown>;
+  moveTask(taskId: string, column: "todo", options?: Record<string, unknown>): Promise<unknown>;
+  logEntry(taskId: string, message: string, details?: string): Promise<unknown>;
+}
+
+export function wireCliRelaunchListener(options: {
+  relaunch: CliRelaunchRegistry;
+  cliSessionStore: CliRelaunchSessionStore;
+  engine?: Pick<import("@fusion/engine").ProjectEngine, "getTaskStore" | "getProjectId">;
+  runtimeLogger?: RuntimeLogger;
+}): (() => void) | undefined {
+  if (!options.engine) return undefined;
+  const taskStore = options.engine.getTaskStore() as unknown as CliRelaunchTaskStoreLike;
+  const engineProjectId = options.engine.getProjectId?.();
+
+  return options.relaunch.on((info) => {
+    void (async () => {
+      if (engineProjectId && info.projectId !== engineProjectId) return;
+
+      /*
+       * FNXC:CliRelaunch 2026-06-14-20:16:
+       * The relaunch listener guarantees a fresh launch by clearing resume linkage on the dead CLI session, then re-enters the existing task retry lifecycle via `moveTask(todo)`; it never calls the CLI manager's spawn path directly, so the scheduler/executor remains the single task-run entrypoint.
+       */
+      options.cliSessionStore.updateSession?.(info.sessionId, {
+        agentState: "dead",
+        terminationReason: "killed",
+        nativeSessionId: null,
+        resumeAttempts: 2,
+      });
+
+      const task = await taskStore.getTask(info.taskId);
+      if (!task) {
+        options.runtimeLogger?.warn?.("CLI session relaunch skipped; task not found", info);
+        return;
+      }
+
+      await taskStore.logEntry(
+        info.taskId,
+        `CLI session relaunch requested from ${info.sessionId} — clearing resume linkage and re-enqueueing for a fresh executor run`,
+      );
+      await taskStore.updateTask(info.taskId, { paused: false, status: null, error: null });
+      await taskStore.moveTask(info.taskId, "todo", {
+        preserveProgress: true,
+        moveSource: "engine",
+        recoveryRehome: true,
+      });
+    })().catch((err: unknown) => {
+      options.runtimeLogger?.warn?.("CLI session relaunch listener failed", {
+        sessionId: info.sessionId,
+        taskId: info.taskId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
+  });
 }
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
@@ -1143,6 +1216,21 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // route the project hub's sanitized telemetry into the runner's transcript
   // handler. The listener is keyed per-session inside one closure so it composes
   // safely even if other taps exist.
+  if (options?.cliSessionTransport && options.engine) {
+    try {
+      wireCliRelaunchListener({
+        relaunch: options.cliSessionTransport.relaunch,
+        cliSessionStore: options.cliSessionTransport.store as CliRelaunchSessionStore,
+        engine: options.engine,
+        runtimeLogger,
+      });
+    } catch (err) {
+      runtimeLogger.warn?.("CLI-agent relaunch listener wiring failed", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   if (options?.cliSessionTransport && options.cliAgentHubResolver) {
     try {
       const cliTransportStore = options.cliSessionTransport.store;
@@ -1542,6 +1630,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         ticketStore: options.cliSessionTransport.ticketStore,
         attributionLog: options.cliSessionTransport.attributionLog,
         confirmAdvance: options.cliSessionTransport.confirmAdvance,
+        relaunch: options.cliSessionTransport.relaunch,
       }),
     );
   }

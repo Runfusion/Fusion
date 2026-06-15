@@ -30,6 +30,7 @@ import {
   AttachTicketStore,
   CliInputAttributionLog,
   CliConfirmAdvanceRegistry,
+  CliRelaunchRegistry,
   GitHubClient,
   createSkillsAdapter,
   getCliPackageVersion,
@@ -1770,6 +1771,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           ticketStore: new AttachTicketStore(),
           attributionLog: new CliInputAttributionLog(),
           confirmAdvance: new CliConfirmAdvanceRegistry(),
+          relaunch: new CliRelaunchRegistry(),
         }
       : undefined;
 

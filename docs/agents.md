@@ -4,6 +4,10 @@
 
 Fusion uses multiple agent roles for planning, execution, review, and merge workflows.
 
+## CLI session actions
+
+The dashboard's CLI session banner uses authenticated `POST /api/cli-sessions/:id/*` routes for task-bound CLI sessions. `POST /api/cli-sessions/:id/relaunch` is project-scoped, rejects sessions that do not have a `taskId`, records a relaunch intent, and lets the engine listener clear resume linkage before moving the owning task back to `todo` for a fresh executor launch. This route backs the `resume-exhausted` banner's **Relaunch fresh** action; when a session summary has no `cliSessionId`, the client does not call the route.
+
 ## Interactive CLI Chat
 
 Use `fn chat` to message an agent from your terminal.

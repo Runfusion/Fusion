@@ -90,7 +90,7 @@ import { NativeShellConnectionManager } from "./components/NativeShellConnection
 import { ShellConnectionStatus } from "./components/ShellConnectionStatus";
 import { getShellConnectionNativeResult, type ShellConnectionNativeResult } from "./shell-native";
 import type { AiSessionSummary, DashboardHealthResponse } from "./api";
-import { api, fetchDashboardHealth, fetchUnreadCount, fetchTaskDetail, fetchWorkflowSteps, refreshDashboardHealth } from "./api";
+import { api, fetchDashboardHealth, fetchUnreadCount, fetchTaskDetail, fetchWorkflowSteps, refreshDashboardHealth, relaunchCliSession } from "./api";
 import { getScopedItem, removeScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "./auth";
@@ -256,11 +256,8 @@ export function isSessionNeedingInputForBanner(session: AiSessionSummary): boole
 }
 
 export function getCliActionDisabledReasonForBanner(session: AiSessionSummary, action: CliActionId): string | null {
-  if (action === "advance" && !session.cliSessionId) {
+  if ((action === "advance" || action === "relaunch") && !session.cliSessionId) {
     return "CLI session id is missing.";
-  }
-  if (action === "relaunch") {
-    return "Relaunch is not supported by the dashboard yet.";
   }
   return null;
 }
@@ -270,8 +267,9 @@ interface CliActionDeps {
   retryTask: (id: string) => Promise<unknown>;
   moveTask: (id: string, column: "todo") => Promise<unknown>;
   openAuthenticationSettings: () => void;
-  addToast: (message: string, type: "error") => void;
+  addToast: (message: string, type: "success" | "error") => void;
   apiClient?: typeof api;
+  relaunchCliSessionClient?: typeof relaunchCliSession;
 }
 
 export async function executeCliSessionBannerAction(
@@ -283,6 +281,9 @@ export async function executeCliSessionBannerAction(
     /*
      * FNXC:SessionBanner 2026-06-14-19:32:
      * CLI banner verbs must either call an existing dashboard route/flow or be disabled by the banner. `advance` confirms the CLI session, `retry` and `cancel` reuse task operations keyed by the session id until summaries expose a distinct task id, and `reauthenticate` opens the existing authentication settings flow.
+     *
+     * FNXC:SessionBanner 2026-06-14-20:16:
+     * `relaunch` is now a supported route-backed action for resume-exhausted CLI sessions; if `cliSessionId` is absent the handler exits without firing a malformed API call, preserving the no-silent-no-op invariant through the banner disabled reason.
      */
     if (action === "advance") {
       if (!session.cliSessionId) {
@@ -292,6 +293,13 @@ export async function executeCliSessionBannerAction(
         method: "POST",
         body: JSON.stringify({ decision: "advance", ...(deps.currentProjectId ? { projectId: deps.currentProjectId } : {}) }),
       });
+      return;
+    }
+
+    if (action === "relaunch") {
+      if (!session.cliSessionId) return;
+      await (deps.relaunchCliSessionClient ?? relaunchCliSession)(session.cliSessionId, deps.currentProjectId);
+      deps.addToast("CLI session relaunch requested", "success");
       return;
     }
 

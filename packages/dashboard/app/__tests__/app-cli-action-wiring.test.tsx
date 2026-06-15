@@ -38,12 +38,14 @@ describe("App CLI session banner wiring", () => {
     ["retry", "retryTask"],
     ["cancel", "moveTask"],
     ["reauthenticate", "openSettings"],
+    ["relaunch", "relaunchCliSession"],
   ] as const)("maps %s to an observable existing route or flow", async (action, expected) => {
     const apiClient = vi.fn().mockResolvedValue({ ok: true });
     const retryTask = vi.fn().mockResolvedValue({ id: "FN-6458" });
     const moveTask = vi.fn().mockResolvedValue({ id: "FN-6458" });
     const openAuthenticationSettings = vi.fn();
     const addToast = vi.fn();
+    const relaunchCliSessionClient = vi.fn().mockResolvedValue({ ok: true, taskId: "FN-6458" });
 
     await executeCliSessionBannerAction(cliSession(), action, {
       currentProjectId: "proj-1",
@@ -52,6 +54,7 @@ describe("App CLI session banner wiring", () => {
       openAuthenticationSettings,
       addToast,
       apiClient,
+      relaunchCliSessionClient,
     });
 
     if (expected === "api") {
@@ -66,21 +69,43 @@ describe("App CLI session banner wiring", () => {
       expect(retryTask).toHaveBeenCalledWith("FN-6458");
     } else if (expected === "moveTask") {
       expect(moveTask).toHaveBeenCalledWith("FN-6458", "todo");
+    } else if (expected === "relaunchCliSession") {
+      expect(relaunchCliSessionClient).toHaveBeenCalledWith("cli-session-1", "proj-1");
+      expect(addToast).toHaveBeenCalledWith("CLI session relaunch requested", "success");
     } else {
       expect(openAuthenticationSettings).toHaveBeenCalledTimes(1);
     }
-    expect(addToast).not.toHaveBeenCalled();
+    if (expected !== "relaunchCliSession") {
+      expect(addToast).not.toHaveBeenCalled();
+    }
   });
 
-  it("marks unsupported or missing-id actions disabled so visible buttons are not silent no-ops", () => {
+  it("marks missing-id actions disabled so visible buttons are not silent no-ops", () => {
     const actions: CliActionId[] = ["advance", "retry", "cancel", "reauthenticate", "relaunch"];
     const missingId = cliSession({ cliSessionId: undefined });
     const withId = cliSession();
 
     const disabled = new Map(actions.map((action) => [action, getCliActionDisabledReasonForBanner(withId, action)]));
-    expect(disabled.get("relaunch")).toMatch(/not supported/i);
+    expect(disabled.get("relaunch")).toBeNull();
     expect(disabled.get("advance")).toBeNull();
     expect(getCliActionDisabledReasonForBanner(missingId, "advance")).toMatch(/missing/i);
+    expect(getCliActionDisabledReasonForBanner(missingId, "relaunch")).toMatch(/missing/i);
+  });
+
+  it("does not fire a relaunch API call when the CLI session id is missing", async () => {
+    const relaunchCliSessionClient = vi.fn();
+    const addToast = vi.fn();
+
+    await executeCliSessionBannerAction(cliSession({ cliSessionId: undefined }), "relaunch", {
+      retryTask: vi.fn(),
+      moveTask: vi.fn(),
+      openAuthenticationSettings: vi.fn(),
+      addToast,
+      relaunchCliSessionClient,
+    });
+
+    expect(relaunchCliSessionClient).not.toHaveBeenCalled();
+    expect(addToast).not.toHaveBeenCalled();
   });
 
   it("toasts instead of silently failing if an enabled CLI action route rejects", async () => {
