@@ -61,6 +61,8 @@ describe("useBackgroundSessions", () => {
     mockFetchAiSessions.mockResolvedValueOnce([
       makeSession({ id: "s-generating", status: "generating" }),
       makeSession({ id: "s-awaiting", status: "awaiting_input" }),
+      makeSession({ id: "s-waiting", type: "cli-agent", status: "waiting_on_input" }),
+      makeSession({ id: "s-needs-attention", type: "cli-agent", status: "needs_attention", cliVariant: "authFailed" }),
       makeSession({ id: "s-complete", status: "complete" }),
       makeSession({ id: "s-error", status: "error" }),
       makeSession({ id: "s-ignored", status: "paused" as any }),
@@ -76,7 +78,10 @@ describe("useBackgroundSessions", () => {
       expect(result.current.sessions.map((session) => session.id).sort()).toEqual([
         "s-awaiting",
         "s-generating",
+        "s-needs-attention",
+        "s-waiting",
       ]);
+      expect(result.current.needsInput).toBe(2);
     });
   });
 

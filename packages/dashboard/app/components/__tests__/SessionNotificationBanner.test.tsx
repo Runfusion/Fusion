@@ -327,7 +327,7 @@ function buildCliSession(overrides: Partial<AiSessionSummary>): AiSessionSummary
     lockedByTab: null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
     cliVariant: overrides.cliVariant,
-    cliSessionId: overrides.cliSessionId ?? "cli-1",
+    cliSessionId: Object.prototype.hasOwnProperty.call(overrides, "cliSessionId") ? overrides.cliSessionId : "cli-1",
   };
 }
 
@@ -418,5 +418,84 @@ describe("SessionNotificationBanner — cli-agent (U11)", () => {
     expect(screen.getByText("Couldn't resume the session")).toBeInTheDocument();
     expect(screen.getByText("Relaunch fresh")).toBeInTheDocument();
     expect(screen.getByText("Cancel task")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["userExited", ["advance", "retry", "cancel"]],
+    ["authFailed", ["reauthenticate", "retry"]],
+    ["resume-exhausted", ["relaunch", "cancel"]],
+  ] as const)("makes every %s action observable or disabled", (cliVariant, actions) => {
+    for (const action of actions) {
+      dismissedIds.clear();
+      const onCliAction = vi.fn();
+      const onDismissSession = vi.fn();
+      const { unmount } = render(
+        <SessionNotificationBanner
+          sessions={[buildCliSession({ status: "needs_attention", cliVariant })]}
+          onResumeSession={vi.fn()}
+          onDismissSession={onDismissSession}
+          onDismissAll={vi.fn()}
+          onCliAction={onCliAction}
+          getCliActionDisabledReason={(_session, candidate) =>
+            candidate === "relaunch" ? "Relaunch is not supported by the dashboard yet." : null
+          }
+        />,
+      );
+
+      const button = document.querySelector<HTMLButtonElement>(`[data-cli-action="${action}"]`);
+      expect(button).toBeTruthy();
+      if (button?.disabled) {
+        expect(button).toHaveAccessibleName(/unavailable:/i);
+        expect(onCliAction).not.toHaveBeenCalled();
+      } else {
+        fireEvent.click(button!);
+        expect(onCliAction).toHaveBeenCalledWith(expect.objectContaining({ id: "cli-1" }), action);
+        if (action === "advance" || action === "cancel") {
+          expect(onDismissSession).toHaveBeenCalledWith("cli-1");
+        } else {
+          expect(onDismissSession).not.toHaveBeenCalled();
+        }
+      }
+      unmount();
+    }
+  });
+
+  it("disables CLI actions when the host provides no action handler", () => {
+    render(
+      <SessionNotificationBanner
+        sessions={[buildCliSession({ status: "needs_attention", cliVariant: "authFailed" })]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+      />,
+    );
+
+    for (const button of screen.getAllByRole("button").filter((node) => node.hasAttribute("data-cli-action"))) {
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleName(/unavailable:/i);
+    }
+  });
+
+  it("disables actions that require a missing cliSessionId without leaving an empty click target", () => {
+    const onCliAction = vi.fn();
+    render(
+      <SessionNotificationBanner
+        sessions={[buildCliSession({ status: "needs_attention", cliVariant: "userExited", cliSessionId: undefined })]}
+        onResumeSession={vi.fn()}
+        onDismissSession={vi.fn()}
+        onDismissAll={vi.fn()}
+        onCliAction={onCliAction}
+        getCliActionDisabledReason={(session, action) =>
+          action === "advance" && !session.cliSessionId ? "CLI session id is missing." : null
+        }
+      />,
+    );
+
+    const advance = screen.getByRole("button", { name: /advance unavailable: cli session id is missing/i });
+    expect(advance).toBeDisabled();
+    expect(advance).toHaveAttribute("data-cli-action-disabled", "true");
+    expect(advance).toHaveTextContent("Advance");
+    fireEvent.click(advance);
+    expect(onCliAction).not.toHaveBeenCalled();
   });
 });

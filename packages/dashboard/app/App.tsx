@@ -22,7 +22,7 @@ import { BackendConnectionErrorPage } from "./components/BackendConnectionErrorP
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
-import { SessionNotificationBanner } from "./components/SessionNotificationBanner";
+import { SessionNotificationBanner, type CliActionId } from "./components/SessionNotificationBanner";
 import { CliBinaryInstallBanner } from "./components/CliBinaryInstallBanner";
 import { SetupWarningBanner } from "./components/SetupWarningBanner";
 import { CapacityRiskBanner } from "./components/CapacityRiskBanner";
@@ -246,6 +246,77 @@ export function shouldShowFirstEverBootLoader(projectsLoading: boolean, projectC
   return projectsLoading && projectCount === 0;
 }
 
+export function isSessionNeedingInputForBanner(session: AiSessionSummary): boolean {
+  return (
+    session.status === "awaiting_input" ||
+    session.status === "error" ||
+    session.status === "waiting_on_input" ||
+    session.status === "needs_attention"
+  );
+}
+
+export function getCliActionDisabledReasonForBanner(session: AiSessionSummary, action: CliActionId): string | null {
+  if (action === "advance" && !session.cliSessionId) {
+    return "CLI session id is missing.";
+  }
+  if (action === "relaunch") {
+    return "Relaunch is not supported by the dashboard yet.";
+  }
+  return null;
+}
+
+interface CliActionDeps {
+  currentProjectId?: string;
+  retryTask: (id: string) => Promise<unknown>;
+  moveTask: (id: string, column: "todo") => Promise<unknown>;
+  openAuthenticationSettings: () => void;
+  addToast: (message: string, type: "error") => void;
+  apiClient?: typeof api;
+}
+
+export async function executeCliSessionBannerAction(
+  session: AiSessionSummary,
+  action: CliActionId,
+  deps: CliActionDeps,
+): Promise<void> {
+  try {
+    /*
+     * FNXC:SessionBanner 2026-06-14-19:32:
+     * CLI banner verbs must either call an existing dashboard route/flow or be disabled by the banner. `advance` confirms the CLI session, `retry` and `cancel` reuse task operations keyed by the session id until summaries expose a distinct task id, and `reauthenticate` opens the existing authentication settings flow.
+     */
+    if (action === "advance") {
+      if (!session.cliSessionId) {
+        throw new Error("CLI session id is required to advance this session.");
+      }
+      await (deps.apiClient ?? api)(`/cli-sessions/${encodeURIComponent(session.cliSessionId)}/confirm-advance`, {
+        method: "POST",
+        body: JSON.stringify({ decision: "advance", ...(deps.currentProjectId ? { projectId: deps.currentProjectId } : {}) }),
+      });
+      return;
+    }
+
+    if (action === "retry") {
+      await deps.retryTask(session.id);
+      return;
+    }
+
+    if (action === "cancel") {
+      await deps.moveTask(session.id, "todo");
+      return;
+    }
+
+    if (action === "reauthenticate") {
+      deps.openAuthenticationSettings();
+      return;
+    }
+
+    throw new Error("This CLI action is not supported yet.");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "CLI action failed";
+    deps.addToast(message, "error");
+  }
+}
+
 function AppInner() {
   const { t } = useTranslation("app");
   const { toasts, addToast, removeToast } = useToast();
@@ -372,9 +443,11 @@ function AppInner() {
 
   // Background AI sessions - required before useModalManager
   const { sessions: bgSessions, generating: bgGenerating, needsInput: bgNeedsInput, planningSessions: bgPlanningSessions, dismissSession: bgDismiss } = useBackgroundSessions(currentProject?.id);
-  const sessionsNeedingInput = bgSessions.filter(
-    (session) => session.status === "awaiting_input" || session.status === "error"
-  );
+  /*
+   * FNXC:SessionBanner 2026-06-14-19:32:
+   * CLI agent sessions use `waiting_on_input` and `needs_attention` to represent user-actionable states. The banner feed must include those statuses in addition to the legacy planning-session statuses so visible CLI actions cannot be silently hidden from users.
+   */
+  const sessionsNeedingInput = bgSessions.filter(isSessionNeedingInputForBanner);
   const sessionBannersHidden = useSessionBannersHidden();
 
   // Modal state/handlers - required before useViewState
@@ -1347,6 +1420,18 @@ function AppInner() {
     // intentional no-op
   }, []);
 
+  const handleCliAction = useCallback(
+    (session: AiSessionSummary, action: CliActionId) =>
+      executeCliSessionBannerAction(session, action, {
+        currentProjectId: currentProject?.id,
+        retryTask,
+        moveTask,
+        openAuthenticationSettings: () => modalManager.openSettings("authentication" as SectionId),
+        addToast,
+      }),
+    [addToast, currentProject?.id, modalManager, moveTask, retryTask],
+  );
+
   const [shellOnboardingComplete, setShellOnboardingComplete] = useState(false);
   const [shellConnectionManagerOpen, setShellConnectionManagerOpen] = useState(false);
   const [shellConnectionStatus, setShellConnectionStatus] = useState<ShellConnectionNativeResult | null>(null);
@@ -1948,6 +2033,8 @@ function AppInner() {
           onResumeSession={handleOpenBackgroundSession}
           onDismissSession={handleDismissNeedingInputSession}
           onDismissAll={handleDismissAllNeedingInputSessions}
+          onCliAction={handleCliAction}
+          getCliActionDisabledReason={getCliActionDisabledReasonForBanner}
         />
       )}
       {viewMode === "project" && currentProject && (

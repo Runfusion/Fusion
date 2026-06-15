@@ -162,9 +162,17 @@
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.session-notification-banner__resume:hover {
+.session-notification-banner__resume:hover:not(:disabled) {
   background: color-mix(in srgb, var(--triage) 14%, transparent);
   border-color: var(--triage);
+}
+
+.session-notification-banner__resume:disabled,
+.session-notification-banner__resume--disabled {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  cursor: not-allowed;
 }
 
 .session-notification-banner__item--error .session-notification-banner__resume {
@@ -172,7 +180,14 @@
   color: var(--color-error);
 }
 
-.session-notification-banner__item--error .session-notification-banner__resume:hover {
+.session-notification-banner__item--error .session-notification-banner__resume:disabled,
+.session-notification-banner__item--error .session-notification-banner__resume--disabled {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+.session-notification-banner__item--error .session-notification-banner__resume:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-error) 14%, transparent);
   border-color: var(--color-error);
 }
