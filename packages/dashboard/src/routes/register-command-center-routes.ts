@@ -6,8 +6,16 @@ import {
   composeLiveSnapshot,
   type TokenGroupBy,
 } from "@fusion/core";
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import { ApiError } from "../api-error.js";
+import {
+  serializeCsv,
+  tokenAnalyticsToTable,
+  toolAnalyticsToTable,
+  activityAnalyticsToTable,
+  productivityAnalyticsToTable,
+  type CsvTable,
+} from "../command-center-csv.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 /**
@@ -25,9 +33,11 @@ import type { ApiRouteRegistrar } from "./types.js";
  *    No analytics endpoint, including `/live`, is unauthenticated; an
  *    unauthenticated request is rejected with 401 by the server-level auth
  *    middleware before reaching these handlers.
- *  - Every endpoint (JSON and `/live`) resolves the database through
+ *  - Every endpoint (JSON, CSV, and `/live`) resolves the database through
  *    `getScopedStore(req)` before aggregating, so a project-A caller can never
- *    read project-B data.
+ *    read project-B data. The `?format=csv` branch (U8) serializes the SAME
+ *    already-scoped aggregator output, so the export path has no separate
+ *    scoping surface.
  *
  * Robustness:
  *  - Missing or invalid `from`/`to`/`groupBy` query params fall back to a
@@ -93,6 +103,23 @@ export function resolveGroupBy(query: Request["query"]): TokenGroupBy | undefine
   return raw !== undefined && VALID_GROUP_BY.has(raw) ? (raw as TokenGroupBy) : undefined;
 }
 
+/** True when the caller asked for CSV via `?format=csv` (case-insensitive). */
+export function wantsCsv(query: Request["query"]): boolean {
+  const raw = typeof query.format === "string" ? query.format : undefined;
+  return raw !== undefined && raw.toLowerCase() === "csv";
+}
+
+/**
+ * Stream a {@link CsvTable} as an `attachment` download. Sets the RFC-4180
+ * `text/csv` content-type (charset utf-8) and a `Content-Disposition` filename.
+ * Always sends a body — a header-only CSV for an empty result, never a 204.
+ */
+function sendCsv(res: Response, filename: string, table: CsvTable): void {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(serializeCsv(table));
+}
+
 export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, getScopedStore, rethrowAsApiError } = ctx;
 
@@ -112,6 +139,10 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         groupBy,
         now: Date.now(),
       });
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-tokens.csv", tokenAnalyticsToTable(result));
+        return;
+      }
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -131,6 +162,10 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         from: range.from,
         to: range.to,
       });
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-tools.csv", toolAnalyticsToTable(result));
+        return;
+      }
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -150,6 +185,10 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         from: range.from,
         to: range.to,
       });
+      if (wantsCsv(req.query)) {
+        sendCsv(res, "command-center-activity.csv", activityAnalyticsToTable(result));
+        return;
+      }
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -169,6 +208,14 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
         from: range.from,
         to: range.to,
       });
+      if (wantsCsv(req.query)) {
+        sendCsv(
+          res,
+          "command-center-productivity.csv",
+          productivityAnalyticsToTable(result),
+        );
+        return;
+      }
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

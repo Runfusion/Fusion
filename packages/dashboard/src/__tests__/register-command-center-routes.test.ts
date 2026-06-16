@@ -200,6 +200,107 @@ describe("register-command-center-routes", () => {
     expect((b.body as { totals: { totalTokens: number } }).totals.totalTokens).toBe(1998);
   });
 
+  it("?format=csv returns well-formed CSV with attachment header", async () => {
+    const res = await request(
+      app,
+      "GET",
+      "/api/command-center/tokens?from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z&groupBy=model&projectId=proj-a&format=csv",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.headers["content-disposition"]).toBe(
+      'attachment; filename="command-center-tokens.csv"',
+    );
+    const csv = res.body as string;
+    const lines = csv.split("\r\n").filter((l) => l.length > 0);
+    // Header row + one model group row (claude-sonnet-4-5, total 200).
+    expect(lines[0]).toContain("totalTokens");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("claude-sonnet-4-5");
+    expect(lines[1]).toContain("200");
+  });
+
+  it("?format=csv empty result returns header-only CSV, not a 204", async () => {
+    // Window with no data → header-only.
+    const res = await request(
+      app,
+      "GET",
+      "/api/command-center/tokens?from=2020-01-01T00:00:00.000Z&to=2020-01-02T00:00:00.000Z&projectId=proj-a&format=csv",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    const csv = res.body as string;
+    const lines = csv.split("\r\n").filter((l) => l.length > 0);
+    // No groupBy → always a single (total) row of zeros, plus the header.
+    expect(lines[0]).toContain("totalTokens");
+    expect(lines[1]).toContain("(total)");
+    expect(lines[1]).toContain(",0,");
+  });
+
+  it("?format=csv RFC-4180 quotes values with commas/quotes/newlines", async () => {
+    // Seed a task whose model id contains a comma + quote + newline so the
+    // groupBy=model group key forces RFC-4180 quoting through the export path.
+    const nasty = 'mod,el "x"\nline2';
+    dbA.prepare(
+      `INSERT INTO tasks
+         (id, description, "column", modelProvider, modelId,
+          tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageTotalTokens,
+          tokenUsageLastUsedAt, createdAt, updatedAt)
+       VALUES ('FN-A2', 'd', 'todo', 'anthropic', ?, 5, 5, 10,
+               '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z',
+               '2026-03-01T00:00:00.000Z')`,
+    ).run(nasty);
+
+    const res = await request(
+      app,
+      "GET",
+      "/api/command-center/tokens?from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z&groupBy=model&projectId=proj-a&format=csv",
+    );
+    expect(res.status).toBe(200);
+    const csv = res.body as string;
+    // The nasty key must appear quoted with the embedded quote doubled.
+    expect(csv).toContain('"mod,el ""x""\nline2"');
+  });
+
+  it("?format=csv is project-scoped — A cannot retrieve B's data", async () => {
+    const a = await request(
+      app,
+      "GET",
+      "/api/command-center/tokens?from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z&projectId=proj-a&format=csv",
+    );
+    const b = await request(
+      app,
+      "GET",
+      "/api/command-center/tokens?from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z&projectId=proj-b&format=csv",
+    );
+    // A total = 200, B total = 1998. Neither CSV may contain the other's total.
+    expect(a.body as string).toContain("200");
+    expect(a.body as string).not.toContain("1998");
+    expect(b.body as string).toContain("1998");
+    expect(b.body as string).not.toContain(",200,");
+  });
+
+  it("?format=csv works for tools / activity / productivity endpoints", async () => {
+    const range = "from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z";
+    for (const [path, filename] of [
+      ["tools", "command-center-tools.csv"],
+      ["activity", "command-center-activity.csv"],
+      ["productivity", "command-center-productivity.csv"],
+    ]) {
+      const res = await request(
+        app,
+        "GET",
+        `/api/command-center/${path}?${range}&projectId=proj-a&format=csv`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/csv");
+      expect(res.headers["content-disposition"]).toBe(
+        `attachment; filename="${filename}"`,
+      );
+      expect((res.body as string).split("\r\n")[0].length).toBeGreaterThan(0);
+    }
+  });
+
   it("project scoping — /live is scoped per project", async () => {
     // Add a distinguishing 'in-review' task only to project B.
     dbB.prepare(
