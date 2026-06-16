@@ -18,9 +18,13 @@ import {
   resolveIncident,
   getOpenIncidentByGroupingKey,
   attachFixTask,
+  claimIncidentForFixTask,
+  releaseIncidentFixTaskClaim,
+  getIncident,
   decideStormGuard,
   countRecentAutoFixTasks,
   DEFAULT_STORM_GUARD,
+  FIX_TASK_CLAIM_SENTINEL_PREFIX,
   type Incident,
 } from "../monitor-store.js";
 
@@ -167,6 +171,47 @@ describe("monitor-store (U13)", () => {
       expect(countRecentAutoFixTasks(db)).toBe(0);
       attachFixTask(db, incident.incidentId, "FN-1");
       expect(countRecentAutoFixTasks(db)).toBe(1);
+    });
+
+    // FNXC:Monitor 2026-06-16-15:40: the breaker count must ignore in-flight /
+    // stranded sentinel placeholders and only count real fix-task links.
+    it("ignores sentinel placeholders but counts real fix-task links", () => {
+      const { incident: a } = ingestIncidentSignal(db, { groupingKey: "ga", title: "a" });
+      const { incident: b } = ingestIncidentSignal(db, { groupingKey: "gb", title: "b" });
+      // a is only claimed (sentinel) → must NOT count.
+      expect(claimIncidentForFixTask(db, a.incidentId)).toBe(true);
+      expect(countRecentAutoFixTasks(db)).toBe(0);
+      // b gets a real fix task → counts.
+      attachFixTask(db, b.incidentId, "FN-2");
+      expect(countRecentAutoFixTasks(db)).toBe(1);
+    });
+  });
+
+  describe("releaseIncidentFixTaskClaim", () => {
+    // FNXC:Monitor 2026-06-16-15:40: a claim must be releasable back to NULL when
+    // task creation fails, but the release must never clobber a real attached id.
+    it("clears a sentinel claim back to NULL", () => {
+      const { incident } = ingestIncidentSignal(db, { groupingKey: "g-rel", title: "t" });
+      expect(claimIncidentForFixTask(db, incident.incidentId)).toBe(true);
+      const claimed = getIncident(db, incident.incidentId);
+      expect(claimed?.fixTaskId).toBe(`${FIX_TASK_CLAIM_SENTINEL_PREFIX}${incident.incidentId}`);
+
+      expect(releaseIncidentFixTaskClaim(db, incident.incidentId)).toBe(true);
+      const released = getIncident(db, incident.incidentId);
+      expect(released?.fixTaskId).toBeNull();
+
+      // Releasing again is a no-op (nothing to clear).
+      expect(releaseIncidentFixTaskClaim(db, incident.incidentId)).toBe(false);
+    });
+
+    it("does NOT clear a real attached fix task id", () => {
+      const { incident } = ingestIncidentSignal(db, { groupingKey: "g-real", title: "t" });
+      claimIncidentForFixTask(db, incident.incidentId);
+      attachFixTask(db, incident.incidentId, "FN-99");
+
+      // The release guard (fixTaskId = sentinel) must reject an attached row.
+      expect(releaseIncidentFixTaskClaim(db, incident.incidentId)).toBe(false);
+      expect(getIncident(db, incident.incidentId)?.fixTaskId).toBe("FN-99");
     });
   });
 });

@@ -341,6 +341,33 @@ export function attachFixTask(db: Database, incidentId: string, fixTaskId: strin
   db.bumpLastModified();
 }
 
+/**
+ * FNXC:Monitor 2026-06-16-15:40: a fix-task claim must be released if task
+ * creation fails so a stranded sentinel can't permanently absorb/suppress
+ * future regressions. {@link claimIncidentForFixTask} writes a non-null sentinel
+ * to `fixTaskId`; if {@link attachFixTask} never runs (createTask threw after the
+ * claim), the incident would stay pseudo-linked forever — every later regression
+ * would absorb against the sentinel and the circuit-breaker count would include
+ * it. This releases the claim back to NULL, but ONLY when the value is STILL the
+ * exact sentinel, so it can never clobber a real attached task id (the
+ * `WHERE fixTaskId = <sentinel>` guard rejects any already-attached row).
+ *
+ * Returns true if a sentinel was actually cleared.
+ */
+export function releaseIncidentFixTaskClaim(db: Database, incidentId: string): boolean {
+  const now = new Date().toISOString();
+  const sentinel = `${FIX_TASK_CLAIM_SENTINEL_PREFIX}${incidentId}`;
+  const result = db
+    .prepare(
+      `UPDATE incidents SET fixTaskId = NULL, updatedAt = ?
+       WHERE incidentId = ? AND fixTaskId = ?`,
+    )
+    .run(now, incidentId, sentinel) as { changes?: number | bigint };
+  const released = Number(result.changes ?? 0) > 0;
+  if (released) db.bumpLastModified();
+  return released;
+}
+
 // ── Storm guard ───────────────────────────────────────────────────────────────
 
 export interface StormGuardConfig {
@@ -421,6 +448,16 @@ export function decideStormGuard(
  * task is one linked to an incident (fixTaskId set) whose incident updatedAt is
  * within the window. This is a deliberately coarse proxy that does not require a
  * separate audit table.
+ *
+ * FNXC:Monitor 2026-06-16-15:40: the circuit-breaker count must ignore in-flight
+ * and stranded sentinel placeholders. {@link claimIncidentForFixTask} writes a
+ * `${FIX_TASK_CLAIM_SENTINEL_PREFIX}…` sentinel into `fixTaskId` BEFORE the real
+ * task exists; the real id overwrites it synchronously right after createTask, so
+ * excluding sentinels here only discounts the brief in-flight window and the
+ * stranded-claim case (creation failed) — exactly the rows that should not count
+ * against the breaker. Loser-absorption is unaffected: a loser absorbs because
+ * {@link decideStormGuard} sees the SPECIFIC incident's non-null `fixTaskId`, or
+ * because its claim attempt lost — never because of this window count.
  */
 export function countRecentAutoFixTasks(
   db: Database,
@@ -431,8 +468,8 @@ export function countRecentAutoFixTasks(
   const row = db
     .prepare(
       `SELECT COUNT(*) AS count FROM incidents
-       WHERE fixTaskId IS NOT NULL AND updatedAt >= ?`,
+       WHERE fixTaskId IS NOT NULL AND fixTaskId NOT LIKE ? AND updatedAt >= ?`,
     )
-    .get(cutoff) as { count: number };
+    .get(`${FIX_TASK_CLAIM_SENTINEL_PREFIX}%`, cutoff) as { count: number };
   return row.count;
 }

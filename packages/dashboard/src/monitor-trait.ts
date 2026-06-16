@@ -12,6 +12,7 @@ import {
   countRecentAutoFixTasks,
   decideStormGuard,
   ingestIncidentSignal,
+  releaseIncidentFixTaskClaim,
   type IncidentSignalInput,
   type StormGuardConfig,
 } from "./monitor-store.js";
@@ -173,7 +174,27 @@ export async function runMonitorOnRegression(
         reason: "fix-task-claimed-concurrently",
       };
     }
-    const task = await store.createTask(buildFixTaskInput(signal, incidentId));
+    // FNXC:Monitor 2026-06-16-15:40: a fix-task claim must be released if task
+    // creation fails so a stranded sentinel can't permanently absorb/suppress
+    // future regressions. The claim wrote a non-null sentinel to fixTaskId; if
+    // createTask throws here, attachFixTask never overwrites it, leaving the
+    // incident pseudo-linked forever. Release the claim (back to NULL, only when
+    // still the sentinel) before surfacing an error outcome so a later regression
+    // can open a fix task again.
+    let task: Task;
+    try {
+      task = await store.createTask(buildFixTaskInput(signal, incidentId));
+    } catch (createErr) {
+      releaseIncidentFixTaskClaim(db, incidentId);
+      diagnostics.errorFromException("Monitor fix-task creation failed; released claim", createErr, {
+        groupingKey: signal.groupingKey,
+        incidentId,
+      });
+      return {
+        kind: "error",
+        reason: createErr instanceof Error ? createErr.message : String(createErr),
+      };
+    }
     attachFixTask(db, incidentId, task.id);
     return { kind: "fix-task-opened", taskId: task.id, incidentId };
   } catch (err) {

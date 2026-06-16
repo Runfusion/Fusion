@@ -13,6 +13,7 @@ import {
   claimIncidentForFixTask,
   ingestIncidentSignal,
   getIncident,
+  getOpenIncidentByGroupingKey,
 } from "../monitor-store.js";
 
 /**
@@ -147,6 +148,12 @@ describe("monitor-trait runMonitorOnRegression (U13)", () => {
     // that exact yield point so they overlap; only the claim-holder should win.
     const created: Task[] = [];
     let seq = 0;
+    // FNXC:Monitor 2026-06-16-15:40: the gate (a Promise both createTask calls
+    // await) holds both concurrent callers suspended at the createTask yield
+    // point so the claim race is reproduced deterministically rather than by
+    // chance scheduling. With both callers parked there, releaseGate() unblocks
+    // them together, proving the atomic claim lets exactly ONE fix task open
+    // (the loser absorbs on the lost claim, not on scheduling luck).
     let releaseGate: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve;
@@ -188,9 +195,55 @@ describe("monitor-trait runMonitorOnRegression (U13)", () => {
     expect(kinds).toEqual(["absorbed", "fix-task-opened"]);
 
     // The incident is linked to the single real task, not a sentinel.
-    const incidentId = (ra.kind === "fix-task-opened" ? ra : (rb as typeof ra)).incidentId;
-    const incident = getIncident(db, incidentId);
+    const openedOutcome = ra.kind === "fix-task-opened" ? ra : rb;
+    if (openedOutcome.kind !== "fix-task-opened") {
+      throw new Error(`expected exactly one fix-task-opened outcome, got ${ra.kind} + ${rb.kind}`);
+    }
+    const incident = getIncident(db, openedOutcome.incidentId);
     expect(incident?.fixTaskId).toBe(created[0].id);
+  });
+
+  // FNXC:Monitor 2026-06-16-15:40: if createTask throws AFTER the claim, the
+  // claim must be released so the sentinel can't permanently absorb/suppress
+  // future regressions for the same incident.
+  it("a createTask failure after claim releases the claim so a later regression can open a fix task", async () => {
+    let failNext = true;
+    const created: Task[] = [];
+    let seq = 0;
+    const store = {
+      getDatabase: () => db,
+      async createTask(input: TaskCreateInput): Promise<Task> {
+        if (failNext) {
+          failNext = false;
+          throw new Error("task store unavailable");
+        }
+        const task = {
+          id: `FN-${++seq}`,
+          title: input.title,
+          column: input.column,
+          source: input.source,
+        } as unknown as Task;
+        created.push(task);
+        return task;
+      },
+    } as unknown as TaskStore;
+
+    // Prime an open incident past the gate so the guard decides open-fix-task.
+    for (let i = 0; i < DEFAULT_STORM_GUARD.threshold; i += 1) {
+      ingestIncidentSignal(db, { groupingKey: "g-fail", title: "Boom" });
+    }
+
+    // First open-fix-task attempt: createTask throws → claim released, error out.
+    const failed = await runMonitorOnRegression({ groupingKey: "g-fail", title: "Boom" }, { store });
+    expect(failed.kind).toBe("error");
+    expect(created).toHaveLength(0);
+    const incident = getOpenIncidentByGroupingKey(db, "g-fail");
+    expect(incident?.fixTaskId).toBeNull(); // claim released, not stranded
+
+    // A later regression can now open a fix task again (not absorbed by a sentinel).
+    const reopened = await runMonitorOnRegression({ groupingKey: "g-fail", title: "Boom" }, { store });
+    expect(reopened.kind).toBe("fix-task-opened");
+    expect(created).toHaveLength(1);
   });
 
   it("the atomic claim step prevents a second create once an incident is claimed/linked", () => {
