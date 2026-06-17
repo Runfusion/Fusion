@@ -60,6 +60,7 @@ import {
   fieldsOf,
   settingsOf,
   columnsToBandNodes,
+  reconcileNodeColumns,
   strictColumnForY,
   validateColumnsClient,
   unplacedNodeIds,
@@ -1220,10 +1221,12 @@ function InnerEditor({
   // Keep the swimlane band group nodes in sync with the authored columns
   // (add/rename/reorder via the column panel). Step nodes are preserved; only
   // the band nodes are replaced.
+  // FNXC:WorkflowEditor 2026-06-16-23:24:
+  // FN-6525 requires the column-sync pass to clear stale node.column ids after delete-all-then-re-add, because the re-added Todo column receives a generated id and parseWorkflowIr rejects the old structural start-node reference.
   useEffect(() => {
     setNodes((ns) => {
       const stepNodes = ns.filter((n) => !isColumnBandNode(n.id) && n.type !== "group");
-      return [...columnsToBandNodes(columns), ...stepNodes];
+      return [...columnsToBandNodes(columns), ...reconcileNodeColumns(stepNodes, columns)];
     });
   }, [columns, setNodes]);
 

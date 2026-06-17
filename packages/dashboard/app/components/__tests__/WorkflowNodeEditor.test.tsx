@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
-import type { WorkflowDefinition, Settings } from "@fusion/core";
+import { parseWorkflowIr, type WorkflowDefinition, type Settings } from "@fusion/core";
 import type { Agent } from "../../api";
 import {
   irToFlow,
@@ -970,6 +970,39 @@ describe("WorkflowNodeEditor — U10 columns/traits/holds", () => {
     expect(dup).toBeInTheDocument();
     fireEvent.click(dup.closest("button")!);
     await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
+  });
+
+  it("clears stale node column references after deleting all columns and re-adding one", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({
+      ...v2Def(),
+      ...(updates as object),
+    }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByText("Save");
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBe(2));
+
+    while (screen.queryAllByLabelText("Remove column").length > 0) {
+      fireEvent.click(screen.getAllByLabelText("Remove column")[0]);
+    }
+    await waitFor(() => expect(screen.queryAllByLabelText(/Column name/i)).toHaveLength(0));
+
+    fireEvent.click(screen.getByText("Add column").closest("button")!);
+    const [newColumnName] = await screen.findAllByLabelText(/Column name/i);
+    fireEvent.change(newColumnName, { target: { value: "Todo" } });
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    expect(screen.queryByText(/references undefined column/i)).not.toBeInTheDocument();
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: WorkflowDefinition["ir"] }).ir;
+    expect(() => parseWorkflowIr(ir)).not.toThrow();
+    if (ir.version !== "v2") throw new Error("expected v2");
+    const columnIds = new Set(ir.columns.map((column) => column.id));
+    expect(ir.nodes.every((node) => node.column === undefined || columnIds.has(node.column))).toBe(true);
   });
 
   it("saves a valid v2 workflow round-tripping columns to the API", async () => {

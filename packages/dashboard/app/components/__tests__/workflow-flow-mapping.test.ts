@@ -13,6 +13,7 @@ import {
   bandTop,
   columnsToBandNodes,
   isColumnBandNode,
+  reconcileNodeColumns,
   validateColumnsClient,
   unplacedNodeIds,
   foreachChildFlowId,
@@ -255,6 +256,90 @@ describe("workflow-flow-mapping v2 round-trip", () => {
     // flowToIr must not emit band group nodes as IR nodes.
     const { ir: out } = flowToIr("wf2", nodes, [], columnsOf(v2Def(ir)));
     expect(out.nodes.some((n) => isColumnBandNode(n.id))).toBe(false);
+  });
+
+  it("clears stale node columns while preserving valid placement and group nodes", () => {
+    const columns = [
+      { id: "todo", name: "Todo", traits: [] },
+      { id: "done", name: "Done", traits: [] },
+    ];
+    const validStep: FlowNode<WorkflowFlowNodeData> = {
+      id: "valid",
+      type: "prompt",
+      position: { x: 0, y: 0 },
+      data: { kind: "prompt", label: "valid", column: "todo" },
+    };
+    const nodes: FlowNode<WorkflowFlowNodeData>[] = [
+      { id: "start", type: "start", position: { x: 0, y: 0 }, data: { kind: "start", label: "start", column: "missing" } },
+      { id: "step", type: "prompt", position: { x: 0, y: 0 }, data: { kind: "prompt", label: "step", column: "missing" } },
+      { id: "end", type: "end", position: { x: 0, y: 0 }, data: { kind: "end", label: "end", column: "missing" } },
+      validStep,
+      columnsToBandNodes([{ id: "missing", name: "Old", traits: [] }])[0],
+      { id: "template-group", type: "group", position: { x: 0, y: 0 }, data: { kind: "foreach", label: "group", column: "missing" } },
+    ];
+
+    const reconciled = reconcileNodeColumns(nodes, columns);
+
+    expect(reconciled.find((node) => node.id === "start")?.data.column).toBeUndefined();
+    expect(reconciled.find((node) => node.id === "step")?.data.column).toBeUndefined();
+    expect(reconciled.find((node) => node.id === "end")?.data.column).toBeUndefined();
+    expect(reconciled.find((node) => node.id === "valid")).toBe(validStep);
+    expect(reconciled.find((node) => isColumnBandNode(node.id))?.data.column).toBe("missing");
+    expect(reconciled.find((node) => node.id === "template-group")?.data.column).toBe("missing");
+  });
+
+  it("preserves column references across rename and reorder because ids remain stable", () => {
+    const node: FlowNode<WorkflowFlowNodeData> = {
+      id: "step",
+      type: "prompt",
+      position: { x: 0, y: 0 },
+      data: { kind: "prompt", label: "step", column: "todo" },
+    };
+
+    expect(reconcileNodeColumns([node], [{ id: "todo", name: "Renamed Todo", traits: [] }])).toBeInstanceOf(Array);
+    expect(reconcileNodeColumns([node], [{ id: "todo", name: "Renamed Todo", traits: [] }])[0]).toBe(node);
+    expect(
+      reconcileNodeColumns(
+        [node],
+        [
+          { id: "done", name: "Done", traits: [] },
+          { id: "todo", name: "Todo", traits: [] },
+        ],
+      )[0],
+    ).toBe(node);
+  });
+
+  it("clears stale columns when the authored column set is empty", () => {
+    const node: FlowNode<WorkflowFlowNodeData> = {
+      id: "start",
+      type: "start",
+      position: { x: 0, y: 0 },
+      data: { kind: "start", label: "start", column: "todo" },
+    };
+
+    const reconciled = reconcileNodeColumns([node], []);
+
+    expect(reconciled[0]).not.toBe(node);
+    expect(reconciled[0].data.column).toBeUndefined();
+  });
+
+  it("prevents stale start-node column ids from reaching IR validation after re-add", () => {
+    const staleColumns = [{ id: "todo", name: "Todo", traits: [] }];
+    const nextColumns = [{ id: "col-new", name: "Todo", traits: [] }];
+    const nodes: FlowNode<WorkflowFlowNodeData>[] = [
+      ...columnsToBandNodes(staleColumns),
+      { id: "start", type: "start", position: { x: 0, y: 0 }, data: { kind: "start", label: "start", column: "todo" } },
+      { id: "end", type: "end", position: { x: 100, y: 0 }, data: { kind: "end", label: "end", column: "todo" } },
+    ];
+    const staleIr = flowToIr("wf", nodes, [], nextColumns).ir;
+    expect(() => parseWorkflowIr(staleIr)).toThrow(/references undefined column 'todo'/);
+
+    const reconciled = reconcileNodeColumns(nodes.filter((node) => !isColumnBandNode(node.id)), nextColumns);
+    const { ir: out } = flowToIr("wf", [...columnsToBandNodes(nextColumns), ...reconciled], [], nextColumns);
+
+    expect(() => parseWorkflowIr(out)).not.toThrow();
+    if (out.version !== "v2") throw new Error("expected v2");
+    expect(out.nodes.find((node) => node.id === "start")?.column).toBe("col-new");
   });
 
   it("derives node.column by position when a node is dropped into a band", () => {
