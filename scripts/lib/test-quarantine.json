@@ -1,4 +1,15 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
-  "entries": []
+  "entries": [
+    {
+      "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
+      "reason": "FN-6496 verification: pnpm test failed in QuickEntryBox expanded-mode tests (expected aria-expanded=false, received true) while FN-6496 only changed chat streaming hooks; direct isolated rerun of this file passed, so classify as unrelated flaky state leakage. Failing command: pnpm test; confirming command: pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/QuickEntryBox.test.tsx --reporter=dot --silent=passed-only.",
+      "quarantinedAt": "2026-06-16"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/github-tracking-hook.test.ts",
+      "reason": "FN-6496 merge verification: pnpm test failed in dashboard-api-quality-backfill with ENOTEMPTY while removing a temp task directory; isolated rerun of the file passed, so classify as unrelated cleanup flake. Failing command: pnpm test; confirming command: pnpm --filter @fusion/dashboard exec vitest run src/__tests__/github-tracking-hook.test.ts --reporter=dot --silent=passed-only.",
+      "quarantinedAt": "2026-06-16"
+    }
+  ]
 }

@@ -1225,8 +1225,14 @@ describe("useChat", () => {
     });
   });
 
-  it("re-attaches from fetchChatSession replay id when tab becomes visible", async () => {
+  it("FN-6496 loads prior thread when visibility resume reattaches", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    const priorThreadNewestFirst = [
+      makeMessage({ id: "msg-004", sessionId: session.id, role: "assistant", content: "Second answer" }),
+      makeMessage({ id: "msg-003", sessionId: session.id, role: "user", content: "Second question" }),
+      makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+      makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+    ];
     const generatingSession = {
       ...session,
       isGenerating: true,
@@ -1241,6 +1247,9 @@ describe("useChat", () => {
     };
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
     mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
     const addToast = vi.fn();
 
     const { result } = renderHook(() => useChat(undefined, addToast));
@@ -1270,6 +1279,13 @@ describe("useChat", () => {
         undefined,
         { lastEventId: 77 },
       );
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "msg-001",
+        "msg-002",
+        "msg-003",
+        "msg-004",
+      ]);
       expect(addToast).not.toHaveBeenCalled();
     });
   });
@@ -1292,10 +1308,18 @@ describe("useChat", () => {
         updatedAt: "2026-04-08T00:00:00.000Z",
       },
     };
+    const priorThreadNewestFirst = [
+      makeMessage({ id: "msg-004", sessionId: staleSession.id, role: "assistant", content: "Second answer" }),
+      makeMessage({ id: "msg-003", sessionId: staleSession.id, role: "user", content: "Second question" }),
+      makeMessage({ id: "msg-002", sessionId: staleSession.id, role: "assistant", content: "First answer" }),
+      makeMessage({ id: "msg-001", sessionId: staleSession.id, role: "user", content: "First question" }),
+    ];
 
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [staleSession] });
     mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
-    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
 
     const { result } = renderHook(() => useChat());
 
@@ -1318,6 +1342,12 @@ describe("useChat", () => {
       expect(result.current.streamingText).toBe("partial text");
       expect(result.current.streamingThinking).toBe("thinking");
       expect(result.current.streamingToolCalls).toHaveLength(1);
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "msg-001",
+        "msg-002",
+        "msg-003",
+        "msg-004",
+      ]);
     });
   });
 
@@ -2833,6 +2863,258 @@ describe("useChat", () => {
       await waitFor(() => {
         expect(result.current.sessions[0]?.title).toBe("New Title");
       });
+    });
+
+    it("FN-6496 loads prior thread during chat:session:updated in-flight attach", async () => {
+      const session = makeSession({ id: "session-001", agentId: "agent-001", title: "Existing" });
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-004", sessionId: session.id, role: "assistant", content: "Second answer" }),
+        makeMessage({ id: "msg-003", sessionId: session.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
+      const generatingSession = {
+        ...session,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "live partial",
+          streamingThinking: "thinking",
+          toolCalls: [],
+          replayFromEventId: 88,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages
+        .mockResolvedValueOnce({ messages: [] })
+        .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession(session.id);
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeSession?.id).toBe(session.id);
+        expect(mockFetchChatMessages).toHaveBeenCalledWith(session.id, { limit: 50, order: "desc" }, "proj-123");
+      });
+      expect(result.current.messages).toEqual([]);
+
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify(generatingSession),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("live partial");
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          session.id,
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 88 },
+        );
+        expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
+        expect(result.current.messages.map((message) => message.id)).toEqual([
+          "msg-001",
+          "msg-002",
+          "msg-003",
+          "msg-004",
+        ]);
+      });
+    });
+
+    it("FN-6496 loads prior thread when auto-reattach effect observes refreshed generation", async () => {
+      const session = makeSession({ id: "session-001", agentId: "agent-001", title: "Stale" });
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-004", sessionId: session.id, role: "assistant", content: "Second answer" }),
+        makeMessage({ id: "msg-003", sessionId: session.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
+      const generatingSession = {
+        ...session,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "refreshed partial",
+          streamingThinking: "thinking",
+          toolCalls: [],
+          replayFromEventId: 90,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
+      mockFetchChatMessages
+        .mockResolvedValueOnce({ messages: [] })
+        .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession(session.id);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("refreshed partial");
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          session.id,
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 90 },
+        );
+        expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
+        expect(result.current.messages.map((message) => message.id)).toEqual([
+          "msg-001",
+          "msg-002",
+          "msg-003",
+          "msg-004",
+        ]);
+      });
+    });
+
+    it("FN-6496 loads prior thread when reconnectSessionSilently reattaches after send suspension", async () => {
+      const session = makeSession({ id: "session-001", agentId: "agent-001", title: "Reconnect" });
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-004", sessionId: session.id, role: "assistant", content: "Second answer" }),
+        makeMessage({ id: "msg-003", sessionId: session.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
+      const generatingSession = {
+        ...session,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "reconnected partial",
+          streamingThinking: "thinking",
+          toolCalls: [],
+          replayFromEventId: 91,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      let onError: ((data: string | apiModule.ChatFailureInfo, tempUserMessageId: string) => void) | undefined;
+
+      mockFetchChatSessions
+        .mockResolvedValueOnce({ sessions: [session] })
+        .mockResolvedValueOnce({ sessions: [generatingSession] });
+      mockFetchChatSession
+        .mockResolvedValueOnce({ session })
+        .mockResolvedValueOnce({ session: generatingSession });
+      mockFetchChatMessages
+        .mockResolvedValueOnce({ messages: [] })
+        .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        onError = handlers.onError;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession(session.id);
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeSession?.id).toBe(session.id);
+      });
+
+      act(() => {
+        result.current.sendMessage("Continue");
+        onError?.("Failed to fetch", "temp-reconnect");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("reconnected partial");
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          session.id,
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 91 },
+        );
+        expect(result.current.messages.map((message) => message.id)).toEqual([
+          "msg-001",
+          "msg-002",
+          "msg-003",
+          "msg-004",
+        ]);
+      });
+    });
+
+    it("FN-6496 does not refetch or duplicate when prior thread is already loaded", async () => {
+      const session = makeSession({ id: "session-001", agentId: "agent-001", title: "Loaded" });
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
+      const generatingSession = {
+        ...session,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "live partial",
+          streamingThinking: "",
+          toolCalls: [],
+          replayFromEventId: 89,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValueOnce({ messages: priorThreadNewestFirst });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession(session.id);
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages.map((message) => message.id)).toEqual(["msg-001", "msg-002"]);
+      });
+      mockFetchChatMessages.mockClear();
+
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify(generatingSession),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          session.id,
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 89 },
+        );
+      });
+      expect(mockFetchChatMessages).not.toHaveBeenCalled();
+      expect(result.current.messages.map((message) => message.id)).toEqual(["msg-001", "msg-002"]);
     });
 
     it("FN-5104 ignores replay checkpoint bumps while attach stream is already active", async () => {

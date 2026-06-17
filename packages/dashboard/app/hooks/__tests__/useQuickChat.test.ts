@@ -1,6 +1,6 @@
 import { act, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatSession } from "@fusion/core";
+import type { ChatMessage, ChatSession } from "@fusion/core";
 import * as apiModule from "../../api";
 import { getChatPendingMessageKey } from "../chatPendingMessageStorage";
 import { getPersistedLastQuickChatSessionId } from "../quickChatLastSessionStorage";
@@ -37,6 +37,18 @@ function makeSession(overrides: Partial<ChatSession> & Pick<ChatSession, "id" | 
     modelId: overrides.modelId ?? null,
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
+  };
+}
+
+function makeMessage(overrides: Partial<ChatMessage> & Pick<ChatMessage, "id" | "sessionId" | "role" | "content">): ChatMessage {
+  return {
+    id: overrides.id,
+    sessionId: overrides.sessionId,
+    role: overrides.role,
+    content: overrides.content,
+    thinkingOutput: overrides.thinkingOutput ?? null,
+    metadata: overrides.metadata ?? null,
+    createdAt: overrides.createdAt ?? "2026-04-08T00:00:00.000Z",
   };
 }
 
@@ -1712,8 +1724,14 @@ describe("useQuickChat", () => {
     });
   });
 
-  it("reattaches with replayFromEventId when tab becomes visible and server is generating", async () => {
+  it("FN-6496 loads prior thread when QuickChat visibility resume reattaches", async () => {
     const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+    const priorThreadNewestFirst = [
+      makeMessage({ id: "msg-004", sessionId: existingSession.id, role: "assistant", content: "Second answer" }),
+      makeMessage({ id: "msg-003", sessionId: existingSession.id, role: "user", content: "Second question" }),
+      makeMessage({ id: "msg-002", sessionId: existingSession.id, role: "assistant", content: "First answer" }),
+      makeMessage({ id: "msg-001", sessionId: existingSession.id, role: "user", content: "First question" }),
+    ];
     const generatingSession = {
       ...existingSession,
       isGenerating: true,
@@ -1730,7 +1748,9 @@ describe("useQuickChat", () => {
 
     mockFetchResumeChatSession.mockResolvedValueOnce({ session: existingSession });
     mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
-    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockFetchChatMessages
+      .mockResolvedValueOnce({ messages: [] })
+      .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
 
     const { result } = renderHook(() => useQuickChat("proj-123", addToast));
 
@@ -1750,6 +1770,13 @@ describe("useQuickChat", () => {
         "proj-123",
         { lastEventId: 17 },
       );
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.messages.map((message) => message.id)).toEqual([
+        "msg-001",
+        "msg-002",
+        "msg-003",
+        "msg-004",
+      ]);
       expect(addToast).not.toHaveBeenCalled();
     });
   });
@@ -2153,10 +2180,16 @@ describe("useQuickChat", () => {
       });
     });
 
-    it("sets isStreaming=true when initializing a session with isGenerating=true", async () => {
+    it("FN-6496 loads prior thread when initializing a generating QuickChat session", async () => {
       const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-004", sessionId: session.id, role: "assistant", content: "Second answer" }),
+        makeMessage({ id: "msg-003", sessionId: session.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
       mockFetchResumeChatSession.mockResolvedValue({ session });
-      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockFetchChatMessages.mockResolvedValue({ messages: priorThreadNewestFirst });
 
       const { result } = renderHook(() => useQuickChat("proj-123"));
 
@@ -2167,7 +2200,111 @@ describe("useQuickChat", () => {
       await waitFor(() => {
         expect(result.current.isStreaming).toBe(true);
         expect(result.current.streamingText).toBe("");
+        expect(result.current.messages.map((message) => message.id)).toEqual([
+          "msg-001",
+          "msg-002",
+          "msg-003",
+          "msg-004",
+        ]);
       });
+    });
+
+    it("FN-6496 loads prior thread when QuickChat auto-reattach effect observes refreshed generation", async () => {
+      const staleSession = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: false };
+      const generatingSession = {
+        ...staleSession,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "refreshed partial",
+          streamingThinking: "thinking",
+          toolCalls: [],
+          replayFromEventId: 18,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-004", sessionId: staleSession.id, role: "assistant", content: "Second answer" }),
+        makeMessage({ id: "msg-003", sessionId: staleSession.id, role: "user", content: "Second question" }),
+        makeMessage({ id: "msg-002", sessionId: staleSession.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: staleSession.id, role: "user", content: "First question" }),
+      ];
+      mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
+      mockFetchChatMessages
+        .mockResolvedValueOnce({ messages: [] })
+        .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.selectSession(staleSession);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("refreshed partial");
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          "session-001",
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 18 },
+        );
+        expect(mockFetchChatMessages).toHaveBeenCalledTimes(2);
+        expect(result.current.messages.map((message) => message.id)).toEqual([
+          "msg-001",
+          "msg-002",
+          "msg-003",
+          "msg-004",
+        ]);
+      });
+    });
+
+    it("FN-6496 does not refetch or duplicate QuickChat thread when already loaded", async () => {
+      const session = {
+        ...makeSession({ id: "session-001", agentId: "agent-001" }),
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "live partial",
+          streamingThinking: "",
+          toolCalls: [],
+          replayFromEventId: 19,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      const priorThreadNewestFirst = [
+        makeMessage({ id: "msg-002", sessionId: session.id, role: "assistant", content: "First answer" }),
+        makeMessage({ id: "msg-001", sessionId: session.id, role: "user", content: "First question" }),
+      ];
+      mockFetchResumeChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: priorThreadNewestFirst });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.messages.map((message) => message.id)).toEqual(["msg-001", "msg-002"]);
+        expect(result.current.isStreaming).toBe(true);
+      });
+      mockFetchChatMessages.mockClear();
+
+      act(() => {
+        result.current.selectSession(session);
+      });
+
+      await waitFor(() => {
+        expect(mockAttachChatStream).toHaveBeenCalledWith(
+          "session-001",
+          expect.any(Object),
+          "proj-123",
+          { lastEventId: 19 },
+        );
+      });
+      expect(mockFetchChatMessages).not.toHaveBeenCalled();
+      expect(result.current.messages.map((message) => message.id)).toEqual(["msg-001", "msg-002"]);
     });
 
     it("does not set isStreaming when isGenerating is false", async () => {

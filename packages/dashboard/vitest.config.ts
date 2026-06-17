@@ -235,8 +235,19 @@ const qualityAppSettingsOnlyTests = ["app/components/__tests__/SettingsModal.tes
 FNXC:DashboardTestQuarantine 2026-06-14-17:01:
 FN-6454 applied the quarantine deletion ratchet to every dashboard test quarantined on 2026-06-14.
 Keep this list empty until a new flaky dashboard test is quarantined with a matching ledger entry.
+
+FNXC:DashboardTestQuarantine 2026-06-16-18:59:
+FN-6496 verification observed QuickEntryBox expanded-mode assertions fail only in the workspace gate while an isolated file rerun passed.
+Quarantine the file under the deletion ratchet instead of appeasing timing/state leakage with retries or widened waits.
+
+FNXC:DashboardTestQuarantine 2026-06-16-19:21:
+FN-6496 merge verification observed github-tracking-hook fail during the changed-test backfill shard with temp-directory cleanup ENOTEMPTY, then pass on isolated rerun.
+Quarantine the cleanup-flaky file under the deletion ratchet rather than changing production or test timing outside the chat-streaming scope.
 */
-const quarantinedDashboardTests: string[] = [];
+const quarantinedDashboardTests: string[] = [
+  "app/components/__tests__/QuickEntryBox.test.tsx",
+  "src/__tests__/github-tracking-hook.test.ts",
+];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,

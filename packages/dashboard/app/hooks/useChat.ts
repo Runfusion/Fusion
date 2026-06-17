@@ -527,13 +527,24 @@ export function useChat(
   const attachIfGenerating = useCallback((
     sessionId: string,
     inFlightGeneration?: ChatInFlightGenerationState | null,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; priorThreadLoadAlreadyStarted?: boolean },
   ) => {
     if (streamRef.current || !sessionId) {
       return true;
     }
 
     cancelledByUserRef.current = false;
+    const currentMessages = messagesRef.current;
+    const needsPriorThreadLoad = currentMessages.length === 0 || currentMessages[0]?.sessionId !== sessionId;
+    if (needsPriorThreadLoad && !options?.priorThreadLoadAlreadyStarted) {
+      /*
+      FNXC:ChatStreaming 2026-06-16-18:10:
+      In-flight attach must keep the persisted prior thread visible while the assistant bubble streams.
+      The chat:message:added SSE echo is suppressed during streaming to avoid duplicate local bubbles, so attach has to hydrate cached history and start a thread load itself when messages are empty or from another session.
+      */
+      hydrateMessagesFromCache(sessionId);
+      void loadMessages(sessionId);
+    }
     if (inFlightGeneration) {
       setStreamingText(inFlightGeneration.streamingText);
       setStreamingThinking(inFlightGeneration.streamingThinking);
@@ -605,7 +616,7 @@ export function useChat(
         : null,
     };
     return true;
-  }, [addToast, loadMessages, projectId, flushPendingMessage]);
+  }, [addToast, hydrateMessagesFromCache, loadMessages, projectId, flushPendingMessage]);
 
   // Select a session
   const selectSession = useCallback(
@@ -663,7 +674,7 @@ export function useChat(
       // all streaming state. Showing "Connecting…" immediately tells the
       // user the AI is still working.
       if (session?.isGenerating) {
-        attachIfGenerating(session.id, session.inFlightGeneration);
+        attachIfGenerating(session.id, session.inFlightGeneration, { priorThreadLoadAlreadyStarted: true });
       }
 
       // Persist active session to localStorage

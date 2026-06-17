@@ -241,6 +241,8 @@ export function useQuickChat(
   // component's useEffect that depends on switchSession.
   const activeSessionRef = useRef<EnrichedChatSession | null>(activeSession);
   activeSessionRef.current = activeSession;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   // Max retries for session init to prevent infinite toast loops
   const initRetryCountRef = useRef(0);
@@ -321,6 +323,20 @@ export function useQuickChat(
     }
   }, []);
 
+  const loadMessagesForSession = useCallback(async (sessionId: string) => {
+    setMessagesLoading(true);
+    try {
+      const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
+      if (activeSessionRef.current?.id === sessionId) {
+        setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
+      }
+    } catch (err) {
+      console.error("[useQuickChat] Failed to load messages:", err);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, [projectId]);
+
   const attachIfGenerating = useCallback((
     sessionId: string,
     inFlightGeneration?: ChatInFlightGenerationState | null,
@@ -331,6 +347,16 @@ export function useQuickChat(
     }
 
     cancelledByUserRef.current = false;
+    const currentMessages = messagesRef.current;
+    const needsPriorThreadLoad = currentMessages.length === 0 || currentMessages[0]?.sessionId !== sessionId;
+    if (needsPriorThreadLoad) {
+      /*
+      FNXC:ChatStreaming 2026-06-16-18:16:
+      QuickChat has the same streaming visibility contract as the full chat view: a resumed in-flight assistant bubble must not hide prior user turns or assistant responses.
+      Because QuickChat has no message cache and streaming suppresses persisted echo handling, attach fetches the session thread directly by id instead of relying on activeSession-bound loaders that may see stale state.
+      */
+      void loadMessagesForSession(sessionId);
+    }
     if (inFlightGeneration) {
       setStreamingText(inFlightGeneration.streamingText);
       setStreamingThinking(inFlightGeneration.streamingThinking);
@@ -361,9 +387,7 @@ export function useQuickChat(
         isStreamingRef.current = false;
         streamRef.current = null;
         lastAttachedGenerationRef.current = null;
-        void fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId).then((data) => {
-          if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-        }).catch(() => {});
+        void loadMessagesForSession(sessionId);
         flushPendingMessage();
       },
       onError: (data) => {
@@ -378,9 +402,7 @@ export function useQuickChat(
         if (!options?.silent) {
           addToast?.(errorMessage, "error");
         }
-        void fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId).then((data) => {
-          if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-        }).catch(() => {});
+        void loadMessagesForSession(sessionId);
         flushPendingMessage();
       },
     });
@@ -397,7 +419,7 @@ export function useQuickChat(
         : null,
     };
     return true;
-  }, [addToast, projectId, flushPendingMessage]);
+  }, [addToast, loadMessagesForSession, flushPendingMessage, t, projectId]);
 
   // Fetch existing sessions and find/create one for the given target
   const initializeSession = useCallback(
@@ -456,17 +478,8 @@ export function useQuickChat(
   const loadMessages = useCallback(async () => {
     if (!activeSession) return;
 
-    setMessagesLoading(true);
-    try {
-      const sessionId = activeSession.id;
-      const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
-      if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-    } catch (err) {
-      console.error("[useQuickChat] Failed to load messages:", err);
-    } finally {
-      setMessagesLoading(false);
-    }
-  }, [activeSession, projectId]);
+    await loadMessagesForSession(activeSession.id);
+  }, [activeSession, loadMessagesForSession]);
 
   // Load messages when session changes
   useEffect(() => {
@@ -524,17 +537,8 @@ export function useQuickChat(
   // Reload messages from server (for same-session revisit)
   const reloadMessages = useCallback(async () => {
     if (!activeSession) return;
-    setMessagesLoading(true);
-    try {
-      const sessionId = activeSession.id;
-      const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
-      if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-    } catch (err) {
-      console.error("[useQuickChat] Failed to reload messages:", err);
-    } finally {
-      setMessagesLoading(false);
-    }
-  }, [activeSession, projectId]);
+    await loadMessagesForSession(activeSession.id);
+  }, [activeSession, loadMessagesForSession]);
 
   const resetTransientComposerState = useCallback(() => {
     cancelStreamingFlushesRef.current?.();
