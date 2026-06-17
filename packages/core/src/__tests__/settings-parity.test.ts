@@ -9,6 +9,7 @@ import {
   isGlobalSettingsKey,
   isProjectSettingsKey,
 } from "../types.js";
+import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 
 function assertExactKeyCoverage(scopeName: string, actual: readonly string[], expected: readonly string[]): void {
   const uniqueActual = [...new Set(actual)];
@@ -468,6 +469,11 @@ describe("model lane key parity regression (FN-1729)", () => {
       }
     },
   );
+
+  it("does not declare title summarizer keys as built-in workflow settings", () => {
+    const declaredIds = BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id);
+    expect(declaredIds.filter((id) => /^titleSummarizer/.test(id))).toEqual([]);
+  });
 
   it("scoped (non-workflow) model lane keys appear in exactly one scope key list", () => {
     const globalKeys = new Set(GLOBAL_SETTINGS_KEYS as readonly string[]);

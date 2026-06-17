@@ -185,17 +185,24 @@ govern that execution belong to the workflow.
 
 **Where to set them.** The common model lanes for a project's default workflow are
 available directly in **Settings → Project Models → Default workflow model lanes**:
-Plan/Triage, Executor, Reviewer, and the Planning/Reviewer/Title Summarizer
-fallback lanes declared by the default workflow. Those dropdown controls use the
-shared model picker and are persisted by the Settings modal's primary **Save**
-action, which writes workflow setting values for the active project's default
-workflow; they do not restore the old project settings keys. The global
-**Fallback Model** remains in Settings → General Models, and workflow-specific
-fallbacks are also editable from the workflow editor Values tab.
+Plan/Triage, Executor, Reviewer, and the Planning/Reviewer fallback lanes declared
+by the default workflow. Those dropdown controls use the shared model picker and
+are persisted by the Settings modal's primary **Save** action, which writes
+workflow setting values for the active project's default workflow; they do not
+restore the old project settings keys. The global **Fallback Model** remains in
+Settings → General Models, and workflow-specific fallbacks are also editable from
+the workflow editor Values tab. Title summarization is separate: set it in
+**Settings → Project Models → Title and Git Commit Message Summarization Model**,
+with its global baseline in Settings → General/Global Models.
 
-For step execution, review/approval policy, title summarization, and custom
-workflow settings, open the [**workflow editor**](./workflow-editor.md) (the workflow node editor in
-the dashboard) and select the **Settings** panel. On mobile, Settings is a
+<!--
+FNXC:WorkflowSettings 2026-06-17-09:13:
+FN-6584 follows the FN-6580 readiness audit by keeping title summarization project/global-scoped. Do not list it as a workflow-editor lane; the workflow editor owns execution/review policy and workflow-declared model lanes only.
+-->
+
+For step execution, review/approval policy, and custom workflow settings, open the
+[**workflow editor**](./workflow-editor.md) (the workflow node editor in the
+dashboard) and select the **Settings** panel. On mobile, Settings is a
 dedicated workflow editor destination beside Graph, Add, Fields, Columns, and
 Actions. It has two tabs:
 

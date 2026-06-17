@@ -30,7 +30,7 @@ vi.mock("../../api", async () => {
 import * as apiModule from "../../api";
 import type { WorkflowSettingDefinition, WorkflowSettingValuesPayload } from "../../api";
 import { ApiRequestError } from "../../api";
-import { WorkflowSettingsPanel } from "../WorkflowSettingsPanel";
+import { WorkflowSettingsPanel, WORKFLOW_MODEL_LANE_CATALOG } from "../WorkflowSettingsPanel";
 
 const mockFetchModels = vi.mocked(apiModule.fetchModels);
 const mockFetchValues = vi.mocked(apiModule.fetchWorkflowSettingValues);
@@ -375,6 +375,34 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     { id: "planningFallbackModelId", name: "Planning fallback model", type: "string" },
     { id: "customModelProvider", name: "Custom model provider", type: "string" },
   ];
+
+  const titleSummarizerDecls: WorkflowSettingDefinition[] = [
+    { id: "titleSummarizerProvider", name: "Title summarizer provider", type: "string" },
+    { id: "titleSummarizerModelId", name: "Title summarizer model", type: "string" },
+    { id: "titleSummarizerFallbackProvider", name: "Title summarizer fallback provider", type: "string" },
+    { id: "titleSummarizerFallbackModelId", name: "Title summarizer fallback model", type: "string" },
+  ];
+
+  it("does not catalog title summarization as a workflow model lane", async () => {
+    expect(WORKFLOW_MODEL_LANE_CATALOG.map((pair) => pair.id)).not.toEqual(
+      expect.arrayContaining(["title-summarizer", "title-summarizer-fallback"]),
+    );
+    expect(WORKFLOW_MODEL_LANE_CATALOG.flatMap((pair) => [pair.providerId, pair.modelId])).not.toEqual(
+      expect.arrayContaining([
+        "titleSummarizerProvider",
+        "titleSummarizerModelId",
+        "titleSummarizerFallbackProvider",
+        "titleSummarizerFallbackModelId",
+      ]),
+    );
+
+    render(<Host initial={titleSummarizerDecls} readOnly />);
+    await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
+
+    expect(screen.queryByLabelText("Title Summarizer Model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Title Summarizer Fallback Model")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Title summarizer provider")).toBeInTheDocument();
+  });
 
   async function openPlanningDropdown() {
     const trigger = await screen.findByLabelText("Plan/Triage Model");

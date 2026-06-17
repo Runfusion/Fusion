@@ -491,7 +491,7 @@ function rawValueDisplay(value: unknown): string {
   }
 }
 
-interface WorkflowModelLanePair {
+export interface WorkflowModelLanePair {
   id: string;
   providerId: string;
   modelId: string;
@@ -499,7 +499,11 @@ interface WorkflowModelLanePair {
   help: string;
 }
 
-const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
+/*
+FNXC:WorkflowSettings 2026-06-17-09:13:
+Title summarization is owned by project/global Settings → Project Models, not workflow Values. Keep this workflow-editor catalog limited to workflow-executed model lanes so custom declarations cannot create misleading title-summarizer dropdowns whose values are orphaned for built-in workflows.
+*/
+export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
   {
     id: "planning",
     providerId: "planningProvider",
@@ -534,20 +538,6 @@ const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     modelId: "validatorFallbackModelId",
     label: "Reviewer Fallback Model",
     help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
-  },
-  {
-    id: "title-summarizer",
-    providerId: "titleSummarizerProvider",
-    modelId: "titleSummarizerModelId",
-    label: "Title Summarizer Model",
-    help: "Provider and model used for title summarization when this workflow declares the lane.",
-  },
-  {
-    id: "title-summarizer-fallback",
-    providerId: "titleSummarizerFallbackProvider",
-    modelId: "titleSummarizerFallbackModelId",
-    label: "Title Summarizer Fallback Model",
-    help: "Fallback provider and model used for title summarization when this workflow declares the lane.",
   },
 ];
 
