@@ -8,6 +8,11 @@ import { appendTokenQuery } from "../auth";
 import { api } from "../api";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { isMobileViewport, MOBILE_MEDIA_QUERY } from "../hooks/useViewportMode";
+import {
+  TERMINAL_PREFERENCES_KEY,
+  readTerminalPreferences,
+  resolveTerminalFontFamily,
+} from "../utils/terminalPreferences";
 
 /**
  * SessionTerminal (CLI Agent Executor, U11) — shared xterm terminal for a CLI
@@ -249,6 +254,45 @@ export function SessionTerminal({
     if (showConfirmAdvance) setAdvanceDismissed(false);
   }, [showConfirmAdvance, sessionId]);
 
+  const applyLiveTerminalPreferences = useCallback(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    const terminalPreferences = readTerminalPreferences();
+    terminal.options.fontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+    terminal.options.fontSize = terminalPreferences.fontSize;
+    terminal.options.cursorStyle = terminalPreferences.cursorStyle;
+    terminal.options.cursorBlink = terminalPreferences.cursorBlink && !readOnly && mode === "live";
+
+    try {
+      (fitAddonRef.current as { fit?: () => void } | null)?.fit?.();
+    } catch {
+      /* ignore transient measure failures */
+    }
+  }, [mode, readOnly]);
+
+  /*
+  FNXC:Terminal 2026-06-17-01:05:
+  Font and cursor preferences live-apply through the shared storage key so SessionTerminal follows changes made in another terminal surface without remounting. Renderer remains excluded from this handler because renderer addon teardown/re-attach only happens safely during the next session init.
+  */
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== TERMINAL_PREFERENCES_KEY) {
+        return;
+      }
+      applyLiveTerminalPreferences();
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [applyLiveTerminalPreferences]);
+
   // ── xterm lifecycle + WS bridge ──────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || typeof window === "undefined") return;
@@ -295,16 +339,23 @@ export function SessionTerminal({
       ]);
       if (disposed || !containerRef.current) return;
 
+      const terminalPreferences = readTerminalPreferences();
+      const resolvedFontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+
+      /*
+      FNXC:Terminal 2026-06-17-00:50:
+      SessionTerminal consumes the shared localStorage terminal preferences for parity with TerminalModal, but replay safety still owns input posture: cursor blink is the user preference AND-gated by !readOnly && mode === "live" so read-only, idle, and ended sessions never blink.
+      */
       const term = new Terminal({
         convertEol: false,
-        cursorBlink: !readOnly && mode === "live",
+        cursorBlink: terminalPreferences.cursorBlink && !readOnly && mode === "live",
+        cursorStyle: terminalPreferences.cursorStyle,
         disableStdin: readOnly,
         scrollback: 10000,
         // Defensive: do NOT register an OSC 52 (clipboard-write) handler. The
         // server-side neutralizer (U10) strips it; we add no client handling.
-        fontFamily:
-          'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-        fontSize: 13,
+        fontFamily: resolvedFontFamily,
+        fontSize: terminalPreferences.fontSize,
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
@@ -316,22 +367,29 @@ export function SessionTerminal({
       xtermRef.current = term;
       fitAddonRef.current = fitAddon as unknown as ITerminalAddon;
 
-      // WebGL renderer with context-loss fallback to the DOM renderer.
-      try {
-        const { WebglAddon } = await import("@xterm/addon-webgl");
-        if (!disposed) {
-          const webgl = new WebglAddon();
-          webgl.onContextLoss(() => {
-            try {
-              webgl.dispose();
-            } catch {
-              /* fall back to DOM renderer */
-            }
-          });
-          term.loadAddon(webgl);
+      /*
+      FNXC:Terminal 2026-06-17-00:55:
+      The embedded session terminal follows the shared renderer preference, but mobile viewports are a hard WebGL skip floor to avoid glyph artifacts in WebKit. Renderer changes are init-only because swapping xterm render addons mid-session is unsafe; users get the new renderer on the next mount/session.
+      */
+      const shouldLoadWebgl = terminalPreferences.renderer === "auto" && !isMobileViewport();
+      if (shouldLoadWebgl) {
+        // WebGL renderer with context-loss fallback to the DOM renderer.
+        try {
+          const { WebglAddon } = await import("@xterm/addon-webgl");
+          if (!disposed) {
+            const webgl = new WebglAddon();
+            webgl.onContextLoss(() => {
+              try {
+                webgl.dispose();
+              } catch {
+                /* fall back to DOM renderer */
+              }
+            });
+            term.loadAddon(webgl);
+          }
+        } catch {
+          /* WebGL unavailable — DOM renderer is the default fallback */
         }
-      } catch {
-        /* WebGL unavailable — DOM renderer is the default fallback */
       }
 
       try {

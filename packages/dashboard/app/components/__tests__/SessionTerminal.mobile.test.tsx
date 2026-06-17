@@ -4,6 +4,7 @@ import { _resetInitialViewportHeight } from "../../hooks/useMobileKeyboard";
 import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 
 // ── Mock xterm + addon dynamic imports (jsdom has no canvas/WebGL) ──────────
+const mockFitAddon = { fit: vi.fn() };
 const mockTerm = {
   loadAddon: vi.fn(),
   open: vi.fn(),
@@ -11,11 +12,12 @@ const mockTerm = {
   write: vi.fn((_data: string, cb?: () => void) => cb?.()),
   dispose: vi.fn(),
   unicode: { activeVersion: "6" },
+  options: {} as Record<string, unknown>,
   cols: 80,
   rows: 24,
 };
-vi.mock("@xterm/xterm", () => ({ Terminal: vi.fn(function Terminal() { return mockTerm; }) }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return { fit: vi.fn() }; }) }));
+vi.mock("@xterm/xterm", () => ({ Terminal: vi.fn(function Terminal(options) { mockTerm.options = { ...options }; return mockTerm; }) }));
+vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return mockFitAddon; }) }));
 vi.mock("@xterm/addon-unicode11", () => ({ Unicode11Addon: vi.fn(function Unicode11Addon() { return {}; }) }));
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: vi.fn(function WebglAddon() { return { onContextLoss: vi.fn(), dispose: vi.fn() }; }),
@@ -91,6 +93,7 @@ function stubScreen(width: number, height: number) {
 }
 
 import { SessionTerminal } from "../SessionTerminal";
+import { DEFAULT_TERMINAL_PREFERENCES, TERMINAL_PREFERENCES_KEY } from "../../utils/terminalPreferences";
 
 /** Pull the parsed input frames a WS has sent. */
 function inputFrames(ws: FakeWS): string[] {
@@ -111,8 +114,14 @@ beforeEach(() => {
   FakeWS.instances = [];
   originalWebSocket = (globalThis as typeof globalThis & { WebSocket?: typeof WebSocket }).WebSocket;
   (globalThis as unknown as { WebSocket: typeof FakeWS }).WebSocket = FakeWS;
+  window.localStorage.clear();
+  mockTerm.loadAddon.mockClear();
+  mockTerm.open.mockClear();
   mockTerm.onData.mockReset();
   mockTerm.write.mockClear();
+  mockTerm.dispose.mockClear();
+  mockTerm.options = {};
+  mockFitAddon.fit.mockClear();
   apiMock.mockReset();
   apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: false });
   installMatchMedia(true); // mobile by default
@@ -298,6 +307,41 @@ describe("SessionTerminal (mobile)", () => {
     await renderMobile();
     expect(mockTerm.onData).toHaveBeenCalled();
   });
+
+  it("never loads WebGL on mobile even when renderer preference is auto", async () => {
+    const { WebglAddon } = await import("@xterm/addon-webgl");
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, renderer: "auto" }),
+    );
+
+    await renderMobile();
+
+    expect(WebglAddon).not.toHaveBeenCalled();
+  });
+
+  it("keeps the accessory key bar intact while applying terminal preferences", async () => {
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({
+        ...DEFAULT_TERMINAL_PREFERENCES,
+        fontFamily: "fira-code",
+        cursorStyle: "underline",
+      }),
+    );
+
+    await renderMobile();
+
+    expect(screen.getByTestId("cli-terminal-key-bar")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-ctrl")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-esc")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-tab")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-ctrl-c")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-arrow-up")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-arrow-down")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-arrow-left")).toBeTruthy();
+    expect(screen.getByTestId("cli-key-arrow-right")).toBeTruthy();
+  });
 });
 
 // ── Keyboard-open (fixed-footer) + pinch-zoom guard ──────────────────────────
@@ -345,7 +389,12 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
 
   beforeEach(() => {
     FakeWS.instances = [];
+    window.localStorage.clear();
+    mockTerm.loadAddon.mockClear();
+    mockTerm.open.mockClear();
     mockTerm.onData.mockReset();
+    mockTerm.options = {};
+    mockFitAddon.fit.mockClear();
     apiMock.mockReset();
     apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: false });
     installMatchMedia(true);

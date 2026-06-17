@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // ── Mock xterm + addon dynamic imports (jsdom has no canvas/WebGL) ──────────
+const mockFitAddon = { fit: vi.fn() };
 const mockTerm = {
   loadAddon: vi.fn(),
   open: vi.fn(),
@@ -10,11 +11,12 @@ const mockTerm = {
   write: vi.fn((_data: string, cb?: () => void) => cb?.()),
   dispose: vi.fn(),
   unicode: { activeVersion: "6" },
+  options: {} as Record<string, unknown>,
   cols: 80,
   rows: 24,
 };
-vi.mock("@xterm/xterm", () => ({ Terminal: vi.fn(function Terminal() { return mockTerm; }) }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return { fit: vi.fn() }; }) }));
+vi.mock("@xterm/xterm", () => ({ Terminal: vi.fn(function Terminal(options) { mockTerm.options = { ...options }; return mockTerm; }) }));
+vi.mock("@xterm/addon-fit", () => ({ FitAddon: vi.fn(function FitAddon() { return mockFitAddon; }) }));
 vi.mock("@xterm/addon-unicode11", () => ({ Unicode11Addon: vi.fn(function Unicode11Addon() { return {}; }) }));
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: vi.fn(function WebglAddon() { return { onContextLoss: vi.fn(), dispose: vi.fn() }; }),
@@ -51,14 +53,24 @@ let originalWebSocket: typeof WebSocket | undefined;
 };
 
 import { SessionTerminal } from "../SessionTerminal";
+import {
+  DEFAULT_TERMINAL_PREFERENCES,
+  TERMINAL_PREFERENCES_KEY,
+} from "../../utils/terminalPreferences";
 
 beforeEach(() => {
   FakeWS.instances = [];
   originalWebSocket = (globalThis as typeof globalThis & { WebSocket?: typeof WebSocket }).WebSocket;
   (globalThis as unknown as { WebSocket: typeof FakeWS }).WebSocket = FakeWS;
+  window.localStorage.clear();
+  mockTerm.loadAddon.mockClear();
+  mockTerm.open.mockClear();
   mockTerm.onData.mockReset();
   mockTerm.attachCustomKeyEventHandler.mockClear();
   mockTerm.write.mockClear();
+  mockTerm.dispose.mockClear();
+  mockTerm.options = {};
+  mockFitAddon.fit.mockClear();
   apiMock.mockReset();
   apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: false });
 });
@@ -97,7 +109,7 @@ describe("SessionTerminal", () => {
     expect(mockTerm.onData).not.toHaveBeenCalled();
   });
 
-  it("relies on native xterm paste with the system monospace font", async () => {
+  it("relies on native xterm paste while applying the default terminal font preference", async () => {
     const { Terminal } = await import("@xterm/xterm");
 
     render(<SessionTerminal sessionId="s1" />);
@@ -105,12 +117,10 @@ describe("SessionTerminal", () => {
     await waitFor(() => expect(FakeWS.instances.length).toBe(1));
     expect(Terminal).toHaveBeenCalledWith(
       expect.objectContaining({
-        fontFamily: expect.stringContaining("ui-monospace"),
-      }),
-    );
-    expect(Terminal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fontFamily: expect.not.stringContaining("Fusion Terminal Nerd Font Symbols"),
+        fontFamily: expect.stringContaining("Fusion Terminal Nerd Font Symbols"),
+        fontSize: DEFAULT_TERMINAL_PREFERENCES.fontSize,
+        cursorStyle: DEFAULT_TERMINAL_PREFERENCES.cursorStyle,
+        cursorBlink: DEFAULT_TERMINAL_PREFERENCES.cursorBlink,
       }),
     );
     expect(mockTerm.attachCustomKeyEventHandler).not.toHaveBeenCalled();
@@ -124,6 +134,144 @@ describe("SessionTerminal", () => {
     expect(FakeWS.instances[0].sent).toEqual([
       JSON.stringify({ type: "input", data: "paste once\n" }),
     ]);
+  });
+
+  it("applies validated terminal preferences at xterm init", async () => {
+    const { Terminal } = await import("@xterm/xterm");
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({
+        fontFamily: "system-mono",
+        fontSize: 18,
+        cursorStyle: "underline",
+        cursorBlink: true,
+        renderer: "auto",
+      }),
+    );
+
+    render(<SessionTerminal sessionId="s1" />);
+
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    expect(Terminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+        fontSize: 18,
+        cursorStyle: "underline",
+        cursorBlink: true,
+      }),
+    );
+  });
+
+  it("falls back to safe default preferences for corrupt storage", async () => {
+    const { Terminal } = await import("@xterm/xterm");
+    window.localStorage.setItem(TERMINAL_PREFERENCES_KEY, "{not-json");
+
+    render(<SessionTerminal sessionId="s1" />);
+
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    expect(Terminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily: expect.stringContaining("Fusion Terminal Nerd Font Symbols"),
+        fontSize: DEFAULT_TERMINAL_PREFERENCES.fontSize,
+        cursorStyle: DEFAULT_TERMINAL_PREFERENCES.cursorStyle,
+        cursorBlink: true,
+      }),
+    );
+  });
+
+  it.each([
+    { label: "read-only", props: { readOnly: true } },
+    { label: "idle", props: { mode: "idle" as const } },
+    { label: "ended", props: { mode: "ended" as const } },
+  ])("keeps cursor blink disabled for $label sessions", async ({ props }) => {
+    const { Terminal } = await import("@xterm/xterm");
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, cursorBlink: true }),
+    );
+
+    render(<SessionTerminal sessionId="s1" {...props} />);
+
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    expect(Terminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursorBlink: false,
+      }),
+    );
+  });
+
+  it("skips WebGL on desktop when renderer preference is canvas", async () => {
+    const { WebglAddon } = await import("@xterm/addon-webgl");
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, renderer: "canvas" }),
+    );
+
+    render(<SessionTerminal sessionId="s1" />);
+
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    await waitFor(() => expect(mockTerm.open).toHaveBeenCalled());
+    expect(WebglAddon).not.toHaveBeenCalled();
+  });
+
+  it("loads WebGL on desktop when renderer preference is auto", async () => {
+    const { WebglAddon } = await import("@xterm/addon-webgl");
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, renderer: "auto" }),
+    );
+
+    render(<SessionTerminal sessionId="s1" />);
+
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    await waitFor(() => expect(WebglAddon).toHaveBeenCalled());
+    expect(mockTerm.loadAddon).toHaveBeenCalledWith(
+      expect.objectContaining({ onContextLoss: expect.any(Function) }),
+    );
+  });
+
+  it("live-applies font and cursor preference changes from storage events", async () => {
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    mockFitAddon.fit.mockClear();
+
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({
+        fontFamily: "jetbrains-mono",
+        fontSize: 20,
+        cursorStyle: "bar",
+        cursorBlink: false,
+        renderer: "canvas",
+      }),
+    );
+    window.dispatchEvent(new StorageEvent("storage", { key: TERMINAL_PREFERENCES_KEY }));
+
+    await waitFor(() => {
+      expect(mockTerm.options).toMatchObject({
+        fontFamily:
+          '"JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, SFMono-Regular, monospace',
+        fontSize: 20,
+        cursorStyle: "bar",
+        cursorBlink: false,
+      });
+    });
+    expect(mockFitAddon.fit).toHaveBeenCalled();
+  });
+
+  it("ignores unrelated storage events when live-applying preferences", async () => {
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    mockFitAddon.fit.mockClear();
+
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, fontSize: 22 }),
+    );
+    window.dispatchEvent(new StorageEvent("storage", { key: "unrelated" }));
+
+    expect(mockTerm.options.fontSize).not.toBe(22);
+    expect(mockFitAddon.fit).not.toHaveBeenCalled();
   });
 
   it("renders the Read-only badge when readOnly", async () => {
