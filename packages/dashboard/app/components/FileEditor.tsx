@@ -21,6 +21,28 @@ interface FileEditorProps {
   toolbarActionsId?: string;
 }
 
+const FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY = "fn-file-editor-markdown-preview";
+
+function readBooleanPref(key: string, defaultValue: boolean): boolean {
+  if (typeof window === "undefined") return defaultValue;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return defaultValue;
+    return raw === "true";
+  } catch {
+    return defaultValue;
+  }
+}
+
+function writeBooleanPref(key: string, value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // ignore storage failures (quota, private mode, etc.)
+  }
+}
+
 function isMarkdownFile(filePath?: string): boolean {
   if (!filePath) return false;
   const lowerPath = filePath.toLowerCase();
@@ -47,7 +69,11 @@ export function FileEditor({
   toolbarActionsId: externalToolbarActionsId,
 }: FileEditorProps) {
   const { t } = useTranslation("app");
-  const [showPreview, setShowPreview] = useState(false);
+  /*
+   * FNXC:FileViewer 2026-06-17-01:22:
+   * The editable markdown file viewer must remember the user's Edit/Preview choice across file opens and browser sessions via localStorage, while first load still defaults to Edit and readOnly force-preview must not mutate the stored editable preference.
+   */
+  const [showPreview, setShowPreview] = useState<boolean>(() => readBooleanPref(FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY, false));
   const [wordWrap, setWordWrap] = useState(true);
   const [internalExpanded, setInternalExpanded] = useState(false);
   const isControlled = toolbarExpanded !== undefined;
@@ -84,6 +110,10 @@ export function FileEditor({
       setInternalExpanded((prev) => !prev);
     }
   }, [isControlled]);
+
+  useEffect(() => {
+    writeBooleanPref(FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY, showPreview);
+  }, [showPreview]);
 
   useEffect(() => {
     if (!editorHostRef.current || effectiveShowPreview) {

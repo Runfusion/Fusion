@@ -1,11 +1,25 @@
 import { useState } from "react";
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { FileEditor } from "../FileEditor";
 
 describe("FileEditor", () => {
+  const markdownPreviewStorageKey = "fn-file-editor-markdown-preview";
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+
   const getEditorView = () => {
     const editor = document.querySelector(".cm-editor") as HTMLElement | null;
     if (!editor) {
@@ -235,6 +249,80 @@ describe("FileEditor", () => {
       expandEditorOptions();
       expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
+    });
+
+    it("defaults editable markdown files to edit mode before a preference exists", () => {
+      render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+
+    it("persists preview mode across fresh editable markdown mounts", async () => {
+      const { unmount } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
+      fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+
+      await waitFor(() => expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("true"));
+      unmount();
+
+      render(<FileEditor content="# Next" onChange={vi.fn()} filePath="next.md" />);
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-codemirror")).not.toBeInTheDocument();
+    });
+
+    it("persists edit mode after preview was previously stored", async () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "true");
+      const { unmount } = render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />);
+      expandEditorOptions();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /edit mode/i }));
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      await waitFor(() => expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("false"));
+      unmount();
+
+      render(<FileEditor content="# Next" onChange={vi.fn()} filePath="next.md" />);
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+
+    it("always previews readOnly markdown without overwriting the editable preference", async () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "false");
+      const { unmount } = render(<FileEditor content="# Read only" onChange={vi.fn()} filePath="readme.md" readOnly />);
+
+      expect(document.querySelector(".file-editor-preview.markdown-body")).toBeInTheDocument();
+      await waitFor(() => expect(window.localStorage.getItem(markdownPreviewStorageKey)).toBe("false"));
+      unmount();
+
+      render(<FileEditor content="# Editable" onChange={vi.fn()} filePath="readme.md" />);
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+    });
+
+    it("ignores the markdown preview preference for non-markdown files", () => {
+      window.localStorage.setItem(markdownPreviewStorageKey, "true");
+      render(<FileEditor content="const x = 1;" onChange={vi.fn()} filePath="script.ts" />);
+
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
+      expandEditorOptions();
+      expect(screen.queryByRole("button", { name: /edit mode/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /preview mode/i })).not.toBeInTheDocument();
+    });
+
+    it("falls back to edit mode when localStorage is unavailable", () => {
+      vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+        throw new Error("localStorage unavailable");
+      });
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new Error("localStorage unavailable");
+      });
+
+      expect(() => render(<FileEditor content="# Hello" onChange={vi.fn()} filePath="readme.md" />)).not.toThrow();
+      expect(document.querySelector(".file-editor-codemirror")).toBeInTheDocument();
+      expect(document.querySelector(".file-editor-preview.markdown-body")).not.toBeInTheDocument();
     });
   });
 
