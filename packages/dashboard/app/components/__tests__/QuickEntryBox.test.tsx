@@ -28,6 +28,39 @@ const TEST_PROJECT_ID = "proj-123";
 const QUICK_ENTRY_STORAGE_KEY = scopedKey("kb-quick-entry-text", TEST_PROJECT_ID);
 const QUICK_ENTRY_BOX_CSS = readFileSync("app/components/QuickEntryBox.css", "utf8");
 
+const originalWindowInnerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+const originalWindowMatchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+const originalDocumentVisibilityStateDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+const originalCreateObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+const originalRevokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+
+function restoreDescriptor(target: object, property: PropertyKey, descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(target, property, descriptor);
+    return;
+  }
+
+  delete (target as Record<PropertyKey, unknown>)[property];
+}
+
+function restoreQuickEntryTestGlobals() {
+  restoreDescriptor(window, "innerWidth", originalWindowInnerWidthDescriptor);
+  restoreDescriptor(window, "matchMedia", originalWindowMatchMediaDescriptor);
+  restoreDescriptor(document, "visibilityState", originalDocumentVisibilityStateDescriptor);
+  restoreDescriptor(URL, "createObjectURL", originalCreateObjectURLDescriptor);
+  restoreDescriptor(URL, "revokeObjectURL", originalRevokeObjectURLDescriptor);
+}
+
+function expectQuickEntryTestGlobalsRestored() {
+  expect(Object.getOwnPropertyDescriptor(window, "innerWidth")).toEqual(originalWindowInnerWidthDescriptor);
+  expect(Object.getOwnPropertyDescriptor(window, "matchMedia")).toEqual(originalWindowMatchMediaDescriptor);
+  expect(Object.getOwnPropertyDescriptor(document, "visibilityState")).toEqual(
+    originalDocumentVisibilityStateDescriptor,
+  );
+  expect(Object.getOwnPropertyDescriptor(URL, "createObjectURL")).toEqual(originalCreateObjectURLDescriptor);
+  expect(Object.getOwnPropertyDescriptor(URL, "revokeObjectURL")).toEqual(originalRevokeObjectURLDescriptor);
+}
+
 function quickEntryMobileActionsTouchRule() {
   return (
     QUICK_ENTRY_BOX_CSS.match(
@@ -336,6 +369,23 @@ describe("QuickEntryBox", () => {
     });
     vi.useRealTimers();
     localStorage.clear();
+    restoreQuickEntryTestGlobals();
+  });
+
+  /*
+  FNXC:DashboardTestIsolation 2026-06-16-21:31:
+  QuickEntryBox runs in broad dashboard jsdom workers, so viewport, visibility, and object-URL mocks must restore their original descriptors after every test.
+  This keeps mobile `innerWidth`/`matchMedia` state from flipping later disclosure `aria-expanded` assertions under sibling-file load.
+  */
+  it("restores jsdom globals mutated by viewport and URL helpers", () => {
+    mockMobileViewport();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn() });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: vi.fn() });
+
+    restoreQuickEntryTestGlobals();
+
+    expectQuickEntryTestGlobalsRestored();
   });
 
   it("renders textarea with placeholder", () => {

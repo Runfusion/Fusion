@@ -236,16 +236,15 @@ FNXC:DashboardTestQuarantine 2026-06-14-17:01:
 FN-6454 applied the quarantine deletion ratchet to every dashboard test quarantined on 2026-06-14.
 Keep this list empty until a new flaky dashboard test is quarantined with a matching ledger entry.
 
-FNXC:DashboardTestQuarantine 2026-06-16-18:59:
-FN-6496 verification observed QuickEntryBox expanded-mode assertions fail only in the workspace gate while an isolated file rerun passed.
-Quarantine the file under the deletion ratchet instead of appeasing timing/state leakage with retries or widened waits.
+FNXC:DashboardTestQuarantine 2026-06-16-21:31:
+FN-6514 rescued QuickEntryBox before the 2026-06-30 deletion deadline by restoring its mutated jsdom viewport, visibility, and object-URL globals in file teardown.
+Keep it out of this exclude list so the broad app backfill lane exercises its aria-expanded regression coverage without quarantine drift.
 
 FNXC:DashboardTestQuarantine 2026-06-16-19:21:
 FN-6496 merge verification observed github-tracking-hook fail during the changed-test backfill shard with temp-directory cleanup ENOTEMPTY, then pass on isolated rerun.
 Quarantine the cleanup-flaky file under the deletion ratchet rather than changing production or test timing outside the chat-streaming scope.
 */
 const quarantinedDashboardTests: string[] = [
-  "app/components/__tests__/QuickEntryBox.test.tsx",
   "src/__tests__/github-tracking-hook.test.ts",
 ];
 
