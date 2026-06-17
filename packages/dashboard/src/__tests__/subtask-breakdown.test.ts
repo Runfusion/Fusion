@@ -33,8 +33,10 @@ import {
   InvalidSessionStateError,
   setAiSessionStore,
   stopSubtaskGeneration,
+  subtaskStreamManager,
   SubtaskStreamManager,
   GENERATION_TIMEOUT_MS,
+  generationGuard,
 } from "../subtask-breakdown.js";
 
 const UUID_REGEX =
@@ -921,10 +923,43 @@ describe("SessionNotFoundError", () => {
 });
 
 describe("subtask generation timeout / abort", () => {
-  it("marks the session as error and stops the prompt() promise when generation exceeds GENERATION_TIMEOUT_MS", async () => {
+  it("marks the session as error and broadcasts a terminal error when createFnAgent construction stalls", async () => {
+    vi.useFakeTimers();
+
+    mockCreateFnAgent.mockImplementation(async () => {
+      await new Promise<never>(() => undefined);
+    });
+
+    const created = await createSubtaskSession(
+      "Hung subtask agent construction",
+      undefined,
+      "/tmp/project",
+    );
+    const events: Array<{ type: string; data?: unknown }> = [];
+    const unsubscribe = subtaskStreamManager.subscribe(created.sessionId, (event) => {
+      events.push(event);
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSubtaskSession(created.sessionId)?.status).toBe("generating");
+
+    await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const after = getSubtaskSession(created.sessionId);
+    expect(after?.status).toBe("error");
+    expect(after?.error).toMatch(/timed out/i);
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", data: expect.stringMatching(/timed out/i) }));
+
+    unsubscribe();
+    vi.useRealTimers();
+  });
+
+  it("marks the session as error and broadcasts a terminal error when prompt() stalls", async () => {
     vi.useFakeTimers();
 
     let resolveHungPrompt: (() => void) | undefined;
+    const dispose = vi.fn();
     const hungPromptCallable = vi.fn(async () => {
       // Simulate a stalled provider stream that never terminates on its own.
       await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
@@ -935,7 +970,7 @@ describe("subtask generation timeout / abort", () => {
       session: {
         state: { messages: [] },
         prompt: hungPromptCallable,
-        dispose: vi.fn(),
+        dispose,
       },
     }));
 
@@ -944,6 +979,10 @@ describe("subtask generation timeout / abort", () => {
       undefined,
       "/tmp/project",
     );
+    const events: Array<{ type: string; data?: unknown }> = [];
+    const unsubscribe = subtaskStreamManager.subscribe(created.sessionId, (event) => {
+      events.push(event);
+    });
 
     // Yield once so startSubtaskGeneration's microtasks run before we advance time.
     await Promise.resolve();
@@ -956,11 +995,139 @@ describe("subtask generation timeout / abort", () => {
     const after = getSubtaskSession(created.sessionId);
     expect(after?.status).toBe("error");
     expect(after?.error).toMatch(/timed out/i);
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", data: expect.stringMatching(/timed out/i) }));
 
     // The hung prompt is still pending; release it so its microtask completes.
     resolveHungPrompt?.();
     await vi.advanceTimersByTimeAsync(0);
 
+    expect(dispose).toHaveBeenCalled();
+    unsubscribe();
+    vi.useRealTimers();
+  });
+
+  it("keeps other subtask sessions responsive while one agent construction is stalled", async () => {
+    vi.useFakeTimers();
+
+    mockCreateFnAgent
+      .mockImplementationOnce(async () => {
+        await new Promise<never>(() => undefined);
+      })
+      .mockImplementationOnce(async () => createMockSubtaskAgent(
+        JSON.stringify({
+          subtasks: [
+            {
+              id: "subtask-responsive",
+              title: "Responsive session completed",
+              description: "The second session should not wait for the first hung construction.",
+              suggestedSize: "S",
+              dependsOn: [],
+            },
+          ],
+        }),
+      ));
+
+    const stalled = await createSubtaskSession(
+      "Hung construction should not monopolize generation",
+      undefined,
+      "/tmp/project",
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSubtaskSession(stalled.sessionId)?.status).toBe("generating");
+    expect(generationGuard.has(stalled.sessionId)).toBe(true);
+
+    const responsive = await createSubtaskSession(
+      "Second subtask session should complete",
+      undefined,
+      "/tmp/project",
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    const responsiveSession = getSubtaskSession(responsive.sessionId);
+    expect(responsiveSession?.status).toBe("complete");
+    expect(responsiveSession?.subtasks).toEqual([
+      expect.objectContaining({ id: "subtask-responsive" }),
+    ]);
+    expect(generationGuard.has(responsive.sessionId)).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getSubtaskSession(stalled.sessionId)?.status).toBe("error");
+    expect(generationGuard.has(stalled.sessionId)).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it("replays terminal timeout errors to late subscribers and still allows retry", async () => {
+    vi.useFakeTimers();
+
+    mockCreateFnAgent.mockImplementationOnce(async () => {
+      await new Promise<never>(() => undefined);
+    });
+
+    const created = await createSubtaskSession(
+      "Hung construction with late subscriber",
+      undefined,
+      "/tmp/project",
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const errored = getSubtaskSession(created.sessionId);
+    expect(errored?.status).toBe("error");
+    expect(errored?.error).toMatch(/timed out/i);
+    expect(generationGuard.has(created.sessionId)).toBe(false);
+
+    const bufferedEvents = subtaskStreamManager.getBufferedEvents(created.sessionId, 0);
+    expect(bufferedEvents).toContainEqual(
+      expect.objectContaining({
+        event: "error",
+        data: JSON.stringify(errored?.error),
+      }),
+    );
+
+    const errorEventId = bufferedEvents.find((event) => event.event === "error")?.id;
+    expect(errorEventId).toBeGreaterThan(0);
+    expect(subtaskStreamManager.getBufferedEvents(created.sessionId, (errorEventId ?? 0) - 1)).toContainEqual(
+      expect.objectContaining({ event: "error" }),
+    );
+    expect(subtaskStreamManager.getBufferedEvents(created.sessionId, errorEventId ?? 0)).toEqual([]);
+
+    const retryEvents: Array<{ type: string; data?: unknown }> = [];
+    const unsubscribe = subtaskStreamManager.subscribe(created.sessionId, (event) => {
+      retryEvents.push(event);
+    });
+
+    mockCreateFnAgent.mockImplementationOnce(async () => createMockSubtaskAgent(
+      JSON.stringify({
+        subtasks: [
+          {
+            id: "subtask-retry-success",
+            title: "Retry succeeds",
+            description: "Retry should use a fresh bounded generation after timeout.",
+            suggestedSize: "S",
+            dependsOn: [],
+          },
+        ],
+      }),
+    ));
+
+    await retrySubtaskSession(created.sessionId, "/tmp/project");
+    await vi.advanceTimersByTimeAsync(0);
+
+    const retried = getSubtaskSession(created.sessionId);
+    expect(retried?.status).toBe("complete");
+    expect(retried?.subtasks).toEqual([
+      expect.objectContaining({ id: "subtask-retry-success" }),
+    ]);
+    expect(retryEvents).toContainEqual(expect.objectContaining({ type: "subtasks" }));
+    expect(retryEvents).toContainEqual(expect.objectContaining({ type: "complete" }));
+    expect(generationGuard.has(created.sessionId)).toBe(false);
+
+    unsubscribe();
     vi.useRealTimers();
   });
 

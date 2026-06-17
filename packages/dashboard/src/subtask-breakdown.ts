@@ -9,7 +9,7 @@ import {
   createSessionDiagnostics,
   resetDiagnosticsSink,
 } from "./ai-session-diagnostics.js";
-import { GenerationGuard, isAbortError } from "./ai-session-timeout.js";
+import { GenerationGuard, createAbortError, isAbortError } from "./ai-session-timeout.js";
 
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
@@ -88,13 +88,13 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
  */
 export const GENERATION_TIMEOUT_MS = 90_000;
 
-const generationGuard = new GenerationGuard();
+export const generationGuard = new GenerationGuard();
 
 /** Minimal interface for the agent object created by createFnAgent */
 interface SubtaskAgent {
   session: {
     dispose?: () => void;
-    prompt: (input: string) => Promise<unknown>;
+    prompt: (input: string, options?: { signal?: AbortSignal }) => Promise<unknown>;
     state: { messages: Array<{ role: string; content?: string | Array<{ type: string; text: string }> }> };
   };
 }
@@ -452,42 +452,75 @@ async function generateSubtasks(
   const systemPrompt = resolvePrompt("subtask-breakdown-system", promptOverrides) || SUBTASK_BREAKDOWN_PROMPT;
 
   if (createFnAgent) {
-    const agent = await createFnAgent({
-      cwd,
-      systemPrompt,
-      tools: "readonly",
-      onThinking: (delta: string) => {
-        const current = sessions.get(sessionId);
-        if (!current) return;
-        current.thinkingOutput += delta;
-        current.updatedAt = new Date();
-        persistSubtaskThinking(sessionId, current.thinkingOutput);
-        subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: delta });
-      },
-      onText: (delta: string) => {
-        const current = sessions.get(sessionId);
-        if (!current) return;
-        current.thinkingOutput += delta;
-      },
-    });
-
-    session.agent = agent;
-
     await generationGuard.run(
       sessionId,
       GENERATION_TIMEOUT_MS,
       {
-        onTimeout: () => setSubtaskError(
-          sessionId,
-          "AI generation timed out. You can retry or start a new session.",
-        ),
-        onUserStop: () => setSubtaskError(
-          sessionId,
-          "Generation stopped by user. You can retry or start a new session.",
-        ),
+        onTimeout: () => {
+          disposeSubtaskAgentForRetry(session);
+          setSubtaskError(
+            sessionId,
+            "AI generation timed out. You can retry or start a new session.",
+          );
+        },
+        onUserStop: () => {
+          disposeSubtaskAgentForRetry(session);
+          setSubtaskError(
+            sessionId,
+            "Generation stopped by user. You can retry or start a new session.",
+          );
+        },
       },
-      async () => {
-        await agent.session.prompt(session.initialDescription);
+      async (abortSignal) => {
+        /*
+        FNXC:SubtaskBreakdown 2026-06-16-20:15:
+        FN-6511 requires the full subtask generation lifecycle to be timeout-bounded, including createFnAgent construction before prompt() starts. Keep construction and prompt inside one GenerationGuard entry so a model-registry or extension-discovery stall cannot pin the SSE session in generating forever.
+        */
+        const agentPromise = createFnAgent({
+          cwd,
+          systemPrompt,
+          tools: "readonly",
+          onThinking: (delta: string) => {
+            const current = sessions.get(sessionId);
+            if (!current) return;
+            current.thinkingOutput += delta;
+            current.updatedAt = new Date();
+            persistSubtaskThinking(sessionId, current.thinkingOutput);
+            subtaskStreamManager.broadcast(sessionId, { type: "thinking", data: delta });
+          },
+          onText: (delta: string) => {
+            const current = sessions.get(sessionId);
+            if (!current) return;
+            current.thinkingOutput += delta;
+          },
+        }) as Promise<SubtaskAgent>;
+
+        void agentPromise.then((lateAgent) => {
+          if (abortSignal.aborted) {
+            try {
+              lateAgent?.session?.dispose?.();
+            } catch {
+              // ignore late cleanup errors
+            }
+          }
+        }, () => undefined);
+
+        const agent = await agentPromise;
+        if (abortSignal.aborted) {
+          try {
+            agent?.session?.dispose?.();
+          } catch {
+            // ignore cleanup errors
+          }
+          throw createAbortError();
+        }
+        session.agent = agent;
+
+        await agent.session.prompt(session.initialDescription, { signal: abortSignal });
+
+        if (abortSignal.aborted) {
+          throw createAbortError();
+        }
 
         const messages = agent.session.state.messages as Array<{ role: string; content?: string | Array<{ type: string; text: string }> }>;
         const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
