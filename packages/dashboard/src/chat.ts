@@ -32,6 +32,7 @@ import { existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionEventBuffer } from "./sse-buffer.js";
+import { formatChatAttachmentContents, readChatAttachmentContents } from "./chat-attachment-content.js";
 
 import {
   createFnAgent as engineCreateFnAgent,
@@ -1215,6 +1216,7 @@ export class ChatManager {
           roomName: room.name,
           content: trimmedContent,
           latestUserMessageId: userMessage.id,
+          attachments,
           mentions,
           responder,
           modelProvider,
@@ -1271,6 +1273,7 @@ export class ChatManager {
     roomName: string;
     content: string;
     latestUserMessageId: string;
+    attachments?: ChatAttachment[];
     mentions: ChatMention[];
     responder: Agent;
     modelProvider?: string;
@@ -1301,7 +1304,14 @@ export class ChatManager {
 
     const roomCompactionSettings = await this.getRoomCompactionSettings();
     const roomMessages = this.chatStore.getRoomMessages(input.roomId, { limit: roomCompactionSettings.fetchLimit });
-    const roomPrompt = [
+    const { attachmentContents, imageContents } = await readChatAttachmentContents(
+      this.rootDir,
+      { kind: "room", roomId: input.roomId },
+      input.attachments,
+      diagnostics,
+    );
+    const attachmentContentBlock = formatChatAttachmentContents(attachmentContents);
+    const roomPromptParts = [
       `You are replying as ${input.responder.name} in room #${input.roomName}.`,
       "Reply to the latest user room message in the context of this shared room thread.",
       "Room transcript (oldest to newest, bounded):",
@@ -1311,7 +1321,11 @@ export class ChatManager {
       }),
       "Latest user message to answer:",
       input.content,
-    ].join("\n\n");
+    ];
+    if (attachmentContentBlock) {
+      roomPromptParts.push(attachmentContentBlock);
+    }
+    const roomPrompt = roomPromptParts.join("\n\n");
 
     const responderRuntimeModel = extractRuntimeModel(input.responder.runtimeConfig);
     const effectiveModelProvider = input.modelProvider ?? responderRuntimeModel.provider;
@@ -1354,7 +1368,11 @@ export class ChatManager {
     });
 
     try {
-      await enginePromptWithFallback(resolvedSession.session, roomPrompt);
+      await enginePromptWithFallback(
+        resolvedSession.session,
+        roomPrompt,
+        imageContents.length > 0 ? { images: imageContents } : undefined,
+      );
 
       type AgentMessage = { role?: string; type?: string; content?: string | Array<{ type?: string; text?: string }> };
       const messages = (resolvedSession.session.state.messages as AgentMessage[]) ?? [];
@@ -1449,6 +1467,10 @@ export class ChatManager {
     // CLI-agent-backed chat: a session that selected a cli-agent executor brokers
     // its composer sends to the live PTY (via the runner) rather than running the
     // model agent loop. The runner persists the user message + the transcript.
+    /*
+    FNXC:ChatAttachments 2026-06-16-20:00:
+    Attachment content inlining is intentionally limited to model-loop chat sessions. CLI-agent-backed chat sends to a live PTY, so changing it here would alter terminal input semantics instead of using promptWithFallback image/text options.
+    */
     if (session?.cliExecutorAdapterId && this.cliChatRunner) {
       const runner = this.cliChatRunner;
       try {
@@ -1647,12 +1669,19 @@ export class ChatManager {
           .map((attachment) => `${attachment.originalName} (${attachment.mimeType}, ${formatAttachmentSize(attachment.size)})`)
           .join(", ")}]`
         : "";
+      const { attachmentContents, imageContents } = await readChatAttachmentContents(
+        this.rootDir,
+        { kind: "session", sessionId },
+        attachments,
+        diagnostics,
+      );
+      const attachmentContentBlock = formatChatAttachmentContents(attachmentContents);
 
       // Send only the new user content. Prior turns are reloaded by the
       // pi/Claude CLI session via SessionManager.open() below — stuffing the
       // transcript back into the user message would balloon the on-disk
       // session every turn (and previously did, see chat-store.ts:setCliSessionFile).
-      const promptContent = [attachmentSummary, resolvedContent].filter(Boolean).join("\n\n");
+      const promptContent = [attachmentSummary, attachmentContentBlock, resolvedContent].filter(Boolean).join("\n\n");
 
       // Per-chat session continuity: the pi SessionManager (and, transitively,
       // the Claude CLI --resume session it owns) is keyed off the chat. On the
@@ -1797,7 +1826,11 @@ export class ChatManager {
       }
 
       // Send user message and get response
-      await enginePromptWithFallback(agentResult.session, promptContent);
+      await enginePromptWithFallback(
+        agentResult.session,
+        promptContent,
+        imageContents.length > 0 ? { images: imageContents } : undefined,
+      );
 
       if (abortController.signal.aborted) {
         return;

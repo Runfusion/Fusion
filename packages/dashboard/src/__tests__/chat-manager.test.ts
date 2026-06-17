@@ -8,6 +8,9 @@ FN-6444 confirmed this ChatManager API-path suite is deterministic under dashboa
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   ChatManager,
   __setBuildAgentChatPrompt,
@@ -80,6 +83,10 @@ const mockAgentStore = {
 
 function createChatManager(pluginRunner?: Record<string, unknown>, messageStore?: Record<string, unknown>): ChatManager {
   return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, pluginRunner as any, undefined, messageStore as any);
+}
+
+function createChatManagerForRoot(rootDir: string): ChatManager {
+  return new ChatManager(mockChatStore as any, rootDir, mockAgentStore as any);
 }
 
 function createChatManagerWithSettings(settings: {
@@ -1414,6 +1421,55 @@ describe("ChatManager.sendMessage", () => {
     expect(createOptions.systemPrompt).not.toContain("## Soul");
   });
 
+  it("inlines text attachments and forwards image attachments to the chat agent", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fn-chat-agent-attachments-"));
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    try {
+      await mkdir(join(rootDir, ".fusion", "chat-attachments", "chat-001"), { recursive: true });
+      await writeFile(join(rootDir, ".fusion", "chat-attachments", "chat-001", "note.txt"), "session attachment bytes");
+      await writeFile(join(rootDir, ".fusion", "chat-attachments", "chat-001", "image.png"), Buffer.from([9, 8, 7]));
+
+      __setCreateFnAgent(async () => ({
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Done" }] },
+        },
+      }));
+
+      const chatManager = createChatManagerForRoot(rootDir);
+      await chatManager.sendMessage("chat-001", "What is attached?", undefined, undefined, [
+        {
+          id: "att-text",
+          filename: "note.txt",
+          originalName: "note.txt",
+          mimeType: "text/plain",
+          size: 24,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+        {
+          id: "att-image",
+          filename: "image.png",
+          originalName: "image.png",
+          mimeType: "image/png",
+          size: 3,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+      ]);
+
+      expect(promptSpy).toHaveBeenCalledTimes(1);
+      const [promptArgument, promptOptions] = promptSpy.mock.calls[0] ?? [];
+      expect(promptArgument).toContain("[User attached: note.txt (text/plain, 24B), image.png (image/png, 3B)]");
+      expect(promptArgument).toContain("## Attachments");
+      expect(promptArgument).toContain("session attachment bytes");
+      expect(promptOptions).toEqual({
+        images: [{ type: "image", data: Buffer.from([9, 8, 7]).toString("base64"), mimeType: "image/png" }],
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it("sends only the new user message — prior turns come from the resumed CLI session, not the prompt", async () => {
     const promptSpy = vi.fn().mockResolvedValue(undefined);
 
@@ -2178,6 +2234,73 @@ describe("ChatManager generation isolation", () => {
     // The slot was correctly cleaned up by sendTwo (the most recent owner)
     // and not re-deleted/corrupted by sendOne's late finally.
     expect(chatManager.isGenerating("chat-001")).toBe(false);
+  });
+
+  it("sendRoomMessage inlines room text attachments and forwards room image attachments", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fn-chat-room-agent-attachments-"));
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    try {
+      await mkdir(join(rootDir, ".fusion", "chat-room-attachments", "room-1"), { recursive: true });
+      await writeFile(join(rootDir, ".fusion", "chat-room-attachments", "room-1", "room-note.txt"), "room attachment bytes");
+      await writeFile(join(rootDir, ".fusion", "chat-room-attachments", "room-1", "room-image.webp"), Buffer.from([5, 4, 3]));
+
+      (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team" });
+      (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([
+        { roomId: "room-1", agentId: "agent-001", role: "member", addedAt: "2026-01-01" },
+      ]);
+      (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({
+        id: input.role === "user" ? "user-room-msg" : "assistant-room-msg",
+        roomId: "room-1",
+        ...input,
+      }));
+
+      mockAgentStore.listAgents.mockResolvedValue([
+        { id: "agent-001", name: "Avery", role: "executor", state: "idle" },
+      ]);
+      mockAgentStore.getAgent.mockResolvedValue({ id: "agent-001", name: "Avery", role: "executor", state: "idle" });
+
+      __setCreateResolvedAgentSession(async () => ({
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Room answer" }] },
+        },
+        provider: "test",
+        model: "test",
+        fallbackInfo: undefined,
+      } as any));
+
+      const chatManager = createChatManagerForRoot(rootDir);
+      await chatManager.sendRoomMessage("room-1", "hello @Avery", [
+        {
+          id: "att-room-text",
+          filename: "room-note.txt",
+          originalName: "room-note.txt",
+          mimeType: "text/plain",
+          size: 21,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+        {
+          id: "att-room-image",
+          filename: "room-image.webp",
+          originalName: "room-image.webp",
+          mimeType: "image/webp",
+          size: 3,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+      ]);
+
+      expect(promptSpy).toHaveBeenCalledTimes(1);
+      const [promptArgument, promptOptions] = promptSpy.mock.calls[0] ?? [];
+      expect(promptArgument).toContain("Latest user message to answer:\n\nhello @Avery");
+      expect(promptArgument).toContain("## Attachments");
+      expect(promptArgument).toContain("room attachment bytes");
+      expect(promptOptions).toEqual({
+        images: [{ type: "image", data: Buffer.from([5, 4, 3]).toString("base64"), mimeType: "image/webp" }],
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("sendRoomMessage persists assistant room replies", async () => {
