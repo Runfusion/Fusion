@@ -1154,7 +1154,11 @@ export function QuickChatFAB({
   // slides down on top of it.
   const suppressVvShrinkRef = useRef(false);
   const isUserScrollingRef = useRef(false);
-  const previousOpenStateRef = useRef<{ isOpen: boolean; sessionId: string | null }>({ isOpen: false, sessionId: null });
+  const previousOpenStateRef = useRef<{ isOpen: boolean; sessionId: string | null; messagesLoading: boolean }>({
+    isOpen: false,
+    sessionId: null,
+    messagesLoading: false,
+  });
 
   // Pin the document at the top while the panel is open on mobile.
   // Otherwise iOS can leave window.scrollY > 0 (e.g. after the keyboard
@@ -1814,8 +1818,9 @@ export function QuickChatFAB({
 
   useLayoutEffect(() => {
     const threadId = roomThreadActive ? (roomsState.activeRoom?.id ?? null) : (activeSession?.id ?? null);
+    const threadMessagesLoading = roomThreadActive ? roomsState.messagesLoading : messagesLoading;
     const previousState = previousOpenStateRef.current;
-    previousOpenStateRef.current = { isOpen, sessionId: threadId };
+    previousOpenStateRef.current = { isOpen, sessionId: threadId, messagesLoading: threadMessagesLoading };
 
     if (!isOpen || !threadId) {
       return;
@@ -1823,15 +1828,23 @@ export function QuickChatFAB({
 
     const openingNow = !previousState.isOpen && isOpen;
     const sessionChangedWhileOpen = previousState.isOpen && previousState.sessionId !== threadId;
-    if (!openingNow && !sessionChangedWhileOpen) {
+    const messagesSettledAfterOpen = previousState.isOpen
+      && previousState.sessionId === threadId
+      && previousState.messagesLoading
+      && !threadMessagesLoading;
+    if (!openingNow && !sessionChangedWhileOpen && !messagesSettledAfterOpen) {
       return;
     }
 
     const messagesEl = messagesRef.current;
     if (!messagesEl) return;
 
+    /*
+    FNXC:QuickChatScroll 2026-06-17-01:06:
+    FN-6513 requires quick chat opens to land on the live tail after asynchronous messages settle across direct sessions and room threads, on desktop and mobile. Re-run the same anchor path on loading-to-loaded transitions so a bounded initial-open frame loop cannot finish against the loading placeholder and leave isUserScrolling suppressing tail auto-scroll.
+    */
     anchorToBottom(messagesEl);
-  }, [isOpen, activeSession?.id, anchorToBottom, roomThreadActive, roomsState.activeRoom?.id]);
+  }, [isOpen, activeSession?.id, anchorToBottom, messagesLoading, roomThreadActive, roomsState.activeRoom?.id, roomsState.messagesLoading]);
 
   useEffect(() => {
     if (!isMobile || !isOpen || !activeSession) {

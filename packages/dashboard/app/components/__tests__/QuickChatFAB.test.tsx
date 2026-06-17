@@ -1587,6 +1587,49 @@ describe("QuickChatFAB session-first UX", () => {
     expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
   });
 
+  it("FN-6513: keeps the live tail anchored while a response is streaming", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "msg-before-stream",
+          sessionId: "session-model",
+          role: "assistant",
+          content: "Before streaming",
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+      ],
+    });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onChunk?.("streaming answer");
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const messages = await screen.findByTestId("quick-chat-messages");
+    let scrollTopValue = 0;
+    const scrollHeightValue = 1400;
+    Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+    Object.defineProperty(messages, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    fireEvent.change(input, { target: { value: "Stream a reply" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    expect(await screen.findByTestId("quick-chat-streaming-message")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(scrollTopValue).toBe(scrollHeightValue);
+    });
+  });
+
   it("shows the streaming indicator instead of the loading placeholder while waiting for a long reply", async () => {
     const deferredMessages = createDeferredPromise<{ messages: never[] }>();
     mockFetchChatMessages.mockImplementation(() => deferredMessages.promise);
@@ -1774,6 +1817,139 @@ describe("QuickChatFAB session-first UX", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("quick-chat-jump-to-latest")).toBeNull();
     });
+  });
+
+  it("FN-6513: re-anchors a direct thread after async loading settles", async () => {
+    const deferredMessages = createDeferredPromise<{
+      messages: Array<{ id: string; sessionId: string; role: "assistant"; content: string; createdAt: string }>;
+    }>();
+    mockFetchChatMessages.mockImplementation(() => deferredMessages.promise);
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    await waitFor(() => expect(mockFetchChatMessages).toHaveBeenCalled());
+
+    const messages = await screen.findByTestId("quick-chat-messages");
+    let scrollTopValue = 0;
+    let scrollHeightValue = 120;
+    Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+    Object.defineProperty(messages, "clientHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(messages, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+
+    expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+    fireEvent.scroll(messages);
+    expect(screen.getByTestId("quick-chat-jump-to-latest")).toBeInTheDocument();
+
+    scrollHeightValue = 1400;
+    deferredMessages.resolve({
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `direct-msg-${index}`,
+        sessionId: "session-model",
+        role: "assistant" as const,
+        content: `Loaded direct message ${index}`,
+        createdAt: `2026-06-16T00:00:${String(index).padStart(2, "0")}.000Z`,
+      })),
+    });
+
+    await waitFor(() => {
+      expect(scrollTopValue).toBe(scrollHeightValue);
+    });
+  });
+
+  it("FN-6513: re-anchors a mobile room thread after async loading settles", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    const originalRaf = window.requestAnimationFrame;
+    const originalCancelRaf = window.cancelAnimationFrame;
+    const rafQueue: FrameRequestCallback[] = [];
+    window.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    });
+    window.cancelAnimationFrame = vi.fn();
+    const room = {
+      id: "room-6513",
+      name: "engineering",
+      slug: "engineering",
+      memberCount: 2,
+      createdAt: "2026-06-16T00:00:00.000Z",
+      updatedAt: "2026-06-16T00:00:10.000Z",
+    };
+    const roomMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `room-msg-${index}`,
+      roomId: room.id,
+      role: index % 2 === 0 ? "assistant" as const : "user" as const,
+      content: `Loaded room message ${index}`,
+      createdAt: `2026-06-16T00:00:${String(index).padStart(2, "0")}.000Z`,
+    }));
+    let finishRoomLoad: (() => void) | null = null;
+    mockUseAppSettings.mockReturnValue({ experimentalFeatures: { chatRooms: true } } as ReturnType<typeof useAppSettings>);
+    mockUseChatRooms.mockImplementation(() => {
+      const [messagesLoading, setMessagesLoading] = useState(true);
+      finishRoomLoad = () => setMessagesLoading(false);
+      return {
+        rooms: [room],
+        roomsLoading: false,
+        roomsError: null,
+        activeRoom: room,
+        activeRoomMembers: [],
+        messages: roomMessages,
+        messagesLoading,
+        selectRoom: vi.fn(),
+        createRoom: vi.fn(),
+        deleteRoom: vi.fn(),
+        sendRoomMessage: vi.fn(),
+        clearRoom: vi.fn(),
+        refreshRooms: vi.fn(),
+      };
+    });
+
+    try {
+      render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+      fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+      const messages = await screen.findByTestId("quick-chat-messages");
+      let scrollTopValue = 0;
+      let scrollHeightValue = 120;
+      Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+      Object.defineProperty(messages, "clientHeight", { configurable: true, get: () => 20 });
+      Object.defineProperty(messages, "scrollTop", {
+        configurable: true,
+        get: () => scrollTopValue,
+        set: (value: number) => {
+          scrollTopValue = value;
+        },
+      });
+
+      expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+      while (rafQueue.length > 0) {
+        const cb = rafQueue.shift();
+        cb?.(performance.now());
+      }
+      expect(scrollTopValue).toBe(scrollHeightValue);
+      scrollTopValue = 0;
+      fireEvent.scroll(messages);
+      expect(screen.getByTestId("quick-chat-jump-to-latest")).toBeInTheDocument();
+
+      scrollHeightValue = 1400;
+      await act(async () => {
+        finishRoomLoad?.();
+      });
+
+      await waitFor(() => {
+        expect(scrollTopValue).toBe(scrollHeightValue);
+      });
+    } finally {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCancelRaf;
+    }
   });
 
   it("FN-3910: anchors to live tail on initial controlled open", async () => {
