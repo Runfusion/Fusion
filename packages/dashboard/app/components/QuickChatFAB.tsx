@@ -1207,6 +1207,9 @@ export function QuickChatFAB({
   /*
   FNXC:QuickChatMobileResize 2026-06-16-18:14:
   FN-6498 requires the mobile fullscreen sheet to track visualViewport samples smoothly across iOS and Android. Keep iOS second-focus offsetTop compensation and keyboard-dismiss pre-grow, but avoid redundant same-sample resize/scroll writes that add layout thrash on Android Chrome interactive-widget=resizes-content.
+
+  FNXC:QuickChatMobileResize 2026-06-16-23:45:
+  FN-6503 requires the first Android open to re-sample visualViewport after the stealth-input to composer focus handoff. Android Chrome can settle the keyboard shrink without a later resize observed by this panel effect, so focusin runs an immediate synchronous apply plus a short settle tail while resize/scroll remain synchronous for iOS animation lock-step.
   */
   useLayoutEffect(() => {
     if (!isOpen) return;
@@ -1233,13 +1236,73 @@ export function QuickChatFAB({
       panel.style.setProperty("--vv-offset-top", `${nextSample.offsetTop}px`);
     };
 
-    apply();
+    const timeoutIds: number[] = [];
+    let rafId: number | null = null;
+    let pollDeadline = 0;
+    let lastTailSample: { height: number; offsetTop: number } | null = null;
+    let stableFrames = 0;
+
+    const cancelTailPoll = () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const pollTailFrame = () => {
+      apply();
+      const currentSample = { height: vv.height, offsetTop: vv.offsetTop || 0 };
+      if (
+        lastTailSample
+        && lastTailSample.height === currentSample.height
+        && lastTailSample.offsetTop === currentSample.offsetTop
+      ) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+        lastTailSample = currentSample;
+      }
+
+      if (stableFrames >= 2 || performance.now() > pollDeadline) {
+        rafId = null;
+        return;
+      }
+
+      rafId = window.requestAnimationFrame(pollTailFrame);
+    };
+
+    const scheduleTailUpdates = () => {
+      for (const delayMs of [50, 200, 500]) {
+        const timeoutId = window.setTimeout(apply, delayMs);
+        timeoutIds.push(timeoutId);
+      }
+
+      if (typeof window.requestAnimationFrame !== "function") return;
+      cancelTailPoll();
+      pollDeadline = performance.now() + 500;
+      lastTailSample = null;
+      stableFrames = 0;
+      rafId = window.requestAnimationFrame(pollTailFrame);
+    };
+
+    const applyWithTail = () => {
+      apply();
+      scheduleTailUpdates();
+    };
+
+    applyWithTail();
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", apply);
+    document.addEventListener("focusin", applyWithTail);
     return () => {
       suppressVvShrinkRef.current = false;
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
+      document.removeEventListener("focusin", applyWithTail);
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
+      cancelTailPoll();
       panel.style.removeProperty("--vv-height");
       panel.style.removeProperty("--vv-offset-top");
     };

@@ -143,13 +143,20 @@ async function driveQuickChatVisualViewport(
   visualViewport: VisualViewport,
   { height, offsetTop, eventType = "resize" }: { height: number; offsetTop: number; eventType?: "resize" | "scroll" },
 ) {
-  Object.defineProperties(visualViewport, {
-    height: { value: height, writable: true, configurable: true },
-    offsetTop: { value: offsetTop, writable: true, configurable: true },
-  });
+  setQuickChatVisualViewportSample(visualViewport, { height, offsetTop });
 
   await act(async () => {
     visualViewport.dispatchEvent(new Event(eventType));
+  });
+}
+
+function setQuickChatVisualViewportSample(
+  visualViewport: VisualViewport,
+  { height, offsetTop }: { height: number; offsetTop: number },
+) {
+  Object.defineProperties(visualViewport, {
+    height: { value: height, writable: true, configurable: true },
+    offsetTop: { value: offsetTop, writable: true, configurable: true },
   });
 }
 
@@ -1078,6 +1085,84 @@ describe("QuickChatFAB session-first UX", () => {
 
     styleWriteSpy.mockRestore();
     styleRemoveSpy.mockRestore();
+  });
+
+  it("FN-6503: re-samples Android first-open keyboard settle on composer focus handoff", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 280,
+      viewportHeight: 520,
+      viewportOffsetTop: 0,
+      keyboardOpen: true,
+    });
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0 });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const panel = await screen.findByTestId("quick-chat-panel");
+    const input = await screen.findByTestId("quick-chat-input");
+
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("800px");
+    setQuickChatVisualViewportSample(visualViewport, { height: 520, offsetTop: 0 });
+    fireEvent.focusIn(input);
+
+    await waitFor(() => {
+      expect(panel.style.getPropertyValue("--vv-height")).toBe("520px");
+    });
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByTestId("quick-chat-close"));
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("");
+
+    setQuickChatVisualViewportSample(visualViewport, { height: 800, offsetTop: 0 });
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const reopenedPanel = await screen.findByTestId("quick-chat-panel");
+    expect(reopenedPanel.style.getPropertyValue("--vv-height")).toBe("800px");
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 520, offsetTop: 0, eventType: "resize" });
+    expect(reopenedPanel.style.getPropertyValue("--vv-height")).toBe("520px");
+    expect(reopenedPanel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+  });
+
+  it("FN-6503: preserves iOS offsetTop compensation and desktop no-op viewport mirroring", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0 });
+
+    const rendered = render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const panel = await screen.findByTestId("quick-chat-panel");
+    const input = await screen.findByTestId("quick-chat-input");
+
+    setQuickChatVisualViewportSample(visualViewport, { height: 360, offsetTop: 24 });
+    fireEvent.focusIn(input);
+
+    await waitFor(() => {
+      expect(panel.style.getPropertyValue("--vv-height")).toBe("360px");
+      expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("24px");
+    });
+
+    rendered.unmount();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("desktop");
+    const desktopVisualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0, width: 1024 });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    const focusSpy = vi.spyOn(document.querySelector(".quick-chat-stealth-input") as HTMLInputElement, "focus");
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const desktopPanel = await screen.findByTestId("quick-chat-panel");
+    setQuickChatVisualViewportSample(desktopVisualViewport, { height: 520, offsetTop: 0 });
+    fireEvent.focusIn(desktopPanel);
+
+    expect(desktopPanel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(desktopPanel.style.getPropertyValue("--vv-offset-top")).toBe("");
+    expect(focusSpy).not.toHaveBeenCalled();
   });
 
   it("FN-6498: close while suppressing dismiss samples resets tracking for reopen", async () => {
