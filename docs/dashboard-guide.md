@@ -1232,7 +1232,7 @@ Manage project and global secrets directly inside **Settings → Project → Sec
 
 ### Lazy-Loaded Heavy Views
 
-These 19 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms chunks once on mount via `requestIdleCallback`. **Do not make these eager.**
+These 22 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`. `prefetchLazyViews()` warms App-level chunks once on mount via `requestIdleCallback`; AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`) are part of the same inventory. **Do not make these eager.**
 
 - `AgentsView`
 - `NodesView`
@@ -1249,7 +1249,10 @@ These 19 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null
 - `TodoView`
 - `GoalsView`
 - `StashRecoveryView`
+- `PullRequestView`
 - `SetupWizardModal`
+- `SettingsModal`
+- `WorkflowNodeEditor`
 - `PluginManager`
 - `PiExtensionsManager`
 - `AgentDetailView`
