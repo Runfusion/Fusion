@@ -51,6 +51,7 @@ export {
   settingsSchema,
   getDefaultProvider,
   getDefaultModelId,
+  getDisabledStages,
   getEnabledStages,
   getReconcileOnHooks,
   getReconcileIntervalMinutes,

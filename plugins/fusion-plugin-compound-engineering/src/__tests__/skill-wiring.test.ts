@@ -62,8 +62,27 @@ describe("session skill wiring", () => {
     },
   );
 
-  it("rejects debug launch cleanly when the stage is disabled", async () => {
+  it("ignores stale enabledStages snapshots so registered stages remain launchable", async () => {
     h.ctx.settings = { enabledStages: ["strategy", "ideate", "brainstorm", "plan", "work"] };
+    const factory = vi.fn(async () => ({
+      session: makeScriptedSession([{ type: "complete", data: { artifact: "# done" } }]),
+    }));
+    const orch = new CeOrchestrator({
+      ctx: h.ctx,
+      createInteractiveAiSession: factory,
+      projectRoot: h.projectRoot,
+      turnTimeoutMs: 5000,
+    });
+
+    for (const stageId of ["strategy", "work", "debug"]) {
+      await orch.start(stageId, { openingMessage: `launch ${stageId}` });
+    }
+
+    expect(factory).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects debug launch cleanly when the stage is disabled", async () => {
+    h.ctx.settings = { disabledStages: ["debug"] };
     const factory = vi.fn(async () => ({
       session: makeScriptedSession([{ type: "complete", data: { artifact: "# done" } }]),
     }));

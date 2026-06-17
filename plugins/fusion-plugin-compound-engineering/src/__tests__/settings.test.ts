@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { PluginSettingType } from "@fusion/plugin-sdk";
 import { listStages } from "../session/stage-registry.js";
 import {
-  DEFAULT_ENABLED_STAGES,
+  DEFAULT_DISABLED_STAGES,
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   DEFAULT_RECONCILE_INTERVAL_MINUTES,
   DEFAULT_RECONCILE_ON_HOOKS,
   getDefaultModelId,
   getDefaultProvider,
+  getDisabledStages,
   getEnabledStages,
   getReconcileIntervalMinutes,
   getReconcileOnHooks,
@@ -42,21 +43,21 @@ describe("compound engineering plugin settings schema", () => {
       [
         "defaultModelId",
         "defaultProvider",
-        "enabledStages",
+        "disabledStages",
         "reconcileIntervalMinutes",
         "reconcileOnHooks",
       ].sort(),
     );
     expect(settingsSchema.defaultProvider.group).toBe("Sessions");
     expect(settingsSchema.defaultModelId.group).toBe("Sessions");
-    expect(settingsSchema.enabledStages.group).toBe("Sessions");
+    expect(settingsSchema.disabledStages.group).toBe("Sessions");
     expect(settingsSchema.reconcileOnHooks.group).toBe("Sync");
     expect(settingsSchema.reconcileIntervalMinutes.group).toBe("Sync");
   });
 
-  it("defaults enabledStages to the full stage registry", () => {
-    expect(DEFAULT_ENABLED_STAGES).toEqual(listStages().map((s) => s.stageId));
-    expect(settingsSchema.enabledStages.defaultValue).toEqual(DEFAULT_ENABLED_STAGES);
+  it("defaults disabledStages to no explicit opt-outs", () => {
+    expect(DEFAULT_DISABLED_STAGES).toEqual([]);
+    expect(settingsSchema.disabledStages.defaultValue).toEqual(DEFAULT_DISABLED_STAGES);
   });
 
   it("uses documented literal defaults", () => {
@@ -72,9 +73,6 @@ describe("compound engineering plugin settings schema", () => {
     expect(DEFAULT_PROVIDER).toBe("");
     expect(getDefaultModelId(empty)).toBeUndefined();
     expect(DEFAULT_MODEL_ID).toBe("");
-    // getEnabledStages re-reads the LIVE registry default (so runtime-registered
-    // stages are launchable); DEFAULT_ENABLED_STAGES is the import-time snapshot
-    // used for the schema/manifest literal.
     expect(getEnabledStages(empty)).toEqual(listStages().map((s) => s.stageId));
     expect(getReconcileOnHooks(empty)).toBe(DEFAULT_RECONCILE_ON_HOOKS);
     expect(getReconcileIntervalMinutes(empty)).toBe(DEFAULT_RECONCILE_INTERVAL_MINUTES);
@@ -84,14 +82,15 @@ describe("compound engineering plugin settings schema", () => {
     const populated = {
       defaultProvider: "anthropic",
       defaultModelId: "claude-opus",
-      enabledStages: ["strategy", "plan"],
+      disabledStages: ["plan"],
       reconcileOnHooks: false,
       reconcileIntervalMinutes: 30,
     } satisfies Record<string, unknown>;
 
     expect(getDefaultProvider(populated)).toBe("anthropic");
     expect(getDefaultModelId(populated)).toBe("claude-opus");
-    expect(getEnabledStages(populated)).toEqual(["strategy", "plan"]);
+    expect(getDisabledStages(populated)).toEqual(["plan"]);
+    expect(getEnabledStages(populated)).toEqual(listStages().map((s) => s.stageId).filter((id) => id !== "plan"));
     expect(getReconcileOnHooks(populated)).toBe(false);
     expect(getReconcileIntervalMinutes(populated)).toBe(30);
   });
@@ -102,10 +101,18 @@ describe("compound engineering plugin settings schema", () => {
     expect(getReconcileIntervalMinutes({ reconcileIntervalMinutes: 7.9 })).toBe(7);
   });
 
+  it("ignores stale enabledStages snapshots when deriving launchable stages", () => {
+    expect(getEnabledStages({ enabledStages: ["strategy", "ideate", "brainstorm", "plan", "work"] })).toEqual(
+      listStages().map((s) => s.stageId),
+    );
+  });
+
   it("falls back to defaults for malformed values", () => {
     const liveDefault = listStages().map((s) => s.stageId);
-    expect(getEnabledStages({ enabledStages: "not-an-array" })).toEqual(liveDefault);
-    expect(getEnabledStages({ enabledStages: [] })).toEqual(liveDefault);
+    expect(getDisabledStages({ disabledStages: "not-an-array" })).toEqual([]);
+    expect(getDisabledStages({ disabledStages: [] })).toEqual([]);
+    expect(getEnabledStages({ disabledStages: "not-an-array" })).toEqual(liveDefault);
+    expect(getEnabledStages({ disabledStages: [] })).toEqual(liveDefault);
     expect(getDefaultProvider({ defaultProvider: "   " })).toBeUndefined();
     expect(getReconcileOnHooks({ reconcileOnHooks: "yes" })).toBe(DEFAULT_RECONCILE_ON_HOOKS);
   });

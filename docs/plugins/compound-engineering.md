@@ -123,8 +123,8 @@ Settings render under **Settings → Plugins → Compound Engineering**.
   the host default. Consumed by the orchestrator's factory call.
 - `defaultModelId` (string) — model within the provider; blank uses the host
   default. Consumed by the orchestrator's factory call.
-- `enabledStages` (string[], default = full registry) — only these stage IDs may
-  be launched; the orchestrator rejects others.
+- `disabledStages` (string[], default `[]`) — explicit opt-out list. Registered
+  stages launch by default; the orchestrator rejects only IDs listed here.
 
 **Sync**
 - `reconcileOnHooks` (boolean, default `true`) — auto-fire the reconcile sweep

@@ -89,7 +89,7 @@ describe("compound engineering plugin manifest", () => {
     const expectedKeys = [
       "defaultProvider",
       "defaultModelId",
-      "enabledStages",
+      "disabledStages",
       "reconcileOnHooks",
       "reconcileIntervalMinutes",
     ].sort();

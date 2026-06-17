@@ -190,7 +190,7 @@ grouped as follows. Every setting has a real consumption point in the plugin.
 |---|---|---|---|
 | **Default Session Provider** (`defaultProvider`) | string | _(host default)_ | Passed to the interactive-session factory as `defaultProvider`. Blank → host picks. |
 | **Default Session Model** (`defaultModelId`) | string | _(host default)_ | Passed to the factory as `defaultModelId`. Blank → host picks. |
-| **Enabled Stages** (`enabledStages`) | string[] | full registry | Only these stage IDs may be launched; the orchestrator rejects others. |
+| **Disabled Stages** (`disabledStages`) | string[] | `[]` | Explicit opt-out list. Registered stages launch by default, and the orchestrator rejects only IDs listed here. |
 
 ### Sync
 
@@ -200,5 +200,8 @@ grouped as follows. Every setting has a real consumption point in the plugin.
 | **Reconcile Cadence (minutes)** (`reconcileIntervalMinutes`) | number | `15` | Cadence hint for an on-demand refresh surface. Not a continuous poll loop. |
 
 Getters live in `src/settings.ts` (`getDefaultProvider`, `getDefaultModelId`,
-`getEnabledStages`, `getReconcileOnHooks`, `getReconcileIntervalMinutes`), each
-returning its default when the setting is absent.
+`getDisabledStages`, `getEnabledStages`, `getReconcileOnHooks`,
+`getReconcileIntervalMinutes`), each returning its default when the setting is
+absent. `getEnabledStages` remains a derived helper for the live registry minus
+explicit `disabledStages` opt-outs; stale persisted `enabledStages` snapshots are
+ignored.
