@@ -1482,8 +1482,11 @@ export class TaskExecutor {
   /**
    * FNXC:WorkflowLifecycle 2026-06-17-03:42:
    * FN-6568 separates pause provenance from the legacy pausedAborted hard-cancel bit. Merge-seam/internal aborts caused FN-6528/FN-6531/FN-6534/FN-6537 to look like pause/resume aborts and left mergeRetries=NULL, so handleGraphFailure must know whether the abort came from global pause, the merge seam, or a generic hard cancel before choosing operator-action parking.
+   *
+   * FNXC:WorkflowLifecycle 2026-06-17-23:31:
+   * FN-6625 adds completion-finalize provenance for the FN-6614 symptom where a completed/no-commit execution already handed off to in-review, then a trailing graph abort looked like a pause/resume engine abort and re-parked the task failed. Completion-finalize is sibling provenance to FN-6568 merge-seam, not operator pause intent.
    */
-  private pausedAbortProvenance = new Map<string, "global-pause" | "merge-seam" | "hard-cancel">();
+  private pausedAbortProvenance = new Map<string, "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize">();
   /** Tasks that had a dependency added mid-execution (abort + discard worktree). */
   private depAborted = new Set<string>();
   /** Tasks killed by stuck task detector. Value = shouldRequeue (budget not exhausted). */
@@ -1507,7 +1510,7 @@ export class TaskExecutor {
   /** Set of ephemeral spawned agent IDs with in-flight cleanup (prevents duplicate deletion attempts). */
   private pendingEphemeralDeletions = new Set<string>();
 
-  private markPausedAborted(taskId: string, provenance: "global-pause" | "merge-seam" | "hard-cancel" = "hard-cancel"): void {
+  private markPausedAborted(taskId: string, provenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" = "hard-cancel"): void {
     this.pausedAborted.add(taskId);
     this.pausedAbortProvenance.set(taskId, provenance);
   }
@@ -6407,7 +6410,7 @@ export class TaskExecutor {
   private async routeGraphMergeFailureToRetry(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
-    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | undefined,
+    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
   ): Promise<boolean> {
     if (!this.mergeRequester) return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
@@ -6436,11 +6439,13 @@ export class TaskExecutor {
       const pausedAborted = this.pausedAborted.has(task.id);
       const abortProvenance = this.pausedAbortProvenance.get(task.id);
       const mergeSeamAborted = abortProvenance === "merge-seam";
+      const completionFinalizeAborted = abortProvenance === "completion-finalize";
+      // FNXC:WorkflowLifecycle 2026-06-17-23:39: A real live pause still parks even if stale provenance says completion-finalize; completed handoff rows are expected to be unpaused.
       const genuinePauseAbort = Boolean(
         live.userPaused
           || abortProvenance === "global-pause"
           || (live.paused && !mergeSeamAborted)
-          || (pausedAborted && !mergeSeamAborted),
+          || (pausedAborted && !mergeSeamAborted && !completionFinalizeAborted),
       );
       if (genuinePauseAbort) {
         /*
@@ -6449,6 +6454,9 @@ export class TaskExecutor {
 
         FNXC:WorkflowLifecycle 2026-06-17-03:48:
         FN-6568: merge-seam aborts are not pause provenance. A non-paused merge-node failure must bypass this operator-action pause branch so FN-6528/FN-6531/FN-6534/FN-6537-style failures route to bounded auto-merge retry instead of being parked failed with mergeRetries=NULL.
+
+        FNXC:WorkflowLifecycle 2026-06-17-23:32:
+        FN-6625: completion-finalize aborts are teardown artifacts after a completed/no-commit execution has already advanced to in-review. Without excluding that provenance, the FN-6614 execute-node tail failure was mislabeled as an operator-action pause abort and re-parked failed.
         */
         const pauseProvenance = live.userPaused
           ? "explicit user pause"
@@ -8140,6 +8148,11 @@ export class TaskExecutor {
               executorLog.log(`${task.id} paused after completion (graceful session exit) — finalizing to in-review`);
               await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review");
               await this.persistTokenUsage(task.id);
+              /*
+              FNXC:WorkflowLifecycle 2026-06-17-23:33:
+              FN-6625: the completed/no-commit handoff may dispose graph execution after the task is already in-review. Mark that abort as completion-finalize so a trailing FN-6614-style graph failure resolves benignly instead of looking like a user/global pause; FN-6568 uses the same provenance seam for merge aborts.
+              */
+              this.markPausedAborted(task.id, "completion-finalize");
               await this.handoffTaskToReview(task, "paused-after-completion");
               this.clearCompletedTaskWatchdog(task.id);
               this.options.onComplete?.(task);
@@ -8686,6 +8699,11 @@ export class TaskExecutor {
           executorLog.log(`${task.id} paused after completion — finalizing to in-review`);
           await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, this.getRunContextFor(task.id));
           await this.persistTokenUsage(task.id);
+          /*
+          FNXC:WorkflowLifecycle 2026-06-17-23:33:
+          FN-6625: the completed/no-commit handoff may dispose graph execution after the task is already in-review. Mark that abort as completion-finalize so a trailing FN-6614-style graph failure resolves benignly instead of looking like a user/global pause; FN-6568 uses the same provenance seam for merge aborts.
+          */
+          this.markPausedAborted(task.id, "completion-finalize");
           await this.handoffTaskToReview(task, "paused-after-completion");
           this.options.onComplete?.(task);
         } else {

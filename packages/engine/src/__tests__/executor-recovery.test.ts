@@ -1087,7 +1087,68 @@ describe("TaskExecutor bounded recovery retries", () => {
     expect(store.handoffToReview).not.toHaveBeenCalled();
   });
 
-  it("surfaces pausedAborted in-review graph exits as workflow failures", async () => {
+  describe("completion-finalize abort classification (FN-6625)", () => {
+    /*
+    Surface Enumeration coverage:
+    - Classifier branch: completion-finalize provenance bypasses operator-action parking while hard-cancel, userPaused, and global-pause coverage remains in this suite.
+    - Abort provenance sources: the new completion-finalize value is asserted here; FN-6568 below covers merge-seam/global-pause and the hard-cancel test in this block preserves generic operator-cancel behavior.
+    - Completion-finalize paths: executor.ts marks both graceful-session-exit and finally-block handoffTaskToReview("paused-after-completion") sites; this direct classifier test reproduces the shared trailing graph failure.
+    - Failed-node identity: the symptom uses execute, but the production predicate keys on provenance/completion state, not a node-id allow-list.
+    - Column/progress states: in-review finalized-completion is benign; existing adjacent tests cover in-progress pause preservation and done/todo non-execution exits.
+    - Data states: userPaused true is covered above, paused true without userPaused is covered below, completion-finalize and hard-cancel are covered here, global-pause/merge-seam are covered in the FN-6568 block, and already-status/error-set guard is preserved here.
+    - Preserved semantics: genuine user/global pause parking, merge-seam retry routing, and genuine hard-cancel parking remain asserted without backward moveTask calls.
+    - No leftover shells: completion-finalize is stored in pausedAbortProvenance and cleared through the existing clearPausedAborted helper used by every cleanup site.
+    */
+    it("treats completion-finalize pausedAborted in-review graph exits as benign", async () => {
+    const store = createMockStore();
+    const steps = [
+      { name: "Preflight", status: "done" },
+      { name: "Implement", status: "done" },
+    ];
+    const task = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      status: undefined,
+      dependencies: [],
+      steps,
+      currentStep: 1,
+      log: [{ timestamp: new Date().toISOString(), action: "Execution paused after completion — finalizing to in-review" }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+    store.getTask.mockResolvedValue({
+      ...task,
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      status: undefined,
+      error: null,
+    });
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    (executor as any).markPausedAborted("FN-001", "completion-finalize");
+
+    await (executor as any).handleGraphFailure(task, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["execute"],
+    });
+
+    const messages = store.logEntry.mock.calls.map((call) => call[1]).join("\n");
+    expect(messages).toContain("Workflow graph run ended after task already advanced to 'in-review' — no further action needed");
+    expect(messages).not.toContain("engine abort during pause/resume");
+    expect(messages).not.toContain("operator action required");
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    );
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.handoffToReview).not.toHaveBeenCalled();
+  });
+
+  it("surfaces genuine hard-cancel pausedAborted in-review graph exits as workflow failures", async () => {
     const store = createMockStore();
     const steps = [
       { name: "Preflight", status: "pending" },
@@ -1181,6 +1242,101 @@ describe("TaskExecutor bounded recovery retries", () => {
     );
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.handoffToReview).not.toHaveBeenCalled();
+  });
+
+  it("preserves global-pause provenance as operator-action parking for execute-node in-review graph exits", async () => {
+    const store = createMockStore();
+    const task = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      status: undefined,
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "done" }],
+      currentStep: 1,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+    store.getTask.mockResolvedValue({
+      ...task,
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      status: undefined,
+      error: null,
+    });
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    (executor as any).markPausedAborted("FN-001", "global-pause");
+
+    await (executor as any).handleGraphFailure(task, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["execute"],
+    });
+
+    const expectedMessage = "Workflow graph failure surfaced after paused global pause in 'in-review' at node 'execute' — operator action required; retry or explicitly unpause/resume after inspecting the task";
+    const messages = store.logEntry.mock.calls.map((call) => call[1]).join("\n");
+    expect(messages).toContain("global pause");
+    expect(messages).toContain("operator action required");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { error: expectedMessage, status: "failed" }, undefined);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.handoffToReview).not.toHaveBeenCalled();
+  });
+
+  it("keeps genuine in-progress hard-cancel aborts active and pause-preserved", async () => {
+    const store = createMockStore();
+    const task = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      status: undefined,
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Task;
+    store.getTask.mockResolvedValue({
+      ...task,
+      column: "in-progress",
+      paused: false,
+      userPaused: false,
+      status: undefined,
+      error: null,
+    });
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const dispose = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    (executor as any).activeSessions.set("FN-001", { session: { abort, dispose, state: {} } });
+
+    await (executor as any).awaitAbortInFlightTaskWork("FN-001", "user move in-progress to todo", { userCanceled: true });
+    await (executor as any).handleGraphFailure(task, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["execute"],
+    });
+
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect((executor as any).userCanceledTaskIds.has("FN-001")).toBe(true);
+    expect((executor as any).pausedAbortProvenance.get("FN-001")).toBe("hard-cancel");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Workflow graph run ended while task is paused — pause state preserved",
+      undefined,
+      undefined,
+    );
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    );
+  });
+
   });
 
   it("keeps genuine in-progress user pauses benign even with partial step progress", async () => {
