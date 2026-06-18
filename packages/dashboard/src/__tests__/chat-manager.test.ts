@@ -20,6 +20,7 @@ import {
   chatStreamManager,
   __getChatDiagnostics,
   __setChatDiagnostics,
+  CHAT_ASK_QUESTION_GUIDANCE,
 } from "../chat.js";
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
@@ -1167,10 +1168,21 @@ describe("ChatManager.sendMessage", () => {
 
     await chatManager.sendMessage("chat-001", "Hello");
 
-    const customTools = createResolvedSession.mock.calls[0]?.[0]?.customTools ?? [];
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    const customTools = createOptions?.customTools ?? [];
     expect(customTools.map((tool: { name: string }) => tool.name)).toContain("fn_ask_question");
     expect(customTools.map((tool: { name: string }) => tool.name)).not.toContain("fn_send_message");
     expect(customTools.map((tool: { name: string }) => tool.name)).not.toContain("fn_read_messages");
+    expect(createOptions?.systemPrompt).toContain(CHAT_ASK_QUESTION_GUIDANCE);
+  });
+
+  it("guides chat agents to use ask-question cards for option sets", () => {
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("## Asking the User");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("fn_ask_question");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toMatch(/options|choices|alternatives/);
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("instead of listing options only in prose");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("single_select");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("multi_select");
   });
 
   it("uses the assigned built-in pi agent model when the chat session has no explicit model override", async () => {

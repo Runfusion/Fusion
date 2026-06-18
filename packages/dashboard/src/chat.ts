@@ -211,8 +211,11 @@ export const CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE = `## Messaging Semantics\n\nYo
 /**
  * FNXC:ChatAskQuestion 2026-06-17-13:17:
  * Only the dashboard chat lane registers `fn_ask_question`, so append this guidance during sendMessage prompt assembly instead of baking it into room-responder prompts that do not receive the tool.
+ *
+ * FNXC:ChatAskQuestion 2026-06-18-05:53:
+ * Agents presenting a set of options, choices, or alternatives should render them as `fn_ask_question` cards instead of prose so users can select an answer in chat.
  */
-export const CHAT_ASK_QUESTION_GUIDANCE = `## Asking the User\n\nWhen you need structured input, call \`fn_ask_question\` with one or more questions, then stop and wait for the user's next chat message.`;
+export const CHAT_ASK_QUESTION_GUIDANCE = `## Asking the User\n\nWhen you need structured input, or whenever you present options, choices, or a decision between alternatives, call \`fn_ask_question\` with one or more questions using the right shape (single_select, multi_select, confirm/yes-no, or text) instead of listing options only in prose, then stop and wait for the user's next chat message.`;
 
 /** Rate limiting window in milliseconds (1 minute) */
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;

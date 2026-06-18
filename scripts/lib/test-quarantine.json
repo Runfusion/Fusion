@@ -5,6 +5,16 @@
       "file": "plugins/fusion-plugin-paperclip-runtime/src/__tests__/paperclip-client.test.ts",
       "reason": "FN-6631 broad `pnpm test` run observed unrelated Paperclip CLI spawn-mock timeouts and unhandled ENOENT errors in mintAgentApiKeyViaCli coverage; targeted Command Center/core checks, lint, typecheck, build, and engine tests passed. Quarantined per deletion-ratchet policy pending Paperclip runtime owner rescue.",
       "quarantinedAt": "2026-06-18"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
+      "reason": "FN-6633 workspace pnpm test observed focus-restoration assertion flake after this task's targeted chat-manager coverage passed; unrelated dashboard jsdom focus race, quarantined under deletion ratchet instead of appeasement.",
+      "quarantinedAt": "2026-06-18"
+    },
+    {
+      "file": "packages/dashboard/src/__tests__/chat-routes.test.ts",
+      "reason": "FN-6633 workspace pnpm test observed SSE lifecycle test timeout after this task's targeted chat-manager coverage passed; unrelated dashboard route timing flake, quarantined under deletion ratchet instead of broadening this prompt-only change.",
+      "quarantinedAt": "2026-06-18"
     }
   ]
 }

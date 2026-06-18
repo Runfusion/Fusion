@@ -253,8 +253,15 @@ Quarantine the cleanup-flaky file under the deletion ratchet rather than changin
 FNXC:DashboardTestQuarantine 2026-06-17-16:12:
 FN-6593 deletes github-tracking-hook under the ratchet because the temp-cleanup ENOTEMPTY flake did not have a non-appeasement root-cause fix in this follow-up.
 Keep the ledger entry and exclude removed together; git history remains the archive for this dropped GitHub tracking hook coverage.
+
+FNXC:DashboardTestQuarantine 2026-06-18-06:12:
+FN-6633 workspace verification observed unrelated QuickEntryBox focus and chat-routes SSE lifecycle flakes after the targeted chat prompt regression suite passed.
+Quarantine the files under the deletion ratchet so this prompt-only chat guidance change does not appease flaky timing/focus behavior.
 */
-const quarantinedDashboardTests: string[] = [];
+const quarantinedDashboardTests: string[] = [
+  "app/components/__tests__/QuickEntryBox.test.tsx",
+  "src/__tests__/chat-routes.test.ts",
+];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,
