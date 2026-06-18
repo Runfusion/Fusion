@@ -64,6 +64,13 @@ function makeMessage(overrides: Partial<ChatMessage> & Pick<ChatMessage, "id" | 
   };
 }
 
+type StreamAppendHandlers = {
+  onText: (delta: string) => void;
+  onThinking: (delta: string) => void;
+  onToolStart: (data: { toolName: string; args?: Record<string, unknown> }) => void;
+  onToolEnd: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
+};
+
 const setDocumentVisibilityState = (state: DocumentVisibilityState) => {
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -2287,6 +2294,146 @@ describe("useQuickChat", () => {
         "proj-123",
         { lastEventId: 17 },
       );
+    });
+
+    it("FN-6632 preserves prior streamed chunks during QuickChat reattach", async () => {
+      const session = {
+        ...makeSession({ id: "session-001", agentId: "agent-001" }),
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "Hello ",
+          streamingThinking: "plan ",
+          toolCalls: [{ toolName: "read", status: "running" as const, isError: false }],
+          replayFromEventId: 17,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      let attachedHandlers: StreamAppendHandlers | undefined;
+      mockFetchResumeChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
+        attachedHandlers = handlers;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("Hello ");
+        expect(attachedHandlers).toBeDefined();
+      });
+
+      vi.useFakeTimers();
+      act(() => {
+        attachedHandlers?.onText("world");
+        attachedHandlers?.onText("!");
+        attachedHandlers?.onThinking("more");
+        attachedHandlers?.onToolEnd({ toolName: "read", isError: false, result: "done" });
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+        vi.advanceTimersToNextTimer();
+      });
+
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.streamingText).toBe("Hello world!");
+      expect(result.current.streamingThinking).toBe("plan more");
+      expect(result.current.streamingToolCalls).toEqual([
+        { toolName: "read", status: "completed", isError: false, result: "done" },
+      ]);
+      vi.useRealTimers();
+    });
+
+    it("FN-6632 preserves QuickChat chunks across selectSession and repeated reattach", async () => {
+      const generatingSession = {
+        ...makeSession({ id: "session-001", agentId: "agent-001" }),
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "Hello ",
+          streamingThinking: "plan ",
+          toolCalls: [],
+          replayFromEventId: 17,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      const otherSession = makeSession({ id: "session-002", agentId: "agent-002" });
+      const handlers: StreamAppendHandlers[] = [];
+      const closeFirstStream = vi.fn();
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockImplementation((_sessionId, nextHandlers) => {
+        handlers.push(nextHandlers);
+        return {
+          close: handlers.length === 1 ? closeFirstStream : vi.fn(),
+          isConnected: () => true,
+        };
+      });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.selectSession(generatingSession);
+      });
+
+      await waitFor(() => {
+        expect(result.current.streamingText).toBe("Hello ");
+        expect(handlers).toHaveLength(1);
+      });
+
+      vi.useFakeTimers();
+      act(() => {
+        handlers[0]?.onText("world");
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+      });
+      expect(result.current.streamingText).toBe("Hello world");
+      vi.useRealTimers();
+
+      await act(async () => {
+        await result.current.selectSession(otherSession);
+      });
+      expect(closeFirstStream).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await result.current.selectSession({
+          ...generatingSession,
+          inFlightGeneration: {
+            ...generatingSession.inFlightGeneration,
+            streamingText: "Hello world",
+            replayFromEventId: 18,
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.streamingText).toBe("Hello world");
+        expect(handlers).toHaveLength(2);
+      });
+
+      vi.useFakeTimers();
+      act(() => {
+        handlers[1]?.onText("!");
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+      });
+
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.streamingText).toBe("Hello world!");
+      expect(mockAttachChatStream).toHaveBeenLastCalledWith(
+        "session-001",
+        expect.any(Object),
+        "proj-123",
+        { lastEventId: 18 },
+      );
+      vi.useRealTimers();
     });
 
     it("FN-5104 reattaches once when selectSession refresh reveals generation from stale cache", async () => {

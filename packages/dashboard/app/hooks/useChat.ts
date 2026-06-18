@@ -557,6 +557,10 @@ export function useChat(
       void loadMessages(sessionId, { commitForStreamingAttach: true });
     }
     if (inFlightGeneration) {
+      /*
+      FNXC:ChatStreaming 2026-06-18-06:00:
+      Main chat paints the durable in-flight snapshot immediately for reattach UX, and passes the same snapshot into createChatStreamHandlers so the first replayed delta appends to accumulated text/thinking/tool calls instead of replacing the visible prefix.
+      */
       setStreamingText(inFlightGeneration.streamingText);
       setStreamingThinking(inFlightGeneration.streamingThinking);
       setStreamingToolCalls(inFlightGeneration.toolCalls);
@@ -566,6 +570,9 @@ export function useChat(
     const { handlers } = createChatStreamHandlers({
       sessionId,
       tempUserMessageId: "",
+      initialText: inFlightGeneration?.streamingText,
+      initialThinking: inFlightGeneration?.streamingThinking,
+      initialToolCalls: inFlightGeneration?.toolCalls,
       setStreamingText,
       setStreamingThinking,
       setStreamingToolCalls,

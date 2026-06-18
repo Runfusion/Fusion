@@ -95,6 +95,13 @@ function createDeferredPromise<T>() {
   return { promise, resolve, reject };
 }
 
+type StreamAppendHandlers = {
+  onText: (delta: string) => void;
+  onThinking: (delta: string) => void;
+  onToolStart: (data: { toolName: string; args?: Record<string, unknown> }) => void;
+  onToolEnd: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
+};
+
 const setDocumentVisibilityState = (state: DocumentVisibilityState) => {
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -3091,6 +3098,71 @@ describe("useChat", () => {
       });
     });
 
+    it("FN-6632 preserves prior streamed chunks during chat:session:updated reattach", async () => {
+      const session = makeSession({ id: "session-001", agentId: "agent-001", title: "Existing" });
+      const generatingSession = {
+        ...session,
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "Hello ",
+          streamingThinking: "plan ",
+          toolCalls: [{ toolName: "read", status: "running" as const, isError: false }],
+          replayFromEventId: 5,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      let attachedHandlers: StreamAppendHandlers | undefined;
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
+        attachedHandlers = handlers;
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession(session.id);
+      });
+
+      act(() => {
+        subscribeHandler["chat:session:updated"]?.({
+          data: JSON.stringify(generatingSession),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("Hello ");
+        expect(attachedHandlers).toBeDefined();
+      });
+
+      vi.useFakeTimers();
+      act(() => {
+        attachedHandlers?.onText("world");
+        attachedHandlers?.onText("!");
+        attachedHandlers?.onThinking("more");
+        attachedHandlers?.onToolEnd({ toolName: "read", isError: false, result: "done" });
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+        vi.advanceTimersToNextTimer();
+      });
+
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.streamingText).toBe("Hello world!");
+      expect(result.current.streamingThinking).toBe("plan more");
+      expect(result.current.streamingToolCalls).toEqual([
+        { toolName: "read", status: "completed", isError: false, result: "done" },
+      ]);
+      vi.useRealTimers();
+    });
+
     it("FN-6496 loads prior thread when auto-reattach effect observes refreshed generation", async () => {
       const session = makeSession({ id: "session-001", agentId: "agent-001", title: "Stale" });
       const priorThreadNewestFirst = [
@@ -3117,6 +3189,11 @@ describe("useChat", () => {
       mockFetchChatMessages
         .mockResolvedValueOnce({ messages: [] })
         .mockResolvedValueOnce({ messages: priorThreadNewestFirst });
+      let attachedHandlers: StreamAppendHandlers | undefined;
+      mockAttachChatStream.mockImplementation((_sessionId, nextHandlers) => {
+        attachedHandlers = nextHandlers;
+        return { close: vi.fn(), isConnected: () => true };
+      });
 
       const { result } = renderHook(() => useChat("proj-123"));
 
@@ -3145,6 +3222,16 @@ describe("useChat", () => {
           "msg-004",
         ]);
       });
+
+      vi.useFakeTimers();
+      act(() => {
+        attachedHandlers?.onText(" plus");
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+      });
+      expect(result.current.streamingText).toBe("refreshed partial plus");
+      vi.useRealTimers();
     });
 
     it("FN-6496 loads prior thread when reconnectSessionSilently reattaches after send suspension", async () => {
@@ -3834,6 +3921,101 @@ describe("useChat", () => {
         "proj-123",
         { lastEventId: 41 },
       );
+    });
+
+    it("FN-6632 preserves chunks across selectSession recovery and repeated reattach", async () => {
+      const generatingSession = {
+        ...makeSession({ id: "session-001", agentId: "agent-001", title: "Generating" }),
+        isGenerating: true,
+        inFlightGeneration: {
+          status: "generating" as const,
+          streamingText: "Hello ",
+          streamingThinking: "plan ",
+          toolCalls: [],
+          replayFromEventId: 5,
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+      };
+      const otherSession = makeSession({ id: "session-002", agentId: "agent-002", title: "Other" });
+      const handlers: StreamAppendHandlers[] = [];
+      const closeFirstStream = vi.fn();
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [generatingSession, otherSession] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockImplementation((_sessionId, nextHandlers) => {
+        handlers.push(nextHandlers);
+        return {
+          close: handlers.length === 1 ? closeFirstStream : vi.fn(),
+          isConnected: () => true,
+        };
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(2);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.streamingText).toBe("Hello ");
+        expect(handlers).toHaveLength(1);
+      });
+
+      vi.useFakeTimers();
+      act(() => {
+        handlers[0]?.onText("world");
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+      });
+      expect(result.current.streamingText).toBe("Hello world");
+      vi.useRealTimers();
+
+      act(() => {
+        result.current.selectSession("session-002");
+      });
+      expect(closeFirstStream).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        result.current.selectSession("session-001", {
+          ...generatingSession,
+          inFlightGeneration: {
+            ...generatingSession.inFlightGeneration,
+            streamingText: "Hello world",
+            streamingThinking: "plan next ",
+            replayFromEventId: 6,
+          },
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.streamingText).toBe("Hello world");
+        expect(handlers).toHaveLength(2);
+      });
+
+      vi.useFakeTimers();
+      act(() => {
+        handlers[1]?.onText("!");
+        handlers[1]?.onThinking("step");
+      });
+      act(() => {
+        vi.advanceTimersToNextTimer();
+        vi.advanceTimersToNextTimer();
+      });
+
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.streamingText).toBe("Hello world!");
+      expect(result.current.streamingThinking).toBe("plan next step");
+      expect(mockAttachChatStream).toHaveBeenLastCalledWith(
+        "session-001",
+        expect.any(Object),
+        "proj-123",
+        { lastEventId: 6 },
+      );
+      vi.useRealTimers();
     });
 
     it("sets isStreaming=true when selecting a session with isGenerating=true", async () => {

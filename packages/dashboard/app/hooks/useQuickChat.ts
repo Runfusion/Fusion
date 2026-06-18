@@ -368,6 +368,10 @@ export function useQuickChat(
       void loadMessagesForSession(sessionId, { commitForStreamingAttach: true });
     }
     if (inFlightGeneration) {
+      /*
+      FNXC:ChatStreaming 2026-06-18-06:01:
+      QuickChat must mirror main chat reattach semantics: paint the durable snapshot for the first frame and seed the handler accumulators from it so post-replay deltas continue the in-flight bubble instead of clobbering prior chunks.
+      */
       setStreamingText(inFlightGeneration.streamingText);
       setStreamingThinking(inFlightGeneration.streamingThinking);
       setStreamingToolCalls(inFlightGeneration.toolCalls);
@@ -377,6 +381,9 @@ export function useQuickChat(
     const { handlers } = createChatStreamHandlers({
       sessionId,
       tempUserMessageId: "",
+      initialText: inFlightGeneration?.streamingText,
+      initialThinking: inFlightGeneration?.streamingThinking,
+      initialToolCalls: inFlightGeneration?.toolCalls,
       setStreamingText,
       setStreamingThinking,
       setStreamingToolCalls,
