@@ -567,7 +567,7 @@ When an identity-bearing, non-ephemeral agent wakes with no assigned task and `r
 Guardrails:
 - Only unpaused, unassigned, unchecked-out todo tasks with satisfied dependencies are considered
 - Claims are rejected for terminal/paused/owned/conflicting tasks
-- Implementation-task backlog pickup is executor-only by default. Engineer-role agents may opt in through project setting `engineerBacklogAutoClaim` or per-agent `runtimeConfig.engineerBacklogAutoClaim`; the per-agent value overrides the project default in both directions.
+- Implementation-task backlog pickup is executor-only by default. Engineer-role agents may opt in through **Settings → Scheduling & Capacity → "Let engineer agents auto-claim backlog tasks"** (`settings.engineerBacklogAutoClaim`) or **Agents → Agent Detail → Settings → Heartbeat Settings → "Engineer Backlog Auto-Claim"** (`runtimeConfig.engineerBacklogAutoClaim`); the per-agent value overrides the project default in both directions. If a no-task engineer wake shows compatible backlog while this is disabled, delegate the work or create a coordination follow-up instead of treating the board as empty.
 - Explicit task routing/delegation is not affected by the backlog auto-claim opt-in gate.
 - Checkout safety is preserved (`checkout_conflict` paths are non-fatal skips)
 - On successful claim, the same heartbeat run switches into task-scoped execution (no nested run re-entry)
