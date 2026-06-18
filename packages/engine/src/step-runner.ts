@@ -238,7 +238,11 @@ export async function resetStepToBaseline(
   const { store, worktreePath, sessionRef } = deps;
   const reviewType = deps.reviewType ?? "code";
   const taskId = task.id;
-  const step = stepIndex + 1; // legacy log lines are 1-indexed
+  const step = stepIndex;
+  /*
+   * FNXC:StepReset 2026-06-17-00:00:
+   * RETHINK reset logs use the same 0-based Step N as fn_review_step and PROMPT.md so recovery tooling can correlate review verdicts, checkpoints, and reset events without off-by-one translation.
+   */
 
   // ── KTD-2 blast-radius guard — assert BEFORE mutating anything. ──────────
   if (deps.blastRadiusGuard) {

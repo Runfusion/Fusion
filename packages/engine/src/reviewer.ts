@@ -115,6 +115,9 @@ export interface ReviewOptions {
 
 /**
  * Spawn a reviewer agent to evaluate a worker's plan or code for a step.
+ *
+ * FNXC:StepNumbering 2026-06-17-00:00:
+ * `stepNumber` is display-only and must remain the same 0-based number shown in PROMPT.md (`### Step N:`). Review prompts, task logs, resume reconciliation, and loop-detection all compare this literal Step N string.
  */
 export async function reviewStep(
   cwd: string,

@@ -434,7 +434,7 @@ function detectPendingReviewBlock(
     .filter((action): action is string => Boolean(action));
 
   for (const stepIndex of inProgressStepIndices) {
-    const stepDisplay = stepIndex + 1;
+    const stepDisplay = stepIndex;
     const codeRequest = `code review requested for Step ${stepDisplay}`;
     const planRequest = `plan review requested for Step ${stepDisplay}`;
     const codeVerdictPrefix = `code review Step ${stepDisplay}:`;
@@ -485,7 +485,7 @@ export function evaluateTaskDoneRefusal(
     }
     pendingSteps.push(stepIndex);
     if (codeReviewVerdicts.get(stepIndex) === "REVISE") {
-      const reason = `Step ${stepIndex + 1} (${step.name}) has a pending code review verdict of REVISE`;
+      const reason = `Step ${stepIndex} (${step.name}) has a pending code review verdict of REVISE`;
       return {
         ok: false,
         refusalClass: "pending-code-review-revise",
@@ -918,7 +918,7 @@ export async function __runConfiguredCommandForTests(
 // ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
 
 const taskUpdateParams = Type.Object({
-  step: Type.Optional(Type.Number({ description: "Step number (1-indexed). Omit when updating only custom_fields/dependencies." })),
+  step: Type.Optional(Type.Number({ description: "Step number (0-indexed; matches the `### Step N:` numbers in PROMPT.md — Step 0 is Preflight). Omit when updating only custom_fields/dependencies." })),
   status: Type.Optional(Type.Union(
     STEP_STATUSES.map((s) => Type.Literal(s)),
     { description: "New status: pending, in-progress, done, or skipped. Required when step is set." },
@@ -1093,7 +1093,7 @@ export function parseWorkflowStepOutput(rawOutput: string): {
 }
 
 const reviewStepParams = Type.Object({
-  step: Type.Number({ description: "Step number to review" }),
+  step: Type.Number({ description: "Step number to review (0-indexed; matches the `### Step N:` numbers in PROMPT.md — Step 0 is Preflight)." }),
   type: Type.Union(
     [Type.Literal("plan"), Type.Literal("code")],
     { description: 'Review type: "plan" or "code"' },
@@ -1150,6 +1150,7 @@ If you genuinely cannot proceed (blocked on a dependency, missing information, o
 You have tools to report progress. The board updates in real-time.
 
 **Step lifecycle:**
+The \`step\` argument is 0-based and equals the literal \`### Step N:\` number in PROMPT.md (Step 0 is Preflight).
 - Before starting a step: \`fn_task_update(step=N, status="in-progress")\`
 - After completing a step: \`fn_task_update(step=N, status="done")\`
 - If skipping a step: \`fn_task_update(step=N, status="skipped")\`
@@ -5476,7 +5477,7 @@ export class TaskExecutor {
         const detail = await this.store.getTask(seamTask.id);
         // Worktree isolation (KTD-11): review the instance's OWN worktree when set.
         const worktreePath = active.worktreePath || detail.worktree || this.rootDir;
-        const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex + 1}`;
+        const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex}`;
         const promptContent = detail.prompt ?? "";
         // Merge per-task effective workflow settings (U3, KTD-3) so the validator
         // model-lane reads below pick up workflow values. Behavior-inert by default.
@@ -5487,7 +5488,7 @@ export class TaskExecutor {
           reviewStep(
             worktreePath,
             seamTask.id,
-            stepIndex + 1, // reviewStep is 1-indexed (matches fn_review_step)
+            stepIndex,
             stepName,
             config.type,
             promptContent,
@@ -5533,7 +5534,7 @@ export class TaskExecutor {
 
         await this.store.logEntry(
           seamTask.id,
-          `${config.type} step-review Step ${stepIndex + 1}: ${review.verdict}${config.advisory ? " (advisory)" : ""}`,
+          `${config.type} step-review Step ${stepIndex}: ${review.verdict}${config.advisory ? " (advisory)" : ""}`,
           review.summary,
         );
 
@@ -5548,12 +5549,12 @@ export class TaskExecutor {
               await this.updateStepGraph(seamTask.id, stepIndex, "done");
               await this.store.logEntry(
                 seamTask.id,
-                `Step ${stepIndex + 1} (${stepName}) marked done by step-review APPROVE (graph)`,
+                `Step ${stepIndex} (${stepName}) marked done by step-review APPROVE (graph)`,
               );
             }
           } catch (err) {
             reviewerLog.warn(
-              `${seamTask.id}: failed to mark Step ${stepIndex + 1} done after APPROVE: ${err instanceof Error ? err.message : String(err)}`,
+              `${seamTask.id}: failed to mark Step ${stepIndex} done after APPROVE: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
         }
@@ -7668,8 +7669,7 @@ export class TaskExecutor {
       // Build custom tools for the worker
       // Track the last code review verdict per step so we can enforce REVISE
       // (block fn_task_update status="done" until the agent re-reviews and gets APPROVE).
-      // Keyed by 0-indexed step (stepIndex). fn_task_update translates from
-      // its 1-indexed `step` parameter via `stepIndex = step - 1` (FN-3757).
+      // Keyed by the canonical 0-indexed step number used by PROMPT.md headings.
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
       let wasPaused = false;
@@ -8294,7 +8294,7 @@ export class TaskExecutor {
                 );
                 await this.store.logEntry(
                   task.id,
-                  `Agent finished without calling fn_task_done but Step ${pendingReviewBlock.stepIndex + 1} is blocked on pending review (${pendingReviewBlock.reason}) — skipping retry session`,
+                  `Agent finished without calling fn_task_done but Step ${pendingReviewBlock.stepIndex} is blocked on pending review (${pendingReviewBlock.reason}) — skipping retry session`,
                   undefined,
                   this.getRunContextFor(task.id),
                 );
@@ -9488,17 +9488,21 @@ export class TaskExecutor {
           };
         }
 
-        if (!Number.isInteger(step) || step < 1) {
+        if (!Number.isInteger(step) || step < 0) {
           return {
             content: [{
               type: "text" as const,
-              text: `Invalid step number: ${step}. Steps are 1-indexed.`,
+              text: `Invalid step number: ${step}. Steps are 0-indexed; Step 0 is Preflight.`,
             }],
             details: {},
           };
         }
 
-        const stepIndex = step - 1;
+        /*
+         * FNXC:StepNumbering 2026-06-17-00:00:
+         * FN-6607 makes fn_task_update.step the same 0-based number agents see in PROMPT.md (`### Step N:`) and TaskStore.updateStep uses internally. The prior `step - 1` conversion made Step 0 impossible to mark done and shifted every review/progress update one array slot early.
+         */
+        const stepIndex = step;
 
         if (status === "in-progress") {
           try {
@@ -9508,7 +9512,7 @@ export class TaskExecutor {
             );
             if (otherInProgressStepIndex !== -1) {
               executorLog.warn(
-                `${taskId}: fn_task_update marking step ${step} in-progress while step ${otherInProgressStepIndex + 1} is already in-progress`,
+                `${taskId}: fn_task_update marking step ${step} in-progress while step ${otherInProgressStepIndex} is already in-progress`,
               );
             }
           } catch (err) {
@@ -9519,7 +9523,7 @@ export class TaskExecutor {
         // Enforce code review REVISE: block advancing to "done" when the last
         // code review for this step returned REVISE. The agent must fix the
         // issues and call fn_review_step(type="code") again before proceeding.
-        // FN-3757: verdict/checkpoint maps are keyed by 0-indexed stepIndex.
+        // FN-6607: verdict/checkpoint maps are keyed directly by the 0-indexed tool step.
         if (status === "done" && codeReviewVerdicts.get(stepIndex) === "REVISE") {
           return {
             content: [{
@@ -9576,7 +9580,7 @@ export class TaskExecutor {
           return {
             content: [{
               type: "text" as const,
-              text: `Invalid step number: ${step}. This task has ${task.steps.length} step(s) (1-indexed).`,
+              text: `Invalid step number: ${step}. This task has ${task.steps.length} step(s) (0-indexed; valid range 0-${Math.max(0, task.steps.length - 1)}).`,
             }],
             details: {},
           };
@@ -9596,7 +9600,7 @@ export class TaskExecutor {
         ) {
           const leafId = sessionRef.current.sessionManager.getLeafId();
           if (leafId) {
-            // FN-3757: verdict/checkpoint maps are keyed by 0-indexed stepIndex.
+            // FN-6607: verdict/checkpoint maps are keyed directly by the 0-indexed tool step.
             stepCheckpoints.set(stepIndex, leafId);
           }
         }
@@ -10487,18 +10491,16 @@ export class TaskExecutor {
       parameters: reviewStepParams,
       execute: async (_toolCallId: string, params: Static<typeof reviewStepParams>) => {
         const { step, type: reviewType, step_name, baseline } = params;
-        // FN-4990: fn_review_step is externally 1-indexed; normalize to the
-        // internal 0-index convention used by FN-3757 step verdict/checkpoint maps.
-        const stepIndex = step - 1;
+        const stepIndex = step;
         const currentTask = await store.getTask(taskId);
         const taskSteps = currentTask.steps.length > 0 ? currentTask.steps : detail.steps;
-        if (!Number.isInteger(step) || step < 1 || stepIndex >= taskSteps.length) {
+        if (!Number.isInteger(step) || step < 0 || step >= taskSteps.length) {
           return {
-            content: [{ type: "text" as const, text: `Invalid step ${step}. Task has ${taskSteps.length} step(s) and fn_review_step is 1-indexed.` }],
+            content: [{ type: "text" as const, text: `Invalid step ${step}. Task has ${taskSteps.length} step(s) and fn_review_step is 0-indexed; Step 0 is Preflight.` }],
             details: {
               error: "invalid_step",
               step,
-              maxStep: taskSteps.length,
+              maxStep: taskSteps.length > 0 ? taskSteps.length - 1 : -1,
             },
           };
         }
@@ -10590,7 +10592,8 @@ export class TaskExecutor {
           stuckDetector?.recordProgress(taskId);
 
           // Track code review verdicts for enforcement. Plan reviews remain
-          // advisory — only code reviews write to the verdict map.
+          // advisory — only code reviews write to the verdict map. FN-6607 keeps
+          // the map keyed by the same 0-indexed `step` value the tool receives.
           if (reviewType === "code") {
             if (result.verdict === "REVISE") {
               codeReviewVerdicts.set(stepIndex, "REVISE");
@@ -15103,7 +15106,7 @@ You are running in an **isolated git worktree**. This means:
 ${hasProgress
     ? `Resume from Step ${task.currentStep}. Do NOT redo completed steps.`
     : "Start with Step 0 (Preflight). Work through each step in order."}
-Use \`fn_task_update\` to report progress on every step transition.
+Use \`fn_task_update\` to report progress on every step transition; its \`step\` value is 0-based and equals the \`### Step N:\` number in PROMPT.md.
 Use \`fn_task_log\` for important actions and decisions.
 Use \`fn_task_create\` for truly separate follow-up work, including unrelated/pre-existing broad-suite failures.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — <short summary>"${sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : ""}${authorArg}\`

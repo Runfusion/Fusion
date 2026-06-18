@@ -68,7 +68,7 @@ describe("FN-4851 REVISE verdict task-done guard", () => {
   it("refuses fn_task_done when a pending step has REVISE verdict", async () => {
     const { store, reviewTool, doneTool } = await setup();
 
-    await reviewTool.execute("rev", { step: 1, type: "code", step_name: "Step 1", baseline: "abc123" });
+    await reviewTool.execute("rev", { step: 0, type: "code", step_name: "Step 1", baseline: "abc123" });
     const result = await doneTool.execute("done", { summary: "Implemented all requested changes." });
 
     expect(result.details.refusalClass).toBe("pending-code-review-revise");
@@ -78,7 +78,7 @@ describe("FN-4851 REVISE verdict task-done guard", () => {
   it("escalates to in-review when retry budget is exhausted", async () => {
     const { store, reviewTool, doneTool } = await setup({ taskDoneRetryCount: 3 });
 
-    await reviewTool.execute("rev", { step: 1, type: "code", step_name: "Step 1", baseline: "abc123" });
+    await reviewTool.execute("rev", { step: 0, type: "code", step_name: "Step 1", baseline: "abc123" });
     const result = await doneTool.execute("done", { summary: "Implemented all requested changes." });
 
     expect(result.details.refusalClass).toBe("pending-code-review-revise");

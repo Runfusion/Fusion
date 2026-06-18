@@ -44,7 +44,7 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
     const task = makeTask({
       id: "FN-5436-RI-A",
       steps: [{ name: "Step 1", status: "done" }],
-      log: [{ action: "code review Step 1: REVISE", timestamp: new Date().toISOString() }],
+      log: [{ action: "code review Step 0: REVISE", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
 
@@ -78,7 +78,7 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
     const task = makeTask({
       id: "FN-5436-RI-C",
       taskDoneRetryCount: 2,
-      log: [{ action: "code review requested for Step 1 (Step 1)", timestamp: new Date().toISOString() }],
+      log: [{ action: "code review requested for Step 0 (Step 1)", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
 
@@ -98,7 +98,7 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
     const task = makeTask({
       id: "FN-5436-RI-D",
       steps: [{ name: "Step 1", status: "done" }],
-      log: [{ action: "code review Step 1: APPROVE", timestamp: new Date().toISOString() }],
+      log: [{ action: "code review Step 0: APPROVE", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
 
@@ -117,7 +117,7 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
     const store = createMockStore();
     const task = makeTask({
       id: "FN-5436-RI-E",
-      log: [{ action: "plan review Step 1: UNAVAILABLE — proceeding advisory after fallback retry exhausted", timestamp: new Date().toISOString() }],
+      log: [{ action: "plan review Step 0: UNAVAILABLE — proceeding advisory after fallback retry exhausted", timestamp: new Date().toISOString() }],
     });
     store.getTask.mockResolvedValue(task);
 

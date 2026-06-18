@@ -224,7 +224,7 @@ describe("Workflow Steps Execution", () => {
             prompt: vi.fn().mockImplementation(async () => {
               const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
               if (reviewTool) {
-                await reviewTool.execute("tool-review", { step: 1, type: "code", step_name: "Implement" });
+                await reviewTool.execute("tool-review", { step: 0, type: "code", step_name: "Implement" });
               }
             }),
             dispose: vi.fn(),
@@ -269,7 +269,7 @@ describe("Workflow Steps Execution", () => {
         dependencies: [],
         steps: [{ name: "Implement", status: "in-progress" }],
         currentStep: 0,
-        log: [{ action: "code review requested for Step 1 (Implement)", timestamp: new Date().toISOString() }],
+        log: [{ action: "code review requested for Step 0 (Implement)", timestamp: new Date().toISOString() }],
         prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -314,7 +314,7 @@ describe("Workflow Steps Execution", () => {
         dependencies: [],
         steps: [{ name: "Implement", status: "in-progress" }],
         currentStep: 0,
-        log: [{ action: "code review Step 1: APPROVE", timestamp: new Date().toISOString() }],
+        log: [{ action: "code review Step 0: APPROVE", timestamp: new Date().toISOString() }],
         prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -2866,12 +2866,18 @@ describe("Workflow Steps Execution", () => {
         };
         return { session };
       } else {
-        // Workflow step agent that passes (no REQUEST REVISION)
+        // Workflow step agent that passes with an explicit parseable verdict.
+        let subscribeHandler: any;
         return {
           session: {
-            prompt: vi.fn().mockResolvedValue(undefined),
+            prompt: vi.fn().mockImplementation(async () => {
+              subscribeHandler?.({
+                type: "message_update",
+                assistantMessageEvent: { type: "text_delta", delta: "Verdict: APPROVE\n\nWorkflow step passed." },
+              });
+            }),
             dispose: vi.fn(),
-            subscribe: vi.fn(),
+            subscribe: vi.fn((handler: any) => { subscribeHandler = handler; }),
             state: {},
           },
         };
@@ -3553,14 +3559,14 @@ describe("U2: fn_review_step RETHINK delegates to resetStepToBaseline (character
             const updateTool = tools.find((t: any) => t.name === "fn_task_update");
             if (updateTool) {
               try {
-                await updateTool.execute("tool-update", { step: 1, status: "in-progress" });
+                await updateTool.execute("tool-update", { step: 0, status: "in-progress" });
               } catch { /* tool param shape varies; ignore */ }
             }
             const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
             if (reviewTool) {
               try {
                 await reviewTool.execute("tool-review", {
-                  step: 1,
+                  step: 0,
                   type: reviewType,
                   step_name: "Implement",
                   baseline: reviewType === "code" ? "agentBaselineSHA" : undefined,
@@ -3624,7 +3630,7 @@ describe("U2: fn_review_step RETHINK delegates to resetStepToBaseline (character
     expect(store.updateStep).toHaveBeenCalledWith("FN-RT-1", 0, "pending");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-RT-1",
-      expect.stringContaining("Step 1 plan rewound"),
+      expect.stringContaining("Step 0 plan rewound"),
       "rejected approach",
     );
   });

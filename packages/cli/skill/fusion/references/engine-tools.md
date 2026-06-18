@@ -68,10 +68,10 @@ Note: step-session execution (`step-session-executor.ts`) reuses executor coordi
 
 | Tool | Purpose | Parameters |
 |---|---|---|
-| `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`), task dependencies, and/or workflow-defined custom field values | `step?` (number, 1-indexed), `status?` (enum), `dependencies?` (string[]), `custom_fields?` (object keyed by field id; validated against the workflow field schema, `null` clears a field) |
+| `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`), task dependencies, and/or workflow-defined custom field values | `step?` (number, 0-indexed; matches `### Step N:` in PROMPT.md, Step 0 = Preflight), `status?` (enum), `dependencies?` (string[]), `custom_fields?` (object keyed by field id; validated against the workflow field schema, `null` clears a field) |
 | `fn_task_add_dep` | Add a dependency to current task (confirmation-gated) | `task_id` (string), `confirm?` (boolean) |
 | `fn_task_done` | Mark task complete and optionally store summary | `summary?` (string) |
-| `fn_review_step` | Spawn step plan/code reviewer | `step` (number), `type` (`plan` \| `code`), `step_name` (string), `baseline?` (string) |
+| `fn_review_step` | Spawn step plan/code reviewer | `step` (number, 0-indexed; matches `### Step N:` in PROMPT.md), `type` (`plan` \| `code`), `step_name` (string), `baseline?` (string) |
 | `fn_spawn_agent` | Spawn child agent in separate worktree | `name` (string), `role` (enum), `task` (string) |
 
 ## Merger-only runtime tools (`merger.ts`)
