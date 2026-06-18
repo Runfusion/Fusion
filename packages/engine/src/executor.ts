@@ -6468,7 +6468,18 @@ export class TaskExecutor {
           && live.status == null
           && live.error == null
           && live.userPaused !== true
-          && live.paused !== true
+          // FNXC:WorkflowLifecycle 2026-06-18-16:20:
+          // FN-6648: do NOT require `paused !== true` here. The
+          // paused-after-completion graceful-exit path (executor ~8748/8194)
+          // finalizes a FULLY COMPLETED task to in-review while leaving a
+          // NON-user `paused: true` flag set — handoffToReview /
+          // applyInReviewEnterEffects clear status/blockedBy/overlapBlockedBy
+          // but never `paused`. Requiring `paused !== true` made this clean
+          // completion unrecognizable, so `genuinePauseAbort` parked it failed
+          // with the spurious "engine abort during pause/resume" error
+          // (FN-6638 recurrence). `userPaused`/global-pause are still excluded,
+          // and `persistedCompletedProgress` + `persistedCompletionFinalizeLog`
+          // + status/error == null keep this scoped to genuine completions.
           && abortProvenance !== "global-pause"
           && !mergeSeamAborted
           && persistedCompletionFinalizeLog,
@@ -6478,14 +6489,21 @@ export class TaskExecutor {
         completionFinalized
           && live.column !== "in-progress"
           && !live.userPaused
-          && live.paused !== true
+          // FN-6648: `paused !== true` intentionally dropped here too — the
+          // suppression is already gated on `completionFinalized` (completed
+          // steps + finalize-to-review evidence) plus userPaused/global-pause
+          // exclusions, so a lingering non-user post-completion pause flag must
+          // not defeat it. See alreadyFinalizedToReview note above.
           && abortProvenance !== "global-pause"
           && !mergeSeamAborted,
       );
       const genuinePauseAbort = Boolean(
         live.userPaused
           || abortProvenance === "global-pause"
-          || (live.paused && !mergeSeamAborted)
+          // FN-6648: gate the bare `paused` clause on the completion-finalize
+          // suppression so a completed task carrying a non-user post-completion
+          // pause flag is not parked as an operator-action failure.
+          || (live.paused && !mergeSeamAborted && !suppressFinalizedCompletionAbort)
           || (pausedAborted && !mergeSeamAborted && !completionFinalizeAborted && !suppressFinalizedCompletionAbort),
       );
       if (genuinePauseAbort) {

@@ -1612,6 +1612,40 @@ describe("TaskExecutor bounded recovery retries", () => {
       expectBenignAlreadyAdvanced(store, column);
     });
 
+    it("treats a completed in-review row as benign even with a lingering NON-user paused flag (FN-6648)", async () => {
+      /*
+      FNXC:WorkflowLifecycle 2026-06-18-16:25:
+      FN-6648 (FN-6638 recurrence): the paused-after-completion graceful-exit
+      path finalizes a fully completed task to in-review while leaving a
+      NON-user `paused: true` flag set (handoffToReview/applyInReviewEnterEffects
+      clear status/blockedBy but never `paused`). Worst case: the volatile
+      completionFinalized marker is lost (execute re-entry) AND provenance is
+      overwritten to hard-cancel by teardown — only persisted evidence remains.
+      This must resolve benignly, NOT park the completed task as an
+      operator-action "engine abort during pause/resume" failure.
+      */
+      const store = createMockStore();
+      const task = makeCompletedTask();
+      store.getTask.mockResolvedValue({
+        ...task,
+        column: "in-review",
+        paused: true,
+        userPaused: false,
+        status: undefined,
+        error: null,
+      });
+      const executor = new TaskExecutor(store, "/tmp/test", {});
+      (executor as any).markPausedAborted("FN-001", "hard-cancel");
+
+      await (executor as any).handleGraphFailure(task, {
+        disposition: "failed",
+        outcome: "failure",
+        visitedNodeIds: ["execute"],
+      });
+
+      expectBenignAlreadyAdvanced(store);
+    });
+
     it("preserves explicit user-pause parking even when durable completion state exists", async () => {
       const store = createMockStore();
       const task = makeCompletedTask();
