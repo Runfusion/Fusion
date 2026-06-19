@@ -75,6 +75,63 @@ function collectReferencedProperties(css: string): Map<string, number[]> {
   return refs;
 }
 
+function extractRuleBlock(css: string, selector: string): string {
+  const ruleStart = css.indexOf(`${selector} {`);
+  expect(ruleStart, `Expected ${selector} to exist in CommandCenter.css`).toBeGreaterThanOrEqual(0);
+  const bodyStart = css.indexOf("{", ruleStart);
+  const bodyEnd = css.indexOf("\n}", bodyStart);
+  expect(bodyEnd, `Expected ${selector} rule to have a closing brace`).toBeGreaterThan(bodyStart);
+  return css.slice(bodyStart + 1, bodyEnd);
+}
+
+function collectAccentMixPercentages(ruleBlock: string): number[] {
+  const percentages: number[] = [];
+  const re = /color-mix\(in srgb,\s*var\(--accent\)\s*([0-9.]+)%,\s*transparent\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(ruleBlock)) !== null) {
+    percentages.push(Number(m[1]));
+  }
+  return percentages;
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-19-19:05:
+FN-6700 keeps the Command Center main overview cards subdued by guarding the decorative accent color-mix percentages on both card bases and their animated overlays while also proving the --surface-1 layer remains in place.
+*/
+describe("Command Center main-card gradient intensity (FN-6700)", () => {
+  const css = readFileSync(join(COMMAND_CENTER_DIR, "CommandCenter.css"), "utf8");
+  const subduedAccentCaps = [
+    { selector: ".cc-live-strip", cap: 10, requiresSurfaceBase: true },
+    { selector: ".cc-live-strip::before", cap: 10, requiresSurfaceBase: false },
+    { selector: ".cc-overview-chart-card", cap: 8, requiresSurfaceBase: true },
+    { selector: ".cc-overview-chart-card::before", cap: 8, requiresSurfaceBase: false },
+  ] as const;
+
+  it("keeps main-card decorative accent gradients and glows capped", () => {
+    const violations: string[] = [];
+    for (const { selector, cap } of subduedAccentCaps) {
+      const block = extractRuleBlock(css, selector);
+      const percentages = collectAccentMixPercentages(block);
+      expect(percentages.length, `Expected ${selector} to retain at least one accent color-mix treatment`).toBeGreaterThan(0);
+      percentages.forEach((percentage) => {
+        if (percentage > cap) violations.push(`${selector}: ${percentage}% exceeds ${cap}%`);
+      });
+    }
+    expect(violations, `Command Center main-card accent treatments should stay subdued:\n${violations.join("\n")}`).toEqual([]);
+  });
+
+  it("keeps the live strip and overview chart cards layered over --surface-1", () => {
+    const violations: string[] = [];
+    for (const { selector, requiresSurfaceBase } of subduedAccentCaps) {
+      if (!requiresSurfaceBase) continue;
+      const block = extractRuleBlock(css, selector);
+      if (!block.includes("linear-gradient(")) violations.push(`${selector}: missing decorative gradient layer`);
+      if (!block.includes("var(--surface-1)")) violations.push(`${selector}: missing --surface-1 base layer`);
+    }
+    expect(violations, `Command Center main-card surfaces should reduce gradients, not delete the layered surface:\n${violations.join("\n")}`).toEqual([]);
+  });
+});
+
 describe("Command Center CSS token validity (FN-6690)", () => {
   // Defined vocabulary = every --name: declared in styles.css, plus any
   // component-local properties assigned within Command Center CSS, plus
