@@ -80,6 +80,29 @@ describe("accumulateSessionTokenUsage", () => {
     });
   });
 
+  it("creates separate per-model buckets for sequential sessions", async () => {
+    const store = createStore(undefined);
+    const executorSession = createSession(
+      { tokens: { input: 70, output: 30, cacheRead: 0, cacheWrite: 0 } },
+      { provider: "anthropic", id: "claude-sonnet-4-5" },
+    );
+    const validatorSession = createSession(
+      { tokens: { input: 25, output: 15, cacheRead: 0, cacheWrite: 0 } },
+      { provider: "openai", id: "gpt-5" },
+    );
+
+    await accumulateSessionTokenUsage(store, "FN-1", executorSession, { role: "executor" });
+    await accumulateSessionTokenUsage(store, "FN-1", validatorSession, { role: "reviewer" });
+
+    const usage = store._task.tokenUsage;
+    expect(usage).toMatchObject({ inputTokens: 95, outputTokens: 45, totalTokens: 140 });
+    expect(usage?.perModel).toEqual([
+      expect.objectContaining({ modelProvider: "anthropic", modelId: "claude-sonnet-4-5", inputTokens: 70, outputTokens: 30, totalTokens: 100 }),
+      expect.objectContaining({ modelProvider: "openai", modelId: "gpt-5", inputTokens: 25, outputTokens: 15, totalTokens: 40 }),
+    ]);
+    expect(usage?.perModel?.reduce((sum, bucket) => sum + bucket.totalTokens, 0)).toBe(usage?.totalTokens);
+  });
+
   it("preserves an existing model snapshot when the session has no model", async () => {
     const store = createStore({
       inputTokens: 50,

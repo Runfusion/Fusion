@@ -76,6 +76,10 @@ export interface StepResult {
     cachedTokens: number;
     cacheWriteTokens: number;
     totalTokens: number;
+    /** Provider of the model that produced these step tokens. */
+    modelProvider?: string;
+    /** Id of the model that produced these step tokens. */
+    modelId?: string;
   };
 }
 
@@ -956,6 +960,7 @@ export class StepSessionExecutor {
       const cachedTokens = tokens.cacheRead ?? 0;
       const cacheWriteTokens = tokens.cacheWrite ?? 0;
       const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens + cacheWriteTokens);
+      const model = (session as { model?: { provider?: string; id?: string } }).model;
 
       return {
         inputTokens,
@@ -963,6 +968,8 @@ export class StepSessionExecutor {
         cachedTokens,
         cacheWriteTokens,
         totalTokens,
+        modelProvider: model?.provider,
+        modelId: model?.id,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

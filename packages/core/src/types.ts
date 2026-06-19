@@ -1809,6 +1809,33 @@ export interface CentralClaimStore {
 }
 
 /**
+ * One model-specific bucket inside a task's durable token usage aggregate.
+ *
+ * FNXC:TokenAnalytics 2026-06-19-15:42:
+ * Multi-model task lifecycles must persist unidentified, partially identified, and fully identified model buckets without tightening nullability; analytics expands these buckets while legacy task-level totals remain the grand-total source of truth.
+ */
+export interface TaskTokenUsagePerModel {
+  /** Provider of the actually-used model for this bucket. */
+  modelProvider?: string;
+  /** Id of the actually-used model for this bucket. */
+  modelId?: string;
+  /** Cumulative prompt/input tokens consumed by this model for the task. */
+  inputTokens: number;
+  /** Cumulative completion/output tokens consumed by this model for the task. */
+  outputTokens: number;
+  /** Cumulative cache-read (cache hit) tokens reported for this model. */
+  cachedTokens: number;
+  /** Cumulative cache-write tokens reported for this model. */
+  cacheWriteTokens: number;
+  /** Cumulative total tokens for this model bucket. */
+  totalTokens: number;
+  /** ISO-8601 timestamp of the first recorded usage event for this model bucket. */
+  firstUsedAt: string;
+  /** ISO-8601 timestamp of the most recent recorded usage event for this model bucket. */
+  lastUsedAt: string;
+}
+
+/**
  * Durable task-level aggregate token usage totals persisted on the task row.
  *
  * This model captures cumulative usage across all agent/run activity linked to
@@ -1840,6 +1867,11 @@ export interface TaskTokenUsage {
    * Snapshot the id of the actually-used model for analytics only. This is intentionally distinct from task.modelId, which is an own-model override used by model resolution and must not be written by token bookkeeping.
    */
   modelId?: string;
+  /**
+   * FNXC:TokenAnalytics 2026-06-19-15:38:
+   * Command Center model/provider analytics must show every model that consumed tokens during a task lifecycle. Store durable per-model buckets so executor, validator, reviewer, and planning usage is attributed to the producing model while the top-level task aggregate remains backward-compatible.
+   */
+  perModel?: TaskTokenUsagePerModel[];
 }
 
 export interface TaskTokenBudget {

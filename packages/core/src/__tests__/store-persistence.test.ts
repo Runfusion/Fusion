@@ -59,6 +59,55 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("tokenUsage persistence", () => {
+    it("round-trips per-model token buckets through write and read", async () => {
+      const task = await harness.store().createTask({ description: "Per-model token task" });
+      const perModel = [
+        {
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          inputTokens: 70,
+          outputTokens: 30,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 100,
+          firstUsedAt: "2026-03-01T00:00:00.000Z",
+          lastUsedAt: "2026-03-01T00:01:00.000Z",
+        },
+        {
+          modelProvider: "openai",
+          modelId: "gpt-5",
+          inputTokens: 25,
+          outputTokens: 15,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 40,
+          firstUsedAt: "2026-03-01T00:02:00.000Z",
+          lastUsedAt: "2026-03-01T00:03:00.000Z",
+        },
+      ];
+
+      await harness.store().updateTask(task.id, {
+        tokenUsage: {
+          inputTokens: 95,
+          outputTokens: 45,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 140,
+          firstUsedAt: "2026-03-01T00:00:00.000Z",
+          lastUsedAt: "2026-03-01T00:03:00.000Z",
+          modelProvider: "openai",
+          modelId: "gpt-5",
+          perModel,
+        },
+      });
+
+      const detail = await harness.store().getTask(task.id);
+
+      expect(detail.tokenUsage?.perModel).toEqual(perModel);
+    });
+  });
+
   describe("graphResumeRetryCount persistence", () => {
     it("defaults to zero and round-trips updateTask values", async () => {
       const task = await harness.store().createTask({ description: "Graph retry counter task" });

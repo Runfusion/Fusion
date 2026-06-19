@@ -20,6 +20,7 @@ interface TaskSeed {
   modelId?: string | null;
   tokenUsageModelProvider?: string | null;
   tokenUsageModelId?: string | null;
+  tokenUsagePerModel?: unknown;
   nodeId?: string | null;
   agentId?: string | null;
 }
@@ -30,9 +31,9 @@ function insertTask(db: Database, t: TaskSeed): void {
        (id, description, "column", createdAt, updatedAt,
         tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
         tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageLastUsedAt,
-        modelProvider, modelId, tokenUsageModelProvider, tokenUsageModelId, checkoutNodeId, assignedAgentId)
+        modelProvider, modelId, tokenUsageModelProvider, tokenUsageModelId, tokenUsagePerModel, checkoutNodeId, assignedAgentId)
      VALUES (?, 'desc', 'todo', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
     t.inputTokens ?? null,
@@ -45,6 +46,7 @@ function insertTask(db: Database, t: TaskSeed): void {
     t.modelId ?? null,
     t.tokenUsageModelProvider ?? null,
     t.tokenUsageModelId ?? null,
+    t.tokenUsagePerModel === undefined ? null : JSON.stringify(t.tokenUsagePerModel),
     t.nodeId ?? null,
     t.agentId ?? null,
   );
@@ -93,6 +95,127 @@ describe("token-analytics", () => {
     expect(groups.get("model-B")!.nTasks).toBe(2);
     // groups sorted descending by totalTokens
     expect(result.groups[0].key).toBe("model-A");
+  });
+
+  it("expands one multi-model task into per-model and per-provider token groups", () => {
+    const perModel = [
+      {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        inputTokens: 700,
+        outputTokens: 300,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 1000,
+        firstUsedAt: "2026-03-01T00:00:00.000Z",
+        lastUsedAt: "2026-03-01T00:01:00.000Z",
+      },
+      {
+        modelProvider: "openai",
+        modelId: "gpt-5",
+        inputTokens: 250,
+        outputTokens: 150,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 400,
+        firstUsedAt: "2026-03-01T00:02:00.000Z",
+        lastUsedAt: "2026-03-01T00:03:00.000Z",
+      },
+    ];
+    insertTask(db, {
+      id: "multi-model",
+      inputTokens: 950,
+      outputTokens: 450,
+      cachedTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 1400,
+      lastUsedAt: "2026-03-01T00:03:00.000Z",
+      tokenUsageModelProvider: "openai",
+      tokenUsageModelId: "gpt-5",
+      tokenUsagePerModel: perModel,
+    });
+
+    const byModel = aggregateTokenAnalytics(db, { groupBy: "model" });
+    const modelGroups = new Map(byModel.groups.map((group) => [group.key, group]));
+
+    expect(byModel.totals.totalTokens).toBe(1400);
+    expect(byModel.totals.nTasks).toBe(1);
+    expect(modelGroups.get("claude-sonnet-4-5")).toMatchObject({ totalTokens: 1000, inputTokens: 700, outputTokens: 300, nTasks: 1 });
+    expect(modelGroups.get("claude-sonnet-4-5")?.cost).toEqual(costFor(
+      { inputTokens: 700, outputTokens: 300, cachedTokens: 0, cacheWriteTokens: 0 },
+      { provider: "anthropic", model: "claude-sonnet-4-5" },
+    ));
+    expect(modelGroups.get("gpt-5")).toMatchObject({ totalTokens: 400, inputTokens: 250, outputTokens: 150, nTasks: 1 });
+    expect(modelGroups.get("gpt-5")?.cost).toEqual(costFor(
+      { inputTokens: 250, outputTokens: 150, cachedTokens: 0, cacheWriteTokens: 0 },
+      { provider: "openai", model: "gpt-5" },
+    ));
+    expect(modelGroups.size).toBe(2);
+    expect([...modelGroups.values()].reduce((sum, group) => sum + group.nTasks, 0)).toBe(2);
+
+    const expectedTaskCost = costFor(
+      { inputTokens: 950, outputTokens: 450, cachedTokens: 0, cacheWriteTokens: 0 },
+      { provider: "openai", model: "gpt-5" },
+    );
+    expect(byModel.cost).toEqual(expectedTaskCost);
+
+    const byProvider = aggregateTokenAnalytics(db, { groupBy: "provider" });
+    expect(byProvider.totals).toEqual(byModel.totals);
+    expect(new Map(byProvider.groups.map((group) => [group.key, group.totalTokens]))).toEqual(
+      new Map([["anthropic", 1000], ["openai", 400]]),
+    );
+  });
+
+  it("marks unpriced per-model buckets as cost unavailable instead of zero", () => {
+    insertTask(db, {
+      id: "unpriced-bucket",
+      inputTokens: 60,
+      outputTokens: 40,
+      totalTokens: 100,
+      lastUsedAt: "2026-03-01T00:00:00.000Z",
+      tokenUsageModelProvider: "openai",
+      tokenUsageModelId: "gpt-5",
+      tokenUsagePerModel: [
+        {
+          modelProvider: "unknown-provider",
+          modelId: "unknown-model",
+          inputTokens: 60,
+          outputTokens: 40,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 100,
+          firstUsedAt: "2026-03-01T00:00:00.000Z",
+          lastUsedAt: "2026-03-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const result = aggregateTokenAnalytics(db, { groupBy: "model" });
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({ key: "unknown-model", totalTokens: 100, cost: { usd: null, unavailable: true } });
+    expect(result.cost).toEqual(costFor(
+      { inputTokens: 60, outputTokens: 40, cachedTokens: 0, cacheWriteTokens: 0 },
+      { provider: "openai", model: "gpt-5" },
+    ));
+  });
+
+  it("falls back to the legacy snapshot when per-model JSON is malformed", () => {
+    insertTask(db, {
+      id: "malformed-per-model",
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      lastUsedAt: "2026-03-01T00:00:00.000Z",
+      tokenUsageModelProvider: "openai",
+      tokenUsageModelId: "gpt-5",
+      tokenUsagePerModel: "not-json",
+    });
+
+    const result = aggregateTokenAnalytics(db, { groupBy: "model" });
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({ key: "gpt-5", totalTokens: 15, nTasks: 1 });
   });
 
   it("groups resolved-via-settings token usage by the actually-used model snapshot", () => {

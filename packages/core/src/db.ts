@@ -162,7 +162,7 @@ export function isFts5CorruptionError(error: unknown): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 124;
+const SCHEMA_VERSION = 125;
 
 const TASKS_FTS_AUTOMERGE = 8;
 const TASKS_FTS_CRISISMERGE = 16;
@@ -287,6 +287,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   tokenUsageLastUsedAt TEXT,
   tokenUsageModelProvider TEXT,
   tokenUsageModelId TEXT,
+  tokenUsagePerModel TEXT,
   tokenBudgetSoftAlertedAt TEXT,
   tokenBudgetHardAlertedAt TEXT,
   tokenBudgetOverride TEXT,
@@ -5007,6 +5008,16 @@ export class Database {
           CREATE INDEX IF NOT EXISTS idxPluginActivationsActivatedAt ON plugin_activations(activatedAt);
           CREATE INDEX IF NOT EXISTS idxPluginActivationsPluginId ON plugin_activations(pluginId);
         `);
+      });
+    }
+
+    // Migration 125: Per-model token buckets for Command Center analytics.
+    // Mirrors the SCHEMA_SQL definition above so fresh-init and migrated DBs converge.
+    // FNXC:TokenAnalytics 2026-06-19-15:39:
+    // Multi-model task lifecycles must preserve each producing model's token totals; the nullable JSON column keeps legacy rows compatible until new executor writes populate buckets.
+    if (version < 125) {
+      this.applyMigration(125, () => {
+        this.addColumnIfMissing("tasks", "tokenUsagePerModel", "TEXT");
       });
     }
 

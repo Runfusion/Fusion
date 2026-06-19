@@ -67,7 +67,7 @@ import { canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorki
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
-import { accumulateSessionTokenUsage } from "./session-token-usage.js";
+import { accumulateSessionTokenUsage, mergeTokenUsagePerModel } from "./session-token-usage.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -3363,6 +3363,7 @@ export class TaskExecutor {
       totalTokens: (existing?.totalTokens ?? 0) + delta.totalTokens,
       firstUsedAt: existing?.firstUsedAt ?? timestamp,
       lastUsedAt: timestamp,
+      perModel: existing?.perModel,
     };
 
     return merged;
@@ -3372,16 +3373,23 @@ export class TaskExecutor {
     tokenUsage: TaskTokenUsage,
     session: AgentSession | undefined,
     existing: TaskTokenUsage | undefined,
+    delta?: Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens">,
+    timestamp = tokenUsage.lastUsedAt,
+    modelOverride?: { provider?: string; id?: string },
   ): TaskTokenUsage {
-    const model = (session as { model?: { provider?: string; id?: string } } | undefined)?.model;
+    const model = modelOverride ?? (session as { model?: { provider?: string; id?: string } } | undefined)?.model;
     return {
       ...tokenUsage,
       /*
        * FNXC:TokenAnalytics 2026-06-18-16:23:
        * Persist the actually-used session model as an analytics snapshot while leaving task.modelProvider/task.modelId untouched so normal model-resolution hierarchy is not pinned by usage bookkeeping.
+       *
+       * FNXC:TokenAnalytics 2026-06-19-15:53:
+       * Per-model buckets must merge only the just-produced delta. The sum of buckets stays equal to the task aggregate, while analytics grand totals and nTasks remain based on the task row rather than expanded buckets.
        */
       modelProvider: model?.provider ?? existing?.modelProvider,
       modelId: model?.id ?? existing?.modelId,
+      perModel: delta ? mergeTokenUsagePerModel(existing?.perModel, delta, model, timestamp) : tokenUsage.perModel,
     };
   }
 
@@ -3467,7 +3475,7 @@ export class TaskExecutor {
     const task = await this.store.getTask(taskId);
     const merged = this.accumulateTokenUsage(task.tokenUsage, delta);
     if (!merged) return;
-    const tokenUsage = this.tokenUsageWithModelSnapshot(merged, activeSession, task.tokenUsage);
+    const tokenUsage = this.tokenUsageWithModelSnapshot(merged, activeSession, task.tokenUsage, delta);
 
     tokenCacheMetricsLog.log(JSON.stringify({
       taskId,
@@ -7424,8 +7432,8 @@ export class TaskExecutor {
             const previousStepTokenUsage = accumulatedStepTokenUsage;
             accumulatedStepTokenUsage = this.accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
             if (accumulatedStepTokenUsage) {
-              // FNXC:TokenAnalytics 2026-06-18-16:23: Step-scoped token writes must not clear the analytics-only actually-used model snapshot captured by the central session seams.
-              accumulatedStepTokenUsage = this.tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage);
+              // FNXC:TokenAnalytics 2026-06-19-15:55: Step-scoped token writes now carry the producing session model so workflow-step sessions contribute their exact deltas to per-model analytics instead of relying on the last central session snapshot.
+              accumulatedStepTokenUsage = this.tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
             }
             tokenUsageRecordedSteps.add(stepIndex);
             if (!accumulatedStepTokenUsage) {
@@ -7474,7 +7482,7 @@ export class TaskExecutor {
             const previousStepTokenUsage = accumulatedStepTokenUsage;
             accumulatedStepTokenUsage = this.accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
             if (accumulatedStepTokenUsage) {
-              accumulatedStepTokenUsage = this.tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage);
+              accumulatedStepTokenUsage = this.tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
             }
           }
 

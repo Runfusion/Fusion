@@ -1,4 +1,4 @@
-import type { AgentRole, TaskStore } from "@fusion/core";
+import type { AgentRole, TaskStore, TaskTokenUsage, TaskTokenUsagePerModel } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "./logger.js";
 
@@ -16,6 +16,10 @@ interface SessionBaseline {
 // The session object is keyed weakly so disposed sessions get garbage-collected.
 const sessionBaselines = new WeakMap<AgentSession, SessionBaseline>();
 
+type TokenUsageDelta = Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens">;
+
+type TokenUsageModelSnapshot = { provider?: string; id?: string } | undefined;
+
 interface SessionStatsLike {
   tokens?: {
     input?: number;
@@ -23,6 +27,39 @@ interface SessionStatsLike {
     cacheRead?: number;
     cacheWrite?: number;
   };
+}
+
+export function mergeTokenUsagePerModel(
+  existing: TaskTokenUsagePerModel[] | undefined,
+  delta: TokenUsageDelta,
+  model: TokenUsageModelSnapshot,
+  timestamp: string,
+): TaskTokenUsagePerModel[] {
+  const perModel = [...(existing ?? [])];
+  const modelProvider = model?.provider;
+  const modelId = model?.id;
+  const matchesBucket = (bucket: TaskTokenUsagePerModel): boolean =>
+    (bucket.modelProvider ?? null) === (modelProvider ?? null)
+    && (bucket.modelId ?? null) === (modelId ?? null);
+  const bucketIndex = perModel.findIndex(matchesBucket);
+  const previous = bucketIndex >= 0 ? perModel[bucketIndex] : undefined;
+  const next: TaskTokenUsagePerModel = {
+    modelProvider,
+    modelId,
+    inputTokens: (previous?.inputTokens ?? 0) + delta.inputTokens,
+    outputTokens: (previous?.outputTokens ?? 0) + delta.outputTokens,
+    cachedTokens: (previous?.cachedTokens ?? 0) + delta.cachedTokens,
+    cacheWriteTokens: (previous?.cacheWriteTokens ?? 0) + delta.cacheWriteTokens,
+    totalTokens: (previous?.totalTokens ?? 0) + delta.totalTokens,
+    firstUsedAt: previous?.firstUsedAt ?? timestamp,
+    lastUsedAt: timestamp,
+  };
+  if (bucketIndex >= 0) {
+    perModel[bucketIndex] = next;
+  } else {
+    perModel.push(next);
+  }
+  return perModel;
 }
 
 function readSessionStats(session: AgentSession): SessionStatsLike | undefined {
@@ -96,6 +133,17 @@ export async function accumulateSessionTokenUsage(
        */
       modelProvider: model?.provider ?? task.tokenUsage?.modelProvider,
       modelId: model?.id ?? task.tokenUsage?.modelId,
+      /*
+       * FNXC:TokenAnalytics 2026-06-19-15:52:
+       * Per-model buckets must add only the newly observed session delta so the bucket sum equals the task aggregate while Command Center grand nTasks continues to count this task once.
+       */
+      perModel: mergeTokenUsagePerModel(task.tokenUsage?.perModel, {
+        inputTokens: inputDelta,
+        outputTokens: outputDelta,
+        cachedTokens: cachedDelta,
+        cacheWriteTokens: cacheWriteDelta,
+        totalTokens: inputDelta + outputDelta + cachedDelta + cacheWriteDelta,
+      }, model, now),
     };
 
     cacheMetricsLog.log(JSON.stringify({

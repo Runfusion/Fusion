@@ -1,5 +1,6 @@
 import type { Database } from "./db.js";
 import { costFor, type CostResult } from "./model-pricing.js";
+import type { TaskTokenUsagePerModel } from "./types.js";
 
 /**
  * Token-consumption analytics over the `tasks` table, generalizing the fixed
@@ -107,6 +108,7 @@ interface TaskTokenRow {
   modelId: string | null;
   tokenUsageModelProvider: string | null;
   tokenUsageModelId: string | null;
+  tokenUsagePerModel: string | null;
   checkoutNodeId: string | null;
   assignedAgentId: string | null;
   tokenUsageLastUsedAt: string;
@@ -116,8 +118,8 @@ function groupKeyFor(row: TaskTokenRow, groupBy: TokenGroupBy): string | null {
   switch (groupBy) {
     case "model":
       /*
-       * FNXC:TokenAnalytics 2026-06-18-16:23:
-       * By-model analytics must prefer the analytics-only actually-used model snapshot because task.modelId is only an own-model override. Fall back to legacy task.modelId so pre-snapshot rows keep their historical grouping and never throw.
+       * FNXC:TokenAnalytics 2026-06-19-16:09:
+       * By-model analytics expands durable per-model buckets before this legacy path runs. Keep this single-snapshot fallback for pre-migration, empty, or malformed per-model rows so historical grouping never throws.
        */
       return row.tokenUsageModelId ?? row.modelId;
     case "provider":
@@ -180,6 +182,37 @@ function finalizeCost(acc: CostAccumulator): CostResult {
     unavailable: acc.anyUnavailable,
     stale: acc.anyStale,
   };
+}
+
+function parsePerModelRows(row: TaskTokenRow): TaskTokenRow[] {
+  if (!row.tokenUsagePerModel) return [];
+  try {
+    const parsed = JSON.parse(row.tokenUsagePerModel) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return [];
+    return parsed
+      .filter((entry): entry is Partial<TaskTokenUsagePerModel> => entry !== null && typeof entry === "object")
+      .map((entry) => {
+        const inputTokens = Number.isFinite(entry.inputTokens) ? Number(entry.inputTokens) : 0;
+        const outputTokens = Number.isFinite(entry.outputTokens) ? Number(entry.outputTokens) : 0;
+        const cachedTokens = Number.isFinite(entry.cachedTokens) ? Number(entry.cachedTokens) : 0;
+        const cacheWriteTokens = Number.isFinite(entry.cacheWriteTokens) ? Number(entry.cacheWriteTokens) : 0;
+        const totalTokens = Number.isFinite(entry.totalTokens)
+          ? Number(entry.totalTokens)
+          : inputTokens + outputTokens + cachedTokens + cacheWriteTokens;
+        return {
+          ...row,
+          inputTokens,
+          outputTokens,
+          cachedTokens,
+          cacheWriteTokens,
+          totalTokens,
+          tokenUsageModelProvider: typeof entry.modelProvider === "string" ? entry.modelProvider : null,
+          tokenUsageModelId: typeof entry.modelId === "string" ? entry.modelId : null,
+        };
+      });
+  } catch {
+    return [];
+  }
 }
 
 function addRow(totals: TokenTotals, row: TaskTokenRow): void {
@@ -258,6 +291,7 @@ export function aggregateTokenAnalytics(
          modelId,
          tokenUsageModelProvider,
          tokenUsageModelId,
+         tokenUsagePerModel,
          checkoutNodeId,
          assignedAgentId,
          tokenUsageLastUsedAt
@@ -279,15 +313,19 @@ export function aggregateTokenAnalytics(
     addRow(totals, row);
     addRowCost(totalCost, row, now);
     if (groupBy) {
-      const key = groupKeyFor(row, groupBy);
-      let group = groupMap.get(key);
-      if (!group) {
-        group = { key, ...emptyTotals(), cost: { usd: null, unavailable: false, stale: false } };
-        groupMap.set(key, group);
-        groupCostMap.set(key, emptyCostAccumulator());
+      const groupRows = (groupBy === "model" || groupBy === "provider") ? parsePerModelRows(row) : [];
+      const rowsForGroup = groupRows.length > 0 ? groupRows : [row];
+      for (const groupRow of rowsForGroup) {
+        const key = groupKeyFor(groupRow, groupBy);
+        let group = groupMap.get(key);
+        if (!group) {
+          group = { key, ...emptyTotals(), cost: { usd: null, unavailable: false, stale: false } };
+          groupMap.set(key, group);
+          groupCostMap.set(key, emptyCostAccumulator());
+        }
+        addRow(group, groupRow);
+        addRowCost(groupCostMap.get(key)!, groupRow, now);
       }
-      addRow(group, row);
-      addRowCost(groupCostMap.get(key)!, row, now);
     }
     if (granularity) {
       const bucket = bucketFor(row, granularity);

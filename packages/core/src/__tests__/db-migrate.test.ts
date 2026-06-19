@@ -788,6 +788,68 @@ describe("schema migration", () => {
     db.close();
   });
 
+  it("adds tokenUsagePerModel when migrating from schema version 124 without data loss", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        tokenUsageInputTokens INTEGER,
+        tokenUsageOutputTokens INTEGER,
+        tokenUsageCachedTokens INTEGER,
+        tokenUsageCacheWriteTokens INTEGER,
+        tokenUsageTotalTokens INTEGER,
+        tokenUsageFirstUsedAt TEXT,
+        tokenUsageLastUsedAt TEXT,
+        tokenUsageModelProvider TEXT,
+        tokenUsageModelId TEXT
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '124')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`
+      INSERT INTO tasks (
+        id, description, "column", createdAt, updatedAt,
+        tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
+        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt,
+        tokenUsageLastUsedAt, tokenUsageModelProvider, tokenUsageModelId
+      ) VALUES (
+        'FN-token', 'legacy token usage', 'done', '2026-03-01T00:00:00.000Z', '2026-03-01T00:03:00.000Z',
+        95, 45, 0, 0, 140, '2026-03-01T00:00:00.000Z', '2026-03-01T00:03:00.000Z', 'openai', 'gpt-5'
+      )
+    `);
+
+    db.init();
+
+    const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("tokenUsagePerModel");
+
+    const row = db.prepare(`
+      SELECT tokenUsageInputTokens, tokenUsageTotalTokens, tokenUsageModelProvider, tokenUsageModelId, tokenUsagePerModel
+      FROM tasks WHERE id = 'FN-token'
+    `).get() as {
+      tokenUsageInputTokens: number;
+      tokenUsageTotalTokens: number;
+      tokenUsageModelProvider: string;
+      tokenUsageModelId: string;
+      tokenUsagePerModel: string | null;
+    };
+    expect(row).toEqual({
+      tokenUsageInputTokens: 95,
+      tokenUsageTotalTokens: 140,
+      tokenUsageModelProvider: "openai",
+      tokenUsageModelId: "gpt-5",
+      tokenUsagePerModel: null,
+    });
+    expect(db.getSchemaVersion()).toBe(SCHEMA_VERSION);
+
+    db.close();
+  });
+
   it("adds workflow_steps.gateMode and backfills legacy rows by mode", () => {
     const db = new Database(fusionDir);
     db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
