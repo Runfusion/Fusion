@@ -217,6 +217,9 @@ function OverviewTab({ range }: { range: DateRange }) {
     },
   ];
 
+  // FNXC:CommandCenter 2026-06-19-00:00:
+  // Throughput funnel now renders first in every overview branch (loading/error/empty/populated)
+  // so the SDLC throughput card is top-of-page; mobile scroll owner and data-testid anchors unchanged.
   // The throughput funnel reads its own data (activityLog transitions) and shows
   // its own empty state, so it renders even when the stat-card aggregates have no
   // data yet.
@@ -229,11 +232,11 @@ function OverviewTab({ range }: { range: DateRange }) {
   if (isInitialLoading) {
     return (
       <div className="cc-overview">
+        {throughputSection}
         <div className="cc-loading" data-testid="command-center-overview-loading">
           <div className="cc-chart-skeleton" />
           <p>{t("commandCenter.loading", "Loading command center...")}</p>
         </div>
-        {throughputSection}
       </div>
     );
   }
@@ -241,11 +244,11 @@ function OverviewTab({ range }: { range: DateRange }) {
   if (coreError !== null && !hasData) {
     return (
       <div className="cc-overview">
+        {throughputSection}
         <div className="cc-error" data-testid="command-center-overview-error" role="alert">
           <AlertCircle size={24} />
           <p>{coreError}</p>
         </div>
-        {throughputSection}
       </div>
     );
   }
@@ -253,17 +256,18 @@ function OverviewTab({ range }: { range: DateRange }) {
   if (!hasData) {
     return (
       <div className="cc-overview">
+        {throughputSection}
         <div className="cc-empty" data-testid="command-center-empty">
           <Gauge size={28} />
           <p>{t("commandCenter.empty", "No usage data yet. Run some agents to populate the Command Center.")}</p>
         </div>
-        {throughputSection}
       </div>
     );
   }
 
   return (
     <div className="cc-overview">
+      {throughputSection}
       <div className="cc-stat-grid">
         {cards.map((card) => (
           <div key={card.id} className="card cc-stat-card" data-testid={`command-center-stat-${card.id}`}>
@@ -370,7 +374,6 @@ function OverviewTab({ range }: { range: DateRange }) {
           ) : null}
         </section>
       ) : null}
-      {throughputSection}
     </div>
   );
 }

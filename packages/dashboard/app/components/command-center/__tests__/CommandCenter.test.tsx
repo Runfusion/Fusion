@@ -291,6 +291,17 @@ function liveMetricValue(testId = "command-center-live-tasks-in-progress") {
   return screen.getByTestId(testId).querySelector(".cc-live-metric-value")?.textContent ?? null;
 }
 
+function expectThroughputFirstBefore(...followingTestIds: string[]) {
+  const throughput = screen.getByTestId("command-center-throughput");
+  expect(throughput.parentElement?.classList.contains("cc-overview")).toBe(true);
+  expect(throughput.parentElement?.firstElementChild).toBe(throughput);
+
+  for (const testId of followingTestIds) {
+    const followingNode = screen.getByTestId(testId);
+    expect(Boolean(throughput.compareDocumentPosition(followingNode) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  }
+}
+
 beforeEach(() => {
   apiMock.mockReset();
   mockEmptyOverviewApi();
@@ -308,6 +319,13 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
   });
 
+  it("renders throughput first while the Overview branch is loading", () => {
+    mockEmptyOverviewApi();
+    render(<CommandCenter />);
+    expect(screen.getByTestId("command-center-overview-loading")).toBeTruthy();
+    expectThroughputFirstBefore("command-center-overview-loading");
+  });
+
   it("renders the documented empty state when there is no data (no crash)", async () => {
     mockEmptyOverviewApi();
     render(<CommandCenter />);
@@ -317,6 +335,7 @@ describe("CommandCenter shell", () => {
     expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
     expect(screen.queryByTestId("cc-overview-line")).toBeNull();
     await screen.findByTestId("command-center-empty");
+    expectThroughputFirstBefore("command-center-empty");
     expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
     expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
     expect(screen.queryByTestId("cc-overview-line")).toBeNull();
@@ -352,6 +371,7 @@ describe("CommandCenter shell", () => {
     expect(statValue("command-center-stat-models")).toBe("2");
     expect(statValue("command-center-stat-signals")).toBe("2");
     expect(screen.getByTestId("command-center-live-strip")).toBeTruthy();
+    expectThroughputFirstBefore("command-center-stat-tokens", "command-center-live-strip");
     expect(screen.getByTestId("command-center-live-snapshot")).toBeTruthy();
     await waitFor(() => expect(liveMetricValue()).toBe("3"));
     expect(screen.getByTestId("command-center-live-agents-working").textContent).toContain("2");
@@ -561,6 +581,7 @@ describe("CommandCenter shell", () => {
     render(<CommandCenter />);
 
     await screen.findByTestId("command-center-overview-error");
+    expectThroughputFirstBefore("command-center-overview-error");
     expect(screen.getByTestId("command-center-overview-error").textContent).toContain("tokens failed");
     expect(screen.queryByTestId("command-center-overview-loading")).toBeNull();
     expect(screen.queryByTestId("command-center-empty")).toBeNull();
