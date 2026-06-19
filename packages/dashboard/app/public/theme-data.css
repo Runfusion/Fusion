@@ -3,6 +3,9 @@
    Contract: every dark/light theme block defines --surface-hover
    so component hover states can use var(--surface-hover) without
    per-selector fallbacks or mode-specific overrides.
+
+   FNXC:DashboardTheming 2026-06-15-00:00:
+   Theme token translucency uses color-mix(in srgb, var(--token) N%, transparent) or exact literal color-mix values for glass surfaces. Raw RGB alpha color functions are banned outside var() fallbacks by FN-6489.
    ============================================================ */
 
 /* OCEAN - Deep blues and cyans */
@@ -22,7 +25,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #00a08a;
   --cta-border-hover: #00c853;
-  --cta-glow: 0 0 8px rgba(0, 200, 83, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #0288d1;
   --accent: #00b8d4;
@@ -45,7 +48,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #00897b;
   --cta-border-hover: #4caf50;
-  --cta-glow: 0 0 8px rgba(0, 137, 123, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #0277bd;
   --accent: #0097a7;
@@ -69,7 +72,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #22c55e;
   --cta-border-hover: #34d399;
-  --cta-glow: 0 0 8px rgba(34, 197, 94, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #29b6f6;
   --accent: #16a34a;
@@ -92,7 +95,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #16a34a;
   --cta-border-hover: #22c55e;
-  --cta-glow: 0 0 8px rgba(22, 163, 74, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #0288d1;
   --accent: #15803d;
@@ -116,7 +119,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #ff6d00;
   --cta-border-hover: #ff9100;
-  --cta-glow: 0 0 8px rgba(255, 109, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2196f3;
   --accent: #ff6d00;
@@ -139,7 +142,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #e65100;
   --cta-border-hover: #ff6d00;
-  --cta-glow: 0 0 8px rgba(230, 81, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #1565c0;
   --accent: #e65100;
@@ -163,7 +166,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #ab47bc;
   --cta-border-hover: #ce93d8;
-  --cta-glow: 0 0 8px rgba(179, 136, 255, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #7c4dff;
   --accent: #9c27b0;
@@ -186,7 +189,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #9c27b0;
   --cta-border-hover: #ab47bc;
-  --cta-glow: 0 0 8px rgba(156, 39, 176, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #6200ea;
   --accent: #7b1fa2;
@@ -210,7 +213,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #9e9e9e;
   --cta-border-hover: #bdbdbd;
-  --cta-glow: 0 0 8px rgba(158, 158, 158, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #64b5f6;
   --accent: #b0b0b0;
@@ -233,7 +236,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #757575;
   --cta-border-hover: #9e9e9e;
-  --cta-glow: 0 0 8px rgba(117, 117, 117, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #1976d2;
   --accent: #616161;
@@ -256,7 +259,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #7c8fa4;
   --cta-border-hover: #94a3b8;
-  --cta-glow: 0 0 8px rgba(148, 163, 184, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border-hover) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #60a5fa;
   --accent: #64748b;
@@ -278,7 +281,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #64748b;
   --cta-border-hover: #94a3b8;
-  --cta-glow: 0 0 8px rgba(71, 85, 105, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #3b82f6;
   --accent: #475569;
@@ -301,7 +304,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #9ca3af;
   --cta-border-hover: #a8a29e;
-  --cta-glow: 0 0 8px rgba(168, 162, 158, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border-hover) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #93c5fd;
   --accent: #a1887f;
@@ -323,7 +326,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #78716c;
   --cta-border-hover: #a8a29e;
-  --cta-glow: 0 0 8px rgba(87, 83, 78, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #3b82f6;
   --accent: #6d5d53;
@@ -346,7 +349,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #a0a0a0;
   --cta-border-hover: #b8b8b8;
-  --cta-glow: 0 0 8px rgba(184, 184, 184, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border-hover) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #7ab8ff;
   --accent: #a0a0a0;
@@ -368,7 +371,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #606060;
   --cta-border-hover: #808080;
-  --cta-glow: 0 0 8px rgba(64, 64, 64, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #606060;
@@ -391,7 +394,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #e8773a;
   --cta-border-hover: #f09050;
-  --cta-glow: 0 0 8px rgba(232, 119, 58, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: #e8773a;
   --color-info: #e8773a;
   --accent: #e8773a;
@@ -413,7 +416,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #d4622a;
   --cta-border-hover: #e07030;
-  --cta-glow: 0 0 8px rgba(192, 88, 32, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 30%, transparent);
   --logo-accent: #d4622a;
   --color-info: #c05820;
   --accent: #d4622a;
@@ -436,7 +439,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #b0b0b0;
   --cta-border-hover: #c0c0c0;
-  --cta-glow: 0 0 8px rgba(192, 192, 192, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border-hover) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #90c0ff;
   --accent: #b8b8b8;
@@ -458,7 +461,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #737373;
   --cta-border-hover: #909090;
-  --cta-glow: 0 0 8px rgba(82, 82, 82, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #707070;
@@ -572,7 +575,7 @@
   --cta-text: #000000;
   --cta-bg-hover: #00ff00;
   --cta-border-hover: #33ff33;
-  --cta-glow: 0 0 8px rgba(0, 255, 0, 0.4);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 40%, transparent);
   --logo-accent: var(--todo);
   --color-info: #00ccff;
   --accent: #00ff00;
@@ -604,7 +607,7 @@
   --cta-text: #ffffff;
   --cta-bg-hover: #009900;
   --cta-border-hover: #00cc00;
-  --cta-glow: 0 0 8px rgba(0, 153, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #0055cc;
   --accent: #00cc00;
@@ -637,7 +640,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #ff6b00;
   --cta-border-hover: #ff8c00;
-  --cta-glow: 0 0 8px rgba(255, 107, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #42a5f5;
   --accent: #ff6d00;
@@ -669,7 +672,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #e65100;
   --cta-border-hover: #ff6b00;
-  --cta-glow: 0 0 8px rgba(230, 81, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #1565c0;
   --accent: #bf360c;
@@ -702,7 +705,7 @@
   --cta-text: #002b36;
   --cta-bg-hover: #859900;
   --cta-border-hover: #a4b800;
-  --cta-glow: 0 0 8px rgba(133, 153, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2aa198;
   --accent: #859900;
@@ -734,7 +737,7 @@
   --cta-text: #fdf6e3;
   --cta-bg-hover: #719e00;
   --cta-border-hover: #859900;
-  --cta-glow: 0 0 8px rgba(133, 153, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2aa198;
   --accent: #637b00;
@@ -792,15 +795,15 @@
   --column-gap: var(--space-sm);
   --board-padding: var(--space-md) var(--space-lg);
 
-  --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 6px rgba(245, 158, 11, 0.4);
-  --glow-success: 0 0 8px rgba(34, 197, 94, 0.35);
-  --glow-warning: 0 0 8px rgba(245, 158, 11, 0.4);
-  --glow-danger: 0 0 8px rgba(239, 68, 68, 0.35);
-  --focus-ring: 0 0 0 2px rgba(245, 158, 11, 0.18);
-  --focus-ring-strong: 0 0 0 2px rgba(245, 158, 11, 0.3);
+  --shadow-sm: 0 1px 1px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-md: 0 2px 4px color-mix(in srgb, #000000 50%, transparent);
+  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 60%, transparent);
+  --shadow-glow: 0 0 6px color-mix(in srgb, var(--todo) 40%, transparent);
+  --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 35%, transparent);
+  --glow-warning: 0 0 8px color-mix(in srgb, var(--todo) 40%, transparent);
+  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 35%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
   --shadow: var(--shadow-lg);
 
   --transition-instant: 0.05s ease;
@@ -813,7 +816,7 @@
   --cta-text: #0a0a0a;
   --cta-bg-hover: #f59e0b;
   --cta-border-hover: #fbbf24;
-  --cta-glow: 0 0 8px rgba(245, 158, 11, 0.4);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 40%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #d97706;
@@ -843,15 +846,15 @@
   --color-error: #dc2626;
   --color-muted: #6b7280;
 
-  --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.15);
-  --shadow-glow: 0 0 6px rgba(217, 119, 6, 0.3);
-  --glow-success: 0 0 8px rgba(22, 163, 74, 0.25);
-  --glow-warning: 0 0 8px rgba(217, 119, 6, 0.3);
-  --glow-danger: 0 0 8px rgba(220, 38, 38, 0.22);
-  --focus-ring: 0 0 0 2px rgba(217, 119, 6, 0.14);
-  --focus-ring-strong: 0 0 0 2px rgba(217, 119, 6, 0.24);
+  --shadow-sm: 0 1px 1px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-md: 0 2px 4px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 15%, transparent);
+  --shadow-glow: 0 0 6px color-mix(in srgb, var(--todo) 30%, transparent);
+  --glow-success: 0 0 8px color-mix(in srgb, var(--color-success) 25%, transparent);
+  --glow-warning: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
+  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 22%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 14%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #b45309;
@@ -859,7 +862,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #d97706;
   --cta-border-hover: #f59e0b;
-  --cta-glow: 0 0 8px rgba(217, 119, 6, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #1d4ed8;
   --accent: #b45309;
@@ -869,8 +872,8 @@
 [data-color-theme="factory"] .card.agent-active {
   border-color: var(--todo);
   box-shadow:
-    0 0 6px rgba(245, 158, 11, 0.5),
-    0 0 12px rgba(245, 158, 11, 0.2);
+    0 0 6px color-mix(in srgb, #f59e0b 50%, transparent),
+    0 0 12px color-mix(in srgb, #f59e0b 20%, transparent);
   animation: agent-glow-factory 2s ease-in-out infinite;
 }
 
@@ -878,20 +881,20 @@
   0%,
   100% {
     box-shadow:
-      0 0 6px rgba(245, 158, 11, 0.5),
-      0 0 12px rgba(245, 158, 11, 0.2);
+      0 0 6px color-mix(in srgb, #f59e0b 50%, transparent),
+      0 0 12px color-mix(in srgb, #f59e0b 20%, transparent);
   }
   50% {
     box-shadow:
-      0 0 10px rgba(245, 158, 11, 0.7),
-      0 0 20px rgba(245, 158, 11, 0.4);
+      0 0 10px color-mix(in srgb, #f59e0b 70%, transparent),
+      0 0 20px color-mix(in srgb, #f59e0b 40%, transparent);
   }
 }
 
 [data-color-theme="factory"][data-theme="light"] .card.agent-active {
   box-shadow:
-    0 0 6px rgba(217, 119, 6, 0.4),
-    0 0 12px rgba(217, 119, 6, 0.15);
+    0 0 6px color-mix(in srgb, #d97706 40%, transparent),
+    0 0 12px color-mix(in srgb, #d97706 15%, transparent);
   animation: agent-glow-factory-light 2s ease-in-out infinite;
 }
 
@@ -899,13 +902,13 @@
   0%,
   100% {
     box-shadow:
-      0 0 6px rgba(217, 119, 6, 0.4),
-      0 0 12px rgba(217, 119, 6, 0.15);
+      0 0 6px color-mix(in srgb, #d97706 40%, transparent),
+      0 0 12px color-mix(in srgb, #d97706 15%, transparent);
   }
   50% {
     box-shadow:
-      0 0 10px rgba(217, 119, 6, 0.6),
-      0 0 20px rgba(217, 119, 6, 0.3);
+      0 0 10px color-mix(in srgb, #d97706 60%, transparent),
+      0 0 20px color-mix(in srgb, #d97706 30%, transparent);
   }
 }
 
@@ -967,7 +970,7 @@
   --done: #6c7986;
   --color-success: #7ee787;
   --color-error: #f07178;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #5cb85c;
@@ -975,7 +978,7 @@
   --cta-text: #0f1419;
   --cta-bg-hover: #7ee787;
   --cta-border-hover: #9af09a;
-  --cta-glow: 0 0 8px rgba(126, 231, 135, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #39bae6;
   --accent: #5cb85c;
@@ -1001,7 +1004,7 @@
   --done: #8a9199;
   --color-success: #86b300;
   --color-error: #f07178;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 15%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #6d9a00;
@@ -1009,7 +1012,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #86b300;
   --cta-border-hover: #9cc800;
-  --cta-glow: 0 0 8px rgba(134, 179, 0, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #007acc;
   --accent: #3a8a3a;
@@ -1036,7 +1039,7 @@
   --done: #828997;
   --color-success: #98c379;
   --color-error: #e06c75;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7ec77a;
@@ -1044,7 +1047,7 @@
   --cta-text: #282c34;
   --cta-bg-hover: #98c379;
   --cta-border-hover: #b5d4a8;
-  --cta-glow: 0 0 8px rgba(152, 195, 121, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #61afef;
   --accent: #7ec77a;
@@ -1071,7 +1074,7 @@
   --done: #9da5b4;
   --color-success: #50a14f;
   --color-error: #e45649;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3d8c3b;
@@ -1079,7 +1082,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #50a14f;
   --cta-border-hover: #66b865;
-  --cta-glow: 0 0 8px rgba(80, 161, 79, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #4078f2;
   --accent: #4a9e46;
@@ -1106,7 +1109,7 @@
   --done: #7b88a1;
   --color-success: #a3be8c;
   --color-error: #bf616a;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8fa879;
@@ -1114,7 +1117,7 @@
   --cta-text: #2e3440;
   --cta-bg-hover: #a3be8c;
   --cta-border-hover: #b8cfab;
-  --cta-glow: 0 0 8px rgba(163, 190, 140, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #81a1c1;
   --accent: #88c0d0;
@@ -1140,7 +1143,7 @@
   --done: #4c566a;
   --color-success: #7ca373;
   --color-error: #b54a52;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #6a8f63;
@@ -1148,7 +1151,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #7ca373;
   --cta-border-hover: #8fb588;
-  --cta-glow: 0 0 8px rgba(124, 163, 115, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #5e81ac;
   --accent: #5e81ac;
@@ -1175,7 +1178,7 @@
   --done: #6272a4;
   --color-success: #50fa7b;
   --color-error: #ff5555;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #40d870;
@@ -1183,7 +1186,7 @@
   --cta-text: #282a36;
   --cta-bg-hover: #50fa7b;
   --cta-border-hover: #70ff95;
-  --cta-glow: 0 0 8px rgba(80, 250, 123, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #8be9fd;
   --accent: #bd93f9;
@@ -1209,7 +1212,7 @@
   --done: #5a5a72;
   --color-success: #2e8b57;
   --color-error: #cc3333;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #267a4d;
@@ -1217,7 +1220,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #2e8b57;
   --cta-border-hover: #3aa870;
-  --cta-glow: 0 0 8px rgba(46, 139, 87, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #00838f;
   --accent: #8662c7;
@@ -1244,7 +1247,7 @@
   --done: #928374;
   --color-success: #b8bb26;
   --color-error: #fb4934;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #a0a325;
@@ -1252,7 +1255,7 @@
   --cta-text: #282828;
   --cta-bg-hover: #b8bb26;
   --cta-border-hover: #d0d340;
-  --cta-glow: 0 0 8px rgba(184, 187, 38, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #83a598;
   --accent: #d4a017;
@@ -1278,7 +1281,7 @@
   --done: #504945;
   --color-success: #427b58;
   --color-error: #9d0006;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3a6a4e;
@@ -1286,7 +1289,7 @@
   --cta-text: #fbf1c7;
   --cta-bg-hover: #427b58;
   --cta-border-hover: #528c68;
-  --cta-glow: 0 0 8px rgba(66, 123, 88, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #076678;
   --accent: #a08010;
@@ -1313,7 +1316,7 @@
   --done: #565f89;
   --color-success: #9ece6a;
   --color-error: #f7768e;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8ab855;
@@ -1321,7 +1324,7 @@
   --cta-text: #1a1b26;
   --cta-bg-hover: #9ece6a;
   --cta-border-hover: #b8e080;
-  --cta-glow: 0 0 8px rgba(158, 206, 106, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #7aa2f7;
   --accent: #7aa2f7;
@@ -1347,7 +1350,7 @@
   --done: #414868;
   --color-success: #48703e;
   --color-error: #c53b53;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3d6035;
@@ -1355,7 +1358,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #48703e;
   --cta-border-hover: #5a8550;
-  --cta-glow: 0 0 8px rgba(72, 112, 62, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #3b5ea5;
   --accent: #5b7ec7;
@@ -1382,7 +1385,7 @@
   --done: #6c7086;
   --color-success: #a6e3a1;
   --color-error: #f38ba8;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8ad985;
@@ -1390,7 +1393,7 @@
   --cta-text: #1e1e2e;
   --cta-bg-hover: #a6e3a1;
   --cta-border-hover: #b8edb4;
-  --cta-glow: 0 0 8px rgba(166, 227, 161, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #89b4fa;
   --accent: #cba6f7;
@@ -1416,7 +1419,7 @@
   --done: #7c7f93;
   --color-success: #40a02b;
   --color-error: #d20f39;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #36891f;
@@ -1424,7 +1427,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #40a02b;
   --cta-border-hover: #52b93d;
-  --cta-glow: 0 0 8px rgba(64, 160, 43, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #1e66f5;
   --accent: #9a6fd9;
@@ -1451,7 +1454,7 @@
   --done: #484f58;
   --color-success: #3fb950;
   --color-error: #f85149;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #2ea043;
@@ -1459,7 +1462,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #3fb950;
   --cta-border-hover: #56d364;
-  --cta-glow: 0 0 8px rgba(63, 185, 80, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #58a6ff;
   --accent: #58a6ff;
@@ -1485,7 +1488,7 @@
   --done: #656d76;
   --color-success: #1a7f37;
   --color-error: #cf222e;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #1a7f37;
@@ -1493,7 +1496,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #1a7f37;
   --cta-border-hover: #2da44e;
-  --cta-glow: 0 0 8px rgba(26, 127, 55, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #0969da;
   --accent: #0969da;
@@ -1520,7 +1523,7 @@
   --done: #859289;
   --color-success: #a7c080;
   --color-error: #e67e80;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8aad75;
@@ -1528,7 +1531,7 @@
   --cta-text: #2d353b;
   --cta-bg-hover: #a7c080;
   --cta-border-hover: #bcd09a;
-  --cta-glow: 0 0 8px rgba(167, 192, 128, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #7fbbb3;
   --accent: #a7c080;
@@ -1554,7 +1557,7 @@
   --done: #8da489;
   --color-success: #6d9b3a;
   --color-error: #c44040;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #5a8a2e;
@@ -1562,7 +1565,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #6d9b3a;
   --cta-border-hover: #80b34c;
-  --cta-glow: 0 0 8px rgba(109, 155, 58, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #3a94a5;
   --accent: #6b8f55;
@@ -1589,7 +1592,7 @@
   --done: #6e6a86;
   --color-success: #9ccfd8;
   --color-error: #eb6f92;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7dbbc4;
@@ -1597,7 +1600,7 @@
   --cta-text: #191724;
   --cta-bg-hover: #9ccfd8;
   --cta-border-hover: #b3dfe6;
-  --cta-glow: 0 0 8px rgba(156, 207, 216, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #c4a7e7;
   --accent: #c4a7e7;
@@ -1623,7 +1626,7 @@
   --done: #9893a5;
   --color-success: #56949f;
   --color-error: #b4637a;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #428089;
@@ -1631,7 +1634,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #56949f;
   --cta-border-hover: #6daab4;
-  --cta-glow: 0 0 8px rgba(86, 148, 159, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #907aa9;
   --accent: #907aac;
@@ -1658,7 +1661,7 @@
   --done: #727169;
   --color-success: #98bb6c;
   --color-error: #c34043;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #7da55a;
@@ -1666,7 +1669,7 @@
   --cta-text: #1f1f28;
   --cta-bg-hover: #98bb6c;
   --cta-border-hover: #aed085;
-  --cta-glow: 0 0 8px rgba(152, 187, 108, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #7e9cd8;
   --accent: #957fb8;
@@ -1692,7 +1695,7 @@
   --done: #81818c;
   --color-success: #5a8249;
   --color-error: #b03438;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #49703f;
@@ -1700,7 +1703,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #5a8249;
   --cta-border-hover: #6b9a5c;
-  --cta-glow: 0 0 8px rgba(90, 130, 73, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #4e76b5;
   --accent: #7560a0;
@@ -1727,7 +1730,7 @@
   --done: #5c7a99;
   --color-success: #4ec9b0;
   --color-error: #ef5350;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 60%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3da890;
@@ -1735,7 +1738,7 @@
   --cta-text: #011627;
   --cta-bg-hover: #4ec9b0;
   --cta-border-hover: #70dbc9;
-  --cta-glow: 0 0 8px rgba(78, 201, 176, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #82aaff;
   --accent: #82aaff;
@@ -1761,7 +1764,7 @@
   --done: #8a95a5;
   --color-success: #2b8a73;
   --color-error: #c0392b;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #257a68;
@@ -1769,7 +1772,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #2b8a73;
   --cta-border-hover: #3a9f8a;
-  --cta-glow: 0 0 8px rgba(43, 138, 115, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #5a7fd4;
@@ -1796,7 +1799,7 @@
   --done: #676e95;
   --color-success: #c3e88d;
   --color-error: #ff5370;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #a3c570;
@@ -1804,7 +1807,7 @@
   --cta-text: #292d3e;
   --cta-bg-hover: #c3e88d;
   --cta-border-hover: #d4f0a5;
-  --cta-glow: 0 0 8px rgba(195, 232, 141, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #82aaff;
   --accent: #c792ea;
@@ -1830,7 +1833,7 @@
   --done: #8a8fa0;
   --color-success: #5a9e2f;
   --color-error: #c0392b;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #4a8c28;
@@ -1838,7 +1841,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #5a9e2f;
   --cta-border-hover: #6db23c;
-  --cta-glow: 0 0 8px rgba(90, 158, 47, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #3b6fcf;
   --accent: #9a60c0;
@@ -1865,7 +1868,7 @@
   --done: #727072;
   --color-success: #a9dc76;
   --color-error: #ff6188;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #88c060;
@@ -1873,7 +1876,7 @@
   --cta-text: #2d2a2e;
   --cta-bg-hover: #a9dc76;
   --cta-border-hover: #c2ec92;
-  --cta-glow: 0 0 8px rgba(169, 220, 118, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #78dce8;
   --accent: #ffd866;
@@ -1899,7 +1902,7 @@
   --done: #9a9490;
   --color-success: #5a9030;
   --color-error: #c4405e;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #4a7a28;
@@ -1907,7 +1910,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #5a9030;
   --cta-border-hover: #6da63c;
-  --cta-glow: 0 0 8px rgba(90, 144, 48, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2d8fa0;
   --accent: #d4a830;
@@ -1934,7 +1937,7 @@
   --done: #5a7a40;
   --color-success: #a0ff60;
   --color-error: #ff4040;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 70%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #78d840;
@@ -1942,7 +1945,7 @@
   --cta-text: #0a0e09;
   --cta-bg-hover: #a0ff60;
   --cta-border-hover: #b8ff80;
-  --cta-glow: 0 0 8px rgba(160, 255, 96, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #60d8a0;
   --accent: #78d840;
@@ -1968,7 +1971,7 @@
   --done: #7a8a70;
   --color-success: #4a8a20;
   --color-error: #b03030;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3a7a18;
@@ -1976,7 +1979,7 @@
   --cta-text: #fff;
   --cta-bg-hover: #4a8a20;
   --cta-border-hover: #5a9a2c;
-  --cta-glow: 0 0 8px rgba(74, 138, 32, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #1a7a5a;
   --accent: #5ab030;
@@ -2033,8 +2036,8 @@
   --shadow-md: none;
   --shadow-lg: none;
   --shadow-glow: none;
-  --focus-ring: 0 0 0 3px rgba(255, 106, 0, 0.28);
-  --focus-ring-strong: 0 0 0 3px rgba(255, 106, 0, 0.44);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--accent) 44%, transparent);
   --shadow: none;
 
   --transition-instant: 0.04s linear;
@@ -2074,8 +2077,8 @@
   --color-success: #4f8f00;
   --color-error: #b32000;
 
-  --focus-ring: 0 0 0 3px rgba(217, 72, 15, 0.22);
-  --focus-ring-strong: 0 0 0 3px rgba(217, 72, 15, 0.35);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--todo) 22%, transparent);
+  --focus-ring-strong: 0 0 0 3px color-mix(in srgb, var(--todo) 35%, transparent);
 
   --cta-bg: #c2410c;
   --cta-border: #d9480f;
@@ -2170,15 +2173,15 @@
   --btn-border-width: 2px;
   --card-padding: 10px 12px;
 
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 0 10px rgba(255, 45, 149, 0.25);
-  --shadow-lg: 0 0 26px rgba(0, 240, 255, 0.2);
-  --shadow-glow: 0 0 10px rgba(255, 45, 149, 0.45);
-  --glow-success: 0 0 10px rgba(120, 255, 77, 0.45);
-  --glow-warning: 0 0 10px rgba(255, 171, 0, 0.45);
-  --glow-danger: 0 0 10px rgba(255, 86, 143, 0.42);
-  --focus-ring: 0 0 0 2px rgba(0, 240, 255, 0.2);
-  --focus-ring-strong: 0 0 0 2px rgba(255, 45, 149, 0.34);
+  --shadow-sm: 0 2px 6px color-mix(in srgb, #000000 35%, transparent);
+  --shadow-md: 0 0 10px color-mix(in srgb, var(--accent) 25%, transparent);
+  --shadow-lg: 0 0 26px color-mix(in srgb, var(--color-info) 20%, transparent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 45%, transparent);
+  --glow-success: 0 0 10px color-mix(in srgb, var(--color-success) 45%, transparent);
+  --glow-warning: 0 0 10px color-mix(in srgb, var(--triage) 45%, transparent);
+  --glow-danger: 0 0 10px color-mix(in srgb, var(--color-error) 42%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-info) 20%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
   --shadow: var(--shadow-lg);
 
   --transition-instant: 0.08s ease;
@@ -2191,7 +2194,7 @@
   --cta-text: #0d0d15;
   --cta-bg-hover: #ff4aa4;
   --cta-border-hover: #7ff7ff;
-  --cta-glow: 0 0 12px rgba(255, 45, 149, 0.45);
+  --cta-glow: 0 0 12px color-mix(in srgb, var(--cta-bg) 45%, transparent);
   --logo-accent: var(--todo);
   --color-info: #00f0ff;
   --accent: #ff2d95;
@@ -2218,21 +2221,21 @@
   --color-success: #3a8a2e;
   --color-error: #b11f5b;
 
-  --shadow-md: 0 0 10px rgba(204, 22, 110, 0.14);
-  --shadow-lg: 0 0 22px rgba(0, 142, 155, 0.12);
-  --shadow-glow: 0 0 10px rgba(204, 22, 110, 0.24);
-  --glow-success: 0 0 10px rgba(58, 138, 46, 0.24);
-  --glow-warning: 0 0 10px rgba(181, 114, 0, 0.24);
-  --glow-danger: 0 0 10px rgba(177, 31, 91, 0.2);
-  --focus-ring: 0 0 0 2px rgba(0, 142, 155, 0.17);
-  --focus-ring-strong: 0 0 0 2px rgba(204, 22, 110, 0.24);
+  --shadow-md: 0 0 10px color-mix(in srgb, var(--todo) 14%, transparent);
+  --shadow-lg: 0 0 22px color-mix(in srgb, var(--color-info) 12%, transparent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 24%, transparent);
+  --glow-success: 0 0 10px color-mix(in srgb, var(--color-success) 24%, transparent);
+  --glow-warning: 0 0 10px color-mix(in srgb, var(--triage) 24%, transparent);
+  --glow-danger: 0 0 10px color-mix(in srgb, var(--color-error) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-info) 17%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
 
   --cta-bg: #b1145f;
   --cta-border: #008e9b;
   --cta-text: #ffffff;
   --cta-bg-hover: #cc166e;
   --cta-border-hover: #00a8b8;
-  --cta-glow: 0 0 10px rgba(177, 20, 95, 0.26);
+  --cta-glow: 0 0 10px color-mix(in srgb, var(--cta-bg) 26%, transparent);
   --logo-accent: var(--todo);
   --color-info: #008e9b;
   --accent: #d63384;
@@ -2249,7 +2252,7 @@
 [data-color-theme="neon-city"] .btn-task-create {
   border-color: color-mix(in srgb, var(--todo) 70%, var(--in-progress) 30%);
   color: var(--todo);
-  box-shadow: 0 0 10px rgba(255, 45, 149, 0.25);
+  box-shadow: 0 0 10px color-mix(in srgb, #ff2d95 25%, transparent);
 }
 
 [data-color-theme="neon-city"] .btn-primary:hover,
@@ -2257,8 +2260,8 @@
   color: var(--text);
   border-color: var(--in-progress);
   box-shadow:
-    0 0 8px rgba(255, 45, 149, 0.6),
-    0 0 14px rgba(0, 240, 255, 0.45);
+    0 0 8px color-mix(in srgb, #ff2d95 60%, transparent),
+    0 0 14px color-mix(in srgb, #00f0ff 45%, transparent);
 }
 
 [data-color-theme="neon-city"] .card,
@@ -2284,13 +2287,13 @@
   0%,
   100% {
     box-shadow:
-      0 0 8px rgba(255, 45, 149, 0.35),
-      0 0 16px rgba(0, 240, 255, 0.25);
+      0 0 8px color-mix(in srgb, #ff2d95 35%, transparent),
+      0 0 16px color-mix(in srgb, #00f0ff 25%, transparent);
   }
   50% {
     box-shadow:
-      0 0 14px rgba(255, 45, 149, 0.65),
-      0 0 24px rgba(0, 240, 255, 0.45);
+      0 0 14px color-mix(in srgb, #ff2d95 65%, transparent),
+      0 0 24px color-mix(in srgb, #00f0ff 45%, transparent);
   }
 }
 
@@ -2302,13 +2305,13 @@
   0%,
   100% {
     box-shadow:
-      0 0 8px rgba(177, 20, 95, 0.22),
-      0 0 16px rgba(0, 142, 155, 0.18);
+      0 0 8px color-mix(in srgb, #b1145f 22%, transparent),
+      0 0 16px color-mix(in srgb, #008e9b 18%, transparent);
   }
   50% {
     box-shadow:
-      0 0 12px rgba(177, 20, 95, 0.32),
-      0 0 20px rgba(0, 142, 155, 0.26);
+      0 0 12px color-mix(in srgb, #b1145f 32%, transparent),
+      0 0 20px color-mix(in srgb, #008e9b 26%, transparent);
   }
 }
 
@@ -2356,12 +2359,12 @@
   --modal-padding: var(--space-lg) calc(var(--space-xl) + 2px);
   --header-padding: var(--space-md) var(--space-xl);
 
-  --shadow-sm: 0 1px 2px rgba(10, 8, 5, 0.45);
-  --shadow-md: 0 4px 12px rgba(10, 8, 5, 0.35);
-  --shadow-lg: 0 12px 28px rgba(10, 8, 5, 0.4);
-  --shadow-glow: 0 0 8px rgba(208, 138, 75, 0.25);
-  --focus-ring: 0 0 0 2px rgba(208, 138, 75, 0.22);
-  --focus-ring-strong: 0 0 0 2px rgba(208, 138, 75, 0.34);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #0a0805 45%, transparent);
+  --shadow-md: 0 4px 12px color-mix(in srgb, #0a0805 35%, transparent);
+  --shadow-lg: 0 12px 28px color-mix(in srgb, #0a0805 40%, transparent);
+  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 25%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--color-info) 22%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--color-info) 34%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #be6e3c;
@@ -2369,7 +2372,7 @@
   --cta-text: #f8eedf;
   --cta-bg-hover: #d08a4b;
   --cta-border-hover: #dda165;
-  --cta-glow: 0 0 10px rgba(208, 138, 75, 0.25);
+  --cta-glow: 0 0 10px color-mix(in srgb, var(--cta-border) 25%, transparent);
   --logo-accent: var(--todo);
   --color-info: #d08a4b;
   --accent: #d08a4b;
@@ -2396,19 +2399,19 @@
   --color-success: #5f7d3f;
   --color-error: #b24f2f;
 
-  --shadow-sm: 0 1px 2px rgba(74, 55, 35, 0.12);
-  --shadow-md: 0 5px 14px rgba(74, 55, 35, 0.14);
-  --shadow-lg: 0 14px 30px rgba(74, 55, 35, 0.16);
-  --shadow-glow: 0 0 8px rgba(168, 86, 47, 0.2);
-  --focus-ring: 0 0 0 2px rgba(168, 86, 47, 0.15);
-  --focus-ring-strong: 0 0 0 2px rgba(168, 86, 47, 0.24);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #4a3723 12%, transparent);
+  --shadow-md: 0 5px 14px color-mix(in srgb, #4a3723 14%, transparent);
+  --shadow-lg: 0 14px 30px color-mix(in srgb, #4a3723 16%, transparent);
+  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 15%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 24%, transparent);
 
   --cta-bg: #99502d;
   --cta-border: #a8562f;
   --cta-text: #fff9f2;
   --cta-bg-hover: #a8562f;
   --cta-border-hover: #bf6a3f;
-  --cta-glow: 0 0 8px rgba(168, 86, 47, 0.2);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 20%, transparent);
   --logo-accent: var(--todo);
   --color-info: #8f4e2a;
   --accent: #a66b35;
@@ -2418,7 +2421,7 @@
 [data-color-theme="parchment"] .btn {
   font-family: var(--font-primary);
   border-color: color-mix(in srgb, var(--todo) 40%, var(--border) 60%);
-  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, #000000 18%, transparent);
 }
 
 [data-color-theme="parchment"] .btn-primary,
@@ -2431,18 +2434,18 @@
 [data-color-theme="parchment"] .column {
   border-color: color-mix(in srgb, var(--border) 76%, var(--todo) 24%);
   background-image:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.06)),
-    linear-gradient(0deg, rgba(201, 160, 112, 0.08), rgba(201, 160, 112, 0.08));
+    linear-gradient(180deg, color-mix(in srgb, #ffffff 2%, transparent), color-mix(in srgb, #000000 6%, transparent)),
+    linear-gradient(0deg, color-mix(in srgb, #c9a070 8%, transparent), color-mix(in srgb, #c9a070 8%, transparent));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 2px 10px rgba(26, 20, 14, 0.2);
+    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent),
+    0 2px 10px color-mix(in srgb, #1a140e 20%, transparent);
 }
 
 [data-color-theme="parchment"][data-theme="light"] .card,
 [data-color-theme="parchment"][data-theme="light"] .column {
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 3px 12px rgba(121, 90, 58, 0.15);
+    inset 0 1px 0 color-mix(in srgb, #ffffff 45%, transparent),
+    0 3px 12px color-mix(in srgb, #795a3a 15%, transparent);
 }
 
 [data-color-theme="parchment"] .column-header h2 {
@@ -2493,12 +2496,12 @@
   --btn-border-width: 2px;
   --card-padding: 9px 10px;
 
-  --shadow-sm: 0 0 4px rgba(51, 255, 0, 0.15);
-  --shadow-md: 0 0 10px rgba(51, 255, 0, 0.18);
-  --shadow-lg: 0 0 22px rgba(51, 255, 0, 0.22);
-  --shadow-glow: 0 0 10px rgba(51, 255, 0, 0.35);
-  --focus-ring: 0 0 0 2px rgba(51, 255, 0, 0.26);
-  --focus-ring-strong: 0 0 0 2px rgba(51, 255, 0, 0.42);
+  --shadow-sm: 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);
+  --shadow-md: 0 0 10px color-mix(in srgb, var(--accent) 18%, transparent);
+  --shadow-lg: 0 0 22px color-mix(in srgb, var(--accent) 22%, transparent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 35%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 26%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
   --shadow: var(--shadow-lg);
 
   --transition-instant: 0.02s steps(2, end);
@@ -2511,7 +2514,7 @@
   --cta-text: #061004;
   --cta-bg-hover: #6dff2f;
   --cta-border-hover: #b2ff67;
-  --cta-glow: 0 0 10px rgba(51, 255, 0, 0.35);
+  --cta-glow: 0 0 10px color-mix(in srgb, var(--cta-bg) 35%, transparent);
   --logo-accent: var(--todo);
   --color-info: #8fff38;
   --accent: #33ff00;
@@ -2538,19 +2541,19 @@
   --color-success: #5e9c2d;
   --color-error: #8f5f00;
 
-  --shadow-sm: 0 0 4px rgba(45, 107, 20, 0.1);
-  --shadow-md: 0 0 8px rgba(45, 107, 20, 0.12);
-  --shadow-lg: 0 0 14px rgba(45, 107, 20, 0.15);
-  --shadow-glow: 0 0 8px rgba(45, 107, 20, 0.2);
-  --focus-ring: 0 0 0 2px rgba(45, 107, 20, 0.16);
-  --focus-ring-strong: 0 0 0 2px rgba(45, 107, 20, 0.24);
+  --shadow-sm: 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+  --shadow-md: 0 0 8px color-mix(in srgb, var(--accent) 12%, transparent);
+  --shadow-lg: 0 0 14px color-mix(in srgb, var(--accent) 15%, transparent);
+  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
 
   --cta-bg: #2d6b14;
   --cta-border: #4c8f25;
   --cta-text: #f4fbef;
   --cta-bg-hover: #3d7d1c;
   --cta-border-hover: #5ea82f;
-  --cta-glow: 0 0 8px rgba(45, 107, 20, 0.2);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 20%, transparent);
   --logo-accent: var(--todo);
   --color-info: #4c8f25;
   --accent: #2d6b14;
@@ -2601,8 +2604,8 @@ body[data-color-theme="terminal"]::before {
   inset: 0;
   background: repeating-linear-gradient(
     to bottom,
-    rgba(51, 255, 0, 0.08) 0px,
-    rgba(51, 255, 0, 0.08) 1px,
+    color-mix(in srgb, #33ff00 8%, transparent) 0px,
+    color-mix(in srgb, #33ff00 8%, transparent) 1px,
     transparent 1px,
     transparent 3px
   );
@@ -2616,8 +2619,8 @@ body[data-color-theme="terminal"]::before {
 body[data-color-theme="terminal"][data-theme="light"]::before {
   background: repeating-linear-gradient(
     to bottom,
-    rgba(17, 52, 12, 0.07) 0px,
-    rgba(17, 52, 12, 0.07) 1px,
+    color-mix(in srgb, #11340c 7%, transparent) 0px,
+    color-mix(in srgb, #11340c 7%, transparent) 1px,
     transparent 1px,
     transparent 3px
   );
@@ -2628,11 +2631,11 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 /* GLASS - Frosted translucent surfaces */
 [data-color-theme="glass"] {
   --bg: #13111f;
-  --surface: rgba(34, 27, 52, 0.78);
-  --card: rgba(54, 44, 82, 0.55);
-  --card-hover: rgba(66, 56, 99, 0.65);
+  --surface: color-mix(in srgb, #221b34 78%, transparent);
+  --card: color-mix(in srgb, #362c52 55%, transparent);
+  --card-hover: color-mix(in srgb, #423863 65%, transparent);
   --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
-  --border: rgba(255, 255, 255, 0.22);
+  --border: color-mix(in srgb, #ffffff 22%, transparent);
   --text: #f2effa;
   --text-muted: #b8b0d2;
   --text-dim: #827aa1;
@@ -2668,12 +2671,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --card-padding: 12px 14px;
   --modal-padding: var(--space-lg) var(--space-xl);
 
-  --shadow-sm: 0 8px 16px rgba(5, 2, 18, 0.24);
-  --shadow-md: 0 14px 30px rgba(6, 3, 24, 0.3);
-  --shadow-lg: 0 22px 42px rgba(8, 4, 30, 0.35);
-  --shadow-glow: 0 0 12px rgba(200, 107, 255, 0.26);
-  --focus-ring: 0 0 0 2px rgba(200, 107, 255, 0.2);
-  --focus-ring-strong: 0 0 0 2px rgba(200, 107, 255, 0.3);
+  --shadow-sm: 0 8px 16px color-mix(in srgb, #050212 24%, transparent);
+  --shadow-md: 0 14px 30px color-mix(in srgb, #060318 30%, transparent);
+  --shadow-lg: 0 22px 42px color-mix(in srgb, #08041e 35%, transparent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--todo) 26%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
   --shadow: var(--shadow-lg);
 
   --transition-instant: 0.08s ease;
@@ -2681,12 +2684,12 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --transition-normal: 0.22s ease;
   --transition-slow: 0.34s ease;
 
-  --cta-bg: rgba(200, 107, 255, 0.32);
-  --cta-border: rgba(255, 255, 255, 0.38);
+  --cta-bg: color-mix(in srgb, var(--accent) 32%, transparent);
+  --cta-border: color-mix(in srgb, #ffffff 38%, transparent);
   --cta-text: #f8f5ff;
-  --cta-bg-hover: rgba(200, 107, 255, 0.46);
-  --cta-border-hover: rgba(255, 255, 255, 0.5);
-  --cta-glow: 0 0 12px rgba(200, 107, 255, 0.24);
+  --cta-bg-hover: color-mix(in srgb, var(--accent) 46%, transparent);
+  --cta-border-hover: color-mix(in srgb, #ffffff 50%, transparent);
+  --cta-glow: 0 0 12px color-mix(in srgb, var(--accent) 24%, transparent);
   --logo-accent: var(--todo);
   --color-info: #ff7aa8;
   --accent: #c86bff;
@@ -2695,11 +2698,11 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 
 [data-color-theme="glass"][data-theme="light"] {
   --bg: #eceaf5;
-  --surface: rgba(255, 255, 255, 0.75);
-  --card: rgba(255, 255, 255, 0.6);
-  --card-hover: rgba(255, 255, 255, 0.75);
+  --surface: color-mix(in srgb, #ffffff 75%, transparent);
+  --card: color-mix(in srgb, #ffffff 60%, transparent);
+  --card-hover: color-mix(in srgb, #ffffff 75%, transparent);
   --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
-  --border: rgba(114, 91, 156, 0.22);
+  --border: color-mix(in srgb, #725b9c 22%, transparent);
   --text: #2f2448;
   --text-muted: #66597f;
   --text-dim: #948aa8;
@@ -2713,19 +2716,19 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --color-success: #3e8f6b;
   --color-error: #c74b7a;
 
-  --shadow-sm: 0 8px 16px rgba(63, 44, 102, 0.08);
-  --shadow-md: 0 14px 30px rgba(63, 44, 102, 0.1);
-  --shadow-lg: 0 22px 42px rgba(63, 44, 102, 0.14);
-  --shadow-glow: 0 0 10px rgba(157, 64, 207, 0.2);
-  --focus-ring: 0 0 0 2px rgba(157, 64, 207, 0.15);
-  --focus-ring-strong: 0 0 0 2px rgba(157, 64, 207, 0.24);
+  --shadow-sm: 0 8px 16px color-mix(in srgb, #3f2c66 8%, transparent);
+  --shadow-md: 0 14px 30px color-mix(in srgb, #3f2c66 10%, transparent);
+  --shadow-lg: 0 22px 42px color-mix(in srgb, #3f2c66 14%, transparent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--todo) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
 
-  --cta-bg: rgba(157, 64, 207, 0.24);
-  --cta-border: rgba(157, 64, 207, 0.38);
+  --cta-bg: color-mix(in srgb, var(--accent) 24%, transparent);
+  --cta-border: color-mix(in srgb, var(--accent) 38%, transparent);
   --cta-text: #2f2448;
-  --cta-bg-hover: rgba(157, 64, 207, 0.34);
-  --cta-border-hover: rgba(157, 64, 207, 0.48);
-  --cta-glow: 0 0 10px rgba(157, 64, 207, 0.22);
+  --cta-bg-hover: color-mix(in srgb, var(--accent) 34%, transparent);
+  --cta-border-hover: color-mix(in srgb, var(--accent) 48%, transparent);
+  --cta-glow: 0 0 10px color-mix(in srgb, var(--accent) 22%, transparent);
   --logo-accent: var(--todo);
   --color-info: #c74b7a;
   --accent: #9d40cf;
@@ -2736,38 +2739,38 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
 [data-color-theme="glass"] .column {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.24);
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  border-color: color-mix(in srgb, #ffffff 24%, transparent);
 }
 
 [data-color-theme="glass"][data-theme="light"] .card,
 [data-color-theme="glass"][data-theme="light"] .column {
-  background: rgba(255, 255, 255, 0.6);
-  border-color: rgba(114, 91, 156, 0.24);
+  background: color-mix(in srgb, #ffffff 60%, transparent);
+  border-color: color-mix(in srgb, #725b9c 24%, transparent);
 }
 
 [data-color-theme="glass"] .btn {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border-color: rgba(255, 255, 255, 0.34);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: color-mix(in srgb, #ffffff 34%, transparent);
+  background: color-mix(in srgb, #ffffff 10%, transparent);
 }
 
 [data-color-theme="glass"] .btn-primary,
 [data-color-theme="glass"] .btn-task-create {
-  background: linear-gradient(135deg, rgba(200, 107, 255, 0.35), rgba(255, 122, 168, 0.3));
-  border-color: rgba(255, 255, 255, 0.42);
+  background: linear-gradient(135deg, color-mix(in srgb, #c86bff 35%, transparent), color-mix(in srgb, #ff7aa8 30%, transparent));
+  border-color: color-mix(in srgb, #ffffff 42%, transparent);
 }
 
 [data-color-theme="glass"] .btn-primary:hover,
 [data-color-theme="glass"] .btn-task-create:hover {
-  background: linear-gradient(135deg, rgba(200, 107, 255, 0.5), rgba(255, 122, 168, 0.42));
-  box-shadow: 0 12px 24px rgba(24, 14, 44, 0.28);
+  background: linear-gradient(135deg, color-mix(in srgb, #c86bff 50%, transparent), color-mix(in srgb, #ff7aa8 42%, transparent));
+  box-shadow: 0 12px 24px color-mix(in srgb, #180e2c 28%, transparent);
 }
 
 [data-color-theme="glass"][data-theme="light"] .btn {
-  background: rgba(255, 255, 255, 0.52);
-  border-color: rgba(114, 91, 156, 0.28);
+  background: color-mix(in srgb, #ffffff 52%, transparent);
+  border-color: color-mix(in srgb, #725b9c 28%, transparent);
 }
 
 [data-color-theme="glass"] .modal-overlay {
@@ -2795,7 +2798,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #7a7d91;
   --color-success: #29d398;
   --color-error: #e8646a;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #e8646a;
@@ -2803,7 +2806,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #1c1e26;
   --cta-bg-hover: #f08c42;
   --cta-border-hover: #f8c967;
-  --cta-glow: 0 0 8px rgba(233, 99, 112, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, #e96370 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #f8c967;
   --accent: #e59371;
@@ -2829,7 +2832,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8a7d78;
   --color-success: #29a87c;
   --color-error: #d84050;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #e8646a;
@@ -2837,7 +2840,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #f08c42;
   --cta-border-hover: #f8c967;
-  --cta-glow: 0 0 8px rgba(232, 100, 106, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #d88030;
   --accent: #e8646a;
@@ -2864,7 +2867,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #5a5850;
   --color-success: #7cb586;
   --color-error: #cb4b16;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #4c9a91;
@@ -2872,7 +2875,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #0d1210;
   --cta-bg-hover: #7cb586;
   --cta-border-hover: #9cd4a6;
-  --cta-glow: 0 0 8px rgba(76, 154, 145, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #dca561;
   --accent: #4c9a91;
@@ -2898,7 +2901,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8a8880;
   --color-success: #5a9a68;
   --color-error: #b04820;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #3a8578;
@@ -2906,7 +2909,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #5a9a68;
   --cta-border-hover: #7aba88;
-  --cta-glow: 0 0 8px rgba(90, 154, 104, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #c08040;
   --accent: #3a8578;
@@ -2933,7 +2936,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #6a60a0;
   --color-success: #00e5ff;
   --color-error: #ff2d95;
-  --shadow-lg: 0 4px 24px rgba(181, 55, 242, 0.4);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--accent) 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #b537f2;
@@ -2941,7 +2944,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #ff2d95;
   --cta-border-hover: #ff6bbf;
-  --cta-glow: 0 0 8px rgba(255, 45, 149, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #00e5ff;
   --accent: #b537f2;
@@ -2967,7 +2970,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8080a0;
   --color-success: #00a8b8;
   --color-error: #d02080;
-  --shadow-lg: 0 4px 24px rgba(144, 48, 200, 0.15);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--accent) 15%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #9030c8;
@@ -2975,7 +2978,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #d02080;
   --cta-border-hover: #e04090;
-  --cta-glow: 0 0 8px rgba(208, 32, 128, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #00a8b8;
   --accent: #9030c8;
@@ -3002,7 +3005,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #707080;
   --color-success: #5af78e;
   --color-error: #ff5c57;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #50fa7b;
@@ -3010,7 +3013,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #282a36;
   --cta-bg-hover: #5af78e;
   --cta-border-hover: #8afaaa;
-  --cta-glow: 0 0 8px rgba(90, 247, 142, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #f3f99d;
   --accent: #ff6f91;
@@ -3036,7 +3039,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #808088;
   --color-success: #30a050;
   --color-error: #d04040;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #28a048;
@@ -3044,7 +3047,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #30a050;
   --cta-border-hover: #50c070;
-  --cta-glow: 0 0 8px rgba(48, 160, 80, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #a0a030;
   --accent: #d06070;
@@ -3071,7 +3074,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #707488;
   --color-success: #c3e88d;
   --color-error: #f07178;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #9a7ee8;
@@ -3079,7 +3082,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #1e2030;
   --cta-bg-hover: #c792ea;
   --cta-border-hover: #d8b0ff;
-  --cta-glow: 0 0 8px rgba(199, 146, 234, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #ffcb6b;
   --accent: #c792ea;
@@ -3105,7 +3108,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8080a0;
   --color-success: #60a050;
   --color-error: #c04050;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #8058c8;
@@ -3113,7 +3116,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #9060d8;
   --cta-border-hover: #a080e8;
-  --cta-glow: 0 0 8px rgba(144, 96, 216, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #d0a030;
   --accent: #9060d8;
@@ -3140,7 +3143,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #706050;
   --color-success: #8f6552;
   --color-error: #d47a6a;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #c17d56;
@@ -3148,7 +3151,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #231813;
   --cta-bg-hover: #d4a574;
   --cta-border-hover: #e4b884;
-  --cta-glow: 0 0 8px rgba(212, 165, 116, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #8f6552;
   --accent: #d4a574;
@@ -3174,7 +3177,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8a7a68;
   --color-success: #706050;
   --color-error: #b06050;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #906040;
@@ -3182,7 +3185,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #a07050;
   --cta-border-hover: #b08060;
-  --cta-glow: 0 0 8px rgba(160, 112, 80, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #806040;
   --accent: #a07050;
@@ -3209,7 +3212,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #706050;
   --color-success: #d4874d;
   --color-error: #c44030;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 50%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #c1440e;
@@ -3217,7 +3220,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #e77d3d;
   --cta-border-hover: #f7a060;
-  --cta-glow: 0 0 8px rgba(193, 68, 14, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #d4874d;
   --accent: #c1440e;
@@ -3243,7 +3246,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8a7a68;
   --color-success: #b07040;
   --color-error: #a03020;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #a03010;
@@ -3251,7 +3254,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #c06030;
   --cta-border-hover: #d08050;
-  --cta-glow: 0 0 8px rgba(160, 48, 16, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #b07040;
   --accent: #a03010;
@@ -3278,7 +3281,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #5d5f78;
   --color-success: #5de4c7;
   --color-error: #d0679d;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #5de4c7;
@@ -3286,7 +3289,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #14151f;
   --cta-bg-hover: #89ddff;
   --cta-border-hover: #aae8ff;
-  --cta-glow: 0 0 8px rgba(93, 228, 199, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #b4bcff;
   --accent: #89ddff;
@@ -3312,7 +3315,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --done: #8080a0;
   --color-success: #30a090;
   --color-error: #c04080;
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, var(--text) 10%, transparent);
   --shadow: var(--shadow-lg);
 
   --cta-bg: #30a090;
@@ -3320,7 +3323,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #4090c0;
   --cta-border-hover: #60a8d8;
-  --cta-glow: 0 0 8px rgba(48, 160, 144, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--color-success) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #8070c0;
   --accent: #4090c0;
@@ -3353,7 +3356,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #c05828;
   --cta-border-hover: #d87038;
-  --cta-glow: 0 0 8px rgba(199, 91, 42, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #58a8d0;
   --accent: #c75b2a;
@@ -3385,7 +3388,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #a04820;
   --cta-border-hover: #b85a28;
-  --cta-glow: 0 0 8px rgba(160, 72, 32, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2878a0;
   --accent: #a04520;
@@ -3418,7 +3421,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #c87840;
   --cta-border-hover: #d88a50;
-  --cta-glow: 0 0 8px rgba(212, 133, 74, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #60a8d8;
   --accent: #d4854a;
@@ -3450,7 +3453,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #906828;
   --cta-border-hover: #a87830;
-  --cta-glow: 0 0 8px rgba(144, 84, 32, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, #905420 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #306090;
   --accent: #b06830;
@@ -3483,7 +3486,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #1a1008;
   --cta-bg-hover: #e08a10;
   --cta-border-hover: #f09a18;
-  --cta-glow: 0 0 12px rgba(240, 154, 24, 0.4);
+  --cta-glow: 0 0 12px color-mix(in srgb, var(--cta-border-hover) 40%, transparent);
   --logo-accent: var(--todo);
   --color-info: #60b0e0;
   --accent: #f0960a;
@@ -3515,7 +3518,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #b07810;
   --cta-border-hover: #c08818;
-  --cta-glow: 0 0 8px rgba(192, 120, 16, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, #c07810 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #3070a0;
   --accent: #c07808;
@@ -3548,7 +3551,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #5a7898;
   --cta-border-hover: #6a8aac;
-  --cta-glow: 0 0 8px rgba(90, 122, 160, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, #5a7aa0 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #6090c0;
   --accent: #5a8abf;
@@ -3580,7 +3583,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #4070a0;
   --cta-border-hover: #5080b0;
-  --cta-glow: 0 0 8px rgba(64, 112, 160, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #306090;
   --accent: #3a6a9f;
@@ -3613,7 +3616,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #b08850;
   --cta-border-hover: #d0a070;
-  --cta-glow: 0 0 8px rgba(192, 144, 96, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #90a8c0;
   --accent: #c4905a;
@@ -3645,7 +3648,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #9a7840;
   --cta-border-hover: #b09060;
-  --cta-glow: 0 0 8px rgba(160, 128, 80, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #5888a8;
   --accent: #a07040;
@@ -3678,7 +3681,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #409898;
   --cta-border-hover: #50b8b0;
-  --cta-glow: 0 0 8px rgba(64, 168, 160, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #50a8c0;
   --accent: #40c8b0;
@@ -3710,7 +3713,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #308070;
   --cta-border-hover: #40a090;
-  --cta-glow: 0 0 8px rgba(56, 144, 128, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2880a0;
   --accent: #2a9080;
@@ -3743,7 +3746,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #5080b8;
   --cta-border-hover: #6898d0;
-  --cta-glow: 0 0 8px rgba(88, 136, 192, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #60a0c8;
   --accent: #7ab8e8;
@@ -3775,7 +3778,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #3080b0;
   --cta-border-hover: #4898c8;
-  --cta-glow: 0 0 8px rgba(56, 136, 184, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #2080a8;
   --accent: #4a90c0;
@@ -3808,7 +3811,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #9070b0;
   --cta-border-hover: #a888c8;
-  --cta-glow: 0 0 8px rgba(152, 120, 184, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #9090c0;
   --accent: #b890d8;
@@ -3840,7 +3843,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #7860a0;
   --cta-border-hover: #9078b8;
-  --cta-glow: 0 0 8px rgba(128, 104, 168, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #6868a0;
   --accent: #8060a8;
@@ -3873,7 +3876,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #b058a8;
   --cta-border-hover: #d070c8;
-  --cta-glow: 0 0 8px rgba(192, 96, 184, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #b090d0;
   --accent: #e870c0;
@@ -3905,7 +3908,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #9040b0;
   --cta-border-hover: #a858c8;
-  --cta-glow: 0 0 8px rgba(152, 72, 184, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #7878c0;
   --accent: #c040a0;
@@ -3938,7 +3941,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #a08858;
   --cta-border-hover: #b8a078;
-  --cta-glow: 0 0 8px rgba(168, 144, 104, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #a8a0b0;
   --accent: #c8a868;
@@ -3970,7 +3973,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --cta-text: #fff;
   --cta-bg-hover: #887038;
   --cta-border-hover: #a08848;
-  --cta-glow: 0 0 8px rgba(144, 120, 64, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
   --logo-accent: var(--todo);
   --color-info: #888098;
   --accent: #9a8050;

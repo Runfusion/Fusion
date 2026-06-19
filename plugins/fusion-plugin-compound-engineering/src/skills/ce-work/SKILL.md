@@ -12,6 +12,22 @@ Execute work efficiently while maintaining quality and finishing features.
 
 This command takes a work document (plan or specification) or a bare prompt describing the work, and executes it systematically. The focus is on **shipping complete features** by understanding requirements quickly, following existing patterns, and maintaining quality throughout.
 
+### Running inside Fusion (autonomous workflow step)
+
+When the environment variable `FUSION_WORKFLOW_STEP` is set, you are running as a **Fusion workflow step**, not an interactive session:
+
+- **No synchronous user.** Do not call `AskUserQuestion` (no listener). If you must ask a genuinely blocking question, emit a single await-input block and stop — Fusion pauses the task and surfaces it on the task card, then re-runs this step with the reply as the latest steering comment:
+
+  ```
+  ===FUSION_AWAIT_INPUT===
+  <your single clear question>
+  ===END_FUSION_AWAIT_INPUT===
+  ```
+
+  If `FUSION_HEADLESS` is also set, do not ask — proceed on reasonable assumptions and note them.
+
+- **Sub-agent dispatch uses `fn_spawn_agent`, not `Task`.** To run a `ce-*` persona, read its def from `${FUSION_CE_AGENTS_DIR}/<persona>.md`, strip the frontmatter, and pass the body as `fn_spawn_agent`'s `systemPromptOverride` (with an appropriate `role`) and the unit scope as `task`. If `FUSION_CE_AGENTS_DIR` is unset or the def is missing, run the unit inline (single-agent) rather than failing. Parallel/worktree dispatch still applies — each `fn_spawn_agent` child already runs in its own worktree.
+
 ## Input Document
 
 <input_document> #$ARGUMENTS </input_document>
@@ -99,8 +115,11 @@ Determine how to proceed based on what was provided in `<input_document>`.
 
    **Option B: Use a worktree (recommended for parallel development)**
    ```bash
-   skill: ce-worktree
-   # The skill will create a new branch from the default branch in an isolated worktree
+   # Create a new branch from the default branch in an isolated worktree.
+   # (In a Fusion workflow run the task already executes inside its own
+   # worktree/branch — skip this and continue there.)
+   git pull origin [default_branch]
+   git worktree add ../feature-branch-name -b feature-branch-name [default_branch]
    ```
 
    **Option C: Continue on the default branch**

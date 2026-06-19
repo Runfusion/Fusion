@@ -1,4 +1,7 @@
 import type { Task } from "@fusion/core";
+import { createLogger } from "./logger.js";
+
+const concurrencyLog = createLogger("concurrency");
 
 /** Priority level for merge agents — served first. */
 export const PRIORITY_MERGE = 2;
@@ -106,6 +109,7 @@ export class AgentSemaphore {
   private _active = 0;
   private _waiters: PriorityWaiter[] = [];
   private _getLimit: () => number;
+  private _excessReleaseWarned = false;
 
   /**
    * @param limit - Either a static number or a getter that returns the current
@@ -118,7 +122,7 @@ export class AgentSemaphore {
 
   /** Number of slots currently held by running agents. */
   get activeCount(): number {
-    return this._active;
+    return Math.max(0, this._active);
   }
 
   /** Number of callers currently queued for a semaphore slot. */
@@ -219,8 +223,7 @@ export class AgentSemaphore {
    * (if any).
    */
   release(): void {
-    this._active--;
-    this._drain();
+    this.returnSlot("release");
   }
 
   /**
@@ -262,9 +265,27 @@ export class AgentSemaphore {
     try {
       return await fn();
     } finally {
-      this._active--;
-      this._drain();
+      this.returnSlot("runNested");
     }
+  }
+
+  /**
+   * FNXC:Scheduler-Concurrency 2026-06-13-19:58:
+   * FN-6423 requires excess slot returns to remain observable without corrupting scheduler capacity accounting. Clamp the active slot count at zero and warn once so a release leak cannot surface as negative `activeCount` or a negative `semaphore used=` diagnostic.
+   */
+  private returnSlot(source: "release" | "runNested"): void {
+    if (this._active <= 0) {
+      this._active = 0;
+      if (!this._excessReleaseWarned) {
+        this._excessReleaseWarned = true;
+        concurrencyLog.warn(`AgentSemaphore excess slot return ignored from ${source}; activeCount already 0`);
+      }
+      this._drain();
+      return;
+    }
+
+    this._active--;
+    this._drain();
   }
 
   /**

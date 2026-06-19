@@ -47,6 +47,21 @@ describe("AgentDetailView mobile scroll regression (FN-4231)", () => {
     expect(window.getComputedStyle(footerEl).flexShrink).toBe("0");
   });
 
+  it("tabs accept horizontal touch panning on mobile (FN-6450)", async () => {
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".agent-detail-tabs")).toBeTruthy();
+    });
+
+    const tabsEl = document.querySelector(".agent-detail-tabs") as HTMLElement;
+    const tabsStyle = window.getComputedStyle(tabsEl);
+
+    expect(tabsStyle.touchAction).toBe("pan-x pan-y");
+    expect(tabsStyle.touchAction).toContain("pan-x");
+    expect(tabsStyle.overflowX).toBe("auto");
+  });
+
   it("tabs are horizontally scrollable at tablet widths (FN-6209)", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,

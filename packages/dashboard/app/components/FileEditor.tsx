@@ -7,6 +7,8 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { useSelectionComment } from "../hooks/useSelectionComment";
+import { SelectionCommentPopover } from "./SelectionCommentPopover";
 import { resolveCodeMirrorLanguage } from "../utils/codemirror-language";
 
 interface FileEditorProps {
@@ -19,6 +21,29 @@ interface FileEditorProps {
   canToggleLineNumbers?: boolean;
   toolbarExpanded?: boolean;
   toolbarActionsId?: string;
+  onSendSelectionToTask?: (description: string) => void;
+}
+
+const FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY = "fn-file-editor-markdown-preview";
+
+function readBooleanPref(key: string, defaultValue: boolean): boolean {
+  if (typeof window === "undefined") return defaultValue;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return defaultValue;
+    return raw === "true";
+  } catch {
+    return defaultValue;
+  }
+}
+
+function writeBooleanPref(key: string, value: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // ignore storage failures (quota, private mode, etc.)
+  }
 }
 
 function isMarkdownFile(filePath?: string): boolean {
@@ -45,15 +70,21 @@ export function FileEditor({
   canToggleLineNumbers = true,
   toolbarExpanded,
   toolbarActionsId: externalToolbarActionsId,
+  onSendSelectionToTask,
 }: FileEditorProps) {
   const { t } = useTranslation("app");
-  const [showPreview, setShowPreview] = useState(false);
+  /*
+   * FNXC:FileViewer 2026-06-17-01:22:
+   * The editable markdown file viewer must remember the user's Edit/Preview choice across file opens and browser sessions via localStorage, while first load still defaults to Edit and readOnly force-preview must not mutate the stored editable preference.
+   */
+  const [showPreview, setShowPreview] = useState<boolean>(() => readBooleanPref(FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY, false));
   const [wordWrap, setWordWrap] = useState(true);
   const [internalExpanded, setInternalExpanded] = useState(false);
   const isControlled = toolbarExpanded !== undefined;
   const expanded = isControlled ? toolbarExpanded : internalExpanded;
 
   const editorHostRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const syncingFromPropsRef = useRef(false);
   const onChangeRef = useRef(onChange);
@@ -84,6 +115,37 @@ export function FileEditor({
       setInternalExpanded((prev) => !prev);
     }
   }, [isControlled]);
+
+  const [selectionCommentOpen, setSelectionCommentOpen] = useState(false);
+  const getCodeMirrorLineRange = useCallback(() => {
+    const view = editorViewRef.current;
+    if (!view) return undefined;
+    const range = view.state.selection.main;
+    if (range.empty) return undefined;
+    const fromLine = view.state.doc.lineAt(Math.min(range.from, range.to)).number;
+    const toLine = view.state.doc.lineAt(Math.max(range.from, range.to)).number;
+    return { start: fromLine, end: toLine };
+  }, []);
+  const editorSelection = useSelectionComment(editorHostRef, {
+    locked: selectionCommentOpen,
+    getLineRange: getCodeMirrorLineRange,
+  });
+  const previewSelection = useSelectionComment(previewRef, { locked: selectionCommentOpen });
+  const activeSelection = effectiveShowPreview ? previewSelection : editorSelection;
+  const selectionPopover = onSendSelectionToTask && activeSelection ? (
+    <SelectionCommentPopover
+      selectedText={activeSelection.selectedText}
+      anchorRect={activeSelection.anchorRect}
+      filePath={filePath}
+      lineRange={activeSelection.lineRange}
+      onSubmit={onSendSelectionToTask}
+      onOpenChange={setSelectionCommentOpen}
+    />
+  ) : null;
+
+  useEffect(() => {
+    writeBooleanPref(FILE_EDITOR_MARKDOWN_PREVIEW_STORAGE_KEY, showPreview);
+  }, [showPreview]);
 
   useEffect(() => {
     if (!editorHostRef.current || effectiveShowPreview) {
@@ -224,12 +286,13 @@ export function FileEditor({
       ) : null}
 
       {effectiveShowPreview ? (
-        <div className="file-editor-preview markdown-body">
+        <div ref={previewRef} className="file-editor-preview markdown-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
       ) : (
         <div className="file-editor-codemirror" ref={editorHostRef} aria-label={filePath ? t("fileEditor.editorFor", `Editor for ${filePath}`) : t("fileEditor.fileEditor", "File editor")} />
       )}
+      {selectionPopover}
     </div>
   );
 }

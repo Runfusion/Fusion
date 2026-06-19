@@ -13,6 +13,13 @@
   color: var(--text);
 }
 
+.update-available-banner__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
 .update-available-banner__text {
   margin: 0;
   color: var(--text);
@@ -39,6 +46,39 @@
   border-radius: var(--radius-sm);
 }
 
+.update-available-banner__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.update-available-banner__update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.update-available-banner__update-btn:disabled {
+  color: var(--color-warning);
+}
+
+.update-available-banner__update-btn svg.spinning {
+  animation: update-available-banner-spin 1s linear infinite;
+}
+
+.update-available-banner__install-status {
+  font-weight: 500;
+}
+
+.update-available-banner__install-status--success {
+  color: var(--color-success);
+}
+
+.update-available-banner__install-status--error {
+  color: var(--color-error);
+}
+
 .update-available-banner__dismiss {
   background: none;
   border: none;
@@ -59,6 +99,12 @@
 .update-available-banner__dismiss:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
+}
+
+@keyframes update-available-banner-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 768px) {

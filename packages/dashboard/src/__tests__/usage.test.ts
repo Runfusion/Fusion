@@ -1,3 +1,7 @@
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 confirmed this usage API parser suite is deterministic under dashboard-api, so it must run in backfill instead of remaining a curated skip-list orphan.
+*/
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const coreInteropMocks = vi.hoisted(() => ({

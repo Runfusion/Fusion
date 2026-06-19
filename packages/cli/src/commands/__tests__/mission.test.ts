@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock node:readline/promises before importing the module under test
@@ -30,6 +33,8 @@ vi.mock("../../project-resolver.js", () => ({
 
 import { createInterface } from "node:readline/promises";
 import { getStore } from "../../project-resolver.js";
+
+const { TaskStore: ActualTaskStore } = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
 
 // Import after mocks
 const {
@@ -931,14 +936,13 @@ describe("mission commands", () => {
     });
 
     it("operates end-to-end against a real temp-project store", async () => {
-      const { TaskStore } = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
-      const { mkdtempSync, rmSync } = await import("node:fs");
-      const { tmpdir } = await import("node:os");
-      const { join } = await import("node:path");
-
+      /*
+       * FNXC:CliTests 2026-06-14-01:04:
+       * The quarantine rescue must narrow genuinely slow CLI seams instead of widening test timeouts. Keep the real in-memory TaskStore coverage, but hoist module and stdlib loading out of the timed test body so this high-value mission/goal regression joins the default lane without per-test package-load overhead.
+       */
       const rootDir = mkdtempSync(join(tmpdir(), "kb-mission-cli-goals-"));
       const globalDir = join(rootDir, ".fusion-global-settings");
-      const store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+      const store = new ActualTaskStore(rootDir, globalDir, { inMemoryDb: true });
       await store.init();
 
       const mission = store.getMissionStore().createMission({ title: "CLI Mission" });

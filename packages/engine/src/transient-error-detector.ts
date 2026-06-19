@@ -193,6 +193,11 @@ export function extractMissingModulePath(errorMessage: string): string | null {
 
 const UNSUPPORTED_MESSAGE_ROLE_PATTERN = /\bmessages\.\[\d+\]\.role\b[\s\S]*\bis not one of\b|\bis not one of\b[\s\S]*\bmessages\.\[\d+\]\.role\b/i;
 const NON_CONTINUABLE_SESSION_PATTERN = /cannot continue from message role\s*[:=-]?\s*(?:['"`]?)(assistant|tool|function|system|user)(?:['"`]?)\b/i;
+/*
+FNXC:Reliability-ErrorClassification 2026-06-17-14:48:
+FN-6594 treats Codex transcript-desync on post-done session re-entry as non-continuable when a `function_call_output` is replayed without its `function_call`, or the symmetric function-call/output pair is missing. Anchor on the original `No tool call found for function call output with call_id ...` symptom so executor fresh-session retry and self-healing post-done wedge recovery engage without swallowing generic 400/auth/quota errors.
+*/
+const CODEX_TRANSCRIPT_DESYNC_NON_CONTINUABLE_PATTERN = /\bno\s+(?:tool\s+call|function\s+call)\s+found\s+for\s+function\s+call\s+output\b/i;
 const MODEL_AUTH_TIER_INCOMPATIBILITY_PATTERNS: RegExp[] = [
   // Codex ChatGPT-account auth-tier incompatibility: the model is valid, but
   // unavailable for the current auth tier.
@@ -228,7 +233,7 @@ export function isNonContinuableSessionError(errorMessage: string): boolean {
   if (!errorMessage || typeof errorMessage !== "string") {
     return false;
   }
-  return NON_CONTINUABLE_SESSION_PATTERN.test(errorMessage);
+  return NON_CONTINUABLE_SESSION_PATTERN.test(errorMessage) || CODEX_TRANSCRIPT_DESYNC_NON_CONTINUABLE_PATTERN.test(errorMessage);
 }
 
 const OPERATOR_ACTIONABLE_AGENT_ERROR_PATTERNS: RegExp[] = [

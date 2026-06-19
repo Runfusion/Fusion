@@ -8,6 +8,10 @@
  * - Stable identity on upsert (id/createdAt preserved)
  * - Deterministic ordering under timestamp ties
  * - Migration: pre-33 DB upgrades to include insight tables
+ *
+ * FNXC:Insights 2026-06-16-09:40:
+ * Touched alongside the Command Center schema work (PR #1683, migrations 118-120) so the insight-store
+ * migration coverage stays valid as later schema versions land; assertions pin the pre-33 upgrade path.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -1000,7 +1004,7 @@ describe("Migration: pre-33 DB upgrade", () => {
       // Step 1: Create a fresh database at v33 (runs all migrations up to 33)
       const db1 = createDatabase(legacyDir);
       db1.init();
-      expect(db1.getSchemaVersion()).toBe(118);
+      expect(db1.getSchemaVersion()).toBe(124);
       db1.close();
 
       // Step 2: Manually downgrade to version 32 and drop insight tables
@@ -1035,7 +1039,7 @@ describe("Migration: pre-33 DB upgrade", () => {
       expect(tableNamesBefore).not.toContain("project_insight_runs");
       // Now run init — this triggers the v32→v33 migration
       db3.init();
-      expect(db3.getSchemaVersion()).toBe(118);
+      expect(db3.getSchemaVersion()).toBe(124);
 
       // Step 4: Verify insight tables exist after migration
       const tablesAfter = db3.prepare(
@@ -1066,12 +1070,12 @@ describe("Migration: pre-33 DB upgrade", () => {
     try {
       const db1 = createDatabase(testDir);
       db1.init();
-      expect(db1.getSchemaVersion()).toBe(118);
+      expect(db1.getSchemaVersion()).toBe(124);
       db1.close();
 
       const db2 = createDatabase(testDir);
       expect(() => db2.init()).not.toThrow();
-      expect(db2.getSchemaVersion()).toBe(118);
+      expect(db2.getSchemaVersion()).toBe(124);
       db2.close();
     } finally {
       rmSync(testDir, { recursive: true, force: true });
@@ -1085,7 +1089,7 @@ describe("Migration: pre-33 DB upgrade", () => {
       // Step 1: Create a fresh DB and run migrations
       const db1 = createDatabase(compatDir);
       db1.init();
-      expect(db1.getSchemaVersion()).toBe(118);
+      expect(db1.getSchemaVersion()).toBe(124);
 
       // Step 2: Strip lifecycle and cancelledAt columns by recreating the
       // table without them. This simulates a DB that was created before the

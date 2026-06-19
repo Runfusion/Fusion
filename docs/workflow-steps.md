@@ -4,9 +4,43 @@
 
 Workflow steps are reusable quality gates that run around task completion.
 
+## Workflow overview
+
+<!--
+FNXC:Docs 2026-06-16-23:25:
+Public docs need one concise workflow overview that names the shipped built-ins, explains per-task selection, and points authors to the visual editor while leaving low-level runtime details in this canonical workflow document.
+-->
+
+Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → Workflow steps → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. A task with no explicit workflow resolves to `builtin:coding`; an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
+
+### Selecting workflows
+
+Operators can select workflows in the dashboard wherever the task or board workflow selector is shown. Agents and automation can discover and assign them with the workflow tools:
+
+- `fn_workflow_list` — list built-in and custom workflow definitions.
+- `fn_workflow_select` — assign a workflow to the current or named task.
+- `workflow_id` on `fn_task_create` / delegation tools — create a task with a workflow already selected.
+
+Decision-only or investigation tasks can also declare `noCommitsExpected` / `**No commits expected:** true`; the built-in triage policy prefers the Quick fix workflow for that no-commit lane.
+
+### Built-in workflow catalog
+
+| Workflow | ID | Notes |
+|---|---|---|
+| Coding | `builtin:coding` | Default coding lifecycle and fallback for tasks without an explicit selection. |
+| Quick fix | `builtin:quick-fix` | Short path for trivial or no-commit/decision work; omits the standard review stage. |
+| Review-heavy | `builtin:review-heavy` | Standard execute/review/merge path with an additional gated security review. |
+| Compound engineering | `builtin:compound-engineering` | Plugin-gated workflow that invokes Compound Engineering skills for planning, work, review, PR/feedback, and learnings capture. |
+| Stepwise coding | `builtin:stepwise-coding` | Graph-executor workflow that models per-step parse/execute/review/rework explicitly. |
+| PR lifecycle | `builtin:pr-workflow` | Reusable PR lifecycle graph fragment (create PR → await review → respond → gate → merge); it is a fragment, not directly selectable as a task workflow. |
+
+### Custom workflow authoring
+
+Use the dashboard [Workflow Editor](./workflow-editor.md) to inspect read-only built-ins, duplicate them, or author custom workflows. Custom workflows can declare graph nodes and edges, columns/traits, task fields, typed workflow settings, model lanes, optional workflow-step templates, and author-time validation. Use this page for runtime semantics; use the editor guide for the visual authoring surface.
+
 ## Workflow IR (v1)
 
-Fusion also defines a separate **Workflow Intermediate Representation (IR)** contract in `@fusion/core` for editor↔interpreter graph exchange. This IR is distinct from the post-implementation quality gates documented on this page (`WorkflowStep` templates and execution policies).
+Fusion also defines a separate **Workflow Intermediate Representation (IR)** contract in `@fusion/core` for editor↔interpreter graph exchange. This IR is distinct from the post-implementation quality gates documented on this page (`WorkflowStep` templates and execution policies). For the user-facing visual authoring surface, see the [Workflow Editor guide](./workflow-editor.md).
 
 Workflow IR v1 is a JSON-safe graph document:
 
@@ -341,7 +375,7 @@ For new workflow step prompts, prefer the structured JSON contract.
 
 #### Malformed Output
 
-If output matches neither structured JSON nor known prose fallback patterns, Fusion records the step output as `malformed`. Operationally, this means no workflow verdict could be inferred from that response.
+If output matches neither structured JSON nor known prose fallback patterns, Fusion records the step output as `malformed`. Operationally, this means no workflow verdict could be inferred from that response. A malformed `gateMode: "gate"` prompt step is a blocking failure rather than an approval; a malformed `gateMode: "advisory"` step is recorded as `advisory_failure` and does not block completion.
 
 ### Behavior
 
@@ -497,7 +531,7 @@ Prompt-mode workflow agents should emit a trailing JSON object:
 - `verdict` and `notes` are persisted on `WorkflowStepResult` when present.
 - Script-mode steps do not populate these fields.
 - Backward compatibility remains for legacy prose-only responses via heuristic fallback (`REQUEST REVISION` and approval keywords).
-- If neither structured JSON nor fallback prose can be interpreted, output is recorded as `malformed` (no inferable verdict) instead of hard-failing the task.
+- If neither structured JSON nor fallback prose can be interpreted, output is recorded as `malformed` (no inferable verdict). Malformed blocking gates fail closed; advisory gates record `advisory_failure` without blocking.
 
 ## Workflow Graph Executor
 
@@ -514,6 +548,7 @@ Traversal semantics:
 - `outcome:<value>` routes when the node result value matches exactly
 - unsupported conditions throw `WorkflowIrError`
 - per-node retries are bounded and deterministic
+- terminal success requires every workflow-declared task-document artifact key (`ir.artifacts[].key`) to exist. No-artifact workflows keep the implicit `PROMPT.md` parse-step default and do not require a task document.
 
 Coverage includes lifecycle ordering, primitive invocation, merge/file-scope failure routing, and downstream halt behavior for hard-cancel/recovery style failures.
 

@@ -77,6 +77,7 @@ export interface UseChatReturn {
     input: { agentId: string; title?: string; modelProvider?: string; modelId?: string },
   ) => Promise<ChatSessionInfo>;
   archiveSession: (id: string) => Promise<void>;
+  renameSession: (id: string, title: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
 
   // Message operations
@@ -437,7 +438,7 @@ export function useChat(
   );
 
   const hydrateMessagesFromCache = useCallback(
-    (sessionId?: string | null) => {
+    (sessionId?: string | null, opts?: { clearOnMiss?: boolean }) => {
       const cachedMessages = readCachedMessages(projectId, sessionId);
       if (cachedMessages.length > 0) {
         setMessages(cachedMessages);
@@ -445,7 +446,9 @@ export function useChat(
         return true;
       }
 
-      setMessages([]);
+      if (opts?.clearOnMiss !== false) {
+        setMessages([]);
+      }
       return false;
     },
     [projectId, readCachedMessages],
@@ -453,7 +456,7 @@ export function useChat(
 
   // Load messages when active session changes
   const loadMessages = useCallback(
-    async (sessionId: string, opts?: { offset?: number; before?: string }) => {
+    async (sessionId: string, opts?: { offset?: number; before?: string; commitForStreamingAttach?: boolean }) => {
       const isPaginationRequest = (typeof opts?.offset === "number" && opts.offset > 0) || typeof opts?.before === "string";
       const cacheKey = getChatMessagesCacheKey(projectId, sessionId);
       const cachedMessages = !isPaginationRequest ? readCachedMessages(projectId, sessionId) : [];
@@ -470,13 +473,15 @@ export function useChat(
         const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc", ...opts }, projectId);
         // API returns newest-first (order=desc); reverse so display is oldest-first.
         const mappedMessages = data.messages.slice().reverse().map(mapChatMessageToInfo);
+        const shouldCommitMessages = activeSessionRef.current?.id === sessionId
+          || (opts?.commitForStreamingAttach === true && lastAttachedGenerationRef.current?.sessionId === sessionId);
         if (isPaginationRequest) {
-          if (activeSessionRef.current?.id === sessionId) {
+          if (shouldCommitMessages) {
             setMessages((prev) => [...mappedMessages, ...prev]);
             setHasMoreMessages(data.messages.length >= 50);
           }
         } else {
-          if (activeSessionRef.current?.id === sessionId) {
+          if (shouldCommitMessages) {
             setMessages(mappedMessages);
             setHasMoreMessages(data.messages.length >= 50);
             if (cacheKey) writeCache(cacheKey, mappedMessages, { maxBytes: 500_000 });
@@ -527,14 +532,35 @@ export function useChat(
   const attachIfGenerating = useCallback((
     sessionId: string,
     inFlightGeneration?: ChatInFlightGenerationState | null,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; priorThreadLoadAlreadyStarted?: boolean },
   ) => {
     if (streamRef.current || !sessionId) {
       return true;
     }
 
     cancelledByUserRef.current = false;
+    const currentMessages = messagesRef.current;
+    const needsPriorThreadLoad = currentMessages.length === 0 || currentMessages[0]?.sessionId !== sessionId;
+    lastAttachedGenerationRef.current = {
+      sessionId,
+      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
+        ? inFlightGeneration.replayFromEventId
+        : null,
+    };
+    if (needsPriorThreadLoad && !options?.priorThreadLoadAlreadyStarted) {
+      /*
+      FNXC:ChatStreaming 2026-06-17-16:50:
+      Main chat must keep the persisted prior thread visible while an assistant response streams, including attach paths that run before React commits activeSession into activeSessionRef.
+      Because chat:message:added echoes are suppressed during streaming, attach-triggered thread loads must commit for the attached session and cache misses must not blank an existing thread while the load is in flight.
+      */
+      hydrateMessagesFromCache(sessionId, { clearOnMiss: false });
+      void loadMessages(sessionId, { commitForStreamingAttach: true });
+    }
     if (inFlightGeneration) {
+      /*
+      FNXC:ChatStreaming 2026-06-18-06:00:
+      Main chat paints the durable in-flight snapshot immediately for reattach UX, and passes the same snapshot into createChatStreamHandlers so the first replayed delta appends to accumulated text/thinking/tool calls instead of replacing the visible prefix.
+      */
       setStreamingText(inFlightGeneration.streamingText);
       setStreamingThinking(inFlightGeneration.streamingThinking);
       setStreamingToolCalls(inFlightGeneration.toolCalls);
@@ -544,6 +570,9 @@ export function useChat(
     const { handlers } = createChatStreamHandlers({
       sessionId,
       tempUserMessageId: "",
+      initialText: inFlightGeneration?.streamingText,
+      initialThinking: inFlightGeneration?.streamingThinking,
+      initialToolCalls: inFlightGeneration?.toolCalls,
       setStreamingText,
       setStreamingThinking,
       setStreamingToolCalls,
@@ -598,14 +627,8 @@ export function useChat(
         : {}),
     });
     streamRef.current = stream;
-    lastAttachedGenerationRef.current = {
-      sessionId,
-      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
-        ? inFlightGeneration.replayFromEventId
-        : null,
-    };
     return true;
-  }, [addToast, loadMessages, projectId, flushPendingMessage]);
+  }, [addToast, hydrateMessagesFromCache, loadMessages, projectId, flushPendingMessage]);
 
   // Select a session
   const selectSession = useCallback(
@@ -624,6 +647,7 @@ export function useChat(
       // Find and set active session
       const session = sessionOverride ?? sessions.find((s) => s.id === id);
       setActiveSession(session || null);
+      activeSessionRef.current = session || null;
 
       if (id) {
         void fetchChatSession(id, projectId)
@@ -660,10 +684,10 @@ export function useChat(
 
       // Recover streaming state if the server reports an active generation.
       // After a reload/HMR, the server keeps generating but the UI loses
-      // all streaming state. Showing "Connecting…" immediately tells the
-      // user the AI is still working.
+      // all streaming state. Showing "Working…" immediately tells the
+      // user the AI is still processing the request.
       if (session?.isGenerating) {
-        attachIfGenerating(session.id, session.inFlightGeneration);
+        attachIfGenerating(session.id, session.inFlightGeneration, { priorThreadLoadAlreadyStarted: true });
       }
 
       // Persist active session to localStorage
@@ -784,6 +808,52 @@ export function useChat(
       }
     },
     [activeSession, projectId],
+  );
+
+  /**
+   * FNXC:Chat 2026-06-16-22:01:
+   * Users can rename regular and quick chat sessions through existing PATCH title plumbing; update the list and active header optimistically so every visible session title reflects the new value immediately while rolling back on API failure.
+   */
+  const renameSession = useCallback(
+    async (id: string, title: string) => {
+      const normalizedTitle = title.trim() || null;
+      const previousSessions = sessions;
+      const previousActiveSession = activeSession;
+
+      setSessions((prev) => prev.map((session) => (session.id === id ? { ...session, title: normalizedTitle } : session)));
+      setActiveSession((prev) => (prev?.id === id ? { ...prev, title: normalizedTitle } : prev));
+
+      try {
+        const data = await updateChatSession(id, { title: normalizedTitle }, projectId);
+        const updatedSession = data.session;
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === id
+              ? {
+                  ...session,
+                  title: updatedSession.title,
+                  updatedAt: updatedSession.updatedAt,
+                }
+              : session,
+          ),
+        );
+        setActiveSession((prev) =>
+          prev?.id === id
+            ? {
+                ...prev,
+                title: updatedSession.title,
+                updatedAt: updatedSession.updatedAt,
+              }
+            : prev,
+        );
+      } catch (error) {
+        setSessions(previousSessions);
+        setActiveSession(previousActiveSession);
+        addToast?.("Failed to rename conversation", "error");
+        throw error;
+      }
+    },
+    [activeSession, addToast, projectId, sessions],
   );
 
   // Delete a session
@@ -1309,6 +1379,7 @@ export function useChat(
     selectSession,
     createSession,
     archiveSession,
+    renameSession,
     deleteSession,
     sendMessage,
     stopStreaming,

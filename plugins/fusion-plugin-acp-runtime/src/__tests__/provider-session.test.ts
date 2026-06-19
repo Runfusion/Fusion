@@ -45,6 +45,23 @@ describe("session driving helpers", () => {
     }
   });
 
+  it("newAcpSession forwards non-empty mcpServers to session/new (U10 — Route A)", async () => {
+    const newSession = vi.fn(async () => ({ sessionId: "s1", modes: undefined }));
+    const fakeConn = { conn: { newSession } } as unknown as AcpConnection;
+    const servers = [
+      { name: "custom-tools", command: "node", args: ["server.cjs"], env: [] as { name: string; value: string }[] },
+    ];
+    await newAcpSession(fakeConn, { cwd: "/tmp/work", mcpServers: servers });
+    expect(newSession).toHaveBeenCalledWith({ cwd: "/tmp/work", mcpServers: servers });
+  });
+
+  it("newAcpSession defaults mcpServers to [] when absent (Route B read-only posture)", async () => {
+    const newSession = vi.fn(async () => ({ sessionId: "s1", modes: undefined }));
+    const fakeConn = { conn: { newSession } } as unknown as AcpConnection;
+    await newAcpSession(fakeConn, { cwd: "/tmp/work" });
+    expect(newSession).toHaveBeenCalledWith({ cwd: "/tmp/work", mcpServers: [] });
+  });
+
   it("promptAcpSession resolves with end_turn for a normal turn", async () => {
     const conn = await open();
     try {

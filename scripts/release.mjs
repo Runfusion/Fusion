@@ -10,11 +10,15 @@
 //   - clean working tree on `main`, up to date with origin
 //   - at least one pending changeset in .changeset/
 //   - `npm login` already completed (publish uses the active npm token)
+//   - real releases require an operator-held FUSION_RELEASE_AUTHORIZED signal;
+//     dry-runs do not require it because they make no file/git/npm changes
 //
 // Usage:
-//   pnpm release              # interactive: review changesets, accept or override version, confirm
-//   pnpm release --yes        # accept the proposed version, skip confirmation prompt
-//   pnpm release --dry-run    # preview only — exit before any file/git/npm changes
+//   pnpm release                  # interactive: review changesets, accept or override version, confirm, then require operator authorization before mutation
+//   pnpm release --yes            # accept the proposed version, skip confirmation prompt, still require operator authorization before mutation
+//   pnpm release --dry-run        # preview only; non-interactive by default; no authorization signal or file/git/npm changes
+//   pnpm release --dry-run --interactive
+//                                 # preview only, but exercise the version prompt override
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
@@ -23,11 +27,18 @@ import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
+import { evaluateReleaseAuthorization } from "./lib/release-authorization-gate.mjs";
 import { extractVersionNotes } from "./lib/extract-version-notes.mjs";
+import { shouldPromptForVersion } from "./lib/release-prompt-gate.mjs";
 
 const args = new Set(process.argv.slice(2));
+/*
+ * FNXC:ReleaseScript 2026-06-14-23:08:
+ * `--dry-run` must not read stdin in the default agent-shell path; `--interactive` is the explicit maintainer override for prompt coverage while preserving real-release prompts.
+ */
 const DRY_RUN = args.has("--dry-run");
 const AUTO_YES = args.has("--yes") || args.has("-y");
+const INTERACTIVE = args.has("--interactive");
 
 const color = (c, s) => `\x1b[${c}m${s}\x1b[0m`;
 const info = (s) => console.log(color(36, "▶ ") + s);
@@ -506,7 +517,7 @@ console.log(`  Bumped packages : ${releases.map((r) => r.name).join(", ")}`);
 console.log("");
 
 let chosenVersion = proposedVersion;
-if (!AUTO_YES) {
+if (shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })) {
   while (true) {
     const answer = await ask(`Release version [${proposedVersion}]: `);
     if (answer === "") break;
@@ -527,6 +538,23 @@ if (DRY_RUN) {
   warn("--dry-run: stopping before version bump. No files modified, no commit, no publish, no tag.");
   info(`Would release v${chosenVersion} (${releases.length} package(s) bumped).`);
   process.exit(0);
+}
+
+/*
+ * FNXC:ReleaseScript 2026-06-15-02:45:
+ * FN-6469 showed `main`-branch preflight is bypassable by cloning a clean `main`; require an out-of-tree operator-held authorization signal before any version bump, publish, push, tag, GitHub Release, or Homebrew tap mutation can begin.
+ * Dry-run exits above so agents can still inspect release plans without the signal.
+ */
+const releaseAuthorization = evaluateReleaseAuthorization({
+  dryRun: DRY_RUN,
+  env: process.env,
+  stdinIsTTY: process.stdin.isTTY === true,
+});
+if (!releaseAuthorization.authorized) {
+  fail(
+    `${releaseAuthorization.reason ?? "Release is not authorized."}\n` +
+    "Releases are not agent-initiable. A human operator must provide the operator-held FUSION_RELEASE_AUTHORIZED signal from outside the repository before invoking a real release.",
+  );
 }
 
 if (!(await confirm(`Proceed with release v${chosenVersion} (build, publish, tag)?`))) {

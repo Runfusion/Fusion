@@ -71,6 +71,22 @@ export const taskDocumentReadParams = Type.Object({
   ),
 });
 
+export const chatTaskDocumentWriteParams = Type.Object({
+  task_id: Type.String({ description: "Task ID to write the document to (e.g. 'FN-001')." }),
+  key: Type.String({
+    description: "Document key (e.g., 'plan', 'notes', 'research'). Alphanumeric, hyphens, underscores, 1-64 chars.",
+  }),
+  content: Type.String({ description: "Document content to store" }),
+  author: Type.Optional(Type.String({ description: "Who is writing (default: 'agent')" })),
+});
+
+export const chatTaskDocumentReadParams = Type.Object({
+  task_id: Type.String({ description: "Task ID to read documents from (e.g. 'FN-001')." }),
+  key: Type.Optional(
+    Type.String({ description: "Document key to read. Omit to list all documents for this task." }),
+  ),
+});
+
 export const workflowListParams = Type.Object({});
 
 export const workflowGetParams = Type.Object({
@@ -299,6 +315,40 @@ export const postRoomMessageParams = Type.Object({
   content: Type.String({ description: "Room message body (1-2000 characters)" }),
   replyToMessageId: Type.Optional(Type.String({ description: "Optional ID of the room message you are replying to" })),
   mentions: Type.Optional(Type.Array(Type.String(), { description: "Optional agent IDs to mention in the room message" })),
+});
+
+export const askQuestionParams = Type.Object({
+  questions: Type.Array(
+    Type.Object({
+      question: Type.String({
+        description: "The question text shown to the user. Required and must be specific enough to answer.",
+      }),
+      header: Type.Optional(Type.String({
+        description: "Optional short heading for the question card, such as 'Decision needed'.",
+      })),
+      description: Type.Optional(Type.String({
+        description: "Optional helper text explaining why the answer is needed or how it will be used.",
+      })),
+      options: Type.Optional(Type.Array(Type.Object({
+        label: Type.String({ description: "Visible option label the user can choose." }),
+        description: Type.Optional(Type.String({ description: "Optional explanatory text for this option." })),
+      }), {
+        description: "Options for single_select, multi_select, or confirm questions. Select questions require at least one option.",
+      })),
+      multiSelect: Type.Optional(Type.Boolean({
+        description: "Set true when the user may choose multiple options. Prefer type='multi_select' for clarity.",
+      })),
+      type: Type.Optional(Type.Union([
+        Type.Literal("text"),
+        Type.Literal("single_select"),
+        Type.Literal("multi_select"),
+        Type.Literal("confirm"),
+      ], {
+        description: "Question input type: free text, single option, multiple options, or yes/no confirmation.",
+      })),
+    }),
+    { description: "One or more structured questions to present to the user." },
+  ),
 });
 
 export const memorySearchParams = Type.Object({
@@ -1012,58 +1062,115 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
     description:
       "Read a named document for this task, or list all documents when no key is provided.",
     parameters: taskDocumentReadParams,
-    execute: async (_id: string, params: Static<typeof taskDocumentReadParams>) => {
-      try {
-        if (params.key) {
-          const document: TaskDocument | null = await store.getTaskDocument(taskId, params.key);
-          if (!document) {
-            return {
-              content: [{ type: "text" as const, text: `Document "${params.key}" not found.` }],
-              details: {},
-            };
-          }
+    execute: async (_id: string, params: Static<typeof taskDocumentReadParams>) => readTaskDocuments(store, taskId, params.key),
+  };
+}
 
+/**
+ * FNXC:ChatAgentTools 2026-06-18-06:51:
+ * Chat sessions do not have an ambient task, but users expect the same `fn_task_document_write` and `fn_task_document_read` names that task-bound lanes expose.
+ * Require an explicit `task_id` here, mirroring no-ambient workflow authoring tools, so FN-6635 chat agents can persist task documents without guessing a target task.
+ */
+export function createChatTaskDocumentTools(store: TaskStore): ToolDefinition[] {
+  return [
+    {
+      name: "fn_task_document_write",
+      label: "Write Document",
+      description:
+        "Save a named document for a task (for example plan, notes, or research). " +
+        "Each write creates a new revision so you can update documents over time. Requires task_id.",
+      parameters: chatTaskDocumentWriteParams,
+      execute: async (_id: string, params: Static<typeof chatTaskDocumentWriteParams>) => {
+        const input: TaskDocumentCreateInput = {
+          key: params.key,
+          content: params.content,
+          author: params.author || "agent",
+        };
+
+        try {
+          const document: TaskDocument = await store.upsertTaskDocument(params.task_id, input);
           return {
             content: [{
               type: "text" as const,
-              text:
-                `Document: ${document.key}\n` +
-                `Revision: ${document.revision}\n` +
-                `Updated: ${document.updatedAt}\n\n` +
-                document.content,
+              text: `Saved document "${document.key}" (revision ${document.revision}).`,
+            }],
+            details: {},
+          };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err: any) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `ERROR: Failed to save document "${params.key}" for task ${params.task_id}: ${err.message}`,
             }],
             details: {},
           };
         }
+      },
+    },
+    {
+      name: "fn_task_document_read",
+      label: "Read Document",
+      description:
+        "Read a named document for a task, or list all documents when no key is provided. Requires task_id.",
+      parameters: chatTaskDocumentReadParams,
+      execute: async (_id: string, params: Static<typeof chatTaskDocumentReadParams>) => (
+        readTaskDocuments(store, params.task_id, params.key)
+      ),
+    },
+  ];
+}
 
-        const documents: TaskDocument[] = await store.getTaskDocuments(taskId);
-        if (documents.length === 0) {
-          return {
-            content: [{ type: "text" as const, text: "No documents found for this task." }],
-            details: {},
-          };
-        }
-
-        const lines = documents.map((doc) => `- ${doc.key} (revision ${doc.revision}, updated ${doc.updatedAt})`);
+async function readTaskDocuments(store: TaskStore, taskId: string, key?: string) {
+  try {
+    if (key) {
+      const document: TaskDocument | null = await store.getTaskDocument(taskId, key);
+      if (!document) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `Task documents:\n${lines.join("\n")}`,
-          }],
-          details: {},
-        };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: `ERROR: Failed to read task documents: ${err.message}`,
-          }],
+          content: [{ type: "text" as const, text: `Document "${key}" not found.` }],
           details: {},
         };
       }
-    },
-  };
+
+      return {
+        content: [{
+          type: "text" as const,
+          text:
+            `Document: ${document.key}\n` +
+            `Revision: ${document.revision}\n` +
+            `Updated: ${document.updatedAt}\n\n` +
+            document.content,
+        }],
+        details: {},
+      };
+    }
+
+    const documents: TaskDocument[] = await store.getTaskDocuments(taskId);
+    if (documents.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: "No documents found for this task." }],
+        details: {},
+      };
+    }
+
+    const lines = documents.map((doc) => `- ${doc.key} (revision ${doc.revision}, updated ${doc.updatedAt})`);
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Task documents:\n${lines.join("\n")}`,
+      }],
+      details: {},
+    };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } catch (err: any) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: `ERROR: Failed to read task documents for task ${taskId}: ${err.message}`,
+      }],
+      details: {},
+    };
+  }
 }
 
 /**
@@ -2867,6 +2974,66 @@ export function createDelegateTaskTool(
         }
         throw err;
       }
+    },
+  };
+}
+
+type AskQuestionInput = Static<typeof askQuestionParams>;
+
+function askQuestionError(message: string) {
+  return {
+    content: [{ type: "text" as const, text: `ERROR: ${message}` }],
+    details: {},
+    isError: true,
+  };
+}
+
+/**
+ * FNXC:ChatAskQuestion 2026-06-17-13:08:
+ * Dashboard chat agents need a provider-agnostic `fn_ask_question` tool that emits the FN-6501 structured question payload, renders through the existing chat question UI, and receives the answer through the normal next user message instead of a blocking tool response.
+ *
+ * Create a `fn_ask_question` tool that asks the dashboard user structured questions.
+ *
+ * @returns ToolDefinition for the `fn_ask_question` tool
+ */
+export function createAskQuestionTool(): ToolDefinition {
+  return {
+    name: "fn_ask_question",
+    label: "Ask User Question",
+    description:
+      "Ask the user a structured question (single-select, multi-select, free-text, or yes/no confirm). " +
+      "The question renders as an interactive card in chat. After calling this tool, end the turn and wait; " +
+      "the user's answer arrives as the next message.",
+    parameters: askQuestionParams,
+    execute: async (_id: string, params: AskQuestionInput) => {
+      if (!Array.isArray(params.questions) || params.questions.length === 0) {
+        return askQuestionError("questions must contain at least one question");
+      }
+
+      for (const [index, question] of params.questions.entries()) {
+        const questionText = typeof question.question === "string" ? question.question.trim() : "";
+        if (!questionText) {
+          return askQuestionError(`questions[${index}].question must be a non-empty string`);
+        }
+
+        const optionCount = Array.isArray(question.options)
+          ? question.options.filter((option) => typeof option.label === "string" && option.label.trim().length > 0).length
+          : 0;
+        const requiresOptions = question.type === "single_select"
+          || question.type === "multi_select"
+          || question.multiSelect === true;
+        if (requiresOptions && optionCount === 0) {
+          return askQuestionError(`questions[${index}] select questions must include at least one option`);
+        }
+      }
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: "Question presented to the user. Stop and wait for their reply on the next turn.",
+        }],
+        details: { questionCount: params.questions.length },
+      };
     },
   };
 }

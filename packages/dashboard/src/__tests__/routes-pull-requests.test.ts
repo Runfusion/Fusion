@@ -1,5 +1,9 @@
 // @vitest-environment node
 
+/*
+FNXC:PullRequests 2026-06-16-09:44:
+U18 auto-resolve-review-comments coverage (PR #1683): extends the PR thread-summary assertions to the fixed/acted thread states the auto-resolution loop produces, so the backward-move-blocked-by-open-PR guard and thread summaries stay correct.
+*/
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { PrEntity, PrThreadState, Task, TaskStore } from "@fusion/core";
@@ -75,6 +79,7 @@ describe("pull request routes", () => {
     threads = [
       { prEntityId: "PR-1", threadId: "T1", headOid: "abc", outcome: "pending", updatedAt: Date.now() },
       { prEntityId: "PR-1", threadId: "T2", headOid: "abc", outcome: "disagreed", updatedAt: Date.now() },
+      { prEntityId: "PR-1", threadId: "T3", headOid: "abc", outcome: "fixed", updatedAt: Date.now() },
     ];
   });
 
@@ -85,12 +90,15 @@ describe("pull request routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.pullRequests).toHaveLength(1);
     const pr = res.body.pullRequests[0];
-    expect(pr.threads).toHaveLength(2);
+    expect(pr.threads).toHaveLength(3);
     expect(pr.summary.checksRollup).toBe("success");
     expect(pr.summary.mergeable).toBe("clean");
     expect(pr.summary.conflicting).toBe(false);
     expect(pr.summary.pendingThreads).toBe(1);
     expect(pr.summary.disagreedThreads).toBe(1);
+    // U18 (R15): Review-response activity exposed for the Command Center.
+    expect(pr.summary.fixedThreads).toBe(1);
+    expect(pr.summary.actedThreads).toBe(2); // fixed + disagreed, excludes pending
   });
 
   it("GET list filters by repo and status", async () => {

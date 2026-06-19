@@ -21,6 +21,8 @@ import type {
   PlanningQuestion,
   PlanningResponse,
 } from "@fusion/core";
+import type { AgentRuntime } from "./agent-runtime.js";
+import { askAcpOnce } from "./cli-agent-ask.js";
 
 /** Minimal shape of an agent session we depend on (subset of pi's AgentSession). */
 export interface InteractiveAgentSession {
@@ -44,6 +46,14 @@ export interface InteractiveAgentResult {
 export type InteractiveAgentFactory = (
   options: CreateInteractiveAiSessionOptions,
 ) => Promise<InteractiveAgentResult>;
+
+/**
+ * FNXC:PlanningExecutor 2026-06-19-01:45:
+ * Planning now has one engine-local executor selector so callers can opt into the read-only CLI-agent/ACP path without changing core interactive-session options or the downstream PlanningResponse contract. The model executor remains the default selection.
+ */
+export type PlanningExecutorSelection =
+  | { kind: "model" }
+  | { kind: "cli-agent"; runtime: AgentRuntime };
 
 /** One bounded reformat retry, matching planning.ts's MAX_PARSE_RETRIES. */
 const MAX_PARSE_RETRIES = 1;
@@ -195,30 +205,114 @@ export function parseAgentResponse(text: string): PlanningResponse {
  * downstream planning flow cannot tell a CLI-backed run from a model run. The
  * one-shot runner is injected (`run`) so this is testable without a live PTY.
  *
- * NOTE (deviation, see report): the full planning *loop* (multi-turn
- * question/answer over a resumable interactive session) is interactive, not
- * one-shot — a one-shot planning run produces a single terminal response. This
- * seam covers the single-shot "produce a plan" case and proves output-shape
- * compatibility (`parseAgentResponse`). Wiring it into the resumable planning
- * loop's executor resolution remains TODO when planning gains a CLI executor
- * selector.
+ * The planning executor selector below is the production resolution point for
+ * this seam: selecting `{ kind: "cli-agent" }` wraps this one-shot in the
+ * `InteractiveAiSession` contract, while `{ kind: "model" }` keeps the existing
+ * resumable model-backed loop. Threading a live CE `AgentRuntime` into the CE
+ * orchestrator remains a gated Route-A follow-up and is intentionally out of
+ * scope for this read-only planning path.
  */
+export interface CliAgentPlanningOptions {
+  prompt: string;
+  cwd: string;
+  settings?: { model?: string };
+  systemPrompt?: string;
+  timeoutMs?: number;
+}
+
 export async function runCliAgentPlanning(
-  opts: Omit<
-    import("./cli-agent/one-shot-session.js").RunOneShotOptions,
-    "purpose"
-  >,
-  run: typeof import("./cli-agent/one-shot-session.js").runOneShotSession,
+  runtime: AgentRuntime,
+  opts: CliAgentPlanningOptions,
 ): Promise<PlanningResponse> {
-  const result = await run({ ...opts, purpose: "planning" });
+  const result = await askAcpOnce(runtime, {
+    prompt: opts.prompt,
+    cwd: opts.cwd,
+    model: opts.settings?.model,
+    systemPrompt: opts.systemPrompt,
+    timeoutMs: opts.timeoutMs,
+  });
   if (!result.ok) {
-    throw new Error(
-      `CLI-agent planning one-shot failed (${result.reason}): ${result.message}`,
-    );
+    throw new Error(`CLI-agent planning ACP ask failed (${result.reason}): ${result.message}`);
   }
   // Map to the planning flow's shape exactly as a model run would: parse the
-  // adapter's textual result through the canonical planning parser.
-  return parseAgentResponse(result.text || result.rawOutput);
+  // ACP prose through the canonical planning parser.
+  return parseAgentResponse(result.text);
+}
+
+/**
+ * FNXC:PlanningExecutor 2026-06-19-01:45:
+ * The CLI-agent planning executor is a read-only one-shot ACP ask adapted to the InteractiveAiSession interface. It emits exactly one terminal question/complete/error event; malformed or failed CLI-agent output must surface as error instead of fabricating a plan.
+ *
+ * Create an interactive-session facade over `runCliAgentPlanning`.
+ *
+ * The one-shot CLI-agent path produces a single terminal turn: even a
+ * `question` event is terminal here and does not support multi-turn
+ * question/answer. `runCliAgentPlanning` owns ACP session disposal via
+ * `askAcpOnce`; this facade's dispose is therefore best-effort no-op.
+ */
+export async function createCliAgentPlanningSessionWith(
+  runtime: AgentRuntime,
+  options: CreateInteractiveAiSessionOptions,
+): Promise<CreateInteractiveAiSessionResult> {
+  let started = false;
+  let terminalEvent: InteractiveAiSessionEvent | undefined;
+
+  async function runOnce(text: string): Promise<InteractiveAiSessionEvent> {
+    try {
+      const response = await runCliAgentPlanning(runtime, {
+        prompt: text,
+        cwd: options.cwd,
+        systemPrompt: options.systemPrompt,
+        settings: options.defaultModelId ? { model: options.defaultModelId } : undefined,
+      });
+      terminalEvent = response.type === "question"
+        ? { type: "question", data: response.data }
+        : { type: "complete", data: response.data };
+    } catch (err) {
+      terminalEvent = {
+        type: "error",
+        data: { message: err instanceof Error ? err.message : String(err), cause: err },
+      };
+    }
+    return terminalEvent;
+  }
+
+  const session: InteractiveAiSession = {
+    async prompt(text: string): Promise<void> {
+      if (terminalEvent || started) return;
+      started = true;
+      await runOnce(text);
+    },
+
+    async nextEvent(): Promise<InteractiveAiSessionEvent> {
+      return terminalEvent ?? { type: "error", data: { message: "No turn in progress. Call prompt() first." } };
+    },
+
+    async answer(): Promise<void> {
+      // Terminal one-shot facade: question events are not resumable here.
+    },
+
+    dispose(): void {
+      // Best-effort no-op; askAcpOnce disposes the underlying ACP session.
+    },
+  };
+
+  return { session };
+}
+
+/**
+ * Resolve planning execution to either the default model-backed loop or the
+ * selected CLI-agent/ACP one-shot adapter.
+ */
+export async function resolvePlanningExecutorSession(
+  selection: PlanningExecutorSelection,
+  modelFactory: InteractiveAgentFactory,
+  options: CreateInteractiveAiSessionOptions,
+): Promise<CreateInteractiveAiSessionResult> {
+  if (selection.kind === "cli-agent") {
+    return createCliAgentPlanningSessionWith(selection.runtime, options);
+  }
+  return createInteractiveAiSessionWith(modelFactory, options);
 }
 
 /** Extract text from the last assistant message (string | text blocks | thinking fallback). */

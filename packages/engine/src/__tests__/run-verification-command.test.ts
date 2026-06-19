@@ -1,7 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { runVerificationCommand, normalizeVerificationCommand, type RunVerificationOptions } from "../run-verification-tool.js";
+import {
+  BOUNDED_VERIFICATION_GUIDANCE,
+  MARATHON_SOFT_CAP_SEC,
+  MAX_TIMEOUT_SEC,
+  createRunVerificationTool,
+  detectMarathonVerification,
+  normalizeVerificationCommand,
+  runVerificationCommand,
+  type RunVerificationOptions,
+} from "../run-verification-tool.js";
 
 // Some tests use platform-appropriate shell syntax. On Windows, sh-style
 // quoting and pipes through `printf` are different — these tests are skipped
@@ -80,6 +89,214 @@ describe("runVerificationCommand", { timeout: 30000 }, () => {
       expect(result.command).toBe(
         "pnpm --filter @runfusion/fusion exec vitest run src/__tests__/cli.test.ts --silent=passed-only --reporter=dot",
       );
+    });
+  });
+
+  describe("marathon verification detection", () => {
+    it.each([
+      ["pnpm test", "root workspace test suite"],
+      ["pnpm -w test", "root workspace test suite"],
+      ["pnpm test:full", "full workspace verification script"],
+      ["pnpm verify:workspace", "full workspace verification script"],
+      ["pnpm --filter @fusion/core test", "whole-package test script"],
+      ["for i in $(seq 1 20); do pnpm --filter @fusion/core exec vitest run src/foo.test.ts; done", "shell loop repeats"],
+      ["while true; do pnpm test; done", "shell loop repeats"],
+      ["seq 1 20 | xargs -I{} pnpm --filter @fusion/core exec vitest run src/foo.test.ts", "seq/xargs pipeline"],
+      ["pnpm --filter @fusion/core exec vitest run src/a.test.ts && pnpm --filter @fusion/core exec vitest run src/a.test.ts", "&& chain repeats"],
+    ])("flags marathon command %s", (command, reason) => {
+      const detection = detectMarathonVerification(command, "workspace");
+
+      expect(detection.isMarathon).toBe(true);
+      expect(detection.reason).toContain(reason);
+      expect(detection.guidance).toContain("allowFullSuite");
+    });
+
+    it.each([
+      "pnpm --filter @fusion/core exec vitest run src/__tests__/settings-consistency.test.ts --silent=passed-only --reporter=dot",
+      "pnpm --filter @fusion/dashboard test -- --run src/__tests__/routes-tasks.test.ts",
+      "pnpm lint",
+      "pnpm build",
+    ])("passes targeted or non-test command %s", (command) => {
+      expect(detectMarathonVerification(command, "package").isMarathon).toBe(false);
+    });
+  });
+
+  describe("tool verification budgets and marathon caps", () => {
+    it("uses the project verification timeout default when provided", async () => {
+      const onVerificationStart = vi.fn();
+      const tool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        verificationCommandTimeoutMs: 1_500,
+        onVerificationStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      await tool.execute("call-budget", { command: "exit 0", scope: "workspace" });
+
+      expect(onVerificationStart).toHaveBeenCalledWith(2_000);
+    });
+
+    it("falls back to legacy package/workspace defaults when the setting is absent or disabled", async () => {
+      const packageStart = vi.fn();
+      const disabledWorkspaceStart = vi.fn();
+      const packageTool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        onVerificationStart: packageStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      const disabledTool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        verificationCommandTimeoutMs: 0,
+        onVerificationStart: disabledWorkspaceStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      await packageTool.execute("call-package-default", { command: "exit 0", scope: "package" });
+      await disabledTool.execute("call-workspace-default", { command: "exit 0", scope: "workspace" });
+
+      expect(packageStart).toHaveBeenCalledWith(300_000);
+      expect(disabledWorkspaceStart).toHaveBeenCalledWith(900_000);
+    });
+
+    it("applies the hard timeout cap to configured defaults and explicit overrides", async () => {
+      const configuredStart = vi.fn();
+      const explicitStart = vi.fn();
+      const configuredTool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        verificationCommandTimeoutMs: (MAX_TIMEOUT_SEC + 60) * 1000,
+        onVerificationStart: configuredStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      const explicitTool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        onVerificationStart: explicitStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      await configuredTool.execute("call-configured-cap", { command: "exit 0", scope: "package" });
+      await explicitTool.execute("call-explicit-cap", { command: "exit 0", scope: "package", timeoutSec: MAX_TIMEOUT_SEC + 1 });
+
+      expect(configuredStart).toHaveBeenCalledWith(MAX_TIMEOUT_SEC * 1000);
+      expect(explicitStart).toHaveBeenCalledWith(MAX_TIMEOUT_SEC * 1000);
+    });
+
+    itPosix("reports an actionable timeout without relying on stuck detection", async () => {
+      const tool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        onVerificationStart: vi.fn(),
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      const result = await tool.execute("call-timeout", { command: "sh -c 'sleep 10 & wait'", scope: "package", timeoutSec: 1 });
+
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      expect(result.details).toEqual(expect.objectContaining({ success: false, timedOut: true }));
+      expect(text).toContain("Command timed out after 1s");
+      expect(text).toContain(BOUNDED_VERIFICATION_GUIDANCE);
+    });
+
+    itPosix("soft-caps marathon commands unless allowFullSuite is provided", async () => {
+      const cappedStart = vi.fn();
+      const allowedStart = vi.fn();
+      const recordActivity = vi.fn();
+      const command = "pnpm() { echo pulse; }; pnpm test";
+      const cappedTool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity: vi.fn(),
+        onVerificationStart: cappedStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+      const allowedTool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6608",
+        recordActivity,
+        onVerificationStart: allowedStart,
+        onVerificationEnd: vi.fn(),
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      const capped = await cappedTool.execute("call-capped", { command, scope: "workspace", timeoutSec: 600 });
+      const allowed = await allowedTool.execute("call-allowed", { command, scope: "workspace", timeoutSec: 600, allowFullSuite: true });
+
+      const cappedText = capped.content[0]?.type === "text" ? capped.content[0].text : "";
+      const allowedText = allowed.content[0]?.type === "text" ? allowed.content[0].text : "";
+      expect(cappedStart).toHaveBeenCalledWith(MARATHON_SOFT_CAP_SEC * 1000);
+      expect(cappedText).toContain("marathon verification detected");
+      expect(allowedStart).toHaveBeenCalledWith(600_000);
+      expect(allowedText).toContain("allowFullSuite=true acknowledged");
+      expect(allowed.details).toEqual(expect.objectContaining({ success: true, timedOut: false }));
+      expect(recordActivity).toHaveBeenCalled();
+    });
+  });
+
+  describe("tool verification lifecycle callbacks", () => {
+    it("brackets a successful verification run with start and end callbacks", async () => {
+      const onVerificationStart = vi.fn();
+      const onVerificationEnd = vi.fn();
+      const tool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6598",
+        recordActivity: vi.fn(),
+        onVerificationStart,
+        onVerificationEnd,
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      await tool.execute("call-1", { command: "exit 0", scope: "package" });
+
+      expect(onVerificationStart).toHaveBeenCalledTimes(1);
+      expect(onVerificationStart).toHaveBeenCalledWith(300_000);
+      expect(onVerificationEnd).toHaveBeenCalledTimes(1);
+      expect(onVerificationStart.mock.invocationCallOrder[0]).toBeLessThan(onVerificationEnd.mock.invocationCallOrder[0]);
+    });
+
+    it("fires the end callback when the verification command fails", async () => {
+      const onVerificationStart = vi.fn();
+      const onVerificationEnd = vi.fn();
+      const tool = createRunVerificationTool({
+        worktreePath: tempDir,
+        rootDir: workspaceRoot,
+        taskId: "FN-6598",
+        recordActivity: vi.fn(),
+        onVerificationStart,
+        onVerificationEnd,
+        log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      });
+
+      const result = await tool.execute("call-2", { command: "exit 7", scope: "package" });
+
+      expect(result.details).toEqual(expect.objectContaining({ success: false, exitCode: 7 }));
+      expect(onVerificationStart).toHaveBeenCalledTimes(1);
+      expect(onVerificationEnd).toHaveBeenCalledTimes(1);
     });
   });
 

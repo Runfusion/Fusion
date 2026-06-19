@@ -26,8 +26,9 @@ interface GitHubImportModalProps {
   projectId?: string;
 }
 
-// Mobile breakpoint in pixels
+// Mobile and two-pane breakpoints in pixels
 const MOBILE_BREAKPOINT = 640;
+const TWO_PANE_BREAKPOINT = 860;
 const GITHUB_IMPORT_LIST_PANE_MIN_WIDTH = 240;
 const GITHUB_IMPORT_LIST_PANE_MAX_WIDTH = 640;
 const GITHUB_IMPORT_LIST_PANE_DEFAULT_WIDTH = 360;
@@ -82,8 +83,9 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
   useModalResizePersist(modalRef, isOpen, "fusion:github-modal-size");
   const overlayDismissProps = useOverlayDismiss(onClose);
 
-  // Mobile view state
+  // Responsive view state
   const [isMobile, setIsMobile] = useState(false);
+  const [canResizePanes, setCanResizePanes] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "preview">("list");
   const [listPaneWidth, setListPaneWidth] = useState(() => {
     if (typeof window === "undefined") {
@@ -288,20 +290,21 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
     return () => document.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose]);
 
-  // Detect mobile viewport
+  // Detect responsive viewport bands
   useEffect(() => {
     if (!isOpen) return;
-    
-    const checkMobile = () => {
+
+    const checkViewportBands = () => {
       setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+      setCanResizePanes(window.innerWidth > TWO_PANE_BREAKPOINT);
     };
-    
+
     // Check initially
-    checkMobile();
-    
+    checkViewportBands();
+
     // Listen for resize
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
+    window.addEventListener("resize", checkViewportBands);
+    return () => window.removeEventListener("resize", checkViewportBands);
   }, [isOpen]);
 
   useEffect(() => {
@@ -316,7 +319,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
   }, [listPaneWidth]);
 
   const handleListPaneResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (isMobile) {
+    if (!canResizePanes) {
       return;
     }
 
@@ -340,10 +343,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
 
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
-  }, [isMobile, listPaneWidth]);
+  }, [canResizePanes, listPaneWidth]);
 
   const handleListPaneResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (isMobile) {
+    if (!canResizePanes) {
       return;
     }
 
@@ -371,7 +374,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
       event.preventDefault();
       setListPaneWidth(GITHUB_IMPORT_LIST_PANE_MAX_WIDTH);
     }
-  }, [isMobile]);
+  }, [canResizePanes]);
 
   // Handle issue selection - switch to preview view on mobile
   const handleIssueSelect = useCallback((issueNumber: number) => {
@@ -625,7 +628,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
             {/* Left pane: Issue/PR list */}
             <section
               className={`github-import-list-pane ${isMobile ? 'mobile' : ''} ${mobileView === 'list' ? 'active' : ''}`}
-              style={!isMobile ? { flex: `0 0 ${listPaneWidth}px` } : undefined}
+              style={canResizePanes ? { flex: `0 0 ${listPaneWidth}px` } : undefined}
               data-testid="github-import-list-pane"
               aria-labelledby="github-import-results-heading"
             >
@@ -763,7 +766,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
               </div>
             </section>
 
-            {!isMobile && (
+            {canResizePanes && (
               <div
                 className="github-import-workspace__resize-handle"
                 role="separator"

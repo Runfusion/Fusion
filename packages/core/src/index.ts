@@ -17,9 +17,19 @@ export type {
 } from "./branch-assignment.js";
 export { customProviderRegistryKey } from "./custom-provider-key.js";
 export { redactSecrets } from "./redact-secrets.js";
+export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
+export type { NearDuplicateCanonicalState } from "./near-duplicate-canonical.js";
 export * from "./frontend-ux-policy.js";
+export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./task-list-format.js";
 export { MOCK_PROVIDER_ID } from "./mock-provider-constants.js";
 export type { MockProviderId, MockSessionPurpose } from "./mock-provider-constants.js";
+export {
+  ZAI_PROVIDER_ID,
+  ZAI_PROVIDER_REGISTRATION,
+  mergeBuiltInZaiProviderModels,
+  registerBuiltInZaiProvider,
+} from "./zai-provider.js";
+export type { ZaiProviderRegistration } from "./zai-provider.js";
 export {
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
@@ -485,6 +495,8 @@ export {
   type NoOpCompletionMarker,
   type NoOpCompletionMarkerKind,
 } from "./no-op-completion-marker.js";
+export { evaluateNoCommitsNoOpFinalize } from "./no-commits-finalize-guard.js";
+export type { NoCommitsNoOpFinalizeEvaluation } from "./no-commits-finalize-guard.js";
 export {
   __getDeterministicGuardMutexSize,
   deterministicGuardLocks,
@@ -506,6 +518,101 @@ export { computeRetrySummary, RETRY_STORM_WARNING_RATIO } from "./retry-summary.
 export { RetryStormError, serializeRetryStormError } from "./retry-storm-error.js";
 export { aggregateAgentTokenUsage } from "./agent-token-usage.js";
 export type { AgentTokenUsageSummary, AgentTokenUsageWindowSummary } from "./agent-token-usage.js";
+export {
+  emitUsageEvent,
+  queryUsageEvents,
+  countUsageEventsBy,
+  categorizeToolName,
+  USAGE_EVENT_META_MAX_BYTES,
+} from "./usage-events.js";
+export type {
+  UsageEvent,
+  UsageEventInput,
+  UsageEventKind,
+  UsageEventRangeQuery,
+} from "./usage-events.js";
+export {
+  costFor,
+  lookupPricing,
+  MODEL_PRICING,
+  pricingAsOf,
+  PRICING_STALE_AFTER_MS,
+} from "./model-pricing.js";
+export type {
+  ModelPricing,
+  ModelRef,
+  UsageForCost,
+  CostResult,
+} from "./model-pricing.js";
+export { aggregateTokenAnalytics } from "./token-analytics.js";
+export type {
+  TokenAnalytics,
+  TokenAnalyticsQuery,
+  TokenGroupBy,
+  TokenGroupSummary,
+  TokenTimeGranularity,
+  TokenTimePoint,
+  TokenTotals,
+} from "./token-analytics.js";
+export { aggregateToolAnalytics, countInterventions } from "./tool-analytics.js";
+export type {
+  ToolAnalytics,
+  ToolAnalyticsQuery,
+  ToolCategoryCount,
+  InterventionBreakdown,
+} from "./tool-analytics.js";
+export { aggregateActivityAnalytics, aggregateMonitorMetrics } from "./activity-analytics.js";
+export type {
+  ActivityAnalytics,
+  ActivityAnalyticsQuery,
+  DailyActivity,
+  MttrSummary,
+  MonitorMetrics,
+} from "./activity-analytics.js";
+export { aggregateProductivityAnalytics } from "./productivity-analytics.js";
+export type {
+  ProductivityAnalytics,
+  ProductivityAnalyticsQuery,
+  LanguageCount,
+  LocSummary,
+} from "./productivity-analytics.js";
+export { aggregateTeamAnalytics } from "./team-analytics.js";
+export type {
+  TeamAnalytics,
+  TeamAnalyticsQuery,
+  TeamAgentSummary,
+  TeamMetricTotals,
+} from "./team-analytics.js";
+export { aggregateGithubIssueAnalytics } from "./github-issue-analytics.js";
+export type {
+  GithubIssueAnalytics,
+  GithubIssueAnalyticsQuery,
+  GithubIssueDailyPoint,
+  GithubIssueRepoBreakdown,
+} from "./github-issue-analytics.js";
+export { aggregateSignalsAnalytics } from "./signals-analytics.js";
+export type {
+  SignalsAnalytics,
+  SignalsAnalyticsQuery,
+  SignalsBreakdown,
+  SignalsSeverityBreakdown,
+  SignalsStatusBreakdown,
+} from "./signals-analytics.js";
+export { composeLiveSnapshot } from "./command-center-live.js";
+export type {
+  LiveSnapshot,
+  LiveSession,
+  LiveRun,
+  ColumnCount,
+} from "./command-center-live.js";
+export { mapAnalyticsToOtlp, OTEL_METRIC_PREFIX } from "./otel-metrics.js";
+export type {
+  OtelMappingInput,
+  OtlpExportPayload,
+  OtlpMetric,
+  OtlpNumberDataPoint,
+  OtlpAttribute,
+} from "./otel-metrics.js";
 export {
   STALLED_REVIEW_REENQUEUE_THRESHOLD,
   STALLED_REVIEW_INVALID_TRANSITION_THRESHOLD,
@@ -650,6 +757,8 @@ export {
   isPrEntityActionable,
   isPrEntityAutoMergeReady,
   autoMergeGateReason,
+  summarizePrThreadActivity,
+  type PrThreadActivity,
 } from "./pr-entity.js";
 export {
   findVitestProcessIds,
@@ -664,6 +773,7 @@ export {
   IN_REVIEW_STALL_TERMINAL_LOG_PREFIX,
   DEFAULT_STALE_MERGING_MIN_AGE_MS,
   DEFAULT_MAX_AUTO_MERGE_RETRIES,
+  resolveMaxAutoMergeRetries,
 } from "./in-review-stall.js";
 export type { InReviewStallSignal, InReviewStallCode, ProviderErrorClassification } from "./in-review-stall.js";
 export {
@@ -1045,8 +1155,26 @@ export {
   resolveTitleSummarizerSettingsModel,
   resolveValidatorSettingsModel,
   TEST_MODE_RESOLVED,
+  routeTaskExecutionModel,
+  routeTaskPlanningModel,
+  routeTaskValidatorModel,
 } from "./model-resolution.js";
-export type { ResolvedModelSelection } from "./model-resolution.js";
+export type { ResolvedModelSelection, RouterLaneOptions } from "./model-resolution.js";
+export {
+  routeModel,
+  routeModelAndEmit,
+  isMechanicalRoutableContext,
+} from "./model-router.js";
+export type {
+  RouterLane,
+  RouterReason,
+  RouterPair,
+  RouterTaskContext,
+  RouteModelInput,
+  RouterDecision,
+  RouterEscalation,
+  ModelGovernancePredicate,
+} from "./model-router.js";
 
 // ── Memory Compaction ─────────────────────────────────────────────────
 

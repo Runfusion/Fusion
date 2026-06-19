@@ -32,9 +32,13 @@ import { executorLog } from "./logger.js";
 const MAX_OUTPUT_BYTES = 200 * 1024; // 200 KB
 const QUIET_HEARTBEAT_INTERVAL_MS = 60_000; // emit synthetic heartbeat after 60s silence
 const SIGKILL_GRACE_MS = 10_000;
-const DEFAULT_TIMEOUT_PACKAGE_SEC = 300;
-const DEFAULT_TIMEOUT_WORKSPACE_SEC = 900;
-const MAX_TIMEOUT_SEC = 1800;
+export const DEFAULT_TIMEOUT_PACKAGE_SEC = 300;
+export const DEFAULT_TIMEOUT_WORKSPACE_SEC = 900;
+export const MAX_TIMEOUT_SEC = 1800;
+
+export const BOUNDED_VERIFICATION_GUIDANCE =
+  "Prefer a bounded targeted command such as `pnpm --filter <pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot` before rerunning broader suites.";
+export const MARATHON_SOFT_CAP_SEC = 120;
 
 const packageDirCache = new Map<string, string | null>();
 
@@ -80,6 +84,89 @@ function shellSplit(input: string): string[] | null {
   if (quote !== null) return null;
   if (current.length > 0) tokens.push(current);
   return tokens;
+}
+
+function isPnpmToken(token: string): boolean {
+  return token === "pnpm" || token.endsWith("/pnpm");
+}
+
+function tokenLooksLikeTestFile(token: string): boolean {
+  return /\.(test|spec)\.[cm]?[tj]sx?$/.test(token);
+}
+
+function tokenLooksLikeFileScopedVitest(tokens: string[]): boolean {
+  const vitestIndex = tokens.findIndex((token) => token === "vitest" || token.endsWith("/vitest"));
+  if (vitestIndex < 0) return false;
+  const runIndex = tokens.indexOf("run", vitestIndex + 1);
+  if (runIndex < 0) return false;
+  return tokens.slice(runIndex + 1).some((token) => !token.startsWith("-") && tokenLooksLikeTestFile(token));
+}
+
+function tokenLooksLikeForwardedTestFile(tokens: string[]): boolean {
+  const runIndex = tokens.indexOf("--run");
+  if (runIndex < 0) return false;
+  return tokens.slice(runIndex + 1).some((token) => !token.startsWith("-") && tokenLooksLikeTestFile(token));
+}
+
+function isRootPnpmTest(tokens: string[]): boolean {
+  if (tokens.length < 2 || !isPnpmToken(tokens[0])) return false;
+  const nonFlagTokens = tokens.slice(1).filter((token) => token !== "-w" && token !== "--workspace-root");
+  return (nonFlagTokens.length === 1 && nonFlagTokens[0] === "test")
+    || (nonFlagTokens.length === 2 && nonFlagTokens[0] === "run" && nonFlagTokens[1] === "test");
+}
+
+export interface MarathonDetection {
+  isMarathon: boolean;
+  reason?: string;
+  guidance: string;
+}
+
+export function detectMarathonVerification(command: string, scope?: "package" | "workspace"): MarathonDetection {
+  const guidance = `${BOUNDED_VERIFICATION_GUIDANCE} Use allowFullSuite: true only when a genuinely full run is required.`;
+  const compact = command.replace(/\s+/g, " ").trim();
+  const tokens = shellSplit(command) ?? [];
+
+  /*
+   * FNXC:Verification 2026-06-17-14:48:
+   * Marathon detection is intentionally token/regex based so it catches the costly invocation shapes that caused stuck-loop requeues without executing shell expansions.
+   * Positive patterns: root `pnpm test`/`pnpm -w test`, `test:full`, `verify:workspace`, whole-package `pnpm --filter <pkg> test`, and loop/repeat wrappers around pnpm/npm/vitest test runners.
+   */
+  if (tokens.length > 0 && isRootPnpmTest(tokens)) {
+    return { isMarathon: true, reason: "root workspace test suite (`pnpm test`) is a marathon verification command", guidance };
+  }
+
+  if (/\bpnpm\b(?:\s+[-\w=:@/.]+)*\s+(?:run\s+)?(?:test:full|verify:workspace)\b/.test(compact)) {
+    return { isMarathon: true, reason: "full workspace verification script is a marathon command", guidance };
+  }
+
+  const filterIndex = tokens.findIndex((token) => token === "--filter" || token === "-F");
+  if (tokens.length > 0 && isPnpmToken(tokens[0]) && filterIndex >= 0) {
+    const afterFilter = tokens.slice(filterIndex + 2);
+    const scriptToken = afterFilter.find((token) => token !== "--");
+    const runsTestScript = scriptToken === "test" || (afterFilter[0] === "run" && afterFilter[1] === "test");
+    if (runsTestScript && !tokenLooksLikeFileScopedVitest(tokens) && !tokenLooksLikeForwardedTestFile(tokens)) {
+      return { isMarathon: true, reason: "whole-package test script has no file-scoped vitest run filter", guidance };
+    }
+  }
+
+  if (/\b(for|while)\b[\s\S]*\bdo\b[\s\S]*\b(pnpm|npm|vitest)\b[\s\S]*\b(test|vitest)\b/.test(command)) {
+    return { isMarathon: true, reason: "shell loop repeats a test runner", guidance };
+  }
+
+  if (/\bseq\b[\s\S]*\|[\s\S]*\bxargs\b[\s\S]*\b(pnpm|npm|vitest)\b[\s\S]*\b(test|vitest)\b/.test(command)) {
+    return { isMarathon: true, reason: "seq/xargs pipeline repeats a test runner", guidance };
+  }
+
+  const chainedTestRuns = compact.split(/\s*&&\s*/).filter((part) => /\b(pnpm|npm|vitest)\b.*\b(test|vitest)\b/.test(part));
+  if (chainedTestRuns.length > 1) {
+    return { isMarathon: true, reason: "&& chain repeats test runner invocations", guidance };
+  }
+
+  if (scope === "workspace" && /\bpnpm\b\s+(?:run\s+)?test\b/.test(compact) && !tokenLooksLikeFileScopedVitest(tokens)) {
+    return { isMarathon: true, reason: "workspace-scoped test command is likely a full suite", guidance };
+  }
+
+  return { isMarathon: false, guidance };
 }
 
 function shellQuote(value: string): string {
@@ -247,7 +334,13 @@ export const runVerificationParams = Type.Object({
   timeoutSec: Type.Optional(
     Type.Number({
       description:
-        "Override the default timeout in seconds. Default: 300 for package scope, 900 for workspace scope. Hard cap: 1800.",
+        "Override the default timeout in seconds. Default: project verificationCommandTimeoutMs when set, otherwise 300 for package scope and 900 for workspace scope. Hard cap: 1800.",
+    }),
+  ),
+  allowFullSuite: Type.Optional(
+    Type.Boolean({
+      description:
+        "Explicit opt-in for marathon verification commands such as pnpm test, pnpm test:full, verify:workspace, whole-package tests, or repeat loops. Default: false; still respects the hard timeout.",
     }),
   ),
   expectFailure: Type.Optional(
@@ -520,6 +613,18 @@ export interface CreateRunVerificationToolOpts {
   taskId: string;
   /** Called on every output line AND on synthetic quiet-interval heartbeats. */
   recordActivity: () => void;
+  /** Project-level default timeout budget in milliseconds. Values <= 0 disable the override and preserve legacy per-scope defaults. */
+  verificationCommandTimeoutMs?: number;
+  /**
+   * FNXC:Reliability 2026-06-17-16:12:
+   * FN-6598 brackets fn_run_verification subprocesses so the stuck detector treats bounded, actively running verification as progress instead of no-progress loop churn.
+   */
+  onVerificationStart?: (timeoutMs: number) => void;
+  /**
+   * FNXC:Reliability 2026-06-17-16:12:
+   * The end signal must fire from a finally block on success, failure, timeout, and spawn errors so detector suppression cannot leak after a verification command exits.
+   */
+  onVerificationEnd?: () => void;
   log: {
     info: (s: string) => void;
     warn: (s: string) => void;
@@ -536,21 +641,24 @@ export interface CreateRunVerificationToolOpts {
 export function createRunVerificationTool(
   opts: CreateRunVerificationToolOpts,
 ): ToolDefinition {
-  const { worktreePath, rootDir, taskId, recordActivity, log } = opts;
+  const { worktreePath, rootDir, taskId, recordActivity, verificationCommandTimeoutMs, onVerificationStart, onVerificationEnd, log } = opts;
 
   return {
     name: "fn_run_verification",
     label: "Run Verification",
     description:
       "Run a verification command (tests, lint, build, typecheck) with timeout and progress " +
-      "heartbeat protection. Use this instead of bash for any pnpm/npm test/lint/build commands. " +
-      "Prevents the inactivity watchdog from killing your session during long compiles.",
+      "heartbeat protection. Verification is bounded by default: project verificationCommandTimeoutMs when set, " +
+      "otherwise 300s for package scope and 900s for workspace scope, with an 1800s hard cap. " +
+      "Marathon invocations (pnpm test, test:full, verify:workspace, whole-package tests, repeat loops) " +
+      "are soft-capped unless allowFullSuite=true is explicitly provided. Use this instead of bash for any " +
+      "pnpm/npm test/lint/build commands.",
     parameters: runVerificationParams,
     execute: async (
       _toolCallId: string,
       params: Static<typeof runVerificationParams>,
     ) => {
-      const { command, scope, expectFailure = false } = params;
+      const { command, scope, allowFullSuite = false, expectFailure = false } = params;
       const warnings: string[] = [];
 
       // ── Scope / command mismatch warning ─────────────────────────────────
@@ -573,11 +681,32 @@ export function createRunVerificationTool(
       }
 
       // ── Resolve timeout ───────────────────────────────────────────────────
-      const defaultTimeoutSec =
+      /*
+       * FNXC:Verification 2026-06-17-14:31:
+       * Engine-level default verification budgets replace per-task "Verification Bounds" prose.
+       * A positive project setting overrides both scope defaults; undefined or 0 preserves the legacy package/workspace defaults so existing builds do not silently lose runtime.
+       */
+      const scopeDefaultTimeoutSec =
         scope === "package"
           ? DEFAULT_TIMEOUT_PACKAGE_SEC
           : DEFAULT_TIMEOUT_WORKSPACE_SEC;
-      const rawTimeoutSec = params.timeoutSec ?? defaultTimeoutSec;
+      const configuredDefaultTimeoutSec =
+        typeof verificationCommandTimeoutMs === "number" && verificationCommandTimeoutMs > 0
+          ? Math.ceil(verificationCommandTimeoutMs / 1000)
+          : undefined;
+      const defaultTimeoutSec = configuredDefaultTimeoutSec ?? scopeDefaultTimeoutSec;
+      let rawTimeoutSec = params.timeoutSec ?? defaultTimeoutSec;
+      const marathon = detectMarathonVerification(command, scope);
+      if (marathon.isMarathon && !allowFullSuite && rawTimeoutSec > MARATHON_SOFT_CAP_SEC) {
+        const msg = `marathon verification detected (${marathon.reason}); soft-capping timeout to ${MARATHON_SOFT_CAP_SEC}s. ${marathon.guidance}`;
+        warnings.push(msg);
+        log.warn(`[fn_run_verification] ${taskId}: ${msg}`);
+        rawTimeoutSec = MARATHON_SOFT_CAP_SEC;
+      } else if (marathon.isMarathon && allowFullSuite) {
+        const msg = `allowFullSuite=true acknowledged for marathon verification (${marathon.reason}); subprocess still sends verification heartbeats and respects the ${MAX_TIMEOUT_SEC}s hard cap.`;
+        warnings.push(msg);
+        log.warn(`[fn_run_verification] ${taskId}: ${msg}`);
+      }
       const timeoutSec = Math.min(rawTimeoutSec, MAX_TIMEOUT_SEC);
       const timeoutMs = timeoutSec * 1000;
 
@@ -615,13 +744,20 @@ export function createRunVerificationTool(
       );
 
       // ── Run ───────────────────────────────────────────────────────────────
-      const result = await runVerificationCommand({
-        command: effectiveCommand,
-        cwd: resolvedCwd,
-        timeoutMs,
-        expectFailure,
-        onHeartbeat: recordActivity,
-      });
+      onVerificationStart?.(timeoutMs);
+      const result = await (async () => {
+        try {
+          return await runVerificationCommand({
+            command: effectiveCommand,
+            cwd: resolvedCwd,
+            timeoutMs,
+            expectFailure,
+            onHeartbeat: recordActivity,
+          });
+        } finally {
+          onVerificationEnd?.();
+        }
+      })();
 
       // ── Merge warnings from auto-bootstrap / scope check ─────────────────
       const allWarnings = [...warnings, ...result.warnings];
@@ -653,7 +789,8 @@ export function createRunVerificationTool(
       if (result.timedOut) {
         lines.push(
           "\nDo NOT blindly retry — investigate whether subprocesses are hung, " +
-            "test loops are infinite, or dependencies are missing.",
+            "test loops are infinite, or dependencies are missing. " +
+            BOUNDED_VERIFICATION_GUIDANCE,
         );
       }
 

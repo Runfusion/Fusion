@@ -586,8 +586,18 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       };
       const { content, modelProvider, modelId, attachments } = body;
       const sessionId = String(req.params.id);
-
-      if (!content || typeof content !== "string" || !content.trim()) {
+      const uploadedFiles = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
+      const referencedAttachments = Array.isArray(attachments) ? attachments : undefined;
+      const hasAttachments = uploadedFiles.length > 0 || (referencedAttachments?.length ?? 0) > 0;
+      if (content !== undefined && typeof content !== "string") {
+        throw badRequest("content is required and must be a non-empty string");
+      }
+      const trimmedContent = content?.trim() ?? "";
+      /**
+       * FNXC:Chat 2026-06-17-02:12:
+       * Attachment-only chat sends are valid user messages. Reject only payloads that have neither text nor uploaded/referenced attachments so Quick Chat and Main Chat can submit files without filler text.
+       */
+      if (!trimmedContent && !hasAttachments) {
         throw badRequest("content is required and must be a non-empty string");
       }
 
@@ -597,16 +607,13 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw notFound(`Chat session ${sessionId} not found`);
       }
 
-      const uploadedFiles = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
       const { store: scopedStore } = await getProjectContext(req);
       const uploadedAttachments = uploadedFiles.length > 0
         ? await Promise.all(uploadedFiles.map((file) => persistChatAttachment(file, scopedStore.getRootDir(), sessionId)))
         : undefined;
       const messageAttachments = uploadedAttachments && uploadedAttachments.length > 0
         ? uploadedAttachments
-        : Array.isArray(attachments)
-          ? attachments
-          : undefined;
+        : referencedAttachments;
 
       // Resolve per-project ChatManager before opening the SSE stream so
       // failures (e.g. project DB cannot be opened) produce a proper HTTP error.
@@ -704,7 +711,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       // Fire and forget - streaming happens via callbacks
       chatManager.sendMessage(
         sessionId,
-        content.trim(),
+        trimmedContent,
         normalizedProvider,
         normalizedModelId,
         messageAttachments,

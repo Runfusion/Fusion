@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
-import { builtinSeamPrompt, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
+import { builtinSeamPrompt, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
   TriageProcessor,
   buildSpecificationPrompt,
+  resolveTaskListFormatter,
   readAttachmentContents,
   computeUserCommentFingerprint,
 } from "../triage.js";
@@ -39,6 +40,30 @@ vi.mock("@fusion/core", async (importOriginal) => {
   const original = await importOriginal<typeof import("@fusion/core")>();
   return createEngineCoreMock(() => Promise.resolve(original), {
     resolveAgentPrompt: vi.fn(original.resolveAgentPrompt),
+  });
+});
+
+
+describe("fn_task_list resilience (FN-6573)", () => {
+  it("returns bounded text when formatter exports are unavailable", () => {
+    const boardLines = [
+      `FN-1 (todo): Triage duplicate check ${"x".repeat(6_000)}`,
+      `FN-2 (triage): Triage duplicate check ${"x".repeat(6_000)}`,
+    ];
+
+    /*
+    FNXC:TaskListOutput 2026-06-17-07:38:
+    FN-6573 drives the engine triage formatter resolver seam because the tool closure imports the live @fusion/core namespace at module load. The seam reproduces stale dist namespaces where formatTaskListText, or both task-list helpers, are absent and must still produce one bounded text block.
+    */
+    for (const coreNamespace of [
+      { formatTaskListText: undefined, clampTaskListText: () => "unused" },
+      { formatTaskListText: undefined, clampTaskListText: undefined },
+    ]) {
+      const formatter = resolveTaskListFormatter(coreNamespace);
+      const text = formatter(boardLines, { clamp: coreNamespace.clampTaskListText }).trimEnd();
+      expect(text).toBeTruthy();
+      expect(text.length).toBeLessThanOrEqual(MAX_TASK_LIST_TEXT_CHARS);
+    }
   });
 });
 

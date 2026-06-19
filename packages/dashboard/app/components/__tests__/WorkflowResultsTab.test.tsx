@@ -1,21 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { WorkflowResultsTab } from "../WorkflowResultsTab";
-import { fetchWorkflow, fetchWorkflows, fetchWorkflowSteps, fetchWorkflowOptionalSteps } from "../../api";
+import * as api from "../../api";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import type { AgentLogEntry, Settings, Task, WorkflowDefinition, WorkflowStep, WorkflowStepResult } from "@fusion/core";
-
-vi.mock("../../api", () => ({
-  fetchWorkflowSteps: vi.fn(),
-  fetchTaskWorkflow: vi.fn().mockResolvedValue({ workflowId: "WF-001" }),
-  selectTaskWorkflow: vi.fn().mockResolvedValue({ workflowId: "WF-001", enabledWorkflowSteps: [] }),
-  fetchWorkflows: vi.fn().mockResolvedValue([]),
-  fetchWorkflow: vi.fn(),
-  fetchWorkflowOptionalSteps: vi.fn(),
-  submitTaskWorkflowInput: vi.fn().mockResolvedValue({ ok: true }),
-  approveTaskWorkflowCli: vi.fn().mockResolvedValue({ approved: "ok" }),
-}));
 
 vi.mock("@xyflow/react", () => ({
   ReactFlow: ({ nodes = [], edges = [] }: { nodes?: unknown[]; edges?: unknown[] }) => (
@@ -30,10 +19,14 @@ vi.mock("../../hooks/useAgentLogs", () => ({
   useAgentLogs: vi.fn(),
 }));
 
-const mockedFetchWorkflowSteps = vi.mocked(fetchWorkflowSteps);
-const mockedFetchWorkflow = vi.mocked(fetchWorkflow);
-const mockedFetchWorkflows = vi.mocked(fetchWorkflows);
-const mockedFetchWorkflowOptionalSteps = vi.mocked(fetchWorkflowOptionalSteps);
+const mockedFetchWorkflowSteps = vi.spyOn(api, "fetchWorkflowSteps");
+const mockedFetchTaskWorkflow = vi.spyOn(api, "fetchTaskWorkflow");
+const mockedFetchWorkflow = vi.spyOn(api, "fetchWorkflow");
+const mockedFetchWorkflows = vi.spyOn(api, "fetchWorkflows");
+const mockedFetchWorkflowOptionalSteps = vi.spyOn(api, "fetchWorkflowOptionalSteps");
+const mockedSelectTaskWorkflow = vi.spyOn(api, "selectTaskWorkflow");
+const mockedSubmitTaskWorkflowInput = vi.spyOn(api, "submitTaskWorkflowInput");
+const mockedApproveTaskWorkflowCli = vi.spyOn(api, "approveTaskWorkflowCli");
 const mockedUseAgentLogs = vi.mocked(useAgentLogs);
 
 describe("WorkflowResultsTab", () => {
@@ -128,9 +121,15 @@ describe("WorkflowResultsTab", () => {
     planningModel: "gemini-2.5-flash",
   } as Settings;
 
+  afterAll(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     mockedFetchWorkflowSteps.mockReset();
     mockedFetchWorkflowSteps.mockResolvedValue(mockWorkflowSteps);
+    mockedFetchTaskWorkflow.mockReset();
+    mockedFetchTaskWorkflow.mockResolvedValue({ workflowId: "WF-001" });
     mockedFetchWorkflow.mockReset();
     mockedFetchWorkflow.mockResolvedValue(selectedWorkflow);
     mockedFetchWorkflows.mockReset();
@@ -140,12 +139,18 @@ describe("WorkflowResultsTab", () => {
       {
         templateId: "browser-verification",
         name: "Browser Verification",
-        description: "Verify web application functionality using browser automation",
+        description: "Verify browser flows",
         icon: "globe",
         phase: "pre-merge",
         defaultOn: false,
       },
     ]);
+    mockedSelectTaskWorkflow.mockReset();
+    mockedSelectTaskWorkflow.mockResolvedValue({ workflowId: "WF-001", enabledWorkflowSteps: [] });
+    mockedSubmitTaskWorkflowInput.mockReset();
+    mockedSubmitTaskWorkflowInput.mockResolvedValue({ ok: true });
+    mockedApproveTaskWorkflowCli.mockReset();
+    mockedApproveTaskWorkflowCli.mockResolvedValue({ approved: "ok" });
     mockedUseAgentLogs.mockReset();
     mockedUseAgentLogs.mockReturnValue({
       entries: [],
@@ -296,6 +301,37 @@ describe("WorkflowResultsTab", () => {
     const button = await screen.findByTestId("workflow-edit-button");
     fireEvent.click(button);
     expect(onEditWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onWorkflowReconciled for preserved-column workflow switches", async () => {
+    const onWorkflowReconciled = vi.fn();
+    const onWorkflowStepsChange = vi.fn();
+    const destinationWorkflow = { ...selectedWorkflow, id: "WF-002", name: "Preserved Column Workflow" };
+    mockedFetchWorkflows.mockResolvedValueOnce([selectedWorkflow, destinationWorkflow]);
+    mockedSelectTaskWorkflow.mockResolvedValueOnce({
+      workflowId: "WF-002",
+      enabledWorkflowSteps: ["WS-101"],
+      reconciliation: { preserved: true, fromColumn: "todo", toColumn: "todo" },
+    });
+
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        task={baseTask}
+        settings={mockSettings}
+        results={mockResults}
+        canEdit
+        onWorkflowStepsChange={onWorkflowStepsChange}
+        onWorkflowReconciled={onWorkflowReconciled}
+      />,
+    );
+
+    const selector = await screen.findByLabelText("Custom workflow");
+    fireEvent.change(selector, { target: { value: "WF-002" } });
+
+    await waitFor(() => expect(mockedSelectTaskWorkflow).toHaveBeenCalledWith("FN-001", "WF-002", undefined));
+    expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-101"]);
+    expect(onWorkflowReconciled).toHaveBeenCalledTimes(1);
   });
 
   it("shows effective model settings and default fallbacks", async () => {

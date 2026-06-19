@@ -1249,7 +1249,7 @@ describe("AgentStore", () => {
     });
 
     it("blocks delete when checked-out assigned task exists unless force=true", async () => {
-      const taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
+      const taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"), { inMemoryDb: true });
       await taskStore.init();
       const linkedStore = new AgentStore({ rootDir, inMemoryDb: true, taskStore });
       await linkedStore.init();
@@ -1843,12 +1843,17 @@ describe("AgentStore", () => {
     let taskId: string;
 
     beforeEach(async () => {
-      taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
+      /*
+      FNXC:AgentStoreTests 2026-06-13-17:49:
+      Checkout leasing tests validate AgentStore and TaskStore behavior through one live TaskStore instance, not disk re-open durability.
+      Keep the TaskStore database in memory so the full agent-store suite does not spend most of its wall time in repeated SQLite file setup and teardown.
+      */
+      taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"), { inMemoryDb: true });
       await taskStore.init();
 
       // Mirror the top-level AgentStore setup: checkout-leasing assertions need
-      // the disk-backed TaskStore for task persistence, but not a disk-backed
-      // AgentStore SQLite database in a shared hook.
+      // task persistence through this TaskStore instance, but not a disk-backed
+      // SQLite database in a shared hook.
       store.close();
       store = new AgentStore({ rootDir, inMemoryDb: true, taskStore });
       await store.init();
@@ -1989,85 +1994,40 @@ describe("AgentStore", () => {
       expect(claimedAgent?.taskId).toBe(taskId);
     });
 
-    it("claimTaskForAgent rejects non-executor agents for implementation tasks", async () => {
+    it("claimTaskForAgent enforces role, task-state, assignment, and checkout guards", async () => {
       const reviewer = await store.createAgent({ name: "Reviewer", role: "reviewer" });
-
-      const result = await store.claimTaskForAgent(reviewer.id, taskId);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.reason).toMatch(/requires an "executor"-role agent/);
-      expect(result.reason).toMatch(/durable "engineer" supported only for explicit routing/);
-
-      const claimedTask = await taskStore.getTask(taskId);
-      expect(claimedTask?.assignedAgentId).toBeUndefined();
-    });
-
-    it("claimTaskForAgent allows engineer claim for explicitly assigned implementation tasks", async () => {
       const engineer = await store.createAgent({ name: "Engineer", role: "engineer" });
-      await taskStore.updateTask(taskId, { assignedAgentId: engineer.id });
-
-      const result = await store.claimTaskForAgent(engineer.id, taskId);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-
-      const claimedTask = await taskStore.getTask(taskId);
-      expect(claimedTask?.assignedAgentId).toBe(engineer.id);
-      expect(claimedTask?.checkedOutBy).toBe(engineer.id);
-    });
-
-    it("claimTaskForAgent rejects engineer auto-claim for unassigned implementation tasks", async () => {
-      const engineer = await store.createAgent({ name: "Engineer", role: "engineer" });
-
-      const result = await store.claimTaskForAgent(engineer.id, taskId);
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.reason).toMatch(/requires an "executor"-role agent/);
-
-      const claimedTask = await taskStore.getTask(taskId);
-      expect(claimedTask?.assignedAgentId).toBeUndefined();
-    });
-
-    it("claimTaskForAgent rejects paused task", async () => {
-      await taskStore.updateTask(taskId, { paused: true });
-
-      const result = await store.claimTaskForAgent(holderId, taskId);
-      expect(result).toMatchObject({ ok: false, reason: "paused" });
-
-      const claimedAgent = await store.getAgent(holderId);
-      expect(claimedAgent?.taskId).toBeUndefined();
-    });
-
-    it("claimTaskForAgent rejects tasks in terminal columns", async () => {
+      const assignedToEngineer = await taskStore.createTask({ description: "explicit engineer task", assignedAgentId: engineer.id });
+      const pausedTask = await taskStore.createTask({ description: "paused task" });
+      await taskStore.updateTask(pausedTask.id, { paused: true });
       const doneTask = await taskStore.createTask({ description: "done task", column: "done" });
+      const assignedElsewhere = await taskStore.createTask({ description: "assigned elsewhere", assignedAgentId: otherAgentId });
+      const checkedOutElsewhere = await taskStore.createTask({ description: "checked out elsewhere" });
+      await store.checkoutTask(otherAgentId, checkedOutElsewhere.id);
 
-      const result = await store.claimTaskForAgent(holderId, doneTask.id);
-      expect(result).toMatchObject({ ok: false, reason: "terminal" });
+      const reviewerResult = await store.claimTaskForAgent(reviewer.id, taskId);
+      expect(reviewerResult.ok).toBe(false);
+      if (!reviewerResult.ok) {
+        expect(reviewerResult.reason).toMatch(/requires an "executor"-role agent/);
+        expect(reviewerResult.reason).toMatch(/durable "engineer" supported only for explicit routing/);
+      }
+      expect((await taskStore.getTask(taskId))?.assignedAgentId).toBeUndefined();
 
-      const claimedAgent = await store.getAgent(holderId);
-      expect(claimedAgent?.taskId).toBeUndefined();
-    });
+      const explicitEngineerResult = await store.claimTaskForAgent(engineer.id, assignedToEngineer.id);
+      expect(explicitEngineerResult.ok).toBe(true);
+      expect((await taskStore.getTask(assignedToEngineer.id))?.checkedOutBy).toBe(engineer.id);
 
-    it("claimTaskForAgent returns task_not_found when task is missing", async () => {
-      const result = await store.claimTaskForAgent(holderId, "FN-404");
-      expect(result).toMatchObject({ ok: false, reason: "task_not_found" });
-      expect("task" in result).toBe(false);
+      const autoEngineerResult = await store.claimTaskForAgent(engineer.id, taskId);
+      expect(autoEngineerResult.ok).toBe(false);
+      if (!autoEngineerResult.ok) {
+        expect(autoEngineerResult.reason).toMatch(/requires an "executor"-role agent/);
+      }
 
-      const claimedAgent = await store.getAgent(holderId);
-      expect(claimedAgent?.taskId).toBeUndefined();
-    });
-
-    it("claimTaskForAgent rejects task already assigned to another agent", async () => {
-      await taskStore.updateTask(taskId, { assignedAgentId: otherAgentId });
-
-      const result = await store.claimTaskForAgent(holderId, taskId);
-      expect(result).toMatchObject({ ok: false, reason: "assigned_to_other" });
-    });
-
-    it("claimTaskForAgent rejects checkout conflicts", async () => {
-      await store.checkoutTask(otherAgentId, taskId);
-
-      const result = await store.claimTaskForAgent(holderId, taskId);
-      expect(result).toMatchObject({ ok: false, reason: "checkout_conflict" });
+      expect(await store.claimTaskForAgent(holderId, pausedTask.id)).toMatchObject({ ok: false, reason: "paused" });
+      expect(await store.claimTaskForAgent(holderId, doneTask.id)).toMatchObject({ ok: false, reason: "terminal" });
+      expect(await store.claimTaskForAgent(holderId, "FN-404")).toMatchObject({ ok: false, reason: "task_not_found" });
+      expect(await store.claimTaskForAgent(holderId, assignedElsewhere.id)).toMatchObject({ ok: false, reason: "assigned_to_other" });
+      expect(await store.claimTaskForAgent(holderId, checkedOutElsewhere.id)).toMatchObject({ ok: false, reason: "checkout_conflict" });
 
       const claimedAgent = await store.getAgent(holderId);
       expect(claimedAgent?.taskId).toBeUndefined();

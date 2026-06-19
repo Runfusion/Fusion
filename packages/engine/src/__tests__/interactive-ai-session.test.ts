@@ -2,59 +2,73 @@ import { describe, expect, it, vi } from "vitest";
 import type { PlanningQuestion, PlanningResponse } from "@fusion/core";
 import {
   createInteractiveAiSessionWith,
+  resolvePlanningExecutorSession,
   runCliAgentPlanning,
+  type InteractiveAgentFactory,
   type InteractiveAgentResult,
   type InteractiveAgentSession,
 } from "../interactive-ai-session.js";
-import type {
-  OneShotResult,
-  RunOneShotOptions,
-} from "../cli-agent/one-shot-session.js";
+import type { AgentRuntime, AgentRuntimeOptions, AgentSessionResult } from "../agent-runtime.js";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
-describe("runCliAgentPlanning (U9 one-shot planning seam)", () => {
-  const baseOpts = {
-    manager: {} as RunOneShotOptions["manager"],
-    adapterId: "claude-code",
-    projectId: "p",
-    prompt: "plan it",
-    cwd: "/tmp",
+function planningRuntime(text: string, options: { throwCreate?: Error; throwPrompt?: Error } = {}) {
+  const createOptions: AgentRuntimeOptions[] = [];
+  const session = { dispose: vi.fn() } as unknown as AgentSession;
+  const runtime: AgentRuntime = {
+    id: "acp",
+    name: "ACP Runtime",
+    async createSession(opts: AgentRuntimeOptions): Promise<AgentSessionResult> {
+      createOptions.push(opts);
+      if (options.throwCreate) throw options.throwCreate;
+      return { session };
+    },
+    async promptWithFallback(): Promise<void> {
+      if (options.throwPrompt) throw options.throwPrompt;
+      createOptions[0]?.onText?.(text);
+    },
+    describeModel() {
+      return "acp/test";
+    },
   };
+  return { runtime, createOptions };
+}
 
-  it("maps one-shot output to the SAME PlanningResponse shape a model run produces", async () => {
-    let seenPurpose: string | undefined;
-    const fakeRun = async (opts: RunOneShotOptions): Promise<OneShotResult> => {
-      seenPurpose = opts.purpose;
-      const summary = {
-        title: "Do X",
-        description: "Plan to do X",
-        suggestedSize: "M",
-        suggestedDependencies: [],
-        keyDeliverables: ["X"],
-      };
-      return {
-        ok: true,
-        sessionId: "s1",
-        parsed: {},
-        text: JSON.stringify({ type: "complete", data: summary }),
-        rawOutput: "",
-      };
+describe("runCliAgentPlanning (ACP planning seam)", () => {
+  it("maps ACP prose with complete JSON to the SAME PlanningResponse shape a model run produces", async () => {
+    const summary = {
+      title: "Do X",
+      description: "Plan to do X",
+      suggestedSize: "M",
+      suggestedDependencies: [],
+      keyDeliverables: ["X"],
     };
-    const resp: PlanningResponse = await runCliAgentPlanning(baseOpts, fakeRun as never);
-    expect(seenPurpose).toBe("planning");
+    const { runtime, createOptions } = planningRuntime(`Here is the plan:\n${JSON.stringify({ type: "complete", data: summary })}`);
+    const resp: PlanningResponse = await runCliAgentPlanning(runtime, {
+      prompt: "plan it",
+      cwd: "/tmp",
+      settings: { model: "claude-sonnet-4" },
+    });
     expect(resp.type).toBe("complete");
     if (resp.type === "complete") expect(resp.data.title).toBe("Do X");
+    expect(createOptions[0]).toMatchObject({ tools: "readonly", defaultModelId: "claude-sonnet-4" });
   });
 
-  it("throws on a failed one-shot (never returns a fabricated plan)", async () => {
-    const fakeRun = async (): Promise<OneShotResult> => ({
-      ok: false,
-      reason: "unparseable",
-      sessionId: "s1",
-      exitCode: 0,
-      stderr: "",
-      message: "no result",
-    });
-    await expect(runCliAgentPlanning(baseOpts, fakeRun as never)).rejects.toThrow(/planning/i);
+  it("maps ACP prose with question JSON to a PlanningResponse question", async () => {
+    const question: PlanningQuestion = { id: "q1", type: "text", question: "What is the goal?" };
+    const { runtime } = planningRuntime(`Need input: ${JSON.stringify({ type: "question", data: question })}`);
+    const resp = await runCliAgentPlanning(runtime, { prompt: "plan it", cwd: "/tmp" });
+    expect(resp.type).toBe("question");
+    if (resp.type === "question") expect(resp.data.id).toBe("q1");
+  });
+
+  it("throws on a failed ACP ask (never returns a fabricated plan)", async () => {
+    const { runtime } = planningRuntime("", { throwPrompt: new Error("transport failed") });
+    await expect(runCliAgentPlanning(runtime, { prompt: "plan it", cwd: "/tmp" })).rejects.toThrow(/planning ACP ask failed/i);
+  });
+
+  it("throws when ACP prose has no decodable planning JSON", async () => {
+    const { runtime } = planningRuntime("no structured answer");
+    await expect(runCliAgentPlanning(runtime, { prompt: "plan it", cwd: "/tmp" })).rejects.toThrow(/no valid JSON/i);
   });
 });
 
@@ -96,6 +110,95 @@ function factoryFor(agent: InteractiveAgentSession): () => Promise<InteractiveAg
 
 const q = (data: PlanningQuestion): string => JSON.stringify({ type: "question", data } satisfies PlanningResponse);
 const complete = (data: unknown): string => JSON.stringify({ type: "complete", data });
+
+describe("resolvePlanningExecutorSession", () => {
+  it("keeps the default model-backed path unchanged", async () => {
+    const question: PlanningQuestion = {
+      id: "q1",
+      type: "text",
+      question: "What is the goal?",
+    };
+    const scripted = makeScriptedAgent([
+      q(question),
+      complete({ title: "Done", summary: "ok" }),
+    ]);
+    const factory = vi.fn(factoryFor(scripted.session));
+
+    const { session, sessionFile } = await resolvePlanningExecutorSession({ kind: "model" }, factory, {
+      cwd: "/tmp",
+      systemPrompt: "emit json protocol",
+    });
+
+    expect(sessionFile).toBe("/tmp/fake-session.json");
+    expect(factory).toHaveBeenCalledTimes(1);
+    await session.prompt("start");
+    const ev1 = await session.nextEvent();
+    expect(ev1.type).toBe("question");
+    expect(ev1.type === "question" && ev1.data.id).toBe("q1");
+
+    await session.answer("q1", "ship it");
+    const ev2 = await session.nextEvent();
+    expect(ev2.type).toBe("complete");
+    expect(ev2.type === "complete" && ev2.data).toEqual({ title: "Done", summary: "ok" });
+  });
+
+  it.each([
+    ["complete", { type: "complete", data: { title: "Do X", summary: "ok" } } satisfies PlanningResponse],
+    ["question", { type: "question", data: { id: "q1", type: "text", question: "What is the goal?" } } satisfies PlanningResponse],
+  ])("selects the CLI-agent path for a terminal %s event without using the model factory", async (_name, response) => {
+    const { runtime, createOptions } = planningRuntime(`ACP says: ${JSON.stringify(response)}`);
+    const modelFactory = vi.fn<InteractiveAgentFactory>(async () => {
+      throw new Error("model factory should not be used");
+    });
+
+    const { session } = await resolvePlanningExecutorSession({ kind: "cli-agent", runtime }, modelFactory, {
+      cwd: "/tmp/project",
+      systemPrompt: "emit json protocol",
+      defaultModelId: "claude-sonnet-4",
+    });
+
+    await session.prompt("plan it");
+    const ev = await session.nextEvent();
+    expect(modelFactory).not.toHaveBeenCalled();
+    expect(createOptions[0]).toMatchObject({
+      cwd: "/tmp/project",
+      systemPrompt: "emit json protocol",
+      tools: "readonly",
+      defaultModelId: "claude-sonnet-4",
+    });
+    expect(ev.type).toBe(response.type);
+    expect(ev.type === "question" || ev.type === "complete" ? ev.data : undefined).toEqual(response.data);
+    expect(await session.nextEvent()).toBe(ev);
+
+    await session.prompt("ignored after terminal");
+    await session.answer("q1", "ignored after terminal");
+    expect(await session.nextEvent()).toBe(ev);
+  });
+
+  it.each([
+    ["unparseable output", () => planningRuntime("no structured answer"), /no valid JSON/i],
+    ["failed ACP prompt", () => planningRuntime("", { throwPrompt: new Error("transport failed") }), /planning ACP ask failed/i],
+  ])("surfaces malformed/failed CLI-agent output as a terminal error: %s", async (_name, makeRuntime, message) => {
+    const { runtime } = makeRuntime();
+    const modelFactory = vi.fn<InteractiveAgentFactory>(async () => {
+      throw new Error("model factory should not be used");
+    });
+
+    const { session } = await resolvePlanningExecutorSession({ kind: "cli-agent", runtime }, modelFactory, {
+      cwd: "/tmp",
+      systemPrompt: "emit json protocol",
+    });
+
+    await session.prompt("plan it");
+    const ev = await session.nextEvent();
+    expect(modelFactory).not.toHaveBeenCalled();
+    expect(ev.type).toBe("error");
+    expect(ev.type === "error" && ev.data.message).toMatch(message);
+    expect(ev.type).not.toBe("complete");
+    expect(ev.type).not.toBe("question");
+    expect(await session.nextEvent()).toBe(ev);
+  });
+});
 
 describe("interactive-ai-session seam", () => {
   it("round-trips question → answer → complete (happy path)", async () => {

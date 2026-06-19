@@ -5,8 +5,19 @@ import {
   isPrEntityActionable,
   isPrEntityActive,
   isPrEntityAutoMergeReady,
+  summarizePrThreadActivity,
 } from "../pr-entity.js";
-import type { PrEntity } from "../types.js";
+import type { PrEntity, PrThreadState } from "../types.js";
+
+function thread(outcome: PrThreadState["outcome"], threadId = "th"): PrThreadState {
+  return {
+    prEntityId: "PR-1",
+    threadId,
+    headOid: "deadbeef",
+    outcome,
+    updatedAt: 1,
+  };
+}
 
 function entity(overrides: Partial<PrEntity> = {}): PrEntity {
   return {
@@ -86,5 +97,34 @@ describe("PR entity predicates", () => {
     expect(autoMergeGateReason({ ...ready, reviewDecision: "CHANGES_REQUESTED" })).toBe("Waiting for approval");
     expect(autoMergeGateReason({ ...ready, checksRollup: "pending" })).toBe("Waiting for checks");
     expect(autoMergeGateReason({ ...ready, mergeable: "unknown" })).toBe("Waiting for checks");
+  });
+});
+
+describe("summarizePrThreadActivity (U18, R15)", () => {
+  it("counts fixed vs disagreed vs pending and derives acted/total", () => {
+    const activity = summarizePrThreadActivity([
+      thread("fixed", "a"),
+      thread("fixed", "b"),
+      thread("disagreed", "c"),
+      thread("pending", "d"),
+    ]);
+    expect(activity).toEqual({ total: 4, acted: 3, fixed: 2, disagreed: 1, pending: 1 });
+  });
+
+  it("empty input returns zeroed counts, not nulls", () => {
+    expect(summarizePrThreadActivity([])).toEqual({
+      total: 0,
+      acted: 0,
+      fixed: 0,
+      disagreed: 0,
+      pending: 0,
+    });
+  });
+
+  it("acted excludes pending (in-flight, not yet GitHub-confirmed)", () => {
+    const activity = summarizePrThreadActivity([thread("pending"), thread("pending", "x")]);
+    expect(activity.acted).toBe(0);
+    expect(activity.total).toBe(2);
+    expect(activity.pending).toBe(2);
   });
 });

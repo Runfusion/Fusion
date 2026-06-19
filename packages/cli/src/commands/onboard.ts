@@ -1,19 +1,12 @@
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { CentralCore, GlobalSettingsStore, getDefaultCentralDbPath } from "@fusion/core";
+import { createFusionAuthStorage } from "@fusion/engine";
 import { resolveProject } from "../project-context.js";
 import { runInit } from "./init.js";
-import {
-  createReadOnlyAuthFileStorage,
-  mergeAuthStorageReads,
-  wrapAuthStorageWithApiKeyProviders,
-} from "./provider-auth.js";
-import {
-  getFusionAuthPath,
-  getLegacyAuthPaths,
-  getModelRegistryModelsPath,
-} from "./auth-paths.js";
+import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
+import { getModelRegistryModelsPath } from "./auth-paths.js";
 
 export interface OnboardOptions {
   force?: boolean;
@@ -186,11 +179,9 @@ export async function runOnboard(options: OnboardOptions = {}): Promise<void> {
       }
     }
 
-    const authStorage = AuthStorage.create(getFusionAuthPath());
-    const supplementalAuthStorage = createReadOnlyAuthFileStorage(getLegacyAuthPaths());
-    const mergedAuthStorage = mergeAuthStorageReads(authStorage, [supplementalAuthStorage]);
-    const modelRegistry = ModelRegistry.create(mergedAuthStorage, getModelRegistryModelsPath());
-    const providerAuth = wrapAuthStorageWithApiKeyProviders(mergedAuthStorage, modelRegistry);
+    const authStorage = createFusionAuthStorage();
+    const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
+    const providerAuth = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
     await runSkippableStep(prompts, "AI provider setup", async () => {
       const apiProviders = providerAuth.getApiKeyProviders();

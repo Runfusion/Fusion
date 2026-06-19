@@ -225,11 +225,11 @@ async function migrateTasks(fusionDir: string, db: Database): Promise<void> {
       error, summary, thinkingLevel, createdAt, updatedAt,
       columnMovedAt, dependencies, steps, log, attachments, steeringComments,
       comments, workflowStepResults, prInfo, issueInfo,
-      sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
+      sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl, sourceIssueClosedAt,
       mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, sliceId
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
 
@@ -293,6 +293,7 @@ async function migrateTasks(fusionDir: string, db: Database): Promise<void> {
         task.sourceIssue?.externalIssueId ?? null,
         task.sourceIssue?.issueNumber ?? null,
         task.sourceIssue?.url ?? null,
+        task.sourceIssue?.closedAt ?? null,
         toJsonNullable(task.mergeDetails),
         task.breakIntoSubtasks ? 1 : 0,
         task.noCommitsExpected ? 1 : 0,

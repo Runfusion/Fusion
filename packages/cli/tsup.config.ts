@@ -3,19 +3,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuildBuild } from "esbuild";
+import { ALL_STAGED_BUNDLED_IDS, RUNTIME_PLUGIN_IDS } from "./src/plugins/staged-bundled-plugin-ids";
 
-// Runtime plugin ids that ship inside the published CLI tarball. Each plugin's
-// entry is esbuild-bundled into dist/plugins/<id>/bundled.js with workspace
-// deps (@fusion/plugin-sdk) inlined, since npm publish strips node_modules
-// directories. See ensureBundledPluginInstalled for the loader-side counterpart.
-const RUNTIME_PLUGIN_IDS = [
-  "fusion-plugin-hermes-runtime",
-  "fusion-plugin-openclaw-runtime",
-  "fusion-plugin-paperclip-runtime",
-  "fusion-plugin-cursor-runtime",
-  "fusion-plugin-droid-runtime",
-  "fusion-plugin-acp-runtime",
-] as const;
+export { ALL_STAGED_BUNDLED_IDS };
 
 const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
   "fusion-plugin-openclaw-runtime",
@@ -127,6 +117,27 @@ async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = fal
   }
 
   console.log(`Bundled plugin ${pluginId} to dist/plugins/${pluginId}/bundled.js`);
+}
+
+function assertAllStagedBundledPluginsLoadable() {
+  const missingEntries: string[] = [];
+
+  for (const pluginId of ALL_STAGED_BUNDLED_IDS) {
+    const destDir = join(__dirname, "dist", "plugins", pluginId);
+    const manifestPath = join(destDir, "manifest.json");
+    const bundledEntryPath = join(destDir, "bundled.js");
+    const sourceEntryPath = join(destDir, "src", "index.ts");
+
+    if (!existsSync(manifestPath) || (!existsSync(bundledEntryPath) && !existsSync(sourceEntryPath))) {
+      missingEntries.push(
+        `${pluginId} (expected manifest.json plus bundled.js or src/index.ts under ${destDir})`,
+      );
+    }
+  }
+
+  if (missingEntries.length > 0) {
+    throw new Error(`[tsup] Missing loadable staged bundled plugin entries:\n${missingEntries.join("\n")}`);
+  }
 }
 
 const pluginSdkEntry = join(__dirname, "..", "plugin-sdk", "src", "index.ts");
@@ -291,6 +302,12 @@ const cliBuildConfig = {
       });
     }
 
+    /*
+     * FNXC:BundledPlugins 2026-06-17-22:15:
+     * Build output must cover the complete staged plugin surface, including raw-src copied plugins that do not pass through bundlePluginEntry's per-plugin bundled.js assertion. Droid and ACP runtimes are intentionally staged but not auto-installed pending FN-6623, so this checks loadable staged entries rather than BUNDLED_PLUGIN_IDS equality.
+     */
+    assertAllStagedBundledPluginsLoadable();
+
     if (existsSync(dashboardClientDest)) {
       rmSync(dashboardClientDest, { recursive: true, force: true });
     }
@@ -316,9 +333,18 @@ const pluginSdkBuildConfig = {
   target: "node22",
   tsconfig: join(__dirname, "..", "plugin-sdk", "tsconfig.json"),
   dts: {
-    resolve: true,
+    /*
+     * FNXC:PluginSDK 2026-06-13-12:00:
+     * FN-6409 requires the published @runfusion/fusion/plugin-sdk declaration entry to be self-contained. External plugin authors cannot resolve private @fusion/core types from scaffolded projects, so leaving @fusion/* imports in dist/plugin-sdk/index.d.ts makes tsc fail with TS2307 before ctx parameters can typecheck.
+     */
+    resolve: [/^@fusion\//],
     compilerOptions: {
       rootDir: join(__dirname, ".."),
+      baseUrl: ".",
+      paths: {
+        "@fusion/core": ["../core/src/index.ts"],
+      },
+      removeComments: true,
     },
   },
   noExternal: [/^@fusion\//],

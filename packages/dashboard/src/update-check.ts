@@ -1,11 +1,19 @@
+import { exec } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { resolveGlobalDir } from "@fusion/core";
 
 const CACHE_FILENAME = "update-check.json";
 const REGISTRY_URL = "https://registry.npmjs.org/@runfusion%2Ffusion";
+const INSTALL_COMMAND = "npm install -g @runfusion/fusion@latest";
+const FORCE_INSTALL_COMMAND = "npm install --force -g @runfusion/fusion@latest";
+const INSTALL_TIMEOUT_MS = 120_000;
+const INSTALL_MAX_BUFFER = 10 * 1024 * 1024;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const execAsync = promisify(exec);
 
 /** Allowed update-check cadences from GlobalSettings. */
 export type UpdateCheckFrequency = "manual" | "on-startup" | "daily" | "weekly";
@@ -17,6 +25,20 @@ export type UpdateCheckResult = {
   lastChecked: number;
   error?: string;
 };
+
+export type UpdateInstallResult = {
+  currentVersion: string;
+  latestVersion: string | null;
+  updated: boolean;
+  error?: string;
+};
+
+type ExecInstall = (
+  command: string,
+  options: { timeout: number; maxBuffer: number },
+) => Promise<{ stdout: string; stderr: string }>;
+
+type InstallError = Error & { stdout?: string; stderr?: string };
 
 /**
  * Cache TTL in ms for the given frequency. Frequencies that don't expire by
@@ -63,6 +85,32 @@ function isRemoteNewer(remoteVersion: string, currentVersion: string): boolean {
   return false;
 }
 
+function isBinCollisionInstallError(error: unknown): boolean {
+  const installError = error as InstallError;
+  const message = [installError?.message, installError?.stderr, installError?.stdout]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
+
+  const hasBinHint = /\/(fn|fusion)\b|runfusion\.ai/i.test(message);
+  if (!hasBinHint) return false;
+
+  return /EEXIST|ENOENT|File exists/i.test(message);
+}
+
+function getInstallErrorMessage(error: unknown): string {
+  const installError = error as InstallError;
+  const stderr = typeof installError?.stderr === "string" ? installError.stderr.trim() : "";
+  if (stderr.length > 0) return stderr;
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getInstallOptions(): { timeout: number; maxBuffer: number } {
+  return {
+    timeout: INSTALL_TIMEOUT_MS,
+    maxBuffer: INSTALL_MAX_BUFFER,
+  };
+}
+
 function isValidResult(value: unknown): value is UpdateCheckResult {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -101,6 +149,51 @@ export function readCachedUpdateCheck(fusionDir: string): UpdateCheckResult | nu
 
 export async function clearUpdateCheckCache(fusionDir: string): Promise<void> {
   await rm(getCachePath(fusionDir), { force: true });
+}
+
+export async function performUpdateInstall(
+  currentVersion: string,
+  latestVersion: string | null,
+  options: { exec?: ExecInstall; fusionDir?: string } = {},
+): Promise<UpdateInstallResult> {
+  const runExec = options.exec ?? execAsync;
+  const fusionDir = options.fusionDir ?? resolveGlobalDir();
+
+  try {
+    await runExec(INSTALL_COMMAND, getInstallOptions());
+    await clearUpdateCheckCache(fusionDir);
+    return {
+      currentVersion,
+      latestVersion,
+      updated: true,
+    };
+  } catch (error) {
+    if (!isBinCollisionInstallError(error)) {
+      return {
+        currentVersion,
+        latestVersion,
+        updated: false,
+        error: getInstallErrorMessage(error),
+      };
+    }
+
+    try {
+      await runExec(FORCE_INSTALL_COMMAND, getInstallOptions());
+      await clearUpdateCheckCache(fusionDir);
+      return {
+        currentVersion,
+        latestVersion,
+        updated: true,
+      };
+    } catch (forceError) {
+      return {
+        currentVersion,
+        latestVersion,
+        updated: false,
+        error: getInstallErrorMessage(forceError),
+      };
+    }
+  }
 }
 
 export async function performUpdateCheck(

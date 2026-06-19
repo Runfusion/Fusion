@@ -39,6 +39,16 @@ const { mockCreateFnAgent } = vi.hoisted(() => ({
 
 vi.mock("@fusion/engine", () => ({
   listCliAdapterDescriptors: () => [],
+  // FNXC:DashboardSessionTests 2026-06-14-09:06: planning.ts spreads createWorkflowAuthoringTools into agent customTools; this focused engine mock must export it to keep AI-session tests aligned with production planning setup.
+  createWorkflowAuthoringTools: vi.fn(() => []),
+  // FNXC:DashboardSessionTests 2026-06-18-09:12: planning.ts also spreads chat task document tools during dashboard API backfill runs; focused engine mocks must return an iterable list so rescued chat-routes coverage does not destabilize planning-session tests.
+  createChatTaskDocumentTools: vi.fn(() => []),
+  // FNXC:DashboardSessionTests 2026-06-17-19:33: planning and mission-interview sessions now request skills through the shared helper; focused engine mocks must return the shaped helper result so lifecycle tests do not crash before createFnAgent is captured.
+  buildSessionSkillContextSync: vi.fn(() => ({
+    skillSelectionContext: undefined,
+    resolvedSkillNames: [],
+    skillSource: "none" as const,
+  })),
   createFnAgent: mockCreateFnAgent,
 }));
 

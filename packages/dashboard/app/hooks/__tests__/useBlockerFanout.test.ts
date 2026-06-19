@@ -128,10 +128,11 @@ describe("computeBlockerFanoutMap", () => {
     expect(entry?.escalation?.activeTodoCount).toBe(5);
   });
 
-  it("keeps MAX_AUTO_MERGE_RETRIES aligned with engine self-healing source", () => {
+  it("keeps the dashboard fallback aligned with the documented self-healing default seed", () => {
     const testDir = dirname(fileURLToPath(import.meta.url));
     const source = readFileSync(resolve(testDir, "../../../../engine/src/self-healing.ts"), "utf8");
-    const match = source.match(/const MAX_AUTO_MERGE_RETRIES = (\d+);/);
+    const match = source.match(/export const MAX_AUTO_MERGE_RETRIES = (\d+);/);
     expect(match?.[1]).toBe(String(MAX_AUTO_MERGE_RETRIES));
+    expect(source).toContain("SelfHealingManager must call resolveMaxAutoMergeRetries(settings)");
   });
 });

@@ -95,6 +95,97 @@ describe("Chat orchestration — rooms (FN-3805..FN-3811 contract)", () => {
       expect(assistantWrite).toMatchObject({ role: "assistant", senderAgentId: "agent-a", content: "Room reply" });
     });
 
+    it("requests responder and enabled plugin skills for room responder sessions", async () => {
+      mockChatStore.listRoomMembers.mockReturnValue([
+        { roomId: "room-1", agentId: "agent-a", role: "member", addedAt: "2026-01-01" },
+      ]);
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-a",
+          name: "Alpha",
+          role: "executor",
+          runtimeConfig: {},
+          metadata: { skills: ["room-agent-debug"] },
+        },
+      ]);
+      let createOptions: any;
+      __setCreateResolvedAgentSession(async (options: any) => {
+        createOptions = options;
+        return {
+          session: {
+            prompt: vi.fn(),
+            dispose: vi.fn(),
+            state: {
+              messages: [{ role: "assistant", content: "Room reply" }],
+            },
+          },
+        } as any;
+      });
+      const pluginRunner = {
+        getPluginSkills: vi.fn(() => [
+          { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug", enabled: true } },
+          { pluginId: "disabled-plugin", skill: { name: "disabled-debug", enabled: false } },
+        ]),
+      };
+
+      const manager = new ChatManager(mockChatStore as any, "/tmp", mockAgentStore as any, pluginRunner as any);
+      await manager.sendRoomMessage("room-1", "hello @Alpha");
+
+      expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
+      expect(createOptions.skillSelection).toMatchObject({
+        projectRootDir: "/tmp",
+        sessionPurpose: "heartbeat",
+      });
+      expect(createOptions.skillSelection.requestedSkillNames).toEqual(["room-agent-debug", "ce-debug"]);
+      expect(createOptions.skillSelection.requestedSkillNames).not.toContain("disabled-debug");
+    });
+
+    it("loads typed /skill commands for room responders and strips them from the room prompt", async () => {
+      mockChatStore.listRoomMembers.mockReturnValue([
+        { roomId: "room-1", agentId: "agent-a", role: "member", addedAt: "2026-01-01" },
+      ]);
+      mockAgentStore.listAgents.mockResolvedValue([
+        {
+          id: "agent-a",
+          name: "Alpha",
+          role: "executor",
+          runtimeConfig: {},
+          metadata: { skills: ["room-agent-debug"] },
+        },
+      ]);
+      const promptSpy = vi.fn().mockResolvedValue(undefined);
+      let createOptions: any;
+      __setCreateResolvedAgentSession(async (options: any) => {
+        createOptions = options;
+        return {
+          session: {
+            prompt: promptSpy,
+            dispose: vi.fn(),
+            state: {
+              messages: [{ role: "assistant", content: "Room reply" }],
+            },
+          },
+        } as any;
+      });
+
+      const manager = new ChatManager(mockChatStore as any, "/tmp", mockAgentStore as any);
+      await manager.sendRoomMessage("room-1", "/skill:ce-debug hello @Alpha");
+
+      expect(createOptions.skillSelection).toMatchObject({
+        projectRootDir: "/tmp",
+        sessionPurpose: "heartbeat",
+      });
+      expect(createOptions.skillSelection.requestedSkillNames).toEqual(["room-agent-debug", "ce-debug"]);
+      expect(promptSpy).toHaveBeenCalledTimes(1);
+      const roomPrompt = promptSpy.mock.calls[0]?.[0] as string;
+      expect(roomPrompt).toContain("Latest user message to answer:\n\nhello @Alpha");
+      expect(roomPrompt).not.toContain("/skill:");
+      expect(mockChatStore.addRoomMessage.mock.calls[0]?.[1]).toMatchObject({
+        role: "user",
+        content: "/skill:ce-debug hello @Alpha",
+      });
+    });
+
     it("suppresses trimmed skip sentinel replies while persisting normal co-responder replies", async () => {
       mockChatStore.listRoomMembers.mockReturnValue([
         { roomId: "room-1", agentId: "agent-a", role: "member", addedAt: "2026-01-01" },

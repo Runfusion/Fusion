@@ -169,7 +169,7 @@ describe("PR metadata/preflight/options routes", () => {
     queueTryRunSuccess("deadbeef\n");
     queueTryRunSuccess("refs/heads/fusion/fn-001\n");
     queueRunSuccess("2\n");
-    queueRunSuccess("");
+    queueTryRunSuccess("tree-oid\n");
     queueRunSuccess("abc123\tAdd feature\tDev\ndef456\tFix tests\tDev\n");
     queueRunSuccess("5\t1\tsrc/a.ts\n1\t1\told.ts => new.ts\n");
     queueRunSuccess("M\tsrc/a.ts\nR100\told.ts\tnew.ts\n");
@@ -201,7 +201,7 @@ describe("PR metadata/preflight/options routes", () => {
     queueTryRunSuccess("deadbeef\n");
     queueTryRunFailure(2, "missing remote branch");
     queueRunSuccess("0\n");
-    queueRunSuccess("conflicted-file.ts\n");
+    queueTryRunFailure(1, "conflicted-file.ts\n");
     queueRunSuccess("");
     queueRunSuccess("not-a-numstat-line\n");
     queueRunSuccess("M\n\n");
@@ -218,6 +218,24 @@ describe("PR metadata/preflight/options routes", () => {
       commits: [],
       changedFiles: [],
     });
+  });
+
+  it("GET /pr/preflight treats non-conflict merge-tree errors as no conflict", async () => {
+    queueTryRunSuccess("deadbeef\n");
+    queueTryRunSuccess("refs/heads/fusion/fn-001\n");
+    queueRunSuccess("2\n");
+    queueTryRunFailure(128, "fatal: bad revision");
+    queueRunSuccess("abc123\tAdd feature\tDev\n");
+    queueRunSuccess("1\t0\tsrc/a.ts\n");
+    queueRunSuccess("M\tsrc/a.ts\n");
+
+    const app = createServer(createStore(createTask()));
+    const response = await performGet(app, "/api/tasks/FN-001/pr/preflight");
+
+    expect(response.status).toBe(200);
+    expect(response.body.conflictsWithBase).toBe(false);
+    expect(tryRunQueue).toHaveLength(0);
+    expect(runQueue).toHaveLength(0);
   });
 
   it("GET /pr/preflight returns 404 for missing task", async () => {

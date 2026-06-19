@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { DiscoveryResult } from "../../artifacts/discovery.js";
 import type { CeSession } from "../../session/session-store.js";
-import { listStages } from "../../session/stage-registry.js";
+import * as LucideIcons from "lucide-react";
+import { getStage, listStages } from "../../session/stage-registry.js";
 
 // Mock the whole api module: artifacts (so the view renders empty) + session.
 const startSession = vi.fn<(stage: string, opts?: unknown) => Promise<CeSession>>();
@@ -61,6 +62,10 @@ describe("Stage launcher (R4)", () => {
     for (const stage of expected) {
       expect(screen.getByText(stage.label)).toBeInTheDocument();
     }
+    const debugTiles = tiles.filter((t) => t.getAttribute("data-stage") === "debug");
+    expect(debugTiles).toHaveLength(1);
+    expect(debugTiles[0]).toHaveTextContent("Debug");
+    expect((LucideIcons as unknown as Record<string, unknown>)[getStage("debug")!.icon]).toBeTruthy();
   });
 
   it("launching a stage starts its session and renders CeFlow", async () => {

@@ -27,6 +27,7 @@ import {
   cleanupIsolatedHomePath,
   knownIsolatedHomeBasenames,
   __setCleanupRmSyncForTests,
+  __setProcessAliveForTests,
   emitModeDecision,
   pruneFusionTestHomes,
   pruneFusionTestWorkers,
@@ -35,7 +36,7 @@ import {
   computeOwnHash,
 } from "../test-changed.mjs";
 
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -1055,6 +1056,77 @@ test("pruneFusionTestWorkers: skips markerless roots with live redirect sinks", 
     assert.equal(existsSync(root), true, "live redir-pid root must not be pruned");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function setOldMtime(pathValue) {
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(pathValue, old, old);
+}
+
+function withAlivePid(pid, fn) {
+  __setProcessAliveForTests((candidate) => candidate === pid);
+  try {
+    fn();
+  } finally {
+    __setProcessAliveForTests(null);
+  }
+}
+
+test("pruneFusionTestWorkers: prunes owner-marker roots when pid liveness is stale", () => {
+  const root = mkdtempSync(path.join(tmpdir(), `fusion-test-workers-stale-owner-${process.pid}-`));
+  const recycledPid = 424_242;
+  try {
+    writeFileSync(path.join(root, ".fusion-test-worker-root-owner"), `${recycledPid}\nrunToken=prior-run\n`);
+    withAlivePid(recycledPid, () => pruneFusionTestWorkers(1024));
+    assert.equal(existsSync(root), false, "stale pid reuse must not preserve an orphaned worker root");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneFusionTestWorkers: preserves same-run owner-marker roots with live pids", () => {
+  const root = mkdtempSync(path.join(tmpdir(), `fusion-test-workers-current-owner-${process.pid}-`));
+  const ownerPid = 515_151;
+  try {
+    writeFileSync(
+      path.join(root, ".fusion-test-worker-root-owner"),
+      `${ownerPid}\nrunToken=${process.env.FUSION_TEST_RUN_TOKEN}\n`,
+    );
+    withAlivePid(ownerPid, () => pruneFusionTestWorkers(1024));
+    assert.equal(existsSync(root), true, "current-run live worker root must not be pruned");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneFusionTestWorkers: prunes old markerless redir roots when pid liveness is stale", () => {
+  const root = mkdtempSync(path.join(tmpdir(), `fusion-test-workers-stale-redir-${process.pid}-`));
+  const recycledPid = 626_262;
+  try {
+    const redir = path.join(root, `redir-${recycledPid}`);
+    mkdirSync(redir, { recursive: true });
+    writeFileSync(path.join(redir, "payload.txt"), "stale\n");
+    setOldMtime(redir);
+    setOldMtime(root);
+    withAlivePid(recycledPid, () => pruneFusionTestWorkers(1024));
+    assert.equal(existsSync(root), false, "old markerless redir root must be pruned despite pid reuse");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneFusionTestWorkers: removes SIGKILL-style orphan roots and leaves foreign prefixes alone", () => {
+  const root = mkdtempSync(path.join(tmpdir(), `fusion-test-workers-sigkill-orphan-${process.pid}-`));
+  const foreign = mkdtempSync(path.join(tmpdir(), `not-fusion-test-workers-${process.pid}-`));
+  try {
+    mkdirSync(path.join(root, `w-${process.pid}-orphan`), { recursive: true });
+    pruneFusionTestWorkers(1024);
+    assert.equal(existsSync(root), false, "orphaned worker root should be pruned");
+    assert.equal(existsSync(foreign), true, "foreign prefixes must not be touched");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(foreign, { recursive: true, force: true });
   }
 });
 

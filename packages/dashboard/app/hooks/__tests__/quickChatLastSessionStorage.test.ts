@@ -7,6 +7,7 @@ import {
 
 describe("quickChatLastSessionStorage", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     localStorage.clear();
     vi.restoreAllMocks();
   });
@@ -38,14 +39,20 @@ describe("quickChatLastSessionStorage", () => {
   });
 
   it("swallows localStorage failures", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("quota exceeded");
-    });
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
-      throw new Error("blocked");
+    /*
+    FNXC:DashboardTesting 2026-06-14-08:46:
+    This rescue must prove the quick-chat persistence helpers survive an unavailable storage backend; stub the global storage object directly because jsdom's Storage prototype spy can miss the Web Storage instance and create a fake-green assertion.
+    */
+    vi.stubGlobal("localStorage", {
+      setItem: vi.fn(() => {
+        throw new Error("quota exceeded");
+      }),
+      getItem: vi.fn(() => {
+        throw new Error("blocked");
+      }),
+      removeItem: vi.fn(() => {
+        throw new Error("blocked");
+      }),
     });
 
     expect(() => setPersistedLastQuickChatSessionId("proj-123", "session-123")).not.toThrow();

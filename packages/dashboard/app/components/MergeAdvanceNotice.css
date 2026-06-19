@@ -57,7 +57,7 @@
   gap: var(--space-xs);
   margin-top: var(--space-sm);
   padding-top: var(--space-sm);
-  border-top: var(--border-width-thin) solid color-mix(in srgb, var(--color-warning) 25%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
 }
 
 .merge-advance-notice__push-heading {

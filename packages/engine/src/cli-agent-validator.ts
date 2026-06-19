@@ -10,11 +10,9 @@
  * downstream from a model-executed validation run.
  */
 
-import type {
-  OneShotResult,
-  RunOneShotOptions,
-  runOneShotSession as RunOneShotFn,
-} from "./cli-agent/one-shot-session.js";
+import type { OneShotResult } from "./cli-agent/one-shot-session.js";
+import type { AgentRuntime } from "./agent-runtime.js";
+import { askAcpOnce } from "./cli-agent-ask.js";
 
 /** The validator verdict contract shared with model-executed runs. */
 export interface ValidatorVerdict {
@@ -36,7 +34,6 @@ interface ParsedVerdictShape {
   result?: unknown;
   passed?: unknown;
   blocked?: unknown;
-  is_error?: unknown;
   summary?: unknown;
   reason?: unknown;
   assertions?: unknown;
@@ -58,9 +55,8 @@ export function normalizeVerdictToken(token: string): ValidatorVerdict["status"]
  * Precedence:
  *  1. explicit `verdict`/`status` string token (normalized)
  *  2. boolean `passed` (true→pass, false→fail) and `blocked === true`
- *  3. `is_error === true` → error (claude-shaped)
- *  4. prose inference from the result text
- *  5. nothing decodable → error (NEVER pass)
+ *  3. prose inference from the result text (fail/blocked only; never pass)
+ *  4. nothing decodable → error (NEVER pass)
  */
 export function mapParsedToVerdict(
   parsed: Record<string, unknown>,
@@ -73,11 +69,6 @@ export function mapParsedToVerdict(
     text ||
     "";
   const assertions = parseAssertions(p.assertions);
-
-  // 3 (early): an adapter error flag is authoritative.
-  if (p.is_error === true) {
-    return { status: "error", assertions, summary: summary || "Adapter reported an error" };
-  }
 
   // 2: explicit blocked flag.
   if (p.blocked === true) {
@@ -106,11 +97,15 @@ export function mapParsedToVerdict(
     return { status: p.passed ? "pass" : "fail", assertions, summary };
   }
 
-  // 4: prose inference.
+  // 3: prose inference. R15: prose may never infer pass.
+  /*
+  FNXC:ACP-RouteB 2026-06-14-20:28:
+  Route-B validation cannot silently pass from prose. A pass is authoritative only when recovered structured JSON says verdict=pass or passed=true; prose fallback is limited to fail/blocked signals and undecidable text maps to error.
+  */
   const inferred = inferVerdictFromProse(text);
   if (inferred) return { status: inferred, assertions, summary: summary || text };
 
-  // 5: undecidable → error, never a silent pass.
+  // 4: undecidable → error, never a silent pass.
   return {
     status: "error",
     assertions,
@@ -145,7 +140,6 @@ export function inferVerdictFromProse(text: string): ValidatorVerdict["status"] 
   const t = text.toLowerCase();
   if (/\bblocked\b/.test(t)) return "blocked";
   if (/\b(revise|revision requested|does not (pass|meet)|fail(s|ed)?\b)/.test(t)) return "fail";
-  if (/\b(all (assertions|checks) pass|validation pass(ed)?|approve(d)?)\b/.test(t)) return "pass";
   return null;
 }
 
@@ -174,10 +168,39 @@ export function oneShotResultToVerdict(result: OneShotResult): ValidatorVerdict 
  * a live PTY (tests pass a stubbed runner; production passes
  * `runOneShotSession`).
  */
+export interface CliAgentValidationOptions {
+  prompt: string;
+  cwd: string;
+  settings?: { model?: string };
+  systemPrompt?: string;
+  timeoutMs?: number;
+}
+
+const VALIDATOR_SYSTEM_PROMPT = [
+  "You are a strict Fusion validation agent.",
+  "Evaluate the requested assertions and end your response with exactly one JSON object:",
+  '{ "verdict": "pass|fail|blocked|error", "summary": "...", "assertions": [] }',
+  "Do not report pass unless every required assertion is satisfied.",
+].join("\n");
+
 export async function runCliAgentValidation(
-  opts: Omit<RunOneShotOptions, "purpose">,
-  run: typeof RunOneShotFn,
+  runtime: AgentRuntime,
+  opts: CliAgentValidationOptions,
 ): Promise<ValidatorVerdict> {
-  const result = await run({ ...opts, purpose: "validator" });
-  return oneShotResultToVerdict(result);
+  const result = await askAcpOnce(runtime, {
+    prompt: opts.prompt,
+    cwd: opts.cwd,
+    model: opts.settings?.model,
+    systemPrompt: opts.systemPrompt ?? VALIDATOR_SYSTEM_PROMPT,
+    timeoutMs: opts.timeoutMs,
+    recoverJson: true,
+  });
+  if (!result.ok) {
+    return {
+      status: "error",
+      assertions: [],
+      summary: `${result.message}${result.text ? `\n--- output tail ---\n${result.text.slice(-4000)}` : ""}`,
+    };
+  }
+  return mapParsedToVerdict(result.parsed ?? {}, result.text);
 }

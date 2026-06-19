@@ -1,0 +1,4 @@
+{
+  "$comment": "Vitest timeout-appeasement allowlist (temporary exemption ledger — see AGENTS.md 'Do Not Add Slow Tests' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). The guard blocks new per-file or suite-level `testTimeout` / `hookTimeout` bumps in tracked test files. Every entry needs a repo-relative `file`, non-empty `reason` linking the owning cleanup/quarantine work, and `allowlistedAt` date. The goal is removal, not permanence: quarantine the flaky test or narrow the slow seam, then delete the timeout bump and this entry.",
+  "entries": []
+}

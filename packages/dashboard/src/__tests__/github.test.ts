@@ -1091,6 +1091,7 @@ describe("GitHubClient", () => {
         url: "https://github.com/owner/repo/issues/1",
         state: "OPEN",
         stateReason: "reopened",
+        closedAt: null,
       });
 
       const result = await client.getIssue("owner", "repo", 1);
@@ -1098,13 +1099,50 @@ describe("GitHubClient", () => {
       expect(mockRunGhJsonAsync).toHaveBeenCalledWith([
         "issue", "view", "1",
         "--repo", "owner/repo",
-        "--json", "number,title,body,url,state,stateReason",
+        "--json", "number,title,body,url,state,stateReason,closedAt",
       ]);
       expect(result).not.toBeNull();
       expect(result?.number).toBe(1);
       expect(result?.state).toBe("open");
       expect(result?.stateReason).toBe("reopened");
+      expect(result?.closedAt).toBeUndefined();
     });
+
+    it("parses closedAt from gh CLI issue view", async () => {
+      mockRunGhJsonAsync.mockResolvedValue({
+        number: 2,
+        title: "Closed Issue",
+        body: "Done",
+        url: "https://github.com/owner/repo/issues/2",
+        state: "CLOSED",
+        stateReason: "completed",
+        closedAt: "2026-06-01T12:00:00Z",
+      });
+
+      const result = await client.getIssue("owner", "repo", 2);
+
+      expect(result?.state).toBe("closed");
+      expect(result?.closedAt).toBe("2026-06-01T12:00:00Z");
+    });
+
+    it.each([null, "", "0001-01-01T00:00:00Z", "not-a-date"])(
+      "normalizes unusable gh CLI closedAt value %s to undefined",
+      async (closedAt) => {
+        mockRunGhJsonAsync.mockResolvedValue({
+          number: 3,
+          title: "Open Issue",
+          body: "Open",
+          url: "https://github.com/owner/repo/issues/3",
+          state: "OPEN",
+          stateReason: "reopened",
+          closedAt,
+        });
+
+        const result = await client.getIssue("owner", "repo", 3);
+
+        expect(result?.closedAt).toBeUndefined();
+      },
+    );
 
     it("returns null for non-existent issues", async () => {
       mockRunGhJsonAsync.mockRejectedValue(
@@ -1126,6 +1164,59 @@ describe("GitHubClient", () => {
       expect(result).toBeNull();
     });
 
+    it("parses closedAt from REST issue responses", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+
+      const clientWithToken = new GitHubClient("ghp_token");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          number: 2,
+          title: "API Issue",
+          body: "API body",
+          html_url: "https://github.com/owner/repo/issues/2",
+          state: "closed",
+          state_reason: "completed",
+          closed_at: "2026-06-01T12:00:00Z",
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.getIssue("owner", "repo", 2);
+
+      expect(result?.state).toBe("closed");
+      expect(result?.closedAt).toBe("2026-06-01T12:00:00Z");
+
+      vi.restoreAllMocks();
+    });
+
+    it("normalizes REST sentinel closed_at to undefined", async () => {
+      mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
+
+      const clientWithToken = new GitHubClient("ghp_token");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          number: 3,
+          title: "API Issue",
+          body: "API body",
+          html_url: "https://github.com/owner/repo/issues/3",
+          state: "open",
+          state_reason: null,
+          closed_at: "0001-01-01T00:00:00Z",
+        }),
+      });
+      global.fetch = mockFetch as any;
+
+      const result = await clientWithToken.getIssue("owner", "repo", 3);
+
+      expect(result?.closedAt).toBeUndefined();
+
+      vi.restoreAllMocks();
+    });
+
     it("falls back to REST API when gh CLI fails and token is available", async () => {
       mockRunGhJsonAsync.mockRejectedValue(new Error("gh failed"));
 
@@ -1140,6 +1231,7 @@ describe("GitHubClient", () => {
           html_url: "https://github.com/owner/repo/issues/1",
           state: "open",
           state_reason: null,
+          closed_at: null,
         }),
       });
       global.fetch = mockFetch as any;
@@ -1148,6 +1240,7 @@ describe("GitHubClient", () => {
 
       expect(mockFetch).toHaveBeenCalled();
       expect(result?.number).toBe(1);
+      expect(result?.closedAt).toBeUndefined();
 
       vi.restoreAllMocks();
     });

@@ -1,5 +1,5 @@
 import "./TaskDetailModal.css";
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
@@ -21,6 +21,7 @@ import {
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
 } from "@fusion/core";
+import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, recoverBranchBinding, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, api } from "../api";
 import type { RecoverBranchBindingOutcome, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
@@ -60,6 +61,8 @@ import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inR
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
 import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
+import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 interface ModelSelection {
   provider?: string;
@@ -254,18 +257,30 @@ function getStepStatusColor(status: string): string {
 }
 
 function formatTimestamp(iso: string): string {
-  const date = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  const diffHr = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHr / 24);
+  /*
+   * FNXC:RelativeTime 2026-06-17-20:48:
+   * FN-6618 routes TaskDetailModal timestamp math through getRelativeTimeBucket while preserving lowercase compact labels, future-as-just-now behavior, and the legacy Invalid Date fallback for unparseable input.
+   */
+  const bucket = getRelativeTimeBucket(iso);
+  if (!bucket) {
+    const timestampMs = Date.parse(iso);
+    if (Number.isFinite(timestampMs) && Date.now() - timestampMs < 0) return "just now";
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
 
-  if (diffMin < 1) return "just now";
-  if (diffMin < 60) return `${diffMin}m ago`;
-  if (diffHr < 24) return `${diffHr}h ago`;
-  if (diffDay < 7) return `${diffDay}d ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  switch (bucket.bucket) {
+    case "just-now":
+      return "just now";
+    case "minutes":
+      return `${bucket.count}m ago`;
+    case "hours":
+      return `${bucket.count}h ago`;
+    case "days":
+      return `${bucket.count}d ago`;
+    case "weeks":
+    case "older":
+      return bucket.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
 }
 
 function formatBytes(bytes: number): string {
@@ -373,7 +388,7 @@ export interface TaskDetailModalProps {
   prAuthAvailable?: boolean;
   autoMergeEnabled?: boolean;
   onOpenWorkflowEditor?: () => void;
-  /** Open the modal with this tab active instead of "definition" */
+  /** Open the modal with this tab active instead of the default Chat view. */
   initialTab?: TabId;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
@@ -531,8 +546,6 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
   }
 }
 
-const DESCRIPTION_TRUNCATE_LENGTH = 200;
-
 // #1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
 // (non-members correctly resolve to false → not editable).
 const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
@@ -555,7 +568,11 @@ export function TaskDetailContent({
   prAuthAvailable,
   autoMergeEnabled: autoMergeEnabledProp,
   onOpenWorkflowEditor,
-  initialTab = "definition",
+  /**
+   * FNXC:TaskDetailTabs 2026-06-17-00:00:
+   * FN-6532 makes Chat the default task-detail view when no caller supplies an explicit initial tab.
+   */
+  initialTab = "chat",
   mobileHeaderMode = "close",
   embedded = false,
   onRequestClose,
@@ -645,10 +662,19 @@ export function TaskDetailContent({
   const nearDuplicateOf = typeof workingTask.sourceMetadata?.nearDuplicateOf === "string"
     ? workingTask.sourceMetadata.nearDuplicateOf
     : null;
+  const nearDuplicateCanonical = nearDuplicateOf
+    ? tasks.find((candidate) => candidate.id === nearDuplicateOf)
+    : undefined;
+  /**
+   * FNXC:NearDuplicateDetection 2026-06-14-12:00:
+   * The Archive/Keep decision banner is actionable only while the referenced canonical exists and is active.
+   * Suppress the whole affordance for missing, archived, done, or soft-deleted canonicals so no empty banner shell or stale user-decision buttons remain.
+   */
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
-    && task.column !== "done";
+    && task.column !== "done"
+    && !isNearDuplicateCanonicalInactive(nearDuplicateCanonical);
   const [sourceAgent, setSourceAgent] = useState<Agent | null>(null);
   const [selectedSourceAgentId, setSelectedSourceAgentId] = useState<string | null>(null);
   const provenanceDisplay = getProvenanceLabel(workingTask, {
@@ -672,12 +698,15 @@ export function TaskDetailContent({
 
   // Reset description expanded state when task changes
   useEffect(() => {
-    setDescriptionExpanded(task.column === "triage");
+    setDescriptionExpanded(false);
   }, [task.column, task.id]);
 
   const [logSubview, setLogSubview] = useState<"activity" | "agent-log">("activity");
   const [highlightStallCode, setHighlightStallCode] = useState<string | null>(null);
-  const [descriptionExpanded, setDescriptionExpanded] = useState(() => task.column === "triage");
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [titleOverflows, setTitleOverflows] = useState(false);
+  const titleRef = useRef<HTMLHeadingElement | null>(null);
+  const displayTitleText = task.title || task.description || task.id;
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies || []);
@@ -694,6 +723,43 @@ export function TaskDetailContent({
   const [specFeedback, setSpecFeedback] = useState("");
   const [showRefineModal, setShowRefineModal] = useState(false);
   const [prCreateOpen, setPrCreateOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const titleElement = titleRef.current;
+    if (!titleElement) {
+      setTitleOverflows(false);
+      return;
+    }
+
+    const measureTitleOverflow = () => {
+      let addedCollapsedClass = false;
+      if (descriptionExpanded && !titleElement.classList.contains("detail-title--collapsed")) {
+        titleElement.classList.add("detail-title--collapsed");
+        addedCollapsedClass = true;
+      }
+
+      const overflows = titleElement.scrollHeight > titleElement.clientHeight + 1;
+
+      if (addedCollapsedClass) {
+        titleElement.classList.remove("detail-title--collapsed");
+      }
+
+      setTitleOverflows(overflows);
+    };
+
+    measureTitleOverflow();
+
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(measureTitleOverflow)
+      : null;
+    resizeObserver?.observe(titleElement);
+    window.addEventListener("resize", measureTitleOverflow);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", measureTitleOverflow);
+    };
+  }, [descriptionExpanded, displayTitleText, task.id]);
 
   // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
   // from the board-workflows payload; absent when the workflow declares none,
@@ -2783,39 +2849,36 @@ export function TaskDetailContent({
             </div>
           ) : (
             <>
-              {(() => {
-                const displayText = task.title || task.description || task.id;
-                const shouldTruncate = !descriptionExpanded && displayText.length > DESCRIPTION_TRUNCATE_LENGTH;
-                return (
-                  <>
-                    <div className="detail-heading-row">
-                      <h2 className="detail-title">
-                        {shouldTruncate ? displayText.slice(0, DESCRIPTION_TRUNCATE_LENGTH) + "…" : displayText}
-                      </h2>
-                      {showSummarizeTitleButton && (
-                        <button
-                          type="button"
-                          className="detail-summarize-title-btn"
-                          onClick={() => void handleSummarizeTitle()}
-                          disabled={isSummarizingTitle || isSaving}
-                          data-testid="summarize-title-btn"
-                        >
-                          {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
-                          <span>{t("taskDetail.title.summarize", "Summarize as title")}</span>
-                        </button>
-                      )}
-                    </div>
-                    {displayText.length > DESCRIPTION_TRUNCATE_LENGTH && (
-                      <button
-                        className="detail-description-toggle"
-                        onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-                      >
-                        {descriptionExpanded ? t("taskDetail.description.showLess", "Show less") : t("taskDetail.description.showMore", "Show more")}
-                      </button>
-                    )}
-                  </>
-                );
-              })()}
+              <>
+                <div className="detail-heading-row">
+                  <h2
+                    ref={titleRef}
+                    className={`detail-title${descriptionExpanded ? "" : " detail-title--collapsed"}`}
+                  >
+                    {displayTitleText}
+                  </h2>
+                  {showSummarizeTitleButton && (
+                    <button
+                      type="button"
+                      className="detail-summarize-title-btn"
+                      onClick={() => void handleSummarizeTitle()}
+                      disabled={isSummarizingTitle || isSaving}
+                      data-testid="summarize-title-btn"
+                    >
+                      {isSummarizingTitle ? <Loader2 size={14} className="spinner" /> : <Sparkles size={14} />}
+                      <span>{t("taskDetail.title.summarize", "Summarize as title")}</span>
+                    </button>
+                  )}
+                </div>
+                {(titleOverflows || descriptionExpanded) && (
+                  <button
+                    className="detail-description-toggle"
+                    onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                  >
+                    {descriptionExpanded ? t("taskDetail.description.showLess", "Show less") : t("taskDetail.description.showMore", "Show more")}
+                  </button>
+                )}
+              </>
               {customFieldDefs && customFieldDefs.length > 0 ? (
                 <TaskFieldsSection
                   fieldDefs={customFieldDefs}
@@ -3017,17 +3080,21 @@ export function TaskDetailContent({
           {!isEditing && (
             <>
           <div className="detail-tabs">
-            <button
-              className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("definition")}
-            >
-              {t("taskDetail.tabs.definition", "Definition")}
-            </button>
+            {/*
+              FNXC:TaskDetailTabs 2026-06-17-00:00:
+              FN-6532 requires Chat to be the first task-detail tab while preserving every explicit tab entrypoint.
+            */}
             <button
               className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("chat")}
             >
               {t("taskDetail.tabs.chat", "Chat")}
+            </button>
+            <button
+              className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("definition")}
+            >
+              {t("taskDetail.tabs.definition", "Definition")}
             </button>
             <button
               className={`detail-tab${activeTab === "logs" ? " detail-tab-active" : ""}`}
@@ -3201,10 +3268,13 @@ export function TaskDetailContent({
                   ) : workingTask.log && workingTask.log.length > 0 ? (
                     <div className="detail-activity-list" ref={activityListRef}>
                       {(() => {
+                        // FNXC:TaskDetail 2026-06-14-13:43 Activity rendering must tolerate legacy `text`/`detail` log entries.
                         let highlightedOnce = false;
                         return [...workingTask.log].reverse().map((entry, i) => {
-                          const stallMatch = entry.action.match(IN_REVIEW_STALL_LOG_REGEX)
-                            ?? entry.action.match(STALE_PAUSED_REVIEW_LOG_REGEX);
+                          const action = getTaskLogEntryAction(entry);
+                          const outcome = getTaskLogEntryOutcome(entry);
+                          const stallMatch = action.match(IN_REVIEW_STALL_LOG_REGEX)
+                            ?? action.match(STALE_PAUSED_REVIEW_LOG_REGEX);
                           const isHighlighted = !highlightedOnce
                             && highlightStallCode != null
                             && stallMatch?.[1] === highlightStallCode;
@@ -3221,10 +3291,10 @@ export function TaskDetailContent({
                                 <span className="detail-log-timestamp">
                                   {formatTimestamp(entry.timestamp)}
                                 </span>
-                                <span className="detail-log-action">{entry.action}</span>
+                                <span className="detail-log-action">{action}</span>
                               </div>
-                              {entry.outcome && (
-                                <div className="detail-log-outcome">{entry.outcome}</div>
+                              {outcome && (
+                                <div className="detail-log-outcome">{outcome}</div>
                               )}
                             </div>
                           );
@@ -3302,7 +3372,7 @@ export function TaskDetailContent({
                   {shouldShowStalePausedReviewBadge(workingTask) && workingTask.stalePausedReview && (() => {
                     const copy = getStalePausedReviewCopy(workingTask.stalePausedReview);
                     const logMatch = [...(workingTask.log ?? [])].reverse().find((entry) => {
-                      const match = entry.action.match(STALE_PAUSED_REVIEW_LOG_REGEX);
+                      const match = getTaskLogEntryAction(entry).match(STALE_PAUSED_REVIEW_LOG_REGEX);
                       return match?.[1] === workingTask.stalePausedReview?.code;
                     });
                     return (

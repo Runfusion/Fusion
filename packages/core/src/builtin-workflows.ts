@@ -165,7 +165,20 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           prompt: "Produce a short implementation plan for this task before any code is written.",
         },
       },
-      { id: "execute", kind: "prompt", config: builtinPromptConfig("execute", "Execute") },
+      {
+        id: "execute",
+        kind: "prompt",
+        config: {
+          name: "Execute",
+          executor: "skill",
+          skillName: "compound-engineering:ce-work",
+          // Coding mode so the step has write + spawn tools (readonly is the
+          // default and would strip them). ce-work does the implementation the
+          // CE way instead of the generic executor seam.
+          toolMode: "coding",
+          prompt: "Execute the plan for this task, following existing patterns and maintaining quality throughout.",
+        },
+      },
       { id: "review", kind: "prompt", config: builtinPromptConfig("review", "Review") },
       {
         id: "code-review",
@@ -176,6 +189,35 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           skillName: "compound-engineering:ce-code-review",
           gateMode: "gate",
           prompt: "Run a structured code review of the changes. Block merge on P0/P1 findings.",
+        },
+      },
+      {
+        id: "commit-pr",
+        kind: "prompt",
+        config: {
+          name: "Commit & open PR",
+          executor: "skill",
+          skillName: "compound-engineering:ce-commit-push-pr",
+          // Coding mode: this step runs git + gh. Per KTD-6 it OWNS commit /
+          // push / PR creation; it does NOT perform the board-state merge — that
+          // stays with Fusion's merge seam below (workflow-owned merge), so the
+          // two never race the same branch state.
+          toolMode: "coding",
+          prompt: "Commit the work in logical commits, push the branch, and open a pull request with a value-first description.",
+        },
+      },
+      {
+        id: "resolve-feedback",
+        kind: "prompt",
+        config: {
+          name: "Resolve PR feedback",
+          executor: "skill",
+          skillName: "compound-engineering:ce-resolve-pr-feedback",
+          toolMode: "coding",
+          // Resolves open PR review threads. On the first autonomous pass there
+          // may be no feedback yet (review is async); the skill no-ops when there
+          // are no threads, and a re-run picks up later feedback.
+          prompt: "Resolve open PR review feedback: evaluate each thread, fix valid issues, and reply.",
         },
       },
       { id: "merge", kind: "prompt", config: builtinPromptConfig("merge", "Merge boundary") },

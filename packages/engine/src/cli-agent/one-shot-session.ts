@@ -2,8 +2,8 @@
  * One-shot CLI agent sessions (CLI Agent Executor, U9).
  *
  * A *one-shot* session runs an adapter's NON-INTERACTIVE invocation
- * (`claude -p`, `codex exec --json`, `droid exec --output-format json`,
- * `pi --print`) to completion in a working directory, streams its output to a
+ * (`codex exec --json`, `droid exec --output-format json`, `pi --print`) to
+ * completion in a working directory, streams its output to a
  * read-only terminal (so U10's attach surface works exactly as for interactive
  * sessions — but with input disabled server-side), collects the output, parses
  * the adapter's structured (JSON) result, and returns a typed result.
@@ -64,9 +64,6 @@ export function buildOneShotSettings(
   // The non-interactive arg sets are documented in each adapter file. We carry
   // them as explicit extraArgs so the session manager forwards them to spawn.
   switch (adapterId) {
-    case "claude-code":
-      settings.oneShotArgs = ["-p", prompt];
-      break;
     case "codex":
       settings.oneShotArgs = ["exec", "--json", prompt];
       break;
@@ -136,16 +133,6 @@ export function parseOneShotOutput(
   if (objects.length === 0) return null;
 
   switch (adapterId) {
-    case "claude-code": {
-      // `claude -p --output-format json` (or stream-json) → a result object
-      // with `{ type: "result", result | text, is_error }`. Prefer the final
-      // result frame.
-      const result =
-        objects.find((o) => o.type === "result") ?? objects[objects.length - 1];
-      const text =
-        pickString(result, ["result", "text", "content", "message"]) ?? "";
-      return { parsed: result, text };
-    }
     case "codex": {
       // `codex exec --json` emits a stream of JSON events; the final
       // agent/assistant message carries the answer.

@@ -123,6 +123,11 @@ describe("plugin commands", () => {
   const tempDirs: string[] = [];
 
   beforeEach(() => {
+    /*
+     * FNXC:CliTests 2026-06-14-01:28:
+     * FN-6430's plugin-suite rescue depends on clearing loader path state before every case so a package-load sibling cannot inherit the previous taskStore root.
+     * Reset the hoisted PluginLoader/PluginStore mocks rather than widening timeouts or serializing the whole CLI lane.
+     */
     mocks.reset();
     vi.mocked(resolveProject).mockResolvedValue({ projectPath: "/tmp/fn-project" } as never);
     vi.spyOn(console, "log").mockImplementation(() => {});

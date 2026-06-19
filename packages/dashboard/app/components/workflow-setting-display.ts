@@ -8,6 +8,10 @@ export interface WorkflowSettingDisplay {
   description?: string;
 }
 
+/*
+FNXC:WorkflowSettings 2026-06-17-09:13:
+Title summarization is project/global-scoped and configured in Project Models, so this workflow display map intentionally omits titleSummarizer* keys. If a custom workflow declares a same-named key, render it as Advanced instead of implying Fusion will execute it as a workflow model lane.
+*/
 const DISPLAY: Record<string, WorkflowSettingDisplay> = {
   planningProvider: {
     group: "models",
@@ -54,14 +58,6 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
   validatorFallbackModelId: {
     group: "models",
     label: "Reviewer fallback model",
-  },
-  titleSummarizerProvider: {
-    group: "models",
-    label: "Title summarizer provider",
-  },
-  titleSummarizerModelId: {
-    group: "models",
-    label: "Title summarizer model",
   },
   requirePrApproval: {
     group: "review",

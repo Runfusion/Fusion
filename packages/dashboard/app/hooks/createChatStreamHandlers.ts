@@ -19,6 +19,12 @@ export interface CreateChatStreamHandlersOptions {
   sessionId: string;
   /** Optimistic temp id of the user message added before the stream started. */
   tempUserMessageId: string;
+  /** Existing text snapshot for reattaching to an in-flight generation. */
+  initialText?: string;
+  /** Existing thinking snapshot for reattaching to an in-flight generation. */
+  initialThinking?: string;
+  /** Existing tool-call snapshot for reattaching to an in-flight generation. */
+  initialToolCalls?: ToolCallInfo[];
   /**
    * The latest text/thinking/tool-call snapshots that are committed to React
    * state. We pass setters (not values) so the factory can flush per-frame
@@ -90,6 +96,9 @@ export function createChatStreamHandlers(
   const {
     sessionId,
     tempUserMessageId,
+    initialText,
+    initialThinking,
+    initialToolCalls,
     setStreamingText,
     setStreamingThinking,
     setStreamingToolCalls,
@@ -100,9 +109,13 @@ export function createChatStreamHandlers(
     onFallbackSession,
   } = options;
 
-  let capturedText = "";
-  let capturedThinking = "";
-  let capturedToolCalls: ToolCallInfo[] = [];
+  /**
+   * FNXC:ChatStreaming 2026-06-18-05:59:
+   * Reattached streams must seed their private accumulators from the durable in-flight snapshot, not only paint that snapshot into React state. The SSE replay starts after replayFromEventId, so the first post-reattach delta must append to snapshot text/thinking/tool calls instead of replacing everything the user already saw on load.
+   */
+  let capturedText = initialText ?? "";
+  let capturedThinking = initialThinking ?? "";
+  let capturedToolCalls: ToolCallInfo[] = initialToolCalls ? [...initialToolCalls] : [];
   let capturedFallbackInfo: FallbackInfo | undefined;
 
   // Coalesce per-token state updates to one render per animation frame.

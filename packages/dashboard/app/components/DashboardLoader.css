@@ -74,7 +74,7 @@
 }
 
 .dashboard-loader__step--done {
-  color: var(--success, #22c55e);
+  color: var(--color-success);
 }
 
 .dashboard-loader__step--active {

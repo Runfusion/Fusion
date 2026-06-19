@@ -318,7 +318,6 @@ function AppShellMobileHarness({ tasks }: { tasks: Task[] }) {
           keyboardOpen={keyboardOpen}
           onOpenSettings={vi.fn()}
           onOpenActivityLog={vi.fn()}
-          onOpenSystemStats={vi.fn()}
           onOpenMailbox={vi.fn()}
           onOpenGitManager={vi.fn()}
           onOpenWorkflowEditor={vi.fn()}

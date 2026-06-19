@@ -171,6 +171,7 @@ export type GitMutationType =
   | "merge:ai-review-landed-with-concerns"
   | "merge:ai-local-sync"
   | "merge:ai-landed"
+  | "merge:ai-deps-sync"
   /**
    * Metadata shape:
    * ```ts
@@ -564,6 +565,12 @@ export type DatabaseMutationType =
    * Metadata: { modifiedFilesCount, classification, baseRef? }
    */
   | "task:finalize-lost-work-blocked"
+  /**
+   * FNXC:Lifecycle 2026-06-14-20:16:
+   * FN-6461 records every no-op finalize lane that refuses to mark a no-commits task done because incomplete/skipped steps outweigh completed work.
+   * Metadata: { reason, doneCount, incompleteCount, classification?, baseRef?, lane }
+   */
+  | "task:no-commits-finalize-blocked-incomplete-steps"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
   /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a done/archived task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */

@@ -38,7 +38,7 @@ export function registerIntegratedRouters({
 }: IntegratedRoutersOptions): void {
   router.use(
     "/missions",
-    createMissionRouter(store, options?.missionAutopilot, aiSessionStore, options?.missionExecutionLoop, options?.engineManager),
+    createMissionRouter(store, options?.missionAutopilot, aiSessionStore, options?.missionExecutionLoop, options?.engineManager, options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3]),
   );
 
   router.use("/insights", createInsightsRouter(store));

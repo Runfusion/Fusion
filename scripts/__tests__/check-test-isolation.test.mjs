@@ -49,6 +49,72 @@ test("fails when a tracked temp leak appears after baseline", () => {
   });
 });
 
+test("ignores tracked temp dirs that disappear during the settle window", () => {
+  withFixture(({ cwd, home }) => {
+    const before = runScript(["--before"], { cwd, home });
+    assert.equal(before.status, 0);
+
+    const transientName = `fusion-test-transient-worker-${process.pid}`;
+    const transientPath = path.join(tmpdir(), transientName);
+    mkdirSync(transientPath, { recursive: true });
+    const cleanup = spawn(process.execPath, ["-e", `setTimeout(() => require("node:fs").rmSync(process.argv[1], { recursive: true, force: true }), 100)`, transientPath], {
+      cwd,
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      stdio: "ignore",
+    });
+    try {
+      const after = runScript([], { cwd, home });
+      assert.equal(after.status, 0, after.stderr || after.stdout);
+    } finally {
+      cleanup.kill("SIGTERM");
+      rmSync(transientPath, { recursive: true, force: true });
+    }
+  });
+});
+
+test("ignores active fusion-test-workers roots created after baseline", () => {
+  withFixture(({ cwd, home }) => {
+    const before = runScript(["--before"], { cwd, home });
+    assert.equal(before.status, 0);
+
+    const activeRoot = path.join(tmpdir(), `fusion-test-workers-active-check-${process.pid}`);
+    const owner = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
+      cwd,
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      stdio: "ignore",
+    });
+    mkdirSync(activeRoot, { recursive: true });
+    writeFileSync(path.join(activeRoot, ".fusion-test-worker-root-owner"), `${owner.pid}\n`);
+
+    try {
+      const after = runScript([], { cwd, home });
+      assert.equal(after.status, 0, after.stderr || after.stdout);
+    } finally {
+      owner.kill("SIGTERM");
+      rmSync(activeRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("fails stale fusion-test-workers roots created after baseline", () => {
+  withFixture(({ cwd, home }) => {
+    const before = runScript(["--before"], { cwd, home });
+    assert.equal(before.status, 0);
+
+    const staleRoot = path.join(tmpdir(), `fusion-test-workers-stale-check-${process.pid}`);
+    mkdirSync(staleRoot, { recursive: true });
+    writeFileSync(path.join(staleRoot, ".fusion-test-worker-root-owner"), "424242424\n");
+
+    try {
+      const after = runScript([], { cwd, home });
+      assert.equal(after.status, 1);
+      assert.match(after.stderr, /leaked temp director/i);
+    } finally {
+      rmSync(staleRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 test("ignores leaked temp dirs whose basenames appear in FUSION_TEST_ISOLATION_IGNORE_NAMES", () => {
   withFixture(({ cwd, home }) => {
     const before = runScript(["--before"], { cwd, home });

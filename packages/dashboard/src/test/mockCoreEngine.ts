@@ -47,9 +47,24 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
   return withFallbackFunctions(actual, {
     createFnAgent: vi.fn(),
     promptWithFallback: vi.fn(),
+    /*
+    FNXC:TestSkills 2026-06-17-19:33:
+    Dashboard route tests mock @fusion/engine wholesale, so skill-aware planning lanes need a shaped session-skill helper result instead of the fallback vi.fn() returning undefined.
+    */
+    buildSessionSkillContextSync: vi.fn(() => ({
+      skillSelectionContext: undefined,
+      resolvedSkillNames: [],
+      skillSource: "none" as const,
+    })),
     // Returns an iterable tool list; dashboard code spreads its result
     // (`...createWorkflowAuthoringTools(...)`), so it must not be undefined.
     createWorkflowAuthoringTools: vi.fn(() => []),
+    /*
+    FNXC:DashboardRouteTests 2026-06-18-09:07:
+    Planning and chat route files can share worker-level @fusion/engine mocks during broad dashboard API quality runs.
+    Keep chat task document tools iterable by default so rescuing chat-routes from quarantine does not poison planning route imports with a fallback vi.fn() result.
+    */
+    createChatTaskDocumentTools: vi.fn(() => []),
     ...overrides,
   });
 }

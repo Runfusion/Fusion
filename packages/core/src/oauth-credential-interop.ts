@@ -8,6 +8,7 @@ export type StoredAuthCredential = {
   access?: string;
   refresh?: string;
   expires?: number;
+  scopes?: string[];
   accountId?: string;
   [key: string]: unknown;
 };
@@ -235,6 +236,9 @@ export function extractClaudeCliStoredCredential(raw: unknown): StoredAuthCreden
   const refresh = typeof oauthRecord.refreshToken === "string" ? oauthRecord.refreshToken : undefined;
   const expiresRaw = oauthRecord.expiresAt;
   const expires = typeof expiresRaw === "number" && Number.isFinite(expiresRaw) ? expiresRaw : undefined;
+  const scopes = Array.isArray(oauthRecord.scopes)
+    ? oauthRecord.scopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0)
+    : undefined;
 
   if (!access || !refresh || expires === undefined) {
     return undefined;
@@ -245,6 +249,7 @@ export function extractClaudeCliStoredCredential(raw: unknown): StoredAuthCreden
     access,
     refresh,
     expires,
+    ...(scopes && scopes.length > 0 ? { scopes } : {}),
   };
 }
 

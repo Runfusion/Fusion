@@ -11,7 +11,7 @@
   max-width: 480px;
   margin: auto;
   text-align: center;
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .error-boundary--root {

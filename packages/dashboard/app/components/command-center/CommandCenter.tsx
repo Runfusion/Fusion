@@ -1,0 +1,528 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { AlertCircle, Gauge } from "lucide-react";
+import type { ActivityAnalytics, LiveSnapshot, SignalsAnalytics, TokenAnalytics, ToolAnalytics } from "@fusion/core";
+import { api } from "../../api/legacy";
+import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
+import { TokensArea } from "./areas/TokensArea";
+import { ToolsArea } from "./areas/ToolsArea";
+import { ActivityArea } from "./areas/ActivityArea";
+import { ProductivityArea } from "./areas/ProductivityArea";
+import { TeamArea } from "./areas/TeamArea";
+import { EcosystemArea } from "./areas/EcosystemArea";
+import { GithubArea } from "./areas/GithubArea";
+import { SignalsArea } from "./areas/SignalsArea";
+import { SystemStatsArea } from "./areas/SystemStatsArea";
+import { MissionControlPanel } from "./MissionControlPanel";
+import { ReliabilityView } from "../ReliabilityView";
+import { SdlcFunnel } from "./SdlcFunnel";
+import { Bar, type BarDatum } from "./charts/Bar";
+import { Sparkline } from "./charts/Sparkline";
+import { LineChart as RechartsLineChart, PieChart } from "./charts/recharts";
+import { useAnalyticsArea } from "./areas/useAnalyticsArea";
+import { formatCost, formatCount } from "./areas/areaShared";
+import "./CommandCenter.css";
+
+type SubViewId =
+  | "overview"
+  | "tokens"
+  | "tools"
+  | "activity"
+  | "productivity"
+  | "team"
+  | "ecosystem"
+  | "github"
+  | "signals"
+  | "system"
+  | "reliability"
+  | "mission-control";
+
+interface SubView {
+  id: SubViewId;
+  label: string;
+}
+
+/*
+FNXC:CommandCenter 2026-06-18-16:57:
+Team tab shows each agent's tokens/cost/files-changed/tasks-completed with live status and bar charts, reusing existing analytics primitives; GitHub-issue per-agent stats are FN-6653, not here.
+
+FNXC:CommandCenter 2026-06-19-00:00:
+FN-6702 moves Reliability from a top-level dashboard view into a Command Center tab next to System telemetry. Reuse ReliabilityView unchanged so its /api/health/reliability loading, error, insufficient-data, and populated states keep the same data flow.
+*/
+function useSubViews(): SubView[] {
+  const { t } = useTranslation("app");
+  return [
+    { id: "overview", label: t("commandCenter.tabs.overview", "Overview") },
+    { id: "tokens", label: t("commandCenter.tabs.tokens", "Tokens") },
+    { id: "tools", label: t("commandCenter.tabs.tools", "Tools") },
+    { id: "activity", label: t("commandCenter.tabs.activity", "Activity") },
+    { id: "productivity", label: t("commandCenter.tabs.productivity", "Productivity") },
+    { id: "team", label: t("commandCenter.tabs.team", "Team") },
+    { id: "ecosystem", label: t("commandCenter.tabs.ecosystem", "Ecosystem") },
+    { id: "github", label: t("commandCenter.tabs.github", "GitHub") },
+    { id: "signals", label: t("commandCenter.tabs.signals", "Signals") },
+    { id: "system", label: t("commandCenter.tabs.system", "System") },
+    { id: "reliability", label: t("commandCenter.tabs.reliability", "Reliability") },
+    { id: "mission-control", label: t("commandCenter.tabs.missionControl", "Mission Control") },
+  ];
+}
+
+interface OverviewStatCard {
+  id: string;
+  label: string;
+  value: string;
+  subLabel?: string;
+}
+
+/*
+FNXC:CommandCenter 2026-06-17-00:00:
+Overview is the Command Center landing surface, so it must reflect real analytics instead of shell placeholders. Show loading while core analytics have not settled, show the empty state only after settled zero data, include the agent-runs card as a first-class activity signal, and read Signals from the project-scoped incidents-backed endpoint without fabricating a value during loading/errors.
+
+FNXC:CommandCenter 2026-06-19-00:00:
+The Open signals card must be real project data, not a swallowed missing-route blank. It calls the scoped `/command-center/signals` endpoint backed by incidents and renders `—` only while unavailable/loading.
+
+FNXC:CommandCenter 2026-06-18-23:45:
+FN-6683 adds real Overview pie and line charts by reusing the already-fetched tokens and activity analytics. Keep the existing overview bars, sparkline, live strip, funnel, and loading/error/empty branches intact; no new endpoint is allowed for these additive affordances.
+*/
+const OVERVIEW_TOKEN_REFRESH_MS = 15_000;
+
+function OverviewTab({ range }: { range: DateRange }) {
+  const { t } = useTranslation("app");
+  const tokens = useAnalyticsArea<TokenAnalytics>("/command-center/tokens?groupBy=model", range, {
+    pollMs: OVERVIEW_TOKEN_REFRESH_MS,
+  });
+  const tools = useAnalyticsArea<ToolAnalytics>("/command-center/tools", range);
+  const activity = useAnalyticsArea<ActivityAnalytics>("/command-center/activity", range);
+  const signals = useAnalyticsArea<SignalsAnalytics>("/command-center/signals", range);
+  const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot | null>(null);
+  const [liveSnapshotLoading, setLiveSnapshotLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLiveSnapshotLoading(true);
+    void (async () => {
+      try {
+        const result = await api<LiveSnapshot>("/command-center/live");
+        if (!cancelled) {
+          setLiveSnapshot(result);
+        }
+      } catch {
+        if (!cancelled) {
+          setLiveSnapshot(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLiveSnapshotLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const tokenTotal = tokens.data?.totals?.totalTokens ?? 0;
+  const toolCalls = tools.data?.toolCalls ?? 0;
+  const activeNodes = activity.data?.activeNodes ?? 0;
+  const activeAgents = activity.data?.activeAgents ?? 0;
+  const agentRunsTotal = activity.data?.agentRuns?.total ?? 0;
+  const tasksDone = activity.data?.funnel?.doneInRange ?? 0;
+  /*
+  FNXC:CommandCenter 2026-06-18-00:00:
+  The Live activity snapshot "tasks in progress" metric must reflect current board state from /command-center/live columns, not the date-range SDLC funnel entered count, because cumulative transitions inflate with history and do not decrease when tasks leave in-progress.
+  */
+  const inProgressTasks = liveSnapshot?.columns.find((column) => column.column === "in-progress")?.count ?? 0;
+  const uniqueModels = tokens.data?.groups?.length ?? 0;
+  const tokensByModelData = useMemo<BarDatum[]>(
+    () =>
+      [...(tokens.data?.groups ?? [])]
+        .sort((a, b) => b.totalTokens - a.totalTokens || (a.key ?? "").localeCompare(b.key ?? ""))
+        .slice(0, 8)
+        .map((g) => ({
+          label: g.key ?? t("commandCenter.tokens.unknownModel", "(unknown)"),
+          value: g.totalTokens,
+          valueLabel: formatCount(g.totalTokens),
+        })),
+    [tokens.data?.groups, t],
+  );
+  const toolCategoryData = useMemo<BarDatum[]>(
+    () =>
+      [...(tools.data?.byCategory ?? [])]
+        .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category))
+        .map((c) => ({
+          label: c.category,
+          value: c.count,
+          valueLabel: formatCount(c.count),
+        })),
+    [tools.data?.byCategory],
+  );
+  const overviewPieData = useMemo(
+    () => tokensByModelData.map((entry) => ({ label: entry.label, value: entry.value })),
+    [tokensByModelData],
+  );
+  const dailyActivityValues = useMemo(
+    () => (activity.data?.daily ?? []).map((day) => day.messages + day.activeAgents + (day.agentRuns ?? 0)),
+    [activity.data?.daily],
+  );
+  const overviewLineSeries = useMemo(
+    () => [
+      { label: t("commandCenter.activity.messages", "Messages"), values: (activity.data?.daily ?? []).map((day) => day.messages) },
+      { label: t("commandCenter.activity.activeAgents", "Active agents"), values: (activity.data?.daily ?? []).map((day) => day.activeAgents) },
+      { label: t("commandCenter.activity.agentRuns", "Agent runs"), values: (activity.data?.daily ?? []).map((day) => day.agentRuns) },
+    ],
+    [activity.data?.daily, t],
+  );
+  const activityTrendValues =
+    dailyActivityValues.length > 0
+      ? dailyActivityValues
+      : [activity.data?.sessions ?? 0, activity.data?.messages ?? 0, activeAgents, activeNodes, tasksDone];
+  const hasOverviewChartData = tokensByModelData.length > 0 || toolCategoryData.length > 0 || dailyActivityValues.length > 0;
+  const hasActivityData =
+    (activity.data?.sessions ?? 0) > 0 ||
+    (activity.data?.messages ?? 0) > 0 ||
+    activeNodes > 0 ||
+    activeAgents > 0 ||
+    agentRunsTotal > 0 ||
+    tasksDone > 0;
+  const hasData = tokenTotal > 0 || toolCalls > 0 || hasActivityData;
+  const hasAllCoreData = tokens.data !== null && tools.data !== null && activity.data !== null;
+  const isInitialLoading = !hasAllCoreData && (tokens.isLoading || tools.isLoading || activity.isLoading);
+  const coreError = tokens.error ?? tools.error ?? activity.error;
+
+  const costLabel = tokens.data ? formatCost(tokens.data.cost?.usd ?? null, tokens.data.cost?.unavailable ?? true) : "—";
+  const autonomyLabel = tools.data
+    ? tools.data.fullyAutonomous
+      ? t("commandCenter.tools.ratioAutonomous", "{{ratio}} calls/session (fully autonomous)", {
+          ratio: tools.data.autonomyRatio.toFixed(1),
+        })
+      : `${tools.data.autonomyRatio.toFixed(1)}:1`
+    : "—";
+
+  const cards: OverviewStatCard[] = [
+    {
+      id: "tokens",
+      label: t("commandCenter.overview.tokensCost", "Tokens & cost"),
+      value: formatCount(tokenTotal),
+      subLabel: costLabel,
+    },
+    { id: "autonomy", label: t("commandCenter.overview.autonomy", "Autonomy ratio"), value: autonomyLabel },
+    { id: "nodes", label: t("commandCenter.overview.activeNodes", "Active nodes"), value: formatCount(activeNodes) },
+    { id: "agentRuns", label: t("commandCenter.overview.agentRuns", "Agent runs"), value: formatCount(agentRunsTotal) },
+    { id: "tasksDone", label: t("commandCenter.overview.tasksDone", "Tasks done"), value: formatCount(tasksDone) },
+    { id: "models", label: t("commandCenter.overview.uniqueModels", "Unique models"), value: formatCount(uniqueModels) },
+    {
+      id: "signals",
+      label: t("commandCenter.overview.openSignals", "Open signals"),
+      value: signals.isLoading ? "—" : signals.data ? formatCount(signals.data.open ?? 0) : "—",
+    },
+  ];
+
+  // FNXC:CommandCenter 2026-06-19-00:00:
+  // Throughput funnel now renders first in every overview branch (loading/error/empty/populated)
+  // so the SDLC throughput card is top-of-page; mobile scroll owner and data-testid anchors unchanged.
+  // The throughput funnel reads its own data (activityLog transitions) and shows
+  // its own empty state, so it renders even when the stat-card aggregates have no
+  // data yet.
+  const throughputSection = (
+    <div className="cc-overview-throughput" data-testid="command-center-throughput">
+      <SdlcFunnel range={range} />
+    </div>
+  );
+
+  if (isInitialLoading) {
+    return (
+      <div className="cc-overview">
+        {throughputSection}
+        <div className="cc-loading" data-testid="command-center-overview-loading">
+          <div className="cc-chart-skeleton" />
+          <p>{t("commandCenter.loading", "Loading command center...")}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (coreError !== null && !hasData) {
+    return (
+      <div className="cc-overview">
+        {throughputSection}
+        <div className="cc-error" data-testid="command-center-overview-error" role="alert">
+          <AlertCircle size={24} />
+          <p>{coreError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasData) {
+    return (
+      <div className="cc-overview">
+        {throughputSection}
+        <div className="cc-empty" data-testid="command-center-empty">
+          <Gauge size={28} />
+          <p>{t("commandCenter.empty", "No usage data yet. Run some agents to populate the Command Center.")}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="cc-overview">
+      {throughputSection}
+      <div className="cc-stat-grid">
+        {cards.map((card) => (
+          <div key={card.id} className="card cc-stat-card" data-testid={`command-center-stat-${card.id}`}>
+            <div className="cc-stat-label">{card.label}</div>
+            <div key={card.value} className={`cc-stat-value ${card.id === "tokens" ? "cc-token-count-live" : ""}`}>{card.value}</div>
+            {card.subLabel ? <span className="cc-stat-sub">{card.subLabel}</span> : null}
+          </div>
+        ))}
+      </div>
+      {/*
+      FNXC:CommandCenter 2026-06-18-00:00:
+      The Overview should feel like a living software factory, so the live strip now surfaces animated pulses for tasks in progress, agents working, open signals, and a compact throughput trend from existing activity analytics without adding a new endpoint.
+
+      FNXC:CommandCenter 2026-06-18-00:00:
+      Motion must be decorative and disabled for reduced-motion users; keep data-testid anchors and the mobile scroll owner unchanged so the cooler dashboard does not destabilize Command Center navigation.
+      */}
+      <div className="cc-live-strip" data-testid="command-center-live-strip">
+        <div className="cc-live-strip-heading">
+          <span className="status-dot status-dot--connecting" aria-hidden="true" />
+          <span className="cc-live-strip-label">{t("commandCenter.overview.liveStrip", "Live activity snapshot")}</span>
+        </div>
+        <div className="cc-live-strip-metrics" data-testid="command-center-live-snapshot">
+          <span className="cc-live-metric" data-testid="command-center-live-tasks-in-progress">
+            <span className="cc-live-metric-value">{liveSnapshotLoading ? "—" : formatCount(inProgressTasks)}</span>
+            <span className="cc-live-metric-label">{t("commandCenter.overview.tasksInProgress", "tasks in progress")}</span>
+          </span>
+          <span className="cc-live-metric" data-testid="command-center-live-agents-working">
+            <span className="cc-live-metric-value">{formatCount(activeAgents)}</span>
+            <span className="cc-live-metric-label">{t("commandCenter.overview.agentsWorking", "agents working")}</span>
+          </span>
+          <span className="cc-live-metric" data-testid="command-center-live-tokens">
+            <span key={tokenTotal} className="cc-live-metric-value cc-token-count-live">{formatCount(tokenTotal)}</span>
+            <span className="cc-live-metric-label">{t("commandCenter.overview.liveTokens", "tokens")}</span>
+          </span>
+          <span className="cc-live-metric" data-testid="command-center-live-open-signals">
+            <span className="cc-live-metric-value">{signals.isLoading ? "—" : signals.data ? formatCount(signals.data.open ?? 0) : "—"}</span>
+            <span className="cc-live-metric-label">{t("commandCenter.overview.openSignals", "open signals")}</span>
+          </span>
+        </div>
+        <div className="cc-live-trend" data-testid="command-center-throughput-trend">
+          <span className="cc-live-trend-label">{t("commandCenter.overview.throughputTrend", "throughput trend")}</span>
+          <Sparkline
+            values={activityTrendValues}
+            ariaLabel={t("commandCenter.overview.throughputTrendAria", "Recent activity throughput trend")}
+          />
+        </div>
+      </div>
+      {hasOverviewChartData ? (
+        /*
+        FNXC:CommandCenter 2026-06-18-00:00:
+        Overview must present an attractive, graph-rich software-factory snapshot reusing existing tokens/tools/activity analytics with no new endpoint, additive to the live strip and funnel.
+        */
+        <section className="cc-overview-charts" data-testid="command-center-overview-charts">
+          {tokensByModelData.length > 0 ? (
+            <div className="card cc-overview-chart-card" data-testid="command-center-overview-chart-tokens">
+              <div className="cc-overview-chart-header">
+                <h3 className="cc-area-section-title">{t("commandCenter.overview.tokensByModel", "Tokens by model")}</h3>
+                <p>{t("commandCenter.overview.tokensByModelHint", "Top model token consumers in this range")}</p>
+              </div>
+              <Bar data={tokensByModelData} ariaLabel={t("commandCenter.overview.tokensByModel", "Tokens by model")} />
+            </div>
+          ) : null}
+          {overviewPieData.length > 0 ? (
+            <div className="card cc-overview-chart-card" data-testid="cc-overview-pie">
+              <div className="cc-overview-chart-header">
+                <h3 className="cc-area-section-title">{t("commandCenter.overview.tokensByModelPie", "Token share by model")}</h3>
+                <p>{t("commandCenter.overview.tokensByModelPieHint", "Top model token share in this range")}</p>
+              </div>
+              <PieChart data={overviewPieData} ariaLabel={t("commandCenter.overview.tokensByModelPie", "Token share by model")} />
+            </div>
+          ) : null}
+          {toolCategoryData.length > 0 ? (
+            <div className="card cc-overview-chart-card" data-testid="command-center-overview-chart-tools">
+              <div className="cc-overview-chart-header">
+                <h3 className="cc-area-section-title">{t("commandCenter.overview.toolCategories", "Tool categories")}</h3>
+                <p>{t("commandCenter.overview.toolCategoriesHint", "Autonomous work grouped by tool family")}</p>
+              </div>
+              <Bar data={toolCategoryData} ariaLabel={t("commandCenter.overview.toolCategories", "Tool categories")} />
+            </div>
+          ) : null}
+          {/*
+          FNXC:CommandCenter 2026-06-19-00:00:
+          The Overview chart grid should surface the multi-series daily activity line higher by rendering it directly before the daily activity sparkline, without changing either card's data gate or wiring.
+          */}
+          {dailyActivityValues.length > 0 ? (
+            <div className="card cc-overview-chart-card cc-overview-chart-card--trend" data-testid="cc-overview-line">
+              <div className="cc-overview-chart-header">
+                <h3 className="cc-area-section-title">{t("commandCenter.overview.dailyActivityLine", "Daily activity line")}</h3>
+                <p>{t("commandCenter.overview.dailyActivityLineHint", "Messages, agents, and runs by day")}</p>
+              </div>
+              <RechartsLineChart
+                series={overviewLineSeries}
+                ariaLabel={t("commandCenter.overview.dailyActivityLine", "Daily activity line")}
+              />
+            </div>
+          ) : null}
+          {dailyActivityValues.length > 0 ? (
+            <div className="card cc-overview-chart-card cc-overview-chart-card--trend" data-testid="command-center-overview-chart-activity">
+              <div className="cc-overview-chart-header">
+                <h3 className="cc-area-section-title">{t("commandCenter.overview.dailyActivity", "Daily activity trend")}</h3>
+                <p>{t("commandCenter.overview.dailyActivityHint", "Messages plus active agents per day")}</p>
+              </div>
+              <Sparkline
+                values={dailyActivityValues}
+                ariaLabel={t("commandCenter.overview.dailyActivityAria", "Daily activity trend")}
+              />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function PlaceholderTab({ tabId }: { tabId: SubViewId }) {
+  const { t } = useTranslation("app");
+  return (
+    <div className="cc-empty" data-testid={`command-center-placeholder-${tabId}`}>
+      <Gauge size={28} />
+      <p>{t("commandCenter.areaPending", "This area renders once metrics data is available.")}</p>
+    </div>
+  );
+}
+
+export function CommandCenter() {
+  const { t } = useTranslation("app");
+  const subViews = useSubViews();
+  const [activeTab, setActiveTab] = useState<SubViewId>("overview");
+
+  const [range, setRange] = useState<DateRange>(() => rangeFromPreset(defaultPresets((_k, f) => f)[1]));
+
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const focusTab = useCallback(
+    (index: number) => {
+      const clamped = (index + subViews.length) % subViews.length;
+      setActiveTab(subViews[clamped].id);
+      tabRefs.current[clamped]?.focus();
+    },
+    [subViews],
+  );
+
+  const onTabKeyDown = useCallback(
+    (e: React.KeyboardEvent, index: number) => {
+      switch (e.key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          e.preventDefault();
+          focusTab(index + 1);
+          break;
+        case "ArrowLeft":
+        case "ArrowUp":
+          e.preventDefault();
+          focusTab(index - 1);
+          break;
+        case "Home":
+          e.preventDefault();
+          focusTab(0);
+          break;
+        case "End":
+          e.preventDefault();
+          focusTab(subViews.length - 1);
+          break;
+        case "Enter":
+        case " ":
+          e.preventDefault();
+          setActiveTab(subViews[index].id);
+          break;
+        default:
+          break;
+      }
+    },
+    [focusTab, subViews],
+  );
+
+  function renderActiveTab() {
+    switch (activeTab) {
+      case "overview":
+        return <OverviewTab range={range} />;
+      case "tokens":
+        return <TokensArea range={range} />;
+      case "tools":
+        return <ToolsArea range={range} />;
+      case "activity":
+        return <ActivityArea range={range} />;
+      case "productivity":
+        return <ProductivityArea range={range} />;
+      case "team":
+        return <TeamArea range={range} />;
+      case "ecosystem":
+        return <EcosystemArea range={range} />;
+      case "github":
+        return <GithubArea range={range} />;
+      case "signals":
+        return <SignalsArea range={range} />;
+      case "system":
+        return <SystemStatsArea />;
+      case "reliability":
+        return <ReliabilityView />;
+      case "mission-control":
+        return <MissionControlPanel />;
+      default:
+        return <PlaceholderTab tabId={activeTab} />;
+    }
+  }
+
+  return (
+    <section className="command-center" data-testid="command-center">
+      <header className="cc-header">
+        <h2 className="cc-title">
+          <Gauge size={18} />
+          {t("commandCenter.heading", "Command Center")}
+        </h2>
+        <DateRangePicker value={range} onChange={setRange} />
+      </header>
+
+      <div
+        className="cc-tablist"
+        role="tablist"
+        aria-label={t("commandCenter.tablistLabel", "Command Center sections")}
+      >
+        {subViews.map((sub, index) => {
+          const selected = sub.id === activeTab;
+          return (
+            <button
+              key={sub.id}
+              ref={(el) => {
+                tabRefs.current[index] = el;
+              }}
+              role="tab"
+              id={`cc-tab-${sub.id}`}
+              aria-selected={selected}
+              aria-controls={`cc-tabpanel-${sub.id}`}
+              tabIndex={selected ? 0 : -1}
+              className={`cc-tab${selected ? " active" : ""}`}
+              onClick={() => setActiveTab(sub.id)}
+              onKeyDown={(e) => onTabKeyDown(e, index)}
+              data-testid={`command-center-tab-${sub.id}`}
+            >
+              {sub.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        role="tabpanel"
+        id={`cc-tabpanel-${activeTab}`}
+        aria-labelledby={`cc-tab-${activeTab}`}
+        tabIndex={0}
+        className="cc-tabpanel"
+        data-testid={`command-center-panel-${activeTab}`}
+      >
+        {renderActiveTab()}
+      </div>
+    </section>
+  );
+}

@@ -10,8 +10,10 @@ vi.mock("../../api", async () => ({
 }));
 
 vi.mock("lucide-react", () => ({
+  Link: () => <span data-testid="icon-link" />,
   Plus: () => <span data-testid="icon-plus" />,
   Sparkles: () => <span data-testid="icon-sparkles" />,
+  X: () => <span data-testid="icon-x" />,
 }));
 
 const mockDraftGoalDescription = vi.mocked(draftGoalDescription);
@@ -31,6 +33,19 @@ describe("GoalsView", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     mockDraftGoalDescription.mockReset();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/missions") {
+          return { ok: true, json: async () => ({ missions: [] }) };
+        }
+        if (path.includes("/missions")) {
+          return { ok: true, json: async () => ({ missions: [] }) };
+        }
+        return { ok: true, json: async () => ({ goals: [] }) };
+      }),
+    );
   });
 
   afterEach(() => {
@@ -91,9 +106,12 @@ describe("GoalsView", () => {
   it("renders inline load error when API request fails", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/missions") {
+          return { ok: true, json: async () => ({ missions: [] }) };
+        }
+        return { ok: false, status: 500, json: async () => ({}) };
       }),
     );
 
@@ -115,6 +133,86 @@ describe("GoalsView", () => {
       />,
     );
     expect(screen.getByText(/approaching the 5-active goal cap/i)).toBeInTheDocument();
+  });
+
+  it("renders linked missions and navigates from the chip", async () => {
+    const onNavigateToMission = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/missions") {
+        return { ok: true, json: async () => ({ missions: [{ id: "M-2", title: "Other Mission", status: "planning" }] }) };
+      }
+      if (path === "/api/goals/g1/missions") {
+        return { ok: true, json: async () => ({ missions: [{ id: "M-1", title: "Linked Mission", status: "active" }] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GoalsView initialGoals={[makeGoal({ id: "g1", title: "One" })]} onNavigateToMission={onNavigateToMission} />);
+
+    const chip = await screen.findByTestId("goal-linked-mission-chip-M-1");
+    expect(chip).toHaveTextContent("Linked Mission");
+    fireEvent.click(screen.getByRole("button", { name: "Linked Mission" }));
+    expect(onNavigateToMission).toHaveBeenCalledWith("M-1");
+  });
+
+  it("links a mission and updates the linked mission list", async () => {
+    let linked = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/missions" && !init) {
+        return { ok: true, json: async () => ({ missions: [{ id: "M-1", title: "Mission One", status: "planning" }] }) };
+      }
+      if (path === "/api/goals/g1/missions") {
+        return { ok: true, json: async () => ({ missions: linked ? [{ id: "M-1", title: "Mission One", status: "planning" }] : [] }) };
+      }
+      if (path === "/api/missions/M-1/goals/g1" && init?.method === "POST") {
+        linked = true;
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GoalsView initialGoals={[makeGoal({ id: "g1", title: "One" })]} />);
+
+    expect(await screen.findByText("No linked missions.")).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("goal-mission-picker-g1"), { target: { value: "M-1" } });
+    fireEvent.click(screen.getByTestId("goal-mission-link-button-g1"));
+
+    expect(await screen.findByTestId("goal-linked-mission-chip-M-1")).toHaveTextContent("Mission One");
+    expect(screen.getByTestId("goal-mission-picker-g1")).not.toHaveTextContent("Mission One");
+    expect(fetchMock).toHaveBeenCalledWith("/api/missions/M-1/goals/g1", { method: "POST" });
+  });
+
+  it("unlinks a mission and restores the empty linked missions state", async () => {
+    let linked = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/missions" && !init) {
+        return { ok: true, json: async () => ({ missions: [{ id: "M-1", title: "Mission One", status: "planning" }] }) };
+      }
+      if (path === "/api/goals/g1/missions") {
+        return { ok: true, json: async () => ({ missions: linked ? [{ id: "M-1", title: "Mission One", status: "planning" }] : [] }) };
+      }
+      if (path === "/api/missions/M-1/goals/g1" && init?.method === "DELETE") {
+        linked = false;
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GoalsView initialGoals={[makeGoal({ id: "g1", title: "One" })]} />);
+
+    expect(await screen.findByTestId("goal-linked-mission-chip-M-1")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("goal-linked-mission-unlink-M-1"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("goal-linked-mission-chip-M-1")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("No linked missions.")).toBeInTheDocument();
   });
 
   it("archives goal via API", async () => {
@@ -148,10 +246,19 @@ describe("GoalsView", () => {
   });
 
   it("shows cap error for unarchive 409", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({ code: "ACTIVE_GOAL_LIMIT_EXCEEDED", limit: 5, currentActive: 5 }),
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/missions") {
+        return { ok: true, json: async () => ({ missions: [] }) };
+      }
+      if (path === "/api/goals/g1/missions") {
+        return { ok: true, json: async () => ({ missions: [] }) };
+      }
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({ code: "ACTIVE_GOAL_LIMIT_EXCEEDED", limit: 5, currentActive: 5 }),
+      };
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -248,10 +355,19 @@ describe("GoalsView", () => {
   });
 
   it("shows cap error on 409 and keeps add form open", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => ({ code: "ACTIVE_GOAL_LIMIT_EXCEEDED", limit: 5, currentActive: 5 }),
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/missions") {
+        return { ok: true, json: async () => ({ missions: [] }) };
+      }
+      if (path === "/api/goals/g1/missions") {
+        return { ok: true, json: async () => ({ missions: [] }) };
+      }
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({ code: "ACTIVE_GOAL_LIMIT_EXCEEDED", limit: 5, currentActive: 5 }),
+      };
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -311,7 +427,16 @@ describe("GoalsView", () => {
   });
 
   it("shows edit error when PATCH fails", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/missions") {
+        return { ok: true, json: async () => ({ missions: [] }) };
+      }
+      if (path === "/api/goals/g1/missions") {
+        return { ok: true, json: async () => ({ missions: [] }) };
+      }
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<GoalsView initialGoals={[makeGoal({ id: "g1", title: "One", description: "Desc" })]} />);

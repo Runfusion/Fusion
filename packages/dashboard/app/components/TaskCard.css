@@ -36,6 +36,16 @@
   background: color-mix(in srgb, var(--todo) 8%, transparent);
 }
 
+/*
+FNXC:TaskCardMobilePan 2026-06-13-19:51:
+Mobile board cards must allow horizontal kanban panning from every visible card surface, not only from gaps or progress-count text.
+The global mobile touch-action reset applies to descendants, and browsers intersect touch-action along the touched element's ancestor chain, so the whole non-editing card subtree must opt back into pan-x.
+*/
+.card:not(.card-editing),
+.card:not(.card-editing) * {
+  touch-action: pan-x pan-y;
+}
+
 /* Agent-active glow: animated border glow when an agent is actively working on a task.
    Uses the in-progress column color to stay consistent with the theme. */
 .card.agent-active {
@@ -64,10 +74,19 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-xs);
   row-gap: var(--space-xs);
   min-width: 0;
   margin-bottom: var(--space-xs);
+}
+
+.card-meta-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  row-gap: var(--space-xs);
+  min-width: 0;
 }
 
 .card-id {
@@ -202,9 +221,9 @@
 
 /* DISTINCT error badge for the failed node-state (never the open-PR badge). */
 .card-pr-node-badge--failed {
-  background: color-mix(in srgb, var(--color-danger, #e5534b) 18%, transparent);
-  border-color: color-mix(in srgb, var(--color-danger, #e5534b) 35%, transparent);
-  color: var(--color-danger, #e5534b);
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+  color: var(--color-error);
 }
 
 .card-status-badge.stalled-review {
@@ -751,10 +770,10 @@
   align-items: center;
 }
 
-.card-footer-row > .card-time-indicator:first-of-type {
-  margin-left: auto;
-}
-
+/*
+FNXC:TaskCardTimingBadge 2026-06-13-17:26:
+The execution-time badge is part of the footer's bottom-right chip cluster, so it inherits the same height, padding, font, and responsive sizing as retry and GitHub tracking badges instead of using the old meta-row placement.
+*/
 .card-time-indicator,
 .card-github-tracking-chip,
 .card-retry-badge,
@@ -875,7 +894,7 @@
 
 .card-duplicate-keep {
   border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
-  background: color-mix(in srgb, var(--surface-secondary) 90%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
   color: var(--text);
   cursor: pointer;
   appearance: none;
@@ -1170,6 +1189,31 @@
     color var(--transition-fast);
 }
 
+/* Prominent affordance to answer an agent's blocking planning question.
+   Always visible (not hover-gated) — the task is parked waiting on the user. */
+.card-answer-questions-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--todo);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.card-answer-questions-btn:hover {
+  filter: brightness(1.1);
+}
+
+.card-answer-questions-btn:focus {
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
 .card:hover .card-edit-btn {
   opacity: 1;
 }
@@ -1246,7 +1290,7 @@
 .card-unarchive-btn:hover {
   background: var(--card-hover);
   color: var(--text);
-  border-color: var(--border-hover);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
 }
 
 .card-archive-btn:focus,
@@ -1287,7 +1331,7 @@
 .card-send-back-btn:hover {
   background: var(--card-hover);
   color: var(--text);
-  border-color: var(--border-hover);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
 }
 
 .card-send-back-btn:focus {
@@ -1472,6 +1516,11 @@
   }
 
 
+  .card-meta-badges {
+    gap: calc(var(--space-xs) / 2);
+    row-gap: var(--space-xs);
+  }
+
   /* Card: smaller status badges for 280px width */
   .card-status-badge,
   .card-priority-badge,
@@ -1530,9 +1579,9 @@
   align-items: center;
   gap: 3px;
   padding: 1px 7px;
-  border: 1px solid var(--border-color, #2a2d34);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--chip-bg, #1c1f26);
+  background: var(--surface-2);
   color: var(--text-muted, #b4b8c0);
   font-size: 11px;
   line-height: 1.5;
@@ -1558,8 +1607,8 @@
   align-items: center;
   padding: 0 5px;
   border-radius: 999px;
-  border: 1px solid var(--border-color, #2a2d34);
-  background: var(--chip-bg, #1c1f26);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
 }
 
 .card-field-badge--overflow {

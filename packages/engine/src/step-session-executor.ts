@@ -17,7 +17,7 @@ const execAsync = promisify(exec);
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentStore, MessageStore, PermanentAgentGatingContext, TaskDetail, Settings, TaskStore } from "@fusion/core";
+import type { AgentStore, MessageStore, PermanentAgentGatingContext, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
 import { resolvePersistAgentThinkingLog } from "@fusion/core";
 
 import {
@@ -403,6 +403,9 @@ export function buildStepPrompt(
     commandsSection = lines.join("\n") + "\n\n";
   }
 
+  // Build steering comments section (last 10 comments only to avoid context bloat)
+  const steeringSection = buildStepSteeringCommentsSection(taskDetail.steeringComments);
+
   // Build attachments section
   let attachmentsSection = "";
   if (attachments && attachments.length > 0 && rootDir) {
@@ -458,6 +461,10 @@ export function buildStepPrompt(
     parts.push(attachmentsSection);
   }
 
+  if (steeringSection) {
+    parts.push(steeringSection, "");
+  }
+
   if (isLastStep && completionSection) {
     parts.push(completionSection, "");
   }
@@ -478,6 +485,24 @@ export function buildStepPrompt(
   parts.push("After completing this step, commit your changes and call fn_task_done(). Do NOT proceed to subsequent steps.");
 
   return parts.join("\n");
+}
+
+function buildStepSteeringCommentsSection(comments: SteeringComment[] | undefined): string {
+  if (!comments || comments.length === 0) return "";
+
+  const recentComments = [...comments].slice(-10);
+  const lines = [
+    "## Steering Comments",
+    "",
+    "The following comments were added during execution. Consider adjusting your approach for this step based on this feedback.",
+    "",
+  ];
+  for (const comment of recentComments) {
+    lines.push(`**${comment.author}** — ${new Date(comment.createdAt).toLocaleString()}`);
+    lines.push(`> ${comment.text}`);
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 function scopePromptToWorktree(prompt: string, rootDir?: string, worktreePath?: string): string {
@@ -555,14 +580,17 @@ function escapeRegex(str: string): string {
  *
  * @param taskDetail - The task to build a prompt for.
  * @param stepIndex - The 0-based step index.
+ * @param rootDir - Optional project root directory used to render absolute attachment paths.
  * @returns A reduced prompt string focused on the current step only.
  */
-export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number): string {
+export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number, rootDir?: string): string {
   const { prompt, id, title, attachments } = taskDetail;
 
   // Extract the step-specific section
   const stepSection = extractStepSection(prompt, stepIndex);
   const hasAttachments = Boolean(attachments && attachments.length > 0);
+  const attachmentDir = rootDir ? `${rootDir}/.fusion/tasks/${id}/attachments/` : `.fusion/tasks/${id}/attachments/`;
+  const steeringSection = buildStepSteeringCommentsSection(taskDetail.steeringComments);
 
   // Build a minimal prompt that focuses on the step without excessive context
   const parts: string[] = [
@@ -574,8 +602,10 @@ export function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number
     stepSection,
     "",
     hasAttachments
-      ? `${attachments?.length ?? 0} attachment(s) available at .fusion/tasks/${id}/attachments/ — ask for context if needed.`
+      ? `${attachments?.length ?? 0} attachment(s) available at \`${attachmentDir}\` — read the files there for context. They live at the project root and are readable even when working in a worktree.`
       : "",
+    "",
+    steeringSection,
     "",
     "IMPORTANT: Your previous attempt hit the context window limit.",
     "Do NOT repeat work that's already been done.",
@@ -655,6 +685,7 @@ export class StepSessionExecutor {
   private stepResults: StepResult[] = [];
   private aborted = false;
   private maxParallel: number;
+  private deliveredSteeringCommentIds = new Set<string>();
 
   private registerActiveStepSession(stepIndex: number, handle: SessionHandle, worktreePath: string): void {
     this.activeSessions.set(stepIndex, handle);
@@ -770,7 +801,37 @@ export class StepSessionExecutor {
     }
   }
 
-  async steerActiveSessions(message: string): Promise<void> {
+  updateSteeringComments(comments: SteeringComment[] | undefined): void {
+    this.options = {
+      ...this.options,
+      taskDetail: {
+        ...this.options.taskDetail,
+        steeringComments: comments ? [...comments] : comments,
+      },
+    };
+  }
+
+  markSteeringCommentsDelivered(commentIds: string[]): void {
+    for (const commentId of commentIds) {
+      this.deliveredSteeringCommentIds.add(commentId);
+    }
+  }
+
+  private consumeTaskDetailForStepPrompt(): TaskDetail {
+    const pendingSteeringComments = (this.options.taskDetail.steeringComments ?? []).filter(
+      (comment) => !this.deliveredSteeringCommentIds.has(comment.id),
+    );
+    for (const comment of pendingSteeringComments) {
+      this.deliveredSteeringCommentIds.add(comment.id);
+    }
+    return {
+      ...this.options.taskDetail,
+      steeringComments: pendingSteeringComments.length > 0 ? pendingSteeringComments : undefined,
+    };
+  }
+
+  async steerActiveSessions(message: string): Promise<number> {
+    const activeSessionCount = this.activeSessions.size;
     for (const [stepIdx, handle] of this.activeSessions) {
       try {
         await handle.steer(message);
@@ -778,6 +839,7 @@ export class StepSessionExecutor {
         stepExecLog.warn(`Failed to steer active session for step ${stepIdx}: ${err}`);
       }
     }
+    return activeSessionCount;
   }
 
   async terminateAllSessions(): Promise<void> {
@@ -934,10 +996,11 @@ export class StepSessionExecutor {
     this.options.onStepStart?.(stepIndex);
 
     // Build step prompt
-    const stepPrompt = buildStepPrompt(taskDetail, stepIndex, this.options.rootDir, settings, worktreePath);
+    const promptTaskDetail = this.consumeTaskDetailForStepPrompt();
+    const stepPrompt = buildStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir, settings, worktreePath);
 
     // Build reduced step prompt for context-limit recovery (simpler, shorter)
-    const reducedStepPrompt = buildReducedStepPrompt(taskDetail, stepIndex);
+    const reducedStepPrompt = buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir);
 
     // Acquire semaphore if provided
     if (semaphore) {

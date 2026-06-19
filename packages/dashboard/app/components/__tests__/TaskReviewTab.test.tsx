@@ -1,3 +1,7 @@
+/*
+FNXC:DashboardTests 2026-06-14-08:31:
+FN-6441 rescued this orphaned component test after standalone dashboard-app execution passed without assertion, timeout, or source-code changes. Keep it registered through the app backfill lane so task-review UI regressions cannot silently fall out of quality coverage again.
+*/
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render as rtlRender, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TaskReviewTab } from "../TaskReviewTab";

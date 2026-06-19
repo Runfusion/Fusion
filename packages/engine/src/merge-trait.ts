@@ -3,32 +3,13 @@
  *
  * The merge trait turns merge/PR orchestration, merge strategy, squash posture
  * and file-scope enforcement mode into *configuration* over the substrate merge
- * capability (KTD-6). This module owns two things:
- *
- *   1. The merge trait's hook implementations, registered into core's trait
- *      registry via the `registerTraitHookImpl` DI seam (mirrors
- *      `setCreateFnAgent`):
- *        - `onEnter`  → enqueue the task onto the *persisted* merge-request
- *          queue (reuse the store's existing enqueue path). It NEVER awaits a
- *          merge inline; completion is driven by the merge-queue worker loop
- *          (`ProjectEngine.pickNextMergeTaskId` → `aiMergeTask` →
- *          `store.moveTask(id, "done")`) and resolved via the queue, so a
- *          graph walk / transition never blocks on a merge (the plan-002
- *          deadlock hazard).
- *        - `onExit`   → leaving the merge column dequeues a pending request.
- *          The store already performs this in-lock inside `moveTaskInternal`
- *          (`dequeueMergeQueueOnColumnExit`, a private method); the hook
- *          delegates to that existing mechanism rather than reimplementing the
- *          dequeue (see the onExit impl note). It is registered so the registry
- *          resolves a real impl (not a degraded no-op + audit warning).
- *
- *   2. `resolveMergePolicy` — a small read-through resolver consulted by
- *      `merger.ts` at its existing policy-knob read sites. When the
- *      `workflowColumns` flag is ON it reads the merge-trait config from the
- *      task's resolved workflow; otherwise (and when the workflow's merge
- *      trait carries no config, e.g. the built-in default workflow) it falls
- *      back to the existing settings knobs (`directMergeCommitStrategy`,
- *      `mergeStrategy`, scope settings) for back-compat.
+ * capability (KTD-6). This module owns `resolveMergePolicy` — a small
+ * read-through resolver consulted by `merger.ts` at its existing policy-knob
+ * read sites. When the `workflowColumns` flag is ON it reads the merge-trait
+ * config from the task's resolved workflow; otherwise (and when the workflow's
+ * merge trait carries no config, e.g. the built-in default workflow) it falls
+ * back to the existing settings knobs (`directMergeCommitStrategy`,
+ * `mergeStrategy`, scope settings) for back-compat.
  *
  * The three 2026-05-23 lost-work guards stay in `merger.ts` mechanics and are
  * UNREACHABLE from this config (KTD-6 / R10): sibling `fusion/fn-*` merge-target
@@ -39,7 +20,6 @@
 
 import {
   isWorkflowColumnsEnabled,
-  registerTraitHookImpl,
   resolveWorkflowIrForTask,
   type DirectMergeCommitStrategy,
   type Settings,
@@ -48,7 +28,6 @@ import {
   type WorkflowIr,
   type WorkflowIrColumn,
 } from "@fusion/core";
-import { mergerLog } from "./logger.js";
 
 // ── Resolved merge policy ────────────────────────────────────────────────────
 
@@ -189,73 +168,36 @@ export async function resolveMergePolicy(
   };
 }
 
-// ── Merge trait hook implementations (DI into core's trait registry) ─────────
+// ── Merge trait hooks: owned by core, NOT this module ────────────────────────
+//
+// The engine deliberately does NOT register `merge` onEnter/onExit impls.
+//
+// `merge.onEnter` is invoked by core's `applyDefaultWorkflowMoveEffects` as
+// `impl(ctx)` with a single `DefaultWorkflowMoveContext` — an in-lock,
+// pre-commit, in-memory field-mutation phase that carries NO store handle. Core
+// registers the correct ctx-shaped impl (`applyInReviewEnterEffects`) via
+// `registerDefaultWorkflowHooks()`; it clears the in-review scheduler state
+// (`status: queued`, `blockedBy`, `overlapBlockedBy`) and mirrors the flag-OFF
+// inline block in `store.ts`.
+//
+// An earlier version of this module registered a `mergeOnEnter(store, task)`
+// impl here that enqueued onto the merge queue. That was wrong on three counts:
+//   1. Signature mismatch — the only caller passes `ctx`, so `store`/`task` bound
+//      to `(ctx, undefined)` and dereferencing `task.id` threw at runtime
+//      (TypeError: cannot read 'id' of undefined) during the hold-release sweep.
+//   2. Slot collision — it clobbered core's field-effects adapter on the
+//      last-write-wins registry, dropping the in-review state clears.
+//   3. Redundant responsibility — the queue enqueue is in-txn and store-owned on
+//      the handoff path (`store.ts` enqueues on `fromHandoff`, shared by both
+//      flag states), and direct non-handoff entry into `in-review` is audited as
+//      a handoff-invariant violation. There is no sanctioned entry into the
+//      merge column that needs a hook-driven enqueue.
+//
+// `merge.onExit` similarly needs no impl: the store dequeues in-lock via the
+// private `dequeueMergeQueueOnColumnExit` on every move (lease-aware), and the
+// ctx move-effects path never invokes `merge.onExit` at all.
 
-/**
- * onEnter: enqueue the task onto the persisted merge-request queue. NEVER awaits
- * a merge (KTD-6) — the merge-queue worker loop drives the actual merge and the
- * subsequent move to the `complete`-flagged column. Delegates to the store's
- * existing `enqueueMergeQueue` so the queue mechanics (audit, priority,
- * idempotent ON CONFLICT insert) are not reimplemented.
- *
- * Idempotent: `enqueueMergeQueue` is `ON CONFLICT(taskId) DO NOTHING`, so a
- * crash-then-rerun (recovery sweep replaying `transitionPending` hooks) holds
- * exactly one queue entry.
- *
- * Invoked by the store's post-commit hook runner with `(store, task)`.
- */
-async function mergeOnEnter(store: TaskStore, task: Pick<Task, "id" | "priority">): Promise<void> {
-  try {
-    store.enqueueMergeQueue(task.id, { priority: task.priority });
-  } catch (err) {
-    // Enqueue rejects (e.g. task not in the merge column) degrade to a no-op:
-    // the card is never stranded and the queue is never corrupted. The store
-    // already audits the rejection.
-    const message = err instanceof Error ? err.message : String(err);
-    mergerLog.warn(`merge enqueue skipped for task ${task.id}: ${message}`);
-  }
-}
-
-/**
- * onExit: leaving the merge column dequeues a pending (unleased) request.
- *
- * NOTE (design / delegation): the store ALREADY performs dequeue-on-column-exit
- * in-lock inside `moveTaskInternal` via the private
- * `dequeueMergeQueueOnColumnExit`, which runs unconditionally on every move and
- * owns the lease-aware semantics (drop an unleased entry; audit a leased one as
- * a stale-lease event). The merge trait's onExit therefore *delegates to that
- * existing mechanism* — it does not reissue a dequeue (which would be a
- * redundant second pass and could not see the lease columns without a store API
- * change the prompt forbids). Registering the hook makes the registry resolve a
- * real impl (not a degraded no-op + audit warning) and documents that the
- * substrate, not the trait, owns the dequeue mechanic (KTD-6: traits configure
- * and invoke capabilities; they never reimplement them).
- */
-function mergeOnExit(): void {
-  // Intentional no-op: dequeue is owned by the store's in-lock
-  // `dequeueMergeQueueOnColumnExit` (see note above).
-}
-
-let registered = false;
-
-/**
- * Register the merge trait's hook implementations into core's shared trait
- * registry. Idempotent (guarded), so importing this module (or calling it from
- * engine startup) more than once is safe. Mirrors the `setCreateFnAgent` DI
- * pattern: core declares the hook descriptors; the engine supplies the impls.
- */
-export function registerMergeTraitHooks(): void {
-  if (registered) return;
-  registered = true;
-  registerTraitHookImpl("merge", "onEnter", mergeOnEnter as never);
-  registerTraitHookImpl("merge", "onExit", mergeOnExit as never);
-}
-
-/** Test-only: re-arm registration so a fresh registry can be exercised. */
-export function __resetMergeTraitRegistrationForTests(): void {
-  registered = false;
-}
-
-// Register on import (idempotent) so the engine's trait registry resolves real
-// merge-hook impls without a separate wiring call.
-registerMergeTraitHooks();
+/*
+FNXC:MergeTrait 2026-06-18-13:05:
+The engine must not register `merge.onEnter` or `merge.onExit` hooks because core owns the ctx-shaped `merge.onEnter` field-effects adapter. Keeping hook registration out of this module prevents last-write-wins registry collisions and preserves in-review scheduler-state clears under workflow columns.
+*/

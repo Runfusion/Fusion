@@ -9,6 +9,7 @@ import { clearActivityLog, type ActivityLogEntry, type ActivityEventType, type A
 import { useActivityLog } from "../hooks/useActivityLog";
 import type { Task, ProjectInfo } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 interface ActivityLogModalProps {
   isOpen: boolean;
@@ -33,6 +34,7 @@ function getEventTypeLabels(t: TFunction<"app">): Record<ActivityEventType, stri
     "task:deleted": t("activityLog.eventType.taskDeleted", "Task Deleted"),
     "task:merged": t("activityLog.eventType.taskMerged", "Task Merged"),
     "task:failed": t("activityLog.eventType.taskFailed", "Task Failed"),
+    "task:release-authorization-required": t("activityLog.eventType.releaseAuthorizationRequired", "Release Authorization Required"),
     "task:duplicate-warning-overridden": t("activityLog.eventType.duplicateWarningOverridden", "Duplicate Warning Overridden"),
     "task:auto-archived-ghost-bug": t("activityLog.eventType.autoArchivedGhostBug", "Task Auto-Archived (Ghost Bug)"),
     "task:auto-archived-duplicate": t("activityLog.eventType.autoArchivedDuplicate", "Task Auto-Archived (Duplicate)"),
@@ -52,6 +54,11 @@ const EVENT_TYPE_ICONS: Record<ActivityEventType, React.ReactNode> = {
   "task:deleted": <X size={14} className="activity-icon deleted" />,
   "task:merged": <CheckCircle size={14} className="activity-icon merged" />,
   "task:failed": <XCircle size={14} className="activity-icon failed" />,
+  /*
+  FNXC:ReleaseAuthorizationGate 2026-06-15-04:00:
+  The release gate parks unauthorized publish-class tasks; activity logs must expose that blocked state with warning styling so a human can authorize or revise the task.
+  */
+  "task:release-authorization-required": <AlertCircle size={14} className="activity-icon updated" />,
   "task:duplicate-warning-overridden": <AlertCircle size={14} className="activity-icon updated" />,
   "task:auto-archived-ghost-bug": <AlertCircle size={14} className="activity-icon failed" />,
   "task:auto-archived-duplicate": <Trash2 size={14} className="activity-icon deleted" />,
@@ -64,19 +71,30 @@ const EVENT_TYPE_ICONS: Record<ActivityEventType, React.ReactNode> = {
 };
 
 function formatTimestamp(timestamp: string, t: TFunction<"app">): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+  /*
+   * FNXC:RelativeTime 2026-06-17-20:48:
+   * FN-6618 centralizes ActivityLogModal bucket math without changing its activityLog.time.* keys, uppercase Just now default, future-as-just-now behavior, or Invalid Date fallback.
+   */
+  const bucket = getRelativeTimeBucket(timestamp);
+  if (!bucket) {
+    const timestampMs = Date.parse(timestamp);
+    if (Number.isFinite(timestampMs) && Date.now() - timestampMs < 0) return t("activityLog.time.justNow", "Just now");
+    return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
 
-  if (diffMins < 1) return t("activityLog.time.justNow", "Just now");
-  if (diffMins < 60) return t("activityLog.time.minutesAgo", "{{count}}m ago", { count: diffMins });
-  if (diffHours < 24) return t("activityLog.time.hoursAgo", "{{count}}h ago", { count: diffHours });
-  if (diffDays < 7) return t("activityLog.time.daysAgo", "{{count}}d ago", { count: diffDays });
-
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  switch (bucket.bucket) {
+    case "just-now":
+      return t("activityLog.time.justNow", "Just now");
+    case "minutes":
+      return t("activityLog.time.minutesAgo", "{{count}}m ago", { count: bucket.count });
+    case "hours":
+      return t("activityLog.time.hoursAgo", "{{count}}h ago", { count: bucket.count });
+    case "days":
+      return t("activityLog.time.daysAgo", "{{count}}d ago", { count: bucket.count });
+    case "weeks":
+    case "older":
+      return bucket.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
 }
 
 /**

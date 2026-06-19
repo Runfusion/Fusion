@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AgentCapability, PlanningQuestion } from "@fusion/core";
 import { resolvePrompt, type PromptOverrideMap } from "@fusion/core";
-import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 
 export interface AgentOnboardingSummary {
@@ -61,6 +61,7 @@ export type AgentOnboardingStreamEvent =
 export type AgentOnboardingStreamCallback = (event: AgentOnboardingStreamEvent, eventId?: number) => void;
 
 const createFnAgent: typeof engineCreateFnAgent = engineCreateFnAgent;
+type SkillSelectionPluginRunner = Parameters<typeof buildSessionSkillContextSync>[3];
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const GENERATION_TIMEOUT_MS = 120_000;
@@ -281,6 +282,7 @@ export async function startAgentOnboardingSession(
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
+  pluginRunner?: SkillSelectionPluginRunner,
 ): Promise<string> {
   const id = randomUUID();
   const mode: OnboardingMode = initialContext.mode ?? "create";
@@ -303,11 +305,17 @@ export async function startAgentOnboardingSession(
   sessions.set(id, session);
 
   const systemPrompt = resolvePrompt("agent-onboarding-system", promptOverrides) || AGENT_ONBOARDING_SYSTEM_PROMPT;
+  const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, pluginRunner);
   session.agent = await createFnAgent({
     cwd: rootDir,
     systemPrompt,
     tools: "readonly",
     ...(modelProvider && modelId ? { defaultProvider: modelProvider, defaultModelId: modelId } : {}),
+    /*
+    FNXC:InterviewSkills 2026-06-17-21:53:
+    Agent onboarding is a model-only dashboard interview lane, so it must request executor role-fallback skills plus enabled plugin skills such as ce-debug like other agent-acting sessions.
+    */
+    ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     onThinking: (delta: string) => {
       session.thinkingOutput += delta;
       agentOnboardingStreamManager.broadcast(session.id, { type: "thinking", data: delta });

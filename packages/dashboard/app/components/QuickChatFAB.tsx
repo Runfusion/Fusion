@@ -15,10 +15,11 @@ import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { ChevronDown, Eye, EyeOff, Hash, MessageSquare, Paperclip, Plus, Send, Square, Wrench, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, Hash, MessageSquare, Paperclip, Pencil, Plus, Send, Square, Wrench, X } from "lucide-react";
 import { attachmentBaseUrlForRoom, type Agent, type ModelInfo } from "../api";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentMentionPopup } from "./AgentMentionPopup";
 import { matchesAgentMentionFilter } from "./mentionMatching";
@@ -36,6 +37,7 @@ import { useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { getPersistedLastQuickChatSessionId } from "../hooks/quickChatLastSessionStorage";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
+import { parseQuestionToolCall } from "../utils/parseQuestionToolCall";
 
 interface PendingAttachment {
   file: File;
@@ -148,10 +150,35 @@ function formatToolResultSummary(result: unknown): string | null {
   }
 }
 
-function renderToolCalls(toolCalls: ToolCallInfo[] | undefined, compact: boolean, t: TFunction<"app">): ReactNode {
+function renderToolCalls(
+  toolCalls: ToolCallInfo[] | undefined,
+  compact: boolean,
+  t: TFunction<"app">,
+  options?: {
+    isAwaitingAnswer?: boolean;
+    submittedAnswer?: string;
+    onQuestionSubmit?: (answerText: string, structured: Record<string, unknown>) => void;
+  },
+): ReactNode {
   if (!toolCalls || toolCalls.length === 0) return null;
 
   const renderToolCallItem = (toolCall: ToolCallInfo, index: number) => {
+    const parsedQuestion = parseQuestionToolCall(toolCall);
+    if (parsedQuestion) {
+      const isAwaitingAnswer = options?.isAwaitingAnswer === true;
+      return (
+        <ChatQuestionResponse
+          key={`${toolCall.toolName}-${index}`}
+          parsed={parsedQuestion}
+          compact={compact}
+          answered={!isAwaitingAnswer}
+          submittedAnswer={options?.submittedAnswer}
+          disabled={!isAwaitingAnswer}
+          onSubmit={(answerText, structured) => options?.onQuestionSubmit?.(answerText, structured)}
+        />
+      );
+    }
+
     const isRunning = toolCall.status === "running";
     const isError = toolCall.status === "completed" && toolCall.isError;
     const argsSummary = formatToolArgsSummary(toolCall.args);
@@ -312,6 +339,21 @@ const QUICK_CHAT_DEFAULT_PANEL_SIZE: PanelSize = {
   width: 320,
   height: 400,
 };
+
+/**
+ * FNXC:QuickChatPanelSize 2026-06-16-23:03:
+ * FN-6502 requires Quick Chat to open taller by default on floating-panel mobile/tablet viewports while portrait mobile stays full-screen through CSS and desktop defaults plus persisted sizes remain unchanged.
+ */
+function getDefaultQuickChatPanelSize(): PanelSize {
+  if (typeof window === "undefined" || window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT || window.innerWidth > 1024) {
+    return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+  }
+
+  return {
+    width: QUICK_CHAT_DEFAULT_PANEL_SIZE.width,
+    height: Math.max(QUICK_CHAT_DEFAULT_PANEL_SIZE.height, Math.floor(window.innerHeight * 0.8)),
+  };
+}
 
 const ALLOWED_ATTACHMENT_TYPES = new Set([
   "image/png",
@@ -623,23 +665,30 @@ function usePanelResize(projectId: string | undefined, fabRight: number, fabBott
   );
 
   const loadPersistedSize = useCallback((): PanelSize => {
+    const defaultSize = getDefaultQuickChatPanelSize();
     if (typeof window === "undefined" || window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT) {
-      return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+      return defaultSize;
     }
     try {
       const raw = localStorage.getItem(storageKey);
-      if (!raw) return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+      if (!raw) return defaultSize;
       const parsed = JSON.parse(raw) as Partial<PanelSize>;
       if (typeof parsed.width !== "number" || typeof parsed.height !== "number") {
-        return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+        return defaultSize;
       }
       return { width: parsed.width, height: parsed.height };
     } catch {
-      return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+      return defaultSize;
     }
   }, [storageKey]);
 
   const [panelSize, setPanelSize] = useState<PanelSize>(loadPersistedSize);
+  const panelSizeRef = useRef(panelSize);
+  const hasUserResizedPanelRef = useRef(false);
+
+  useEffect(() => {
+    panelSizeRef.current = panelSize;
+  }, [panelSize]);
 
   /**
    * Anchor offset relative to the FAB position.
@@ -655,7 +704,7 @@ function usePanelResize(projectId: string | undefined, fabRight: number, fabBott
   }, [anchorOffset, clampPanelSize, fabBottom, fabRight, isDesktopViewport, isOpen]);
 
   useEffect(() => {
-    if (!isOpen || !isDesktopViewport()) return;
+    if (!isOpen || !isDesktopViewport() || !hasUserResizedPanelRef.current) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify(panelSize));
     } catch {
@@ -745,6 +794,7 @@ function usePanelResize(projectId: string | undefined, fabRight: number, fabBott
           ),
         );
 
+        hasUserResizedPanelRef.current = true;
         setPanelSize(clamped);
         setAnchorOffset({ right: clampedAnchorRight, bottom: clampedAnchorBottom });
       };
@@ -759,7 +809,7 @@ function usePanelResize(projectId: string | undefined, fabRight: number, fabBott
 
         // Persist final size.
         try {
-          localStorage.setItem(storageKey, JSON.stringify({ width: panelSize.width, height: panelSize.height }));
+          localStorage.setItem(storageKey, JSON.stringify(panelSizeRef.current));
         } catch {
           // Best-effort
         }
@@ -775,8 +825,6 @@ function usePanelResize(projectId: string | undefined, fabRight: number, fabBott
       fabBottom,
       fabRight,
       isDesktopViewport,
-      panelSize.height,
-      panelSize.width,
       storageKey,
     ],
   );
@@ -795,10 +843,17 @@ interface QuickChatMessageItemProps {
   roomContext: QuickChatRoomContext | null;
   projectId?: string;
   onToggleRender: (id: string) => void;
+  isAwaitingQuestionAnswer: boolean;
+  submittedQuestionAnswer?: string;
+  onQuestionSubmit: (answerText: string, structured: Record<string, unknown>) => void;
 }
 
 // Memoized so streaming state churn doesn't re-render every prior message
 // (each one would re-run ReactMarkdown over its full content otherwise).
+function findSubmittedQuestionAnswer(messages: ChatMessageInfo[], messageIndex: number): string | undefined {
+  return messages.slice(messageIndex + 1).find((message) => message.role === "user")?.content;
+}
+
 const QuickChatMessageItem = memo(function QuickChatMessageItem({
   message,
   forcePlain,
@@ -806,6 +861,9 @@ const QuickChatMessageItem = memo(function QuickChatMessageItem({
   roomContext,
   projectId,
   onToggleRender,
+  isAwaitingQuestionAnswer,
+  submittedQuestionAnswer,
+  onQuestionSubmit,
 }: QuickChatMessageItemProps) {
   const { t } = useTranslation("app");
   const isSent = message.role === "user";
@@ -907,7 +965,11 @@ const QuickChatMessageItem = memo(function QuickChatMessageItem({
           </>
         )}
       {renderedAttachments}
-      {renderToolCalls(message.toolCalls, true, t)}
+      {renderToolCalls(message.toolCalls, true, t, {
+        isAwaitingAnswer: isAwaitingQuestionAnswer,
+        submittedAnswer: submittedQuestionAnswer,
+        onQuestionSubmit,
+      })}
     </div>
   );
 });
@@ -960,6 +1022,8 @@ export function QuickChatFAB({
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [newSessionChooserOpen, setNewSessionChooserOpen] = useState(false);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const [renameDialog, setRenameDialog] = useState<{ sessionId: string; title: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
   const [newSessionMode, setNewSessionMode] = useState<"agent" | "model">("model");
   const [newSessionAgentId, setNewSessionAgentId] = useState<string>("");
   const [newSessionModel, setNewSessionModel] = useState<string>("");
@@ -1053,6 +1117,7 @@ export function QuickChatFAB({
     selectSession,
     startModelChat,
     startFreshSession,
+    renameSession,
     refreshSessions,
     skipNextSessionInitRef,
   } = useQuickChat(projectId, addToast);
@@ -1071,6 +1136,10 @@ export function QuickChatFAB({
   const shouldAutoFocusComposerRef = useRef(false);
   const handledMobileActionRef = useRef(false);
   const handledMobileActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dedupe pointerdown vs touchstart within a single tap: a real touch fires
+  // both, and each handler runs its action before React flushes the input
+  // clear, so without this the action runs twice per tap.
+  const touchActionGestureRef = useRef(false);
   const preserveComposerFocusRef = useRef(false);
   // Always-mounted offscreen input used to claim the iOS soft keyboard
   // synchronously inside the FAB click gesture, before the real composer
@@ -1085,7 +1154,11 @@ export function QuickChatFAB({
   // slides down on top of it.
   const suppressVvShrinkRef = useRef(false);
   const isUserScrollingRef = useRef(false);
-  const previousOpenStateRef = useRef<{ isOpen: boolean; sessionId: string | null }>({ isOpen: false, sessionId: null });
+  const previousOpenStateRef = useRef<{ isOpen: boolean; sessionId: string | null; messagesLoading: boolean }>({
+    isOpen: false,
+    sessionId: null,
+    messagesLoading: false,
+  });
 
   // Pin the document at the top while the panel is open on mobile.
   // Otherwise iOS can leave window.scrollY > 0 (e.g. after the keyboard
@@ -1135,27 +1208,109 @@ export function QuickChatFAB({
   // its own keyboard animation; deferring our write to the next frame
   // makes the panel lag iOS by one paint, which is visible as a slide.
   // Synchronous writes keep the panel locked to the visual viewport.
+  /*
+  FNXC:QuickChatMobileResize 2026-06-16-18:14:
+  FN-6498 requires the mobile fullscreen sheet to track visualViewport samples smoothly across iOS and Android. Keep iOS second-focus offsetTop compensation and keyboard-dismiss pre-grow, but avoid redundant same-sample resize/scroll writes that add layout thrash on Android Chrome interactive-widget=resizes-content.
+
+  FNXC:QuickChatMobileResize 2026-06-16-23:45:
+  FN-6503 requires the first Android open to re-sample visualViewport after the stealth-input to composer focus handoff. Android Chrome can settle the keyboard shrink without a later resize observed by this panel effect, so focusin runs an immediate synchronous apply plus a short settle tail while resize/scroll remain synchronous for iOS animation lock-step.
+  */
   useLayoutEffect(() => {
     if (!isOpen) return;
+    if (!isMobile) return;
     if (typeof window === "undefined" || !window.visualViewport) return;
+    if (window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
     const panel = panelRef.current;
     if (!panel) return;
 
     const vv = window.visualViewport;
+    let lastAppliedSample: { height: number; offsetTop: number } | null = null;
     const apply = () => {
       if (suppressVvShrinkRef.current) return;
-      panel.style.setProperty("--vv-height", `${vv.height}px`);
-      panel.style.setProperty("--vv-offset-top", `${vv.offsetTop || 0}px`);
+      const nextSample = { height: vv.height, offsetTop: vv.offsetTop || 0 };
+      if (
+        lastAppliedSample
+        && lastAppliedSample.height === nextSample.height
+        && lastAppliedSample.offsetTop === nextSample.offsetTop
+      ) {
+        return;
+      }
+      lastAppliedSample = nextSample;
+      panel.style.setProperty("--vv-height", `${nextSample.height}px`);
+      panel.style.setProperty("--vv-offset-top", `${nextSample.offsetTop}px`);
     };
 
-    apply();
+    const timeoutIds: number[] = [];
+    let rafId: number | null = null;
+    let pollDeadline = 0;
+    let lastTailSample: { height: number; offsetTop: number } | null = null;
+    let stableFrames = 0;
+
+    const cancelTailPoll = () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+
+    const pollTailFrame = () => {
+      apply();
+      const currentSample = { height: vv.height, offsetTop: vv.offsetTop || 0 };
+      if (
+        lastTailSample
+        && lastTailSample.height === currentSample.height
+        && lastTailSample.offsetTop === currentSample.offsetTop
+      ) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+        lastTailSample = currentSample;
+      }
+
+      if (stableFrames >= 2 || performance.now() > pollDeadline) {
+        rafId = null;
+        return;
+      }
+
+      rafId = window.requestAnimationFrame(pollTailFrame);
+    };
+
+    const scheduleTailUpdates = () => {
+      for (const delayMs of [50, 200, 500]) {
+        const timeoutId = window.setTimeout(apply, delayMs);
+        timeoutIds.push(timeoutId);
+      }
+
+      if (typeof window.requestAnimationFrame !== "function") return;
+      cancelTailPoll();
+      pollDeadline = performance.now() + 500;
+      lastTailSample = null;
+      stableFrames = 0;
+      rafId = window.requestAnimationFrame(pollTailFrame);
+    };
+
+    const applyWithTail = () => {
+      apply();
+      scheduleTailUpdates();
+    };
+
+    applyWithTail();
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", apply);
+    document.addEventListener("focusin", applyWithTail);
     return () => {
+      suppressVvShrinkRef.current = false;
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
+      document.removeEventListener("focusin", applyWithTail);
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
+      cancelTailPoll();
+      panel.style.removeProperty("--vv-height");
+      panel.style.removeProperty("--vv-offset-top");
     };
-  }, [isOpen]);
+  }, [isMobile, isOpen]);
 
   const resolvedModelSelection = selectedModel || configuredDefaultModelSelection;
   const targetModelSelection = useMemo(
@@ -1307,9 +1462,14 @@ export function QuickChatFAB({
       const parsed = Date.parse(value);
       return Number.isFinite(parsed) ? parsed : 0;
     };
+    /*
+    FNXC:QuickChatRestore 2026-06-17-00:17:
+    Quick Chat must resume the exact direct session the user last opened; only stale or missing persisted ids may fall back.
+    Rank fallback sessions by conversation activity first because metadata-only updatedAt bumps can make an older same-target thread look newer than the user's last real chat.
+    */
     const latestSession = [...activeSessions].sort((a, b) => {
-      const aLastTouched = Math.max(timestamp(a.lastMessageAt), timestamp(a.updatedAt));
-      const bLastTouched = Math.max(timestamp(b.lastMessageAt), timestamp(b.updatedAt));
+      const aLastTouched = timestamp(a.lastMessageAt) || timestamp(a.updatedAt);
+      const bLastTouched = timestamp(b.lastMessageAt) || timestamp(b.updatedAt);
       return bLastTouched - aLastTouched;
     })[0];
     const sessionToRestore = persistedSession ?? latestSession;
@@ -1350,6 +1510,14 @@ export function QuickChatFAB({
       return;
     }
 
+    const persistedSessionId = getPersistedLastQuickChatSessionId(projectId);
+    const waitingForPersistedSessionRestore = !hasAppliedInitialSessionRef.current
+      && Boolean(persistedSessionId)
+      && sessionsLoading;
+    if (waitingForPersistedSessionRestore) {
+      return;
+    }
+
     if (!sessionTargetKey) {
       prevSessionTargetRef.current = "";
       return;
@@ -1369,6 +1537,11 @@ export function QuickChatFAB({
       && !sessionsLoading;
 
     if (restoredFromExistingSessionRef.current) {
+      /*
+      FNXC:QuickChatRestore 2026-06-17-00:18:
+      A restored direct session is id-specific, not just target-specific.
+      Skip the first automatic same-target switch so fetchResumeChatSession cannot replace the restored session with a different thread that shares the agent or model target and then clobber localStorage.
+      */
       restoredFromExistingSessionRef.current = false;
       prevSessionTargetRef.current = sessionTargetKey;
       return;
@@ -1399,6 +1572,7 @@ export function QuickChatFAB({
     startModelChat,
     switchSession,
     skipNextSessionInitRef,
+    projectId,
   ]);
 
   useEffect(() => {
@@ -1442,7 +1616,11 @@ export function QuickChatFAB({
       return;
     }
 
-    shouldAutoFocusComposerRef.current = window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT;
+    /*
+    FNXC:QuickChat 2026-06-17-02:50:
+    Bringing up Quick Chat must focus the composer on every viewport so typing can start immediately. Mobile still claims the iOS keyboard through the stealth input first; the ready-state focus effect keeps that synchronous handoff while desktop reaches its requestAnimationFrame focus path.
+    */
+    shouldAutoFocusComposerRef.current = true;
   }, [isOpen]);
 
   useEffect(() => {
@@ -1644,8 +1822,9 @@ export function QuickChatFAB({
 
   useLayoutEffect(() => {
     const threadId = roomThreadActive ? (roomsState.activeRoom?.id ?? null) : (activeSession?.id ?? null);
+    const threadMessagesLoading = roomThreadActive ? roomsState.messagesLoading : messagesLoading;
     const previousState = previousOpenStateRef.current;
-    previousOpenStateRef.current = { isOpen, sessionId: threadId };
+    previousOpenStateRef.current = { isOpen, sessionId: threadId, messagesLoading: threadMessagesLoading };
 
     if (!isOpen || !threadId) {
       return;
@@ -1653,15 +1832,23 @@ export function QuickChatFAB({
 
     const openingNow = !previousState.isOpen && isOpen;
     const sessionChangedWhileOpen = previousState.isOpen && previousState.sessionId !== threadId;
-    if (!openingNow && !sessionChangedWhileOpen) {
+    const messagesSettledAfterOpen = previousState.isOpen
+      && previousState.sessionId === threadId
+      && previousState.messagesLoading
+      && !threadMessagesLoading;
+    if (!openingNow && !sessionChangedWhileOpen && !messagesSettledAfterOpen) {
       return;
     }
 
     const messagesEl = messagesRef.current;
     if (!messagesEl) return;
 
+    /*
+    FNXC:QuickChatScroll 2026-06-17-01:06:
+    FN-6513 requires quick chat opens to land on the live tail after asynchronous messages settle across direct sessions and room threads, on desktop and mobile. Re-run the same anchor path on loading-to-loaded transitions so a bounded initial-open frame loop cannot finish against the loading placeholder and leave isUserScrolling suppressing tail auto-scroll.
+    */
     anchorToBottom(messagesEl);
-  }, [isOpen, activeSession?.id, anchorToBottom, roomThreadActive, roomsState.activeRoom?.id]);
+  }, [isOpen, activeSession?.id, anchorToBottom, messagesLoading, roomThreadActive, roomsState.activeRoom?.id, roomsState.messagesLoading]);
 
   useEffect(() => {
     if (!isMobile || !isOpen || !activeSession) {
@@ -1875,6 +2062,32 @@ export function QuickChatFAB({
     setSessionMenuOpen(false);
   }, [markRead, roomThreadActive, roomsState, selectSession, sessions]);
 
+  const openRenameDialog = useCallback(
+    (sessionId: string) => {
+      const selectedSession = sessions.find((session) => session.id === sessionId) ?? (activeSession?.id === sessionId ? activeSession : null);
+      setRenameTitle(selectedSession?.title ?? "");
+      setRenameDialog({ sessionId, title: selectedSession?.title ?? "" });
+      setSessionMenuOpen(false);
+    },
+    [activeSession, sessions],
+  );
+
+  /**
+   * FNXC:Chat 2026-06-16-22:24:
+   * Quick chat session rows need an inline rename affordance that preserves unread-dot layout and updates the active panel title through the hook's optimistic session-title state.
+   */
+  const handleRenameSession = useCallback(async () => {
+    if (!renameDialog) return;
+    try {
+      await renameSession(renameDialog.sessionId, renameTitle);
+      setRenameDialog(null);
+      setRenameTitle("");
+      addToast(t("chat.conversationRenamed", "Conversation renamed"), "success");
+    } catch {
+      // The hook rolls back and reports the failure so regular and quick chat share error behavior.
+    }
+  }, [addToast, renameDialog, renameSession, renameTitle, t]);
+
   const handleRoomSwitch = useCallback((roomId: string) => {
     const selectedRoom = roomsState.rooms.find((room) => room.id === roomId);
     markRead("room", roomId, selectedRoom?.updatedAt);
@@ -1992,6 +2205,22 @@ export function QuickChatFAB({
     }, 700);
   }, []);
 
+  // Claim a touch gesture for a single action. A real touch tap dispatches both
+  // pointerdown and touchstart, and each handler runs before React flushes the
+  // composer-clear, so both would otherwise fire the action (double send, or a
+  // second send that aborts the first's freshly-opened stream). The first event
+  // of the tap claims; the second bails. The claim auto-clears after the current
+  // input task so a later tap — or a different button (e.g. stop right after
+  // send) — starts fresh, unlike the 700ms onClick latch above.
+  const beginTouchActionGesture = useCallback(() => {
+    if (touchActionGestureRef.current) return false;
+    touchActionGestureRef.current = true;
+    setTimeout(() => {
+      touchActionGestureRef.current = false;
+    }, 0);
+    return true;
+  }, []);
+
   // If a mobile handler already ran this gesture's action, consume the latch
   // (and cancel its timer) so the trailing onClick bails without double-firing.
   const consumeHandledMobileAction = useCallback(() => {
@@ -2101,6 +2330,25 @@ export function QuickChatFAB({
     startFreshSession,
     stopStreaming,
   ]);
+
+  const handleQuestionSubmit = useCallback(async (answerText: string) => {
+    try {
+      setHelpMessageVisible(false);
+      if (chatRoomsEnabled && roomsState.activeRoom) {
+        await roomsState.sendRoomMessage(answerText);
+      } else {
+        await sendMessage(answerText);
+      }
+    } catch (error) {
+      const message = error instanceof Error && error.message.trim()
+        ? error.message
+        : (chatRoomsEnabled && roomsState.activeRoom ? t("chat.sendRoomMessageFailed", "Failed to send room message") : t("chat.sendMessageFailed", "Failed to send message"));
+      addToast(message, "error");
+    } finally {
+      focusComposerInput();
+      preserveComposerFocusRef.current = false;
+    }
+  }, [addToast, chatRoomsEnabled, focusComposerInput, roomsState, sendMessage, t]);
 
   const handleAttachmentDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -2660,6 +2908,11 @@ export function QuickChatFAB({
           <div className="quick-chat-panel-header">
             <div className="quick-chat-panel-title-wrap">
               <h3>{t("chat.quickChatTitle", "Quick Chat")}</h3>
+              {!roomThreadActive && activeSession ? (
+                <span className="quick-chat-session-title-tag" data-testid="quick-chat-active-session-title" title={activeSessionLabel}>
+                  {activeSessionLabel}
+                </span>
+              ) : null}
               {roomThreadActive && roomsState.activeRoom ? (
                 <span className="quick-chat-model-tag" data-testid="quick-chat-room-tag" title={`#${roomsState.activeRoom.name}`}>
                   #{roomsState.activeRoom.name}
@@ -2780,29 +3033,80 @@ export function QuickChatFAB({
                     const session = sessions.find((item) => item.id === sessionOption.id);
                     const showUnreadDot = !isActiveSession && isUnread("direct", sessionOption.id, session?.lastMessageAt ?? session?.updatedAt);
                     return (
-                    <button
+                    <div
                       key={sessionOption.id}
-                      type="button"
-                      role="menuitem"
-                      data-testid={`quick-chat-session-option-${sessionOption.id}`}
-                      className={`quick-chat-session-option${isActiveSession ? " quick-chat-session-option--active" : ""}`}
-                      onClick={() => handleSessionSwitch(sessionOption.id)}
+                      className={`quick-chat-session-option-row${isActiveSession ? " quick-chat-session-option-row--active" : ""}`}
+                      role="none"
                     >
-                      <span>{sessionOption.label}</span>
-                      {showUnreadDot ? (
-                        <span
-                          className="chat-unread-dot quick-chat-session-unread-dot"
-                          data-testid={`quick-chat-unread-dot-${sessionOption.id}`}
-                          aria-label={t("chat.unreadMessages", "Unread messages")}
-                        />
-                      ) : null}
-                    </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-testid={`quick-chat-session-option-${sessionOption.id}`}
+                        className={`quick-chat-session-option${isActiveSession ? " quick-chat-session-option--active" : ""}`}
+                        onClick={() => handleSessionSwitch(sessionOption.id)}
+                      >
+                        <span>{sessionOption.label}</span>
+                        {showUnreadDot ? (
+                          <span
+                            className="chat-unread-dot quick-chat-session-unread-dot"
+                            data-testid={`quick-chat-unread-dot-${sessionOption.id}`}
+                            aria-label={t("chat.unreadMessages", "Unread messages")}
+                          />
+                        ) : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-icon quick-chat-session-rename"
+                        data-testid={`quick-chat-session-rename-${sessionOption.id}`}
+                        aria-label={t("chat.renameConversationAria", "Rename conversation {{title}}", { title: sessionOption.label })}
+                        onClick={() => openRenameDialog(sessionOption.id)}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
                     );
                   })}
                 </div>
               )}
             </div>
           </div>
+
+          {renameDialog && (
+            <div className="quick-chat-rename-dialog" data-testid="quick-chat-rename-dialog">
+              <label className="quick-chat-rename-label" htmlFor="quick-chat-rename-input">
+                {t("chat.renameConversationTitle", "Rename Conversation")}
+              </label>
+              <input
+                id="quick-chat-rename-input"
+                className="input quick-chat-rename-input"
+                type="text"
+                value={renameTitle}
+                placeholder={t("chat.renamePlaceholder", "Untitled")}
+                data-testid="quick-chat-rename-input"
+                onChange={(event) => setRenameTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void handleRenameSession();
+                  }
+                }}
+                autoFocus
+              />
+              <div className="quick-chat-rename-actions">
+                <button type="button" className="btn" onClick={() => setRenameDialog(null)}>
+                  {t("chat.cancelButton", "Cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  data-testid="quick-chat-rename-save"
+                  onClick={() => void handleRenameSession()}
+                >
+                  {t("chat.save", "Save")}
+                </button>
+              </div>
+            </div>
+          )}
 
           {newSessionChooserOpen && (
             <div className="quick-chat-new-session-chooser" data-testid="quick-chat-new-session-chooser">
@@ -2887,7 +3191,7 @@ export function QuickChatFAB({
               <div className="quick-chat-panel-empty">{t("chat.loadingConversation", "Loading conversation…")}</div>
             ) : !roomThreadActive && isStreaming ? (
               <>
-                {displayedMessages.map((message: ChatMessageInfo) => (
+                {displayedMessages.map((message: ChatMessageInfo, index) => (
                   <QuickChatMessageItem
                     key={message.id}
                     message={message}
@@ -2896,6 +3200,9 @@ export function QuickChatFAB({
                     roomContext={roomContext}
                     projectId={projectId}
                     onToggleRender={toggleMessageRenderMode}
+                    isAwaitingQuestionAnswer={message.role === "assistant" && index === displayedMessages.length - 1 && !isStreaming}
+                    submittedQuestionAnswer={findSubmittedQuestionAnswer(displayedMessages, index)}
+                    onQuestionSubmit={handleQuestionSubmit}
                   />
                 ))}
                 {helpMessageVisible && (
@@ -2924,10 +3231,13 @@ export function QuickChatFAB({
                     </>
                   ) : (
                     <p className="quick-chat-panel-waiting" data-testid="quick-chat-waiting">
-                      {streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.connectingStatus", "Connecting…")}
+                      {streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.workingStatus", "Working…")}
                     </p>
                   )}
-                  {renderToolCalls(streamingToolCalls, true, t)}
+                  {renderToolCalls(streamingToolCalls, true, t, {
+                    isAwaitingAnswer: true,
+                    onQuestionSubmit: handleQuestionSubmit,
+                  })}
                   {streamingThinking && (
                     <details className="chat-message-thinking" data-testid="quick-chat-streaming-thinking">
                       <summary>{t("chat.thinkingLabel", "Thinking")}</summary>
@@ -2942,7 +3252,7 @@ export function QuickChatFAB({
               <div className="quick-chat-panel-empty">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
             ) : (
               <>
-                {displayedMessages.map((message: ChatMessageInfo) => (
+                {displayedMessages.map((message: ChatMessageInfo, index) => (
                   <QuickChatMessageItem
                     key={message.id}
                     message={message}
@@ -2951,6 +3261,9 @@ export function QuickChatFAB({
                     roomContext={roomContext}
                     projectId={projectId}
                     onToggleRender={toggleMessageRenderMode}
+                    isAwaitingQuestionAnswer={message.role === "assistant" && index === displayedMessages.length - 1 && !isStreaming}
+                    submittedQuestionAnswer={findSubmittedQuestionAnswer(displayedMessages, index)}
+                    onQuestionSubmit={handleQuestionSubmit}
                   />
                 ))}
                 {helpMessageVisible && (
@@ -2965,7 +3278,7 @@ export function QuickChatFAB({
               <div className="quick-chat-panel-empty">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
             ) : (
               <>
-                {displayedMessages.map((message: ChatMessageInfo) => (
+                {displayedMessages.map((message: ChatMessageInfo, index) => (
                   <QuickChatMessageItem
                     key={message.id}
                     message={message}
@@ -2974,6 +3287,9 @@ export function QuickChatFAB({
                     roomContext={roomContext}
                     projectId={projectId}
                     onToggleRender={toggleMessageRenderMode}
+                    isAwaitingQuestionAnswer={message.role === "assistant" && index === displayedMessages.length - 1 && !isStreaming}
+                    submittedQuestionAnswer={findSubmittedQuestionAnswer(displayedMessages, index)}
+                    onQuestionSubmit={handleQuestionSubmit}
                   />
                 ))}
                 {helpMessageVisible && (
@@ -3086,6 +3402,7 @@ export function QuickChatFAB({
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
                       if (event.pointerType && event.pointerType !== "mouse") {
+                        if (!beginTouchActionGesture()) return;
                         markHandledMobileAction();
                         stopStreaming();
                       }
@@ -3093,6 +3410,7 @@ export function QuickChatFAB({
                     onTouchStart={(event) => {
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
+                      if (!beginTouchActionGesture()) return;
                       markHandledMobileAction();
                       stopStreaming();
                     }}
@@ -3117,6 +3435,7 @@ export function QuickChatFAB({
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
                       if (event.pointerType && event.pointerType !== "mouse") {
+                        if (!beginTouchActionGesture()) return;
                         markHandledMobileAction();
                         markPreserveComposerFocus();
                         focusComposerInput();
@@ -3126,6 +3445,7 @@ export function QuickChatFAB({
                     onTouchStart={(event) => {
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
+                      if (!beginTouchActionGesture()) return;
                       markHandledMobileAction();
                       markPreserveComposerFocus();
                       focusComposerInput();

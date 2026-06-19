@@ -1,5 +1,5 @@
 import { resolveGlobalDir } from "@fusion/core";
-import { clearUpdateCheckCache, performUpdateCheck } from "../update-check.js";
+import { clearUpdateCheckCache, performUpdateCheck, performUpdateInstall } from "../update-check.js";
 import { getCliPackageVersion } from "../cli-package-version.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
@@ -42,6 +42,29 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
       res.json(result);
     } catch (error) {
       rethrowAsApiError(error, "Failed to refresh update check");
+    }
+  });
+
+  router.post("/update-check/install", async (_req, res) => {
+    try {
+      const fusionDir = resolveGlobalDir();
+      const updateCheck = await performUpdateCheck(fusionDir, cliPackageVersion, {
+        force: true,
+      });
+
+      if (!updateCheck.updateAvailable || !updateCheck.latestVersion) {
+        res.json({
+          currentVersion: updateCheck.currentVersion,
+          latestVersion: updateCheck.latestVersion,
+          updated: false,
+        });
+        return;
+      }
+
+      const result = await performUpdateInstall(updateCheck.currentVersion, updateCheck.latestVersion, { fusionDir });
+      res.json(result);
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to install update");
     }
   });
 };

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { DEFAULT_SETTINGS, TaskStore, type Settings } from "@fusion/core";
 import { cleanupAiMergeWorktree, resolveAiMergeRoot, runAiMerge } from "../../merger-ai.js";
+import { activeSessionRegistry } from "../../active-session-registry.js";
 import { hasGit } from "./_helpers.js";
 import type { RunAuditor } from "../../run-audit.js";
 
@@ -242,6 +243,36 @@ describe("FN-6220 AI-merge worktree cleanup lifecycle (real git)", () => {
 
       expectNoAiMergeWorktrees(rootDir, taskId);
     } finally {
+      await cleanup();
+    }
+  }, 20_000);
+
+  it.skipIf(!hasGit)("removes the clean-room directory when active-session registration throws", async () => {
+    const fixture = await createFixture("register-throws");
+    const { rootDir, store, taskId, branch, cleanup } = fixture;
+    const originalRegisterPath = activeSessionRegistry.registerPath.bind(activeSessionRegistry);
+
+    try {
+      commitTaskBranch(rootDir, branch, "feature.txt", "feature work\n");
+      /*
+       * FNXC:AIMerge 2026-06-14-16:47:
+       * Reproduce the create→register window deterministically: after `mkdtemp` creates a `fusion-ai-merge-*` clean room, force active-session registration to throw before `git worktree add`. The lifecycle invariant is that cleanup still removes the directory and leaves no git worktree registration for the task prefix.
+       */
+      vi.spyOn(activeSessionRegistry, "registerPath").mockImplementation((pathToRegister, metadata) => {
+        if (String(pathToRegister).includes(aiMergePrefix(taskId))) {
+          throw new Error("simulated active-session registration failure");
+        }
+        return originalRegisterPath(pathToRegister, metadata);
+      });
+
+      await expect(runAiMerge(store, rootDir, taskId, { manual: true, allowDirtyLocalCheckoutSync: true }, {
+        mergeAgent: realMergeAgent(branch),
+        reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+      })).rejects.toThrow("simulated active-session registration failure");
+
+      expectNoAiMergeWorktrees(rootDir, taskId);
+    } finally {
+      vi.restoreAllMocks();
       await cleanup();
     }
   }, 20_000);

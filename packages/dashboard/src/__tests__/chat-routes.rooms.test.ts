@@ -160,25 +160,26 @@ describe("Chat HTTP + SSE routes — rooms (FN-3805..FN-3811 contract)", () => {
 
   it("covers room message route contracts: trim, senderAgentId rejection, before cursor, delete idempotency, attachments", async () => {
     const { createServer } = await import("../server.js");
+    const sendRoomMessage = vi.fn(async (roomId: string, content: string, attachments?: any[]) => {
+      const userMessage = chatStore.addRoomMessage(roomId, {
+        role: "user",
+        content,
+        senderAgentId: null,
+        mentions: ["agent-room"],
+        ...(Array.isArray(attachments) ? { attachments } : {}),
+      });
+      chatStore.addRoomMessage(roomId, {
+        role: "assistant",
+        content: "room reply",
+        senderAgentId: "agent-room",
+        mentions: ["agent-room"],
+      });
+      return { userMessage, responders: ["agent-room"] };
+    });
     const appWithRoomReplies = createServer(store as any, {
       chatStore,
       chatManager: {
-        sendRoomMessage: async (roomId: string, content: string, attachments?: any[]) => {
-          const userMessage = chatStore.addRoomMessage(roomId, {
-            role: "user",
-            content,
-            senderAgentId: null,
-            mentions: ["agent-room"],
-            ...(Array.isArray(attachments) ? { attachments } : {}),
-          });
-          chatStore.addRoomMessage(roomId, {
-            role: "assistant",
-            content: "room reply",
-            senderAgentId: "agent-room",
-            mentions: ["agent-room"],
-          });
-          return { userMessage, responders: ["agent-room"] };
-        },
+        sendRoomMessage,
       } as any,
     });
 
@@ -195,13 +196,38 @@ describe("Chat HTTP + SSE routes — rooms (FN-3805..FN-3811 contract)", () => {
       { "content-type": "application/json" },
     );
     expect(postRes.status).toBe(201);
+    expect(sendRoomMessage).toHaveBeenCalledWith(roomId, "hello @agent_room", undefined);
     const messageId = (postRes.body as any).message.id as string;
     const persisted = chatStore.getRoomMessage(messageId);
     expect(persisted?.content).toBe("hello @agent_room");
 
+    const attachments = [{ id: "att-room-1", filename: "room.txt", originalName: "room.txt", mimeType: "text/plain", size: 4, createdAt: new Date().toISOString() }];
+    const attachmentOnly = await request(
+      appWithRoomReplies,
+      "POST",
+      `/api/chat/rooms/${roomId}/messages`,
+      JSON.stringify({ content: "   ", attachments }),
+      { "content-type": "application/json" },
+    );
+    expect(attachmentOnly.status).toBe(201);
+    expect(sendRoomMessage).toHaveBeenCalledWith(roomId, "", attachments);
+
+    const emptyWithoutAttachments = await request(
+      appWithRoomReplies,
+      "POST",
+      `/api/chat/rooms/${roomId}/messages`,
+      JSON.stringify({ content: "" }),
+      { "content-type": "application/json" },
+    );
+    expect(emptyWithoutAttachments.status).toBe(400);
+    expect((emptyWithoutAttachments.body as any).error).toContain("content is required");
+
     const assistantMessages = chatStore.getRoomMessages(roomId).filter((entry) => entry.role === "assistant");
-    expect(assistantMessages).toHaveLength(1);
-    expect(assistantMessages[0]).toMatchObject({ senderAgentId: "agent-room" });
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages).toEqual([
+      expect.objectContaining({ senderAgentId: "agent-room" }),
+      expect.objectContaining({ senderAgentId: "agent-room" }),
+    ]);
 
     const invalidSender = await request(
       appWithRoomReplies,

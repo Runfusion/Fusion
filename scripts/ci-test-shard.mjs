@@ -13,14 +13,17 @@
  * keeping slices of the same package on different shards whenever possible.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { globSync, readFileSync, writeFileSync, readdirSync, mkdirSync, renameSync } from "node:fs";
 import { cpus } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureTestArtifacts } from "./ensure-test-artifacts.mjs";
 import { listWorkspacePackageInfos } from "./test-changed.mjs";
+import { deriveBudgetMs, runWithWatchdog } from "./lib/run-vitest-watchdog.mjs";
 
+// Quick, non-test commands (e.g. skill-sync check) stay synchronous — they have
+// no hang risk and no benefit from the watchdog.
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: process.cwd(),
@@ -30,6 +33,32 @@ function run(command, commandArgs, options = {}) {
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
+  }
+}
+
+// Test invocations run under the L2 wall-clock watchdog so a wedged vitest run
+// is SIGTERM/SIGKILLed at its budget instead of blocking to the CI job ceiling.
+// Preserves the fail-fast contract of `run` (exit non-zero on failure/timeout).
+async function runWatched(command, commandArgs, { env, budgetMs, label } = {}) {
+  const { code, signal, timedOut } = await runWithWatchdog({
+    command,
+    args: commandArgs,
+    env: env ?? process.env,
+    budgetMs,
+    label: label ?? command,
+    log: console.error,
+    spawn,
+  });
+  if (timedOut) {
+    console.error(`[ci-test-shard] FAILED (timeout): ${label ?? command}`);
+    process.exit(124);
+  }
+  if (signal) {
+    console.error(`[ci-test-shard] FAILED (signal ${signal}): ${label ?? command}`);
+    process.exit(1);
+  }
+  if (code !== 0) {
+    process.exit(code ?? 1);
   }
 }
 
@@ -1157,6 +1186,10 @@ export function buildShardCommands(shardEntries, options = {}) {
     commands.push({
       kind: "plain",
       label: plain.map((e) => e.name).join(", "),
+      // A single plain command fans out across every packed package, so its
+      // expected duration is the SUM of their weights — not a per-package value
+      // (see the watchdog budget aggregation, KTD-2).
+      weightMs: plain.reduce((sum, e) => sum + (e.weight ?? 0), 0),
       args: [...filters, "test", ...timingFlags()],
     });
   }
@@ -1165,6 +1198,7 @@ export function buildShardCommands(shardEntries, options = {}) {
     commands.push({
       kind: "virtual",
       label: `${entry.name} [${entry.shardIndex}/${entry.shardCount}]`,
+      weightMs: entry.weight ?? 0,
       // NB: no `--` between `test` and `--shard`; cac would treat the value as a
       // positional file filter and silently disable sharding.
       args: ["--filter", entry.name, "test", `--shard=${entry.shardIndex}/${entry.shardCount}`, ...timingFlags()],
@@ -1175,6 +1209,7 @@ export function buildShardCommands(shardEntries, options = {}) {
     commands.push({
       kind: "dashboard-lane",
       label: `${entry.name} run ${entry.lane}`,
+      weightMs: entry.weight ?? 0,
       args: ["--filter", entry.name, "run", entry.lane, ...timingFlags()],
     });
   }
@@ -1182,7 +1217,7 @@ export function buildShardCommands(shardEntries, options = {}) {
   return commands;
 }
 
-export function main(argv = process.argv.slice(2), env = process.env) {
+export async function main(argv = process.argv.slice(2), env = process.env) {
   if (argv.includes("--write-timings")) {
     const dirIdx = argv.indexOf("--inputs-dir");
     const inputDir = dirIdx >= 0 ? argv[dirIdx + 1] : undefined;
@@ -1264,7 +1299,11 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   }
 
   const { shard, total } = parseShardArgs(argv, env);
-  const { units } = buildScheduleUnits();
+  const { units, timings } = buildScheduleUnits();
+  // Only trust timings to TIGHTEN the watchdog budget when the snapshot is
+  // present and fresh; otherwise deriveBudgetMs falls back to the generous
+  // per-class ceiling (KTD-2).
+  const timingsFresh = Boolean(timings?.present) && !timings?.stale;
   const shardEntries = planShardAssignments(units, total)[shard - 1] || [];
 
   if (shardEntries.length === 0) {
@@ -1302,12 +1341,22 @@ export function main(argv = process.argv.slice(2), env = process.env) {
 
   const commands = buildShardCommands(shardEntries, { timingFlags });
   for (const command of commands) {
-    console.log(`[ci-test-shard] shard ${shard}/${total}: running ${command.label}`);
-    run("pnpm", command.args, { env: shardEnv });
+    const klass = command.kind === "dashboard-lane" ? "dashboard-lane" : "shard";
+    const budgetMs = deriveBudgetMs({
+      klass,
+      expectedDurationMs: command.weightMs,
+      timingsFresh,
+    });
+    const label = `shard ${shard}/${total}: ${command.label}`;
+    console.log(`[ci-test-shard] ${label} (watchdog budget ${Math.round(budgetMs / 1000)}s)`);
+    await runWatched("pnpm", command.args, { env: shardEnv, budgetMs, label });
   }
 }
 
 const currentFilePath = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
-  main();
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

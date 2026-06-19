@@ -4,7 +4,7 @@
 // and the reconcile all consult one definition and cannot drift — the same
 // discipline that put isBranchGroupMemberLanded in branch-group-completion.ts.
 
-import type { PrEntity } from "./types.js";
+import type { PrEntity, PrThreadState } from "./types.js";
 
 /** Non-terminal lifecycle states — the entity is "live". */
 export function isPrEntityActive(entity: Pick<PrEntity, "state">): boolean {
@@ -62,6 +62,50 @@ export function isPrEntityAutoMergeReady(
   // mergeable must be the known-clean state; "unknown"/conflict/undefined all block.
   if (entity.mergeable !== "clean") return false;
   return true;
+}
+
+/**
+ * Aggregate Review-response-loop activity for a single PR entity (U18, R15).
+ *
+ * A lightweight, dependency-free read seam so the Command Center / Mission
+ * Control can surface what the Review-response loop actually did — threads acted
+ * on, and the fixed-vs-disagreed split — without each surface re-deriving the
+ * counts from raw `PrThreadState[]` (and silently disagreeing with one another).
+ *
+ * `acted` = fixed + disagreed (threads the loop reached a terminal verdict on).
+ * `pending` rows are in-flight (recorded before GitHub confirmed) and are NOT
+ * counted as acted-on. The same discipline that put `isPrEntityAutoMergeReady`
+ * in @fusion/core keeps this single-sourced.
+ */
+export interface PrThreadActivity {
+  /** Total threads with a recorded outcome (fixed + disagreed + pending). */
+  total: number;
+  /** Threads the loop reached a terminal verdict on (fixed + disagreed). */
+  acted: number;
+  /** Threads fixed (a change was pushed and the thread replied/resolved). */
+  fixed: number;
+  /** Threads the loop disagreed on (reasoning posted, thread left open). */
+  disagreed: number;
+  /** Threads recorded but not yet GitHub-confirmed (in-flight). */
+  pending: number;
+}
+
+export function summarizePrThreadActivity(threads: PrThreadState[]): PrThreadActivity {
+  let fixed = 0;
+  let disagreed = 0;
+  let pending = 0;
+  for (const t of threads) {
+    if (t.outcome === "fixed") fixed += 1;
+    else if (t.outcome === "disagreed") disagreed += 1;
+    else if (t.outcome === "pending") pending += 1;
+  }
+  return {
+    total: threads.length,
+    acted: fixed + disagreed,
+    fixed,
+    disagreed,
+    pending,
+  };
 }
 
 /**

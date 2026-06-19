@@ -2,7 +2,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import express from "express";
-import type { Goal, GoalStatus, TaskStore } from "@fusion/core";
+import type { Goal, GoalStatus, Mission, TaskStore } from "@fusion/core";
 import { createGoalsRouter } from "../goals-routes.js";
 import { get, request } from "../test-request.js";
 
@@ -66,12 +66,42 @@ function createMockGoalStore() {
   };
 }
 
+function createMockMissionStore() {
+  const missions = new Map<string, Mission>();
+  const goalLinks = new Map<string, string[]>();
+  const now = new Date().toISOString();
+
+  const addMission = (mission: Pick<Mission, "id" | "title" | "status">) => {
+    missions.set(mission.id, {
+      description: undefined,
+      interviewState: "idle",
+      createdAt: now,
+      updatedAt: now,
+      ...mission,
+    } as Mission);
+  };
+
+  return {
+    addMission,
+    linkGoal: (missionId: string, goalId: string) => {
+      const existing = goalLinks.get(goalId) ?? [];
+      if (!existing.includes(missionId)) {
+        goalLinks.set(goalId, [...existing, missionId]);
+      }
+    },
+    listMissionIdsForGoal: (goalId: string) => goalLinks.get(goalId) ?? [],
+    getMission: (missionId: string) => missions.get(missionId) ?? null,
+  };
+}
+
 describe("goals-routes", () => {
   let app: express.Express;
+  let missionStore: ReturnType<typeof createMockMissionStore>;
 
   beforeEach(() => {
     const goalStore = createMockGoalStore();
-    const store = { getGoalStore: () => goalStore } as unknown as TaskStore;
+    missionStore = createMockMissionStore();
+    const store = { getGoalStore: () => goalStore, getMissionStore: () => missionStore } as unknown as TaskStore;
     app = express();
     app.use(express.json());
     app.use("/api/goals", createGoalsRouter(store));
@@ -111,6 +141,42 @@ describe("goals-routes", () => {
 
     const invalid = await get(app, "/api/goals?status=bogus");
     expect(invalid.status).toBe(400);
+  });
+
+  it("GET /:id/missions returns an empty linked mission list", async () => {
+    const created = await request(app, "POST", "/api/goals", JSON.stringify({ title: "Strategy" }), { "content-type": "application/json" });
+    const response = await get(app, `/api/goals/${(created.body as Goal).id}/missions`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ missions: [] });
+  });
+
+  it("GET /:id/missions returns linked missions in store order and skips missing missions", async () => {
+    const created = await request(app, "POST", "/api/goals", JSON.stringify({ title: "Strategy" }), { "content-type": "application/json" });
+    const goalId = (created.body as Goal).id;
+    missionStore.addMission({ id: "M-ALPHA", title: "Alpha", status: "active" });
+    missionStore.addMission({ id: "M-BETA", title: "Beta", status: "complete" });
+    missionStore.linkGoal("M-BETA", goalId);
+    missionStore.linkGoal("M-MISSING", goalId);
+    missionStore.linkGoal("M-ALPHA", goalId);
+
+    const response = await get(app, `/api/goals/${goalId}/missions`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      missions: [
+        { id: "M-BETA", title: "Beta", status: "complete" },
+        { id: "M-ALPHA", title: "Alpha", status: "active" },
+      ],
+    });
+  });
+
+  it("GET /:id/missions validates the goal id and returns 404 for unknown goals", async () => {
+    const invalid = await get(app, "/api/goals/not-a-goal/missions");
+    expect(invalid.status).toBe(400);
+
+    const unknown = await get(app, "/api/goals/G-UNKNOWN/missions");
+    expect(unknown.status).toBe(404);
   });
 
   it("PATCH /:id updates and validates", async () => {

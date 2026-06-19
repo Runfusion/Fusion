@@ -21,6 +21,9 @@ function formatDurationMs(ms: number): string {
 
 /**
  * Format an ISO timestamp to a relative time string.
+ *
+ * FNXC:RelativeTime 2026-06-17-20:48:
+ * FN-6618 deliberately keeps RoutineCard separate from getRelativeTimeBucket because scheduled routines expose future-time copy (`in a moment`, `in Xm`, `in Xh`, `in Xd`) that the shared helper represents as null.
  */
 function relativeTime(iso: string): string {
   const now = Date.now();

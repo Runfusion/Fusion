@@ -6,6 +6,7 @@ import "./ProjectCard.css";
 import type { RegisteredProject, ProjectHealth } from "@fusion/core";
 import type { ProjectNodeAvailability } from "../api";
 import { getProjectStatusConfig, isInitializingStatus } from "../utils/projectStatusConfig";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 export interface ProjectCardProps {
   project: RegisteredProject;
@@ -21,18 +22,30 @@ export interface ProjectCardProps {
 function formatRelativeTime(timestamp: string | undefined, t: TFunction<"app">): string {
   if (!timestamp) return t("projectCard.never", "Never");
 
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+  /*
+   * FNXC:RelativeTime 2026-06-17-20:48:
+   * FN-6618 reuses shared relative-time buckets while preserving ProjectCard's Never guard, projectCard.* i18n keys, future-as-Just-now behavior, and no-options date fallback.
+   */
+  const bucket = getRelativeTimeBucket(timestamp);
+  if (!bucket) {
+    const timestampMs = Date.parse(timestamp);
+    if (Number.isFinite(timestampMs) && Date.now() - timestampMs < 0) return t("projectCard.justNow", "Just now");
+    return new Date(timestamp).toLocaleDateString();
+  }
 
-  if (diffMins < 1) return t("projectCard.justNow", "Just now");
-  if (diffMins < 60) return t("projectCard.minutesAgo", "{{count}}m ago", { count: diffMins });
-  if (diffHours < 24) return t("projectCard.hoursAgo", "{{count}}h ago", { count: diffHours });
-  if (diffDays < 7) return t("projectCard.daysAgo", "{{count}}d ago", { count: diffDays });
-  return date.toLocaleDateString();
+  switch (bucket.bucket) {
+    case "just-now":
+      return t("projectCard.justNow", "Just now");
+    case "minutes":
+      return t("projectCard.minutesAgo", "{{count}}m ago", { count: bucket.count });
+    case "hours":
+      return t("projectCard.hoursAgo", "{{count}}h ago", { count: bucket.count });
+    case "days":
+      return t("projectCard.daysAgo", "{{count}}d ago", { count: bucket.count });
+    case "weeks":
+    case "older":
+      return bucket.date.toLocaleDateString();
+  }
 }
 
 function truncatePath(path: string, maxLength: number = 40): string {

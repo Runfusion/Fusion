@@ -20,6 +20,10 @@ vi.mock("../project-store-resolver.js", async () => {
   };
 });
 
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 rescues this route/API suite from the curated skip-list, so cleanup must tolerate asynchronous SQLite/global-settings teardown without leaving a silent orphan.
+*/
 describe("Evals routes", () => {
   let rootA: string;
   let rootB: string;
@@ -47,8 +51,8 @@ describe("Evals routes", () => {
   afterEach(async () => {
     try { await storeA.close(); } catch { /* cleanup */ }
     try { await storeB.close(); } catch { /* cleanup */ }
-    await rm(rootA, { recursive: true, force: true });
-    await rm(rootB, { recursive: true, force: true });
+    await rm(rootA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    await rm(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   function seedEvalResult(store: TaskStore, options?: { runId?: string; title?: string; score?: number; rationale?: string }) {

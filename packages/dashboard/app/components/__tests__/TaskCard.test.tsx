@@ -137,6 +137,16 @@ function mountCssForBadgeTests() {
   };
 }
 
+function expectTimerInFooterRight(container: HTMLElement) {
+  const timer = container.querySelector(".card-time-indicator");
+  const footerRow = container.querySelector(".card-footer-row");
+  const rightCluster = container.querySelector(".card-footer-row-right");
+  expect(timer).not.toBeNull();
+  expect(footerRow?.contains(timer)).toBe(true);
+  expect(timer?.closest(".card-footer-row-right")).toBe(rightCluster);
+  expect(timer?.closest(".card-meta-badges")).toBeNull();
+}
+
 const highFanout = {
   totalCount: 7,
   activeTodoCount: 3,
@@ -160,6 +170,35 @@ afterEach(() => {
 });
 
 describe("TaskCard", () => {
+  it("shows an Answer-questions button when awaiting user input and opens the workflow tab", async () => {
+    const onOpenDetailWithTab = vi.fn();
+    render(
+      <TaskCard
+        task={makeTask({ status: "awaiting-user-input" as any })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={onOpenDetailWithTab}
+      />,
+    );
+
+    const btn = screen.getByLabelText("Answer questions");
+    fireEvent.click(btn);
+    expect(onOpenDetailWithTab).toHaveBeenCalledTimes(1);
+    expect(onOpenDetailWithTab.mock.calls[0][1]).toBe("workflow");
+  });
+
+  it("does not show the Answer-questions button when not awaiting input", () => {
+    render(
+      <TaskCard
+        task={makeTask({ status: "executing" as any })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText("Answer questions")).toBeNull();
+  });
+
   it("uses githubIssueAction for tracked task delete", async () => {
     const onDeleteTask = vi.fn(async () => makeTask());
     mockConfirm
@@ -566,6 +605,33 @@ describe("TaskCard", () => {
     const { container } = render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} disableDrag={true} />);
     const card = container.querySelector(".card") as HTMLElement;
     expect(card.getAttribute("draggable")).toBe("false");
+  });
+
+  // FN-6389 follow-up: native HTML5 drag is desktop-mouse only and doesn't move
+  // cards via touch, but a `draggable` element still arms the browser's touch-drag
+  // heuristic, which intermittently hijacks horizontal swipes meant to scroll the
+  // mobile board. On touch-primary (coarse pointer) devices we drop `draggable`.
+  it("disables native card dragging on touch-primary (coarse pointer) devices", () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(hover: none) and (pointer: coarse)",
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+    try {
+      const { container } = render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
+      const card = container.querySelector(".card") as HTMLElement;
+      expect(card.getAttribute("draggable")).toBe("false");
+      // No drag-start handler should be wired on touch (would arm the heuristic).
+      const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
+      const prevented = !card.dispatchEvent(dragStart);
+      expect(prevented).toBe(false);
+    } finally {
+      window.matchMedia = original;
+    }
   });
 
   it("renders Nx PR badge label when multiple PRs are linked", () => {
@@ -1573,6 +1639,140 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("icon-zap")).toBeDefined();
   });
 
+
+  it("keeps priority, fast mode, and agent-created in meta while time moves to footer", () => {
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          priority: "high",
+          executionMode: "fast",
+          sourceType: "automation",
+          sourceMetadata: { agentName: "Task Robot" },
+          executionStartedAt: "2026-04-25T13:00:00.000Z",
+          executionCompletedAt: "2026-04-25T15:00:00.000Z",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const group = container.querySelector(".card-meta-badges");
+    expect(group).not.toBeNull();
+
+    const expectedMetaSelectors = [
+      ".card-priority-badge",
+      ".card-execution-mode-badge",
+      ".card-agent-created-badge",
+    ];
+    expectedMetaSelectors.forEach((selector) => {
+
+      const badge = container.querySelector(selector);
+      expect(badge).not.toBeNull();
+      expect(badge?.closest(".card-meta-badges")).toBe(group);
+    });
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer).not.toBeNull();
+    expect(timer?.closest(".card-meta-badges")).toBeNull();
+    expect(timer?.closest(".card-footer-row-right")).not.toBeNull();
+
+    expect(Array.from(group?.children ?? []).map((child) => child.className)).toEqual([
+      "card-priority-badge card-priority-badge--high",
+      "card-execution-mode-badge card-execution-mode-badge--fast",
+      "card-agent-created-badge",
+
+
+    ]);
+  });
+
+  it("renders partial card meta groups without empty wrappers when time is absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          priority: "urgent",
+          executionMode: "fast",
+          sourceType: "automation",
+          sourceMetadata: { agentName: "Task Robot" },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const group = container.querySelector(".card-meta-badges");
+    expect(group).not.toBeNull();
+    expect(group?.querySelector(".card-priority-badge")).not.toBeNull();
+    expect(group?.querySelector(".card-execution-mode-badge")).not.toBeNull();
+    expect(group?.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(group?.querySelector(".card-time-indicator")).toBeNull();
+    expect(container.querySelector(".card-footer-row")).toBeNull();
+    expect(container.querySelector(".card-footer-row-right")).toBeNull();
+  });
+
+
+  it("moves a lone time chip into the footer without rendering empty meta badges", () => {
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-25T12:05:00.000Z"));
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          columnMovedAt: "2026-04-25T12:00:00.000Z",
+          updatedAt: "2026-04-25T12:00:00.000Z",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const group = container.querySelector(".card-meta-badges");
+    const timer = container.querySelector(".card-time-indicator");
+
+    const footerRow = container.querySelector(".card-footer-row");
+    const rightCluster = container.querySelector(".card-footer-row-right");
+    expect(group).toBeNull();
+    expect(timer).not.toBeNull();
+    expect(footerRow).not.toBeNull();
+    expect(rightCluster).not.toBeNull();
+    expect(timer?.closest(".card-footer-row-right")).toBe(rightCluster);
+    expect(Array.from(rightCluster?.children ?? [])).toEqual([timer]);
+    expect(container.querySelector(".card-priority-badge")).toBeNull();
+    expect(container.querySelector(".card-execution-mode-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+
+  });
+
+  it("does not render card meta badge shells when all grouped affordances are absent", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          priority: "normal",
+          executionMode: "standard",
+          sourceType: "dashboard_ui",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-meta-badges")).toBeNull();
+    expect(container.querySelector(".card-footer-row")).toBeNull();
+    expect(container.querySelector(".card-footer-row-right")).toBeNull();
+  });
+
+  it("defines responsive flex-wrap styling for grouped card meta badges", () => {
+    const fullCss = loadAllAppCss();
+
+    expect(fullCss).toMatch(/\.card-meta-badges\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*gap:\s*var\(--space-xs\);[^}]*\}/);
+    expect(fullCss).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-meta-badges\s*\{[^}]*gap:\s*calc\(var\(--space-xs\) \/ 2\);[^}]*\}/);
+  });
+
   describe("retry button on failed tasks", () => {
     it("renders when task is failed and onRetryTask is provided", () => {
       const onRetryTask = vi.fn(async () => ({}) as Task);
@@ -2189,7 +2389,7 @@ describe("TaskCard", () => {
     );
 
     const timer = container.querySelector(".card-time-indicator");
-    expect(timer).not.toBeNull();
+    expectTimerInFooterRight(container);
     // 8m workflow + 4m timed = 12m
     expect(timer?.textContent).toContain("12m");
     expect(timer?.getAttribute("title")).toContain("In progress 12m");
@@ -2208,6 +2408,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector(".card-time-indicator")?.textContent).toContain("1m");
+    expectTimerInFooterRight(container);
 
     rerender(
       <TaskCard
@@ -2221,6 +2422,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector(".card-time-indicator")?.textContent).toContain("2m");
+    expectTimerInFooterRight(container);
   });
 
   it("shows timer chip for done cards summing workflow runtime + timed events", () => {
@@ -2255,7 +2457,7 @@ describe("TaskCard", () => {
     );
 
     const timer = container.querySelector(".card-time-indicator");
-    expect(timer).not.toBeNull();
+    expectTimerInFooterRight(container);
     // 1h workflow + 1h timed = 2h
     expect(timer?.textContent).toContain("2h");
     expect(timer?.getAttribute("title")).toContain("Execution time 2h");
@@ -2366,7 +2568,9 @@ describe("TaskCard", () => {
     expect(queuedBadge?.compareDocumentPosition(footerRow as Node) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   });
 
-  it("renders tracking, retry, and timer chips in the same footer row", () => {
+
+  it("renders tracking, retry, and timer in the footer right cluster", () => {
+
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -2392,14 +2596,24 @@ describe("TaskCard", () => {
     );
 
     const footerRow = container.querySelector(".card-footer-row");
+    const metaBadges = container.querySelector(".card-meta-badges");
+
+    const rightCluster = container.querySelector(".card-footer-row-right");
+
     const trackingLink = container.querySelector(".card-github-tracking-chip");
     const retryChip = container.querySelector(".card-retry-badge");
     const timerChip = container.querySelector(".card-time-indicator");
 
     expect(footerRow).not.toBeNull();
+
+    expect(metaBadges).toBeNull();
+    expect(rightCluster).not.toBeNull();
     expect(footerRow?.contains(trackingLink)).toBe(true);
     expect(footerRow?.contains(retryChip)).toBe(true);
     expect(footerRow?.contains(timerChip)).toBe(true);
+    expect(rightCluster?.contains(timerChip)).toBe(true);
+    expect(Array.from(rightCluster?.children ?? [])).toContain(timerChip);
+
     expect(container.querySelector(".card-bottom-right-row")).toBeNull();
   });
 
@@ -2596,7 +2810,9 @@ describe("TaskCard", () => {
       expect(container.querySelector(".card-footer-row > .card-source-provenance")).toBeNull();
     });
 
-    it("keeps github badges before retry and time chips", () => {
+
+    it("keeps github badges before retry while time chip ends the footer cluster", () => {
+
       const { container } = render(
         <TaskCard
           task={makeTask({
@@ -2627,12 +2843,16 @@ describe("TaskCard", () => {
 
       const sourceNode = footerRow?.querySelector(".card-source-provenance");
       const rightCluster = footerRow?.querySelector(".card-footer-row-right");
+      const timerChip = container.querySelector(".card-time-indicator");
       expect(sourceNode).not.toBeNull();
       expect(rightCluster).not.toBeNull();
+
+      expect(timerChip?.closest(".card-footer-row-right")).toBe(rightCluster);
       const orderedNodes = [
         rightCluster?.querySelector(".card-github-tracking-chip"),
         rightCluster?.querySelector(".card-retry-badge"),
-        rightCluster?.querySelector(".card-time-indicator"),
+        timerChip,
+
       ];
       orderedNodes.forEach((node) => expect(node).not.toBeNull());
       expect(Array.from((rightCluster as Element).children)).toEqual(orderedNodes);
@@ -2688,17 +2908,15 @@ describe("TaskCard", () => {
       const rightCluster = container.querySelector(".card-footer-row-right") as HTMLElement | null;
       expect(rightCluster).not.toBeNull();
       const children = Array.from((rightCluster as HTMLElement).children);
-      const expectedLastChip = rightSideChip;
-      expect(children.at(-1)).toBe(expectedLastChip);
-      if (rightSideChip?.classList.contains("card-retry-badge")) {
-        expect(children.indexOf(rightSideChip as HTMLElement)).toBeGreaterThan(children.indexOf(trackingChip as HTMLElement));
-      } else {
-        expect(children.indexOf(trackingChip as HTMLElement)).toBeLessThan(children.indexOf(rightSideChip as HTMLElement));
-      }
+
+      expect(children).toContain(trackingChip as HTMLElement);
+      expect(children).toContain(rightSideChip as HTMLElement);
+      expect(children.indexOf(rightSideChip as HTMLElement)).toBeGreaterThan(children.indexOf(trackingChip as HTMLElement));
       expect(getComputedStyle(rightCluster as HTMLElement).marginLeft).toBe("auto");
     });
 
-    it.each(["in-progress", "in-review"] as const)("renders time indicator to the right of tracking chip in %s", (column) => {
+    it.each(["in-progress", "in-review"] as const)("renders time indicator in footer right cluster beside tracking chip for %s", (column) => {
+
       const { container } = render(
         <TaskCard
           task={makeTask({
@@ -2724,8 +2942,11 @@ describe("TaskCard", () => {
       const rightCluster = container.querySelector(".card-footer-row-right") as HTMLElement | null;
       expect(rightCluster).not.toBeNull();
       const children = Array.from((rightCluster as HTMLElement).children);
-      expect(children.indexOf(timeChip as HTMLElement)).toBeGreaterThan(children.indexOf(trackingChip as HTMLElement));
-      expect(children.at(-1)).toBe(timeChip);
+      expect(children).toContain(trackingChip);
+
+      expect(children).toContain(timeChip);
+      expect(timeChip?.closest(".card-footer-row-right")).toBe(rightCluster);
+
     });
 
     it("does not force far-right modifier when in-progress card has files changed", () => {
@@ -2789,13 +3010,11 @@ describe("TaskCard", () => {
       const rightCluster = container.querySelector(".card-footer-row-right") as HTMLElement | null;
       expect(rightCluster).not.toBeNull();
       const children = Array.from((rightCluster as HTMLElement).children);
-      const expectedLastChip = rightSideChip;
-      expect(children.at(-1)).toBe(expectedLastChip);
-      if (rightSideChip?.classList.contains("card-retry-badge")) {
-        expect(children.indexOf(rightSideChip as HTMLElement)).toBeGreaterThan(children.indexOf(trackingChip as HTMLElement));
-      } else {
-        expect(children.indexOf(trackingChip as HTMLElement)).toBeLessThan(children.indexOf(rightSideChip as HTMLElement));
-      }
+
+      expect(children).toContain(trackingChip as HTMLElement);
+      expect(children).toContain(rightSideChip as HTMLElement);
+      expect(children.indexOf(rightSideChip as HTMLElement)).toBeGreaterThan(children.indexOf(trackingChip as HTMLElement));
+
       expect(getComputedStyle(rightCluster as HTMLElement).marginLeft).toBe("auto");
     });
 
@@ -2859,7 +3078,10 @@ describe("TaskCard", () => {
         const rightCluster = container.querySelector(".card-footer-row-right") as HTMLElement | null;
         expect(rightCluster).not.toBeNull();
         expect(getComputedStyle(rightCluster as HTMLElement).marginLeft).toBe("auto");
+
         expect((trackingChip as HTMLElement).nextElementSibling).toBe(timerChip);
+        expect(timerChip?.closest(".card-footer-row-right")).toBe(rightCluster);
+
       } finally {
         cleanupCss();
       }
@@ -3646,12 +3868,15 @@ describe("TaskCard", () => {
     expect(footerRow).not.toBeNull();
     expect(filesChanged).not.toBeNull();
     expect(timer).not.toBeNull();
+    const rightCluster = container.querySelector(".card-footer-row-right");
     expect(footerRow?.contains(filesChanged)).toBe(true);
+
     expect(footerRow?.contains(timer)).toBe(true);
     expect(header?.contains(timer)).toBe(false);
-    const rightCluster = container.querySelector(".card-footer-row-right");
+    expect(timer?.closest(".card-footer-row-right")).toBe(rightCluster);
+    expect(rightCluster).not.toBeNull();
     expect(Array.from(footerRow?.children ?? [])).toEqual([filesChanged, rightCluster]);
-    expect(Array.from((rightCluster as HTMLElement | null)?.children ?? [])).toEqual([timer]);
+
   });
 
   it("shows timer chip for in-review cards", () => {
@@ -3683,7 +3908,7 @@ describe("TaskCard", () => {
     );
 
     const timer = container.querySelector(".card-time-indicator");
-    expect(timer).not.toBeNull();
+    expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("12m");
     expect(timer?.getAttribute("title")).toContain("Execution time 12m");
     expect(timer?.getAttribute("title")).not.toContain("Completed");
@@ -3707,7 +3932,7 @@ describe("TaskCard", () => {
     );
 
     const timer = container.querySelector(".card-time-indicator");
-    expect(timer).not.toBeNull();
+    expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("30m");
     expect(timer?.getAttribute("title")).toBe("Execution time 30m");
 
@@ -3739,7 +3964,7 @@ describe("TaskCard", () => {
     );
 
     const timer = container.querySelector(".card-time-indicator");
-    expect(timer).not.toBeNull();
+    expectTimerInFooterRight(container);
     expect(timer?.textContent).toContain("6m");
     expect(timer?.getAttribute("title")).toBe("Execution time 6m");
   });
@@ -3793,7 +4018,7 @@ describe("TaskCard", () => {
       );
 
       const timer = container.querySelector(".card-time-indicator");
-      expect(timer).not.toBeNull();
+      expectTimerInFooterRight(container);
       expect(timer?.textContent).toContain("45m");
       expect(timer?.getAttribute("title")).toBe("Execution time 45m. Merge phase <1m");
     } finally {
@@ -4120,6 +4345,34 @@ describe("TaskCard near-duplicate chip", () => {
     );
 
     expect(screen.queryByText("Duplicate of FN-1234")).toBeNull();
+  });
+
+  it("hides duplicate chip when parent resolves the canonical as inactive or missing", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
+        nearDuplicateCanonicalInactive={true}
+        onOpenDetail={noop}
+        addToast={noop}
+        onUpdateTask={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Duplicate of FN-1234")).toBeNull();
+  });
+
+  it("renders duplicate chip when canonical activity is unknown", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceMetadata: { nearDuplicateOf: "FN-1234" } })}
+        nearDuplicateCanonicalInactive={undefined}
+        onOpenDetail={noop}
+        addToast={noop}
+        onUpdateTask={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Duplicate of FN-1234")).toBeInTheDocument();
   });
 
   it("hides duplicate chip in archived and done columns", () => {
@@ -4697,6 +4950,14 @@ describe("TaskCard Android tap regression", () => {
     expect(onOpenDetailWithTab).toHaveBeenCalledWith(task, "changes");
     expect(onOpenDetail).toHaveBeenCalledTimes(0);
     expect(onClose).toHaveBeenCalledTimes(0);
+  });
+
+  it("allows horizontal board pan from every non-editing card descendant on mobile", () => {
+    const css = loadAllAppCssBaseOnly();
+
+    expect(css).toMatch(
+      /\.card:not\(\.card-editing\)\s*,\s*\.card:not\(\.card-editing\)\s+\*\s*\{[^}]*touch-action:\s*pan-x\s+pan-y;[^}]*\}/,
+    );
   });
 });
 

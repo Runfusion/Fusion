@@ -222,6 +222,23 @@ export function buildRespondCallback(
     // agent runner + git ops need its settings + worktree. Resolve at run time.
     const fullStore = store as unknown as import("@fusion/core").TaskStore;
     const settings = await fullStore.getSettings();
+
+    // U18 (R15): auto-resolution of review comments is a first-class, configurable,
+    // default-ON capability. When disabled, the loop is inert — it dispatches no
+    // agent, pushes nothing, and replies to no thread; review threads are left for a
+    // human. This is INDEPENDENT of the auto-merge gate (a separate graph node): with
+    // resolution on but auto-merge off, threads are still resolved but the PR is not
+    // merged. Default true preserves today's always-on behavior. `disagreed-only` is
+    // the benign routing value (loops back to await-review like the U3 inert default),
+    // so a disabled loop never advances the PR on its own.
+    if (settings.autoResolveReviewComments === false) {
+      audit?.(
+        "pr-respond-auto-resolve-disabled",
+        `entity ${entity.id}: autoResolveReviewComments off; leaving review threads for a human`,
+      );
+      return { value: "disagreed-only" };
+    }
+
     const taskId = ops.getTaskId(entity);
     const cwd = ops.getCwd(entity);
     const runAgent = makePrResponseAgentRunner(settings, taskId, cwd);

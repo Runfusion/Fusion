@@ -19,9 +19,11 @@ import { useTranslation } from "react-i18next";
 import type { ModelPreset, Settings } from "@fusion/core";
 import {
   ApiRequestError,
+  fetchWorkflow,
   fetchWorkflowSettingValues,
   updateWorkflowSettingValues,
   type ModelInfo,
+  type WorkflowSettingDefinition,
   type WorkflowSettingRejection,
   type WorkflowSettingValuesPayload,
 } from "../../../api";
@@ -33,7 +35,7 @@ import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState
 type LaneStatus = "inherited" | "overridden";
 
 type WorkflowModelPair = {
-  id: "planning" | "execution" | "validator";
+  id: "planning" | "execution" | "validator" | "planning-fallback" | "validator-fallback" | "title-summarizer-fallback";
   providerId: string;
   modelId: string;
   label: string;
@@ -42,6 +44,10 @@ type WorkflowModelPair = {
 
 const DEFAULT_WORKFLOW_ID = "builtin:coding";
 
+/*
+FNXC:SettingsModels 2026-06-16-19:58:
+Fallback model lanes must be configurable in all Settings surfaces: General uses the global Fallback Model, Workflow Values uses declared workflow settings, and Project Models exposes only fallback pairs declared by the active default workflow so saves never PATCH undeclared keys.
+*/
 const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
   {
     id: "planning",
@@ -64,7 +70,37 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
     label: "Reviewer Model",
     help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
   },
+  {
+    id: "planning-fallback",
+    providerId: "planningFallbackProvider",
+    modelId: "planningFallbackModelId",
+    label: "Planning Fallback Model",
+    help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
+  },
+  {
+    id: "validator-fallback",
+    providerId: "validatorFallbackProvider",
+    modelId: "validatorFallbackModelId",
+    label: "Reviewer Fallback Model",
+    help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
+  },
+  {
+    id: "title-summarizer-fallback",
+    providerId: "titleSummarizerFallbackProvider",
+    modelId: "titleSummarizerFallbackModelId",
+    label: "Title Summarizer Fallback Model",
+    help: "Fallback provider and model used when the primary Title Summarizer model cannot be used.",
+  },
 ];
+
+function declaredWorkflowModelPairs(settings?: WorkflowSettingDefinition[]): WorkflowModelPair[] {
+  const settingsById = new Map((settings ?? []).map((setting) => [setting.id, setting]));
+  return WORKFLOW_MODEL_PAIRS.filter((pair) => {
+    const provider = settingsById.get(pair.providerId);
+    const model = settingsById.get(pair.modelId);
+    return provider?.type === "string" && model?.type === "string";
+  });
+}
 
 function modelPairValue(values: Record<string, unknown>, pair: WorkflowModelPair): string {
   const provider = values[pair.providerId];
@@ -154,6 +190,7 @@ export function ProjectModelsSection({
   const [workflowLoading, setWorkflowLoading] = useState(false);
   const [workflowPending, setWorkflowPending] = useState<Record<string, unknown>>({});
   const [workflowRejections, setWorkflowRejections] = useState<Record<string, WorkflowSettingRejection>>({});
+  const [workflowModelPairs, setWorkflowModelPairs] = useState<WorkflowModelPair[]>([]);
   const workflowReqSeq = useRef(0);
   const workflowDirty = Object.keys(workflowPending).length > 0;
 
@@ -166,16 +203,22 @@ export function ProjectModelsSection({
       setWorkflowPayload(null);
       setWorkflowPending({});
       setWorkflowRejections({});
+      setWorkflowModelPairs([]);
       return;
     }
     const seq = ++workflowReqSeq.current;
     setWorkflowLoading(true);
-    fetchWorkflowSettingValues(workflowId, projectId)
-      .then((payload) => {
+    Promise.all([
+      fetchWorkflow(workflowId, projectId),
+      fetchWorkflowSettingValues(workflowId, projectId),
+    ])
+      .then(([definition, payload]) => {
         if (workflowReqSeq.current !== seq) return;
         setWorkflowPayload(payload);
         setWorkflowPending({});
         setWorkflowRejections({});
+        const declarations = "settings" in definition.ir ? definition.ir.settings : undefined;
+        setWorkflowModelPairs(declaredWorkflowModelPairs(declarations));
       })
       .catch((err) => {
         if (workflowReqSeq.current !== seq) return;
@@ -184,6 +227,7 @@ export function ProjectModelsSection({
           return;
         }
         setWorkflowPayload({ stored: {}, effective: {}, orphaned: [] });
+        setWorkflowModelPairs([]);
       })
       .finally(() => {
         if (workflowReqSeq.current === seq) setWorkflowLoading(false);
@@ -387,7 +431,7 @@ export function ProjectModelsSection({
         </div>
       ) : (
         <>
-          {WORKFLOW_MODEL_PAIRS.map((pair) => {
+          {workflowModelPairs.map((pair) => {
             const value = modelPairValue(effectiveWorkflowValues, pair);
             const customized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
               ? workflowPending[pair.providerId] !== null

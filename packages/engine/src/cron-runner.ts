@@ -19,6 +19,7 @@ import { createLogger } from "./logger.js";
 import { defaultShell } from "./shell-utils.js";
 import { createFnAgent, promptWithFallback } from "./pi.js";
 import { HybridEvaluatorService } from "./evaluator.js";
+import { buildSessionSkillContextSync } from "./session-skill-context.js";
 
 const log = createLogger("cron-runner");
 
@@ -1004,11 +1005,17 @@ export async function createAiPromptExecutor(cwd: string): Promise<AiPromptExecu
 
   return async (prompt: string, modelProvider?: string, modelId?: string): Promise<string> => {
     let responseText = "";
+    const skillContext = buildSessionSkillContextSync(null, "executor", cwd, undefined);
 
+    /*
+    FNXC:CronAutomationSkills 2026-06-17-19:33:
+    Scheduled AI automation is an agent-acting lane; even without a plugin runner in this seam, it must request executor fallback skills and tolerate the degraded no-plugin path.
+    */
     const { session } = await createFnAgent({
       cwd,
       systemPrompt: AI_AUTOMATION_SYSTEM_PROMPT,
       tools: "readonly",
+      ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
       defaultProvider: modelProvider,
       defaultModelId: modelId,
       onText: (delta: string) => {

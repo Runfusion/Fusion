@@ -45,8 +45,8 @@
 }
 
 .cli-posture-chip--elevated {
-  color: var(--warning, var(--color-warning));
-  border-color: var(--warning, var(--color-warning));
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 
 .cli-posture-chip__mode {
@@ -91,7 +91,7 @@
   margin-top: var(--space-sm);
   padding: 2px var(--space-sm);
   font-size: 0.75rem;
-  color: var(--accent, var(--color-primary));
+  color: var(--accent);
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -122,6 +122,24 @@
   background: var(--terminal-bg, var(--bg));
 }
 
+/*
+FNXC:Terminal 2026-06-18-07:34:
+SessionTerminal hosts the same xterm DOM/canvas measurement subtree as TerminalModal under a different wrapper. Apply the FN-6638 real-iOS text-size-adjust invariant here too so CLI-agent attach terminals do not inherit Safari-inflated ASCII cell metrics while still using the shared font-load remeasure path for every preset and desktop WebGL.
+*/
+.cli-session-terminal__viewport,
+.cli-session-terminal__viewport * {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/*
+FNXC:Terminal 2026-06-18-15:45:
+Recurrence #5 requires the attach terminal to mirror TerminalModal: xterm receives a symbols-free measured family, and only DOM row spans receive the optional glyph fallback. This keeps the real-iOS WebKit measurement invariant shared across DOM/canvas fallback and desktop WebGL while avoiding a SessionTerminal-only recurrence.
+*/
+.cli-session-terminal__viewport .xterm-rows span {
+  font-family: var(--terminal-glyph-font-family, inherit) !important;
+}
+
 .cli-session-terminal__advance-strip {
   display: flex;
   align-items: center;
@@ -146,8 +164,8 @@
 .cli-session-terminal__advance-btn {
   padding: 4px var(--space-md);
   font-size: 0.8125rem;
-  color: var(--button-primary-text, var(--accent-text));
-  background: var(--button-primary-bg, var(--accent));
+  color: var(--accent-text);
+  background: var(--accent);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -223,14 +241,14 @@
 }
 
 .cli-terminal-key--ctrl.cli-terminal-key--active {
-  color: var(--accent-text, var(--button-primary-text));
-  background: var(--accent, var(--color-primary));
-  border-color: var(--accent, var(--color-primary));
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .cli-terminal-key--ctrlc {
-  color: var(--warning, var(--color-warning));
-  border-color: var(--warning, var(--color-warning));
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 
 .cli-session-terminal__input-row {
@@ -245,14 +263,14 @@
   padding: var(--space-xs) var(--space-sm);
   font-size: 16px; /* >=16px avoids iOS focus zoom */
   color: var(--text);
-  background: var(--input-bg, var(--bg));
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
 
 .cli-session-terminal__mobile-input:focus {
   outline: none;
-  border-color: var(--accent, var(--color-primary));
+  border-color: var(--accent);
 }
 
 .cli-session-terminal__mobile-send {
@@ -260,8 +278,8 @@
   min-height: 38px;
   padding: var(--space-xs) var(--space-md);
   font-size: 0.8125rem;
-  color: var(--button-primary-text, var(--accent-text));
-  background: var(--button-primary-bg, var(--accent));
+  color: var(--accent-text);
+  background: var(--accent);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;

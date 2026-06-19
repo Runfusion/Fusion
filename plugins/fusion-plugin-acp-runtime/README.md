@@ -59,8 +59,15 @@ Per `AGENTS.md` (External-integration evidence):
 - **Pinned release:** `0.24.0` (Apache-2.0)
 - **Tarball:** https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-0.24.0.tgz
 - **Integrity (sha512):** `sha512-vvu9appvGvfYstBj19C6NCepV6SvUhY5VRv60KUZ4XzhTah/olOYul5Zo4C+x2enyshMSvgB2mm/OEmrsHaSmA==`
-- **Agent binaries driven:** user-supplied ACP agents (e.g. `gemini --acp`, the
-  `@agentclientprotocol/claude-agent-acp` adapter). These are configured by the
-  user at runtime, not bundled — `upstream-pending-verification` per agent.
+- **Agent binaries driven:** user-supplied ACP agents (e.g. `gemini --acp`) and the bundled Claude bridge below. User-configured agents remain `upstream-pending-verification` per agent.
+
+### Bundled Claude ACP bridge evidence
+
+- **Canonical upstream repo URL:** https://github.com/moabualruz/claude-code-cli-acp
+- **Docs / homepage URL:** https://github.com/moabualruz/claude-code-cli-acp#readme
+- **Release / download URL:** npm package `claude-code-cli-acp` (version `0.1.1`) — https://www.npmjs.com/package/claude-code-cli-acp
+- **Binary / CLI name:** `claude-code-cli-acp`
+- **Checksum:** `sha512-qpfRGOXkOs9mqI7oumsGistWisyXcCC0r7ng7wdLvGMIORdzHjmUUa+94Jftgr/NYAVnAUe6N7kimD8PaO3D5g==` (from `pnpm-lock.yaml` for `claude-code-cli-acp@0.1.1`)
+- **Pinned-commit spot-review:** tag `v0.1.1` points to commit `c93f4f4ca449f451d9f3b7db536caf4060883da9` (annotated tag `ca33404fc1128d6a88a55b248f042f70b4bc9f9a`, unsigned). License: Apache-2.0. Behavior reviewed for this integration: runs `claude` through a PTY, reads transcript JSONL, exposes an ACP server over stdio, and requires `@anthropic-ai/claude-code` installed + authenticated.
 
 See `docs/acp-contract.md` for the launch/readiness contract and failure taxonomy.

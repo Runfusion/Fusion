@@ -298,7 +298,7 @@
 
 .agent-log-summary {
   padding: var(--space-xs) var(--space-md);
-  font-size: var(--text-xs, 12px);
+  font-size: 0.75rem;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
   text-align: center;

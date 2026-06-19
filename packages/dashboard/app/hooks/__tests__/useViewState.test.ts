@@ -66,6 +66,33 @@ describe("useViewState", () => {
     });
   });
 
+  it("migrates legacy reliability taskView from localStorage to Command Center", async () => {
+    localStorage.setItem("kb-dashboard-task-view", "reliability");
+
+    const { result } = renderHook(() => useViewState(createOptions()));
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("command-center");
+    });
+    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("command-center");
+  });
+
+  it("migrates legacy reliability URL param to Command Center", async () => {
+    const originalUrl = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState({}, "", "?view=reliability");
+
+    try {
+      const { result } = renderHook(() => useViewState(createOptions()));
+
+      await waitFor(() => {
+        expect(result.current.taskView).toBe("command-center");
+      });
+      expect(localStorage.getItem("kb-dashboard-task-view")).toBe("command-center");
+    } finally {
+      window.history.replaceState({}, "", originalUrl || "/");
+    }
+  });
+
   it("migrates legacy roadmaps state to plugin view when registered", async () => {
     vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockReturnValue(true);
     localStorage.setItem("kb-dashboard-task-view", "roadmaps");
@@ -270,6 +297,23 @@ describe("useViewState", () => {
     await waitFor(() => {
       expect(result.current.taskView).toBe("research");
     });
+  });
+
+  it("migrates legacy reliability taskView from scoped storage to Command Center", async () => {
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "reliability");
+
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("command-center");
+    });
+    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("command-center");
   });
 
   it("persists insights taskView changes to scoped localStorage", async () => {

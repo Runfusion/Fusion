@@ -26,6 +26,27 @@ const mockUseProjectMarkdownFiles = vi.mocked(useProjectMarkdownFiles);
 const mockFetchWorkspaceFileContent = vi.mocked(fetchWorkspaceFileContent);
 const mockFetchTaskDetail = vi.mocked(fetchTaskDetail);
 
+function mockSelectionRect() {
+  const rect = new DOMRect(10, 20, 80, 12);
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: vi.fn(() => rect),
+  });
+  Object.defineProperty(Range.prototype, "getClientRects", {
+    configurable: true,
+    value: vi.fn(() => ({ 0: rect, length: 1, item: () => rect, [Symbol.iterator]: function* () { yield rect; } }) as DOMRectList),
+  });
+}
+
+function selectNodeText(node: Node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = document.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}
+
 const mockTaskDocuments: TaskDocumentWithTask[] = [
   {
     id: "doc-1",
@@ -184,6 +205,44 @@ describe("DocumentsView", () => {
     });
 
     expect(await screen.findByText(/Hello docs/)).toBeInTheDocument();
+  });
+
+  it("sends selected plain project file preview text to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    const plainPreview = await screen.findByText(/Hello docs/);
+    selectNodeText(plainPreview);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Create a docs task." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: README.md"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Hello docs"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Create a docs task."));
+  });
+
+  it("sends selected markdown project file preview text to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    await screen.findByText(/Hello docs/);
+    fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
+    const markdownPreviewText = await screen.findByText("Hello docs");
+    selectNodeText(markdownPreviewText);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Review this rendered content." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: README.md"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Hello docs"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Review this rendered content."));
   });
 
   it("search filters task documents", async () => {

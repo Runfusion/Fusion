@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, renameSync, mkdtempSync, rmSync, realpathSync, globSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, renameSync, mkdtempSync, rmSync, realpathSync, globSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cpus, tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { ensureTestArtifacts } from "./ensure-test-artifacts.mjs";
 import { isSkillSyncCheckCached } from "./sync-fusion-skill-tools.mjs";
 import { computeContentHash, createRepoContentSnapshot } from "./lib/content-hash.mjs";
+import { deriveBudgetMs, runWithWatchdog } from "./lib/run-vitest-watchdog.mjs";
+
+/** Generous local full-suite budget (60min): far above a real full run, far below an infinite hang. */
+const FULL_SUITE_BUDGET_MS = 60 * 60 * 1000;
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFilePath);
@@ -174,13 +178,32 @@ const PRUNE_REMOVE_RETRIES = 3;
 const PRUNE_REMOVE_DELAY_MS = 75;
 const PRUNE_DIAGNOSTIC_CHILD_LIMIT = 8;
 const FUSION_WORKER_ROOT_OWNER_FILE = ".fusion-test-worker-root-owner";
+const FUSION_TEST_RUN_TOKEN_ENV = "FUSION_TEST_RUN_TOKEN";
+const LEGACY_MARKERLESS_ACTIVE_ROOT_MAX_AGE_MS = 30_000;
+
+function ensureFusionTestRunToken(env = process.env) {
+  const existing = env[FUSION_TEST_RUN_TOKEN_ENV];
+  if (typeof existing === "string" && existing.trim().length > 0) return existing;
+  const token = randomUUID();
+  env[FUSION_TEST_RUN_TOKEN_ENV] = token;
+  return token;
+}
+
+ensureFusionTestRunToken();
 
 function isEnoentError(err) {
   return Boolean(err && typeof err === "object" && "code" in err && err.code === "ENOENT");
 }
 
+let processAliveForTests = null;
+
+export function __setProcessAliveForTests(nextProcessAlive) {
+  processAliveForTests = typeof nextProcessAlive === "function" ? nextProcessAlive : null;
+}
+
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (processAliveForTests) return Boolean(processAliveForTests(pid));
   try {
     process.kill(pid, 0);
     return true;
@@ -189,28 +212,61 @@ function isProcessAlive(pid) {
   }
 }
 
-function readWorkerRootOwnerPid(rootPath) {
+function readWorkerRootOwnerInfo(rootPath) {
   try {
     const raw = readFileSync(path.join(rootPath, FUSION_WORKER_ROOT_OWNER_FILE), "utf8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const pid = Number.parseInt(lines[0] ?? "", 10);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    const info = { pid, runToken: null };
+    for (const line of lines.slice(1)) {
+      const match = /^runToken=(.+)$/.exec(line);
+      if (match) info.runToken = match[1];
+    }
+    return info;
   } catch {
     return null;
   }
 }
 
-function isActiveFusionWorkerRoot(rootPath) {
-  const ownerPid = readWorkerRootOwnerPid(rootPath);
-  if (ownerPid !== null && isProcessAlive(ownerPid)) return true;
+function hasCurrentRunToken(ownerInfo) {
+  const currentToken = process.env[FUSION_TEST_RUN_TOKEN_ENV];
+  return Boolean(ownerInfo?.runToken && currentToken && ownerInfo.runToken === currentToken);
+}
 
-  // Backward-compatible guard for worker roots created before the owner marker
-  // landed, or marker writes that failed: an alive redir-<pid> child means a
-  // Vitest worker still owns temp workspaces beneath this root.
+function isFreshLegacyMarkerlessRoot(rootPath) {
+  try {
+    return Date.now() - statSync(rootPath).mtimeMs <= LEGACY_MARKERLESS_ACTIVE_ROOT_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function isActiveFusionWorkerRoot(rootPath) {
+  const ownerInfo = readWorkerRootOwnerInfo(rootPath);
+  if (ownerInfo !== null && isProcessAlive(ownerInfo.pid)) {
+    if (ownerInfo.pid === process.pid || hasCurrentRunToken(ownerInfo)) return true;
+    // FN-6396/FN-6360 recurrence: bare pid liveness is not enough evidence.
+    // macOS can recycle a dead Vitest owner's pid to an unrelated process, so
+    // the pnpm-test prune must require the same-run token before preserving the
+    // root. Otherwise stale fusion-test-workers-* shells survive to the after
+    // check-test-isolation pass and fail the merge gate.
+  }
+
+  // Backward-compatible guard for markerless roots. New roots are marked by
+  // globalSetup or by vitest-setup's self-minted fallback path; old markerless
+  // redir roots are only considered active while very fresh, preventing stale
+  // redir-<pid> pid reuse from keeping orphans alive forever.
   try {
     for (const child of readdirSync(rootPath, { withFileTypes: true })) {
       if (!child.isDirectory()) continue;
       const match = /^redir-(\d+)$/.exec(child.name);
-      if (match && isProcessAlive(Number.parseInt(match[1], 10))) return true;
+      if (!match) continue;
+      const redirPid = Number.parseInt(match[1], 10);
+      if (!isProcessAlive(redirPid)) continue;
+      if (redirPid === process.pid || (ownerInfo && hasCurrentRunToken(ownerInfo)) || isFreshLegacyMarkerlessRoot(rootPath)) {
+        return true;
+      }
     }
   } catch {
     // If we cannot inspect it, fall through to normal best-effort pruning.
@@ -288,13 +344,45 @@ export function pruneFusionTestWorkers(maxEntries = PRUNE_MAX_ENTRIES, retryOpti
   pruneFusionTestRoots("fusion-test-workers-", maxEntries, retryOptions);
 }
 
-function runMaybeIsolated(command, commandArgs, options = {}) {
+// Run a test invocation under the L2 wall-clock watchdog (async). Throws on
+// failure/timeout/signal with an `.exitCode` — same shape as `run` — so the
+// caller's catch and the `finally` cleanup below behave identically. On a
+// watchdog kill the child group is already dead, and the `finally` prune +
+// isolation post-check then reap any leaked isolated HOME (no leak slips past
+// the guard).
+async function runWatchedTest(command, commandArgs, { env, budgetMs, label } = {}) {
+  const { code, signal, timedOut } = await runWithWatchdog({
+    command,
+    args: commandArgs,
+    env: env ?? process.env,
+    // Preserve the original `run`'s fixed working directory; pnpm must execute
+    // from the repo root regardless of where test-changed was invoked.
+    cwd: rootDir,
+    budgetMs,
+    label: label ?? `${command} ${commandArgs.join(" ")}`,
+    log: console.error,
+    spawn,
+  });
+  if (timedOut || signal || code !== 0) {
+    const reason = timedOut ? "watchdog timeout" : signal ? `signal ${signal}` : `exit code ${code}`;
+    const error = new Error(`${command} ${commandArgs.join(" ")} failed (${reason})`);
+    error.exitCode = timedOut ? 124 : signal ? 1 : code ?? 1;
+    throw error;
+  }
+}
+
+async function runMaybeIsolated(command, commandArgs, options = {}) {
   const enabled = shouldRunIsolationGuard();
-  const env = options.env ?? process.env;
-  const { onBeforeAfterCheck, ...spawnOptions } = options;
+  /*
+   * FNXC:TestInfrastructure 2026-06-15-12:12:
+   * Conflict resolution for PR #1669 must keep main's per-run temp-root token so cleanup can distinguish live roots while still passing watchdog budgets and labels into async test invocations.
+   */
+  const env = { ...(options.env ?? process.env), [FUSION_TEST_RUN_TOKEN_ENV]: ensureFusionTestRunToken(options.env ?? process.env) };
+  const { onBeforeAfterCheck, budgetMs, label, ...spawnOptions } = options;
+  void spawnOptions; // cwd/stdio defaults live in the watchdog/spawn path now
   if (enabled) runIsolationCheck(true, env, /* fastBefore */ true);
   try {
-    run(command, commandArgs, spawnOptions);
+    await runWatchedTest(command, commandArgs, { env, budgetMs, label });
   } finally {
     if (typeof onBeforeAfterCheck === "function") {
       onBeforeAfterCheck();
@@ -1096,8 +1184,19 @@ export function createIsolatedHomeEnv(env = process.env) {
   return { env: nextEnv, isolatedHome };
 }
 
+export function createTestProcessEnv(env = process.env) {
+  /*
+  FNXC:TestInfrastructure 2026-06-17-17:02:
+  Developer shells and release scripts can export NODE_ENV=production, but Vitest must resolve React, Testing Library, and Vite transforms through their test/development paths. Normalize spawned test processes here so pnpm test cannot inherit production React test-utils and stall/fail jsdom lanes.
+  */
+  return {
+    ...env,
+    NODE_ENV: "test",
+  };
+}
+
 const fullSuiteEnv = {
-  ...process.env,
+  ...createTestProcessEnv(process.env),
   FUSION_TEST_TOTAL_WORKERS: process.env.FUSION_TEST_TOTAL_WORKERS || String(totalWorkers),
   FUSION_TEST_CONCURRENCY: process.env.FUSION_TEST_CONCURRENCY || String(concurrency),
 };
@@ -1160,7 +1259,7 @@ export function normalizeForwardedArgs(argv) {
   return normalized;
 }
 
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   // The full suite is explicit opt-in ONLY (--full / FUSION_TEST_FULL=1).
   // CI no longer routes through this script (the gate job runs `pnpm
   // test:gate`; the demoted tier runs `test:ci:shard` in full-suite.yml), so
@@ -1291,9 +1390,11 @@ export function main(argv = process.argv.slice(2)) {
 
   if (plan.mode === "full") {
     // Explicit opt-in only ("forced": --full / FUSION_TEST_FULL=1).
-    runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
+    await runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
       env: isolatedHomeEnv,
       onBeforeAfterCheck: cleanupIsolatedHome,
+      budgetMs: FULL_SUITE_BUDGET_MS,
+      label: "test:full (-r)",
     });
     return;
   }
@@ -1312,9 +1413,11 @@ export function main(argv = process.argv.slice(2)) {
     }
     console.log("[test-changed] need the full sweep instead? run `pnpm test:full` (explicit opt-in).");
 
-    runMaybeIsolated("pnpm", ["test:gate"], {
+    await runMaybeIsolated("pnpm", ["test:gate"], {
       env: isolatedHomeEnv,
       onBeforeAfterCheck: cleanupIsolatedHome,
+      budgetMs: deriveBudgetMs({ klass: "changed" }),
+      label: "test:gate",
     });
     return;
   }
@@ -1327,7 +1430,11 @@ export function main(argv = process.argv.slice(2)) {
   // Run the gate under the same isolation guard as the affected set — a gate
   // suite leak must trip the checker, not silently become the "before" state
   // of the later run.
-  runMaybeIsolated("pnpm", ["test:gate"], { env: isolatedHomeEnv });
+  await runMaybeIsolated("pnpm", ["test:gate"], {
+    env: isolatedHomeEnv,
+    budgetMs: deriveBudgetMs({ klass: "changed" }),
+    label: "test:gate (pre-affected)",
+  });
 
   const filterArgs = activePackages.flatMap((pkg) => ["--filter", pkg]);
   console.log(`[test-changed] running tests for changed packages: ${activePackages.join(", ")}`);
@@ -1335,9 +1442,14 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`[test-changed] skipping cached packages: ${cachedPackages.join(", ")}`);
   }
 
-  runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
+  await runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
     env: isolatedHomeEnv,
     onBeforeAfterCheck: cleanupIsolatedHome,
+    // Affected sets can include dashboard (13 inner-watchdog'd lanes); use the
+    // generous full-suite backstop rather than the tight changed ceiling so a
+    // legitimately long local run is never false-killed.
+    budgetMs: FULL_SUITE_BUDGET_MS,
+    label: `affected: ${activePackages.join(", ")}`,
   });
 
   // Tests passed — record in cache (never cache failures; process.exit on failure above).
@@ -1353,12 +1465,11 @@ export function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     if (error?.exitCode) {
       process.exit(error.exitCode);
     }
-    throw error;
-  }
+    console.error(error);
+    process.exit(1);
+  });
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { GitHubTrackingReconciler, RECONCILE_CONCURRENCY_LIMIT } from "../github-tracking-reconciler.js";
 
@@ -34,6 +34,7 @@ function createStore(options: {
       .fn()
       .mockResolvedValue({ tasks: options.reconcileCandidates ?? [], hasMore: options.reconcileHasMore ?? false }),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    updateTask: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue(options.settings ?? { githubAuthMode: "token", githubAuthToken: "ghp_test" }),
     getGlobalSettingsStore: vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) })),
   } as unknown as TaskStore;
@@ -42,6 +43,10 @@ function createStore(options: {
 describe("GitHubTrackingReconciler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("closes open issues for done-column tracked tasks", async () => {
@@ -164,6 +169,78 @@ describe("GitHubTrackingReconciler", () => {
       expect(result).toMatchObject({ scanned: 3, closed: 3, skipped: 0, errors: 0 });
     });
 
+    it("persists the current close time after closing an open source issue", async () => {
+      vi.useFakeTimers({ now: new Date("2026-06-18T10:00:00.000Z") });
+      mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+      mockGetIssue.mockResolvedValue({ state: "open" });
+      const sourceIssue = { provider: "github", repository: "o/r", issueNumber: 1 };
+      const store = createStore({
+        settings: sourceSettings,
+        listTasks: [{ id: "FN-1", column: "done", sourceIssue }],
+      });
+
+      const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
+
+      expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "completed");
+      expect((store.updateTask as any)).toHaveBeenCalledWith("FN-1", {
+        sourceIssue: { ...sourceIssue, closedAt: "2026-06-18T10:00:00.000Z" },
+      });
+      expect(result).toMatchObject({ closed: 1, skipped: 0, errors: 0 });
+    });
+
+    it("backfills already-closed source issues with the GitHub closedAt without reclosing", async () => {
+      mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+      mockGetIssue.mockResolvedValue({ state: "closed", closedAt: "2026-06-01T12:00:00Z" });
+      const sourceIssue = { provider: "github", repository: "o/r", issueNumber: 7 };
+      const store = createStore({
+        settings: sourceSettings,
+        listTasks: [{ id: "FN-7", column: "done", sourceIssue }],
+      });
+
+      const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
+
+      expect(mockSetIssueState).not.toHaveBeenCalled();
+      expect((store.updateTask as any)).toHaveBeenCalledWith("FN-7", {
+        sourceIssue: { ...sourceIssue, closedAt: "2026-06-01T12:00:00Z" },
+      });
+      expect(result).toMatchObject({ closed: 0, skipped: 1, errors: 0 });
+    });
+
+    it("does not overwrite an existing source issue closedAt", async () => {
+      mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+      mockGetIssue.mockResolvedValue({ state: "closed", closedAt: "2026-06-01T12:00:00Z" });
+      const store = createStore({
+        settings: sourceSettings,
+        listTasks: [{
+          id: "FN-8",
+          column: "done",
+          sourceIssue: { provider: "github", repository: "o/r", issueNumber: 8, closedAt: "2026-01-01T00:00:00.000Z" },
+        }],
+      });
+
+      const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
+
+      expect(mockSetIssueState).not.toHaveBeenCalled();
+      expect((store.updateTask as any)).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ closed: 0, skipped: 1, errors: 0 });
+    });
+
+    it("logs but does not fail when persisting a source issue closedAt fails", async () => {
+      vi.useFakeTimers({ now: new Date("2026-06-18T10:00:00.000Z") });
+      mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+      mockGetIssue.mockResolvedValue({ state: "open" });
+      const store = createStore({
+        settings: sourceSettings,
+        listTasks: [{ id: "FN-9", column: "done", sourceIssue: { provider: "github", repository: "o/r", issueNumber: 9 } }],
+      });
+      (store.updateTask as any).mockRejectedValueOnce(new Error("db locked"));
+
+      const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
+
+      expect(result).toMatchObject({ closed: 1, errors: 0 });
+      expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Failed to persist GitHub source issue closed timestamp", "db locked");
+    });
+
     it("skips source issue reconciliation when close-on-done is disabled", async () => {
       const store = createStore({
         settings: { githubCloseSourceIssueOnDone: false, githubAuthMode: "token", githubAuthToken: "ghp_test" },
@@ -173,6 +250,7 @@ describe("GitHubTrackingReconciler", () => {
       const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
 
       expect(mockSetIssueState).not.toHaveBeenCalled();
+      expect((store.updateTask as any)).not.toHaveBeenCalled();
       expect(result).toEqual({ scanned: 1, closed: 0, skipped: 1, errors: 0 });
     });
   });

@@ -95,7 +95,7 @@
 
 .goals-card {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: var(--space-md);
   scroll-margin-top: var(--space-xl);
@@ -164,6 +164,79 @@
   gap: var(--space-sm);
 }
 
+.goals-linked-missions {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-left: var(--space-md);
+  border-left: calc(var(--space-xs) / 4) solid var(--border);
+}
+
+.goals-linked-missions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.goals-linked-missions-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+}
+
+.goals-linked-missions-count,
+.goals-linked-mission-status,
+.goals-linked-missions-empty {
+  color: var(--text-muted);
+}
+
+.goals-linked-missions-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.goals-linked-missions-picker {
+  flex: 1 1 calc(var(--space-xl) * 10);
+  min-width: 0;
+}
+
+.goals-linked-missions-link-button,
+.goals-linked-mission-chip,
+.goals-linked-mission-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.goals-linked-missions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.goals-linked-mission-chip {
+  gap: calc(var(--space-xs) / 2);
+  padding: calc(var(--space-xs) / 2);
+  border: calc(var(--space-xs) / 4) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+}
+
+.goals-linked-mission-link {
+  border-radius: var(--radius-pill);
+}
+
+.goals-linked-missions-empty {
+  margin: 0;
+}
+
 .goals-activate-button {
   min-width: calc(var(--space-2xl) * 2);
 }
@@ -184,8 +257,21 @@
   }
 
   .goals-form-actions,
-  .goals-card-actions {
+  .goals-card-actions,
+  .goals-linked-missions-controls {
     flex-direction: column;
+  }
+
+  .goals-linked-missions {
+    padding-left: 0;
+    padding-top: var(--space-md);
+    border-left: 0;
+    border-top: calc(var(--space-xs) / 4) solid var(--border);
+  }
+
+  .goals-linked-missions-link-button,
+  .goals-linked-missions-picker {
+    width: 100%;
   }
 
   .goals-card-description-collapsed {

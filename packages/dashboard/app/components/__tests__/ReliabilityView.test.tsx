@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ReliabilityView } from "../ReliabilityView";
@@ -165,6 +165,80 @@ describe("ReliabilityView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show empty days" }));
     expect(screen.getByText("2026-05-12")).toBeInTheDocument();
+  });
+
+  it("renders the in-review flow chart for populated reliability data", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    render(<ReliabilityView />);
+
+    await waitFor(() => expect(screen.getByRole("img", { name: "In-review entered vs bounced per day" })).toBeInTheDocument());
+    expect(within(screen.getByTestId("reliability-flow-chart")).queryByText("No in-review flow data")).not.toBeInTheDocument();
+  });
+
+  it("renders the merge-attempts chart for populated reliability data", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    render(<ReliabilityView />);
+
+    await waitFor(() => expect(screen.getByRole("img", { name: "Merge attempts histogram" })).toBeInTheDocument());
+    expect(within(screen.getByTestId("reliability-merge-attempts-chart")).queryByText("No merge attempt data")).not.toBeInTheDocument();
+  });
+
+  it("renders chart empty states without throwing when reliability series are empty", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...baseResponse,
+        headline: { inReviewFailureRate7d: null, reason: "no-in-review-entries" },
+        perDay: [],
+        mergeAttempts: { mean: null, max: null, histogram: {}, reason: "no-audit-coverage" },
+      }),
+    } as Response);
+
+    render(<ReliabilityView />);
+
+    await waitFor(() => expect(screen.getByRole("img", { name: "In-review entered vs bounced per day" })).toBeInTheDocument());
+    expect(screen.getByRole("img", { name: "Merge attempts histogram" })).toBeInTheDocument();
+    expect(screen.getByText("No in-review flow data")).toBeInTheDocument();
+    expect(screen.getByText("No merge attempt data")).toBeInTheDocument();
+  });
+
+  it("keeps the flow chart source consistent with the Show empty days table toggle", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...baseResponse,
+        perDay: [
+          {
+            date: "2026-05-12",
+            tasksEnteredInReview: 4,
+            tasksBouncedToInProgress: 1,
+            postMergeAuditFailures: null,
+            fileScopeInvariantFailures: null,
+            recoverAlreadyMergedReviewTasksRecoveries: null,
+            hasSamples: false,
+          },
+          {
+            date: "2026-05-13",
+            tasksEnteredInReview: 0,
+            tasksBouncedToInProgress: 0,
+            postMergeAuditFailures: null,
+            fileScopeInvariantFailures: null,
+            recoverAlreadyMergedReviewTasksRecoveries: null,
+            hasSamples: true,
+          },
+        ],
+      }),
+    } as Response);
+
+    render(<ReliabilityView />);
+
+    await waitFor(() => expect(screen.getByText("2026-05-13")).toBeInTheDocument());
+    expect(screen.queryByText("2026-05-12")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("reliability-flow-chart")).getByText("No in-review flow data")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show empty days" }));
+    expect(screen.getByText("2026-05-12")).toBeInTheDocument();
+    expect(within(screen.getByTestId("reliability-flow-chart")).queryByText("No in-review flow data")).not.toBeInTheDocument();
   });
 
   it("opens reset modal and confirms reset with refetch", async () => {

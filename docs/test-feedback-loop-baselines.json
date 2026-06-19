@@ -1,0 +1,122 @@
+{
+  "baselines": [
+    {
+      "capturedAt": "2026-06-18T02:11:11.998Z",
+      "cycle": "2026-W25",
+      "gateWallTimeMs": 7200,
+      "pnpmTestWallTimeMs": 36900,
+      "timingSnapshotCapturedAt": "2026-06-03T23:45:49.672Z",
+      "slowest20": [
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts",
+          "durationMs": 13900
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "durationMs": 11600
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/src/__tests__/routes-agents.test.ts",
+          "durationMs": 11200
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "durationMs": 10700
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "durationMs": 10100
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/src/__tests__/routes-git.test.ts",
+          "durationMs": 9400
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts",
+          "durationMs": 9000
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/merger-ai.test.ts",
+          "durationMs": 8700
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts",
+          "durationMs": 8400
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts",
+          "durationMs": 8400
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/task-documents.test.ts",
+          "durationMs": 8300
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "durationMs": 7800
+        },
+        {
+          "packageName": "@runfusion/fusion",
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "durationMs": 7000
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/run-audit.test.ts",
+          "durationMs": 6900
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts",
+          "durationMs": 6100
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/src/__tests__/routes-planning.test.ts",
+          "durationMs": 5600
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/store-merge-queue.test.ts",
+          "durationMs": 5200
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/FileEditor.test.tsx",
+          "durationMs": 5100
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts",
+          "durationMs": 4900
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts",
+          "durationMs": 4900
+        }
+      ],
+      "flakeCount": 5,
+      "uniqueQuarantinedFileCount": 4,
+      "quarantinedFiles": [
+        "packages/core/src/__tests__/task-list-format.test.ts",
+        "packages/core/src/__tests__/test-project.test.ts",
+        "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+        "plugins/fusion-plugin-compound-engineering/src/__tests__/work-bridge.test.ts"
+      ],
+      "notes": "FN-6612 first-cycle publication artifact measured in this worktree: pnpm test:gate 7.2s; pnpm test 36.9s."
+    }
+  ]
+}

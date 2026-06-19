@@ -1336,7 +1336,10 @@ describe("createFnAgent", () => {
       "/tmp",
       "/tmp/.fusion/disabled-auto-extension-discovery",
     );
-    expect(registerProviderMock).toHaveBeenCalledWith("zai", expect.objectContaining({
+    expect(registerProviderMock).toHaveBeenNthCalledWith(1, "zai", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
+    }));
+    expect(registerProviderMock).toHaveBeenNthCalledWith(2, "zai", expect.objectContaining({
       models: [{ id: "glm-5.1" }],
     }));
     expect(refreshMock).toHaveBeenCalled();

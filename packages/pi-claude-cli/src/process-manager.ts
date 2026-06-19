@@ -6,7 +6,7 @@
  * Also provides startup validation for CLI presence and authentication.
  */
 
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -209,46 +209,14 @@ export function captureStderr(proc: ChildProcess): () => string {
 }
 
 /**
- * Validate that the Claude CLI is installed and on PATH.
- * Throws with install instructions if not found.
- */
-export function validateCliPresence(): void {
-  try {
-    execSync("claude --version", { stdio: "pipe", timeout: 5000 });
-  } catch {
-    throw new Error(
-      "Claude Code CLI not found. Install it: npm install -g @anthropic-ai/claude-code\n" +
-        "Then authenticate: claude auth login",
-    );
-  }
-}
-
-/**
- * Validate that the Claude CLI is authenticated.
- * Returns false and warns if not authenticated.
- *
- * @returns true if authenticated, false otherwise
- */
-export function validateCliAuth(): boolean {
-  try {
-    execSync("claude auth status", { stdio: "pipe", timeout: 5000 });
-    return true;
-  } catch {
-    console.warn(
-      "[pi-claude-cli] Claude CLI is not authenticated. " +
-        "Run 'claude auth login' to authenticate.",
-    );
-    return false;
-  }
-}
-
-/**
  * Run a one-shot `claude <args>` and resolve to the exit code.
  *
- * Why: the sync execSync variants block the Node event loop for the duration
- * of a Claude CLI cold start (1–3s, occasionally longer). When pi-claude-cli's
+ * FNXC:CliRuntime 2026-06-15-07:35:
+ * Third-party CLI presence/auth probes must be non-blocking in Fusion request and session-startup paths. Use spawn-based probes here because synchronous shell probes freeze the dashboard event loop during CLI cold start.
+ *
+ * Why: a Claude CLI cold start can take 1–3s, occasionally longer. When pi-claude-cli's
  * factory is invoked from a per-request createFnAgent path (Fusion dashboard
- * does this on every chat send), those sync probes freeze every other request.
+ * does this on every chat send), sync probes freeze every other request.
  * This async variant uses spawn so the loop keeps turning while the subprocess
  * starts up.
  */

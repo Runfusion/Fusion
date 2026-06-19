@@ -6,6 +6,16 @@ import type { TaskStore } from "@fusion/core";
 import { createApiRoutes } from "../routes.js";
 import { request as performRequest, get as performGet } from "../test-request.js";
 
+const terminalServiceMock = vi.hoisted(() => ({
+  createSession: vi.fn(),
+  waitForReady: vi.fn(),
+  writeInput: vi.fn(),
+}));
+
+vi.mock("../terminal-service.js", () => ({
+  getTerminalService: vi.fn(() => terminalServiceMock),
+}));
+
 function createMockGlobalSettingsStore() {
   return {
     getSettings: vi.fn().mockResolvedValue({}),
@@ -84,6 +94,12 @@ describe("Scripts routes", () => {
   beforeEach(() => {
     store = createMockStore();
     vi.clearAllMocks();
+    terminalServiceMock.createSession.mockResolvedValue({
+      success: true,
+      session: { id: "term-script" },
+    });
+    terminalServiceMock.waitForReady.mockResolvedValue(undefined);
+    terminalServiceMock.writeInput.mockReturnValue(true);
   });
 
   function buildApp() {
@@ -201,5 +217,43 @@ describe("Scripts routes", () => {
 
     expect(res.status).toBe(200);
     expect(store.updateSettings).toHaveBeenCalledWith({ scripts: {} });
+  });
+
+  it("POST /api/scripts/:name/run defers command write until terminal readiness", async () => {
+    vi.mocked(store.getSettings).mockResolvedValueOnce({ scripts: { build: "pnpm build" } } as any);
+    let resolveReady!: () => void;
+    terminalServiceMock.waitForReady.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveReady = resolve;
+      }),
+    );
+
+    const responsePromise = REQUEST(
+      buildApp(),
+      "POST",
+      "/api/scripts/build/run",
+      JSON.stringify({ args: ["--filter", "@fusion/dashboard"] }),
+      { "Content-Type": "application/json" },
+    );
+
+    await vi.waitFor(() => {
+      expect(terminalServiceMock.waitForReady).toHaveBeenCalledWith("term-script");
+    });
+    expect(terminalServiceMock.writeInput).not.toHaveBeenCalled();
+
+    resolveReady();
+    const res = await responsePromise;
+
+    expect(res.status).toBe(201);
+    expect(terminalServiceMock.createSession).toHaveBeenCalledWith({ cwd: "/fake/root" });
+    expect(terminalServiceMock.writeInput).toHaveBeenCalledTimes(1);
+    expect(terminalServiceMock.writeInput).toHaveBeenCalledWith(
+      "term-script",
+      'pnpm build "--filter" "@fusion/dashboard"\n',
+    );
+    expect(res.body).toEqual({
+      sessionId: "term-script",
+      command: 'pnpm build "--filter" "@fusion/dashboard"',
+    });
   });
 });

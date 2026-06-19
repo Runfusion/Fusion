@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Edge as FlowEdge, Node as FlowNode } from "@xyflow/react";
-import { buildMobileWorkflowGraph } from "../workflow-mobile-graph";
+import { buildMobileWorkflowGraph, reorderWorkflowNode } from "../workflow-mobile-graph";
 import type { WorkflowFlowNodeData } from "../nodes/WorkflowNodeTypes";
 import { columnBandNodeId, foreachChildFlowId } from "../workflow-flow-mapping";
 
@@ -29,6 +29,79 @@ function edge(id: string, source: string, target: string, condition = "success")
     data: { condition },
   };
 }
+
+function rowOrder(nodes: FlowNode<WorkflowFlowNodeData>[]): string[] {
+  return buildMobileWorkflowGraph(nodes, []).map((row) => row.id);
+}
+
+describe("reorderWorkflowNode", () => {
+  it("swaps adjacent editable top-level siblings in the same column and re-derives the new order", () => {
+    const nodes = [
+      node("a", "prompt", 0, 0, { data: { kind: "prompt", label: "A", column: "todo" } }),
+      node("b", "script", 0, 80, { data: { kind: "script", label: "B", column: "todo" } }),
+      node("c", "gate", 0, 160, { data: { kind: "gate", label: "C", column: "todo" } }),
+    ];
+
+    const reordered = reorderWorkflowNode(nodes, "b", "up");
+
+    expect(rowOrder(reordered)).toEqual(["b", "a", "c"]);
+    expect(reordered.find((n) => n.id === "b")?.position).toEqual({ x: 0, y: 0 });
+    expect(reordered.find((n) => n.id === "a")?.position).toEqual({ x: 0, y: 80 });
+  });
+
+  it("does not move past same-group boundaries", () => {
+    const nodes = [
+      node("a", "prompt", 0, 0, { data: { kind: "prompt", label: "A", column: "todo" } }),
+      node("b", "script", 0, 80, { data: { kind: "script", label: "B", column: "todo" } }),
+    ];
+
+    expect(reorderWorkflowNode(nodes, "a", "up")).toBe(nodes);
+    expect(reorderWorkflowNode(nodes, "b", "down")).toBe(nodes);
+  });
+
+  it("does not move top-level nodes across column groups", () => {
+    const nodes = [
+      node("todo-a", "prompt", 0, 0, { data: { kind: "prompt", label: "A", column: "todo" } }),
+      node("doing-a", "script", 0, 80, { data: { kind: "script", label: "B", column: "doing" } }),
+    ];
+
+    expect(reorderWorkflowNode(nodes, "todo-a", "down")).toBe(nodes);
+    expect(rowOrder(reorderWorkflowNode(nodes, "doing-a", "up"))).toEqual(["todo-a", "doing-a"]);
+  });
+
+  it("reorders template children only within the same parent", () => {
+    const first = foreachChildFlowId("each", "first");
+    const second = foreachChildFlowId("each", "second");
+    const other = foreachChildFlowId("other", "first");
+    const nodes = [
+      node("each", "foreach", 0, 0, { data: { kind: "foreach", label: "Each" } }),
+      node(first, "prompt", 20, 60, { parentId: "each", data: { kind: "prompt", label: "First" } }),
+      node(second, "script", 20, 120, { parentId: "each", data: { kind: "script", label: "Second" } }),
+      node("other", "loop", 0, 200, { data: { kind: "loop", label: "Other" } }),
+      node(other, "prompt", 20, 60, { parentId: "other", data: { kind: "prompt", label: "Other child" } }),
+    ];
+
+    const rows = buildMobileWorkflowGraph(reorderWorkflowNode(nodes, second, "up"), []);
+
+    expect(rows.find((row) => row.id === "each")?.children.map((child) => child.id)).toEqual([second, first]);
+    expect(rows.find((row) => row.id === "other")?.children.map((child) => child.id)).toEqual([other]);
+  });
+
+  it("refuses to reorder non-editable nodes or swap with a non-editable neighbor", () => {
+    const nodes = [
+      node("start", "start", 0, 0, { data: { kind: "start", label: "Start", column: "todo" } }),
+      node("step", "prompt", 0, 80, { data: { kind: "prompt", label: "Step", column: "todo" } }),
+      node(columnBandNodeId("todo"), "start", -40, 0, {
+        type: "group",
+        data: { kind: "start", label: "Todo", column: "todo" },
+      }),
+    ];
+
+    expect(reorderWorkflowNode(nodes, "start", "down")).toBe(nodes);
+    expect(reorderWorkflowNode(nodes, "step", "up")).toBe(nodes);
+    expect(reorderWorkflowNode(nodes, columnBandNodeId("todo"), "down")).toBe(nodes);
+  });
+});
 
 describe("buildMobileWorkflowGraph", () => {
   it("returns ordered linear rows with outgoing edge destinations", () => {

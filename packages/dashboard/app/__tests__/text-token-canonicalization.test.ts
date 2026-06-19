@@ -1,4 +1,4 @@
-// Regression guard for FN-4286 follow-up to FN-4195: prevent reintroducing undefined --text-secondary.
+// Regression guard for FN-4286/FN-6688: prevent reintroducing undefined primary/secondary text aliases.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -38,13 +38,27 @@ describe("text token canonicalization", () => {
     expect(offenders, `Unexpected --text-secondary references in: ${offenders.join(", ")}`).toEqual([]);
   });
 
-  it("defines canonical text tokens and does not define --text-secondary at :root", () => {
+  it("keeps --text-primary out of dashboard source files outside command-center", () => {
+    const offenders: string[] = [];
+    for (const relPath of collectSourceFiles(APP_ROOT)) {
+      if (relPath.startsWith("components/command-center/")) continue;
+      if (ALLOWLIST.has(relPath)) continue;
+      const content = readFileSync(path.join(APP_ROOT, relPath), "utf8");
+      if (content.includes("--text-primary")) offenders.push(relPath);
+    }
+
+    expect(offenders, `Unexpected --text-primary references in: ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  it("defines canonical text tokens and does not define legacy text aliases at :root", () => {
     const stylesCss = loadStylesCss();
     const rootBlocks = [...stylesCss.matchAll(/:root\s*\{([\s\S]*?)\}/g)].map((match) => match[1]);
     expect(rootBlocks.length).toBeGreaterThan(0);
     const allRootContent = rootBlocks.join("\n");
 
+    expect(allRootContent).not.toMatch(/^\s*--text-primary\s*:/m);
     expect(allRootContent).not.toMatch(/^\s*--text-secondary\s*:/m);
+    expect(allRootContent).toMatch(/^\s*--text\s*:/m);
     expect(allRootContent).toMatch(/^\s*--text-muted\s*:/m);
     expect(allRootContent).toMatch(/^\s*--text-dim\s*:/m);
   });

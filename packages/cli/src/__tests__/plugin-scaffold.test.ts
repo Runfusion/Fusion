@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { validatePluginManifest } from "@fusion/plugin-sdk";
 import { resolvePluginEntryFile } from "../commands/plugin.js";
 import { runPluginCreate, runPluginNew } from "../commands/plugin-scaffold.js";
+import {
+  standaloneScaffoldPluginFixture,
+  verifyStandaloneScaffoldPluginFixture,
+} from "../type-guards/plugin-scaffold-fusion-plugin.js";
 
 describe("plugin-scaffold", () => {
   const tmpBase = join(tmpdir(), `fn-scaffold-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -15,6 +19,13 @@ describe("plugin-scaffold", () => {
     "vitest",
   ];
   const caretRangePattern = /^\^\d+\.\d+\.\d+$/;
+
+  function expectStandaloneIndexInvariants(indexContents: string): void {
+    expect(indexContents).toContain('import { definePlugin } from "@runfusion/fusion/plugin-sdk";');
+    expect(indexContents).toContain('state: "installed"');
+    expect(indexContents).not.toContain("@fusion/");
+    expect(indexContents).not.toContain("workspace:");
+  }
 
   beforeEach(() => {
     mkdirSync(tmpBase, { recursive: true });
@@ -90,8 +101,7 @@ describe("plugin-scaffold", () => {
       const readmeContents = readFileSync(join(outputDir, "README.md"), "utf-8");
       expect(packageContents).not.toContain("@fusion/");
       expect(packageContents).not.toContain("workspace:");
-      expect(indexContents).not.toContain("@fusion/");
-      expect(indexContents).not.toContain("workspace:");
+      expectStandaloneIndexInvariants(indexContents);
       expect(readmeContents).toContain("fn plugin dev .");
       expect(readmeContents).toContain("fn plugin dev . --once");
 
@@ -118,6 +128,14 @@ describe("plugin-scaffold", () => {
       };
       expect(packageJson.name).toBe("@acme/fusion-plugin-scoped-plugin");
       expect(Object.keys(packageJson.devDependencies)).toEqual(standaloneDevDependencyKeys);
+
+      const indexContents = readFileSync(join(outputDir, "src/index.ts"), "utf-8");
+      expectStandaloneIndexInvariants(indexContents);
+    });
+
+    it("keeps the standalone scaffold shape assignable to FusionPlugin", () => {
+      // The runtime identity assertion is intentionally small; the regression value is the tsc guard in the imported fixture.
+      expect(verifyStandaloneScaffoldPluginFixture()).toBe(standaloneScaffoldPluginFixture);
     });
 
     it("rejects invalid plugin names", async () => {

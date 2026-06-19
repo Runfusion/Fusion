@@ -882,7 +882,7 @@
 .mission-list__item-run-help {
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
-  max-width: calc(var(--space-3xl) * 5);
+  max-width: calc(calc(var(--space-2xl) + var(--space-md)) * 5);
 }
 
 .mission-list__item-summary {
@@ -1096,6 +1096,24 @@
   font-weight: 600;
 }
 
+.mission-detail__linked-goal-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.mission-detail__linked-goal-picker {
+  flex: 1 1 calc(var(--space-xl) * 10);
+  min-width: 0;
+}
+
+.mission-detail__linked-goal-link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .mission-detail__linked-goals-list {
   display: flex;
   flex-wrap: wrap;
@@ -1105,7 +1123,19 @@
 .mission-detail__linked-goal-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
+  gap: calc(var(--space-xs) / 2);
+  padding: calc(var(--space-xs) / 2);
+  border: calc(var(--space-xs) / 4) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+}
+
+.mission-detail__linked-goal-chip-link {
+  border-radius: var(--radius-pill);
+}
+
+.mission-detail__linked-goal-unlink {
+  flex: 0 0 auto;
 }
 
 .mission-detail__linked-goals-empty {
@@ -1297,9 +1327,9 @@
 }
 
 .mission-detail__tab--active {
-  background: var(--button-primary-bg);
-  color: var(--button-primary-text);
-  border-color: var(--button-primary-bg);
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
 }
 
 .mission-detail__activity {
@@ -2560,8 +2590,14 @@
   }
 
   .mission-detail__linked-goals-header,
+  .mission-detail__linked-goal-controls,
   .mission-detail__linked-goals-list {
     align-items: stretch;
+  }
+
+  .mission-detail__linked-goal-controls,
+  .mission-detail__linked-goal-link-button {
+    width: 100%;
   }
 
   .mission-detail__run-help,

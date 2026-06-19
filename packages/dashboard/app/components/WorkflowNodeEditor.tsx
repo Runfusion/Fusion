@@ -60,6 +60,7 @@ import {
   fieldsOf,
   settingsOf,
   columnsToBandNodes,
+  reconcileNodeColumns,
   strictColumnForY,
   validateColumnsClient,
   unplacedNodeIds,
@@ -84,7 +85,12 @@ import { WorkflowSettingsPanel } from "./WorkflowSettingsPanel";
 import type { WorkflowFieldDefinition, WorkflowSettingDefinition } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { MobileWorkflowGraphView } from "./MobileWorkflowGraphView";
-import { buildMobileWorkflowGraph } from "./workflow-mobile-graph";
+import {
+  buildMobileWorkflowGraph,
+  reorderWorkflowNode,
+  type MobileWorkflowConnectionTarget,
+  type WorkflowNodeReorderDirection,
+} from "./workflow-mobile-graph";
 
 type ExecutorKind = "model" | "agent" | "skill" | "cli" | "cli-agent";
 type MobileWorkflowPanel = "graph" | "add" | "settings" | "fields" | "columns" | "actions";
@@ -1220,10 +1226,12 @@ function InnerEditor({
   // Keep the swimlane band group nodes in sync with the authored columns
   // (add/rename/reorder via the column panel). Step nodes are preserved; only
   // the band nodes are replaced.
+  // FNXC:WorkflowEditor 2026-06-16-23:24:
+  // FN-6525 requires the column-sync pass to clear stale node.column ids after delete-all-then-re-add, because the re-added Todo column receives a generated id and parseWorkflowIr rejects the old structural start-node reference.
   useEffect(() => {
     setNodes((ns) => {
       const stepNodes = ns.filter((n) => !isColumnBandNode(n.id) && n.type !== "group");
-      return [...columnsToBandNodes(columns), ...stepNodes];
+      return [...columnsToBandNodes(columns), ...reconcileNodeColumns(stepNodes, columns)];
     });
   }, [columns, setNodes]);
 
@@ -1231,8 +1239,8 @@ function InnerEditor({
   // which dedupes on source/target/handles and would block parallel
   // success+failure edges between the same pair (KTD-3). buildConnectionEdge
   // reimplements addEdge's sanity guards plus the author-time cycle guard (KTD-9).
-  const onConnect = useCallback(
-    (connection: Connection) => {
+  const createConnectionEdge = useCallback(
+    (connection: Connection, options: { selectCreatedEdge?: boolean } = {}) => {
       const result = buildConnectionEdge(connection, edges, nodes);
       if ("error" in result) {
         if (result.error === "cycle") {
@@ -1243,12 +1251,47 @@ function InnerEditor({
             ),
             "warning",
           );
+        } else if (result.error === "duplicate") {
+          addToast(
+            t("workflowNodes.duplicateBlocked", "That connection already exists"),
+            "warning",
+          );
         }
         return;
       }
       setEdges((eds) => [...eds, result.edge]);
+      if (options.selectCreatedEdge) {
+        setSelectedEdgeId(result.edge.id);
+        setSelectedNodeId(null);
+        setInspectorCollapsed(false);
+      }
     },
     [edges, nodes, setEdges, addToast, t],
+  );
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      createConnectionEdge(connection);
+    },
+    [createConnectionEdge],
+  );
+
+  const onCreateSimpleConnection = useCallback(
+    (source: string, target: string) => {
+      createConnectionEdge({ source, target, sourceHandle: null, targetHandle: null }, { selectCreatedEdge: true });
+    },
+    [createConnectionEdge],
+  );
+
+  /**
+   * FNXC:WorkflowSimpleEditor 2026-06-17-03:08:
+   * Custom-workflow simple editors need read-only-safe reordering without a canvas drag gesture. Swap sibling node positions through the shared mobile graph helper so built-ins stay gated, selection remains untouched, and the existing IR save path persists the new position-derived order.
+   */
+  const onMoveSimpleNode = useCallback(
+    (nodeId: string, direction: WorkflowNodeReorderDirection) => {
+      setNodes((ns) => reorderWorkflowNode(ns, nodeId, direction));
+    },
+    [setNodes],
   );
 
   // Dragging a step node into a column band sets node.column (position-based
@@ -1874,10 +1917,11 @@ function InnerEditor({
   }, [nodes, unplaced, serverNodeError, t]);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
-  const selectedNodeHasInspector =
-    selectedNode !== null &&
-    selectedNode.data.kind !== "start" &&
-    selectedNode.data.kind !== "end";
+  /**
+   * FNXC:WorkflowEditor 2026-06-17-00:20:
+   * The structural start node needs an inspector because its entry column is editable and persisted in the workflow IR. Keep end structural-only until it has a meaningful editable property.
+   */
+  const selectedNodeHasInspector = selectedNode !== null && selectedNode.data.kind !== "end";
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
   const mobileNodeDetailStage = isMobileMode && selectedNodeHasInspector && !inspectorCollapsed;
   const mobileEdgeDetailStage = isMobileMode && selectedEdge !== null;
@@ -1971,10 +2015,40 @@ function InnerEditor({
     }),
     [models, agents, skills],
   );
-  const mobileGraphRows = useMemo(
-    () => buildMobileWorkflowGraph(nodesForRender, edges, columns, catalogs, t),
-    [nodesForRender, edges, columns, catalogs, t],
-  );
+  const mobileConnectionTargetsBySource = useMemo(() => {
+    const targetNodes = nodesForRender
+      .filter((node) => !isColumnBandNode(node.id) && node.data.kind !== "start")
+      .map((node): MobileWorkflowConnectionTarget => ({
+        id: node.id,
+        label: node.data.label || node.id,
+        kind: node.data.kind,
+      }));
+
+    const targetsBySource = new Map<string, MobileWorkflowConnectionTarget[]>();
+    for (const source of nodesForRender) {
+      if (
+        isColumnBandNode(source.id)
+        || source.data.kind === "start"
+        || source.data.kind === "end"
+      ) {
+        continue;
+      }
+      const targets = targetNodes.filter((target) => target.id !== source.id);
+      if (targets.length > 0) targetsBySource.set(source.id, targets);
+    }
+    return targetsBySource;
+  }, [nodesForRender]);
+
+  const mobileGraphRows = useMemo(() => {
+    const attachConnectionTargets = (rows: ReturnType<typeof buildMobileWorkflowGraph>): ReturnType<typeof buildMobileWorkflowGraph> =>
+      rows.map((row) => ({
+        ...row,
+        connectionTargets: isBuiltin ? [] : mobileConnectionTargetsBySource.get(row.id) ?? [],
+        children: attachConnectionTargets(row.children),
+      }));
+
+    return attachConnectionTargets(buildMobileWorkflowGraph(nodesForRender, edges, columns, catalogs, t));
+  }, [nodesForRender, edges, columns, catalogs, t, isBuiltin, mobileConnectionTargetsBySource]);
 
   const currentExecutor = (selectedNode?.data.config?.executor as ExecutorKind | undefined) ?? "model";
 
@@ -2517,6 +2591,9 @@ function InnerEditor({
                             setSelectedEdgeId(id);
                             setSelectedNodeId(null);
                           }}
+                          onCreateConnection={isBuiltin ? undefined : onCreateSimpleConnection}
+                          canReorder={!isBuiltin}
+                          onMoveNode={onMoveSimpleNode}
                         />
                       )}
 
@@ -3068,7 +3145,6 @@ function InnerEditor({
                   {isMobileMode &&
                     inspectorCollapsed &&
                     selectedNode &&
-                    selectedNode.data.kind !== "start" &&
                     selectedNode.data.kind !== "end" && (
                       <button
                         type="button"
@@ -3179,13 +3255,46 @@ function InnerEditor({
                 </p>
               )}
               <fieldset className="wf-inspector-fields" disabled={isBuiltin}>
-              <label className="wf-field">
-                <span>Name</span>
-                <input
-                  value={selectedNode.data.label}
-                  onChange={(e) => updateSelectedData({ label: e.target.value })}
-                />
-              </label>
+              {/* FNXC:WorkflowEditor 2026-06-17-00:20: Start labels are structural and ignored by flowToIr, so exposing the generic Name editor would create a no-op rename. */}
+              {selectedNode.data.kind !== "start" && (
+                <label className="wf-field">
+                  <span>Name</span>
+                  <input
+                    value={selectedNode.data.label}
+                    onChange={(e) => updateSelectedData({ label: e.target.value })}
+                  />
+                </label>
+              )}
+              {selectedNode.data.kind === "start" && (
+                <div data-testid="wf-start-inspector">
+                  {/* FNXC:WorkflowEditor 2026-06-17-00:20: The start node's entry column persists as node.column in v2 IR and determines the board column a task enters. Only render the selector when columns exist so v1 workflows keep a meaningful note without an empty control. */}
+                  <p className="wf-inspector-note wf-inspector-note--info">
+                    {t(
+                      "workflowNodes.startNote",
+                      "The start node marks where a task enters the workflow.",
+                    )}
+                  </p>
+                  {columns.length > 0 && (
+                    <label className="wf-field">
+                      <span>{t("workflowNodes.startEntryColumn", "Entry column")}</span>
+                      <select
+                        data-testid="wf-start-entry-column"
+                        value={String(selectedNode.data.column ?? "")}
+                        onChange={(e) => updateSelectedData({ column: e.target.value || undefined })}
+                      >
+                        <option value="">
+                          {t("workflowNodes.startEntryColumnAuto", "— Auto (first column)")}
+                        </option>
+                        {columns.map((col) => (
+                          <option key={col.id} value={col.id}>
+                            {col.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )}
               </fieldset>
 
               {selectedNode.data.kind === "prompt" || selectedNode.data.kind === "gate" ? (

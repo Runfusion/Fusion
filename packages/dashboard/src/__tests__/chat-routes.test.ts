@@ -1181,14 +1181,11 @@ describe("Chat API Routes", () => {
     it("returns 400 for multipart requests missing content instead of crashing", async () => {
       mockGetSession.mockReturnValue(sampleSession);
 
-      const { payload, boundary } = makeMultipartMessageRequest({
-        files: [{
-          fieldName: "attachments",
-          filename: "note.txt",
-          contentType: "text/plain",
-          body: Buffer.from("hello"),
-        }],
-      });
+      /**
+       * FNXC:Chat 2026-06-18-06:34:
+       * FN-6637 keeps this regression test aligned with the register-chat-routes.ts FNXC:Chat 2026-06-17-02:12 invariant: attachment-only multipart sends are valid, so the 400 no-SSE path must omit both text content and files.
+       */
+      const { payload, boundary } = makeMultipartMessageRequest({});
 
       const response = await request(
         app,

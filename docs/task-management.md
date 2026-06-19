@@ -97,7 +97,9 @@ Near-duplicate flagging now keeps the task in its normal flow column (`todo` / a
 - optional `source.sourceMetadata.nearDuplicateDismissed = true` after user chooses Keep
 - activity event `task:near-duplicate-flagged`
 
-Dashboard surfaces this as a yellow Duplicate chip plus modal actions:
+A near-duplicate flag is only actionable while the canonical task is active. The triage backstop does not persist `nearDuplicateOf` for archived, soft-deleted, done, or missing canonicals; when a canonical later becomes inactive through archive, soft-delete, or move-to-done, the store clears `nearDuplicateOf`, `nearDuplicateScore`, `nearDuplicateSharedTokens`, and `nearDuplicateDismissed` from active referrers and records an informational log entry without pausing or failing those tasks.
+
+Dashboard surfaces this as a yellow Duplicate chip plus modal actions only while the canonical exists and is active:
 
 - **Archive** (user-initiated archive path)
 - **Keep** (dismisses the warning by setting `nearDuplicateDismissed: true`)
@@ -194,6 +196,8 @@ For full Todo View behavior (enablement, list/item actions, API routes, and stor
 Use the 🌳 button:
 
 - Generate 2–5 candidate subtasks
+- Shows live thinking/progress immediately while generation runs, before the candidate list is ready
+- Send the run to the background or close the dialog without canceling it; use the background-session indicator to resume running, waiting, or completed breakdowns
 - Drag to reorder
 - Add dependencies only on earlier items
 - Set each subtask's **Priority** (`low`, `normal`, `high`, `urgent`) before create

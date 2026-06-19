@@ -887,6 +887,50 @@ describe("GitHubImportModal", () => {
       return rendered;
     };
 
+    const renderWithEmptyIssues = async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([]);
+
+      const rendered = render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("No open issues found")).toBeTruthy();
+      });
+
+      return rendered;
+    };
+
+    const renderWithPulls = async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([
+        { number: 7, title: "Resize Test Pull", body: "Pull body", html_url: "https://github.com/owner/repo/pull/7", headBranch: "feature", baseBranch: "main" },
+      ]);
+
+      const rendered = render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      fireEvent.click(screen.getByRole("tab", { name: /Pull Requests/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Resize Test Pull")).toBeTruthy();
+      });
+
+      return rendered;
+    };
+
+    const stubPointerCapture = (handle: HTMLElement) => {
+      handle.setPointerCapture = vi.fn();
+      handle.releasePointerCapture = vi.fn();
+      handle.hasPointerCapture = vi.fn(() => true);
+    };
+
+    const dragHandle = (handle: HTMLElement, startX: number, endX: number) => {
+      stubPointerCapture(handle);
+      fireEvent.pointerDown(handle, { pointerId: 1, clientX: startX });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: endX });
+      fireEvent.pointerUp(document, { pointerId: 1, clientX: endX });
+    };
+
     beforeEach(() => {
       window.localStorage.removeItem("fusion:github-import-list-pane-width");
       setViewportWidth(1200);
@@ -897,17 +941,62 @@ describe("GitHubImportModal", () => {
       setViewportWidth(originalInnerWidth);
     });
 
-    it("renders handle on desktop and hides it on mobile", async () => {
+    it("renders handle only in the side-by-side two-pane band", async () => {
       await renderWithIssues();
       expect(screen.getByTestId("github-import-resize-handle")).toBeTruthy();
+      expect(screen.getByTestId("github-import-list-pane").getAttribute("style")).toContain("flex: 0 0 360px");
+
+      setViewportWidth(800);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("github-import-resize-handle")).toBeNull();
+      });
+      expect(screen.getByTestId("github-import-list-pane").getAttribute("style") ?? "").not.toContain("flex: 0 0");
 
       setViewportWidth(480);
 
       await waitFor(() => {
         expect(screen.queryByTestId("github-import-resize-handle")).toBeNull();
       });
+      expect(screen.getByTestId("github-import-list-pane").getAttribute("style") ?? "").not.toContain("flex: 0 0");
     });
 
+    it("resizes the list pane with pointer drags and clamps to bounds", async () => {
+      await renderWithIssues();
+      const handle = screen.getByTestId("github-import-resize-handle");
+      const listPane = screen.getByTestId("github-import-list-pane");
+
+      dragHandle(handle, 100, 160);
+      expect(handle.getAttribute("aria-valuenow")).toBe("420");
+      expect(listPane.getAttribute("style")).toContain("flex: 0 0 420px");
+
+      dragHandle(handle, 160, 120);
+      expect(handle.getAttribute("aria-valuenow")).toBe("380");
+      expect(listPane.getAttribute("style")).toContain("flex: 0 0 380px");
+
+      dragHandle(handle, 120, -200);
+      expect(handle.getAttribute("aria-valuenow")).toBe("240");
+      expect(listPane.getAttribute("style")).toContain("flex: 0 0 240px");
+
+      dragHandle(handle, -200, 700);
+      expect(handle.getAttribute("aria-valuenow")).toBe("640");
+      expect(listPane.getAttribute("style")).toContain("flex: 0 0 640px");
+    });
+
+    it("renders the desktop handle regardless of list content or active tab", async () => {
+      const mounted = await renderWithEmptyIssues();
+      expect(screen.getByTestId("github-import-resize-handle")).toBeTruthy();
+      expect(screen.getByTestId("github-import-list-pane").getAttribute("style")).toContain("flex: 0 0 360px");
+      mounted.unmount();
+
+      vi.clearAllMocks();
+      window.localStorage.removeItem("fusion:github-import-list-pane-width");
+      setViewportWidth(1200);
+
+      await renderWithPulls();
+      expect(screen.getByTestId("github-import-resize-handle")).toBeTruthy();
+      expect(screen.getByTestId("github-import-list-pane").getAttribute("style")).toContain("flex: 0 0 360px");
+    });
     it.each([
       [{ key: "ArrowRight" }, 370],
       [{ key: "ArrowLeft" }, 350],

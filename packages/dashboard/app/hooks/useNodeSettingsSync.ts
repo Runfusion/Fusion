@@ -54,6 +54,9 @@ export function computeSyncState(status: NodeSettingsSyncStatus): ComputedNodeSy
 /**
  * Format a relative time string from an ISO timestamp.
  * Returns "Synced Xm ago", "Synced Xh ago", "Synced Xd ago", or "Never synced".
+ *
+ * FNXC:RelativeTime 2026-06-17-20:48:
+ * FN-6618 keeps node settings sync timestamps local because the user-facing contract is the prefixed `Synced … ago` / `Never synced` state copy, not a generic relative-time label.
  */
 export function formatRelativeTime(isoTimestamp: string | null): string {
   if (isoTimestamp === null) {

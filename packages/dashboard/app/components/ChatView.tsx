@@ -11,6 +11,7 @@ import {
   Search,
   Trash2,
   Archive,
+  Pencil,
   ChevronLeft,
   Bot,
   Square,
@@ -32,6 +33,7 @@ import { useViewportMode } from "./Header";
 import { updateGlobalSettings, type DiscoveredSkill } from "../api";
 import type { Agent } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentMentionPopup } from "./AgentMentionPopup";
 import { AgentAvatar } from "./AgentAvatar";
@@ -48,6 +50,7 @@ import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
+import { parseQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 
@@ -258,10 +261,33 @@ function renderFailureReference(reference: FailureInfo["reference"], t: (key: st
   );
 }
 
-function renderToolCalls(toolCalls: ToolCallInfo[] | undefined, t: (key: string, defaultValue: string, opts?: Record<string, unknown>) => string): ReactNode {
+function renderToolCalls(
+  toolCalls: ToolCallInfo[] | undefined,
+  t: (key: string, defaultValue: string, opts?: Record<string, unknown>) => string,
+  options?: {
+    isAwaitingAnswer?: boolean;
+    submittedAnswer?: string;
+    onQuestionSubmit?: (answerText: string, structured: Record<string, unknown>) => void;
+  },
+): ReactNode {
   if (!toolCalls || toolCalls.length === 0) return null;
 
   const renderToolCallItem = (toolCall: ToolCallInfo, index: number) => {
+    const parsedQuestion = parseQuestionToolCall(toolCall);
+    if (parsedQuestion) {
+      const isAwaitingAnswer = options?.isAwaitingAnswer === true;
+      return (
+        <ChatQuestionResponse
+          key={`${toolCall.toolName}-${index}`}
+          parsed={parsedQuestion}
+          answered={!isAwaitingAnswer}
+          submittedAnswer={options?.submittedAnswer}
+          disabled={!isAwaitingAnswer}
+          onSubmit={(answerText, structured) => options?.onQuestionSubmit?.(answerText, structured)}
+        />
+      );
+    }
+
     const isRunning = toolCall.status === "running";
     const isError = toolCall.status === "completed" && toolCall.isError;
     const argsSummary = formatToolArgsSummary(toolCall.args);
@@ -742,6 +768,13 @@ interface ChatMessageItemProps {
   roomContext: RoomContext | null;
   copyAction?: ReactNode;
   onScrollToTop?: (messageId: string) => void;
+  isAwaitingQuestionAnswer: boolean;
+  submittedQuestionAnswer?: string;
+  onQuestionSubmit: (answerText: string, structured: Record<string, unknown>) => void;
+}
+
+function findSubmittedQuestionAnswer(messages: ChatMessageInfo[], messageIndex: number): string | undefined {
+  return messages.slice(messageIndex + 1).find((message) => message.role === "user")?.content;
 }
 
 // Renders a single chat message bubble. Memoized so the streaming bubble's
@@ -760,6 +793,9 @@ const ChatMessageItem = memo(function ChatMessageItem({
   roomContext,
   copyAction,
   onScrollToTop,
+  isAwaitingQuestionAnswer,
+  submittedQuestionAnswer,
+  onQuestionSubmit,
 }: ChatMessageItemProps) {
   const { t } = useTranslation("app");
   const isAssistantMessage = message.role === "assistant";
@@ -923,7 +959,11 @@ const ChatMessageItem = memo(function ChatMessageItem({
           )}
         </div>
       )}
-      {renderToolCalls(message.toolCalls, t)}
+      {renderToolCalls(message.toolCalls, t, {
+        isAwaitingAnswer: isAwaitingQuestionAnswer,
+        submittedAnswer: submittedQuestionAnswer,
+        onQuestionSubmit,
+      })}
       {message.thinkingOutput && (
         <details className="chat-message-thinking">
           <summary>{t("chat.thinking", "Thinking")}</summary>
@@ -970,6 +1010,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     selectSession,
     createSession,
     archiveSession,
+    renameSession,
     deleteSession,
     sendMessage,
     stopStreaming,
@@ -1009,6 +1050,8 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     return getPersistedChatDraft(initialDraftKey);
   });
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{ sessionId: string; title: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmDeleteRoomId, setConfirmDeleteRoomId] = useState<string | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -1097,7 +1140,13 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
   const mentionCursorPosRef = useRef(0);
   const copyFeedbackTimeoutsRef = useRef<Map<string, number>>(new Map());
   const roomSendInFlightRef = useRef(false);
-  const tabletKeyboardSidebarVisibilityRef = useRef<boolean | null>(null);
+  /*
+  FNXC:ChatSendDedupe 2026-06-17-08:36:
+  FN-6576 refines FN-6563 by matching QuickChatFAB's two-latch touch contract: pointerdown/touchstart claim a per-input-task gesture so one mobile tap sends exactly once, while the separate 700ms latch is consumed only by a trailing click. A suppressed iOS click must never leave the long latch blocking the next tap; a send-to-stop DOM swap must consume the trailing click without swallowing a genuine later stop tap.
+  */
+  const handledSendTouchRef = useRef(false);
+  const handledSendTouchTimerRef = useRef<number | null>(null);
+  const touchActionGestureRef = useRef(false);
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
@@ -1213,29 +1262,6 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     allowNonMobileViewport: isTablet,
   });
   const tabletKeyboardOpen = isTablet && keyboardOpen;
-
-  useEffect(() => {
-    if (!isTablet) {
-      tabletKeyboardSidebarVisibilityRef.current = null;
-      return;
-    }
-
-    if (keyboardOpen) {
-      setSidebarVisible((currentSidebarVisible) => {
-        if (tabletKeyboardSidebarVisibilityRef.current === null) {
-          tabletKeyboardSidebarVisibilityRef.current = currentSidebarVisible;
-        }
-        return currentSidebarVisible ? false : currentSidebarVisible;
-      });
-      return;
-    }
-
-    if (tabletKeyboardSidebarVisibilityRef.current !== null) {
-      const shouldRestoreSidebar = tabletKeyboardSidebarVisibilityRef.current;
-      tabletKeyboardSidebarVisibilityRef.current = null;
-      setSidebarVisible(shouldRestoreSidebar);
-    }
-  }, [isTablet, keyboardOpen]);
 
   const filteredSkills = useMemo(() => {
     const normalizedFilter = skillFilter.trim().toLowerCase();
@@ -1930,6 +1956,50 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     });
   }, [activeDraftKey]);
 
+  // Mark that a mobile pointer/touch handler already performed the action so
+  // the trailing onClick (if it survives) bails. This long latch is intentionally
+  // never consulted by pointerdown/touchstart, because iOS may suppress the
+  // click that would consume it.
+  const markHandledSendTouch = useCallback(() => {
+    handledSendTouchRef.current = true;
+    if (handledSendTouchTimerRef.current != null) {
+      clearTimeout(handledSendTouchTimerRef.current);
+    }
+    handledSendTouchTimerRef.current = window.setTimeout(() => {
+      handledSendTouchRef.current = false;
+      handledSendTouchTimerRef.current = null;
+    }, 700);
+  }, []);
+
+  // Claim one input task's touch gesture. Real mobile taps can dispatch both
+  // pointerdown and touchstart before React flushes state; only the first should
+  // run the action, and the claim must clear before the next tap.
+  const beginTouchActionGesture = useCallback(() => {
+    if (touchActionGestureRef.current) return false;
+    touchActionGestureRef.current = true;
+    window.setTimeout(() => {
+      touchActionGestureRef.current = false;
+    }, 0);
+    return true;
+  }, []);
+
+  // Consume the latch (cancelling its timer) so a trailing onClick bails once.
+  const consumeHandledSendTouch = useCallback(() => {
+    if (!handledSendTouchRef.current) return false;
+    handledSendTouchRef.current = false;
+    if (handledSendTouchTimerRef.current != null) {
+      clearTimeout(handledSendTouchTimerRef.current);
+      handledSendTouchTimerRef.current = null;
+    }
+    return true;
+  }, []);
+
+  useEffect(() => () => {
+    if (handledSendTouchTimerRef.current != null) {
+      clearTimeout(handledSendTouchTimerRef.current);
+    }
+  }, []);
+
   // Handle send message including pending attachment uploads.
   const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
@@ -1967,7 +2037,12 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
 
   const handleSendDispatch = useCallback(async () => {
     const trimmed = messageInput.trim();
-    if (!trimmed) {
+    const files = pendingAttachments.map((attachment) => attachment.file);
+    /**
+     * FNXC:Chat 2026-06-17-02:12:
+     * Main Chat room dispatch must permit attachment-only sends. Block only a truly empty composer so staged files can reach the backend without requiring filler text.
+     */
+    if (!trimmed && files.length === 0) {
       return;
     }
 
@@ -1995,7 +2070,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       clearComposerState();
 
       try {
-        await rooms.sendRoomMessage(trimmed, { files: pendingAttachments.map((attachment) => attachment.file) });
+        await rooms.sendRoomMessage(trimmed, { files });
       } catch (error) {
         if (error instanceof RoomMessageDeliveredButReplyFailedError) {
           const message = error.message.trim()
@@ -2018,6 +2093,31 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
 
     handleSend();
   }, [messageInput, pendingAttachments, chatRoomsEnabled, chatScope, rooms, rooms.clearRoom, clearComposerState, addToast, handleSend]);
+
+  const handleQuestionSubmit = useCallback(async (answerText: string) => {
+    if (chatRoomsEnabled && chatScope === "rooms") {
+      if (!rooms.activeRoom) {
+        return;
+      }
+
+      try {
+        await rooms.sendRoomMessage(answerText);
+      } catch (error) {
+        const message = error instanceof Error && error.message.trim()
+          ? error.message
+          : t("chat.failedToSendRoomMessage", "Failed to send room message");
+        addToast(message, "error");
+      }
+      return;
+    }
+
+    if (!activeSession) {
+      return;
+    }
+
+    sendMessage(answerText);
+  }, [activeSession, addToast, chatRoomsEnabled, chatScope, rooms, sendMessage, t]);
+
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {
       setMessageInput((currentInput) => {
@@ -2387,6 +2487,33 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     [archiveSession, addToast],
   );
 
+  const openRenameDialog = useCallback(
+    (id: string) => {
+      const session = filteredSessions.find((item) => item.id === id) ?? (activeSession?.id === id ? activeSession : null);
+      setContextMenu(null);
+      setMobileSessionMenuOpen(false);
+      setRenameTitle(session?.title ?? "");
+      setRenameDialog({ sessionId: id, title: session?.title ?? "" });
+    },
+    [activeSession, filteredSessions],
+  );
+
+  /**
+   * FNXC:Chat 2026-06-16-22:08:
+   * Regular chat exposes rename from the desktop context menu and mobile session switcher; saving delegates to the shared hook so the sidebar list and active thread header update from one optimistic state path.
+   */
+  const handleRename = useCallback(async () => {
+    if (!renameDialog) return;
+    try {
+      await renameSession(renameDialog.sessionId, renameTitle);
+      setRenameDialog(null);
+      setRenameTitle("");
+      addToast(t("chat.conversationRenamed", "Conversation renamed"), "success");
+    } catch {
+      // useChat owns rollback and error toast so both regular-chat rename surfaces share failure behavior.
+    }
+  }, [addToast, renameDialog, renameSession, renameTitle, t]);
+
   // Handle delete
   const handleDelete = useCallback(
     async (id: string) => {
@@ -2733,7 +2860,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       </div>
       {isStreaming ? (
         <>
-          {messages.map((message) => (
+          {messages.map((message, index) => (
             <ChatMessageItem
               key={message.id}
               message={message}
@@ -2748,6 +2875,9 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
               roomContext={null}
               copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
               onScrollToTop={handleScrollMessageToTop}
+              isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
+              submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
+              onQuestionSubmit={handleQuestionSubmit}
             />
           ))}
           <div className="chat-message chat-message--assistant chat-message--streaming">
@@ -2762,11 +2892,18 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
               renderAssistantContent(streamingText, showAllAsPlain)
             ) : (
               <div className="chat-message-content chat-message-content--waiting">
-                {streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.connectingStatus", "Connecting…")}
+                {/*
+                FNXC:ChatLoadingCopy 2026-06-19-06:13:
+                The post-send waiting indicator reads "Working…" when no streamed text or thinking content has arrived yet, because the UI is waiting on work rather than a transport connection.
+                */}
+                {streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.workingStatus", "Working…")}
               </div>
             )}
             {showProviderResponseCopy && streamingText && renderCopyAction("__streaming__", streamingText, "chat-copy-response-streaming")}
-            {renderToolCalls(streamingToolCalls, t)}
+            {renderToolCalls(streamingToolCalls, t, {
+              isAwaitingAnswer: true,
+              onQuestionSubmit: handleQuestionSubmit,
+            })}
             {streamingThinking && (
               <details className="chat-message-thinking">
                 <summary>{t("chat.thinking", "Thinking")}</summary>
@@ -2788,7 +2925,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
         <div className="chat-empty-state">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
       ) : (
         <>
-          {messages.map((message) => (
+          {messages.map((message, index) => (
             <ChatMessageItem
               key={message.id}
               message={message}
@@ -2803,6 +2940,9 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
               roomContext={null}
               copyAction={showProviderResponseCopy && message.role === "assistant" ? renderCopyAction(message.id, message.content) : undefined}
               onScrollToTop={handleScrollMessageToTop}
+              isAwaitingQuestionAnswer={message.role === "assistant" && index === messages.length - 1 && !isStreaming}
+              submittedQuestionAnswer={findSubmittedQuestionAnswer(messages, index)}
+              onQuestionSubmit={handleQuestionSubmit}
             />
           ))}
         </>
@@ -2968,7 +3108,27 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
         {isStreaming ? (
           <button
             className="chat-input-stop"
-            onClick={stopStreaming}
+            onPointerDown={(event) => {
+              if (event.pointerType && event.pointerType !== "mouse") {
+                event.preventDefault();
+                if (!beginTouchActionGesture()) return;
+                markHandledSendTouch();
+                stopStreaming();
+              }
+            }}
+            onTouchStart={(event) => {
+              event.preventDefault();
+              if (!beginTouchActionGesture()) return;
+              markHandledSendTouch();
+              stopStreaming();
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              if (consumeHandledSendTouch()) return;
+              stopStreaming();
+            }}
             aria-label={t("chat.stopGeneration", "Stop generation")}
             data-testid="chat-stop-btn"
           >
@@ -2980,13 +3140,25 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
             className="chat-input-send"
             onPointerDown={(event) => {
               if (event.pointerType && event.pointerType !== "mouse") {
+                // iOS suppresses the trailing click after this preventDefault,
+                // so fire the send here (deduped) rather than relying on onClick.
                 event.preventDefault();
+                if (!beginTouchActionGesture()) return;
+                markHandledSendTouch();
+                void handleSend();
               }
+            }}
+            onTouchStart={(event) => {
+              event.preventDefault();
+              if (!beginTouchActionGesture()) return;
+              markHandledSendTouch();
+              void handleSend();
             }}
             onMouseDown={(event) => {
               event.preventDefault();
             }}
             onClick={() => {
+              if (consumeHandledSendTouch()) return;
               void handleSend();
             }}
             disabled={!messageInput.trim() && pendingAttachments.length === 0}
@@ -3000,12 +3172,21 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     </div>
   );
 
+  /**
+   * FNXC:ChatTabletKeyboard 2026-06-16-17:46:
+   * FN-6494 reverses the FN-6178/FN-6210 tablet-keyboard auto-hide: a visible chat sidebar must stay visible while the software keyboard is up. The user's persisted width remains untouched and returns when the keyboard closes; mobile keeps CSS-driven one-pane sizing.
+   *
+   * FNXC:ChatTabletKeyboard 2026-06-16-22:59:
+   * FN-6516 refines the tablet keyboard behavior: keep the sidebar at the same persisted width while the keyboard is open instead of narrowing to the minimum. The FN-6210 CSS max-width guard remains the upper bound, and resize controls still stay disabled while typing.
+   */
+  const sidebarInlineStyle: React.CSSProperties | undefined = isMobile ? undefined : { width: `${sidebarWidth}px` };
+
   return (
     <div className="chat-view">
       {/* Sidebar */}
       <div
         className={`chat-sidebar${!sidebarVisible ? " chat-sidebar--hidden" : ""}`}
-        style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
+        style={sidebarInlineStyle}
       >
         {chatRoomsEnabled && (
           <div className="chat-sidebar-scope-toggle" role="tablist" data-testid="chat-sidebar-scope-toggle">
@@ -3251,6 +3432,13 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
           onClick={(e) => e.stopPropagation()}
         >
           <button
+            onClick={() => openRenameDialog(contextMenu.sessionId)}
+            data-testid="chat-context-rename"
+          >
+            <Pencil size={14} />
+            {t("chat.rename", "Rename")}
+          </button>
+          <button
             onClick={() => handleArchive(contextMenu.sessionId)}
             data-testid="chat-context-archive"
           >
@@ -3267,6 +3455,49 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
             <Trash2 size={14} />
             {t("chat.delete", "Delete")}
           </button>
+        </div>
+      )}
+
+      {/* Rename Dialog */}
+      {renameDialog && (
+        <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setRenameDialog(null)}>
+          <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>{t("chat.renameConversationTitle", "Rename Conversation")}</h3>
+            <p className="chat-view-delete-dialog-copy">
+              {t("chat.renameConversationBody", "Choose a new name for this conversation. Leave it blank to show Untitled.")}
+            </p>
+            <label className="chat-rename-label" htmlFor="chat-rename-input">
+              {t("chat.conversationName", "Conversation name")}
+            </label>
+            <input
+              id="chat-rename-input"
+              className="input chat-rename-input"
+              type="text"
+              value={renameTitle}
+              placeholder={t("chat.renamePlaceholder", "Untitled")}
+              data-testid="chat-rename-input"
+              onChange={(event) => setRenameTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void handleRename();
+                }
+              }}
+              autoFocus
+            />
+            <div className="chat-new-dialog-actions">
+              <button className="btn btn-sm" onClick={() => setRenameDialog(null)}>
+                {t("chat.cancel", "Cancel")}
+              </button>
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => void handleRename()}
+                data-testid="chat-rename-save"
+              >
+                {t("chat.save", "Save")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -3420,6 +3651,8 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                         mentionAgentsByName={mentionAgentsByName}
                         roomContext={roomContext}
                         onScrollToTop={handleScrollMessageToTop}
+                        isAwaitingQuestionAnswer={false}
+                        onQuestionSubmit={handleQuestionSubmit}
                       />
                     );
                   })
@@ -3444,8 +3677,66 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
 
           {rooms.activeRoom && (
             <div className="chat-input-area">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.txt,.json,.yaml,.yml,.log,.csv,.xml,.md"
+                multiple
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  handleAttachmentFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+              {pendingAttachments.length > 0 && (
+                <div className="chat-attachment-previews" data-testid="chat-attachment-previews">
+                  {pendingAttachments.map((attachment, index) => (
+                    <div
+                      key={attachment.previewUrl || `${attachment.file.name}-${index}`}
+                      className="chat-attachment-preview"
+                      data-testid={`chat-attachment-preview-${index}`}
+                    >
+                      {attachment.previewUrl ? (
+                        <img src={attachment.previewUrl} alt={attachment.file.name} />
+                      ) : (
+                        <span className="chat-attachment-preview-name">{attachment.file.name}</span>
+                      )}
+                      <button
+                        type="button"
+                        className="chat-attachment-remove"
+                        onClick={() => removeAttachment(index)}
+                        data-testid={`chat-attachment-remove-${index}`}
+                        aria-label={`Remove ${attachment.file.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="chat-input-row">
-                <div className="chat-input-wrapper">
+                <button
+                  type="button"
+                  className="btn-icon chat-attach-btn"
+                  data-testid="chat-attach-btn"
+                  aria-label={t("chat.attachFiles", "Attach files")}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip size={16} />
+                </button>
+                <div
+                  className={`chat-input-wrapper${isDragOver ? " chat-input-wrapper--dragover" : ""}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setIsDragOver(true);
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setIsDragOver(false);
+                    handleAttachmentFiles(event.dataTransfer.files);
+                  }}
+                >
                   <textarea
                     ref={handleComposerRef}
                     className="chat-input-textarea"
@@ -3457,6 +3748,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                     onClick={handleInputSelectionChange}
                     onBlur={handleInputBlur}
                     onFocus={handleInputFocus}
+                    onPaste={handlePaste}
                     onTouchStart={(event) => {
                       if (typeof window === "undefined") return;
                       if (window.innerWidth > 768) return;
@@ -3483,26 +3775,32 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                 <button
                   type="button"
                   className="chat-input-send"
-                  // Keep keyboard up when sending. preventDefault fires on
-                  // pointerdown for touch pointers (BEFORE iOS blurs the
-                  // textarea — the synthesized mousedown is too late on
-                  // iOS), and on mousedown for desktop. Crucially we do NOT
-                  // call preventDefault on touchstart and we do NOT run the
-                  // action here — both of those broke quick taps. Click
-                  // still fires from the iOS touch sequence and runs the
-                  // action reliably.
+                  /*
+                  FNXC:ChatRoomSend 2026-06-17-08:36:
+                  FN-6576 requires the room composer to share the direct-chat two-latch dedupe contract: pointerdown/touchstart use the short per-gesture claim, while the 700ms latch is reserved for a trailing click. This preserves room routing through handleSendDispatch() and ensures a second iOS tap within the suppressed-click window still dispatches exactly one room send.
+                  */
                   onPointerDown={(event) => {
                     if (event.pointerType && event.pointerType !== "mouse") {
                       event.preventDefault();
+                      if (!beginTouchActionGesture()) return;
+                      markHandledSendTouch();
+                      void handleSendDispatch();
                     }
+                  }}
+                  onTouchStart={(event) => {
+                    event.preventDefault();
+                    if (!beginTouchActionGesture()) return;
+                    markHandledSendTouch();
+                    void handleSendDispatch();
                   }}
                   onMouseDown={(event) => {
                     event.preventDefault();
                   }}
                   onClick={() => {
+                    if (consumeHandledSendTouch()) return;
                     void handleSendDispatch();
                   }}
-                  disabled={!messageInput.trim()}
+                  disabled={!messageInput.trim() && pendingAttachments.length === 0}
                   data-testid="chat-send-btn"
                   style={{ touchAction: "manipulation" }}
                 >
@@ -3541,16 +3839,30 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                   {mobileSessionMenuOpen && (
                     <div className="chat-mobile-session-dropdown" role="menu" data-testid="chat-mobile-session-dropdown">
                       {filteredSessions.map((session) => (
-                        <button
+                        <div
                           key={session.id}
-                          type="button"
-                          role="menuitem"
-                          className={`chat-mobile-session-option${activeSession?.id === session.id ? " chat-mobile-session-option--active" : ""}`}
-                          data-testid={`chat-mobile-session-option-${session.id}`}
-                          onClick={() => handleSessionClick(session.id)}
+                          className={`chat-mobile-session-option-row${activeSession?.id === session.id ? " chat-mobile-session-option-row--active" : ""}`}
+                          role="none"
                         >
-                          <span className="chat-mobile-session-option-title">{session.title || t("chat.untitledSession", "Untitled")}</span>
-                        </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`chat-mobile-session-option${activeSession?.id === session.id ? " chat-mobile-session-option--active" : ""}`}
+                            data-testid={`chat-mobile-session-option-${session.id}`}
+                            onClick={() => handleSessionClick(session.id)}
+                          >
+                            <span className="chat-mobile-session-option-title">{session.title || t("chat.untitledSession", "Untitled")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-icon chat-mobile-session-rename"
+                            data-testid={`chat-mobile-session-rename-${session.id}`}
+                            aria-label={t("chat.renameConversationAria", "Rename conversation {{title}}", { title: session.title || t("chat.untitledSession", "Untitled") })}
+                            onClick={() => openRenameDialog(session.id)}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        </div>
                       ))}
                     </div>
                   )}

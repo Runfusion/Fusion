@@ -39,8 +39,8 @@
 }
 
 .github-import-toolbar__zone--filter input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
   outline: none;
 }
 
@@ -105,8 +105,8 @@
 
 .github-import-remote-select select:focus {
   outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 /* Load button */
@@ -146,22 +146,38 @@
 }
 
 .github-import-workspace__resize-handle {
-  flex: 0 0 var(--space-xs);
+  position: relative;
+  flex: 0 0 var(--space-sm);
   align-self: stretch;
   cursor: col-resize;
   touch-action: none;
+  border-radius: var(--radius-sm);
+}
+
+.github-import-workspace__resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-xs);
+  transform: translateX(-50%);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--border) 35%, transparent);
   transition: background var(--transition-fast);
 }
 
-.github-import-workspace__resize-handle:hover {
+.github-import-workspace__resize-handle:hover::before,
+.github-import-workspace__resize-handle:active::before {
   background: color-mix(in srgb, var(--todo) 50%, transparent);
 }
 
 .github-import-workspace__resize-handle:focus-visible {
   outline: var(--focus-ring-strong);
   outline-offset: 0;
+}
+
+.github-import-workspace__resize-handle:focus-visible::before {
   background: color-mix(in srgb, var(--todo) 60%, transparent);
 }
 
@@ -688,7 +704,7 @@
 }
 
 [data-theme="light"] .github-import-toolbar__zone--filter input:focus {
-  border-color: var(--color-primary, var(--todo));
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--in-progress) 15%, transparent);
 }
 

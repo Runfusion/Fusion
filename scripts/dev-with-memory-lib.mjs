@@ -93,10 +93,30 @@ export function getPrebuildCommand(mode) {
     case "full":
       return { command: "pnpm", args: ["build"], label: "workspace build" };
     case "client":
+      /*
+      FNXC:DevWorkflow 2026-06-18-16:40:
+      FN-6638/stale-dist: `pnpm dev dashboard` must rebuild @fusion/core and
+      @fusion/engine alongside the dashboard UI, not only the client bundle.
+      Although the CLI runs under `--conditions=source` (engine/core resolve to
+      src), the running process and any dist-resolving consumer (plugins,
+      sub-imports, a later non-dev `fn`/`pnpm local`) load built dist. Leaving
+      engine/core dist stale is exactly how landed fixes (FN-6644/6647/6648,
+      etc.) silently failed to run for ~2 days. pnpm builds these in dependency
+      order (core → engine → dashboard); dashboard `build` runs the vite client
+      bundle + server tsc, so the UI is rebuilt too.
+      */
       return {
         command: "pnpm",
-        args: ["--filter", "@fusion/dashboard", "build:client"],
-        label: "dashboard client build",
+        args: [
+          "--filter",
+          "@fusion/core",
+          "--filter",
+          "@fusion/engine",
+          "--filter",
+          "@fusion/dashboard",
+          "build",
+        ],
+        label: "core + engine + dashboard build",
       };
     case "none":
     case "auto":

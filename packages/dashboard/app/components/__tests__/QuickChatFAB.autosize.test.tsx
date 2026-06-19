@@ -84,10 +84,15 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
   })),
 }));
 
-vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  useViewportMode: vi.fn(() => "desktop"),
-}));
+vi.mock("../../hooks/useViewportMode", () => {
+  const useViewportMode = vi.fn(() => "desktop");
+  return {
+    MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+    getViewportMode: () => useViewportMode(),
+    isMobileViewport: () => useViewportMode() === "mobile",
+    useViewportMode,
+  };
+});
 
 vi.mock("react-markdown", () => ({
   default: ({ children }: { children: string }) => children,

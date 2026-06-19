@@ -767,6 +767,14 @@ Bundled workspace plugin pattern:
 - Register the lazy dashboard component in host code (currently `packages/dashboard/app/plugins/registerBundledPluginViews.ts`)
 - CLI bundling inlines backend plugin code from workspace packages; dashboard view modules are imported by the dashboard build via the host registry
 
+### Bundled plugin build-freshness guard
+
+<!-- FNXC:BundledPlugins 2026-06-17-22:31: Bundled plugins can load gitignored compiled artifacts before source during workspace/dev resolution, so plugin authors need a documented recovery path when the generic freshness guard detects stale dist output. -->
+
+Bundled plugins shipped in `@runfusion/fusion` are tracked by the staged bundled-plugin set in `packages/cli/src/plugins/staged-bundled-plugin-ids.ts`; the default auto-install subset remains `BUNDLED_PLUGIN_IDS` in `packages/cli/src/plugins/bundled-plugin-install.ts`. The CLI build asserts every staged bundled plugin has a loadable entry under `packages/cli/dist/plugins/<id>/`, and the freshness test checks any per-plugin `plugins/<id>/dist/index.js` that exists against the newest `src/**` mtime.
+
+This catches stale `dist/` drift: `resolvePluginEntryPath` prefers `bundled.js` and compiled `dist/index.js` before falling back to `src/index.ts`, while per-plugin `dist/` is gitignored and can lag behind source edits. If `bundled-plugin-freshness` reports `dist is stale relative to src`, run `pnpm build` from the workspace root to regenerate plugin `dist/` outputs and staged CLI plugin artifacts before rerunning tests.
+
 Runtime host context contract:
 - Registered views receive a `context` object from the dashboard host (`PluginDashboardViewContext`).
 - Context includes the active `projectId`, current visible `tasks`, optional `workflowSteps`, `openTaskDetail` for launching the native task detail flow, and `openFile(path, options?)` for opening project-relative files in the dashboard's built-in file viewer.
@@ -1547,6 +1555,7 @@ const traits: PluginTraitContribution[] = [
 
 export default definePlugin({
   manifest: { id: "my-plugin", name: "My Plugin", version: "1.0.0" },
+  state: "installed",
   hooks: {},
   traits,
 });
@@ -1666,6 +1675,7 @@ const workflowExtensions: WorkflowExtensionContribution[] = [
 
 export default definePlugin({
   manifest: { id: "my-plugin", name: "My Plugin", version: "1.0.0" },
+  state: "installed",
   workflowExtensions,
 });
 ```

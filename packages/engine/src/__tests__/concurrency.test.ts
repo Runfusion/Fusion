@@ -19,6 +19,38 @@ describe("AgentSemaphore", () => {
     expect(sem.availableCount).toBe(2);
   });
 
+  it("FN-6423: clamps excess slot returns without breaking future acquires", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const sem = new AgentSemaphore(2);
+      await sem.acquire();
+      sem.release();
+      sem.release();
+      sem.release();
+
+      expect(sem.activeCount).toBe(0);
+      expect(sem.availableCount).toBe(2);
+      expect(sem.snapshot()).toEqual({
+        activeCount: 0,
+        waitingCount: 0,
+        availableCount: 2,
+        limit: 2,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("AgentSemaphore excess slot return ignored from release");
+
+      expect(sem.tryAcquire()).toBe(true);
+      expect(sem.activeCount).toBe(1);
+      sem.release();
+      await sem.acquire();
+      expect(sem.activeCount).toBe(1);
+      sem.release();
+      expect(sem.activeCount).toBe(0);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("queues waiters when at capacity and unblocks FIFO", async () => {
     const sem = new AgentSemaphore(1);
     await sem.acquire(); // slot taken

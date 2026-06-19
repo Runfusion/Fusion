@@ -16,6 +16,17 @@ import { join, resolve } from "node:path";
 import { afterEach } from "vitest";
 import { assertOutsideRealFusionPath } from "../test-safety.js";
 
+/**
+ * FNXC:CoreTests 2026-06-18-01:30:
+ * FN-6627 requires built-dist-barrel regression guards to skip cleanly when @fusion/core/dist is absent or partial, and to run with full FN-6515/FN-6535 signal only when the same artifacts loaded by the test are present.
+ * Keep new dist-dependent guards on this predicate instead of checking index.js separately from task-list-format.js body assertions.
+ */
+export const requiredCoreDistFiles = ["index.js", "task-list-format.js"] as const;
+
+export function hasBuiltCoreDistBarrel(distDir: string): boolean {
+  return requiredCoreDistFiles.every((file) => existsSync(resolve(distDir, file)));
+}
+
 export function assertOutsideRealFusion(path: string, context = "operation"): void {
   assertOutsideRealFusionPath(path, context);
 }

@@ -39,13 +39,16 @@ vi.mock("../../hooks/useConfirm", () => ({
 }));
 
 const mockUseMobileKeyboard = vi.fn();
+const mockViewportMode = vi.hoisted(() => ({ value: "mobile" }));
 vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: (...args: unknown[]) => mockUseMobileKeyboard(...args),
 }));
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  useViewportMode: () => "mobile",
+  getViewportMode: () => mockViewportMode.value,
+  isMobileViewport: () => mockViewportMode.value === "mobile",
+  useViewportMode: () => mockViewportMode.value,
 }));
 
 const SAMPLE_SUBTASKS = [
@@ -90,6 +93,7 @@ describe("SubtaskBreakdownModal", () => {
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockConfirm.mockReset();
     mockConfirm.mockResolvedValue(true);
+    mockViewportMode.value = "mobile";
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOpen: false,
       keyboardOverlap: 0,
@@ -130,10 +134,128 @@ describe("SubtaskBreakdownModal", () => {
     expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
   });
 
-  it("shows generating state after auto-start", async () => {
+  it("shows immediate progress while auto-start waits for a session", async () => {
+    let resolveStart: (value: { sessionId: string }) => void = () => {};
+    mockStartSubtaskBreakdown.mockReturnValueOnce(new Promise((resolve) => {
+      resolveStart = resolve;
+    }));
+
+    renderModal();
+
+    expect(await screen.findByTestId("subtask-progress-state")).toBeInTheDocument();
+    expect(screen.getByText("Starting subtask breakdown...")).toBeInTheDocument();
+    expect(screen.getByText("Fusion will keep working while the AI prepares subtasks.")).toBeInTheDocument();
+    expect(screen.getByText("Build a complex feature")).toBeInTheDocument();
+    expect(screen.queryByText("AI is generating subtasks...")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveStart({ sessionId: "session-123" });
+    });
+    expect(await screen.findByText("AI is generating subtasks...")).toBeInTheDocument();
+  });
+
+  it("shows generating state and empty thinking progress after auto-start", async () => {
     renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalledWith("Build a complex feature", undefined));
     expect(await screen.findByText("AI is generating subtasks...")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for AI progress updates...")).toBeInTheDocument();
+  });
+
+  it("shows immediate progress in desktop viewport without mobile keyboard scaffolding", async () => {
+    mockViewportMode.value = "desktop";
+    let resolveStart: (value: { sessionId: string }) => void = () => {};
+    mockStartSubtaskBreakdown.mockReturnValueOnce(new Promise((resolve) => {
+      resolveStart = resolve;
+    }));
+
+    renderModal();
+
+    expect(await screen.findByTestId("subtask-progress-state")).toBeInTheDocument();
+    expect(screen.getByText("Starting subtask breakdown...")).toBeInTheDocument();
+    expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: false });
+
+    await act(async () => {
+      resolveStart({ sessionId: "session-123" });
+    });
+    await waitFor(() => expect(screen.getByText("AI is generating subtasks...")).toBeInTheDocument());
+  });
+
+  it("resumes a running subtask session with progress visible", async () => {
+    mockFetchAiSession.mockResolvedValueOnce({
+      id: "session-running",
+      status: "generating",
+      thinkingOutput: "",
+      conversationHistory: "[]",
+      result: null,
+      error: null,
+    });
+
+    render(
+      <SubtaskBreakdownModal
+        isOpen={true}
+        onClose={onClose}
+        initialDescription=""
+        resumeSessionId="session-running"
+        onTasksCreated={onTasksCreated}
+      />,
+    );
+
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledWith("session-running"));
+    expect(mockStartSubtaskBreakdown).not.toHaveBeenCalled();
+    expect(await screen.findByText("AI is generating subtasks...")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for AI progress updates...")).toBeInTheDocument();
+    expect(mockConnectSubtaskStream).toHaveBeenCalledWith("session-running", undefined, expect.any(Object));
+  });
+
+  it("resumes an awaiting-input subtask session as running progress", async () => {
+    mockFetchAiSession.mockResolvedValueOnce({
+      id: "session-awaiting",
+      status: "awaiting_input",
+      thinkingOutput: "Review the proposed subtasks.",
+      conversationHistory: "[]",
+      result: null,
+      error: null,
+    });
+
+    render(
+      <SubtaskBreakdownModal
+        isOpen={true}
+        onClose={onClose}
+        initialDescription=""
+        resumeSessionId="session-awaiting"
+        onTasksCreated={onTasksCreated}
+      />,
+    );
+
+    expect(await screen.findByText("Review the proposed subtasks.")).toBeInTheDocument();
+    expect(screen.getByText("AI is generating subtasks...")).toBeInTheDocument();
+    expect(mockConnectSubtaskStream).toHaveBeenCalledWith("session-awaiting", undefined, expect.any(Object));
+  });
+
+  it("resumes a completed subtask session into editable subtasks", async () => {
+    mockFetchAiSession.mockResolvedValueOnce({
+      id: "session-complete",
+      status: "complete",
+      thinkingOutput: "Done",
+      conversationHistory: "[]",
+      result: JSON.stringify(SAMPLE_SUBTASKS),
+      error: null,
+    });
+
+    render(
+      <SubtaskBreakdownModal
+        isOpen={true}
+        onClose={onClose}
+        initialDescription=""
+        resumeSessionId="session-complete"
+        onTasksCreated={onTasksCreated}
+      />,
+    );
+
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledWith("session-complete"));
+    expect(await screen.findByDisplayValue("First")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Do second")).toBeInTheDocument();
+    expect(mockStartSubtaskBreakdown).not.toHaveBeenCalled();
   });
 
   it("shows lock overlay and allows take-control", async () => {
@@ -205,17 +327,19 @@ describe("SubtaskBreakdownModal", () => {
   it("preserves thinking output while reconnecting in generating state", async () => {
     renderModal();
     await waitFor(() => expect(streamHandlers).toBeDefined());
+    expect(await screen.findByText("Waiting for AI progress updates...")).toBeInTheDocument();
 
     act(() => {
       streamHandlers.onThinking?.("Generating subtasks...");
     });
     expect(await screen.findByText("Generating subtasks...")).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for AI progress updates...")).not.toBeInTheDocument();
 
     act(() => {
       streamHandlers.onConnectionStateChange?.("reconnecting");
     });
     await waitFor(() => {
-      expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+      expect(screen.getAllByText("Reconnecting…").length).toBeGreaterThan(0);
     });
     expect(screen.getByText("Generating subtasks...")).toBeInTheDocument();
   });
@@ -389,34 +513,32 @@ describe("SubtaskBreakdownModal", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
-  it("close button explicitly cancels the session (destructive)", async () => {
+  it("close button leaves a generating session resumable instead of canceling", async () => {
     renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalled());
 
     fireEvent.click(await screen.findByLabelText("Close"));
 
-    await waitFor(() => {
-      expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
-    });
-    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mockCancelSubtaskBreakdown).not.toHaveBeenCalled();
   });
 
-  it("escape key cancels session when in editing state (destructive)", async () => {
+  it("escape keeps an editing session available for resume", async () => {
     renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalled());
 
-    // First transition to editing state
     await waitFor(() => expect(streamHandlers).toBeDefined());
-    streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    act(() => {
+      streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+    });
     await screen.findByDisplayValue("First");
 
-    // Now escape should trigger confirm dialog then cancel
     fireEvent.keyDown(document, { key: "Escape" });
 
-    // confirm() returns true (stubbed in beforeEach)
-    await waitFor(() => {
-      expect(mockCancelSubtaskBreakdown).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
-    });
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Keep subtask session available?",
+    })));
+    expect(mockCancelSubtaskBreakdown).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
   });
 

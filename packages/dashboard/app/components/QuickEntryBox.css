@@ -236,7 +236,7 @@
   background: none;
   border: none;
   border-radius: 6px;
-  color: var(--text-primary);
+  color: var(--text);
   cursor: pointer;
   text-align: left;
   font-size: 0.8125rem;
@@ -244,11 +244,11 @@
 }
 
 .model-menu-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .model-menu-item--active {
-  color: var(--text-accent, var(--todo));
+  color: var(--accent);
 }
 
 .model-menu-item-label {
@@ -289,13 +289,13 @@
 }
 
 .model-submenu-back:hover {
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .model-submenu-header {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text);
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
 }
@@ -306,7 +306,7 @@
   justify-content: space-between;
   gap: 8px;
   font-size: 0.6875rem;
-  color: var(--text-error, #e53e3e);
+  color: var(--color-error);
   padding-top: 4px;
 }
 

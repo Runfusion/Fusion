@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import * as fusionCore from "@fusion/core";
 import type {
   TaskStore,
   Task,
@@ -24,9 +25,44 @@ import {
   resolveAgentMemoryInclusionMode,
   extractIntentSignature,
   findNearDuplicates,
+  isNearDuplicateCanonicalInactive,
   applyFrontendUxCriteria,
+  MAX_TASK_LIST_TEXT_CHARS,
   type NearDuplicateCandidate,
 } from "@fusion/core";
+
+type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
+type TaskListFormatter = (
+  lines: string[],
+  opts?: { maxChars?: number; clamp?: TaskListClamp },
+) => string;
+
+export function inlineTaskListFallback(
+  lines: string[],
+  opts: { maxChars?: number } = {},
+): string {
+  /*
+  FNXC:TaskListOutput 2026-06-18-03:20:
+  FN-6629 requires stale-runtime fallback formatting to mirror the shared host-safe task-list budget; otherwise missing @fusion/core formatter exports can re-emit imageified duplicate-check listings.
+  */
+  const maxChars = Math.max(1, Math.floor(opts.maxChars ?? MAX_TASK_LIST_TEXT_CHARS));
+  try {
+    const text = lines.join("\n");
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return text.slice(0, Math.max(0, maxChars - 1)) + "…";
+  } catch {
+    return "";
+  }
+}
+
+export function resolveTaskListFormatter(core: { formatTaskListText?: unknown }): TaskListFormatter {
+  return typeof core.formatTaskListText === "function"
+    ? (core.formatTaskListText as TaskListFormatter)
+    : inlineTaskListFallback;
+}
+
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import type {
@@ -88,6 +124,7 @@ import {
   isResearchToolSurfaceEnabled,
 } from "./tool-availability.js";
 import { runGhostBugPreflight } from "./triage-preflight.js";
+import { evaluateReleaseAuthorizationGate } from "./triage-release-authorization.js";
 import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
@@ -1465,8 +1502,19 @@ export class TriageProcessor {
             : "";
           return `${t.id} (${t.column}): ${desc}${deps}`;
         });
+        /*
+        FNXC:TaskListOutput 2026-06-16-17:47:
+        FN-6492 keeps engine triage duplicate-detection listings bounded with the shared fn_task_list text clamp so large active boards never require attachment/image fallback.
+
+        FNXC:TaskListOutput 2026-06-17-05:47:
+        FN-6570 guards the triage fn_task_list formatter against stale @fusion/core runtime namespaces where clampTaskListText is absent, so duplicate-detection board reads degrade to bounded text instead of throwing.
+
+        FNXC:TaskListOutput 2026-06-17-07:25:
+        FN-6573 requires engine triage fn_task_list to resolve formatTaskListText from the runtime @fusion/core namespace with a typeof guard and a self-contained bounded fallback. A stale @fusion/core dist missing the FN-6570 formatter export crashed ambient heartbeat agents as `(0 , _core.formatTaskListText) is not a function`; duplicate detection must now return bounded text instead.
+        */
+        const formatter = resolveTaskListFormatter(fusionCore);
         return {
-          content: [{ type: "text" as const, text: lines.join("\n") }],
+          content: [{ type: "text" as const, text: formatter(lines, { clamp: fusionCore.clampTaskListText }) }],
           details: {},
         };
       },
@@ -2239,6 +2287,15 @@ export class TriageProcessor {
             return;
           }
 
+          /**
+           * FNXC:NearDuplicateDetection 2026-06-14-12:00:
+           * FN-6439 makes the triage backstop defense-in-depth: never persist a user-decision duplicate flag when the canonical is inactive, even if candidate filtering regresses or a stale snapshot slips through.
+           */
+          if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+            planLog.log(`${task.id}: near-duplicate candidate ${canonical.id} is inactive; skipping near-duplicate flag`);
+            return;
+          }
+
           // FN-5152: when the candidate is older (or tie-canonical), flag for user confirmation.
           if (isStrictlyOlderOrTieCanonical(canonicalTask)) {
             await this.store.updateTask(task.id, {
@@ -2290,6 +2347,56 @@ export class TriageProcessor {
       planLog.warn(`${task.id}: failed to re-read task before approved-spec transition (${message}); proceeding with original task snapshot`);
       latestTransitionTask = task;
     }
+    try {
+      /**
+       * FNXC:ReleaseAuthorizationGate 2026-06-15-02:47:
+       * FN-6469 showed that agent-authored release specs can otherwise flow from triage directly to execution and publish npm packages. FN-6481 parks release-class tasks before every final triage dispatch branch unless a user-authored source supplied the explicit authorization marker.
+       */
+      const releaseGateDecision = evaluateReleaseAuthorizationGate({
+        sourceType: latestTransitionTask?.sourceType ?? task.sourceType,
+        title: latestTransitionTask?.title ?? task.title ?? "",
+        description: latestTransitionTask?.description ?? task.description ?? "",
+        promptText: written,
+      });
+      if (releaseGateDecision.action === "block") {
+        const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };
+        if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
+          approvalUpdates.title = promptDeclaredTitle;
+        }
+        const signals = releaseGateDecision.signals.length > 0
+          ? releaseGateDecision.signals.join(", ")
+          : "release intent";
+        const details = `${releaseGateDecision.reason} Matched signals: ${signals}.`;
+        await this.store.updateTask(task.id, approvalUpdates);
+        await this.store.logEntry(
+          task.id,
+          "Release authorization required — leaving task in triage awaiting manual approval",
+          details,
+        );
+        try {
+          await this.store.recordActivity({
+            type: "task:release-authorization-required",
+            taskId: task.id,
+            taskTitle: promptDeclaredTitle ?? latestTransitionTask?.title ?? task.title ?? "",
+            details,
+            metadata: {
+              reason: releaseGateDecision.reason,
+              signals: releaseGateDecision.signals,
+              sourceType: latestTransitionTask?.sourceType ?? task.sourceType ?? "unknown",
+            },
+          });
+        } catch (activityError: unknown) {
+          const message = activityError instanceof Error ? activityError.message : String(activityError);
+          planLog.warn(`${task.id}: failed to record release-authorization-required activity (${message})`);
+        }
+        planLog.log(`${task.id} release authorization required — leaving in triage awaiting manual approval (${signals})`);
+        return;
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: release-authorization gate failed open: ${message}`);
+    }
+
     if (latestTransitionTask?.paused === true || latestTransitionTask?.userPaused === true) {
       const restoreStatus = options.isReplan ? "needs-replan" : null;
       await this.store.updateTask(task.id, { status: restoreStatus });

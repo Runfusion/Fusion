@@ -129,6 +129,25 @@ async function warnIfSourceVersionBehind() {
 
 await warnIfSourceVersionBehind();
 
+// FNXC:DevWorkflow 2026-06-18-16:50:
+// FN-6638 stale-dist guard. Warn (loudly, best-effort) when built dist/ is older
+// than src/ so a never-rebuilt/never-restarted process does not silently run
+// phantom-old code. When a prebuild is about to run it will refresh dist, so the
+// check is informational there; for --prebuild none / dist-resolving consumers
+// it is the safety net. Never let the check break startup.
+async function warnIfDistStale() {
+  if (process.env.FUSION_SKIP_DIST_FRESHNESS_CHECK === "1") return;
+  try {
+    const { computeDistStaleness, formatDistStalenessWarning } = await import("./lib/dist-freshness.mjs");
+    const warning = formatDistStalenessWarning(computeDistStaleness({ rootDir: process.cwd() }));
+    if (warning) console.warn(warning);
+  } catch {
+    // Best-effort only. Startup must not depend on the freshness check.
+  }
+}
+
+await warnIfDistStale();
+
 if (!prebuildCommand) {
   runApp(forwardedArgs);
 } else {

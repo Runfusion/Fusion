@@ -565,79 +565,89 @@ describe("useTaskDiffStats", () => {
       mockFetchTaskDiff.mockClear();
     });
 
-    it("re-fetches when stepVersion changes", async () => {
-      // Initial fetch
-      mockFetchTaskDiff.mockResolvedValueOnce({
-        files: [],
-        stats: { filesChanged: 1, additions: 5, deletions: 1 },
-      });
+    it("re-fetches active worktree stats when stepVersion changes", async () => {
+      /*
+      FNXC:DashboardTesting 2026-06-14-08:49:
+      stepVersion is the cache key only for active worktree-backed columns; done-mode cache invalidation intentionally uses mergeSignature so this regression test must exercise in-progress behavior.
+      */
+      mockFetchTaskDiff
+        .mockResolvedValueOnce({
+          files: [],
+          stats: { filesChanged: 1, additions: 5, deletions: 1 },
+        })
+        .mockResolvedValueOnce({
+          files: [],
+          stats: { filesChanged: 3, additions: 10, deletions: 2 },
+        });
 
       const { result, rerender } = renderHook(
         ({ stepVersion }) => useTaskDiffStats(
           "FN-STEP",
-          "done",
-          "abc1234",
+          "in-progress",
           undefined,
-          { stepVersion },
+          undefined,
+          { worktree: "/repo/.worktrees/fn-step", stepVersion },
         ),
         { initialProps: { stepVersion: 1 as number | string } },
       );
 
-      await waitFor(() => expect(result.current.loading).toBe(false));
-      expect(result.current.stats).toEqual({ filesChanged: 1, additions: 5, deletions: 1 });
+      await waitFor(() => expect(result.current.stats).toEqual({ filesChanged: 1, additions: 5, deletions: 1 }));
+      expect(result.current.loading).toBe(false);
+      expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-STEP", "/repo/.worktrees/fn-step", undefined);
       expect(mockFetchTaskDiff).toHaveBeenCalledTimes(1);
-
-      // Change stepVersion - should trigger re-fetch
-      mockFetchTaskDiff.mockResolvedValueOnce({
-        files: [],
-        stats: { filesChanged: 3, additions: 10, deletions: 2 },
-      });
 
       rerender({ stepVersion: 2 as number | string });
 
-      await waitFor(() => expect(result.current.loading).toBe(false));
-      expect(result.current.stats).toEqual({ filesChanged: 3, additions: 10, deletions: 2 });
+      await waitFor(() => expect(result.current.stats).toEqual({ filesChanged: 3, additions: 10, deletions: 2 }));
+      expect(result.current.loading).toBe(false);
       expect(mockFetchTaskDiff).toHaveBeenCalledTimes(2);
     });
 
-    it("caches stats separately per stepVersion", async () => {
-      // Initial fetch with stepVersion 1
-      mockFetchTaskDiff.mockResolvedValueOnce({
-        files: [],
-        stats: { filesChanged: 5, additions: 20, deletions: 3 },
-      });
+    it("caches active worktree stats separately per stepVersion", async () => {
+      mockFetchTaskDiff
+        .mockResolvedValueOnce({
+          files: [],
+          stats: { filesChanged: 5, additions: 20, deletions: 3 },
+        })
+        .mockResolvedValueOnce({
+          files: [],
+          stats: { filesChanged: 10, additions: 50, deletions: 8 },
+        });
+
+      const activeOptions = { worktree: "/repo/.worktrees/fn-step-cache" };
 
       const { result: first } = renderHook(() =>
-        useTaskDiffStats("FN-STEP-CACHE", "done", "abc1234", undefined, { stepVersion: "v1" }),
+        useTaskDiffStats("FN-STEP-CACHE", "in-progress", undefined, undefined, {
+          ...activeOptions,
+          stepVersion: "v1",
+        }),
       );
 
-      await waitFor(() => expect(first.current.loading).toBe(false));
-      expect(first.current.stats).toEqual({ filesChanged: 5, additions: 20, deletions: 3 });
-
-      // Same task, different stepVersion - should fetch separately
-      mockFetchTaskDiff.mockResolvedValueOnce({
-        files: [],
-        stats: { filesChanged: 10, additions: 50, deletions: 8 },
-      });
+      await waitFor(() => expect(first.current.stats).toEqual({ filesChanged: 5, additions: 20, deletions: 3 }));
 
       const { result: second } = renderHook(() =>
-        useTaskDiffStats("FN-STEP-CACHE", "done", "abc1234", undefined, { stepVersion: "v2" }),
+        useTaskDiffStats("FN-STEP-CACHE", "in-progress", undefined, undefined, {
+          ...activeOptions,
+          stepVersion: "v2",
+        }),
       );
 
-      await waitFor(() => expect(second.current.loading).toBe(false));
-      expect(second.current.stats).toEqual({ filesChanged: 10, additions: 50, deletions: 8 });
-
-      // Both should have been fetched
+      await waitFor(() => expect(second.current.stats).toEqual({ filesChanged: 10, additions: 50, deletions: 8 }));
       expect(mockFetchTaskDiff).toHaveBeenCalledTimes(2);
 
-      // Cache should have both entries
       mockFetchTaskDiff.mockClear();
 
       const { result: cached1 } = renderHook(() =>
-        useTaskDiffStats("FN-STEP-CACHE", "done", "abc1234", undefined, { stepVersion: "v1" }),
+        useTaskDiffStats("FN-STEP-CACHE", "in-progress", undefined, undefined, {
+          ...activeOptions,
+          stepVersion: "v1",
+        }),
       );
       const { result: cached2 } = renderHook(() =>
-        useTaskDiffStats("FN-STEP-CACHE", "done", "abc1234", undefined, { stepVersion: "v2" }),
+        useTaskDiffStats("FN-STEP-CACHE", "in-progress", undefined, undefined, {
+          ...activeOptions,
+          stepVersion: "v2",
+        }),
       );
 
       expect(cached1.current.stats).toEqual({ filesChanged: 5, additions: 20, deletions: 3 });

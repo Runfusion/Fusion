@@ -101,12 +101,24 @@
   flex-direction: column;
   min-height: 0;
   overflow-y: hidden;
+  /* FNXC:TaskDetailChat 2026-06-13-19:55: Chat box should sit in the chat view without excess vertical spacing around the composer (FN-6418), so only the chat body tightens vertical padding while shared detail tab padding remains unchanged. */
+  padding-block: var(--space-md);
 }
 
 .detail-title {
   font-size: 18px;
   font-weight: 600;
   margin-bottom: var(--space-md);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.detail-title--collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .detail-heading-row {
@@ -164,7 +176,15 @@
   color: var(--text);
 }
 
+/*
+FNXC:TaskDetailMeta 2026-06-13-17:32:
+The task-detail modal metadata must keep priority, execution mode, provenance, PR context, and timestamps in one horizontal row that wraps as needed instead of stacking each child as a separate line.
+*/
 .detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: var(--space-lg);
@@ -174,8 +194,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  margin-top: var(--space-sm);
-  margin-bottom: var(--space-sm);
+  margin-top: 0;
+  margin-bottom: 0;
   color: var(--text-muted);
 }
 
@@ -219,7 +239,7 @@
   flex-wrap: nowrap;
   gap: var(--space-xs);
   color: var(--text-dim);
-  margin-top: var(--space-xs);
+  margin-top: 0;
 }
 
 .detail-timestamp-item {
@@ -245,8 +265,13 @@
     flex-shrink: 0;
   }
 
+  .detail-meta {
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
   .detail-provenance {
-    align-items: flex-start;
+    align-items: center;
   }
 
   .detail-timestamps {
@@ -725,13 +750,14 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  margin-top: var(--space-lg);
+  /* FNXC:TaskDetailChat 2026-06-13-19:55: Chat box should sit in the chat view without excess vertical spacing around the composer (FN-6418), so the chat section opts out of the shared top margin used by other detail tabs. */
+  margin-top: 0;
 }
 
-.task-detail-content--chat-expanded .detail-title-row {
-  display: none;
-}
-
+/*
+FNXC:TaskDetailChat 2026-06-16-22:13:
+Expanded chat should take over the modal except for the task title row, so users keep task ID and column context while tabs and modal actions stay hidden.
+*/
 .task-detail-content--chat-expanded .detail-tabs {
   display: none;
 }
@@ -742,7 +768,7 @@
 
 .task-detail-content--chat-expanded .modal-header {
   flex: 0 0 auto;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding-block: var(--space-sm);
 }
 
@@ -936,13 +962,20 @@
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
 }
 
-/* FN-5599: widen task detail modal on tablet viewports. */
+/*
+FNXC:TaskDetailModalResponsive 2026-06-16-19:13:
+FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset and modal max-height subtraction must use the same `--overlay-padding-top` value so the `.modal-actions` footer remains on-screen, while the modal uses more of the tablet viewport to avoid a cramped layout.
+*/
 @media (min-width: 769px) and (max-width: 1024px) {
+  .modal-overlay:has(.task-detail-modal) {
+    --overlay-padding-top: 6vh;
+  }
+
   .modal.task-detail-modal {
-    width: min(96vw, 1024px);
-    max-width: 96vw;
+    width: 98vw;
+    max-width: 98vw;
     height: 92vh;
-    max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - 16px);
+    max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - var(--space-md));
   }
 }
 
@@ -978,11 +1011,13 @@
     flex-direction: column;
     min-height: 0;
     overflow-y: hidden;
+    padding-block: var(--space-sm);
   }
 
   .detail-section--chat {
     flex: 1;
     min-height: 0;
+    margin-top: 0;
   }
 
   .task-detail-content--chat-expanded .detail-body--chat {

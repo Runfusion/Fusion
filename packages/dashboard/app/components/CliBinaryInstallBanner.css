@@ -63,7 +63,7 @@
 }
 
 .cli-binary-banner__primary:hover:not(:disabled) {
-  background: var(--accent-hover, #2563eb);
+  background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
 }
 
 .cli-binary-banner__primary:disabled {

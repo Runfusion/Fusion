@@ -68,6 +68,19 @@ export const COMPOUND_ENGINEERING_SKILLS: PluginSkillContribution[] = [
     triggerPatterns: ["code review", "review this change", "review before PR"],
   },
   {
+    /*
+     * FNXC:CompoundEngineering 2026-06-16-19:40:
+     * ce-debug is bundled beside the other pinned CE skills so bug-shaped investigation sessions install from the plugin-local snapshot and never depend on an operator's global skill cache.
+     */
+    skillId: "ce-debug",
+    name: "ce-debug",
+    description:
+      "Investigate bug-shaped work by reproducing failures, testing hypotheses, isolating root cause, and producing findings before implementation.",
+    skillFiles: ["skills/ce-debug/SKILL.md"],
+    enabled: true,
+    triggerPatterns: ["debug", "investigate a bug", "root cause", "regression", "broken behavior", "error message"],
+  },
+  {
     skillId: "ce-compound",
     name: "ce-compound",
     description:
@@ -75,5 +88,32 @@ export const COMPOUND_ENGINEERING_SKILLS: PluginSkillContribution[] = [
     skillFiles: ["skills/ce-compound/SKILL.md"],
     enabled: true,
     triggerPatterns: ["compound this", "document this learning", "capture this solution"],
+  },
+  {
+    skillId: "ce-commit",
+    name: "ce-commit",
+    description:
+      "Create a git commit with a clear, value-communicating message following repo conventions.",
+    skillFiles: ["skills/ce-commit/SKILL.md"],
+    enabled: true,
+    triggerPatterns: ["commit", "commit this", "save my changes", "create a commit"],
+  },
+  {
+    skillId: "ce-commit-push-pr",
+    name: "ce-commit-push-pr",
+    description:
+      "Commit, push, and open a PR with an adaptive, value-first description that scales with the change.",
+    skillFiles: ["skills/ce-commit-push-pr/SKILL.md"],
+    enabled: true,
+    triggerPatterns: ["commit and PR", "ship this", "create a PR", "open a pull request"],
+  },
+  {
+    skillId: "ce-resolve-pr-feedback",
+    name: "ce-resolve-pr-feedback",
+    description:
+      "Resolve PR review feedback by evaluating validity and fixing issues in parallel.",
+    skillFiles: ["skills/ce-resolve-pr-feedback/SKILL.md"],
+    enabled: true,
+    triggerPatterns: ["resolve PR feedback", "address review comments", "fix review feedback"],
   },
 ];

@@ -193,6 +193,14 @@
   color: var(--text-muted);
 }
 
+/*
+FNXC:WorkflowEditorTheme 2026-06-19-05:22:
+Boolean workflow settings live in the editor's left sidebar, so their checkboxes must use the same accent token as inspector checkboxes instead of browser-default white controls.
+*/
+.wf-setting--checkbox input[type="checkbox"] {
+  accent-color: var(--todo);
+}
+
 .wf-setting-options {
   display: flex;
   flex-direction: column;

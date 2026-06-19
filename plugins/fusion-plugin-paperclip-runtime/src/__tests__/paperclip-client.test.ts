@@ -385,7 +385,11 @@ describe("probePaperclipConnection", () => {
 // ---------------------------------------------------------------------------
 
 describe("mintAgentApiKeyViaCli", () => {
-  // We mock node:child_process.spawn for each case.
+  /*
+   * FNXC:PaperclipRuntimeTests 2026-06-18-06:31:
+   * Spawn-backed tests must emit fake child `close`/`error` events only after the production Promise attaches listeners.
+   * `mintAgentApiKeyViaCli` awaits the dynamic `node:child_process` import before listener registration, so bare `setImmediate` emits can be lost and produce 5000ms timeouts or unhandled ENOENT errors.
+   */
 
   it("success path — parses apiKey from JSON", async () => {
     const mockPayload = {
@@ -394,105 +398,55 @@ describe("mintAgentApiKeyViaCli", () => {
       agentId: "AG-1",
       companyId: "CO-1",
     };
-    const { EventEmitter } = await import("node:events");
-    const { Readable } = await import("node:stream");
 
-    const fakeStdout = Readable.from([Buffer.from(JSON.stringify(mockPayload))]);
-    const fakeStderr = Readable.from([]);
-    const fakeChild = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
-    (fakeChild as unknown as Record<string, unknown>).stdout = fakeStdout;
-    (fakeChild as unknown as Record<string, unknown>).stderr = fakeStderr;
-    (fakeChild as unknown as Record<string, unknown>).kill = vi.fn();
-
-    const spawnMock = vi.fn().mockReturnValue(fakeChild);
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-
-    // Emit close asynchronously after mock is in place
-    setImmediate(() => {
-      fakeChild.emit("close", 0);
-    });
-
-    const result = await mintAgentApiKeyViaCli({ agentRef: "my-agent", companyId: "CO-1" });
-    expect(result.apiKey).toBe("sk-test-mint-key");
-    expect(result.apiBase).toBe("http://localhost:3100");
-    expect(result.agentId).toBe("AG-1");
-    expect(result.companyId).toBe("CO-1");
-
-    vi.doUnmock("node:child_process");
+    await withFakeSpawn(
+      { stdoutChunks: [JSON.stringify(mockPayload)], stderrChunks: [], exitCode: 0 },
+      async () => {
+        const result = await mintAgentApiKeyViaCli({ agentRef: "my-agent", companyId: "CO-1" });
+        expect(result.apiKey).toBe("sk-test-mint-key");
+        expect(result.apiBase).toBe("http://localhost:3100");
+        expect(result.agentId).toBe("AG-1");
+        expect(result.companyId).toBe("CO-1");
+      },
+    );
   });
 
   it("ENOENT on spawn error → throws with install hint", async () => {
-    const { EventEmitter } = await import("node:events");
-    const { Readable } = await import("node:stream");
-
-    const fakeChild = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
-    (fakeChild as unknown as Record<string, unknown>).stdout = Readable.from([]);
-    (fakeChild as unknown as Record<string, unknown>).stderr = Readable.from([]);
-    (fakeChild as unknown as Record<string, unknown>).kill = vi.fn();
-
-    const spawnMock = vi.fn().mockReturnValue(fakeChild);
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-
-    setImmediate(() => {
-      const err = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
-      fakeChild.emit("error", err);
-    });
-
-    await expect(
-      mintAgentApiKeyViaCli({ agentRef: "my-agent", cliBinaryPath: "/usr/local/bin/paperclipai", companyId: "CO-1" }),
-    ).rejects.toThrow(/binary not found.*npm i -g paperclipai/i);
-
-    vi.doUnmock("node:child_process");
+    await withFakeSpawn(
+      {
+        stdoutChunks: [],
+        stderrChunks: [],
+        exitCode: null,
+        errorOnSpawn: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
+      },
+      async () => {
+        await expect(
+          mintAgentApiKeyViaCli({ agentRef: "my-agent", cliBinaryPath: "/usr/local/bin/paperclipai", companyId: "CO-1" }),
+        ).rejects.toThrow(/binary not found.*npm i -g paperclipai/i);
+      },
+    );
   });
 
   it("non-zero exit → throws with stderr hint", async () => {
-    const { EventEmitter } = await import("node:events");
-    const { Readable } = await import("node:stream");
-
-    const fakeStdout = Readable.from([]);
-    const fakeStderr = Readable.from([Buffer.from("Error: CLI is not authenticated\n")]);
-    const fakeChild = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
-    (fakeChild as unknown as Record<string, unknown>).stdout = fakeStdout;
-    (fakeChild as unknown as Record<string, unknown>).stderr = fakeStderr;
-    (fakeChild as unknown as Record<string, unknown>).kill = vi.fn();
-
-    const spawnMock = vi.fn().mockReturnValue(fakeChild);
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-
-    setImmediate(() => {
-      fakeChild.emit("close", 1);
-    });
-
-    await expect(
-      mintAgentApiKeyViaCli({ agentRef: "my-agent", companyId: "CO-1" }),
-    ).rejects.toThrow(/exited 1.*paperclipai onboard/i);
-
-    vi.doUnmock("node:child_process");
+    await withFakeSpawn(
+      { stdoutChunks: [], stderrChunks: ["Error: CLI is not authenticated\n"], exitCode: 1 },
+      async () => {
+        await expect(
+          mintAgentApiKeyViaCli({ agentRef: "my-agent", companyId: "CO-1" }),
+        ).rejects.toThrow(/exited 1.*paperclipai onboard/i);
+      },
+    );
   });
 
   it("malformed JSON output → throws", async () => {
-    const { EventEmitter } = await import("node:events");
-    const { Readable } = await import("node:stream");
-
-    const fakeStdout = Readable.from([Buffer.from("not-json-at-all")]);
-    const fakeStderr = Readable.from([]);
-    const fakeChild = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>;
-    (fakeChild as unknown as Record<string, unknown>).stdout = fakeStdout;
-    (fakeChild as unknown as Record<string, unknown>).stderr = fakeStderr;
-    (fakeChild as unknown as Record<string, unknown>).kill = vi.fn();
-
-    const spawnMock = vi.fn().mockReturnValue(fakeChild);
-    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
-
-    setImmediate(() => {
-      fakeChild.emit("close", 0);
-    });
-
-    await expect(
-      mintAgentApiKeyViaCli({ agentRef: "my-agent", companyId: "CO-1" }),
-    ).rejects.toThrow(/non-JSON output/i);
-
-    vi.doUnmock("node:child_process");
+    await withFakeSpawn(
+      { stdoutChunks: ["not-json-at-all"], stderrChunks: [], exitCode: 0 },
+      async () => {
+        await expect(
+          mintAgentApiKeyViaCli({ agentRef: "my-agent", companyId: "CO-1" }),
+        ).rejects.toThrow(/non-JSON output/i);
+      },
+    );
   });
 });
 

@@ -71,6 +71,30 @@ describe("reliability interactions: near-duplicate intake", () => {
     expect(archivedActivity.some((entry) => entry.taskId === incoming.id)).toBe(false);
   });
 
+  it("does not flag when the only near-duplicate candidate is archived", async () => {
+    const fx = await createFixture();
+    fixtures.push(fx);
+
+    const canonical = await fx.store.createTask({
+      title: "Create PR routes missing handlers",
+      description: "Missing /api/tasks/:id/pr/options and /api/tasks/:id/pr/preflight and /api/tasks/:id/pr/generate-metadata",
+      column: "todo",
+    });
+    await fx.store.archiveTask(canonical.id, { cleanup: false });
+    const incoming = await fx.store.createTask({
+      title: "Missing handlers for create PR routes",
+      description: "GET /api/tasks/:id/pr/options and GET /api/tasks/:id/pr/preflight and POST /api/tasks/:id/pr/generate-metadata all fail",
+    });
+
+    await (fx.triage as any).finalizeApprovedTask(incoming, basePrompt, await fx.store.getSettings(), {});
+
+    const updated = await fx.store.getTask(incoming.id);
+    expect(updated.column).toBe("todo");
+    expect(updated.sourceMetadata?.nearDuplicateOf).toBeFalsy();
+    const flaggedActivity = await fx.store.getActivityLog({ type: "task:near-duplicate-flagged", limit: 20 });
+    expect(flaggedActivity.some((entry) => entry.taskId === incoming.id)).toBe(false);
+  });
+
   it("does not archive generic file overlap only", async () => {
     const fx = await createFixture();
     fixtures.push(fx);

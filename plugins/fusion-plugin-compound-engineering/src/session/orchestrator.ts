@@ -11,7 +11,7 @@ import type {
 import { resolveDefaultInstallTargetRoot } from "../skill-installation.js";
 import { getCePipelineStore, type CePipelineStore } from "../sync/pipeline-store.js";
 import { createCeTaskWithLink } from "../sync/ce-task.js";
-import { getDefaultModelId, getDefaultProvider, getEnabledStages } from "../settings.js";
+import { getDefaultModelId, getDefaultProvider, getDisabledStages } from "../settings.js";
 import type { CeActivityTurn, CeSession, CeSessionStore } from "./session-store.js";
 import { getCeSessionStore } from "./session-store.js";
 import { getStage, type CeStageDefinition } from "./stage-registry.js";
@@ -383,8 +383,11 @@ export class CeOrchestrator {
   async start(stageId: string, opts: StartStageOptions): Promise<CeStepResult> {
     const stage = getStage(stageId);
     if (!stage) throw new Error(`Unknown CE stage: ${stageId}`);
-    // Setting-gated launch (U9): only stages the operator enabled may launch.
-    if (!getEnabledStages(this.ctx.settings).includes(stageId)) {
+    /*
+     * FNXC:CompoundEngineering 2026-06-17-08:09:
+     * Stage launch gating is opt-out: a registered CE stage launches unless operators explicitly list it in disabledStages. This keeps existing installs from rejecting newly appended stages because of stale enabledStages snapshots.
+     */
+    if (getDisabledStages(this.ctx.settings).includes(stageId)) {
       throw new Error(`CE stage is not enabled: ${stageId}`);
     }
     if (!this.factory) {

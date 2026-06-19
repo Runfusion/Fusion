@@ -13,7 +13,7 @@ import type {
   ResearchSynthesisRequest,
   ResearchSynthesisResult,
 } from "@fusion/core";
-import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, normalizeMergerMode, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
+import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, normalizeMergerMode, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -104,6 +104,18 @@ function formatErrorDetails(error: unknown): { message: string; detail: string }
 function isInvalidDoneTransitionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Invalid transition:") && message.includes("→ 'done'");
+}
+
+export function shouldRetryAutoMergeConflict(
+  currentRetries: number,
+  settings: { autoResolveConflicts?: boolean; maxAutoMergeRetries?: unknown } | null | undefined,
+): { shouldRetry: boolean; maxAutoMergeRetries: number; nextRetryCount: number } {
+  const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
+  return {
+    shouldRetry: settings?.autoResolveConflicts !== false && currentRetries + 1 < maxAutoMergeRetries,
+    maxAutoMergeRetries,
+    nextRetryCount: currentRetries + 1,
+  };
 }
 
 /**
@@ -364,7 +376,6 @@ export class ProjectEngine {
     for (const r of this.takeMergeResolvers(taskId)) r.reject(err);
   }
 
-  private static readonly MAX_AUTO_MERGE_RETRIES = 3;
   /** FN-5697/FN-5674: cap transient provider/network abort retries in auto-merge.
    *  Examples: "This operation was aborted", "socket hang up", `server_error`.
    *  After this cap, the task is parked failed for human visibility. */
@@ -1442,9 +1453,9 @@ export class ProjectEngine {
     column: string;
     error?: string | null;
     log?: Array<{ action?: string }>;
-  }): boolean {
+  }, maxAutoMergeRetries: number): boolean {
     if (task.column !== "in-review") return false;
-    if ((task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES) return false;
+    if ((task.mergeRetries ?? 0) < maxAutoMergeRetries) return false;
     const err = task.error ?? "";
     const matchesVerificationError =
       err.includes("Deterministic test verification failed") ||
@@ -1490,7 +1501,7 @@ export class ProjectEngine {
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
-  }): boolean {
+  }, maxAutoMergeRetries: number): boolean {
     // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
@@ -1503,8 +1514,8 @@ export class ProjectEngine {
     // error). The task is parked for human/follow-up intervention.
     if (task.status === "failed") return false;
     return (
-      (task.mergeRetries ?? 0) < ProjectEngine.MAX_AUTO_MERGE_RETRIES ||
-      this.hasAutoHealableVerificationBufferFailure(task) ||
+      (task.mergeRetries ?? 0) < maxAutoMergeRetries ||
+      this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries) ||
       this.isRetryCooldownElapsed(task)
     );
   }
@@ -1677,9 +1688,10 @@ export class ProjectEngine {
     }
   }
 
-  private enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge">): number {
+  private enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge" | "maxAutoMergeRetries">): number {
+    const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
     const eligible = sortTasksByPriorityThenAgeAndId(
-      tasks.filter((t) => !t.paused && this.canMergeTask(t as any) && this.allowInReviewMergeProcessing(t, settings)) as Task[],
+      tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries) && this.allowInReviewMergeProcessing(t, settings)) as Task[],
     );
     for (const t of eligible) {
       this.internalEnqueueMerge(t.id);
@@ -1783,6 +1795,7 @@ export class ProjectEngine {
           if (!hasManualResolver) {
             // Re-check autoMerge and pause before each merge
             const settings = await store.getSettings();
+            const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
             if (settings.globalPause || settings.enginePaused) {
               runtimeLog.log(
                 `Auto-merge skipping ${taskId} — ${settings.globalPause ? "global pause" : "engine paused"} active`,
@@ -1804,7 +1817,7 @@ export class ProjectEngine {
 
             // Intentional cast to access Task properties needed by merge validation
 
-            if (!this.canMergeTask(task as any)) {
+            if (!this.canMergeTask(task as any, maxAutoMergeRetries)) {
               continue;
             }
 
@@ -1842,11 +1855,14 @@ export class ProjectEngine {
                 cwd,
               });
               if (!reachability.reachable) {
+                /*
+                 * FNXC:AutoMergeRetries 2026-06-17-04:20:
+                 * Fast-path recovery must consume the resolved project retry cap, not a class constant, because poisoned merge-confirmed rows otherwise park or retry at the old fixed value after operators tune maxAutoMergeRetries.
+                 */
                 const sha = task.mergeDetails.commitSha || "";
                 const shortSha = sha ? sha.slice(0, 8) : "<no-sha>";
                 const currentRetries = task.mergeRetries ?? 0;
-                const budgetExhausted =
-                  currentRetries >= ProjectEngine.MAX_AUTO_MERGE_RETRIES;
+                const budgetExhausted = currentRetries >= maxAutoMergeRetries;
 
                 // Clear poisoned mergeDetails fields. These persisted before
                 // the integration ref-advance actually succeeded (pre-FN-5627
@@ -1926,14 +1942,14 @@ export class ProjectEngine {
                 // integration tip.
                 const nextRetries = currentRetries + 1;
                 runtimeLog.warn(
-                  `Auto-merge: ${taskId} fast-path REFUSED — auto-recovering (attempt ${nextRetries}/${ProjectEngine.MAX_AUTO_MERGE_RETRIES}): ${reachability.reason}: ${reachability.diagnostic}`,
+                  `Auto-merge: ${taskId} fast-path REFUSED — auto-recovering (attempt ${nextRetries}/${maxAutoMergeRetries}): ${reachability.reason}: ${reachability.diagnostic}`,
                 );
                 // Prefix MUST be "Auto-recovered:" so NotificationService's
                 // maybeSuppressTransientFailedNotification cancels the pending
                 // ntfy fired off the underlying task:failed event.
                 await store.logEntry(
                   taskId,
-                  `Auto-recovered: fast-path refused — cleared poisoned mergeDetails (commit ${shortSha} not reachable from ${integrationBranchForGate}, ${reachability.reason}). Re-enqueueing for fresh merge attempt ${nextRetries}/${ProjectEngine.MAX_AUTO_MERGE_RETRIES} [FN-5627].`,
+                  `Auto-recovered: fast-path refused — cleared poisoned mergeDetails (commit ${shortSha} not reachable from ${integrationBranchForGate}, ${reachability.reason}). Re-enqueueing for fresh merge attempt ${nextRetries}/${maxAutoMergeRetries} [FN-5627].`,
                 );
                 await store.updateTask(taskId, {
                   mergeDetails: cleanedMergeDetails,
@@ -1958,7 +1974,7 @@ export class ProjectEngine {
                       reason: reachability.reason,
                       diagnostic: reachability.diagnostic,
                       mergeRetries: nextRetries,
-                      maxRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
+                      maxRetries: maxAutoMergeRetries,
                     },
                   });
                 } catch (auditErr) {
@@ -2076,14 +2092,14 @@ export class ProjectEngine {
 
             // Auto-heal verification buffer failures by resetting retry counter
 
-            if (this.hasAutoHealableVerificationBufferFailure(task as any)) {
+            if (this.hasAutoHealableVerificationBufferFailure(task as any, maxAutoMergeRetries)) {
               await store.logEntry(
                 taskId,
                 "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
               );
               await store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
             } else if (
-              (task.mergeRetries ?? 0) >= ProjectEngine.MAX_AUTO_MERGE_RETRIES &&
+              (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
 
               this.isRetryCooldownElapsed(task as any)
             ) {
@@ -2329,6 +2345,7 @@ export class ProjectEngine {
           const settingsOnErr = await store
             .getSettings()
             .catch(() => ({ autoResolveConflicts: true }));
+          const maxAutoMergeRetriesOnErr = resolveMaxAutoMergeRetries(settingsOnErr as { maxAutoMergeRetries?: unknown });
           const taskOnErr = await store.getTask(taskId).catch(() => null);
           const mergeStrategyOnErr =
             this.options.getMergeStrategy?.(settingsOnErr as Settings) ?? "direct";
@@ -2579,6 +2596,10 @@ export class ProjectEngine {
             if (taskOnErr && isConflictError) {
               const currentRetries = taskOnErr.mergeRetries ?? 0;
 
+              /*
+               * FNXC:AutoMergeRetries 2026-06-17-04:20:
+               * The conflict retry loop resolves maxAutoMergeRetries from settings on every caught merge failure so changed project policy affects the next retry/bounce decision without changing the historical default of 3.
+               */
               // Use `currentRetries + 1 < MAX` (not `currentRetries < MAX`) so
               // the LAST retry's failure goes straight to the bounce code in
               // this same engine tick. The previous condition scheduled a
@@ -2586,17 +2607,15 @@ export class ProjectEngine {
               // before that timer fired (common during dev), the task was
               // stranded with mergeRetries=MAX and only the cooldown sweep
               // could ever try again (silent loop).
-              if (
-                (settingsOnErr as Settings).autoResolveConflicts !== false &&
-                currentRetries + 1 < ProjectEngine.MAX_AUTO_MERGE_RETRIES
-              ) {
-                const newRetryCount = currentRetries + 1;
+              const retryDecision = shouldRetryAutoMergeConflict(currentRetries, settingsOnErr);
+              if (retryDecision.shouldRetry) {
+                const newRetryCount = retryDecision.nextRetryCount;
                 await store.updateTask(taskId, { mergeRetries: newRetryCount, status: null });
 
                 // Exponential backoff: 5s, 10s, 20s
                 const delayMs = 5000 * Math.pow(2, currentRetries);
                 runtimeLog.log(
-                  `Auto-merge conflict retry ${newRetryCount}/${ProjectEngine.MAX_AUTO_MERGE_RETRIES} for ${taskId} in ${delayMs / 1000}s`,
+                  `Auto-merge conflict retry ${newRetryCount}/${maxAutoMergeRetriesOnErr} for ${taskId} in ${delayMs / 1000}s`,
                 );
                 setTimeout(() => {
                   if (!this.shuttingDown) this.internalEnqueueMerge(taskId);
@@ -2627,12 +2646,12 @@ export class ProjectEngine {
                   try {
                     await store.updateTask(taskId, {
                       status: "failed",
-                      mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
+                      mergeRetries: maxAutoMergeRetriesOnErr,
                       error: `Auto-merge gave up: ${reason}. ${errorMsg}`,
                     });
                     await store.addTaskComment(
                       taskId,
-                      `Auto-merge gave up after ${ProjectEngine.MAX_AUTO_MERGE_RETRIES} conflict-resolution retries (${reason}). ` +
+                      `Auto-merge gave up after ${maxAutoMergeRetriesOnErr} conflict-resolution retries (${reason}). ` +
                         `Resolve the conflict on branch \`${taskOnErr.branch ?? "?"}\` manually, then unpause/retry.`,
                       "agent",
                     );
@@ -2711,7 +2730,7 @@ export class ProjectEngine {
                   try {
                     await store.addTaskComment(
                       taskId,
-                      `Auto-merge could not resolve conflicts within ${ProjectEngine.MAX_AUTO_MERGE_RETRIES} retries (bounce ${nextBounces}/${bounceCap}). ` +
+                      `Auto-merge could not resolve conflicts within ${maxAutoMergeRetriesOnErr} retries (bounce ${nextBounces}/${bounceCap}). ` +
                         `Bouncing back to in-progress for a fresh rebase against main; the executor will re-run quality gates and re-attempt the merge.`,
                       "agent",
                     );
@@ -2724,7 +2743,7 @@ export class ProjectEngine {
                     await store.moveTask(taskId, "in-progress");
                     await store.logEntry(
                       taskId,
-                      `Auto-merge conflicts unresolved (${ProjectEngine.MAX_AUTO_MERGE_RETRIES}/${ProjectEngine.MAX_AUTO_MERGE_RETRIES}) — bounced to in-progress for re-rebase (bounce ${nextBounces}/${bounceCap})`,
+                      `Auto-merge conflicts unresolved (${maxAutoMergeRetriesOnErr}/${maxAutoMergeRetriesOnErr}) — bounced to in-progress for re-rebase (bounce ${nextBounces}/${bounceCap})`,
                       "MergeConflictBounce",
                     );
                     runtimeLog.log(
@@ -2781,7 +2800,7 @@ export class ProjectEngine {
                 }
                 await store.updateTask(taskId, {
                   status: "failed",
-                  mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
+                  mergeRetries: maxAutoMergeRetriesOnErr,
                   error: errorMsg,
                 });
                 await store.logEntry(
@@ -2837,7 +2856,7 @@ export class ProjectEngine {
               }
               await store.updateTask(taskId, {
                 status: "failed",
-                mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
+                mergeRetries: maxAutoMergeRetriesOnErr,
                 error: errorMsg,
               });
             } catch (recoveryErr) {

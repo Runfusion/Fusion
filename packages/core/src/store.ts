@@ -142,6 +142,7 @@ import {
   readAgentLogEntriesByTimeRange,
 } from "./agent-log-file-store.js";
 import { truncateAgentLogDetail } from "./agent-log-constants.js";
+import { emitUsageEvent as emitUsageEventToDb, type UsageEventInput } from "./usage-events.js";
 import { validateNodeOverrideChange } from "./node-override-guard.js";
 import { sanitizeTitle, summarizeTitle } from "./ai-summarize.js";
 import { extractTaskIdTokens, normalizeTitleForTaskId } from "./task-title-id-drift.js";
@@ -158,6 +159,7 @@ import { createDistributedTaskIdAllocator, reconcileTaskIdState, resolveLocalNod
 import { detectStalledReview } from "./stalled-review-detector.js";
 import { computeRetrySummary } from "./retry-summary.js";
 import { archiveAsSameAgentDuplicate, findSameAgentDuplicates } from "./duplicate-intake.js";
+import { isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
 import {
   detectTaskIdIntegrityAnomalies,
   type TaskIdIntegrityReport,
@@ -231,6 +233,8 @@ interface TaskRow {
   tokenUsageTotalTokens: number | null;
   tokenUsageFirstUsedAt: string | null;
   tokenUsageLastUsedAt: string | null;
+  tokenUsageModelProvider: string | null;
+  tokenUsageModelId: string | null;
   tokenBudgetSoftAlertedAt: string | null;
   tokenBudgetHardAlertedAt: string | null;
   tokenBudgetOverride: string | null;
@@ -260,6 +264,7 @@ interface TaskRow {
   sourceIssueExternalIssueId: string | null;
   sourceIssueNumber: number | null;
   sourceIssueUrl: string | null;
+  sourceIssueClosedAt: string | null;
   mergeDetails: string | null;
   breakIntoSubtasks: number | null;
   noCommitsExpected: number | null;
@@ -379,6 +384,8 @@ const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("tokenUsageTotalTokens", (task) => task.tokenUsage?.totalTokens ?? null),
   defineTaskColumn("tokenUsageFirstUsedAt", (task) => task.tokenUsage?.firstUsedAt ?? null),
   defineTaskColumn("tokenUsageLastUsedAt", (task) => task.tokenUsage?.lastUsedAt ?? null),
+  defineTaskColumn("tokenUsageModelProvider", (task) => task.tokenUsage?.modelProvider ?? null),
+  defineTaskColumn("tokenUsageModelId", (task) => task.tokenUsage?.modelId ?? null),
   defineTaskColumn("tokenBudgetSoftAlertedAt", (task) => task.tokenBudgetSoftAlertedAt ?? null),
   defineTaskColumn("tokenBudgetHardAlertedAt", (task) => task.tokenBudgetHardAlertedAt ?? null),
   defineTaskColumn("tokenBudgetOverride", (task) => toJsonNullable(task.tokenBudgetOverride)),
@@ -408,6 +415,7 @@ const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("sourceIssueExternalIssueId", (task) => task.sourceIssue?.externalIssueId ?? null),
   defineTaskColumn("sourceIssueNumber", (task) => task.sourceIssue?.issueNumber ?? null),
   defineTaskColumn("sourceIssueUrl", (task) => task.sourceIssue?.url ?? null),
+  defineTaskColumn("sourceIssueClosedAt", (task) => task.sourceIssue?.closedAt ?? null),
   defineTaskColumn("mergeDetails", (task) => toJsonNullable(task.mergeDetails)),
   defineTaskColumn("breakIntoSubtasks", (task) => task.breakIntoSubtasks ? 1 : 0),
   defineTaskColumn("noCommitsExpected", (task) => task.noCommitsExpected ? 1 : 0),
@@ -552,6 +560,8 @@ interface TaskCommitAssociationRow {
   matchedBy: TaskCommitAssociationMatchSource;
   confidence: TaskCommitAssociationConfidence;
   note: string | null;
+  additions: number | null;
+  deletions: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2012,6 +2022,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           totalTokens: row.tokenUsageTotalTokens,
           firstUsedAt: row.tokenUsageFirstUsedAt,
           lastUsedAt: row.tokenUsageLastUsedAt,
+          modelProvider: row.tokenUsageModelProvider ?? undefined,
+          modelId: row.tokenUsageModelId ?? undefined,
         };
       })(),
       attachments: (() => { const a = fromJson<TaskAttachment[]>(row.attachments); return a && a.length > 0 ? a : undefined; })(),
@@ -2060,6 +2072,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           externalIssueId: row.sourceIssueExternalIssueId,
           issueNumber: row.sourceIssueNumber,
           url: row.sourceIssueUrl ?? undefined,
+          closedAt: row.sourceIssueClosedAt ?? undefined,
         };
       })(),
       mergeDetails: fromJson<import("./types.js").MergeDetails>(row.mergeDetails),
@@ -2477,10 +2490,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "planningModelProvider", "planningModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "graphResumeRetryCount", "resumeLimboTipSha", "resumeLimboStepSignature", "postReviewFixCount", "recoveryRetryCount", "taskDoneRetryCount", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
       "error", "summary", "thinkingLevel", "executionMode",
-      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
+      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
-      "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
+      "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails",
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
@@ -2526,10 +2539,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "planningModelProvider", "planningModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "graphResumeRetryCount", "resumeLimboTipSha", "resumeLimboStepSignature", "postReviewFixCount", "recoveryRetryCount", "taskDoneRetryCount", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
       "error", "summary", "thinkingLevel", "executionMode",
-      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
+      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenUsageModelProvider", "tokenUsageModelId", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails",
       "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
@@ -6178,6 +6191,78 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     return rows.map((row) => this.rowToTask(row));
   }
 
+  /**
+   * FNXC:NearDuplicateDetection 2026-06-14-12:00:
+   * FN-6439 requires the store to reconcile persisted duplicate flags after a canonical becomes inactive.
+   * sourceMetadataPatch only merges, so this reverse lookup performs a bounded read-modify-write that strips stale near-duplicate keys without pausing or failing the referencing tasks.
+   */
+  private async clearNearDuplicateReferencesTo(
+    canonicalId: string,
+    inactiveState: { column?: ColumnId | null; deletedAt?: string | null; reason: string },
+  ): Promise<Task[]> {
+    if (!isNearDuplicateCanonicalInactive(inactiveState)) {
+      return [];
+    }
+
+    const selectClause = this.getTaskSelectClause(false, "t");
+    const rows = this.db.prepare(`
+      SELECT ${selectClause}
+      FROM tasks t
+      WHERE t."deletedAt" IS NULL
+        AND t."column" != 'archived'
+        AND t."column" != 'done'
+        AND json_extract(t.sourceMetadata, '$.nearDuplicateOf') = ?
+      ORDER BY t.createdAt ASC
+    `).all(canonicalId) as TaskRow[];
+
+    const updatedTasks: Task[] = [];
+    for (const row of rows) {
+      const task = this.rowToTask(row);
+      const nextSourceMetadata = { ...(task.sourceMetadata ?? {}) };
+      delete nextSourceMetadata.nearDuplicateOf;
+      delete nextSourceMetadata.nearDuplicateScore;
+      delete nextSourceMetadata.nearDuplicateSharedTokens;
+      delete nextSourceMetadata.nearDuplicateDismissed;
+
+      task.sourceMetadata = Object.keys(nextSourceMetadata).length > 0 ? nextSourceMetadata : undefined;
+      const updatedAt = new Date().toISOString();
+      task.updatedAt = updatedAt;
+      task.log = [
+        ...(task.log ?? []),
+        {
+          timestamp: updatedAt,
+          action: `Near-duplicate canonical ${canonicalId} is now inactive (${inactiveState.reason}); cleared duplicate flag (informational, no decision required)`,
+        },
+      ];
+
+      this.db.transactionImmediate(() => {
+        this.upsertTaskWithFtsRecovery(task);
+        this.db.bumpLastModified();
+      });
+      await this.writeTaskJsonFile(this.taskDir(task.id), task);
+      if (this.isWatching) this.taskCache.set(task.id, { ...task });
+      this.emit("task:updated", task);
+      updatedTasks.push(task);
+    }
+
+    return updatedTasks;
+  }
+
+  private async clearNearDuplicateReferencesToFailSoft(
+    canonicalId: string,
+    inactiveState: { column?: ColumnId | null; deletedAt?: string | null; reason: string },
+  ): Promise<void> {
+    try {
+      await this.clearNearDuplicateReferencesTo(canonicalId, inactiveState);
+    } catch (error) {
+      storeLog.warn("Failed to clear stale near-duplicate references (degraded)", {
+        taskId: canonicalId,
+        reason: inactiveState.reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async getTasksByAssignedAgent(
     agentId: string,
     options?: { pausedOnly?: boolean; excludeArchived?: boolean },
@@ -6664,6 +6749,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
             },
           });
           this.enqueueMergeQueue(id, { priority: task.priority, now: internal.now });
+          this.createCompletionHandoffWorkflowWork(task, {
+            runId: internal.runContext?.runId,
+            now: internal.now,
+            source: internal.evidence?.reason,
+          });
           this.insertRunAuditEventRow({
             taskId: id,
             agentId: internal.runContext?.agentId,
@@ -6690,6 +6780,12 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         await this.atomicWriteTaskJson(dir, task);
         if (this.isWatching) this.taskCache.set(id, { ...task });
         this.emit("task:updated", task);
+      }
+      if (toColumn === "done") {
+        await this.clearNearDuplicateReferencesToFailSoft(id, {
+          column: "done",
+          reason: "done",
+        });
       }
       return task;
     }
@@ -7126,6 +7222,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       if (internal.fromHandoff) {
         alreadyEnqueued = Boolean(this.db.prepare("SELECT 1 FROM mergeQueue WHERE taskId = ?").get(id));
         this.enqueueMergeQueue(id, { priority: task.priority, now: internal.now });
+        this.createCompletionHandoffWorkflowWork(task, {
+          runId: internal.runContext?.runId,
+          now: internal.now,
+          source: internal.evidence?.reason,
+        });
         this.insertRunAuditEventRow({
           taskId: id,
           agentId: internal.runContext?.agentId,
@@ -7223,6 +7324,12 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
     if (fromColumn !== toColumn) {
       this.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource });
+    }
+    if (toColumn === "done") {
+      await this.clearNearDuplicateReferencesToFailSoft(id, {
+        column: "done",
+        reason: "done",
+      });
     }
     return task;
   }
@@ -8896,6 +9003,10 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     return state === "succeeded" || state === "failed" || state === "cancelled" || state === "exhausted";
   }
 
+  private isActiveWorkflowWorkItemState(state: WorkflowWorkItemState): boolean {
+    return state === "runnable" || state === "running" || state === "held" || state === "retrying" || state === "manual-required";
+  }
+
   private workflowStateForMergeRequestState(state: MergeRequestState): WorkflowWorkItemState {
     const states: Record<MergeRequestState, WorkflowWorkItemState> = {
       queued: "runnable",
@@ -9054,6 +9165,79 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     });
   }
 
+  createCompletionHandoffWorkflowWork(
+    task: Pick<Task, "id" | "autoMerge" | "priority">,
+    opts: { runId?: string; now?: string; source?: string } = {},
+  ): WorkflowWorkItem {
+    const autoMerge = task.autoMerge !== false;
+    const runId = opts.runId ?? `completion-handoff:${task.id}:${randomUUID()}`;
+    const nodeId = autoMerge ? "merge-gate" : "merge-manual-hold";
+    const kind: WorkflowWorkItemKind = autoMerge ? "merge" : "manual-hold";
+    const existing = this.getWorkflowWorkItemByIdentity(runId, task.id, nodeId, kind);
+    if (existing && this.isActiveWorkflowWorkItemState(existing.state)) {
+      this.cancelActiveWorkflowWorkItemsForTask(task.id, {
+        kinds: ["merge", "manual-hold"],
+        excludeIds: [existing.id],
+        now: opts.now,
+        lastError: "superseded-by-completion-handoff",
+      });
+      this.insertCompletionHandoffWorkflowWorkAudit(task, existing, autoMerge, opts.source);
+      return existing;
+    }
+
+    this.cancelActiveWorkflowWorkItemsForTask(task.id, {
+      kinds: ["merge", "manual-hold"],
+      now: opts.now,
+      lastError: "superseded-by-completion-handoff",
+    });
+    const item = this.upsertWorkflowWorkItem({
+      runId,
+      taskId: task.id,
+      nodeId,
+      kind,
+      state: autoMerge ? "runnable" : "manual-required",
+      blockedReason: autoMerge ? null : "autoMerge:false",
+      now: opts.now,
+    });
+    this.insertCompletionHandoffWorkflowWorkAudit(task, item, autoMerge, opts.source);
+    return item;
+  }
+
+  private getWorkflowWorkItemByIdentity(
+    runId: string,
+    taskId: string,
+    nodeId: string,
+    kind: WorkflowWorkItemKind,
+  ): WorkflowWorkItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM workflow_work_items WHERE runId = ? AND taskId = ? AND nodeId = ? AND kind = ?")
+      .get(runId, taskId, nodeId, kind) as WorkflowWorkItemRow | undefined;
+    return row ? this.rowToWorkflowWorkItem(row) : null;
+  }
+
+  private insertCompletionHandoffWorkflowWorkAudit(
+    task: Pick<Task, "id">,
+    item: WorkflowWorkItem,
+    autoMerge: boolean,
+    source?: string,
+  ): void {
+    this.insertRunAuditEventRow({
+      taskId: task.id,
+      runId: item.runId,
+      domain: "database",
+      mutationType: "workflowWorkItem:completion-handoff",
+      target: item.id,
+      metadata: {
+        taskId: task.id,
+        autoMerge,
+        source: source ?? "completion-handoff",
+        workItemId: item.id,
+        nodeId: item.nodeId,
+        state: item.state,
+      },
+    });
+  }
+
   upsertWorkflowWorkItem(input: WorkflowWorkItemUpsertInput): WorkflowWorkItem {
     return this.db.transactionImmediate(() => {
       const existing = this.db
@@ -9195,11 +9379,13 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
   cancelActiveWorkflowWorkItemsForTask(
     taskId: string,
-    opts: { kinds?: WorkflowWorkItemKind[]; now?: string; lastError?: string | null } = {},
+    opts: { kinds?: WorkflowWorkItemKind[]; now?: string; lastError?: string | null; excludeIds?: string[] } = {},
   ): WorkflowWorkItem[] {
     return this.db.transactionImmediate(() => {
-      const activeStates: WorkflowWorkItemState[] = ["runnable", "running", "held", "retrying", "manual-required"];
-      const items = this.listWorkflowWorkItemsForTask(taskId, opts).filter((item) => activeStates.includes(item.state));
+      const excludeIds = new Set(opts.excludeIds ?? []);
+      const items = this.listWorkflowWorkItemsForTask(taskId, opts).filter((item) =>
+        this.isActiveWorkflowWorkItemState(item.state) && !excludeIds.has(item.id)
+      );
       return items.map((item) =>
         this.transitionWorkflowWorkItem(item.id, "cancelled", {
           now: opts.now,
@@ -10141,7 +10327,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       auditContext?: { agentId: string; runId: string; sessionId?: string };
     },
   ): Promise<Task> {
-    return this.withTaskLock(id, async () => {
+    const deletedTask = await this.withTaskLock(id, async () => {
       // Flush buffered agent logs inside the lock so no new appends for this
       // task can sneak in between flush and soft-delete mutation.
       this.flushAgentLogBuffer();
@@ -10244,6 +10430,13 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       this.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
       return task;
     });
+
+    await this.clearNearDuplicateReferencesToFailSoft(id, {
+      column: "archived",
+      deletedAt: deletedTask.deletedAt ?? new Date().toISOString(),
+      reason: "deleted",
+    });
+    return deletedTask;
   }
 
   private deleteTaskById(taskId: string): void {
@@ -10812,7 +11005,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     id: string,
     optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean } = true,
   ): Promise<Task> {
-    return this.withTaskLock(id, async () => {
+    const archivedTask = await this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
@@ -10898,6 +11091,12 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       this.emit("task:moved", { task, from: fromColumn, to: "archived" as Column, source: "engine" });
       return this.archiveEntryToTask(entry, false);
     });
+
+    await this.clearNearDuplicateReferencesToFailSoft(id, {
+      column: "archived",
+      reason: "archived",
+    });
+    return archivedTask;
   }
 
   /**
@@ -11490,6 +11689,22 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       );
       this.agentLogFlushTimer.unref();
     }
+  }
+
+  /**
+   * Append a normalized telemetry row to `usage_events` (tool calls, messages,
+   * session lifecycle) for the Command Center analytics layer. Callers in the
+   * executor/session layer pass `model`/`provider`/`nodeId`/`category` from the
+   * session context (see usage-events.ts / KTD3).
+   *
+   * **Fail-soft**: the underlying helper swallows malformed events and write
+   * errors, so this never throws and never aborts the agent-log write or the
+   * agent hot path.
+   *
+   * @returns `true` if a row was inserted, `false` if the event was skipped.
+   */
+  emitUsageEvent(event: UsageEventInput): boolean {
+    return emitUsageEventToDb(this.db, event);
   }
 
   /**
@@ -15989,14 +16204,16 @@ ${notificationsSection}`;
     });
     this.db.prepare(
       `INSERT INTO task_commit_associations
-       (id, taskLineageId, taskIdSnapshot, commitSha, commitSubject, authoredAt, matchedBy, confidence, note, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, taskLineageId, taskIdSnapshot, commitSha, commitSubject, authoredAt, matchedBy, confidence, note, additions, deletions, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(taskLineageId, commitSha, matchedBy) DO UPDATE SET
          taskIdSnapshot = excluded.taskIdSnapshot,
          commitSubject = excluded.commitSubject,
          authoredAt = excluded.authoredAt,
          confidence = excluded.confidence,
          note = excluded.note,
+         additions = excluded.additions,
+         deletions = excluded.deletions,
          updatedAt = excluded.updatedAt`,
     ).run(
       association.id,
@@ -16008,6 +16225,8 @@ ${notificationsSection}`;
       association.matchedBy,
       association.confidence,
       association.note ?? null,
+      association.additions ?? null,
+      association.deletions ?? null,
       association.createdAt,
       association.updatedAt,
     );
@@ -16018,7 +16237,12 @@ ${notificationsSection}`;
     const rows = this.db.prepare(
       `SELECT * FROM task_commit_associations WHERE taskLineageId = ? ORDER BY authoredAt DESC, createdAt DESC`,
     ).all(lineageId) as TaskCommitAssociationRow[];
-    return rows.map((row) => normalizeTaskCommitAssociation({ ...row, note: row.note ?? undefined }));
+    return rows.map((row) => normalizeTaskCommitAssociation({
+      ...row,
+      note: row.note ?? undefined,
+      additions: row.additions ?? undefined,
+      deletions: row.deletions ?? undefined,
+    }));
   }
 
   async replaceLegacyTaskCommitAssociations(

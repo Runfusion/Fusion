@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { superviseSpawn } from "@fusion/core";
-import { readFile, rm, stat, mkdtemp } from "node:fs/promises";
+import { readFile, readdir, rm, stat, mkdtemp } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -43,8 +43,21 @@ async function readEmittedClientCss() {
   }
 
   const chunks = [];
-  for (const href of hrefs) {
-    const file = path.join(clientDistRoot, href.replace(/^\//, ""));
+  const cssFiles = new Set(hrefs.map((href) => path.join(clientDistRoot, href.replace(/^\//, ""))));
+  /*
+  FNXC:CommandCenterTesting 2026-06-19-02:19:
+  Command Center is lazy-loaded, so its emitted CSS lives in a dynamic chunk that index.html does not link directly. The browser smoke must include emitted CSS chunks as well as root links or chart layout assertions would test an unstyled fixture instead of the production Command Center contract.
+  */
+  const assetsDir = path.join(clientDistRoot, "assets");
+  if (existsSync(assetsDir)) {
+    for (const entry of await readdir(assetsDir)) {
+      if (entry.endsWith(".css")) {
+        cssFiles.add(path.join(assetsDir, entry));
+      }
+    }
+  }
+
+  for (const file of [...cssFiles].sort()) {
     chunks.push(`\n/* ${path.relative(dashboardRoot, file)} */\n${await readFile(file, "utf8")}`);
   }
   return chunks.join("\n");
@@ -147,6 +160,9 @@ export function createSmokeHtml() {
             </button>
             <button class="btn-icon" data-smoke="show-pr-checks" type="button" aria-label="Show PR checks fixture">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="18" cy="12" r="2"></circle></svg>
+            </button>
+            <button class="btn-icon" data-smoke="show-command-center-charts" type="button" aria-label="Show Command Center charts fixture">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 15l3-4 3 2 4-6"></path></svg>
             </button>
           </div>
         </header>
@@ -359,6 +375,97 @@ export function createSmokeHtml() {
           </div>
         </section>
       </section>
+
+      <!--
+      FNXC:CommandCenterTesting 2026-06-19-02:04:
+      FN-6685 requires a real-Blink desktop and mobile gate for the FN-6683/FN-6684 recharts surfaces because jsdom cannot compute ResponsiveContainer parent height, min-content shrink, or overflow. This fixture mirrors Command Center tabpanel/card wrappers and includes populated pie/line plus empty states so emitted dashboard CSS owns the sizing chain under test.
+      -->
+      <section data-smoke="command-center-charts" hidden>
+        <div class="command-center" data-testid="command-center">
+          <header class="cc-header">
+            <div>
+              <p class="cc-eyebrow">Command Center</p>
+              <h2>Browser smoke chart fixture</h2>
+            </div>
+          </header>
+          <div class="cc-tabs" role="tablist" aria-label="Command Center smoke tabs">
+            <button class="cc-tab active" type="button" role="tab" aria-selected="true">Charts</button>
+          </div>
+          <div class="cc-tabpanel" role="tabpanel" data-testid="command-center-panel-overview">
+            <section class="cc-overview-grid" data-testid="command-center-overview-charts">
+              <article class="card cc-overview-chart-card" data-testid="cc-overview-pie">
+                <div class="cc-overview-chart-header">
+                  <h3>Overview distribution</h3>
+                  <p>Populated pie chart</p>
+                </div>
+                <div class="cc-recharts-chart" role="img" aria-label="Overview distribution pie chart">
+                  <div class="recharts-responsive-container" style="width:100%;height:100%;min-width:0;overflow:hidden;">
+                    <svg width="100%" height="100%" viewBox="0 0 240 160" aria-hidden="true" focusable="false">
+                      <path d="M120 24a56 56 0 1 1-39.6 95.6L120 80z" fill="var(--accent)"></path>
+                      <path d="M120 24v56H64a56 56 0 0 1 56-56z" fill="var(--todo)"></path>
+                      <path d="M80.4 119.6A56 56 0 0 1 64 80h56z" fill="var(--in-progress)"></path>
+                    </svg>
+                  </div>
+                  <div class="recharts-legend-wrapper">Triage · Todo · In progress</div>
+                </div>
+              </article>
+              <article class="card cc-overview-chart-card cc-overview-chart-card--trend" data-testid="cc-overview-line">
+                <div class="cc-overview-chart-header">
+                  <h3>Overview trend</h3>
+                  <p>Populated line chart</p>
+                </div>
+                <div class="cc-recharts-chart" role="img" aria-label="Overview trend line chart">
+                  <div class="recharts-responsive-container" style="width:100%;height:100%;min-width:0;overflow:hidden;">
+                    <svg width="100%" height="100%" viewBox="0 0 320 160" aria-hidden="true" focusable="false">
+                      <path d="M28 132h264M28 92h264M28 52h264" stroke="var(--border-subtle)" fill="none"></path>
+                      <path d="M28 124L72 96l44 12 44-48 44 24 88-56" stroke="var(--accent)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+                      <path d="M28 112L72 104l44-20 44 8 44-32 88 12" stroke="var(--in-review)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>
+                  </div>
+                  <div class="recharts-legend-wrapper">Tokens · Tasks</div>
+                </div>
+              </article>
+            </section>
+            <section class="cc-area" data-testid="cc-area-system">
+              <div class="cc-area-section" data-testid="cc-system-pie">
+                <div class="cc-area-section-header">
+                  <h3 class="cc-area-section-title">System distribution</h3>
+                </div>
+                <div class="cc-recharts-chart" role="img" aria-label="System distribution pie chart">
+                  <div class="recharts-responsive-container" style="width:100%;height:100%;min-width:0;overflow:hidden;">
+                    <svg width="100%" height="100%" viewBox="0 0 240 160" aria-hidden="true" focusable="false">
+                      <circle cx="120" cy="80" r="54" fill="var(--surface-2)"></circle>
+                      <path d="M120 26a54 54 0 0 1 46.8 81L120 80z" fill="var(--accent)"></path>
+                      <path d="M166.8 107A54 54 0 1 1 120 26v54z" fill="var(--triage)"></path>
+                    </svg>
+                  </div>
+                  <div class="recharts-legend-wrapper">Queue · Runtime</div>
+                </div>
+              </div>
+              <div class="cc-area-section" data-testid="cc-system-line">
+                <div class="cc-area-section-header">
+                  <h3 class="cc-area-section-title">System trend</h3>
+                </div>
+                <div class="cc-recharts-chart" role="img" aria-label="System resource line chart">
+                  <div class="recharts-responsive-container" style="width:100%;height:100%;min-width:0;overflow:hidden;">
+                    <svg width="100%" height="100%" viewBox="0 0 320 160" aria-hidden="true" focusable="false">
+                      <path d="M28 132h264M28 92h264M28 52h264" stroke="var(--border-subtle)" fill="none"></path>
+                      <path d="M28 118l44-36 44 20 44-44 44 30 88-52" stroke="var(--accent)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>
+                  </div>
+                  <div class="recharts-legend-wrapper">CPU · Memory</div>
+                </div>
+              </div>
+              <div class="cc-area-section" data-testid="cc-recharts-empty-fixture">
+                <div class="cc-area-section-header">
+                  <h3 class="cc-area-section-title">Empty chart</h3>
+                </div>
+                <div class="cc-recharts-empty" role="img" aria-label="Empty chart fixture">No chart data</div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
     </div>
     <script>
       const board = document.querySelector('[data-smoke="board"]');
@@ -370,6 +477,7 @@ export function createSmokeHtml() {
       const prCreate = document.querySelector('[data-smoke="pr-create-modal"]');
       const prPanel = document.querySelector('[data-smoke="pr-panel"]');
       const prChecks = document.querySelector('[data-smoke="pr-checks"]');
+      const commandCenterCharts = document.querySelector('[data-smoke="command-center-charts"]');
 
       function setView(view) {
         const isList = view === 'list';
@@ -383,6 +491,7 @@ export function createSmokeHtml() {
         prCreate.hidden = name !== 'pr-create-modal';
         prPanel.hidden = name !== 'pr-panel';
         prChecks.hidden = name !== 'pr-checks';
+        commandCenterCharts.hidden = name !== 'command-center-charts';
       }
 
       boardButton.addEventListener('click', () => setView('board'));
@@ -390,6 +499,7 @@ export function createSmokeHtml() {
       document.querySelector('[data-smoke="show-pr-create"]').addEventListener('click', () => showSmokeSection('pr-create-modal'));
       document.querySelector('[data-smoke="show-pr-panel"]').addEventListener('click', () => showSmokeSection('pr-panel'));
       document.querySelector('[data-smoke="show-pr-checks"]').addEventListener('click', () => showSmokeSection('pr-checks'));
+      document.querySelector('[data-smoke="show-command-center-charts"]').addEventListener('click', () => showSmokeSection('command-center-charts'));
       document.querySelector('[data-smoke="open-modal"]').addEventListener('click', () => {
         modalOverlay.classList.add('open');
         nav.hidden = true;
@@ -649,6 +759,89 @@ function assertSmokeResult(name, passed, details) {
   log(`ok: ${name}`);
 }
 
+async function collectCommandCenterChartLayout(page, { clickToggle = false } = {}) {
+  return evaluate(page, `(() => {
+    if (${clickToggle ? "true" : "false"}) {
+      document.querySelector('[data-smoke="show-command-center-charts"]').click();
+    }
+    const section = document.querySelector('[data-smoke="command-center-charts"]');
+    const panel = section.querySelector('.cc-tabpanel');
+    const chartNodes = [...section.querySelectorAll('.cc-recharts-chart')];
+    const emptyNodes = [...section.querySelectorAll('.cc-recharts-empty')];
+    const charts = chartNodes.map((chart) => {
+      const rect = chart.getBoundingClientRect();
+      const responsiveContainer = chart.querySelector('.recharts-responsive-container');
+      const svg = chart.querySelector('svg');
+      const svgRect = svg?.getBoundingClientRect();
+      const style = getComputedStyle(chart);
+      return {
+        testId: chart.closest('[data-testid]')?.getAttribute('data-testid') ?? chart.getAttribute('aria-label'),
+        clientHeight: chart.clientHeight,
+        responsiveHeight: responsiveContainer?.clientHeight ?? 0,
+        svgHeight: svgRect?.height ?? 0,
+        hasSvg: Boolean(svg),
+        overflow: chart.scrollWidth - chart.clientWidth,
+        overflowY: style.overflowY,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      };
+    });
+    const empties = emptyNodes.map((empty) => {
+      const rect = empty.getBoundingClientRect();
+      const style = getComputedStyle(empty);
+      return {
+        testId: empty.closest('[data-testid]')?.getAttribute('data-testid') ?? empty.getAttribute('aria-label'),
+        text: empty.textContent.trim(),
+        clientHeight: empty.clientHeight,
+        clientWidth: empty.clientWidth,
+        overflow: empty.scrollWidth - empty.clientWidth,
+        overflowY: style.overflowY,
+        left: rect.left,
+        right: rect.right,
+      };
+    });
+    const panelStyle = getComputedStyle(panel);
+    return {
+      hidden: section.hidden,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      panelOverflow: panel.scrollWidth - panel.clientWidth,
+      panelOverflowY: panelStyle.overflowY,
+      charts,
+      empties,
+    };
+  })()`);
+}
+
+function commandCenterChartsPass(layout) {
+  return layout.hidden === false
+    && layout.documentOverflow <= 1
+    && layout.panelOverflow <= 1
+    && layout.panelOverflowY === "auto"
+    && layout.charts.length >= 4
+    && layout.charts.every((chart) => chart.clientHeight > 0
+      && chart.responsiveHeight > 0
+      && chart.svgHeight > 0
+      && chart.hasSvg === true
+      && chart.overflow <= 1
+      && chart.left >= 0
+      && chart.right <= layout.viewportWidth + 1
+      && chart.overflowY !== "auto"
+      && chart.overflowY !== "scroll")
+    && layout.empties.length >= 1
+    && layout.empties.every((empty) => empty.text.length > 0
+      && empty.clientHeight > 0
+      && empty.clientWidth > 0
+      && empty.overflow <= 1
+      && empty.left >= 0
+      && empty.right <= layout.viewportWidth + 1
+      && empty.overflowY !== "auto"
+      && empty.overflowY !== "scroll");
+}
+
 async function runSmokeChecks(page, pageUrl) {
   await page.send("Page.enable");
   await page.send("Runtime.enable");
@@ -863,6 +1056,27 @@ async function runSmokeChecks(page, pageUrl) {
       && prChecksLayout.detailsLinkVisible === true
       && prChecksLayout.detailsLinkColor !== "rgb(255, 255, 255)",
     JSON.stringify(prChecksLayout),
+  );
+
+  const mobileCommandCenterChartsLayout = await collectCommandCenterChartLayout(page, { clickToggle: true });
+  assertSmokeResult(
+    "command-center charts mobile layout",
+    commandCenterChartsPass(mobileCommandCenterChartsLayout),
+    JSON.stringify(mobileCommandCenterChartsLayout),
+  );
+
+  await page.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
+  const desktopCommandCenterChartsLayout = await collectCommandCenterChartLayout(page);
+  assertSmokeResult(
+    "command-center charts desktop layout",
+    commandCenterChartsPass(desktopCommandCenterChartsLayout),
+    JSON.stringify(desktopCommandCenterChartsLayout),
   );
 
   const chatComposerLayout = await evaluate(page, `(() => {

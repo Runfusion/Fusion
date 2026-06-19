@@ -353,7 +353,7 @@
 /* Context menu for session items */
 .chat-session-context-menu {
   position: fixed;
-  background: var(--bg-elevated, var(--bg));
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
@@ -573,6 +573,17 @@
   overflow-y: auto;
 }
 
+/*
+FNXC:Chat 2026-06-16-22:12:
+Mobile chat session switching needs a dedicated rename tap target beside each session without nesting buttons, so the row owns layout while the title and rename controls remain independently keyboard accessible.
+*/
+.chat-mobile-session-option-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+
 .chat-mobile-session-option {
   width: 100%;
   display: flex;
@@ -586,6 +597,17 @@
   text-align: left;
   padding: var(--space-sm) var(--space-md);
   line-height: normal;
+}
+
+.chat-mobile-session-rename {
+  flex-shrink: 0;
+  align-self: stretch;
+  color: var(--text-muted);
+}
+
+.chat-mobile-session-rename:hover {
+  color: var(--text);
+  background: var(--card-hover);
 }
 
 .chat-mobile-session-option:hover {
@@ -613,6 +635,28 @@
   flex-shrink: 0;
 }
 
+.chat-rename-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.chat-rename-input {
+  width: 100%;
+  margin-bottom: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .chat-mobile-session-option-row {
+    align-items: stretch;
+  }
+
+  .chat-mobile-session-rename {
+    min-width: calc(var(--space-lg) * 2.25);
+  }
+}
+
 /* Single thread-wide markdown / plain-text toggle, anchored to the right of
  * the header next to "New Chat". Replaces the per-message eye toggle that
  * used to live inside every assistant bubble. */
@@ -636,7 +680,7 @@
 }
 
 .chat-thread-header-render-toggle:hover {
-  background: var(--bg-hover, var(--bg-secondary));
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -711,7 +755,7 @@
 
 .chat-message--assistant {
   align-self: flex-start;
-  background: var(--bg-elevated, var(--bg-secondary));
+  background: var(--surface-1);
   color: var(--text);
   border-bottom-left-radius: var(--radius-sm);
 }
@@ -785,7 +829,7 @@
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--surface-bg, color-mix(in srgb, var(--surface) 55%, transparent));
+  background: var(--surface);
   color: var(--text-muted);
   margin-left: 6px;
   white-space: nowrap;
@@ -1314,7 +1358,7 @@
 /* Streaming indicator */
 .chat-message--streaming {
   align-self: flex-start;
-  background: var(--bg-elevated, var(--bg-secondary));
+  background: var(--surface-1);
   color: var(--text);
   border-bottom-left-radius: 4px;
   opacity: 0.9;

@@ -347,7 +347,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
     }
   });
 
-  it("auto-hides the tablet sidebar while the software keyboard is open and restores it when closed", async () => {
+  it("keeps the tablet sidebar at the same width while the software keyboard is open", async () => {
     const restoreMatchMedia = mockViewportMode("tablet");
     const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
     try {
@@ -369,18 +369,115 @@ describe("FN-5997 mobile chat message pane rendering", () => {
       });
       await setVisualViewportHeight(visualViewport, 560);
 
-      await waitFor(() => expect(sidebar).toHaveClass("chat-sidebar--hidden"));
-      expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull();
+      await waitFor(() => expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull());
       expect(sidebar.style.width).toBe("280px");
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
 
       await act(async () => {
         input.blur();
       });
       await setVisualViewportHeight(visualViewport, 1112);
 
-      await waitFor(() => expect(sidebar).not.toHaveClass("chat-sidebar--hidden"));
+      await waitFor(() => expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument());
       expect(sidebar.style.width).toBe("280px");
-      expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument();
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
+  it("keeps a persisted custom tablet sidebar width while the software keyboard is open", async () => {
+    const restoreMatchMedia = mockViewportMode("tablet");
+    const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
+    localStorage.setItem("fusion:chat-sidebar-width", "360");
+    try {
+      setupChat({
+        sessions: [activeSession],
+        filteredSessions: [activeSession],
+        activeSession,
+      });
+      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const sidebar = getSidebar();
+      await waitFor(() => expect(sidebar.style.width).toBe("360px"));
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
+
+      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+      await act(async () => {
+        input.focus();
+      });
+      await setVisualViewportHeight(visualViewport, 560);
+
+      await waitFor(() => expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull());
+      expect(sidebar.style.width).toBe("360px");
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
+
+      await act(async () => {
+        input.blur();
+      });
+      await setVisualViewportHeight(visualViewport, 1112);
+
+      await waitFor(() => expect(screen.getByRole("separator", { name: "Resize chat sidebar" })).toBeInTheDocument());
+      expect(sidebar.style.width).toBe("360px");
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
+  it("keeps a user-collapsed sidebar collapsed across tablet keyboard open and close", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    const visualViewport = mockVisualViewport({ width: 900, height: 1112 });
+    try {
+      setupChat({
+        sessions: [activeSession],
+        filteredSessions: [activeSession],
+        activeSession,
+      });
+      await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const sidebar = getSidebar();
+      await act(async () => {
+        screen.getByTestId(`chat-session-${activeSession.id}`).click();
+      });
+      expect(sidebar).toHaveClass("chat-sidebar--hidden");
+
+      Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+      restoreMatchMedia.mockImplementation((query: string) => ({
+        matches: query.includes("min-width: 769px") && query.includes("max-width: 1024px"),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }));
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+      });
+
+      expect(sidebar).toHaveClass("chat-sidebar--hidden");
+      expect(sidebar.style.width).toBe("280px");
+
+      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+      await act(async () => {
+        input.focus();
+      });
+      await setVisualViewportHeight(visualViewport, 560);
+
+      await waitFor(() => expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull());
+      expect(sidebar.style.width).toBe("280px");
+      expect(sidebar).toHaveClass("chat-sidebar--hidden");
+
+      await act(async () => {
+        input.blur();
+      });
+      await setVisualViewportHeight(visualViewport, 1112);
+
+      await waitFor(() => expect(sidebar.style.width).toBe("280px"));
+      expect(sidebar).toHaveClass("chat-sidebar--hidden");
+      expect(screen.queryByRole("separator", { name: "Resize chat sidebar" })).toBeNull();
     } finally {
       restoreMatchMedia.mockRestore();
     }

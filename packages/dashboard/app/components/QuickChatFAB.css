@@ -218,6 +218,21 @@
   min-width: 0;
 }
 
+.quick-chat-session-title-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 18ch;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .quick-chat-model-tag {
   display: inline-flex;
   align-items: center;
@@ -346,6 +361,33 @@
   border-bottom: 1px solid var(--border);
 }
 
+.quick-chat-rename-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-sm) var(--space-md) 0;
+  padding: var(--space-sm);
+  border: 1px solid color-mix(in srgb, var(--todo) 25%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 80%, var(--card));
+}
+
+.quick-chat-rename-label {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.quick-chat-rename-input {
+  width: 100%;
+}
+
+.quick-chat-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .quick-chat-new-session-chooser {
   display: flex;
   flex-direction: column;
@@ -442,6 +484,17 @@
   text-transform: uppercase;
 }
 
+/*
+FNXC:Chat 2026-06-16-22:28:
+Quick chat session rows include a separate rename button so selecting a session, unread status, and rename remain distinct accessible targets in both desktop and mobile panel widths.
+*/
+.quick-chat-session-option-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+
 .quick-chat-session-option {
   width: 100%;
   border: none;
@@ -459,6 +512,17 @@
 
 .quick-chat-session-unread-dot {
   margin-inline-start: auto;
+}
+
+.quick-chat-session-rename {
+  flex-shrink: 0;
+  align-self: stretch;
+  color: var(--text-muted);
+}
+
+.quick-chat-session-rename:hover {
+  color: var(--text);
+  background: var(--card-hover);
 }
 
 .quick-chat-session-option:hover {
@@ -784,6 +848,20 @@
   cursor: not-allowed;
 }
 
+/* The quick chat stop button reuses .chat-input-stop for its red appearance,
+   but that class sizes itself with --chat-input-control-size, a variable scoped
+   to ChatView's .chat-input-row and undefined in this DOM — which collapsed the
+   button toward its icon width. Pin it to the send button's square dimensions
+   using globally-scoped spacing tokens. The compound selector outranks the
+   single-class base and mobile rules from both stylesheets. */
+.quick-chat-send-btn.chat-input-stop {
+  width: calc(var(--space-lg) + var(--space-xl));
+  min-width: calc(var(--space-lg) + var(--space-xl));
+  height: calc(var(--space-lg) + var(--space-xl));
+  min-height: calc(var(--space-lg) + var(--space-xl));
+  border-radius: var(--radius-sm);
+}
+
 .quick-chat-attachment-previews {
   display: flex;
   gap: var(--space-xs);
@@ -960,9 +1038,14 @@
     white-space: nowrap;
   }
 
+  .quick-chat-session-title-tag,
   .quick-chat-model-tag {
     max-width: 12ch;
     flex-shrink: 1;
+  }
+
+  .quick-chat-session-rename {
+    min-width: calc(var(--space-lg) * 2.25);
   }
 
   .quick-chat-panel-header-actions {
@@ -1268,7 +1351,7 @@
 /* Streaming indicator */
 .quick-chat-panel .chat-message--streaming {
   align-self: flex-start;
-  background: var(--bg-elevated, var(--bg-secondary));
+  background: var(--surface-1);
   color: var(--text);
   border-bottom-left-radius: var(--radius-sm);
   opacity: 0.9;

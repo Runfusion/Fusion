@@ -4,6 +4,8 @@ import { Loader2 } from "lucide-react";
 import {
   fetchClaudeCliStatus,
   setClaudeCliEnabled,
+  fetchGlobalSettings,
+  updateGlobalSettings,
   type ClaudeCliStatus,
 } from "../api";
 import { ProviderIcon } from "./ProviderIcon";
@@ -122,6 +124,29 @@ export function ClaudeCliProviderCard({
     [onToggled, refresh],
   );
 
+  // R17 fallback: the bridge can't authenticate Claude. Turn the ACP transport
+  // off (experimentalFeatures.claudeCliAcp=false) so Claude CLI uses `claude -p`.
+  const handleFallbackToDashP = useCallback(async () => {
+    setBusy("disabling");
+    setLastAction(null);
+    try {
+      const gs = await fetchGlobalSettings();
+      await updateGlobalSettings({
+        experimentalFeatures: { ...(gs.experimentalFeatures ?? {}), claudeCliAcp: false },
+      });
+      if (mountedRef.current) {
+        setLastAction({ kind: "disabled", restartRequired: false });
+      }
+      await refresh();
+    } catch (err) {
+      if (mountedRef.current) {
+        setLastAction({ kind: "error", message: err instanceof Error ? err.message : String(err) });
+      }
+    } finally {
+      if (mountedRef.current) setBusy(null);
+    }
+  }, [refresh]);
+
   const binaryAvailable = status?.binary.available ?? false;
   const currentlyEnabled = status?.enabled ?? authenticated;
 
@@ -217,6 +242,39 @@ export function ClaudeCliProviderCard({
         </strong>
         {description}
         <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+        {status?.acp?.authFailed && (
+          <div
+            className="onboarding-provider-card__alert"
+            role="alert"
+            data-testid="claude-cli-acp-auth-banner"
+          >
+            <strong>
+              {t("setup.claudeCli.acpAuthFailedTitle", "Claude CLI bridge can't authenticate")}
+            </strong>
+            <p>
+              {status.acp.authReason ??
+                t(
+                  "setup.claudeCli.acpAuthFailed",
+                  "The ACP bridge reached a Claude session that isn't logged in. Fall back to `claude -p`, or fix authentication and re-test.",
+                )}
+            </p>
+            <div className="onboarding-provider-card__actions">
+              <button type="button" onClick={handleFallbackToDashP} disabled={busy !== null}>
+                {busy === "disabling" && <Loader2 className="animate-spin" size={14} />}
+                {t("setup.claudeCli.useDashP", "Use claude -p")}
+              </button>
+              <button type="button" onClick={handleTest} disabled={busy !== null}>
+                {t("setup.claudeCli.recheckAuth", "I fixed auth — re-test")}
+              </button>
+            </div>
+            <p className="onboarding-provider-card__hint">
+              {t(
+                "setup.claudeCli.fixAuthHint",
+                "To fix: run `claude` in a terminal and complete login, then re-test.",
+              )}
+            </p>
+          </div>
+        )}
       </div>
       <div className="onboarding-provider-card__actions">{actions}</div>
       {lastAction && <ClaudeCliActionToast action={lastAction} />}

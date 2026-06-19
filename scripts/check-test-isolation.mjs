@@ -61,6 +61,44 @@ function snapshotTmp() {
   return matching;
 }
 
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error && typeof error === "object" && error.code === "EPERM");
+  }
+}
+
+function readWorkerRootOwnerPid(rootPath) {
+  try {
+    const raw = readFileSync(join(rootPath, ".fusion-test-worker-root-owner"), "utf8").trim();
+    const pid = Number.parseInt(raw.split(/\r?\n/)[0] ?? "", 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isActiveFusionTestWorkerRoot(entry) {
+  if (!entry.name.startsWith("fusion-test-workers-")) return false;
+  const rootPath = join(tmpdir(), entry.name);
+  const ownerPid = readWorkerRootOwnerPid(rootPath);
+  if (ownerPid !== null && isProcessAlive(ownerPid)) return true;
+
+  try {
+    for (const child of readdirSync(rootPath, { withFileTypes: true })) {
+      if (!child.isDirectory()) continue;
+      const match = /^redir-(\d+)$/.exec(child.name);
+      if (match && isProcessAlive(Number.parseInt(match[1], 10))) return true;
+    }
+  } catch {
+    // Ignore transient removal while the worker root is being cleaned up.
+  }
+  return false;
+}
+
 function listProtectedFusionDirs() {
   const dirs = new Set();
   dirs.add(stablePath(join(process.cwd(), ".fusion")));
@@ -278,15 +316,33 @@ function checkAgainstBaseline() {
     .map((name) => name.trim())
     .filter(Boolean);
   for (const name of callerIgnoreNames) baselineNames.add(name);
-  const leaks = snapshotTmp().filter((e) => {
+  let leaks = snapshotTmp().filter((e) => {
     if (baselineNames.has(e.name)) {
       return false;
     }
     if (e.name.startsWith("fusion-test-home-root-")) {
       return false;
     }
+    /*
+    FNXC:TestIsolation 2026-06-14-01:20:
+    Local verification can run beside another Vitest invocation from a sibling worktree.
+    A fusion-test-workers-* root created after this run's baseline is not this run's leak when its owner marker or redirect sink points at a live process, so skip only those active worker roots while still failing stale worker-root leaks.
+    */
+    if (isActiveFusionTestWorkerRoot(e)) {
+      return false;
+    }
     return true;
   });
+
+  // Vitest/Node worker roots can disappear a moment after the child process
+  // exits on macOS. Re-check candidate leaks after a short settle window so
+  // the guard still fails durable leaks while avoiding false failures for
+  // already-cleaned transient worker directories.
+  if (leaks.length > 0) {
+    sleepMs(500);
+    const settledNames = new Set(snapshotTmp().map((e) => e.name));
+    leaks = leaks.filter((e) => settledNames.has(e.name));
+  }
 
   const baselineByDir = new Map((baseline.protectedFusion ?? []).map((entry) => [entry.dir, entry]));
   const unstableProtectedDirs = new Set(baseline.unstableProtectedDirs ?? []);

@@ -94,10 +94,34 @@ describe("tablet header controls", () => {
     expect(screen.getByTitle("Board view")).toBeDefined();
     expect(screen.getByTitle("List view")).toBeDefined();
     expect(screen.getByTitle("Agents view")).toBeDefined();
+    expect(screen.getByTestId("view-toggle-command-center")).toBeDefined();
+    expect(screen.queryByTitle("Documents view")).toBeNull();
     // Skills and Insights are NOT inline (they're in overflow)
     expect(screen.queryByTitle("Skills view")).toBeNull();
     expect(screen.queryByTitle("Roadmaps view")).toBeNull();
     expect(screen.queryByTitle("Insights view")).toBeNull();
+  });
+
+  it("places tablet Command Center inline immediately after Agents and Documents only in overflow", () => {
+    renderTabletHeader({ onChangeView: noop, showAgentsTab: true });
+
+    expect(screen.getByTestId("view-toggle-command-center").previousElementSibling).toBe(screen.getByTitle("Agents view"));
+    expect(screen.queryByTitle("Documents view")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+    expect(screen.getByTestId("view-overflow-documents")).toBeDefined();
+    expect(screen.queryByTestId("view-overflow-command-center")).toBeNull();
+  });
+
+  it("keeps desktop Documents inline and Command Center in overflow", () => {
+    renderDesktopHeader({ onChangeView: noop, showAgentsTab: true });
+
+    expect(screen.getByTitle("Documents view")).toBeDefined();
+    expect(screen.queryByTestId("view-toggle-command-center")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+    expect(screen.getByTestId("view-overflow-command-center")).toBeDefined();
+    expect(screen.queryByTestId("view-overflow-documents")).toBeNull();
   });
 
   it("renders view toggle overflow trigger on tablet when overflow items are available", () => {

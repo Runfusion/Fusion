@@ -7,8 +7,11 @@ interface MockSessionStats {
   tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
 }
 
-function createSession(stats: MockSessionStats | undefined) {
-  return { getSessionStats: vi.fn(() => stats) } as unknown as Parameters<typeof accumulateSessionTokenUsage>[2];
+function createSession(
+  stats: MockSessionStats | undefined,
+  model?: { provider?: string; id?: string },
+) {
+  return { getSessionStats: vi.fn(() => stats), ...(model ? { model } : {}) } as unknown as Parameters<typeof accumulateSessionTokenUsage>[2];
 }
 
 function createStore(initial: Task["tokenUsage"]): TaskStore & { _task: Task; updateTask: ReturnType<typeof vi.fn> } {
@@ -61,6 +64,47 @@ describe("accumulateSessionTokenUsage", () => {
     });
   });
 
+  it("persists the actually-used session model snapshot with token usage", async () => {
+    const store = createStore(undefined);
+    const session = createSession(
+      { tokens: { input: 20, output: 10, cacheRead: 0, cacheWrite: 0 } },
+      { provider: "anthropic", id: "claude-sonnet-4-5" },
+    );
+
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+
+    const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
+    expect(call.tokenUsage).toMatchObject({
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    });
+  });
+
+  it("preserves an existing model snapshot when the session has no model", async () => {
+    const store = createStore({
+      inputTokens: 50,
+      outputTokens: 20,
+      cachedTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 70,
+      firstUsedAt: "2024-01-01T00:00:00.000Z",
+      lastUsedAt: "2024-01-01T00:00:00.000Z",
+      modelProvider: "openai",
+      modelId: "gpt-5",
+    });
+    const session = createSession({ tokens: { input: 55, output: 25, cacheRead: 0, cacheWrite: 0 } });
+
+    await accumulateSessionTokenUsage(store, "FN-1", session);
+
+    const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
+    expect(call.tokenUsage).toMatchObject({
+      inputTokens: 105,
+      outputTokens: 45,
+      modelProvider: "openai",
+      modelId: "gpt-5",
+    });
+  });
+
   it("does nothing when delta is zero (no write, no metrics log)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = createStore({
@@ -89,10 +133,15 @@ describe("accumulateSessionTokenUsage", () => {
     executor.tokenUsageBaselines = new Map();
     executor.activeSessions = new Map();
 
-    await executor.persistTokenUsage("FN-1", { getSessionStats: () => ({ tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, total: 6 } }) });
+    await executor.persistTokenUsage("FN-1", {
+      getSessionStats: () => ({ tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, total: 6 } }),
+      model: { provider: "mock", id: "scripted" },
+    });
 
     const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
     expect(cacheLogCall).toBeTruthy();
+    const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
+    expect(call.tokenUsage).toMatchObject({ modelProvider: "mock", modelId: "scripted" });
   });
 
   it("swallows store errors instead of throwing", async () => {

@@ -205,6 +205,14 @@ describe("chat attachment routes", () => {
     expect(mockSendMessage).toHaveBeenCalledWith(session.id, "hello", undefined, undefined, attachments, { generationId: 1 });
   });
 
+  it("accepts whitespace-only JSON message content when attachments are referenced", async () => {
+    const attachments = [{ id: "att-1", filename: "x.txt", originalName: "x.txt", mimeType: "text/plain", size: 1, createdAt: new Date().toISOString() }];
+    const body = JSON.stringify({ content: "   ", attachments });
+    const response = await request(app, "POST", `/api/chat/sessions/${session.id}/messages`, body, { "content-type": "application/json" });
+    expect(response.status).toBe(200);
+    expect(mockSendMessage).toHaveBeenCalledWith(session.id, "", undefined, undefined, attachments, { generationId: 1 });
+  });
+
   it("passes multipart file attachments on message send", async () => {
     const { payload, boundary } = makeMultipartMessageRequest("hello", "x.txt", "text/plain", Buffer.from("x"));
     const response = await request(app, "POST", `/api/chat/sessions/${session.id}/messages`, payload, { "content-type": `multipart/form-data; boundary=${boundary}` }, payload);
@@ -219,11 +227,25 @@ describe("chat attachment routes", () => {
     );
   });
 
-  it("returns 400 for multipart message send without content", async () => {
+  it("accepts multipart file-only message send without content", async () => {
     const { payload, boundary } = makeMultipartMessageRequest(undefined, "x.txt", "text/plain", Buffer.from("x"));
     const response = await request(app, "POST", `/api/chat/sessions/${session.id}/messages`, payload, { "content-type": `multipart/form-data; boundary=${boundary}` }, payload);
+    expect(response.status).toBe(200);
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      session.id,
+      "",
+      undefined,
+      undefined,
+      [expect.objectContaining({ originalName: "x.txt", mimeType: "text/plain", size: 1 })],
+      { generationId: 1 },
+    );
+  });
+
+  it("returns 400 for empty message send without content or attachments", async () => {
+    const response = await request(app, "POST", `/api/chat/sessions/${session.id}/messages`, JSON.stringify({ content: "" }), { "content-type": "application/json" });
     expect(response.status).toBe(400);
     expect((response.body as any).error).toContain("content is required");
+    expect(mockSendMessage).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

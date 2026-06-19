@@ -1179,6 +1179,12 @@ export interface TaskSourceIssue {
   issueNumber: number;
   /** Optional canonical URL to the source issue. */
   url?: string;
+  /**
+   * FNXC:GithubSourceIssueAnalytics 2026-06-18-17:56:
+   * Command Center "Fixed by Fusion" analytics need the real source-issue closure time when Fusion closed or observed the issue, replacing the prior `updatedAt` completion approximation when exact data is available.
+   * ISO-8601 timestamp for when the source issue was closed; absent when the issue has never been observed closed.
+   */
+  closedAt?: string;
 }
 
 export interface BatchStatusRequest {
@@ -1240,6 +1246,8 @@ export type ActivityEventType =
   | "task:auto-archived-deterministic-duplicate"
   | "task:auto-archived-near-duplicate"
   | "task:near-duplicate-flagged"
+  /** FNXC:ReleaseAuthorizationGate 2026-06-15-02:44: Release-class tasks parked by triage need a distinct activity so operators can see that explicit user approval is required before dispatch. */
+  | "task:release-authorization-required"
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   | "task:merge-worktree-reacquired"
@@ -1812,6 +1820,16 @@ export interface TaskTokenUsage {
   firstUsedAt: string;
   /** ISO-8601 timestamp of the most recent recorded usage event for this task. */
   lastUsedAt: string;
+  /**
+   * FNXC:TokenAnalytics 2026-06-18-16:23:
+   * Snapshot the provider of the actually-used model for analytics only. This is intentionally distinct from task.modelProvider, which is an own-model override used by model resolution and must not be written by token bookkeeping.
+   */
+  modelProvider?: string;
+  /**
+   * FNXC:TokenAnalytics 2026-06-18-16:23:
+   * Snapshot the id of the actually-used model for analytics only. This is intentionally distinct from task.modelId, which is an own-model override used by model resolution and must not be written by token bookkeeping.
+   */
+  modelId?: string;
 }
 
 export interface TaskTokenBudget {
@@ -2814,6 +2832,22 @@ export interface GlobalSettings {
    *  of per-task or per-lane overrides. No network calls, zero token cost.
    *  Project `testMode` takes precedence over the global value. */
   testMode?: boolean;
+  /** Fusion Model Router opt-in (U17/KTD9). When true, a conservative selection
+   *  layer may down-route an allowlist of mechanical steps (dependabot bumps,
+   *  lint-only fixes) to a cheap model tier before a session starts; everything
+   *  else resolves to the configured default pair. OFF by default — when unset or
+   *  false, model resolution is byte-identical to its non-router behavior.
+   *  Selection is governed: it never returns a pair the model controls forbid and
+   *  always defers to a column-agent override. */
+  modelRouterEnabled?: boolean;
+  /** Provider for the Model Router's cheap tier (U17). Used only when
+   *  `modelRouterEnabled` is true and a step is allowlisted for down-routing.
+   *  Must be set together with `modelRouterCheapModelId`; if either is unset the
+   *  router falls back to the configured default pair. */
+  modelRouterCheapProvider?: string;
+  /** Model ID for the Model Router's cheap tier (U17). See
+   *  `modelRouterCheapProvider`. */
+  modelRouterCheapModelId?: string;
   /** Phase-1 FN-5741 write-only shadow seam toggle.
    *  When true, executor/self-healing/merger persist additive merge-request contract
    *  records and completion-handoff markers without changing merge authority.
@@ -3170,9 +3204,14 @@ export interface GlobalSettings {
    *    "another-experiment": false
    *  }
    *
-   *  Default: workflow columns, graph executor, dual-observe, and authoritative
-   *  interpreter flags enabled; operators may explicitly set individual flags
-   *  false while rollout controls remain available. */
+   *  Default: workflow columns, graph executor, dual-observe, authoritative
+   *  interpreter, and `claudeCliAcp` flags enabled; operators may explicitly set
+   *  individual flags false while rollout controls remain available.
+   *
+   *  `claudeCliAcp` (default ON): routes the Claude CLI provider through the
+   *  `claude-code-cli-acp` ACP bridge instead of `claude -p`. Effective only when
+   *  the acp-runtime plugin is installed (it publishes the bundled bridge path);
+   *  otherwise the provider fails closed to `-p`. Set false to force `-p`. */
   experimentalFeatures?: Record<string, boolean>;
   /** Per-adapter CLI-agent launch configuration (CLI Agent Executor, U15).
    *  Keyed by adapter id (e.g. `"claude-code"`, `"codex"`, `"generic"`). Each
@@ -3377,6 +3416,13 @@ export interface ProjectSettings {
    *  be enforced server-side. Only applies when `mergeStrategy === "pull-request"`.
    *  Default: false. */
   requirePrApproval?: boolean;
+  /** When true (default), the Review-response loop automatically acts on PR review
+   *  threads (human + bot): it dispatches an agent that fixes + pushes + replies, or
+   *  disagrees with reasoning. When false, the loop is inert — review threads are left
+   *  untouched for a human to handle. Independent of `autoMerge`: with auto-resolution
+   *  on but auto-merge off, threads are still resolved but the PR is NOT merged (the
+   *  human checkpoint remains merge). U18, R15. Default: true. */
+  autoResolveReviewComments?: boolean;
   /** Direct-merge commit routing mode.
    *  - "auto": squash single-substantive branches, preserve history for multi-substantive branches
    *  - "always-squash": always use the legacy squash path for direct merges
@@ -3638,6 +3684,14 @@ export interface ProjectSettings {
   /** Strategy used when a merge conflict can't be resolved by AI. See
    *  {@link MergeConflictStrategy}. Default: "smart". */
   mergeConflictStrategy?: MergeConflictStrategy;
+  /**
+   * FNXC:AutoMergeRetries 2026-06-17-04:20:
+   * The auto-merge conflict-resolution retry cap is project-configurable so operators can tune when tasks park for human visibility. Default 3 preserves the historical fixed cap; non-positive or non-finite values fall back to the default.
+   *
+   * Maximum number of auto-merge conflict-resolution retries before a task is
+   * parked as failed for manual recovery. Must be a positive integer. Default: 3.
+   */
+  maxAutoMergeRetries?: number;
   /** AI merge path configuration (FN-5633). See {@link MergerSettings}.
    *  When mode is "ai" (default), the standalone AI merge path is used and the
    *  legacy merge settings above/below it do not apply. */
@@ -3706,6 +3760,12 @@ export interface ProjectSettings {
   verificationFixRetries?: number;
   /** Timeout in milliseconds for build commands during merge. Default: 300000 (5 min). */
   buildTimeoutMs?: number;
+  /**
+   * FNXC:Verification 2026-06-17-14:20:
+   * Engine verification commands need a durable project-level budget so marathon test runs abort cleanly instead of tripping the stuck detector and requeueing forever.
+   * When set, this millisecond value overrides both fn_run_verification scope defaults (package 300s, workspace 900s); when unset, the legacy per-scope defaults still apply.
+   */
+  verificationCommandTimeoutMs?: number;
   /** When enabled, AI-generated task specifications require manual approval
    *  before the task can move from triage to todo. Tasks with approved specs
    *  remain in triage with status "awaiting-approval" until a user approves
@@ -4327,6 +4387,8 @@ export interface TaskCommitAssociation {
   matchedBy: TaskCommitAssociationMatchSource;
   confidence: TaskCommitAssociationConfidence;
   note?: string;
+  additions?: number;
+  deletions?: number;
   createdAt: string;
   updatedAt: string;
 }

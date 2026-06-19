@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail } from "@fusion/core";
+import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";
@@ -10,6 +11,7 @@ interface WorktreeGroupProps {
   label: string;
   activeTasks: Task[];
   queuedTasks: Task[];
+  allTasks?: Task[];
   projectId?: string;
   onOpenDetail: (task: Task | TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
@@ -19,7 +21,7 @@ interface WorktreeGroupProps {
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** Called when user clicks a mission badge on a task card */
@@ -42,6 +44,7 @@ function WorktreeGroupComponent({
   label,
   activeTasks,
   queuedTasks,
+  allTasks,
   projectId,
   onOpenDetail,
   addToast,
@@ -61,6 +64,11 @@ function WorktreeGroupComponent({
   const { t } = useTranslation("app");
   const upNextLabel = t("worktree.upNext", "Up Next");
   const unassignedLabel = t("worktree.unassigned", "Unassigned");
+  const resolveNearDuplicateCanonicalInactive = (task: Task): boolean | undefined => {
+    const nearDuplicateOf = task.sourceMetadata?.nearDuplicateOf;
+    if (typeof nearDuplicateOf !== "string" || !allTasks) return undefined;
+    return isNearDuplicateCanonicalInactive(allTasks.find((candidate) => candidate.id === nearDuplicateOf));
+  };
 
   return (
     <div className="worktree-group">
@@ -71,7 +79,26 @@ function WorktreeGroupComponent({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onRetryTask={onRetryTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} workflowStepNameLookup={workflowStepNameLookup} cardFieldDefs={taskCardFieldDefs?.get(task.id)} fanout={blockerFanoutMap?.get(task.id)} prAuthAvailable={prAuthAvailable} autoMergeEnabled={autoMergeEnabled} />
+        <TaskCard
+          key={task.id}
+          task={task}
+          projectId={projectId}
+          onOpenDetail={onOpenDetail}
+          addToast={addToast}
+          globalPaused={globalPaused}
+          onUpdateTask={onUpdateTask}
+          onRetryTask={onRetryTask}
+          onOpenDetailWithTab={onOpenDetailWithTab}
+          taskStuckTimeoutMs={taskStuckTimeoutMs}
+          onOpenMission={onOpenMission}
+          lastFetchTimeMs={lastFetchTimeMs}
+          workflowStepNameLookup={workflowStepNameLookup}
+          cardFieldDefs={taskCardFieldDefs?.get(task.id)}
+          fanout={blockerFanoutMap?.get(task.id)}
+          prAuthAvailable={prAuthAvailable}
+          autoMergeEnabled={autoMergeEnabled}
+          nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
+        />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -93,6 +120,7 @@ function WorktreeGroupComponent({
           fanout={blockerFanoutMap?.get(task.id)}
           prAuthAvailable={prAuthAvailable}
           autoMergeEnabled={autoMergeEnabled}
+          nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
         />
       ))}
     </div>

@@ -82,6 +82,12 @@ The core board entity: a unit of work that moves through columns (triage, todo, 
 ### Workflow Runtime
 The authoritative task lifecycle runtime. It resolves a Task to workflow IR, walks the graph, routes node outcomes, and invokes runtime primitives for side effects. The engine substrate still owns scheduling, routing claims, persistence, concurrency, process supervision, storage, and audit plumbing; lifecycle policy lives in workflow nodes and built-in workflow IR.
 
+### ACP Ask Path
+A one-turn read-only model ask routed through the ACP runtime rather than a CLI print mode. The runner accumulates streamed prose, may recover a trailing JSON object for structured seams, and treats abnormal ACP stop reasons as incomplete answers for validator use.
+
+### Claude Bridge
+The pinned `claude-code-cli-acp` subprocess bundled with the ACP runtime plugin. It speaks ACP over stdio to Fusion while driving the real interactive `claude` through a PTY, and is resolved from the plugin-owned `node_modules` tree rather than PATH.
+
 ### Runtime Primitive
 A named, injected operation a workflow node can call to perform side effects without depending on `executor.ts` lifecycle branches. Examples include planning session, coding session, step execution/reset, review, verification, workflow step, transition, merge request, abort, and audit. Primitives are the boundary between workflow policy and engine substrate.
 

@@ -14,6 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createSessionDiagnostics, nonfatal } from "./ai-session-diagnostics.js";
+import { registerBeforeExitCleanup } from "./process-lifecycle.js";
 
 // Dynamic import for @fusion/core to get prompt override resolution
 
@@ -218,7 +219,7 @@ export function __runAgentGenerationCleanupForTests(): void {
 const cleanupInterval = setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS);
 cleanupInterval.unref?.();
 
-process.on("beforeExit", () => {
+registerBeforeExitCleanup(() => {
   clearInterval(cleanupInterval);
 });
 

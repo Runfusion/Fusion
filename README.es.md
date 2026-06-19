@@ -72,14 +72,14 @@ Cada tarea muestra su plan, sus revisiones, sus diffs y sus cambios de archivos 
 |  |  |
 |---|---|
 | 🧠 **Planificación con IA** | Describe una tarea en lenguaje natural. Los agentes de planificación la convierten en un plan `PROMPT.md` con pasos, alcance de archivos y criterios de aceptación. |
-| 🔁 **Puertas de flujo** | Plan → Revisión → Ejecución → Revisión en cada paso. Las puertas previas al merge bloquean código deficiente; las posteriores ejecutan verificaciones informativas. |
+| 🔁 **Workflows seleccionables** | Los integrados cubren codificación, arreglos rápidos, trabajo con revisión intensa, ejecución paso a paso, Compound Engineering con plugin y fragmentos de ciclo de vida de PR. Elige un workflow por tarea o crea personalizados en el [Editor de workflows](./docs/workflow-editor.md). |
 | 🌳 **Aislamiento con worktrees** | Cada tarea corre en su propia rama y worktree (`fusion/{task-id}`). Tareas en paralelo. Cero conflictos. Delegación opcional a [worktrunk](https://github.com/max-sixty/worktrunk) mediante [`worktrunk.enabled`](./docs/settings-reference.md#worktree-backend-settings) (ver [abstracción WorktreeBackend](./docs/architecture.md#worktreebackend-abstraction)). |
-| ⚡ **Merge inteligente** | ¿Pasa todas las puertas? Fusion hace squash-merge y avanza. Habilita aprobación manual en cualquier punto. |
+| ⚡ **Controles de merge inteligente** | ¿Pasa todas las puertas? Fusion hace squash-merge y avanza. Puedes exigir aprobación manual, heredar el valor global de auto-merge o definir sobreescrituras por tarea. |
 | 🛰️ **Malla multinodo** | Laptop, Mac mini, servidor Linux, VM en la nube, teléfono — todos sincronizados. Escritorio, móvil, web. |
-| 🧩 **Cualquier modelo** | Anthropic, OpenAI, Ollama y más. Local y en la nube coexisten. |
+| 🧩 **Cualquier modelo** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, runtimes locales y [proveedores personalizados](./docs/dashboard-guide.md#custom-providers). Local y nube coexisten, con canales de modelo/fallback configurables por workflow. |
 | 🏢 **Empresas de agentes** | Importa equipos predefinidos — más de 440 agentes en 16 empresas — y ejecútalos de forma autónoma durante semanas. |
 | 📬 **Mensajería entre agentes** | Buzón incorporado entre agentes. Delega, aclara, coordina. |
-| 🗨️ **Salas de chat multiagente** | Conversaciones grupales con alcance de proyecto donde varios miembros de la sala pueden responder: los miembros mencionados son respondedores directos, y miembros ambientales adicionales pueden responder hasta un límite. Actualmente **experimental** — habilita `chatRooms` en **Configuración → Funciones experimentales → Salas de chat**. ([Documentación de salas de chat](./docs/dashboard-guide.md#chat-rooms)) |
+| 🗨️ **Chat de agentes** | Chat directo, chat de tareas, adjuntos, tarjetas de preguntas en chat, streams reanudables y salas multiagente experimentales donde los miembros mencionados responden directamente y miembros ambientales pueden sumarse hasta un límite. ([Documentación de chat](./docs/dashboard-guide.md#chat-view)) |
 | 🗺️ **Misiones** | Planificación jerárquica (Misión → Hito → Slice → Característica → Tarea) con piloto automático y contratos de validación. |
 | 🔬 **Investigación** | Ejecuciones de investigación delimitadas con búsqueda web, GitHub, documentación local y síntesis con LLM (además de soporte integrado en tiempo de ejecución para WebSearch/WebFetch en flujos de planificación y síntesis cuando está disponible). Convierte los hallazgos en tareas. ([Documentación](./docs/research.md)) |
 | 🧪 **Automejora** | Los agentes reflexionan sobre su propio resultado y actualizan sus prompts a medida que aprenden tu base de código. |
@@ -124,6 +124,18 @@ graph TD
 ```
 
 Las tareas con dependencias se procesan secuencialmente. Las tareas independientes se ejecutan en paralelo. Opcionalmente puedes requerir aprobación manual antes de que las tareas pasen de Planificación a Pendiente (configuración `requirePlanApproval`).
+
+---
+
+## Resumen del flujo de trabajo
+
+Fusion workflows definen cómo una tarea pasa de una idea a una entrega. La ruta de codificación predeterminada sigue siendo el ciclo **Planificación/triage → Ejecución → Pasos del flujo → Revisión → Merge**, pero ahora la política vive en un workflow seleccionable en lugar de estar solo codificada en el motor.
+
+- **Selecciona por tarea:** elige un workflow desde los controles de workflow de la tarea/tablero, o asígnalo con `fn_workflow_select` / `workflow_id` al crear tareas.
+- **Catálogo integrado:** Coding (`builtin:coding`), Quick fix (`builtin:quick-fix`), Review-heavy (`builtin:review-heavy`), Compound engineering (`builtin:compound-engineering`, requiere plugin), Stepwise coding (`builtin:stepwise-coding`) y PR lifecycle (`builtin:pr-workflow`, un fragmento reutilizable de grafo de PR).
+- **Personaliza con seguridad:** inspecciona los workflows integrados, duplícalos o crea workflows personalizados en el [Editor de workflows](./docs/workflow-editor.md). Los ajustes específicos de workflow cubren canales de modelo, revisión/aprobación, ejecución de pasos, campos de tarea y columnas.
+
+Lee [Pasos del flujo](./docs/workflow-steps.md) para la semántica de ejecución y [Editor de workflows](./docs/workflow-editor.md) para la guía de autoría en el panel.
 
 ---
 
@@ -283,32 +295,41 @@ Para el flujo de trabajo con Capacitor + PWA, consulta [MOBILE.md](./MOBILE.md).
 
 | Guía | Qué cubre |
 |---|---|
-| [Primeros pasos](./docs/getting-started.md) | Instalación e incorporación |
-| [Guía del panel](./docs/dashboard-guide.md) | Vistas de tablero/lista, terminal, gestor de git |
-| [Gestión de tareas](./docs/task-management.md) | Ciclo de vida de la tarea y comandos CLI |
-| [Referencia CLI](./docs/cli-reference.md) | Referencia completa de comandos y daemon |
-| [Referencia de configuración](./docs/settings-reference.md) | Opciones de configuración |
-| [Arquitectura](./docs/architecture.md) | Funcionamiento interno del sistema |
-| [Agentes](./docs/agents.md) | Gestión de agentes, creación, latido |
-| [Pasos del flujo](./docs/workflow-steps.md) | Puertas de calidad, plantillas, fases |
-| [Misiones](./docs/missions.md) | Jerarquía de misiones, planificación, piloto automático |
-| [Multiproyecto](./docs/multi-project.md) | Registro central, modos de aislamiento |
+| [Primeros pasos](./docs/getting-started.md) | Instalación, incorporación, primera tarea y selección básica de workflows |
+| [Guía del panel](./docs/dashboard-guide.md) | Vistas de tablero/lista, chat, editor de workflows, gestor de git, configuración y herramientas UI |
+| [Gestión de tareas](./docs/task-management.md) | Ciclo de vida, especificaciones de prompts, comentarios, archivado e integración con GitHub |
+| [Referencia CLI](./docs/cli-reference.md) | Referencia completa de comandos `fn` y daemon |
+| [Referencia de configuración](./docs/settings-reference.md) | Configuración global/proyecto, jerarquía de modelos, configuración de workflows y proveedores personalizados |
+| [Pasos del flujo](./docs/workflow-steps.md) | Runtime de workflows, integrados, puertas, plantillas y fases |
+| [Editor de workflows](./docs/workflow-editor.md) | Autoría visual, importación/exportación, campos/columnas/configuración y editor móvil |
+| [Investigación](./docs/research.md) | Ejecuciones de investigación, hallazgos, exportaciones e integración con tareas |
+| [Agentes](./docs/agents.md) | Gestión de agentes, spawning, latidos y buzones |
+| [Misiones](./docs/missions.md) | Jerarquía, planificación, piloto automático y contratos de validación |
+| [Gestión de plugins](./docs/plugin-management.md) | Descubrir, instalar, habilitar, configurar y solucionar plugins |
+| [Autoría de plugins](./docs/PLUGIN_AUTHORING.md) | Crear plugins con hooks, rutas, herramientas, runtimes y superficies de panel |
+| [Acceso remoto](./docs/remote-access.md) | Acceso remoto con token, Tailscale/Cloudflare y solución de problemas |
+| [Multiproyecto](./docs/multi-project.md) | Registro central, aislamiento y migraciones |
 | [Docker](./docs/docker.md) | Despliegue en contenedores |
 
 ---
 
 ## Características principales
 
-- **Planificación con IA** — El agente de planificación genera un `PROMPT.md` detallado con pasos, alcance de archivos y criterios de aceptación
-- **Ejecución paso a paso** — Ciclo Plan → Revisión → Ejecución → Revisión para cada paso de la tarea
-- **Aislamiento con worktrees de git** — Cada tarea corre en su propio worktree (rama `fusion/{task-id}`)
-- **Pasos del flujo** — Puertas de calidad configurables (previas al merge: bloquean el merge; posteriores al merge: informativas)
-- **Integración con GitHub** — Importar issues, crear PRs, insignias en tiempo real de PR/issue
-- **Panel** — Tablero kanban en tiempo real, gestión de agentes, terminal, gestor de git, planificador de misiones
-- **Misiones** — Planificación jerárquica (Misión → Hito → Slice → Característica → Tarea) con piloto automático, contratos de validación, reintentos de corrección de características y semántica de entrega bloqueada
-- **Multiproyecto** — Gestiona múltiples proyectos desde una sola instalación con aislamiento de proyectos
-- **Mensajería entre agentes** — Sistema de mensajería integrado para la coordinación entre agentes y usuarios
-- **Salas de chat (experimental)** — Chat grupal con alcance de proyecto donde los miembros mencionados se enrutan como respondedores directos y miembros ambientales adicionales pueden responder hasta un límite (habilitar en **Configuración → Funciones experimentales → Salas de chat**; detalles en [Guía del panel → Salas de chat](./docs/dashboard-guide.md#chat-rooms))
+- **AI Planning** — Planning agent generates detailed `PROMPT.md` with steps, file scope, and acceptance criteria
+- **Step-by-step Execution** — Plan → Review → Execute → Review cycle for each task step, with graph-mode workflows able to model per-step parse/execute/review/rework explicitly
+- **Git Worktree Isolation** — Each task runs in its own worktree (`fusion/{task-id}` branch)
+- **Selectable workflows** — Pick Coding, Quick fix, Review-heavy, Stepwise coding, plugin-gated Compound Engineering, custom workflows, or PR lifecycle fragments where appropriate ([overview](#resumen-del-flujo-de-trabajo); [Workflow Steps](./docs/workflow-steps.md#resumen-del-flujo-de-trabajo))
+- **Visual Workflow Editor** — Inspect read-only built-ins, duplicate/customize workflows, and edit graph nodes, columns, task fields, typed settings, and per-project values ([Workflow Editor](./docs/workflow-editor.md))
+- **Workflow Steps** — Configurable quality gates (pre-merge blocks merge; post-merge informational), plus opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
+- **Workflow-native policy** — Fast-mode planning, typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings ([Settings Reference](./docs/settings-reference.md#workflow-settings))
+- **GitHub + PR lifecycle** — Import issues, create PRs, display live PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
+- **Dashboard** — Real-time kanban/list/graph views, agent management, terminal, git manager, missions, chat, workflow editor, custom providers, and one-click updates
+- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, mission-goal linking, and blocked handoffs
+- **Multi-Project** — Manage multiple projects from one installation with project isolation
+- **Custom Providers** — Add OpenAI-compatible, OpenAI Responses, Anthropic-compatible, or Google Generative AI providers; saved models appear in project and workflow model dropdowns ([Dashboard Guide](./docs/dashboard-guide.md#custom-providers))
+- **Smart merge controls** — Global auto-merge stays live for default tasks, while explicit per-task overrides can force auto/manual behavior
+- **Inter-Agent Messaging** — Built-in messaging for coordination between agents and users; engineer-role agents can opt into backlog auto-claim
+- **Agent Chat + Chat Rooms** — Direct/task chat supports attachments, resumable streams, question response cards, and renameable conversations; experimental rooms route mentioned members as direct responders ([Dashboard Guide → Chat View](./docs/dashboard-guide.md#chat-view))
 
 ### Autenticación de proveedores
 
@@ -331,6 +352,8 @@ Fusion usa una jerarquía de modelos de doble alcance con cinco canales independ
 | Validator | Revisor de plan/código | `validatorGlobalProvider` + `validatorGlobalModelId` | `validatorProvider` + `validatorModelId` |
 | Title Summarization | Generación automática de títulos | `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId` | `titleSummarizerProvider` + `titleSummarizerModelId` |
 | Workflow Step Refinement | Refinamiento de prompts con IA | (usa `defaultProvider`/`defaultModelId`) | (usa `modelProvider`/`modelId` en WorkflowStep) |
+
+**Canales de workflow:** El workflow predeterminado expone canales de modelo Plan/Triage, Executor, Reviewer y fallback en **Configuración → Modelos de proyecto**, y los workflows avanzados pueden declarar valores tipados adicionales ([Referencia de configuración](./docs/settings-reference.md#workflow-settings)).
 
 **Sobreescrituras por tarea:** Las tareas pueden sobreescribir los canales de executor, validator y planning con campos de modelo por tarea (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`).
 

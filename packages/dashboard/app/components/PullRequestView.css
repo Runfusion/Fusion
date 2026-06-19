@@ -19,7 +19,7 @@
 }
 
 .pr-view--error {
-  color: var(--danger, #e5534b);
+  color: var(--color-error);
 }
 
 /* identity header */
@@ -62,12 +62,12 @@
 }
 
 .pr-identity-state--failed {
-  background: var(--pr-failed-bg, color-mix(in srgb, #e5534b 18%, transparent));
-  color: var(--danger, #e5534b);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
 }
 
 .pr-identity-state--merged {
-  background: var(--pr-merged-bg, color-mix(in srgb, #8250df 18%, transparent));
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
 }
 
 /* placeholders / banners / notices */
@@ -84,16 +84,16 @@
 }
 
 .pr-banner--responding {
-  background: var(--pr-responding-bg, color-mix(in srgb, #3682dc 14%, transparent));
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
 }
 
 .pr-notice--unverified {
-  background: var(--pr-unverified-bg, color-mix(in srgb, #dcaa36 14%, transparent));
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
 
 .pr-error-reason {
-  background: var(--pr-error-bg, color-mix(in srgb, #e5534b 14%, transparent));
-  color: var(--danger, #e5534b);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
 }
 
 /* action bar */
@@ -133,7 +133,7 @@
 }
 
 .pr-action--close {
-  border-color: var(--pr-close-border, color-mix(in srgb, #e5534b 40%, transparent));
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
 }
 
 .pr-automerge-toggle {
@@ -155,7 +155,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--danger, #e5534b);
+  color: var(--color-error);
   text-decoration: none;
   font-size: 0.85em;
 }
@@ -179,15 +179,15 @@
 }
 
 .pr-icon-success {
-  color: var(--success, #3fb950);
+  color: var(--color-success);
 }
 
 .pr-icon-failure {
-  color: var(--danger, #e5534b);
+  color: var(--color-error);
 }
 
 .pr-icon-pending {
-  color: var(--warning, #d29922);
+  color: var(--color-warning);
 }
 
 /* threads */
@@ -209,8 +209,8 @@
 }
 
 .pr-thread--agent-disagreement {
-  border-left: 3px solid var(--warning, #d29922);
-  background: var(--pr-disagreement-bg, color-mix(in srgb, #d29922 8%, transparent));
+  border-left: 3px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
 
 .pr-thread--pending {
@@ -249,6 +249,6 @@
 }
 
 .pr-inline-error {
-  color: var(--danger, #e5534b);
+  color: var(--color-error);
   font-size: 0.85em;
 }

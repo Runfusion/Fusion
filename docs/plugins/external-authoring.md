@@ -46,7 +46,7 @@ You can also run the build yourself:
 pnpm build
 ```
 
-Troubleshooting: plugin entrypoints must be compiled JavaScript. `fn plugin install` and `fn plugin dev` reject `.ts` source entrypoints, so run the build before installing if you are not using the dev loop.
+Troubleshooting: plugin entrypoints must be compiled JavaScript. `fn plugin install` and `fn plugin dev` reject `.ts` source entrypoints, so run the build before installing if you are not using the dev loop. A raw `*.tgz` is not a valid `fn plugin install` argument; extract it first with `tar -xzf` and install from the unpacked `./package` directory.
 
 ## 3. Test
 

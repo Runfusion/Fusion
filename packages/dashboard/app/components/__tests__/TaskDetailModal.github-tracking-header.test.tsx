@@ -1,3 +1,7 @@
+/*
+FNXC:TaskDetailTabs 2026-06-17-08:20:
+FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+*/
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { loadAllAppCss } from "../../test/cssFixture";
@@ -10,6 +14,7 @@ describe("FN-4224 GitHub tracking header layout", () => {
   it("keeps the summary, enable action, and disclosure toggle on one row across desktop and mobile CSS", () => {
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           column: "todo",
           githubTracking: { enabled: false },

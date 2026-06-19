@@ -7,7 +7,8 @@ import {
 
 export type { BlockerFanoutEntry };
 
-// Keep in sync with packages/engine/src/self-healing.ts
+// Keep in sync with packages/engine/src/self-healing.ts default export.
+// FNXC:AutoMergeRetries 2026-06-17-04:20: Dashboard fanout copy uses this as a display fallback until task-card surfaces receive live project settings; engine/self-healing decisions use resolveMaxAutoMergeRetries(settings) and are authoritative.
 export const MAX_AUTO_MERGE_RETRIES = 3;
 
 export interface UseBlockerFanoutOptions {

@@ -45,6 +45,10 @@ Model fullscreen mobile overlays as explicit board-layout suppressors in `comput
 
 This keeps the board's footer/mobile-nav padding classes present for the entire time Quick Chat is open. The board therefore never shifts in response to the Quick Chat keyboard, leaving nothing to snap back after the overlay closes.
 
+## Related viewport-smoothing pitfall
+
+FN-6498 found a separate Quick Chat viewport-tracking jank source inside `QuickChatFAB.tsx`: mobile `visualViewport` `resize` and `scroll` events can report the same `{ height, offsetTop }` sample during one keyboard animation tick, especially on Android Chrome with `interactive-widget=resizes-content`. The sheet should still own `--vv-height` / `--vv-offset-top`, but same-sample writes are deduped so the overlay does not add redundant style/layout invalidation while the board-shift suppression described above keeps the board underneath stable.
+
 ## Regression coverage
 
 Cover the invariant at the pure helper seam:

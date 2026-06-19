@@ -26,8 +26,8 @@
   width: calc(var(--space-lg) * 2 + var(--space-xs));
   height: calc(var(--space-lg) * 2 + var(--space-xs));
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--primary) 15%, var(--surface));
-  color: var(--primary);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  color: var(--accent);
   flex-shrink: 0;
 }
 

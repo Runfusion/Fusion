@@ -537,12 +537,14 @@
   background: color-mix(in srgb, var(--triage) 8%, transparent);
 }
 
+/*
+FNXC:ListView 2026-06-16-00:00:
+FN-6529 requires list-view agent-active tasks to use a simple static highlight instead of the animated board-card glow, so the list row keeps a flat inset indicator and subtle background without referencing agent-glow.
+*/
 .list-row.agent-active {
   border-color: var(--in-progress);
-  box-shadow:
-    0 0 var(--space-sm) color-mix(in srgb, var(--in-progress) 40%, transparent),
-    0 0 calc(var(--space-xl) - var(--space-xs)) color-mix(in srgb, var(--in-progress) 15%, transparent);
-  animation: agent-glow 2.5s ease-in-out infinite;
+  background: color-mix(in srgb, var(--in-progress) 8%, transparent);
+  box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--in-progress);
 }
 
 /* Table cells */
@@ -989,10 +991,8 @@
 
   .list-card.agent-active {
     border-color: var(--in-progress);
-    box-shadow:
-      0 0 var(--space-sm) color-mix(in srgb, var(--in-progress) 40%, transparent),
-      0 0 calc(var(--space-xl) - var(--space-xs)) color-mix(in srgb, var(--in-progress) 15%, transparent);
-    animation: agent-glow 2.5s ease-in-out infinite;
+    background: color-mix(in srgb, var(--in-progress) 8%, transparent);
+    box-shadow: inset 0 0 0 calc(var(--space-xs) / 4) var(--in-progress);
   }
 
   .list-card-row {

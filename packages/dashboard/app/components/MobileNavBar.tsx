@@ -10,6 +10,7 @@ import {
   FileCode,
   FileText,
   Folder,
+  Gauge,
   GitBranch,
   Grid3X3,
   History,
@@ -74,7 +75,6 @@ export interface MobileNavBarProps {
   // Navigation handlers
   onOpenSettings?: () => void;
   onOpenActivityLog?: () => void;
-  onOpenSystemStats?: () => void;
   onOpenMailbox?: () => void;
   mailboxUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
@@ -141,7 +141,6 @@ export function MobileNavBar({
   keyboardOpen = false,
   onOpenSettings,
   onOpenActivityLog,
-  onOpenSystemStats,
   onOpenMailbox,
   mailboxUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
@@ -271,14 +270,19 @@ export function MobileNavBar({
   const skillsEnabled = Boolean(showSkillsTab);
   const todoViewEnabled = Boolean(experimentalFeatures?.todoView);
 
-  // Keep a maximum of one optional primary tab visible at once to preserve touch-target width.
+  // Keep optional primary tabs limited to preserve touch-target width.
   // Overflowed destinations remain available in the More sheet.
   const showSkillsTopLevel = skillsEnabled;
   const showSkillsInMore = skillsEnabled && !showSkillsTopLevel;
   const sortedPrimaryPluginViews = pluginDashboardViews
     .filter((entry) => entry.view.placement === "primary")
     .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER));
-  const MAX_PRIMARY_PLUGIN_TOP_LEVEL_TABS = 1;
+  /*
+  FNXC:Navigation 2026-06-19-12:05:
+  Mobile navigation adds Command Center as a fixed top-level tab immediately after Mailbox.
+  Primary plugin tabs, including Compound Engineering, are demoted to the More sheet so touch targets stay wide and Command Center is not duplicated.
+  */
+  const MAX_PRIMARY_PLUGIN_TOP_LEVEL_TABS = 0;
   const topLevelPrimaryPluginViews = sortedPrimaryPluginViews.slice(0, MAX_PRIMARY_PLUGIN_TOP_LEVEL_TABS);
   const topLevelPluginViewKeys = new Set(
     topLevelPrimaryPluginViews.map((entry) => `${entry.pluginId}:${entry.view.viewId}`),
@@ -289,7 +293,6 @@ export function MobileNavBar({
 
   const isMoreActive =
     view === "documents"
-    || view === "reliability"
     || (Boolean(experimentalFeatures?.evalsView) && view === "evals")
     || (Boolean(experimentalFeatures?.goalsView) && view === "goalsView")
     || view === "research"
@@ -393,6 +396,18 @@ export function MobileNavBar({
           )}
         </button>
 
+        <button
+          type="button"
+          className={`mobile-nav-tab${view === "command-center" ? " mobile-nav-tab--active" : ""}`}
+          data-testid="mobile-nav-tab-command-center"
+          role="tab"
+          aria-selected={view === "command-center"}
+          onClick={() => onChangeView("command-center")}
+        >
+          <Gauge />
+          <span className="mobile-nav-tab-label">{t("nav.commandCenter", "Command Center")}</span>
+        </button>
+
         {showSkillsTopLevel && (
           <button
             type="button"
@@ -480,16 +495,6 @@ export function MobileNavBar({
             >
               <Activity />
               <span>{t("nav.activityLog", "Activity Log")}</span>
-            </button>
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-system-stats"
-              onClick={() => handleMoreAction(onOpenSystemStats)}
-            >
-              <Monitor />
-              <span>{t("nav.systemStats", "System Stats")}</span>
             </button>
 
             <button
@@ -671,15 +676,6 @@ export function MobileNavBar({
               <span>{t("nav.documents", "Documents")}</span>
             </button>
 
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-reliability"
-              onClick={() => handleMoreAction(() => onChangeView("reliability"))}
-            >
-              <Activity />
-              <span>{t("nav.reliability", "Reliability")}</span>
-            </button>
             {experimentalFeatures?.evalsView && (
               <button
                 type="button"

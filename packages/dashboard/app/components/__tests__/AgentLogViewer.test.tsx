@@ -70,6 +70,14 @@ describe("AgentLogViewer", () => {
     expect(textSpans[0].textContent).toContain("first chunk second chunk");
   });
 
+  it("preserves just now output for future timestamps", () => {
+    const futureTimestamp = new Date(Date.now() + 30_000).toISOString();
+
+    render(<AgentLogViewer entries={[makeEntry({ timestamp: futureTimestamp, agent: "executor" })]} loading={false} />);
+
+    expect(screen.getByTestId("agent-log-timestamp")).toHaveTextContent("just now");
+  });
+
   it("keeps existing DOM rows stable when a new live entry appears at the bottom", () => {
     const initialEntries = [
       makeEntry({ text: "first chunk", timestamp: "2026-01-01T00:00:00Z", agent: "triage" }),

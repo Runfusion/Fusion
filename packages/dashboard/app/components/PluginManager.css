@@ -19,7 +19,7 @@
 }
 
 .plugin-manager-header-title {
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text);
   flex: 1;
@@ -43,7 +43,7 @@
 
 .plugin-install-hint {
   margin: 0;
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   color: var(--text-muted);
   line-height: 1.45;
 }
@@ -113,7 +113,7 @@
 }
 
 .plugin-version {
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
 }
 
 .plugin-state-badge {
@@ -121,7 +121,7 @@
   align-items: center;
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-pill);
-  font-size: var(--font-size-3xs, 0.7rem);
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -169,7 +169,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-xs, 0.8rem);
+  font-size: 0.8rem;
   font-family: var(--font-mono);
   color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
@@ -202,7 +202,7 @@
 }
 
 .plugin-description {
-  font-size: var(--font-size-md, 0.95rem);
+  font-size: 0.95rem;
   color: var(--text-muted);
   line-height: 1.5;
 }
@@ -211,7 +211,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  font-size: var(--font-size-base, 0.9rem);
+  font-size: 0.9rem;
   color: var(--text-muted);
 }
 
@@ -225,7 +225,7 @@
   align-items: center;
   gap: var(--space-xs);
   color: var(--color-info);
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   flex-wrap: wrap;
   overflow-wrap: anywhere;
 }
@@ -234,7 +234,7 @@
   margin: 0;
   padding: 0;
   border: 0;
-  font-size: var(--font-size-md, 0.95rem);
+  font-size: 0.95rem;
 }
 
 .plugin-settings-form {
@@ -257,7 +257,7 @@
 
 .plugin-settings-group-heading {
   margin: 0;
-  font-size: var(--font-size-xs, 0.8rem);
+  font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -362,12 +362,12 @@
 
 .plugin-builtins-heading {
   margin: 0;
-  font-size: var(--font-size-md, 0.95rem);
+  font-size: 0.95rem;
 }
 
 .plugin-builtins-description {
   margin: 0;
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 
@@ -401,7 +401,7 @@
 
 .plugin-builtins-name {
   color: var(--text);
-  font-size: var(--font-size-base, 0.9rem);
+  font-size: 0.9rem;
   font-weight: 500;
 }
 
@@ -412,7 +412,7 @@
   border-radius: var(--radius-pill);
   background: var(--status-in-review-bg);
   color: var(--in-review);
-  font-size: var(--font-size-2xs, 0.75rem);
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -422,7 +422,7 @@
   align-items: center;
   padding: var(--btn-border-width) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: var(--font-size-2xs, 0.75rem);
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -442,7 +442,7 @@
   align-items: center;
   padding: var(--btn-border-width) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: var(--font-size-2xs, 0.75rem);
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -470,12 +470,12 @@
 .plugin-builtins-description-text {
   flex: 1 1 100%;
   color: var(--text-muted);
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
 }
 
 .plugin-builtins-metadata-only {
   color: var(--text-muted);
-  font-size: var(--font-size-xs, 0.8rem);
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -502,12 +502,12 @@
 
 .plugin-registry-heading {
   margin: 0;
-  font-size: var(--font-size-md, 0.95rem);
+  font-size: 0.95rem;
 }
 
 .plugin-registry-description {
   margin: 0;
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 
@@ -581,7 +581,7 @@
 
 .plugin-registry-name {
   color: var(--text);
-  font-size: var(--font-size-base, 0.9rem);
+  font-size: 0.9rem;
   font-weight: 500;
 }
 
@@ -589,7 +589,7 @@
 .plugin-registry-author,
 .plugin-registry-description-text {
   color: var(--text-muted);
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
 }
 
 .plugin-registry-description-text {
@@ -606,7 +606,7 @@
   align-items: center;
   padding: var(--btn-border-width) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: var(--font-size-2xs, 0.75rem);
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -644,7 +644,7 @@
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   text-align: center;
 }
 
@@ -684,7 +684,7 @@
 
 .plugin-bundled-runtime-name {
   color: var(--text);
-  font-size: var(--font-size-base, 0.9rem);
+  font-size: 0.9rem;
   font-weight: 500;
 }
 
@@ -695,7 +695,7 @@
   border-radius: var(--radius-pill);
   background: var(--status-in-review-bg);
   color: var(--in-review);
-  font-size: var(--font-size-2xs, 0.75rem);
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -714,12 +714,12 @@
 
 .plugin-bundled-runtime-heading {
   margin: 0;
-  font-size: var(--font-size-md, 0.95rem);
+  font-size: 0.95rem;
 }
 
 .plugin-bundled-runtime-description {
   margin: 0;
-  font-size: var(--font-size-sm, 0.85rem);
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 
@@ -728,7 +728,7 @@
   align-items: center;
   padding: var(--btn-border-width) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: var(--font-size-2xs, 0.75rem);
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
 }

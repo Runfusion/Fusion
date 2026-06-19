@@ -87,8 +87,51 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
     expect(missionStore.triageFeature).not.toHaveBeenCalled();
   });
 
-  it("skips inconsistent non-defined stranded features without title match", async () => {
-    const features = [feature({ id: "F-001", status: "triaged", taskId: undefined })];
+  it("resets and retriages inconsistent non-defined stranded features without title match", async () => {
+    let features = [feature({ id: "F-001", status: "triaged", taskId: undefined })];
+    const tasks: any[] = [];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      triageFeature: vi.fn(async (featureId: string) => {
+        const taskId = `FN-${featureId}`;
+        tasks.push({ id: taskId, title: "Feature one", missionId: "M-001", sliceId: "SL-001", column: "todo", status: "queued" });
+        features = [{ ...features[0], taskId, status: "triaged" }];
+        return features[0];
+      }),
+      linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn((featureId: string, updates: Partial<MissionFeature>) => {
+        features = [{ ...features[0], id: featureId, ...updates }];
+        return features[0];
+      }),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+
+    const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(missionStore.updateFeature).toHaveBeenCalledWith("F-001", {
+      status: "defined",
+      loopState: "idle",
+      taskId: undefined,
+    });
+    expect(missionStore.triageFeature).toHaveBeenCalledWith("F-001");
+    expect(features[0].taskId).toBe("FN-F-001");
+  });
+
+  it("blocks stranded generated fix features instead of recreating fix-loop tasks", async () => {
+    let features = [feature({
+      id: "F-FIX",
+      title: "Fix: Fix: Mobile read/browse MVP",
+      status: "triaged",
+      generatedFromFeatureId: "F-ORIGINAL",
+      taskId: undefined,
+    })];
     const missionStore = {
       listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
       getMissionWithHierarchy: vi.fn(() => ({
@@ -98,14 +141,150 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
       })),
       triageFeature: vi.fn(),
       linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn((featureId: string, updates: Partial<MissionFeature>) => {
+        features = [{ ...features[0], id: featureId, ...updates }];
+        return features[0];
+      }),
       updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
     };
 
     const scheduler = new Scheduler(createTaskStore([]), { missionStore: missionStore as any });
     await scheduler.reconcileAllMissionFeatures();
 
     expect(missionStore.triageFeature).not.toHaveBeenCalled();
-    expect(missionStore.linkFeatureToTask).not.toHaveBeenCalled();
+    expect(missionStore.updateFeature).toHaveBeenCalledWith("F-FIX", {
+      status: "blocked",
+      loopState: "blocked",
+      taskId: undefined,
+    });
+    expect(features[0].status).toBe("blocked");
+  });
+
+  it("blocks stranded validator-run generated features", async () => {
+    let features = [feature({
+      id: "F-FIX-RUN",
+      title: "Generated follow-up",
+      status: "triaged",
+      generatedFromRunId: "MVR-001",
+      taskId: undefined,
+    })];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      triageFeature: vi.fn(),
+      linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn((featureId: string, updates: Partial<MissionFeature>) => {
+        features = [{ ...features[0], id: featureId, ...updates }];
+        return features[0];
+      }),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+
+    const scheduler = new Scheduler(createTaskStore([]), { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(missionStore.triageFeature).not.toHaveBeenCalled();
+    expect(features[0].status).toBe("blocked");
+  });
+
+  it("retriages user-authored Fix-prefixed features when no generated marker is present", async () => {
+    let features = [feature({ id: "F-USER-FIX", title: "Fix: login redirect loop", status: "triaged", taskId: undefined })];
+    const tasks: any[] = [];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      triageFeature: vi.fn(async (featureId: string) => {
+        const taskId = `FN-${featureId}`;
+        tasks.push({ id: taskId, title: "Fix: login redirect loop", missionId: "M-001", sliceId: "SL-001", column: "todo", status: "queued" });
+        features = [{ ...features[0], taskId, status: "triaged" }];
+        return features[0];
+      }),
+      linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn((featureId: string, updates: Partial<MissionFeature>) => {
+        features = [{ ...features[0], id: featureId, ...updates }];
+        return features[0];
+      }),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+
+    const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(missionStore.triageFeature).toHaveBeenCalledWith("F-USER-FIX");
+    expect(features[0].taskId).toBe("FN-F-USER-FIX");
+  });
+
+  it("triages newly-created generated fix features that are still defined", async () => {
+    let features = [feature({
+      id: "F-NEW-FIX",
+      title: "Fix: Mobile read/browse MVP",
+      status: "defined",
+      generatedFromFeatureId: "F-ORIGINAL",
+      taskId: undefined,
+    })];
+    const tasks: any[] = [];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      triageFeature: vi.fn(async (featureId: string) => {
+        const taskId = `FN-${featureId}`;
+        tasks.push({ id: taskId, title: "Fix: Mobile read/browse MVP", missionId: "M-001", sliceId: "SL-001", column: "todo", status: "queued" });
+        features = [{ ...features[0], taskId, status: "triaged" }];
+        return features[0];
+      }),
+      linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn((featureId: string, updates: Partial<MissionFeature>) => {
+        features = [{ ...features[0], id: featureId, ...updates }];
+        return features[0];
+      }),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+
+    const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(missionStore.triageFeature).toHaveBeenCalledWith("F-NEW-FIX");
+    expect(missionStore.updateFeature).not.toHaveBeenCalledWith("F-NEW-FIX", expect.objectContaining({ status: "blocked" }));
+    expect(features[0].taskId).toBe("FN-F-NEW-FIX");
+  });
+
+  it("does not reopen done features that no longer have task links", async () => {
+    const features = [feature({ id: "F-DONE", title: "Completed feature", status: "done", taskId: undefined })];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      triageFeature: vi.fn(),
+      linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn(),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+
+    const scheduler = new Scheduler(createTaskStore([]), { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(missionStore.triageFeature).not.toHaveBeenCalled();
+    expect(missionStore.updateFeature).not.toHaveBeenCalled();
   });
 
   it("leaves non-autopilot and blocked features untouched", async () => {

@@ -42,6 +42,7 @@ import {
   getPlanningDescription,
   clearPlanningDescription,
 } from "../hooks/modalPersistence";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, Lock, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle, StopCircle, Archive, ArchiveRestore } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
@@ -3279,18 +3280,26 @@ function PlanningSessionStatusLabel({ status }: { status: AiSessionSummary["stat
   }
 }
 
+/*
+FNXC:PlanningTimestamps 2026-06-17-17:34:
+FN-6601 shares relative-time bucket math while preserving Planning Mode's empty invalid/future fallback and weeks-specific translation branch.
+*/
 function formatRelativeTime(iso: string, t: TFunction<"app">): string {
-  const ms = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return t("planning.relativeTimeJustNow", "just now");
-  const min = Math.floor(sec / 60);
-  if (min < 60) return t("planning.relativeTimeMinutes", "{{count}}m ago", { count: min });
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return t("planning.relativeTimeHours", "{{count}}h ago", { count: hr });
-  const days = Math.floor(hr / 24);
-  if (days < 7) return t("planning.relativeTimeDays", "{{count}}d ago", { count: days });
-  const weeks = Math.floor(days / 7);
-  if (weeks < 4) return t("planning.relativeTimeWeeks", "{{count}}w ago", { count: weeks });
-  return new Date(iso).toLocaleDateString();
+  const bucket = getRelativeTimeBucket(iso);
+  if (!bucket) return "";
+
+  switch (bucket.bucket) {
+    case "just-now":
+      return t("planning.relativeTimeJustNow", "just now");
+    case "minutes":
+      return t("planning.relativeTimeMinutes", "{{count}}m ago", { count: bucket.count });
+    case "hours":
+      return t("planning.relativeTimeHours", "{{count}}h ago", { count: bucket.count });
+    case "days":
+      return t("planning.relativeTimeDays", "{{count}}d ago", { count: bucket.count });
+    case "weeks":
+      return t("planning.relativeTimeWeeks", "{{count}}w ago", { count: bucket.count });
+    case "older":
+      return bucket.date.toLocaleDateString();
+  }
 }

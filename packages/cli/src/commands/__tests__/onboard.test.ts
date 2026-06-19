@@ -35,18 +35,16 @@ class MockCentralCore {
 vi.mock("../init.js", () => ({ runInit: mockRunInit }));
 vi.mock("../project-context.js", () => ({ resolveProject: mockResolveProject }));
 vi.mock("../provider-auth.js", () => ({
-  createReadOnlyAuthFileStorage: vi.fn(() => ({})),
-  mergeAuthStorageReads: vi.fn((primary) => primary),
   wrapAuthStorageWithApiKeyProviders: vi.fn(() => mockProviderAuthFactory()),
 }));
 vi.mock("../auth-paths.js", () => ({
-  getFusionAuthPath: vi.fn(() => "/tmp/auth.json"),
-  getLegacyAuthPaths: vi.fn(() => []),
   getModelRegistryModelsPath: vi.fn(() => "/tmp/models.json"),
 }));
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: { create: vi.fn(() => ({})) },
   ModelRegistry: { create: vi.fn(() => ({})) },
+}));
+vi.mock("@fusion/engine", () => ({
+  createFusionAuthStorage: vi.fn(() => ({})),
 }));
 vi.mock("@fusion/core", () => ({
   CentralCore: MockCentralCore,

@@ -15,7 +15,7 @@
 }
 
 .task-document-card:hover {
-  border-color: var(--border-hover);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
 }
 
 .task-document-card-header {
@@ -62,7 +62,7 @@
 .task-document-content {
   margin: var(--space-md) 0;
   padding: var(--space-md);
-  background: var(--bg-primary);
+  background: var(--bg);
   border-radius: 4px;
   border: 1px solid var(--border);
   max-height: 400px;
@@ -112,7 +112,7 @@
 .task-document-revisions {
   margin: var(--space-md) 0;
   padding: var(--space-md);
-  background: var(--bg-primary);
+  background: var(--bg);
   border-radius: 4px;
   border: 1px solid var(--border);
 }
@@ -138,7 +138,7 @@
 }
 
 .task-document-revision-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .revision-header {

@@ -1,4 +1,7 @@
 import type { Request } from "express";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { probeClaudeCli } from "../claude-cli-probe.js";
 import { probeDroidCli } from "../droid-cli-probe.js";
@@ -271,9 +274,23 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         keyHint?: string;
         loginInProgress?: boolean;
         requiresManualCode?: boolean;
-      }[] = oauthProviders.map((p) => {
-        const hasAuth = storage.hasAuth(p.id);
-        const expired = hasAuth && isExpiredOauthCredential(p.id, storage);
+      }[] = await Promise.all(oauthProviders.map(async (p) => {
+        let hasAuth = storage.hasAuth(p.id);
+        let expired = hasAuth && isExpiredOauthCredential(p.id, storage);
+        if (expired && storage.getApiKey) {
+          /*
+          FNXC:ClaudeOAuth 2026-06-13-22:46:
+          The auth status poll should clear a Claude re-login banner after Fusion refreshes a stored OAuth token, without waiting for a separate model request to touch auth storage.
+          Keep this best-effort so providers without refresh support still report expired and ask the user to re-authenticate.
+          */
+          try {
+            await storage.getApiKey(p.id);
+          } catch {
+            // Best-effort refresh only; preserve the expired status below.
+          }
+          hasAuth = storage.hasAuth(p.id);
+          expired = hasAuth && isExpiredOauthCredential(p.id, storage);
+        }
         return {
           id: p.id,
           name: p.name,
@@ -283,7 +300,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           loginInProgress: loginInProgress.has(p.id),
           requiresManualCode: getManualCodeConfig(p.id, origin) !== undefined || undefined,
         };
-      });
+      }));
 
       // Include API-key-backed providers if supported
       if (storage.getApiKeyProviders) {
@@ -566,21 +583,61 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const binary = await probeClaudeCli();
       let enabled = false;
+      let acpEnabled = true; // experimentalFeatures.claudeCliAcp defaults ON
       if (store) {
         try {
           const globalSettings = await store.getGlobalSettingsStore().getSettings();
           enabled = globalSettings.useClaudeCli === true;
+          acpEnabled =
+            (globalSettings as { experimentalFeatures?: Record<string, boolean> })
+              .experimentalFeatures?.claudeCliAcp !== false;
         } catch {
           // Best-effort: unreadable settings still allow the binary probe
           // to surface, just with enabled=false.
         }
       }
       const extension = options?.getClaudeCliExtensionStatus?.() ?? null;
+      // ACP transport (Route A): active only when Claude CLI is on, the
+      // experimental flag is on, AND the acp-runtime plugin published a bridge
+      // path (FUSION_CLAUDE_ACP_BRIDGE). Otherwise the provider uses `claude -p`.
+      const acpBridgeAvailable =
+        typeof process.env.FUSION_CLAUDE_ACP_BRIDGE === "string" &&
+        process.env.FUSION_CLAUDE_ACP_BRIDGE.length > 0;
+      // FNXC:ClaudeAcp 2026-06-15-11:40:
+      // `active` must reflect the ACTUAL dispatch determinant — FUSION_CLAUDE_ACP
+      // (set by applyClaudeAcpEnable from the flag OR the operator force-override),
+      // not the flag alone — so the status isn't misleading when an operator forces
+      // it on/off.
+      const acpEnvOn = process.env.FUSION_CLAUDE_ACP === "1";
+      // R17: the driver writes this signal when a turn comes back "Not logged in"
+      // (the bridged `claude` can't authenticate). Surface it so the UI can offer
+      // fall-back-to-`-p` or fix-auth. Path matches ACP_BRIDGE_AUTH_SIGNAL_PATH.
+      let acpAuthFailed = false;
+      let acpAuthReason: string | undefined;
+      try {
+        const signalPath = join(tmpdir(), "fusion-acp-bridge-auth.json");
+        if (existsSync(signalPath)) {
+          const sig = JSON.parse(readFileSync(signalPath, "utf8")) as { authFailed?: boolean; reason?: string };
+          if (sig?.authFailed) {
+            acpAuthFailed = true;
+            acpAuthReason = typeof sig.reason === "string" ? sig.reason : undefined;
+          }
+        }
+      } catch {
+        // best-effort; absence of the signal means no known auth failure
+      }
 
       res.json({
         binary,
         enabled,
         extension,
+        acp: {
+          enabled: acpEnabled,
+          bridgeAvailable: acpBridgeAvailable,
+          active: enabled && acpBridgeAvailable && acpEnvOn,
+          authFailed: acpAuthFailed,
+          authReason: acpAuthReason,
+        },
         // Convenience field: the provider card considers everything "ready"
         // when the binary is available, the user has enabled the toggle,
         // AND the host loaded the extension without error. Surfacing this

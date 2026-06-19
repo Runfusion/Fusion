@@ -53,6 +53,8 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  getViewportMode: () => "mobile",
+  isMobileViewport: () => true,
   useViewportMode: () => "mobile",
 }));
 
@@ -201,6 +203,23 @@ describe("NewTaskModal", () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(textarea);
     });
+  });
+
+  it("seeds the description when opened with an initial description", () => {
+    renderNewTaskModal({ initialDescription: "File: README.md\n\nComment:\nFollow up" });
+
+    expect(screen.getByRole("textbox")).toHaveValue("File: README.md\n\nComment:\nFollow up");
+    expect(screen.getByRole("button", { name: "Create Task" })).not.toBeDisabled();
+  });
+
+  it("does not clobber user edits when initialDescription changes while open", () => {
+    const { rerender, props } = renderNewTaskModal({ initialDescription: "Seeded description" });
+    const descTextarea = screen.getByRole("textbox");
+
+    fireEvent.change(descTextarea, { target: { value: "User edited text" } });
+    rerender(<NewTaskModal {...props} initialDescription="Different seed" />);
+
+    expect(screen.getByRole("textbox")).toHaveValue("User edited text");
   });
 
   it("creates task with description when submitted", async () => {

@@ -1,9 +1,11 @@
+import { execSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { __fusionTmpdirRedirectTestHooks } from "../__test-utils__/vitest-setup";
+import { DatabaseSync } from "../sqlite-adapter.js";
 
 const createdPaths: string[] = [];
 
@@ -92,6 +94,37 @@ describe("vitest setup tmpdir mkdtemp redirect", () => {
     const asyncPath = remember(await mkdtemp(join(tmpdir(), "fn-redirect-recreated-async-")));
     expect(existsSync(asyncPath)).toBe(true);
     expect(dirname(asyncPath)).toBe(sink);
+    expect(existsSync(sink)).toBe(true);
+  });
+
+  it("revalidates cwd, HOME, tmpdir redirect, and SQLite opens after mid-run cleanup", () => {
+    const originalHome = process.env.HOME;
+    expect(originalHome).toBeTruthy();
+    expect(existsSync(originalHome!)).toBe(true);
+
+    const sink = __fusionTmpdirRedirectTestHooks.sinkForPid(process.pid);
+    const doomedCwd = remember(mkdtempSync(join(tmpdir(), "fn-redirect-cwd-")));
+    process.chdir(doomedCwd);
+    rmSync(sink, { recursive: true, force: true });
+    rmSync(originalHome!, { recursive: true, force: true });
+    expect(existsSync(sink)).toBe(false);
+    expect(existsSync(originalHome!)).toBe(false);
+
+    const sqliteProject = remember(mkdtempSync(join(tmpdir(), "fn-redirect-sqlite-")));
+    const fusionDir = join(sqliteProject, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+    const db = new DatabaseSync(join(fusionDir, "fusion.db"));
+    db.exec("CREATE TABLE smoke (id TEXT PRIMARY KEY)");
+    db.prepare("INSERT INTO smoke (id) VALUES (?)").run("ok");
+    expect(db.prepare("SELECT id FROM smoke").get()).toEqual({ id: "ok" });
+    db.close();
+
+    const output = execSync("git config --global user.name fusion-test && git config --global --get user.name && pwd", { encoding: "utf8" });
+
+    expect(output).toContain("fusion-test");
+    expect(output).toContain(process.env.FUSION_TEST_WORKER_ROOT!);
+    expect(process.env.HOME).toBe(originalHome);
+    expect(existsSync(process.env.HOME!)).toBe(true);
     expect(existsSync(sink)).toBe(true);
   });
 

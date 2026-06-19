@@ -25,6 +25,11 @@ needed. If the plugin is uninstalled, the workflow is hidden again.
 The Compound Engineering view is registered as a primary plugin destination
 (`viewId: "compound-engineering"`).
 
+It follows dashboard UI conventions: the view's panels, controls, responsive
+layout, spacing, and radii use the shared `--space-*` / `--radius-*` design
+tokens and shared button/card/input classes so the plugin remains visually
+consistent across light, dark, desktop, and mobile surfaces.
+
 It provides:
 - An **artifact hub** that discovers CE artifacts from conventional locations
   (`STRATEGY.md`, `docs/ideation/`, `docs/brainstorms/`, plan docs, `docs/work/`,
@@ -118,8 +123,8 @@ Settings render under **Settings → Plugins → Compound Engineering**.
   the host default. Consumed by the orchestrator's factory call.
 - `defaultModelId` (string) — model within the provider; blank uses the host
   default. Consumed by the orchestrator's factory call.
-- `enabledStages` (string[], default = full registry) — only these stage IDs may
-  be launched; the orchestrator rejects others.
+- `disabledStages` (string[], default `[]`) — explicit opt-out list. Registered
+  stages launch by default; the orchestrator rejects only IDs listed here.
 
 **Sync**
 - `reconcileOnHooks` (boolean, default `true`) — auto-fire the reconcile sweep

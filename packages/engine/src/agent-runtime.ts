@@ -32,6 +32,18 @@ export interface AgentRuntimeContext {
   requestedSkillNames?: string[];
 }
 
+/**
+ * A stdio MCP server forwarded to a runtime's agent session (U10 — Route A ACP).
+ * `env` is explicit name/value pairs; inherited `process.env` is never forwarded.
+ * Runtimes that don't speak MCP ignore this field.
+ */
+export interface AgentMcpServerConfig {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+}
+
 export interface AgentRuntimeOptions {
   /** Working directory for the agent session */
   cwd: string;
@@ -78,6 +90,13 @@ export interface AgentRuntimeOptions {
   skills?: string[];
   /** Runtime-facing context for non-pi runtimes that cannot consume JS ToolDefinition objects directly. */
   runtimeContext?: AgentRuntimeContext;
+  /**
+   * MCP servers to forward to the runtime's agent session (U10 — Route A ACP).
+   * Consumed by runtimes that speak MCP (e.g. the ACP runtime forwards them on
+   * `session/new`); ignored by runtimes that don't. Tool calls still route
+   * through the runtime's permission floor.
+   */
+  mcpServers?: AgentMcpServerConfig[];
   /** Optional task-scoped environment variables for session-local subprocesses. */
   taskEnv?: NodeJS.ProcessEnv;
   /**
@@ -108,6 +127,10 @@ export interface AgentRuntimeOptions {
 /**
  * Result of creating an agent session.
  */
+export interface AgentPromptResult {
+  stopReason?: string;
+}
+
 export interface AgentSessionResult {
   /** The created agent session */
   session: AgentSession;
@@ -153,7 +176,7 @@ export interface AgentRuntime {
    * @param prompt - The prompt text
    * @param options - Optional prompt options (e.g., images for vision)
    */
-  promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void>;
+  promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void | AgentPromptResult>;
 
   /**
    * Get a human-readable model description from a session.

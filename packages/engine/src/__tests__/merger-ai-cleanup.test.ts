@@ -30,7 +30,10 @@ const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as co
 afterEach(() => {
   vi.restoreAllMocks();
   fsState.failReaddirPath = "";
-  activeSessionRegistry.clear();
+  /*
+  FNXC:EngineTests 2026-06-14-02:10:
+  This file observes AI-merge active-session state while sibling files may also be asserting live registrations. Do not clear the shared registry here; production cleanup paths must unregister their own entries, and broad singleton clears make package-load rescue nondeterministic.
+  */
   for (const dir of tracked) {
     try { rmSync(dir, RM); } catch { /* best effort */ }
   }

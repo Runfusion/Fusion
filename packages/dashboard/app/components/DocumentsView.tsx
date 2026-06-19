@@ -9,6 +9,8 @@ import type { ToastType } from "../hooks/useToast";
 import { fetchTaskDetail, fetchWorkspaceFileContent, type MarkdownFileEntry } from "../api";
 import { useDocuments } from "../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../hooks/useProjectMarkdownFiles";
+import { useSelectionComment } from "../hooks/useSelectionComment";
+import { SelectionCommentPopover } from "./SelectionCommentPopover";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -18,6 +20,7 @@ export interface DocumentsViewProps {
   projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
   onOpenDetail: (task: TaskDetail) => void;
+  onSendSelectionToTask?: (description: string) => void;
 }
 
 interface DocumentCardProps {
@@ -172,7 +175,7 @@ function TaskGroup({ taskId, taskTitle, documents, onOpenTask, renderMarkdownSta
   );
 }
 
-export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsViewProps) {
+export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelectionToTask }: DocumentsViewProps) {
   const { t } = useTranslation("app");
   const [activeTab, setActiveTab] = useState<DocumentsTab>("project");
   const [searchQuery, setSearchQuery] = useState("");
@@ -184,10 +187,16 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
   const [isMobile, setIsMobile] = useState(false);
   const requestIdRef = useRef(0);
   const initialTabSetRef = useRef(false);
+  const markdownPreviewRef = useRef<HTMLDivElement>(null);
+  const plainPreviewRef = useRef<HTMLPreElement>(null);
   // Markdown render toggle for project file preview
   const [renderProjectMarkdown, setRenderProjectMarkdown] = useState(false);
   // Markdown render toggles per task document card (scoped by doc ID)
   const [taskDocMarkdownStates, setTaskDocMarkdownStates] = useState<Map<string, boolean>>(new Map());
+  const [selectionCommentOpen, setSelectionCommentOpen] = useState(false);
+  const markdownSelection = useSelectionComment(markdownPreviewRef, { locked: selectionCommentOpen });
+  const plainSelection = useSelectionComment(plainPreviewRef, { locked: selectionCommentOpen });
+  const activeProjectSelection = renderProjectMarkdown ? markdownSelection : plainSelection;
 
   const taskSearchQuery = activeTab === "tasks" ? searchQuery.trim() : "";
 
@@ -374,6 +383,15 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
   }, [activeTab, refreshProjectFiles, refreshDocuments]);
 
   const activeCount = activeTab === "project" ? filteredProjectFiles.length : documents.length;
+  const selectionPopover = selectedFile && onSendSelectionToTask && activeProjectSelection ? (
+    <SelectionCommentPopover
+      selectedText={activeProjectSelection.selectedText}
+      anchorRect={activeProjectSelection.anchorRect}
+      filePath={selectedFile.path}
+      onSubmit={onSendSelectionToTask}
+      onOpenChange={setSelectionCommentOpen}
+    />
+  ) : null;
 
   const searchPlaceholder = activeTab === "project"
     ? t("documents.searchProjectFiles", "Search project markdown files…")
@@ -541,14 +559,15 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
                       ) : fileError ? (
                         <p className="documents-content-state documents-content-state--error">{fileError}</p>
                       ) : renderProjectMarkdown ? (
-                        <div className="documents-content-markdown">
+                        <div ref={markdownPreviewRef} className="documents-content-markdown">
                           <div className="markdown-body">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileContent ?? ""}</ReactMarkdown>
                           </div>
                         </div>
                       ) : (
-                        <pre className="document-card-content-text documents-content-viewer-text">{fileContent ?? ""}</pre>
+                        <pre ref={plainPreviewRef} className="document-card-content-text documents-content-viewer-text">{fileContent ?? ""}</pre>
                       )}
+                      {selectionPopover}
                     </div>
                   )}
                 </section>

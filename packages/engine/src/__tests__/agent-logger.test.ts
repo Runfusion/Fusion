@@ -496,4 +496,145 @@ describe("AgentLogger", () => {
       );
     });
   });
+
+  // ── usage_events emission (U1) ─────────────────────────────────────
+  describe("usage_events emission", () => {
+    function createUsageStore() {
+      return {
+        appendAgentLog: vi.fn().mockResolvedValue(undefined),
+        emitUsageEvent: vi.fn().mockReturnValue(true),
+      } as unknown as TaskStore & { emitUsageEvent: ReturnType<typeof vi.fn> };
+    }
+
+    it("emits a tool_call usage event with model/provider/nodeId on tool start", () => {
+      const store = createUsageStore();
+      const logger = new AgentLogger({ store, taskId: "FN-UE-1", agent: "executor" });
+      logger.setUsageContext({
+        model: "claude-sonnet-4-5",
+        provider: "anthropic",
+        nodeId: "node-x",
+        agentId: "A-1",
+      });
+
+      logger.onToolStart("Read", { path: "secret/credentials.env" });
+
+      expect(store.emitUsageEvent).toHaveBeenCalledTimes(1);
+      const event = store.emitUsageEvent.mock.calls[0][0];
+      expect(event).toMatchObject({
+        kind: "tool_call",
+        taskId: "FN-UE-1",
+        agentId: "A-1",
+        nodeId: "node-x",
+        model: "claude-sonnet-4-5",
+        provider: "anthropic",
+        toolName: "Read",
+        category: "read",
+      });
+      // The tool-argument content (the file path) MUST NOT appear in meta.
+      const meta = (event.meta ?? {}) as Record<string, unknown>;
+      expect(JSON.stringify(meta)).not.toContain("credentials.env");
+    });
+
+    it("does not emit usage events when no usage context is set", () => {
+      const store = createUsageStore();
+      const logger = new AgentLogger({ store, taskId: "FN-UE-2" });
+      logger.onToolStart("Bash", { command: "ls" });
+      expect(store.emitUsageEvent).not.toHaveBeenCalled();
+    });
+
+    it("integration: a session calling 3 tools yields 3 tool_call rows with model/provider/nodeId", () => {
+      const store = createUsageStore();
+      const logger = new AgentLogger({ store, taskId: "FN-UE-3", agent: "executor" });
+      logger.setUsageContext({
+        model: "gpt-5",
+        provider: "openai",
+        nodeId: "local",
+        agentId: "A-3",
+      });
+
+      logger.onToolStart("Read", { path: "a.ts" });
+      logger.onToolStart("Edit", { path: "a.ts" });
+      logger.onToolStart("Bash", { command: "pnpm test" });
+
+      const toolCalls = store.emitUsageEvent.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.kind === "tool_call");
+      expect(toolCalls).toHaveLength(3);
+      expect(toolCalls.map((e) => e.toolName)).toEqual(["Read", "Edit", "Bash"]);
+      for (const event of toolCalls) {
+        expect(event.model).toBe("gpt-5");
+        expect(event.provider).toBe("openai");
+        expect(event.nodeId).toBe("local");
+        expect(event.agentId).toBe("A-3");
+      }
+    });
+
+    it("emits tool_result with a duration descriptor and no result payload", () => {
+      const store = createUsageStore();
+      const logger = new AgentLogger({ store, taskId: "FN-UE-4" });
+      logger.setUsageContext({ model: "m", provider: "p", nodeId: "n", agentId: "a" });
+
+      logger.onToolStart("Bash", { command: "echo hi" });
+      logger.onToolEnd("Bash", false, "super-secret-output");
+
+      const endEvent = store.emitUsageEvent.mock.calls
+        .map((c) => c[0])
+        .find((e) => e.kind === "tool_result");
+      expect(endEvent).toBeDefined();
+      expect(endEvent.toolName).toBe("Bash");
+      const meta = (endEvent.meta ?? {}) as Record<string, unknown>;
+      expect(meta).toHaveProperty("durationMs");
+      // The tool result payload MUST NOT leak into meta.
+      expect(JSON.stringify(meta)).not.toContain("super-secret-output");
+    });
+
+    /*
+     * FNXC:Telemetry 2026-06-16-05:47:
+     * Prove the fail-soft telemetry contract: a throwing store.emitUsageEvent must never break
+     * onToolStart/onToolEnd, and tool logging (appendAgentLog) must still proceed. Covers both a
+     * synchronously throwing store and one that returns a rejected Promise.
+     */
+    it("does not throw and still logs the tool when emitUsageEvent throws synchronously", async () => {
+      const store = {
+        appendAgentLog: vi.fn().mockResolvedValue(undefined),
+        emitUsageEvent: vi.fn().mockImplementation(() => {
+          throw new Error("telemetry sink exploded");
+        }),
+      } as unknown as TaskStore & { emitUsageEvent: ReturnType<typeof vi.fn> };
+      const logger = new AgentLogger({ store, taskId: "FN-UE-FAILSOFT", agent: "executor" });
+      logger.setUsageContext({ model: "m", provider: "p", nodeId: "n", agentId: "a" });
+
+      expect(() => logger.onToolStart("Bash", { command: "ls" })).not.toThrow();
+      expect(() => logger.onToolEnd("Bash", false, "output")).not.toThrow();
+
+      // emitUsageEvent was attempted for both start and end despite throwing.
+      expect(store.emitUsageEvent).toHaveBeenCalled();
+
+      // Tool logging still proceeds: tool start + tool_result rows are persisted.
+      await vi.advanceTimersByTimeAsync(0);
+      const calls = (store.appendAgentLog as ReturnType<typeof vi.fn>).mock.calls;
+      const types = calls.map((c) => c[2]);
+      expect(types).toContain("tool");
+      expect(types).toContain("tool_result");
+
+      // Failure is observed via warn, not propagated.
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to emit usage event"));
+    });
+
+    it("does not throw when emitUsageEvent returns a rejected promise", async () => {
+      const store = {
+        appendAgentLog: vi.fn().mockResolvedValue(undefined),
+        emitUsageEvent: vi.fn().mockRejectedValue(new Error("async telemetry failure")),
+      } as unknown as TaskStore & { emitUsageEvent: ReturnType<typeof vi.fn> };
+      const logger = new AgentLogger({ store, taskId: "FN-UE-FAILSOFT-ASYNC" });
+      logger.setUsageContext({ model: "m", provider: "p", nodeId: "n", agentId: "a" });
+
+      expect(() => logger.onToolStart("Read", { path: "a.ts" })).not.toThrow();
+      expect(() => logger.onToolEnd("Read", true, "boom")).not.toThrow();
+
+      // Let the rejected emit-promise settle; the .catch must absorb it.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(loggerWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to emit usage event"));
+    });
+  });
 });

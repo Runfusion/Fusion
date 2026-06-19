@@ -14,8 +14,11 @@ import { Database, TaskStore } from "@fusion/core";
 import { AiSessionStore } from "../ai-session-store.js";
 import {
   __resetPlanningState,
+  __getActiveGenerationForTests,
   __setCreateFnAgent,
   createSession,
+  createSessionWithAgent,
+  GENERATION_TIMEOUT_MS as PLANNING_GENERATION_TIMEOUT_MS,
   getSession,
   planningStreamManager,
   retrySession,
@@ -46,6 +49,16 @@ const { mockCreateFnAgent } = vi.hoisted(() => ({
 
 vi.mock("@fusion/engine", () => ({
   listCliAdapterDescriptors: () => [],
+  // FNXC:DashboardSessionTests 2026-06-14-09:06: planning.ts spreads createWorkflowAuthoringTools into agent customTools; this focused engine mock must export it to keep AI-session tests aligned with production planning setup.
+  createWorkflowAuthoringTools: vi.fn(() => []),
+  // FNXC:DashboardSessionTests 2026-06-18-09:12: planning.ts also spreads chat task document tools during dashboard API backfill runs; focused engine mocks must return an iterable list so rescued chat-routes coverage does not destabilize planning-session tests.
+  createChatTaskDocumentTools: vi.fn(() => []),
+  // FNXC:DashboardSessionTests 2026-06-17-19:33: planning and mission-interview sessions now request skills through the shared helper; focused engine mocks must return the shaped helper result so lifecycle tests do not crash before createFnAgent is captured.
+  buildSessionSkillContextSync: vi.fn(() => ({
+    skillSelectionContext: undefined,
+    resolvedSkillNames: [],
+    skillSource: "none" as const,
+  })),
   createFnAgent: mockCreateFnAgent,
 }));
 
@@ -104,6 +117,7 @@ describe("session error recovery", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     __setCreateFnAgent(undefined as any);
     __resetPlanningState();
     __resetSubtaskBreakdownState();
@@ -185,6 +199,85 @@ describe("session error recovery", () => {
     expect(getSession(sessionId)?.currentQuestion?.id).toBe("q-retry");
 
     unsubscribeError();
+  });
+
+  it("times out planning sessions when createFnAgent construction stalls", async () => {
+    vi.useFakeTimers();
+
+    __setCreateFnAgent(async () => {
+      await new Promise<never>(() => undefined);
+    });
+
+    const sessionId = await createSessionWithAgent(
+      "127.0.0.150",
+      "Planning construction stall",
+      "/tmp/project",
+      taskStore,
+    );
+    const errorEvents: string[] = [];
+    const unsubscribe = planningStreamManager.subscribe(sessionId, (event) => {
+      if (event.type === "error") {
+        errorEvents.push(String(event.data));
+      }
+    });
+
+    planningStreamManager.consumeInitialTurn(sessionId)?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(aiSessionStore.get(sessionId)?.status).toBe("generating");
+    expect(__getActiveGenerationForTests(sessionId)).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(PLANNING_GENERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(aiSessionStore.get(sessionId)?.status).toBe("error");
+    expect(aiSessionStore.get(sessionId)?.error).toMatch(/timed out/i);
+    expect(errorEvents).toContainEqual(expect.stringMatching(/timed out/i));
+    expect(__getActiveGenerationForTests(sessionId)).toBeUndefined();
+
+    unsubscribe();
+  });
+
+  it("times out planning sessions when prompt stalls and disposes the agent", async () => {
+    vi.useFakeTimers();
+
+    const dispose = vi.fn();
+    __setCreateFnAgent(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          await new Promise<never>(() => undefined);
+        }),
+        dispose,
+      },
+    }));
+
+    const sessionId = await createSessionWithAgent(
+      "127.0.0.151",
+      "Planning prompt stall",
+      "/tmp/project",
+      taskStore,
+    );
+    const errorEvents: string[] = [];
+    const unsubscribe = planningStreamManager.subscribe(sessionId, (event) => {
+      if (event.type === "error") {
+        errorEvents.push(String(event.data));
+      }
+    });
+
+    planningStreamManager.consumeInitialTurn(sessionId)?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(__getActiveGenerationForTests(sessionId)).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(PLANNING_GENERATION_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(aiSessionStore.get(sessionId)?.status).toBe("error");
+    expect(aiSessionStore.get(sessionId)?.error).toMatch(/timed out/i);
+    expect(errorEvents).toContainEqual(expect.stringMatching(/timed out/i));
+    expect(__getActiveGenerationForTests(sessionId)).toBeUndefined();
+    expect(dispose).toHaveBeenCalled();
+
+    unsubscribe();
   });
 
   it("captures subtask generation errors, broadcasts SSE error, and retries to completion", async () => {

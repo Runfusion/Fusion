@@ -69,14 +69,14 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 |  |  |
 |---|---|
 | 🧠 **AI planning** | Describe a task in plain language. Planning agents turn it into a `PROMPT.md` plan with steps, file scope, and acceptance criteria. |
-| 🔁 **Workflow gates** | Plan → Review → Execute → Review on every step. Pre-merge gates block bad code; post-merge gates run informational checks; workflow-declared optional steps such as [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps) can be enabled per task. |
+| 🔁 **Selectable workflows** | Built-ins cover coding, quick fixes, review-heavy work, stepwise execution, plugin-gated Compound Engineering, and PR lifecycle fragments. Pick a workflow per task or author custom ones in the [Workflow Editor](./docs/workflow-editor.md). |
 | 🌳 **Worktree isolation** | Each task runs in its own branch and worktree (`fusion/{task-id}`). Parallel tasks. Zero conflicts. Optional [worktrunk](https://github.com/max-sixty/worktrunk) delegation via [`worktrunk.enabled`](./docs/settings-reference.md#worktree-backend-settings) (see [WorktreeBackend abstraction](./docs/architecture.md#worktreebackend-abstraction)). |
-| ⚡ **Smart merge** | Passing every gate? Fusion squash-merges and moves on. Opt into manual approval anywhere, or let tasks follow the live global auto-merge default unless they have an explicit per-task override. |
+| ⚡ **Smart merge controls** | Passing every gate? Fusion squash-merges and moves on. Opt into manual approval anywhere, inherit the live global auto-merge default, or set explicit per-task auto/manual overrides. |
 | 🛰️ **Multi-node mesh** | Laptop, Mac mini, Linux server, cloud VM, phone — all synced. Desktop, mobile, web. |
-| 🧩 **Any model** | Anthropic, OpenAI, Ollama, Google Generative AI, and user-defined [custom providers](./docs/dashboard-guide.md#custom-providers). Local and cloud coexist, with workflow model lanes configurable per project. |
+| 🧩 **Any model** | Anthropic, OpenAI, Ollama, Google Generative AI, Z.ai, local runtimes, and user-defined [custom providers](./docs/dashboard-guide.md#custom-providers). Local and cloud coexist, with workflow model/fallback lanes configurable per project. |
 | 🏢 **Agent companies** | Import pre-built teams — 440+ agents across 16 companies — and run them autonomously for weeks. |
 | 📬 **Inter-agent messaging** | Built-in mailbox between agents. Delegate, clarify, coordinate; engineer-role agents can opt into backlog auto-claim when you want implementation help beyond executor-only pickup. |
-| 🗨️ **Multi-agent Chat Rooms** | Project-scoped group conversations where multiple room members can reply: mentioned members are direct responders, and additional ambient members may respond up to a cap. Currently **experimental** — enable `chatRooms` in **Settings → Experimental Features → Chat Rooms**. ([Chat Rooms docs](./docs/dashboard-guide.md#chat-rooms)) |
+| 🗨️ **Agent chat** | Direct chat, task chat, attachments, in-chat question cards, resumable streams, and experimental multi-agent Chat Rooms where mentioned members respond directly and ambient members can join up to a cap. ([Chat docs](./docs/dashboard-guide.md#chat-view)) |
 | 🗺️ **Missions** | Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot and validation contracts. |
 | 🔬 **Research** | Bounded research runs with web search, GitHub, local docs, and LLM synthesis (plus runtime builtin WebSearch/WebFetch support in planning + synthesis flows when available). Turn findings into tasks. ([Docs](./docs/research.md)) |
 | 🧪 **Self-improvement** | Agents reflect on their own output and update their prompts as they learn your codebase. |
@@ -121,6 +121,23 @@ graph TD
 ```
 
 Tasks with dependencies are processed sequentially. Independent tasks run in parallel. Optionally require manual approval before tasks move from Planning to Todo (`requirePlanApproval` setting).
+
+---
+
+## Workflow overview
+
+<!--
+FNXC:Docs 2026-06-16-23:10:
+Fusion now exposes workflow selection and authoring as public product surfaces, so the README must explain the high-level lifecycle and link to the canonical Workflow Steps and Workflow Editor docs instead of duplicating editor internals here.
+-->
+
+Fusion workflows define how a task moves from idea to delivery. The default coding path is still the familiar **Plan/Triage → Execute → Workflow steps → Review → Merge** loop, but the policy now lives in a selectable workflow rather than being only hard-coded engine behavior.
+
+- **Select per task:** choose a workflow from the dashboard task/board workflow controls, or assign one through `fn_workflow_select` / `workflow_id` when creating tasks.
+- **Built-in catalog:** Coding (`builtin:coding`), Quick fix (`builtin:quick-fix`), Review-heavy (`builtin:review-heavy`), Compound engineering (`builtin:compound-engineering`, plugin-gated), Stepwise coding (`builtin:stepwise-coding`), and the PR lifecycle (`builtin:pr-workflow`, a reusable PR graph fragment).
+- **Customize safely:** inspect built-ins, duplicate them, or author custom workflows in the visual [Workflow Editor](./docs/workflow-editor.md). Workflow-specific settings cover model lanes, review/approval policy, step execution knobs, task fields, and columns.
+
+Read [Workflow Steps](./docs/workflow-steps.md) for runtime semantics, built-in workflow behavior, and workflow-step templates; read [Workflow Editor](./docs/workflow-editor.md) for the dashboard authoring guide.
 
 ---
 
@@ -280,16 +297,20 @@ For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 
 | Guide | What it covers |
 |---|---|
-| [Getting Started](./docs/getting-started.md) | Installation and onboarding |
-| [Dashboard Guide](./docs/dashboard-guide.md) | Board/list views, terminal, git manager |
-| [Task Management](./docs/task-management.md) | Task lifecycle and CLI commands |
-| [CLI Reference](./docs/cli-reference.md) | Full command and daemon reference |
-| [Settings Reference](./docs/settings-reference.md) | Configuration options |
-| [Architecture](./docs/architecture.md) | System internals |
-| [Agents](./docs/agents.md) | Agent management, spawning, heartbeat |
-| [Workflow Steps](./docs/workflow-steps.md) | Quality gates, templates, phases |
-| [Missions](./docs/missions.md) | Mission hierarchy, planning, autopilot |
-| [Multi-Project](./docs/multi-project.md) | Central registry, isolation modes |
+| [Getting Started](./docs/getting-started.md) | Installation, onboarding, first task, and workflow-selection basics |
+| [Dashboard Guide](./docs/dashboard-guide.md) | Board/list views, chat, workflow editor, git manager, settings, and UI tools |
+| [Task Management](./docs/task-management.md) | Task lifecycle, prompt specs, comments, archiving, and GitHub integration |
+| [CLI Reference](./docs/cli-reference.md) | Full `fn` command and daemon reference |
+| [Settings Reference](./docs/settings-reference.md) | Global/project settings, model hierarchy, workflow settings, and custom providers |
+| [Workflow Steps](./docs/workflow-steps.md) | Workflow runtime, built-in workflows, gates, templates, and phases |
+| [Workflow Editor](./docs/workflow-editor.md) | Visual authoring, importing/exporting, custom fields/columns/settings, and mobile editor |
+| [Research](./docs/research.md) | Bounded research runs, findings, exports, and task integration |
+| [Agents](./docs/agents.md) | Agent management, spawning, heartbeat, and mailbox workflows |
+| [Missions](./docs/missions.md) | Mission hierarchy, planning, autopilot, and validation contracts |
+| [Plugin Management](./docs/plugin-management.md) | Discovering, installing, enabling, configuring, and troubleshooting plugins |
+| [Plugin Authoring](./docs/PLUGIN_AUTHORING.md) | Building plugins with lifecycle hooks, routes, tools, runtimes, and dashboard surfaces |
+| [Remote Access](./docs/remote-access.md) | Tokenized remote dashboard access, Tailscale/Cloudflare setup, and troubleshooting |
+| [Multi-Project](./docs/multi-project.md) | Central registry, isolation modes, and migration paths |
 | [Docker](./docs/docker.md) | Container deployment |
 
 ---
@@ -297,18 +318,20 @@ For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 ## Core features
 
 - **AI Planning** — Planning agent generates detailed `PROMPT.md` with steps, file scope, and acceptance criteria
-- **Step-by-step Execution** — Plan → Review → Execute → Review cycle for each task step
+- **Step-by-step Execution** — Plan → Review → Execute → Review cycle for each task step, with graph-mode workflows able to model per-step parse/execute/review/rework explicitly
 - **Git Worktree Isolation** — Each task runs in its own worktree (`fusion/{task-id}` branch)
+- **Selectable workflows** — Pick Coding, Quick fix, Review-heavy, Stepwise coding, plugin-gated Compound Engineering, custom workflows, or PR lifecycle fragments where appropriate ([overview](#workflow-overview); [Workflow Steps](./docs/workflow-steps.md#workflow-overview))
+- **Visual Workflow Editor** — Inspect read-only built-ins, duplicate/customize workflows, and edit graph nodes, columns, task fields, typed settings, and per-project values ([Workflow Editor](./docs/workflow-editor.md))
 - **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational), plus workflow-declared optional steps such as opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
-- **Workflow-native policy** — Fast-mode planning (`leanPlanning` / `autoApproveSpec`) and typed triage thresholds are workflow settings, not hard-coded engine constants ([Settings Reference](./docs/settings-reference.md#workflow-native-triage-policy-settings); [fast-mode step behavior](./docs/workflow-steps.md#execution-modes))
-- **GitHub Integration** — Import issues, create PRs, real-time PR/issue badges
-- **Dashboard** — Real-time kanban board, agent management, terminal, git manager, mission planner, custom provider setup, and workflow model lanes
-- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, and blocked-handoff semantics
+- **Workflow-native policy** — Fast-mode planning (`leanPlanning` / `autoApproveSpec`), typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings, not hard-coded engine constants ([Settings Reference](./docs/settings-reference.md#workflow-native-triage-policy-settings); [workflow settings](./docs/settings-reference.md#workflow-settings))
+- **GitHub + PR lifecycle** — Import issues, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
+- **Dashboard** — Real-time kanban/list/graph views, agent management, terminal, git manager, mission planner, chat, workflow editor, custom provider setup, and one-click update action
+- **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, mission-goal linking, and blocked-handoff semantics
 - **Multi-Project** — Manage multiple projects from a single installation with project isolation
 - **Custom Providers** — Add OpenAI-compatible, OpenAI Responses, Anthropic-compatible, or Google Generative AI providers; saved models appear in Project Models and workflow model dropdowns ([Dashboard Guide](./docs/dashboard-guide.md#custom-providers); [settings shape](./docs/settings-reference.md#customproviders))
 - **Smart merge controls** — Global auto-merge stays live for default tasks, while explicit per-task overrides can force auto/manual behavior ([Settings Reference](./docs/settings-reference.md#project-settings))
 - **Inter-Agent Messaging** — Built-in messaging for coordination between agents and users; engineer-role agents can opt into backlog auto-claim for implementation tasks ([Settings Reference](./docs/settings-reference.md#project-settings))
-- **Chat Rooms (Experimental)** — Project-scoped group chat where mentioned members are routed as direct responders and additional ambient members may reply up to a cap (enable via **Settings → Experimental Features → Chat Rooms**; details in [Dashboard Guide → Chat Rooms](./docs/dashboard-guide.md#chat-rooms))
+- **Agent Chat + Chat Rooms** — Direct/task chat supports attachments, resumable streams, question response cards, and renameable conversations; experimental rooms route mentioned members as direct responders with optional ambient replies ([Dashboard Guide → Chat View](./docs/dashboard-guide.md#chat-view))
 
 ### Provider authentication
 
@@ -333,7 +356,7 @@ Fusion uses a dual-scope model hierarchy with five independent lanes. Global set
 | Title Summarization | Auto-title generation | `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId` | `titleSummarizerProvider` + `titleSummarizerModelId` |
 | Workflow Step Refinement | AI prompt refinement | (uses `defaultProvider`/`defaultModelId`) | (uses `modelProvider`/`modelId` on WorkflowStep) |
 
-**Workflow lanes:** The default workflow exposes Plan/Triage, Executor, and Reviewer model lanes in **Settings → Project Models**, and advanced workflow settings can declare additional typed model/policy values ([Settings Reference](./docs/settings-reference.md#workflow-settings)).
+**Workflow lanes:** The default workflow exposes Plan/Triage, Executor, Reviewer, and fallback model lanes in **Settings → Project Models**, and advanced workflow settings can declare additional typed model/policy values ([Settings Reference](./docs/settings-reference.md#workflow-settings)).
 
 **Per-Task Overrides:** Tasks can override the executor, validator, and planning lanes with per-task model fields (`modelProvider`/`modelId`, `validatorModelProvider`/`validatorModelId`, `planningModelProvider`/`planningModelId`).
 

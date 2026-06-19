@@ -257,6 +257,10 @@ export default definePlugin({
 `;
 }
 
+/**
+ * FNXC:PluginScaffold 2026-06-14-01:40:
+ * The published FusionPlugin type requires state: PluginState, so standalone `fn plugin new` output must emit `state: "installed"` and stay in sync with the workspace scaffold plus SDK type surface to build unedited.
+ */
 function generateStandaloneIndexTs(name: string): string {
   const titleCase = toTitleCase(name);
   return `import { definePlugin } from "@runfusion/fusion/plugin-sdk";
@@ -268,6 +272,7 @@ export default definePlugin({
     version: "0.1.0",
     description: "A standalone Fusion plugin",
   },
+  state: "installed",
   hooks: {
     onLoad: async (ctx) => {
       ctx.logger.info("${titleCase} plugin loaded");

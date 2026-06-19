@@ -17,6 +17,11 @@ import type { Settings } from "@fusion/core";
 import { MovedSettingsStub } from "./MovedSettingsStub";
 import type { SectionBaseProps } from "./context";
 
+function resolveMaxAutoMergeRetriesForMergeForm(value: unknown): number {
+  const configured = Number(value);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 3;
+}
+
 interface LegacyAutoMergeStampCandidate {
   taskId: string;
   column: string;
@@ -126,6 +131,27 @@ export function MergeSection({
           <summary>More details</summary>
           <small>When enabled, tasks that pass review are automatically merged into the main branch</small>
         </details>
+      </div>
+      <div className="form-group">
+        <label htmlFor="maxAutoMergeRetries">Auto-merge conflict retries</label>
+        {/*
+          FNXC:AutoMergeRetries 2026-06-17-04:20:
+          Operators need a merge-section control for maxAutoMergeRetries so conflict-heavy projects can tune how many auto-resolution attempts occur before Fusion parks a task for human recovery. Invalid input falls back to 3 to preserve prior behavior.
+        */}
+        <input
+          id="maxAutoMergeRetries"
+          type="number"
+          min={1}
+          step={1}
+          value={form.maxAutoMergeRetries ?? 3}
+          onChange={(e) =>
+            setForm((f) => ({
+              ...f,
+              maxAutoMergeRetries: e.target.value === "" ? undefined : resolveMaxAutoMergeRetriesForMergeForm(e.target.value),
+            }))
+          }
+        />
+        <small>Positive integer retry cap for auto-merge conflict resolution before a task parks for human recovery. Default 3.</small>
       </div>
       <div className="form-group" data-testid="legacy-automerge-stamp-cleanup-panel">
         <h5 className="settings-section-heading">Legacy auto-merge stamp cleanup</h5>

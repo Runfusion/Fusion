@@ -1,3 +1,7 @@
+/*
+FNXC:Database 2026-06-16-09:40:
+Command Center / SDLC work (PR #1683) added usage_events, knowledge_pages, deployments, and incidents tables behind schema migrations 118-120. These legacy-data migration tests guard the separate legacy-import path so the in-DB schema migrations and the legacy importer stay independent.
+*/
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "../db-migrate.js";
 import { Database, SCHEMA_VERSION } from "../db.js";
@@ -592,6 +596,7 @@ describe("migrateFromLegacy", () => {
           externalIssueId: "I_kgDOExample",
           issueNumber: 10,
           url: "https://github.com/test/issues/1",
+          closedAt: "2026-06-18T12:00:00.000Z",
         },
         breakIntoSubtasks: true,
         enabledWorkflowSteps: ["WS-001", "WS-002"],
@@ -641,6 +646,7 @@ describe("migrateFromLegacy", () => {
       expect(row.sourceIssueExternalIssueId).toBe("I_kgDOExample");
       expect(row.sourceIssueNumber).toBe(10);
       expect(row.sourceIssueUrl).toBe("https://github.com/test/issues/1");
+      expect(row.sourceIssueClosedAt).toBe("2026-06-18T12:00:00.000Z");
       expect(row.breakIntoSubtasks).toBe(1);
       expect(JSON.parse(row.enabledWorkflowSteps)).toEqual(["WS-001", "WS-002"]);
     });
@@ -715,6 +721,68 @@ describe("schema migration", () => {
 
     const row = db.prepare("SELECT deletedAt FROM tasks WHERE id = 'FN-legacy'").get() as { deletedAt: string | null };
     expect(row.deletedAt).toBeNull();
+    expect(db.getSchemaVersion()).toBe(SCHEMA_VERSION);
+
+    db.close();
+  });
+
+  it("adds sourceIssueClosedAt when migrating from schema version 121 without data loss", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        sourceIssueProvider TEXT,
+        sourceIssueRepository TEXT,
+        sourceIssueExternalIssueId TEXT,
+        sourceIssueNumber INTEGER,
+        sourceIssueUrl TEXT,
+        tokenUsageModelProvider TEXT,
+        tokenUsageModelId TEXT
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '121')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`
+      INSERT INTO tasks (
+        id, description, "column", createdAt, updatedAt,
+        sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId,
+        sourceIssueNumber, sourceIssueUrl
+      ) VALUES (
+        'FN-source', 'legacy source issue', 'done', '2025-01-01T00:00:00.000Z', '2025-01-02T00:00:00.000Z',
+        'github', 'runfusion/fusion', 'I_kgDOExample', 10, 'https://github.com/runfusion/fusion/issues/10'
+      )
+    `);
+
+    db.init();
+
+    const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("sourceIssueClosedAt");
+
+    const row = db.prepare(`
+      SELECT sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId,
+             sourceIssueNumber, sourceIssueUrl, sourceIssueClosedAt
+      FROM tasks WHERE id = 'FN-source'
+    `).get() as {
+      sourceIssueProvider: string;
+      sourceIssueRepository: string;
+      sourceIssueExternalIssueId: string;
+      sourceIssueNumber: number;
+      sourceIssueUrl: string;
+      sourceIssueClosedAt: string | null;
+    };
+    expect(row).toEqual({
+      sourceIssueProvider: "github",
+      sourceIssueRepository: "runfusion/fusion",
+      sourceIssueExternalIssueId: "I_kgDOExample",
+      sourceIssueNumber: 10,
+      sourceIssueUrl: "https://github.com/runfusion/fusion/issues/10",
+      sourceIssueClosedAt: null,
+    });
     expect(db.getSchemaVersion()).toBe(SCHEMA_VERSION);
 
     db.close();

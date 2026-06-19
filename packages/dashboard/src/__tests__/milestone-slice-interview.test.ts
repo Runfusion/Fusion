@@ -8,6 +8,21 @@ const { mockCreateFnAgent } = vi.hoisted(() => ({
 
 vi.mock("@fusion/engine", () => ({
   listCliAdapterDescriptors: () => [],
+  buildSessionSkillContextSync: (_agent: unknown, sessionPurpose: string, projectRootDir: string, pluginRunner?: { getPluginSkills?: () => Array<{ pluginId: string; skill: { name: string; enabled?: boolean } }> }) => {
+    const requestedSkillNames = ["fusion"];
+    for (const contribution of pluginRunner?.getPluginSkills?.() ?? []) {
+      const name = contribution.skill.name.trim();
+      if (contribution.skill.enabled === false || name.length === 0 || requestedSkillNames.includes(name)) {
+        continue;
+      }
+      requestedSkillNames.push(name);
+    }
+    return {
+      skillSelectionContext: { projectRootDir, requestedSkillNames, sessionPurpose },
+      resolvedSkillNames: requestedSkillNames,
+      skillSource: "role-fallback" as const,
+    };
+  },
   createFnAgent: mockCreateFnAgent,
 }));
 
@@ -140,6 +155,23 @@ async function waitForCurrentQuestion(sessionId: string): Promise<void> {
   throw new Error("Timed out waiting for currentQuestion");
 }
 
+async function waitForCreateFnAgentOptions(): Promise<{ skillSelection?: { requestedSkillNames?: string[] } }> {
+  for (let i = 0; i < 50; i++) {
+    const options = mockCreateFnAgent.mock.calls.at(-1)?.[0];
+    if (options) {
+      return options;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for createFnAgent options");
+}
+
+function createSkillPluginRunner(skills: Array<{ name: string; enabled?: boolean }>) {
+  return {
+    getPluginSkills: () => skills.map((skill) => ({ pluginId: "fusion-plugin-compound-engineering", skill })),
+  };
+}
+
 class MockAiSessionStore extends EventEmitter {
   rows = new Map<string, AiSessionRow>();
 
@@ -235,6 +267,40 @@ describe("milestone-slice-interview module", () => {
   });
 
   describe("session lifecycle", () => {
+    it("requests role-fallback and enabled plugin skills for model-only milestone/slice interview agents", async () => {
+      await createTargetInterviewSession(
+        "127.0.0.1",
+        "milestone",
+        "ms-skills",
+        "Skillful Milestone",
+        undefined,
+        "/tmp/project",
+        MOCK_TASK_STORE,
+        createSkillPluginRunner([
+          { name: "ce-debug" },
+          { name: "disabled-skill", enabled: false },
+        ]),
+      );
+
+      const options = await waitForCreateFnAgentOptions();
+      expect(options.skillSelection?.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+    });
+
+    it("requests role-fallback skills when milestone/slice plugin runner is unavailable", async () => {
+      await createTargetInterviewSession(
+        "127.0.0.1",
+        "slice",
+        "sl-skills",
+        "Fallback Slice",
+        undefined,
+        "/tmp/project",
+        MOCK_TASK_STORE,
+      );
+
+      const options = await waitForCreateFnAgentOptions();
+      expect(options.skillSelection?.requestedSkillNames).toEqual(["fusion"]);
+    });
+
     it("creates, retrieves, and cleans up a milestone session", async () => {
       const sessionId = await createTargetInterviewSession(
         "127.0.0.1",

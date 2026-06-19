@@ -24,9 +24,10 @@ interface NewTaskModalProps {
   tasks: Task[]; // for dependency selection
   onCreateTask: (input: TaskCreateInput) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
+  initialDescription?: string;
 }
 
-export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast }: NewTaskModalProps) {
+export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, initialDescription = "" }: NewTaskModalProps) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const viewportMode = useViewportMode();
@@ -42,6 +43,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       } as React.CSSProperties)
     : {};
   const [description, setDescription] = useState("");
+  const wasOpenRef = useRef(false);
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [branchMode, setBranchMode] = useState<BranchSelectionMode>("project-default");
   const [branch, setBranch] = useState("");
@@ -79,6 +81,17 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   const { hasAiProvider, hasGithub, loading: setupReadinessLoading } = useSetupReadiness(projectId);
   const { nodes } = useNodes();
+
+  /**
+   * FNXC:SelectionComment 2026-06-16-23:58:
+   * Selection comments open the normal New Task dialog with a prefilled description; seed only on the closed→open transition so rerenders do not overwrite user edits.
+   */
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      setDescription(initialDescription);
+    }
+    wasOpenRef.current = isOpen;
+  }, [initialDescription, isOpen]);
 
   // Load agents for agent picker
   const loadAgents = useCallback(() => {

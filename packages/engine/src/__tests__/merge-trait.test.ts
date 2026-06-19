@@ -40,11 +40,7 @@ import {
   type WorkflowIr,
 } from "@fusion/core";
 
-import {
-  resolveMergePolicy,
-  registerMergeTraitHooks,
-  __resetMergeTraitRegistrationForTests,
-} from "../merge-trait.js";
+import { resolveMergePolicy } from "../merge-trait.js";
 import {
   assertSquashOverlapsFileScope,
   enforceSquashFileScopeInvariant,
@@ -489,52 +485,77 @@ describe("lost-work guard trio is non-configurable (KTD-6 regression)", () => {
   });
 });
 
-// ── 4. merge trait hooks: enqueue (onEnter) drives queue, never inline ───────
-
-describe("merge trait hooks — enqueue-only, queue-driven", () => {
-  beforeEach(() => {
-    __resetMergeTraitRegistrationForTests();
-    registerMergeTraitHooks();
-  });
-
-  it("registers real onEnter/onExit impls in the registry (not degraded no-ops)", () => {
-    const onEnter = getTraitRegistry().resolveTraitHook("merge", "onEnter");
-    const onExit = getTraitRegistry().resolveTraitHook("merge", "onExit");
-    expect(onEnter.impl).toBeDefined();
-    expect(onEnter.warning).toBeUndefined(); // a real impl is registered
-    expect(onExit.impl).toBeDefined();
-    expect(onExit.warning).toBeUndefined();
-  });
-
-  it("onEnter enqueues onto the persisted merge queue and never awaits a merge", async () => {
+// ── 4. merge.onEnter is the core field-effects hook, invoked as impl(ctx) ─────
+//
+// Regression for the unhandled rejection in the hold-release sweep
+// (TypeError: Cannot read properties of undefined (reading 'id')). The engine
+// used to register a `mergeOnEnter(store, task)` impl here; the ONLY caller
+// (`applyDefaultWorkflowMoveEffects`) invokes the hook as `impl(ctx)` with a
+// single `DefaultWorkflowMoveContext` (no store handle), so `task` bound to
+// `undefined` and `task.id` threw. The merge hook is now owned by core
+// (`applyInReviewEnterEffects`, registered via `registerDefaultWorkflowHooks`);
+// the enqueue is store-owned on the handoff path. Importing this engine module
+// must NOT clobber that registration.
+describe("merge.onEnter — core field-effects hook (no engine clobber)", () => {
+  it("resolves to a real impl that is safe to invoke as impl(ctx) (single arg)", async () => {
     const fx = await makeStoreFixture();
     try {
-      const onEnter = getTraitRegistry().resolveTraitHook("merge", "onEnter").impl as (
-        s: TaskStore,
-        t: { id: string; priority?: string },
-      ) => Promise<void>;
+      const onEnter = getTraitRegistry().resolveTraitHook("merge", "onEnter");
+      expect(onEnter.impl).toBeDefined();
+      expect(onEnter.warning).toBeUndefined(); // a real impl, not a degraded no-op
+
+      // The contract the bug violated: the ONLY caller invokes the hook with a
+      // single `DefaultWorkflowMoveContext` (no store, no second `task` arg). A
+      // `(store, task)`-shaped impl would deref `undefined.id` and throw here.
+      // Order-independent: this guards the signature regardless of which module
+      // registered last.
       const task = await fx.store.getTask(fx.taskId);
-      await onEnter(fx.store, { id: task.id, priority: task.priority });
-      // Exactly one queue entry; the merge itself is NOT performed by the hook.
-      expect(fx.peekQueue(fx.taskId)).toBeTruthy();
-      const after = await fx.store.getTask(fx.taskId);
-      expect(after.column).toBe("in-review"); // hook did not move the card
+      const ctx = {
+        task,
+        fromColumn: "in-progress",
+        toColumn: "in-review",
+        moveSource: "scheduler",
+        bypassGuards: false,
+        movedAt: new Date().toISOString(),
+        settings: undefined,
+        options: {},
+        resetSteps: () => {},
+      };
+      expect(() => (onEnter.impl as (c: unknown) => void)(ctx)).not.toThrow();
     } finally {
       await fx.cleanup();
     }
   });
 
-  it("onEnter is idempotent: re-running (crash-replay) holds exactly one entry", async () => {
+  it("a flag-ON move into in-review does not throw and clears scheduler state", async () => {
     const fx = await makeStoreFixture();
     try {
-      const onEnter = getTraitRegistry().resolveTraitHook("merge", "onEnter").impl as (
-        s: TaskStore,
-        t: { id: string; priority?: string },
-      ) => Promise<void>;
-      const task = await fx.store.getTask(fx.taskId);
-      await onEnter(fx.store, { id: task.id, priority: task.priority });
-      await onEnter(fx.store, { id: task.id, priority: task.priority });
-      expect(fx.queueCount()).toBe(1);
+      // Fresh card in in-progress with scheduler dispatch state that MUST be
+      // cleared on review entry (else it permanently blocks the merge gate).
+      const created = await fx.store.createTask({
+        title: "review-entry",
+        description: "x",
+        column: "in-progress",
+        branch: "fusion/fn-review-entry",
+        baseBranch: "main",
+        steps: [],
+        status: "queued",
+        blockedBy: "SOME-OTHER",
+        overlapBlockedBy: "SOME-OTHER",
+      } as never);
+
+      // The exact wiring that crashed: moveTask → moveTaskInternal →
+      // applyDefaultWorkflowMoveEffects → merge.onEnter, invoked as impl(ctx).
+      const moved = await fx.store.moveTask(created.id, "in-review", {
+        moveSource: "scheduler",
+        allowDirectInReviewMove: true,
+      } as never);
+
+      expect(moved.column).toBe("in-review");
+      // applyInReviewEnterEffects ran: scheduler dispatch state is cleared.
+      expect(moved.status).toBeUndefined();
+      expect(moved.blockedBy).toBeUndefined();
+      expect(moved.overlapBlockedBy).toBeUndefined();
     } finally {
       await fx.cleanup();
     }

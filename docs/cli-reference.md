@@ -485,7 +485,7 @@ Use planning mode to turn a rough idea into a triage task through an interactive
 
 When supported by your configured runtime/model provider, planning sessions can also use builtin `WebSearch` and `WebFetch` tools for live context gathering.
 
-Planning sessions also have read-only board tools: `fn_task_list` (list active backlog tasks) and `fn_task_get` (read full task details, including PROMPT.md) so interviews can avoid duplicate in-flight plans and anchor questions to existing work. `fn_task_list` also accepts `includeDeleted: true` to surface soft-deleted blockers when diagnosing stalled dependency chains, and `fn_task_show` now auto-falls back to include soft-deleted tasks with a `[SOFT-DELETED at ...]` marker.
+Planning sessions also have read-only board tools: `fn_task_list` (list active backlog tasks) and `fn_task_get` (read full task details, including PROMPT.md) so interviews can avoid duplicate in-flight plans and anchor questions to existing work. `fn_task_list` output is bounded and falls back to a defensive formatter if the runtime task-list clamp helper is unavailable, so board reads return text instead of failing during ambient planning or heartbeat checks. `fn_task_list` also accepts `includeDeleted: true` to surface soft-deleted blockers when diagnosing stalled dependency chains, and `fn_task_show` now auto-falls back to include soft-deleted tasks with a `[SOFT-DELETED at ...]` marker.
 
 ```bash
 fn task plan [description]
@@ -1025,6 +1025,7 @@ fn plugin dev <path> [--once] [--ai-scan]
 Subcommands: `list|ls`, `install`, `rescan`, `trust`, `untrust`, `verify`, `uninstall`, `enable`, `disable`, `create`, `new`, `dev`.
 
 Scope semantics:
+- `fn plugin install <path>` accepts a built plugin directory or installed package name, not a packed `.tgz` tarball; extract tarballs before installing.
 - `fn plugin install` / `fn plugin uninstall` are **global** operations
 - `fn plugin enable` / `fn plugin disable` are **project-scoped** operations (`--project` selects the project context)
 - `fn plugin list` shows globally installed plugins plus enabled/disabled state for the current project context

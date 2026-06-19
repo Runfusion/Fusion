@@ -5,7 +5,7 @@ import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getPluginViewId, isPluginViewId, isPluginViewRegistered } from "../plugins/pluginViewRegistry";
 
 export type ViewMode = "overview" | "project";
-export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "goalsView" | "skills" | "mailbox" | "insights" | "memory" | "reliability" | "secrets" | "devserver" | "dev-server" | "stash-recovery" | "pull-requests";
+export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "goalsView" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "stash-recovery" | "pull-requests";
 export type PluginTaskView = `plugin:${string}:${string}`;
 export type TaskView = BuiltInTaskView | PluginTaskView;
 
@@ -25,7 +25,7 @@ const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = [
   "mailbox",
   "insights",
   "memory",
-  "reliability",
+  "command-center",
   "secrets",
   "devserver",
   "dev-server",
@@ -52,6 +52,14 @@ function migrateLegacyRoadmapsView(value: string): TaskView {
     return "board";
   }
   return isPluginViewRegistered("fusion-plugin-roadmap", "roadmaps") ? LEGACY_ROADMAPS_PLUGIN_VIEW : "board";
+}
+
+/*
+FNXC:ViewState 2026-06-19-00:00:
+FN-6702 removed the top-level Reliability task view after moving the page into Command Center. Persisted or linked legacy `reliability` values must land users on `command-center` instead of falling back to the board or becoming invalid.
+*/
+function migrateLegacyReliabilityView(value: string | null): TaskView | null {
+  return value === "reliability" ? "command-center" : null;
 }
 
 interface UseViewStateOptions {
@@ -98,6 +106,8 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
 
   const [taskView, setTaskView] = useState<TaskView>(() => {
     const saved = getScopedItem("kb-dashboard-task-view");
+    const legacyReliabilityView = migrateLegacyReliabilityView(saved);
+    if (legacyReliabilityView) return legacyReliabilityView;
     if (saved === "roadmaps") return migrateLegacyRoadmapsView(saved);
     if (isTaskView(saved)) return saved;
     return "board";
@@ -110,7 +120,10 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
 
   useEffect(() => {
     const saved = getScopedItem("kb-dashboard-task-view", currentProject?.id);
-    if (saved === "roadmaps") {
+    const legacyReliabilityView = migrateLegacyReliabilityView(saved);
+    if (legacyReliabilityView) {
+      setTaskView(legacyReliabilityView);
+    } else if (saved === "roadmaps") {
       setTaskView(migrateLegacyRoadmapsView(saved));
     } else if (isTaskView(saved)) {
       const preserveLegacyOnFirstScopedHydration =
@@ -136,7 +149,10 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
     }
 
     const viewParam = new URLSearchParams(window.location.search).get("view");
-    if (viewParam && isTaskView(viewParam)) {
+    const legacyReliabilityView = migrateLegacyReliabilityView(viewParam);
+    if (legacyReliabilityView) {
+      setTaskView(legacyReliabilityView);
+    } else if (viewParam && isTaskView(viewParam)) {
       setTaskView(normalizeTaskView(viewParam));
     }
   }, []);

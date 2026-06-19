@@ -38,6 +38,20 @@ function expectTextareaThemeTokens(selector: string, surfaceName: string) {
   expect(block, `expected ${surfaceName} not to rely on a transparent background`).not.toMatch(/background:\s*transparent\s*;/);
 }
 
+function declarationValues(blocks: string[], property: string): string[] {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`${escaped}\\s*:\\s*([^;]+);`, "g");
+  return blocks.flatMap((block) => Array.from(block.matchAll(pattern), (match) => match[1].trim()));
+}
+
+function expectTokenizedDeclaration(selector: string, property: string, tokenPattern: RegExp) {
+  const blocks = [...selectorBlocks(selector), ...selectorGroupBlocks(selector)];
+  expect(blocks, `expected block for ${selector}`).not.toHaveLength(0);
+  const values = declarationValues(blocks, property);
+  expect(values, `expected ${selector} to declare ${property}`).not.toHaveLength(0);
+  expect(values.some((value) => tokenPattern.test(value)), `expected ${selector} ${property} to use a design token`).toBe(true);
+}
+
 describe("CompoundEngineeringView theme tokens", () => {
   it("does not use hardcoded legacy color fallbacks", () => {
     const forbiddenPatterns = [
@@ -86,6 +100,38 @@ describe("CompoundEngineeringView theme tokens", () => {
     const [viewBlock] = selectorBlocks(".ce-view");
     expect(viewBlock).toBeDefined();
     expect(viewBlock).toMatch(/color:\s*var\(--text\)\s*;/);
+  });
+
+  it("uses dashboard spacing and radius tokens for representative layout surfaces", () => {
+    const spacingToken = /^(?:0|var\(--space-[^)]+\)|calc\([^;]*var\(--space-[^)]+\)[^;]*\))(?:\s+(?:0|var\(--space-[^)]+\)|calc\([^;]*var\(--space-[^)]+\)[^;]*\)))*$/;
+    const radiusToken = /^(?:var\(--radius(?:-[^)]+)?\)|50%)$/;
+
+    const tokenizedDeclarations = [
+      [".ce-view", "gap", spacingToken],
+      [".ce-view", "padding", spacingToken],
+      [".ce-group", "gap", spacingToken],
+      [".ce-group", "padding", spacingToken],
+      [".ce-group", "border-radius", radiusToken],
+      [".ce-launcher-list", "gap", spacingToken],
+      [".ce-sessions-list", "gap", spacingToken],
+      [".ce-flow", "gap", spacingToken],
+      [".ce-flow-turn", "gap", spacingToken],
+      [".ce-flow-turn", "padding", spacingToken],
+      [".ce-flow-turn", "border-radius", radiusToken],
+      [".ce-session-open", "gap", spacingToken],
+      [".ce-session-open", "padding", spacingToken],
+      [".ce-session-open", "border-radius", radiusToken],
+    ] as const;
+
+    for (const [selector, property, pattern] of tokenizedDeclarations) {
+      expectTokenizedDeclaration(selector, property, pattern);
+    }
+  });
+
+  it("does not use hardcoded border-radius lengths", () => {
+    expect(css, "expected border-radius to use radius tokens or 50% only").not.toMatch(
+      /border-radius\s*:\s*(?!50%\s*;)[^;]*(?:px|rem)\s*;/,
+    );
   });
 
   it("themes every CE free-text textarea with dashboard input tokens", () => {

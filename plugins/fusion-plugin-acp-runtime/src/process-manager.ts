@@ -69,6 +69,19 @@ export function killAllProcesses(): void {
   activeProcesses.clear();
 }
 
+export class MissingAcpEnvError extends Error {
+  readonly code = "ACP_MISSING_ENV";
+  constructor(readonly missingKeys: string[]) {
+    super(`Missing required ACP environment variable(s): ${missingKeys.join(", ")}`);
+    this.name = "MissingAcpEnvError";
+  }
+}
+
+export interface BuildSpawnEnvOptions {
+  required?: string[];
+  sourceEnv?: NodeJS.ProcessEnv;
+}
+
 /**
  * Build the subprocess environment from an explicit allow-list (KTD6b).
  *
@@ -76,11 +89,20 @@ export function killAllProcesses(): void {
  * never inherited — the agent is untrusted and must not receive secret-bearing
  * vars. Returns an empty env by default (empty allow-list).
  */
-export function buildSpawnEnv(allowList: string[]): NodeJS.ProcessEnv {
+export function buildSpawnEnv(allowList: string[], options: BuildSpawnEnvOptions = {}): NodeJS.ProcessEnv {
+  /*
+  FNXC:ACP-RouteB 2026-06-14-19:52:
+  Claude bridge subprocesses may receive HOME so the real `claude` can read ~/.claude auth and PATH so the bridge can locate sub-executables. Do not forward ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or inherited process.env because the bridge is an untrusted external process.
+  */
+  const sourceEnv = options.sourceEnv ?? process.env;
   const env: NodeJS.ProcessEnv = {};
   for (const key of allowList) {
-    const value = process.env[key];
+    const value = sourceEnv[key];
     if (typeof value === "string") env[key] = value;
+  }
+  const missing = (options.required ?? []).filter((key) => typeof env[key] !== "string");
+  if (missing.length > 0) {
+    throw new MissingAcpEnvError(missing);
   }
   return env;
 }

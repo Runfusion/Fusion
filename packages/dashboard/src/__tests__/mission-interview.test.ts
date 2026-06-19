@@ -8,6 +8,20 @@ const { mockCreateFnAgent } = vi.hoisted(() => ({
 
 vi.mock("@fusion/engine", () => ({
   listCliAdapterDescriptors: () => [],
+  buildSessionSkillContextSync: (_agent: unknown, sessionPurpose: string, projectRootDir: string, pluginRunner?: { getPluginSkills?: () => Array<{ pluginId: string; skill: { name: string; enabled?: boolean } }> }) => {
+    const requestedSkillNames = ["fusion"];
+    for (const contribution of pluginRunner?.getPluginSkills?.() ?? []) {
+      if (contribution.skill.enabled === false) continue;
+      if (contribution.skill.name.trim() && !requestedSkillNames.includes(contribution.skill.name.trim())) {
+        requestedSkillNames.push(contribution.skill.name.trim());
+      }
+    }
+    return {
+      skillSelectionContext: { projectRootDir, requestedSkillNames, sessionPurpose },
+      resolvedSkillNames: requestedSkillNames,
+      skillSource: "role-fallback" as const,
+    };
+  },
   createFnAgent: mockCreateFnAgent,
 }));
 
@@ -204,6 +218,47 @@ describe("mission-interview module", () => {
   });
 
   describe("session lifecycle", () => {
+    it("passes executor fallback and enabled plugin skills to mission interview sessions", async () => {
+      const runner = {
+        getPluginSkills: vi.fn(() => [
+          { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+          { pluginId: "disabled-plugin", skill: { name: "disabled-skill", enabled: false } },
+        ]),
+      };
+      let capturedOptions: any;
+      mockCreateFnAgent.mockImplementationOnce(async (options: any) => {
+        capturedOptions = options;
+        return createMockAgent([createQuestionJson("q-skills")]);
+      });
+
+      const sessionId = await createMissionInterviewSession("127.0.0.77", "Launch platform", "/tmp/project", MOCK_TASK_STORE, undefined, undefined, undefined, undefined, runner as any);
+      await waitForCurrentQuestion(sessionId);
+
+      expect(runner.getPluginSkills).toHaveBeenCalledTimes(1);
+      expect(capturedOptions.skillSelection).toMatchObject({
+        projectRootDir: "/tmp/project",
+        sessionPurpose: "executor",
+      });
+      expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+    });
+
+    it("uses executor fallback skills when mission interview has no plugin runner", async () => {
+      let capturedOptions: any;
+      mockCreateFnAgent.mockImplementationOnce(async (options: any) => {
+        capturedOptions = options;
+        return createMockAgent([createQuestionJson("q-degraded")]);
+      });
+
+      const sessionId = await createMissionInterviewSession("127.0.0.78", "Launch platform", "/tmp/project", MOCK_TASK_STORE);
+      await waitForCurrentQuestion(sessionId);
+
+      expect(capturedOptions.skillSelection).toMatchObject({
+        projectRootDir: "/tmp/project",
+        sessionPurpose: "executor",
+      });
+      expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
+    });
+
     it("creates, retrieves, and cleans up a session", async () => {
       const sessionId = await createMissionInterviewSession("127.0.0.1", "Launch platform", "/tmp/project", MOCK_TASK_STORE);
 

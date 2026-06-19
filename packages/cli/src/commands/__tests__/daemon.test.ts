@@ -563,8 +563,9 @@ vi.mock("@fusion/dashboard", () => ({
 vi.mock("@fusion/engine", async (importOriginal) => {
   const { createCliEngineMock } = await import("../../test/mockCoreEngine");
   return createCliEngineMock(() => importOriginal<typeof import("@fusion/engine")>(), {
-  ProjectEngine: mocks.projectEngineCtor,
-  ProjectEngineManager: vi.fn().mockImplementation(function (centralCore: any, options: any) {
+    createFusionAuthStorage: vi.fn(() => mocks.authStorage),
+    ProjectEngine: mocks.projectEngineCtor,
+    ProjectEngineManager: vi.fn().mockImplementation(function (centralCore: any, options: any) {
     const engines = new Map<string, any>();
     return {
       startAll: vi.fn(async () => {
@@ -681,6 +682,17 @@ describe("runDaemon", () => {
     const { runDaemon } = await import("../daemon.js");
     await runDaemon({});
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers built-in zai GLM-5.2 before refreshing models", async () => {
+    await runDaemon({});
+
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith("zai", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
+    }));
+    expect(mocks.modelRegistry.refresh).toHaveBeenCalled();
+
+    await triggerSignal("SIGINT");
   });
   const originalCwd = process.cwd;
   const originalExit = process.exit;

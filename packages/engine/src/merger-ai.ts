@@ -38,6 +38,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import {
   buildTaskLineageTrailer,
+  evaluateNoCommitsNoOpFinalize,
   getPrimaryPrInfo,
   getTaskMergeBlocker,
   resolveAgentPrompt,
@@ -63,6 +64,7 @@ import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
 import { createLogger } from "./logger.js";
 import { captureSingleCommitLandedMetadata, type MergerOptions } from "./merger.js";
+import { installWorktreeDependencies } from "./merge-dependency-sync.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
 import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "./self-healing.js";
 import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "./worktree-paths.js";
@@ -1052,7 +1054,7 @@ export async function runAiMerge(
     const tipSha = await git(["rev-parse", "--verify", `refs/heads/${integrationBranch}`], projectRootDir);
 
     // 1. Clean-room worktree at the integration tip.
-    const mergeRoot = await mkdtemp(join(resolveAiMergeRoot(projectRootDir, settings), `fusion-ai-merge-${taskId.toLowerCase()}-`));
+    let mergeRoot: string | undefined;
     let worktreeAdded = false;
     const registeredMergePaths = new Set<string>();
     const registerMergeRoot = (pathToRegister: string): void => {
@@ -1060,12 +1062,17 @@ export async function runAiMerge(
       activeSessionRegistry.registerPath(pathToRegister, { taskId, kind: "ai-merge", ownerKey: `ai-merge:${taskId}` });
       registeredMergePaths.add(pathToRegister);
     };
-    // Register the repo-local clean-room path as soon as it exists, before
-    // `git worktree add`, so self-healing/pre-merge sweeps cannot reap a
-    // just-created clean room in the small window before canonical registration
-    // is available.
-    registerMergeRoot(mergeRoot);
     try {
+      mergeRoot = await mkdtemp(join(resolveAiMergeRoot(projectRootDir, settings), `fusion-ai-merge-${taskId.toLowerCase()}-`));
+      /*
+       * FNXC:AIMerge 2026-06-14-16:36:
+       * The AI-merge clean-room directory must be created and registered inside the cleanup guard. Any terminal path or interrupt after `mkdtemp`, including active-session registration failure before `git worktree add`, must still unregister known paths and remove the `fusion-ai-merge-*` directory.
+       */
+      // Register the repo-local clean-room path as soon as it exists, before
+      // `git worktree add`, so self-healing/pre-merge sweeps cannot reap a
+      // just-created clean room in the small window before canonical registration
+      // is available.
+      registerMergeRoot(mergeRoot);
       await git(["worktree", "add", "--detach", mergeRoot, tipSha], projectRootDir);
       worktreeAdded = true;
       let canonicalMergeRoot = mergeRoot;
@@ -1080,6 +1087,36 @@ export async function runAiMerge(
       await audit.git({ type: "merge:ai-clean-room", target: integrationBranch, metadata: { taskId, tipSha, mergeRoot } });
       await log(`AI merge: merging ${branch} into ${integrationBranch} (clean room at ${short(tipSha)})${advanceRetries ? ` — retry ${advanceRetries} after concurrent advance` : ""}`);
 
+      /*
+       * FNXC:AIMerge 2026-06-13-20:32:
+       * The detached AI-merge clean room is rebuilt from the integration tip and starts without workspace dependencies. Hard-fail configured or inferred install failures so verification cannot silently run against an uninstalled checkout; aborts propagate before merge agents run.
+       */
+      const depsSyncStartedAt = Date.now();
+      const depsSyncResult = await installWorktreeDependencies({
+        cwd: canonicalMergeRoot,
+        settings,
+        taskId,
+        signal: options.signal,
+        context: "for AI merge clean room",
+        logger: aiMergeLog,
+        log,
+      });
+      await audit.git({
+        type: "merge:ai-deps-sync",
+        target: integrationBranch,
+        metadata: {
+          taskId,
+          tipSha,
+          mergeRoot: canonicalMergeRoot,
+          installCommand: depsSyncResult.installCommand,
+          configured: depsSyncResult.configured,
+          skipped: depsSyncResult.skipped,
+          skipReason: depsSyncResult.skipReason,
+          durationMs: depsSyncResult.durationMs,
+        },
+      });
+      await log(`[timing] AI merge dependency sync completed in ${Date.now() - depsSyncStartedAt}ms${depsSyncResult.installCommand ? ` (${depsSyncResult.skipped ? "skipped" : "ran"}: ${depsSyncResult.installCommand})` : " (no command)"}`);
+
       // 2 + 3. Merge + review loop (corrective passes).
       const squashSha = await mergeAndReview({
         mergeRoot, branch, integrationBranch, tipSha, taskTitle, includeTaskId, trailers, taskId,
@@ -1089,6 +1126,50 @@ export async function runAiMerge(
       if (!squashSha) {
         // Branch had no net changes vs the tip — nothing to land.
         await audit.git({ type: "merge:ai-empty", target: integrationBranch, metadata: { taskId, tipSha } });
+        const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+        if (noCommitsFinalize.blocked) {
+          const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
+          /*
+           * FNXC:Lifecycle 2026-06-14-20:02:
+           * FN-6461/FN-6455 requires the AI empty-merge lane to demote no-commits tasks whose skipped/incomplete steps outweigh done steps instead of finalizing the operational work as done.
+           */
+          await store.updateTask(taskId, { error: reason });
+          await store.logEntry(
+            taskId,
+            `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+            JSON.stringify({
+              doneCount: noCommitsFinalize.doneCount,
+              incompleteCount: noCommitsFinalize.incompleteCount,
+              branch,
+              integrationBranch,
+              lane: "ai-empty-merge",
+            }, null, 2),
+          );
+          await audit.database({
+            type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
+            target: taskId,
+            metadata: {
+              reason,
+              doneCount: noCommitsFinalize.doneCount,
+              incompleteCount: noCommitsFinalize.incompleteCount,
+              branch,
+              integrationBranch,
+              lane: "ai-empty-merge",
+            },
+          });
+          await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+          return {
+            task,
+            branch,
+            merged: false,
+            noOp: false,
+            ok: true,
+            reason,
+            error: reason,
+            worktreeRemoved: false,
+            branchDeleted: false,
+          };
+        }
         await log(`AI merge: ${branch} had no net changes vs ${integrationBranch} — finalizing as no-op`);
         return await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, tipSha, audit, log, { empty: true });
       }
@@ -1115,7 +1196,9 @@ export async function runAiMerge(
       for (const registeredPath of registeredMergePaths) {
         activeSessionRegistry.unregisterPath(registeredPath);
       }
-      await cleanupAiMergeWorktree({ taskId, mergeRoot, projectRootDir, worktreeAdded, audit, log });
+      if (mergeRoot) {
+        await cleanupAiMergeWorktree({ taskId, mergeRoot, projectRootDir, worktreeAdded, audit, log });
+      }
     }
   }
 }
@@ -1244,6 +1327,8 @@ async function finalizeMerged(
         authoredAt: mergedAt,
         matchedBy: "canonical-lineage-trailer",
         confidence: "canonical",
+        additions: insertions,
+        deletions,
       }).catch(() => undefined);
     }
   }

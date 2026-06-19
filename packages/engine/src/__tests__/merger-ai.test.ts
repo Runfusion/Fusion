@@ -308,6 +308,65 @@ describe("runAiMerge", () => {
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
 
+  it("demotes a no-commits task with skipped-out work instead of AI empty-merge finalizing done", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Dry-run", status: "skipped" },
+        { name: "Execute", status: "skipped" },
+        { name: "Verify", status: "skipped" },
+        { name: "Testing", status: "skipped" },
+        { name: "Documentation", status: "skipped" },
+      ],
+    });
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toContain("done=1, incomplete=5");
+    expect(task.column).toBe("todo");
+    expect(task.error).toContain("done=1, incomplete=5");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
+      expect.stringContaining("ai-empty-merge"),
+    );
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  it("still finalizes an all-done no-commits task on the AI empty-merge path", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      noCommitsExpected: true,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Dry-run", status: "done" },
+        { name: "Execute", status: "done" },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(async () => { /* nothing to do */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done");
+  });
+
   it("fails loudly when an executed, never-merged task has no branch (possible lost work)", async () => {
     const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
     // branch points at a ref that doesn't exist; task was executed (baseCommitSha) and never merged.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MailboxView } from "../MailboxView";
@@ -27,10 +27,15 @@ vi.mock("../../api", () => ({
   decideApproval: vi.fn(),
 }));
 
-vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  useViewportMode: vi.fn(),
-}));
+vi.mock("../../hooks/useViewportMode", () => {
+  const useViewportMode = vi.fn();
+  return {
+    MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+    getViewportMode: () => useViewportMode(),
+    isMobileViewport: () => useViewportMode() === "mobile",
+    useViewportMode,
+  };
+});
 
 vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: vi.fn(),
@@ -170,6 +175,10 @@ function makeOutboxResponse(messages: Message[]) {
 }
 
 describe("MailboxView", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -211,6 +220,35 @@ describe("MailboxView", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-unread-badge")).toBeDefined();
+    });
+  });
+
+  it("preserves composed inbox timestamp buckets", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-17T20:00:00.000Z"));
+    const messages = [
+      ["now", "2026-06-17T19:59:30.000Z"],
+      ["minute", "2026-06-17T19:55:00.000Z"],
+      ["hour", "2026-06-17T17:00:00.000Z"],
+      ["day", "2026-06-14T20:00:00.000Z"],
+      ["future", "2026-06-17T20:00:01.000Z"],
+      ["invalid", "not-a-date"],
+      ["older", "2026-06-10T20:00:00.000Z"],
+    ].map(([id, createdAt]) => ({ ...mockMessage, id: `msg-${id}`, createdAt, updatedAt: createdAt, content: id, read: true }));
+    mockFetchInbox.mockResolvedValue(makeInboxResponse(messages, 0));
+
+    const { container } = render(<MailboxView {...defaultProps} />);
+
+    await waitFor(() => {
+      const times = Array.from(container.querySelectorAll(".mailbox-item-time")).map((node) => node.textContent);
+      expect(times).toEqual(expect.arrayContaining([
+        "Just now",
+        "5m ago",
+        "3h ago",
+        "3d ago",
+        "Invalid Date",
+        new Date("2026-06-10T20:00:00.000Z").toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      ]));
     });
   });
 

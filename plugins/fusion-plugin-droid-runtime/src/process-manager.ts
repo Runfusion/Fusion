@@ -6,7 +6,7 @@
  * Also provides startup validation for CLI presence and authentication.
  */
 
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -209,45 +209,14 @@ export function captureStderr(proc: ChildProcess): () => string {
 }
 
 /**
- * Validate that the Droid CLI is installed and on PATH.
- * Throws with install instructions if not found.
- */
-export function validateCliPresence(): void {
-  try {
-    execSync("droid --version", { stdio: "pipe", timeout: 45000 });
-  } catch {
-    throw new Error(
-      "Droid CLI not found on PATH. Install Droid CLI and then run: droid auth login",
-    );
-  }
-}
-
-/**
- * Validate that the Droid CLI is authenticated.
- * Returns false and warns if not authenticated.
- *
- * @returns true if authenticated, false otherwise
- */
-export function validateCliAuth(): boolean {
-  try {
-    execSync("droid auth status", { stdio: "pipe", timeout: 45000 });
-    return true;
-  } catch {
-    console.warn(
-      "[droid-cli] Droid CLI is not authenticated. " +
-        "Run 'droid auth login' to authenticate.",
-    );
-    return false;
-  }
-}
-
-/**
  * Run a one-shot `droid <args>` and resolve to the exit code.
  *
- * Why: the sync execSync variants block the Node event loop for the duration
- * of a Droid CLI cold start (1–3s, occasionally longer). When droid-cli's
+ * FNXC:CliRuntime 2026-06-15-07:35:
+ * Third-party CLI presence/auth probes must be non-blocking in Fusion request and session-startup paths. Use spawn-based probes here because synchronous shell probes freeze the dashboard event loop during CLI cold start.
+ *
+ * Why: a Droid CLI cold start can take 1–3s, occasionally longer. When droid-cli's
  * factory is invoked from a per-request createFnAgent path (Fusion dashboard
- * does this on every chat send), those sync probes freeze every other request.
+ * does this on every chat send), sync probes freeze every other request.
  * This async variant uses spawn so the loop keeps turning while the subprocess
  * starts up.
  */

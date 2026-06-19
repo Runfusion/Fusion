@@ -411,6 +411,142 @@ describe("StuckTaskDetector", () => {
 
       vi.useRealTimers();
     });
+
+    it("suppresses loop classification while verification is active and within its deadline", async () => {
+      const onStuck = vi.fn();
+      const customDetector = new StuckTaskDetector(createMockStore({
+        getSettings: vi.fn().mockResolvedValue({ taskStuckTimeoutMs: 60_000 }),
+      }), { onStuck });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      customDetector.trackTask("FN-6598", createMockSession());
+      customDetector.beginVerification("FN-6598", 120_000);
+
+      vi.advanceTimersByTime(61_000);
+      for (let i = 0; i < 80; i++) {
+        customDetector.recordActivity("FN-6598");
+      }
+
+      expect(customDetector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
+      await customDetector.checkNow();
+      expect(onStuck).not.toHaveBeenCalled();
+      expect(customDetector.trackedCount).toBe(1);
+
+      customDetector.stop();
+      vi.useRealTimers();
+    });
+
+    it("resumes loop detection after verification ends and activity churn continues", () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      detector.trackTask("FN-6598", createMockSession());
+      detector.beginVerification("FN-6598", 120_000);
+
+      vi.advanceTimersByTime(61_000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-6598");
+      }
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
+
+      detector.endVerification("FN-6598");
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
+
+      for (let i = 0; i < 60; i++) {
+        detector.recordActivity("FN-6598");
+      }
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBe("loop");
+
+      vi.useRealTimers();
+    });
+
+    it("resumes loop detection after the verification deadline elapses without an end signal", () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      detector.trackTask("FN-6598", createMockSession());
+      detector.beginVerification("FN-6598", 60_000);
+
+      vi.advanceTimersByTime(61_000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-6598");
+      }
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
+
+      vi.advanceTimersByTime(5_001);
+      detector.recordActivity("FN-6598");
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBe("loop");
+
+      vi.useRealTimers();
+    });
+
+    it("suppresses no-progress-churn classification while verification is active", () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      detector.trackTask("FN-6598", createMockSession());
+      detector.beginVerification("FN-6598", 120_000);
+      detector.markLoopObserved("FN-6598");
+
+      vi.advanceTimersByTime(61_000);
+      for (let i = 0; i < 25; i++) {
+        detector.recordIgnoredStepUpdate("FN-6598");
+      }
+
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
+      detector.endVerification("FN-6598");
+      for (let i = 0; i < 25; i++) {
+        detector.recordIgnoredStepUpdate("FN-6598");
+      }
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBe("no-progress-churn");
+
+      vi.useRealTimers();
+    });
+
+    it("control: identical activity churn without active verification still trips loop detection", async () => {
+      const onStuck = vi.fn();
+      const store = createMockStore({
+        getSettings: vi.fn().mockResolvedValue({ taskStuckTimeoutMs: 60_000 }),
+      });
+      const customDetector = new StuckTaskDetector(store, { onStuck });
+      const session = createMockSession();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      customDetector.trackTask("FN-6598", session);
+
+      vi.advanceTimersByTime(61_000);
+      for (let i = 0; i < 80; i++) {
+        customDetector.recordActivity("FN-6598");
+      }
+
+      expect(customDetector.classifyStuckReason("FN-6598", 60_000)).toBe("loop");
+      await customDetector.checkNow();
+      expect(onStuck).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-6598", reason: "loop" }));
+      expect(session.dispose).toHaveBeenCalledTimes(1);
+
+      customDetector.stop();
+      vi.useRealTimers();
+    });
+
+    it("verification accounting no-ops safely for untracked and unbalanced calls", () => {
+      expect(() => detector.beginVerification("FN-MISSING", 60_000)).not.toThrow();
+      expect(() => detector.endVerification("FN-MISSING")).not.toThrow();
+      detector.trackTask("FN-6598", createMockSession());
+      expect(() => detector.endVerification("FN-6598")).not.toThrow();
+      expect(detector.classifyStuckReason("FN-6598", 60_000)).toBeNull();
+    });
+
+    it("verification accounting resolves step-session entries by canonical task id", () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      detector.trackTask("FN-6598-step-2", createMockSession(), "FN-6598");
+      detector.beginVerification("FN-6598", 120_000);
+
+      vi.advanceTimersByTime(61_000);
+      for (let i = 0; i < 80; i++) {
+        detector.recordActivity("FN-6598-step-2");
+      }
+
+      expect(detector.classifyStuckReason("FN-6598-step-2", 60_000)).toBeNull();
+      detector.endVerification("FN-6598");
+      for (let i = 0; i < 60; i++) {
+        detector.recordActivity("FN-6598-step-2");
+      }
+      expect(detector.classifyStuckReason("FN-6598-step-2", 60_000)).toBe("loop");
+
+      vi.useRealTimers();
+    });
   });
 
   describe("killAndRetry", () => {

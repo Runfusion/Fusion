@@ -48,7 +48,12 @@ function formatPercent(rate: number): string {
   return `${Math.round(rate * 100)}%`;
 }
 
-/** Format an ISO timestamp to a relative time string */
+/**
+ * Format an ISO timestamp to a relative time string.
+ *
+ * FNXC:RelativeTime 2026-06-17-20:48:
+ * FN-6618 intentionally leaves AgentReflectionsTab local because its `agents.time.in*` future-time i18n outputs would be lost if getRelativeTimeBucket's negative-diff null were treated as an invalid timestamp.
+ */
 function relativeTime(iso: string, t: (key: string, defaultValue: string, opts?: Record<string, unknown>) => string): string {
   const now = Date.now();
   const then = new Date(iso).getTime();

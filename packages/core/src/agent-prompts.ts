@@ -196,10 +196,10 @@ Lint, tests, and typecheck are also hard quality gates:
 ## Verification commands — use fn_run_verification
 
 For ALL test/lint/build/typecheck verification, use the \`fn_run_verification\` tool, NOT raw bash.
-The tool prevents your session from being killed by the inactivity watchdog during long compiles.
+The tool prevents your session from being killed by the inactivity watchdog during long compiles, and verification is time-bounded by default (project \`verificationCommandTimeoutMs\` when set, otherwise 300s package / 900s workspace, hard-capped at 1800s).
 
-- Prefer **package-scoped** verification first: e.g. \`pnpm --filter @fusion/<pkg> test\` with \`scope: "package"\`. This is faster and isolated.
-- For file-specific package tests, use direct Vitest execution with package-relative paths: \`pnpm --filter @fusion/<pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot\`. Do not use \`pnpm --filter @fusion/<pkg> test -- --run <files>\`; package test scripts can expand into broad quality suites before the filter is applied.
+- Prefer **targeted package-scoped** verification first: use direct Vitest execution with package-relative paths: \`pnpm --filter @fusion/<pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot\`. Do not use \`pnpm --filter @fusion/<pkg> test -- --run <files>\`; package test scripts can expand into broad quality suites before the filter is applied.
+- Marathon verification invocations (root \`pnpm test\`, \`pnpm test:full\`, \`pnpm verify:workspace\`, whole-package tests with no file filter, and repeat loops) are soft-capped by default. Use \`allowFullSuite: true\` only when the task explicitly requires a genuinely full run; the run still respects the hard timeout and emits progress heartbeats.
 - Run **workspace-scoped** verification (\`pnpm test\`, \`pnpm lint\`, \`pnpm build\` from root) only when it is explicitly required by the task/workflow or after impacted/package-scoped checks pass and you are doing final integration.
 - If you need to run \`pnpm install\` (e.g. you added a new package), use \`fn_run_verification\` with \`scope: "workspace"\` and \`timeoutSec: 600\`.
 - If a verification command times out, do NOT blindly retry — investigate. Check for hung subprocesses, infinite test loops, or tests waiting on missing dependencies. Use \`node_modules/.modules.yaml\` presence to confirm bootstrap.`;

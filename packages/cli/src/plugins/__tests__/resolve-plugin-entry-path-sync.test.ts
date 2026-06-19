@@ -12,8 +12,8 @@
  * seam that exercises both implementations equally.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolvePluginEntryPath as cliResolve } from "../bundled-plugin-install.js";
 import { resolvePluginEntryPath as coreResolve } from "@fusion/core";
@@ -31,16 +31,53 @@ describe("resolvePluginEntryPath: CLI copy stays in sync with @fusion/core", () 
 
   function touch(relative: string) {
     const full = join(dir, relative);
-    mkdirSync(join(full, ".."), { recursive: true });
+    mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, "// entry\n");
   }
 
-  const layouts: Array<{ name: string; files: string[]; expected: string | null }> = [
+  const older = new Date("2026-01-01T00:00:00.000Z");
+  const newer = new Date("2026-01-01T00:01:00.000Z");
+
+  const layouts: Array<{
+    name: string;
+    files: string[];
+    expected: string | null;
+    mtimes?: Record<string, Date>;
+  }> = [
     { name: "bundled.js only", files: ["bundled.js"], expected: "bundled.js" },
     { name: "dist/index.js only", files: ["dist/index.js"], expected: "dist/index.js" },
     { name: "src/index.ts only", files: ["src/index.ts"], expected: "src/index.ts" },
     { name: "bundled.js preferred over src", files: ["bundled.js", "src/index.ts"], expected: "bundled.js" },
-    { name: "dist preferred over src", files: ["dist/index.js", "src/index.ts"], expected: "dist/index.js" },
+    {
+      name: "dist + src, src newer → src/index.ts",
+      files: ["dist/index.js", "src/index.ts"],
+      expected: "src/index.ts",
+      mtimes: { "dist/index.js": older, "src/index.ts": newer },
+    },
+    {
+      name: "dist + src, dist newer → dist/index.js",
+      files: ["dist/index.js", "src/index.ts"],
+      expected: "dist/index.js",
+      mtimes: { "dist/index.js": newer, "src/index.ts": older },
+    },
+    {
+      name: "dist + src, equal mtimes → dist/index.js",
+      files: ["dist/index.js", "src/index.ts"],
+      expected: "dist/index.js",
+      mtimes: { "dist/index.js": older, "src/index.ts": older },
+    },
+    {
+      name: "dist + src, non-index src file newer → src/index.ts",
+      files: ["dist/index.js", "src/index.ts", "src/settings.ts"],
+      expected: "src/index.ts",
+      mtimes: { "dist/index.js": older, "src/index.ts": older, "src/settings.ts": newer },
+    },
+    {
+      name: "bundled.js + dist + src, src newer → bundled.js",
+      files: ["bundled.js", "dist/index.js", "src/index.ts"],
+      expected: "bundled.js",
+      mtimes: { "dist/index.js": older, "src/index.ts": newer },
+    },
     { name: "all three → bundled.js", files: ["bundled.js", "dist/index.js", "src/index.ts"], expected: "bundled.js" },
     { name: "no entry files", files: ["README.md"], expected: null },
   ];
@@ -48,6 +85,9 @@ describe("resolvePluginEntryPath: CLI copy stays in sync with @fusion/core", () 
   for (const layout of layouts) {
     it(`resolves identically for: ${layout.name}`, () => {
       for (const f of layout.files) touch(f);
+      for (const [file, mtime] of Object.entries(layout.mtimes ?? {})) {
+        utimesSync(join(dir, file), mtime, mtime);
+      }
       const expected = layout.expected === null ? null : join(dir, layout.expected);
 
       expect(cliResolve(dir)).toBe(expected);

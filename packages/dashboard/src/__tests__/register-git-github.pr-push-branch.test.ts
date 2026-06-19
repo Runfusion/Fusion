@@ -128,7 +128,7 @@ describe("POST /pr/push-branch", () => {
     queueTryRunSuccess("main"); // computePrPreflight -> resolvePrBaseRef local base check
     queueTryRunSuccess("fusion/fn-001\n"); // computePrPreflight -> ls-remote (branchOnRemote)
     queueRunSuccess("2\n"); // computePrPreflight -> rev-list --count (commitsPresent)
-    queueRunSuccess(""); // computePrPreflight -> merge-tree (no conflicts)
+    queueTryRunSuccess("tree-oid\n"); // computePrPreflight -> merge-tree (clean exit 0)
     queueRunSuccess("abc123\tAdd feature\tDev\n"); // computePrPreflight -> git log
     queueRunSuccess("3\t1\tsrc/a.ts\n"); // computePrPreflight -> git diff --numstat
     queueRunSuccess("M\tsrc/a.ts\n"); // computePrPreflight -> git diff --name-status

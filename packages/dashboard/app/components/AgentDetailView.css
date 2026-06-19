@@ -234,6 +234,11 @@
   gap: var(--space-sm);
 }
 
+/*
+FNXC:AgentDetailView 2026-06-14-11:22:
+The mobile global `* { touch-action: pan-y; }` lock from FN-6365 prevents horizontal swipe gestures unless each known horizontal scroller opts back into pan-x.
+The overflowing agent-detail tab strip must keep horizontal touch panning enabled so all tabs remain reachable on narrow touch viewports (FN-6450).
+*/
 .agent-detail-tabs {
   display: flex;
   gap: var(--space-xs);
@@ -242,6 +247,7 @@
   background: var(--bg-secondary);
   flex-shrink: 0;
   overflow-x: auto;
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }

@@ -4,6 +4,7 @@ import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import { useConfirm } from "../hooks/useConfirm";
 import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIssueAction } from "@fusion/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage } from "@fusion/core";
+import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
 import { QuickEntryBox } from "./QuickEntryBox";
@@ -125,7 +126,7 @@ interface ColumnProps {
    * Called when the user clicks the "Subtask" button in the inline create card.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;
@@ -198,6 +199,13 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
   const menuRef = useRef<HTMLDivElement | null>(null);
   const countFlashing = useFlashOnIncrease(tasks.length);
   const { confirm } = useConfirm();
+  const resolveNearDuplicateCanonicalInactive = useCallback((task: Task): boolean | undefined => {
+    const nearDuplicateOf = task.sourceMetadata?.nearDuplicateOf;
+    if (typeof nearDuplicateOf !== "string" || !allTasks) {
+      return undefined;
+    }
+    return isNearDuplicateCanonicalInactive(allTasks.find((candidate) => candidate.id === nearDuplicateOf));
+  }, [allTasks]);
 
   // Clear the inline capacity-exhausted banner once the column's task list
   // changes via SSE (e.g. an occupant moves out and capacity frees up). The
@@ -724,6 +732,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   blockerFanoutMap={blockerFanoutMap}
                   prAuthAvailable={prAuthAvailable}
                   autoMergeEnabled={Boolean(autoMerge)}
+                  allTasks={allTasks}
                 />
               ))
             )
@@ -757,6 +766,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                   fanout={blockerFanoutMap?.get(task.id)}
                   prAuthAvailable={prAuthAvailable}
                   autoMergeEnabled={Boolean(autoMerge)}
+                  nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
                 />
               ))}
               {shouldPaginate && hiddenTaskCount > 0 && (

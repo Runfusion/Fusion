@@ -1135,7 +1135,7 @@
   height: var(--org-chart-children-offset, var(--space-md));
   left: var(--org-chart-first-child-center-offset);
   right: var(--org-chart-last-child-center-offset);
-  border-top: 1px solid var(--border-color, currentColor);
+  border-top: 1px solid var(--border);
   pointer-events: none;
 }
 
@@ -1146,7 +1146,7 @@
   left: 50%;
   width: 1px;
   height: var(--org-chart-children-offset);
-  border-left: 1px solid var(--border-color, currentColor);
+  border-left: 1px solid var(--border);
   pointer-events: none;
 }
 
@@ -1158,7 +1158,7 @@
   width: 1px;
   height: auto;
   border-top: none;
-  border-left: 1px solid var(--border-color, currentColor);
+  border-left: 1px solid var(--border);
 }
 
 .agent-org-chart--vertical {

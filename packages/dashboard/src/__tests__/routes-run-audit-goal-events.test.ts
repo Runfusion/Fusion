@@ -1,3 +1,7 @@
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 rescues this server route test from the curated skip-list; the fake SQLite statement returns better-sqlite-style mutation metadata so createServer boot sweeps exercise real startup paths.
+*/
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { request } from "../test-request.js";
 
@@ -22,7 +26,7 @@ class MockStore {
   getMutationsForRun = vi.fn().mockResolvedValue([]);
   getRootDir() { return "/tmp/fn-5655-test"; }
   getFusionDir() { return "/tmp/fn-5655-test/.fusion"; }
-  getDatabase() { return { exec: vi.fn(), prepare: vi.fn().mockReturnValue({ run: vi.fn(), get: vi.fn(), all: vi.fn().mockReturnValue([]) }) }; }
+  getDatabase() { return { exec: vi.fn(), prepare: vi.fn().mockReturnValue({ run: vi.fn().mockReturnValue({ changes: 0 }), get: vi.fn(), all: vi.fn().mockReturnValue([]) }) }; }
 }
 
 describe("run-audit goal event route filtering", () => {

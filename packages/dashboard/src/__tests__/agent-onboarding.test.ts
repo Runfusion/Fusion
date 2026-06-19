@@ -6,6 +6,21 @@ const { mockCreateFnAgent } = vi.hoisted(() => ({
 
 vi.mock("@fusion/engine", () => ({
   listCliAdapterDescriptors: () => [],
+  buildSessionSkillContextSync: (_agent: unknown, sessionPurpose: string, projectRootDir: string, pluginRunner?: { getPluginSkills?: () => Array<{ pluginId: string; skill: { name: string; enabled?: boolean } }> }) => {
+    const requestedSkillNames = ["fusion"];
+    for (const contribution of pluginRunner?.getPluginSkills?.() ?? []) {
+      const name = contribution.skill.name.trim();
+      if (contribution.skill.enabled === false || name.length === 0 || requestedSkillNames.includes(name)) {
+        continue;
+      }
+      requestedSkillNames.push(name);
+    }
+    return {
+      skillSelectionContext: { projectRootDir, requestedSkillNames, sessionPurpose },
+      resolvedSkillNames: requestedSkillNames,
+      skillSource: "role-fallback" as const,
+    };
+  },
   createFnAgent: mockCreateFnAgent,
 }));
 
@@ -45,6 +60,12 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function createSkillPluginRunner(skills: Array<{ name: string; enabled?: boolean }>) {
+  return {
+    getPluginSkills: () => skills.map((skill) => ({ pluginId: "fusion-plugin-compound-engineering", skill })),
+  };
 }
 
 describe("agent-onboarding", () => {
@@ -244,6 +265,53 @@ describe("agent-onboarding", () => {
     expect(prompt).toContain("name: Alpha");
     expect(prompt).toContain("instructionsText: Current instructions");
     expect(prompt).toContain("messageResponseMode: immediate");
+  });
+
+  it("requests role-fallback and enabled plugin skills for model-only onboarding agents", async () => {
+    mockCreateFnAgent.mockResolvedValueOnce(
+      createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: { id: "goal", type: "text", question: "What is the primary goal?" },
+        }),
+      ]),
+    );
+
+    await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "skills", existingAgents: [], templates: [] },
+      process.cwd(),
+      undefined,
+      undefined,
+      undefined,
+      createSkillPluginRunner([
+        { name: "ce-debug" },
+        { name: "disabled-skill", enabled: false },
+      ]),
+    );
+
+    const options = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { skillSelection?: { requestedSkillNames?: string[] } };
+    expect(options.skillSelection?.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("requests role-fallback skills when onboarding plugin runner is unavailable", async () => {
+    mockCreateFnAgent.mockResolvedValueOnce(
+      createMockAgent([
+        JSON.stringify({
+          type: "question",
+          data: { id: "goal", type: "text", question: "What is the primary goal?" },
+        }),
+      ]),
+    );
+
+    await startAgentOnboardingSession(
+      "127.0.0.1",
+      { intent: "skills", existingAgents: [], templates: [] },
+      process.cwd(),
+    );
+
+    const options = mockCreateFnAgent.mock.calls.at(-1)?.[0] as { skillSelection?: { requestedSkillNames?: string[] } };
+    expect(options.skillSelection?.requestedSkillNames).toEqual(["fusion"]);
   });
 
   it("progresses through start -> question -> response -> final summary", async () => {

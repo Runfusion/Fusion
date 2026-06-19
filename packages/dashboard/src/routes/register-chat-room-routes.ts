@@ -331,14 +331,23 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         attachments?: ChatAttachment[];
       };
 
-      if (!content || typeof content !== "string" || !content.trim()) {
+      const messageAttachments = Array.isArray(attachments) ? attachments : undefined;
+      if (content !== undefined && typeof content !== "string") {
+        throw badRequest("content is required and must be a non-empty string");
+      }
+      const trimmedContent = content?.trim() ?? "";
+      /**
+       * FNXC:ChatRooms 2026-06-17-02:12:
+       * Room chat must accept attachment-only messages from main and quick chat while continuing to reject fully empty sends with no text and no attachment references.
+       */
+      if (!trimmedContent && (messageAttachments?.length ?? 0) === 0) {
         throw badRequest("content is required and must be a non-empty string");
       }
       if (senderAgentId !== undefined && senderAgentId !== null) {
         throw badRequest("senderAgentId is reserved for FN-3810; must be null or omitted");
       }
 
-      const result = await services.chatManager.sendRoomMessage(roomId, content.trim(), Array.isArray(attachments) ? attachments : undefined);
+      const result = await services.chatManager.sendRoomMessage(roomId, trimmedContent, messageAttachments);
       res.status(201).json({ message: result.userMessage });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

@@ -9,6 +9,7 @@ import type { Components } from "react-markdown";
 import { Maximize2, Minimize2, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import "./AgentLogViewer.css";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -33,19 +34,30 @@ function writeBooleanPref(key: string, value: boolean): void {
   }
 }
 
+/*
+FNXC:AgentLogTimestamps 2026-06-17-17:34:
+FN-6601 centralizes timestamp bucket math but AgentLog keeps its existing translation keys and future timestamps continue to render as "just now".
+*/
 function formatTimestamp(iso: string, t: TFunction<"app">): string {
-  const date = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  const diffHr = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHr / 24);
+  const bucket = getRelativeTimeBucket(iso);
+  if (!bucket) {
+    const date = new Date(iso);
+    return Number.isFinite(date.getTime()) ? t("agentLog.timeJustNow", "just now") : date.toLocaleDateString();
+  }
 
-  if (diffMin < 1) return t("agentLog.timeJustNow", "just now");
-  if (diffMin < 60) return t("agentLog.timeMinutesAgo", "{{count}}m ago", { count: diffMin });
-  if (diffHr < 24) return t("agentLog.timeHoursAgo", "{{count}}h ago", { count: diffHr });
-  if (diffDay < 7) return t("agentLog.timeDaysAgo", "{{count}}d ago", { count: diffDay });
-  return date.toLocaleDateString();
+  switch (bucket.bucket) {
+    case "just-now":
+      return t("agentLog.timeJustNow", "just now");
+    case "minutes":
+      return t("agentLog.timeMinutesAgo", "{{count}}m ago", { count: bucket.count });
+    case "hours":
+      return t("agentLog.timeHoursAgo", "{{count}}h ago", { count: bucket.count });
+    case "days":
+      return t("agentLog.timeDaysAgo", "{{count}}d ago", { count: bucket.count });
+    case "weeks":
+    case "older":
+      return bucket.date.toLocaleDateString();
+  }
 }
 
 export const markdownComponents: Components = {

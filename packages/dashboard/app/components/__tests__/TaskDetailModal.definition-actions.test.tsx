@@ -24,6 +24,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test\n\nSpec content." })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -40,6 +41,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test\n\nSpec content." })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -65,6 +67,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test Task\n\nTest specification." })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -94,6 +97,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ id: "FN-099", prompt: "# Original" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -121,6 +125,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -146,6 +151,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-099", column: "todo", prompt: "# Test" })}
+          initialTab="definition"
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -173,6 +179,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask()}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -183,11 +190,11 @@ describe("TaskDetailModal", () => {
       );
 
       // In-progress tasks show exactly 11 tabs:
-      // Definition, Chat, Logs, Changes, Review, Comments, Documents, Model, Workflow, Stats, Routing
+      // Chat, Definition, Logs, Changes, Review, Comments, Documents, Model, Workflow, Stats, Routing
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Definition");
-      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[0].textContent).toBe("Chat");
+      expect(tabs[1].textContent).toBe("Definition");
       expect(tabs[2].textContent).toBe("Logs");
       expect(tabs[3].textContent).toBe("Changes");
       expect(tabs[4].textContent).toBe("Review");
@@ -205,6 +212,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ enabledWorkflowSteps: ["WS-001"] })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -217,8 +225,8 @@ describe("TaskDetailModal", () => {
       // In-progress task with workflow steps: 11 tabs (Review after Changes, Workflow after Model)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Definition");
-      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[0].textContent).toBe("Chat");
+      expect(tabs[1].textContent).toBe("Definition");
       expect(tabs[2].textContent).toBe("Logs");
       expect(tabs[3].textContent).toBe("Changes");
       expect(tabs[4].textContent).toBe("Review");
@@ -237,6 +245,7 @@ describe("TaskDetailModal", () => {
             column: "done",
             mergeDetails: { commitSha: "abc1234567890", filesChanged: 3 },
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -246,11 +255,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Definition, Chat, Logs, Changes, Review, Comments, Documents, Model, Workflow, Stats, Routing (11 tabs, no Commits)
+      // Done task with commit SHA: Chat, Definition, Logs, Changes, Review, Comments, Documents, Model, Workflow, Stats, Routing (11 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Definition");
-      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[0].textContent).toBe("Chat");
+      expect(tabs[1].textContent).toBe("Definition");
       expect(tabs[2].textContent).toBe("Logs");
       expect(tabs[3].textContent).toBe("Changes");
       expect(tabs[4].textContent).toBe("Review");
@@ -272,6 +281,7 @@ describe("TaskDetailModal", () => {
             mergeDetails: { commitSha: "abc1234567890", filesChanged: 3 },
             enabledWorkflowSteps: ["WS-001"],
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -284,8 +294,8 @@ describe("TaskDetailModal", () => {
       // Done task with workflow steps and commit SHA: 11 tabs including Review (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Definition");
-      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[0].textContent).toBe("Chat");
+      expect(tabs[1].textContent).toBe("Definition");
       expect(tabs[2].textContent).toBe("Logs");
       expect(tabs[3].textContent).toBe("Changes");
       expect(tabs[4].textContent).toBe("Review");
@@ -303,6 +313,7 @@ describe("TaskDetailModal", () => {
       const { container: triageContainer } = render(
         <TaskDetailModal
           task={makeTask({ column: "triage" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -313,14 +324,15 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
-      expect(triageTabs.length).toBe(10); // Definition, Chat, Logs, Review, Comments, Documents, Model, Workflow, Stats, Routing
+      expect(triageTabs.length).toBe(10); // Chat, Definition, Logs, Review, Comments, Documents, Model, Workflow, Stats, Routing
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Chat", "Logs", "Review", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing",
+        "Chat", "Definition", "Logs", "Review", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing",
       ]);
 
       const { container: todoContainer } = render(
         <TaskDetailModal
           task={makeTask({ column: "todo" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -331,9 +343,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
-      expect(todoTabs.length).toBe(10); // Definition, Chat, Logs, Review, Comments, Documents, Model, Workflow, Stats, Routing
+      expect(todoTabs.length).toBe(10); // Chat, Definition, Logs, Review, Comments, Documents, Model, Workflow, Stats, Routing
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Chat", "Logs", "Review", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing",
+        "Chat", "Definition", "Logs", "Review", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing",
       ]);
     });
 
@@ -341,6 +353,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -364,6 +377,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -385,6 +399,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -406,6 +421,7 @@ describe("TaskDetailModal", () => {
             status: "planning",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -427,6 +443,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -454,6 +471,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -489,6 +507,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -534,6 +553,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -566,6 +586,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -600,6 +621,7 @@ describe("TaskDetailModal", () => {
             status: "awaiting-approval",
             prompt: "# Task Spec",
           })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -623,6 +645,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask()}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -644,6 +667,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask()}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -665,6 +689,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -697,6 +722,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001" })}
+          initialTab="definition"
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -729,6 +755,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -759,6 +786,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -788,6 +816,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -821,6 +850,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -839,6 +869,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -854,6 +885,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: true })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -870,6 +902,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: true })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -891,6 +924,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "todo", paused: undefined, userPaused: true })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -917,6 +951,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: true, assignedAgentId: "agent-1" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -946,6 +981,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: true, assignedAgentId: "agent-1", pausedByAgentId: "agent-1" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -968,6 +1004,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ column: "triage", paused: false, status: "todo" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -984,6 +1021,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1007,6 +1045,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1029,6 +1068,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1056,6 +1096,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1079,6 +1120,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1109,6 +1151,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1136,6 +1179,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1168,6 +1212,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={onClose}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1204,6 +1249,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1234,6 +1280,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1267,6 +1314,7 @@ describe("TaskDetailModal", () => {
       render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1300,6 +1348,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ id: "FN-001", column: "done" })}
+          initialTab="definition"
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}

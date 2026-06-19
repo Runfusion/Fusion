@@ -1,14 +1,19 @@
+/*
+FNXC:CompoundEngineeringUI 2026-06-17-00:44:
+The Compound Engineering dashboard view must follow the dashboard design scale so plugin spacing, radii, and controls read as native Fusion UI in dark, light, desktop, and mobile contexts. Use existing --space-* and --radius-* tokens instead of ad-hoc rem/px layout literals, and lean on shared .card/.btn/.btn-icon/.input conventions where markup already supplies those classes.
+*/
+
 .ce-view {
   display: flex;
   color: var(--text);
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-lg);
   min-width: 0;
   min-height: 0;
   width: 100%;
   height: 100%;
-  padding: 1rem 1.25rem;
+  padding: var(--space-lg) calc(var(--space-lg) + var(--space-xs));
   box-sizing: border-box;
   overflow: auto;
 }
@@ -17,7 +22,8 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
 }
 
 .ce-view-header h2 {
@@ -31,7 +37,7 @@
 
 .ce-loading,
 .ce-view-error {
-  padding: 0.75rem 1rem;
+  padding: var(--space-md) var(--space-lg);
   font-size: 0.85rem;
 }
 
@@ -41,10 +47,10 @@
 
 .ce-empty {
   max-width: 36rem;
-  padding: 1.5rem;
+  padding: var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-md);
   align-items: flex-start;
 }
 
@@ -59,17 +65,17 @@
 
 .ce-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-2xl) * 9), 1fr));
+  gap: var(--space-lg);
 }
 
 .ce-group {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 
 .ce-group[data-empty="true"] {
@@ -104,14 +110,14 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
 }
 
 .ce-artifact {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-sm);
   font-size: 0.85rem;
 }
 
@@ -127,7 +133,7 @@
   display: flex;
   flex-direction: column;
   color: inherit;
-  padding: 0.25rem 0;
+  padding: var(--space-xs) 0;
   flex: 1;
 }
 
@@ -160,7 +166,7 @@
 .ce-artifact-error {
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.15rem;
+  gap: calc(var(--space-xs) / 2);
 }
 
 .ce-view[data-mobile="true"] {
@@ -172,14 +178,38 @@
   grid-template-columns: 1fr;
 }
 
+.ce-view[data-mobile="true"] .ce-view-header,
+.ce-view[data-mobile="true"] .ce-flow-header,
+.ce-view[data-mobile="true"] .ce-flow-guidance-row {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.ce-view[data-mobile="true"] .ce-view-start,
+.ce-view[data-mobile="true"] .ce-flow-close,
+.ce-view[data-mobile="true"] .ce-flow-cancel {
+  margin-left: 0;
+}
+
+.ce-view[data-mobile="true"] .ce-flow-turn {
+  max-width: 100%;
+}
+
 @media (max-width: 768px) {
   .ce-view {
     width: 100%;
     padding: var(--space-sm);
   }
 
+  .ce-view-header,
+  .ce-flow-header,
+  .ce-flow-guidance-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .ce-session-row {
-    align-items: center;
+    align-items: stretch;
     flex-direction: row;
   }
 
@@ -187,6 +217,11 @@
     flex-wrap: wrap;
   }
 
+  .ce-flow-turn {
+    max-width: 100%;
+  }
+
+  .ce-view-start,
   .ce-session-cancel,
   .ce-session-discard,
   .ce-flow-cancel,
@@ -197,21 +232,21 @@
 
 /* --- Stage launcher (U6) --- */
 .ce-launcher {
-  margin: 0.75rem 0;
+  margin: var(--space-md) 0;
 }
 .ce-launcher-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-2xl) * 4.5), 1fr));
+  gap: var(--space-sm);
 }
 .ce-launcher-tile {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 .ce-launcher-icon {
   flex: none;
@@ -222,18 +257,18 @@
 
 /* --- CeFlow interactive renderer (U6) --- */
 .ce-flow {
-  margin: 0.75rem 0;
+  margin: var(--space-md) 0;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: calc(var(--space-sm) + var(--space-xs) / 2);
   min-height: 0;
   overflow-y: auto;
 }
 .ce-flow-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 .ce-flow-header h3 {
   margin: 0;
@@ -258,7 +293,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   min-height: 0;
   overflow-y: auto;
 }
@@ -278,10 +313,15 @@
   font-style: italic;
   color: var(--text-muted);
 }
+.ce-flow-question-panel,
 .ce-flow-question {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-sm);
+}
+
+.ce-flow-question {
+  gap: var(--space-xs);
 }
 .ce-flow-question-text {
   font-weight: 600;
@@ -295,7 +335,7 @@
 .ce-flow-text {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-xs);
 }
 .ce-flow-text textarea,
 .ce-flow-guidance-row textarea {
@@ -322,7 +362,7 @@
 }
 .ce-flow-confirm {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 .ce-flow-options {
   list-style: none;
@@ -330,7 +370,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
 }
 .ce-flow-options ul {
   list-style: none;
@@ -338,7 +378,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
 }
 .ce-flow-option {
   width: 100%;
@@ -353,8 +393,27 @@
 .ce-flow-checkbox {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+.ce-flow-checkbox:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+.ce-flow-checkbox:has(input:focus-visible) {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+.ce-flow-checkbox-input {
+  width: var(--space-lg);
+  height: var(--space-lg);
+  margin: 0;
+  accent-color: var(--todo);
 }
 .ce-flow-error {
   color: var(--color-error);
@@ -364,12 +423,12 @@
 /* Degraded chat fallback (R8/AE1) — must read as visibly distinct. */
 .ce-flow-degraded {
   border: 1px dashed var(--color-warning);
-  border-radius: 6px;
-  padding: 0.6rem;
+  border-radius: var(--radius-sm);
+  padding: calc(var(--space-sm) + var(--space-xs) / 2);
   background: color-mix(in srgb, var(--color-warning) 8%, transparent);
 }
 .ce-flow-degraded-banner {
-  margin: 0 0 0.4rem;
+  margin: 0 0 var(--space-xs);
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-warning);
@@ -377,13 +436,13 @@
 .ce-flow-degraded-options {
   font-size: 0.78rem;
   color: var(--text-muted);
-  margin: 0 0 0.4rem;
-  padding-left: 1.1rem;
+  margin: 0 0 var(--space-xs);
+  padding-left: calc(var(--space-lg) + var(--space-xs) / 2);
 }
 
 /* Sessions panel — manage/switch across multiple concurrent CE sessions. */
 .ce-sessions {
-  margin-bottom: 0.8rem;
+  margin-bottom: var(--space-md);
 }
 .ce-sessions-list {
   list-style: none;
@@ -391,12 +450,12 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
 }
 .ce-session-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-sm);
 }
 .ce-session-row.is-active .ce-session-open {
   border-color: var(--todo);
@@ -407,13 +466,18 @@
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
+  justify-content: flex-start;
+  gap: calc(var(--space-sm) + var(--space-xs) / 2);
   text-align: left;
-  padding: 0.4rem 0.6rem;
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface);
   cursor: pointer;
+}
+.ce-session-open:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
 }
 .ce-session-open:disabled {
   cursor: default;
@@ -489,22 +553,22 @@
 /* ── Q&A transcript bubbles ────────────────────────────────────────────── */
 .ce-flow-transcript {
   list-style: none;
-  margin: 0 0 0.8rem;
+  margin: 0 0 var(--space-md);
   padding: 0;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 4);
   min-height: 0;
   overflow-y: auto;
 }
 .ce-flow-turn {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: calc(var(--space-xs) / 2);
   max-width: 85%;
-  padding: 0.45rem 0.65rem;
-  border-radius: 10px;
+  padding: calc(var(--space-sm) - var(--space-xs) / 4) calc(var(--space-sm) + var(--space-xs) / 2);
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--border) 30%, transparent);
 }
 .ce-flow-turn-user {
@@ -531,7 +595,7 @@
   font-style: italic;
   color: var(--text-muted);
   border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
-  padding-top: 0.25rem;
+  padding-top: var(--space-xs);
 }
 .ce-flow-turn-done {
   align-self: center;
@@ -556,11 +620,11 @@
 .ce-flow-activity {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin: 0.3rem 0 0;
-  padding: 0.5rem 0.6rem;
+  gap: var(--space-xs);
+  margin: calc(var(--space-sm) - var(--space-xs) / 2) 0 0;
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs) / 2);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--border) 12%, transparent);
   max-height: 16rem;
   overflow-y: auto;
@@ -592,19 +656,19 @@
 
 /* ── Live working pane ──────────────────────────────────────────────────── */
 .ce-flow-working {
-  margin: 0.4rem 0;
+  margin: var(--space-xs) 0;
 }
 .ce-flow-working-label {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  margin: 0 0 0.3rem;
+  gap: calc(var(--space-sm) - var(--space-xs) / 4);
+  margin: 0 0 calc(var(--space-sm) - var(--space-xs) / 2);
   font-size: 0.82rem;
   color: var(--text-muted);
 }
 .ce-flow-pulse {
-  width: 8px;
-  height: 8px;
+  width: var(--space-sm);
+  height: var(--space-sm);
   border-radius: 50%;
   background: var(--todo);
   animation: ce-pulse 1.2s ease-in-out infinite;
@@ -616,22 +680,39 @@
 
 /* ── Steering / guidance channel ────────────────────────────────────────── */
 .ce-flow-guidance {
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
   border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
 }
 .ce-flow-guidance-label {
   display: block;
   font-size: 0.74rem;
   color: var(--text-dim);
-  margin-bottom: 0.3rem;
+  margin-bottom: calc(var(--space-sm) - var(--space-xs) / 2);
 }
 .ce-flow-guidance-row {
   display: flex;
-  gap: 0.4rem;
+  gap: var(--space-xs);
   align-items: flex-end;
 }
 .ce-flow-guidance-row textarea {
   flex: 1;
   resize: vertical;
+}
+
+.ce-flow-recover,
+.ce-flow-complete {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.ce-flow-recover p,
+.ce-flow-complete p {
+  margin: 0;
 }

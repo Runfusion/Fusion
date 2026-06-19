@@ -6,6 +6,19 @@
 // an arbitrary binary + args, plus the conservative-by-default fs capability
 // toggles (KTD6: writes default OFF) and an env allow-list (KTD6b).
 
+import { existsSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const CLAUDE_CODE_CLI_ACP_BINARY = "claude-code-cli-acp";
+
+export interface AcpBinaryResolution {
+  kind: "resolved" | "not_resolved";
+  requested: string;
+  path?: string;
+  reason?: string;
+}
+
 export interface AcpCliSettings {
   /** Agent binary to spawn (e.g. "gemini", "npx", an absolute path). */
   binaryPath: string;
@@ -23,6 +36,8 @@ export interface AcpCliSettings {
    * default — callers opt specific vars in by name.
    */
   envAllowList: string[];
+  /** Env allow-list entries that must be present before spawning this profile. */
+  requiredEnv: string[];
   /**
    * Risk S1 acknowledgement. The shipped default permission policy is
    * `unrestricted` (every category → allow). Because the ACP agent is an
@@ -33,6 +48,8 @@ export interface AcpCliSettings {
    * Default: false (safe).
    */
   allowUnrestricted: boolean;
+  /** Bundled bridge resolution status when `acpBinaryPath` asks for it. */
+  binaryResolution?: AcpBinaryResolution;
 }
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -49,13 +66,87 @@ function asBool(value: unknown): boolean {
   return value === true;
 }
 
+function pluginRootDir(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+export interface ResolveBundledClaudeBridgeOptions {
+  pluginRoot?: string;
+  exists?: (path: string) => boolean;
+}
+
+export function bundledClaudeBridgeBinPath(pluginRoot = pluginRootDir()): string {
+  const extension = process.platform === "win32" ? ".cmd" : "";
+  return join(pluginRoot, "node_modules", ".bin", `${CLAUDE_CODE_CLI_ACP_BINARY}${extension}`);
+}
+
+export function resolveBundledClaudeBridgeBinary(
+  options: ResolveBundledClaudeBridgeOptions = {},
+): AcpBinaryResolution {
+  const root = options.pluginRoot ?? pluginRootDir();
+  const exists = options.exists ?? existsSync;
+  const candidate = bundledClaudeBridgeBinPath(root);
+  /*
+  FNXC:ACP-RouteB 2026-06-14-19:47:
+  The Claude ACP bridge is a pinned plugin dependency, not a PATH-selected executable. Resolve the sentinel to the plugin-owned node_modules/.bin shim so a same-named global binary cannot replace the reviewed bridge.
+  */
+  if (!exists(candidate)) {
+    return {
+      kind: "not_resolved",
+      requested: CLAUDE_CODE_CLI_ACP_BINARY,
+      path: candidate,
+      reason: `Bundled ${CLAUDE_CODE_CLI_ACP_BINARY} binary was not found at ${candidate}`,
+    };
+  }
+  if (!isAbsolute(candidate)) {
+    return {
+      kind: "not_resolved",
+      requested: CLAUDE_CODE_CLI_ACP_BINARY,
+      path: candidate,
+      reason: `Bundled ${CLAUDE_CODE_CLI_ACP_BINARY} path is not absolute`,
+    };
+  }
+  return { kind: "resolved", requested: CLAUDE_CODE_CLI_ACP_BINARY, path: candidate };
+}
+
 export function resolveCliSettings(settings?: Record<string, unknown>): AcpCliSettings {
-  const binaryPath = asTrimmedString(settings?.acpBinaryPath) ?? "acp-agent";
+  const requestedBinaryPath = asTrimmedString(settings?.acpBinaryPath);
+  let binaryPath = requestedBinaryPath ?? "acp-agent";
+  let binaryResolution: AcpBinaryResolution | undefined;
+  if (requestedBinaryPath === CLAUDE_CODE_CLI_ACP_BINARY) {
+    binaryResolution = resolveBundledClaudeBridgeBinary();
+    if (binaryResolution.kind === "resolved" && binaryResolution.path) {
+      binaryPath = binaryResolution.path;
+    }
+  }
   const args = asStringArray(settings?.acpArgs) ?? [];
   const model = asTrimmedString(settings?.acpModel);
   const fsRead = asBool(settings?.acpFsRead);
   const fsWrite = asBool(settings?.acpFsWrite);
   const envAllowList = asStringArray(settings?.acpEnvAllowList) ?? [];
   const allowUnrestricted = asBool(settings?.acpAllowUnrestricted);
-  return { binaryPath, args, model, fsRead, fsWrite, envAllowList, allowUnrestricted };
+  return {
+    binaryPath,
+    args,
+    model,
+    fsRead,
+    fsWrite,
+    envAllowList,
+    requiredEnv: [],
+    allowUnrestricted,
+    binaryResolution,
+  };
+}
+
+export function resolveClaudeBridgeAskSettings(settings?: Record<string, unknown>): AcpCliSettings {
+  const resolved = resolveCliSettings({
+    ...settings,
+    acpBinaryPath: CLAUDE_CODE_CLI_ACP_BINARY,
+    acpArgs: [],
+    acpFsRead: false,
+    acpFsWrite: false,
+    acpEnvAllowList: ["HOME", "PATH"],
+    acpAllowUnrestricted: false,
+  });
+  return { ...resolved, requiredEnv: ["HOME"] };
 }

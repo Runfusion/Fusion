@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MailboxModal } from "../MailboxModal";
@@ -127,6 +127,10 @@ const defaultProps = {
 };
 
 describe("MailboxModal", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     // Clear SWR cache between tests so prior runs don't pre-hydrate inbox/outbox
@@ -210,6 +214,35 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
       expect(screen.getByTestId("mailbox-item-msg-002")).toBeDefined();
+    });
+  });
+
+  it("preserves byte-identical inbox timestamp buckets", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-17T20:00:00.000Z"));
+    const messages = [
+      ["now", "2026-06-17T19:59:30.000Z"],
+      ["minute", "2026-06-17T19:55:00.000Z"],
+      ["hour", "2026-06-17T17:00:00.000Z"],
+      ["day", "2026-06-14T20:00:00.000Z"],
+      ["future", "2026-06-17T20:00:01.000Z"],
+      ["invalid", "not-a-date"],
+      ["older", "2026-06-10T20:00:00.000Z"],
+    ].map(([id, createdAt]) => ({ ...mockMessage, id: `msg-${id}`, createdAt, updatedAt: createdAt, content: id, read: true }));
+    mockFetchInbox.mockResolvedValue({ messages, total: messages.length, unreadCount: 0 });
+
+    const { container } = render(<MailboxModal {...defaultProps} />);
+
+    await waitFor(() => {
+      const times = Array.from(container.querySelectorAll(".mailbox-item-time")).map((node) => node.textContent);
+      expect(times).toEqual(expect.arrayContaining([
+        "Just now",
+        "5m ago",
+        "3h ago",
+        "3d ago",
+        "Invalid Date",
+        new Date("2026-06-10T20:00:00.000Z").toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      ]));
     });
   });
 

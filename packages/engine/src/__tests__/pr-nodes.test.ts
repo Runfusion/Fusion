@@ -18,11 +18,14 @@ import { TaskStore } from "@fusion/core";
 import type { TaskDetail, WorkflowIrNode } from "@fusion/core";
 
 import {
+  buildRespondCallback,
   createPrNodeHandlers,
   type PrMergeCallResult,
   type PrNodeDeps,
+  type PrRespondGithubOps,
   type PrSourceDescriptor,
 } from "../pr-nodes.js";
+import type { PrEntity } from "@fusion/core";
 import { createDefaultNodeHandlers, createNoopLegacySeams } from "../workflow-node-handlers.js";
 import type { WorkflowNodeExecutionContext } from "../workflow-graph-executor.js";
 
@@ -240,5 +243,114 @@ describe("PR node handlers (U3)", () => {
     const handlers = createDefaultNodeHandlers(createNoopLegacySeams(), undefined, { prNodes: deps() });
     const result = await handlers["pr-create"](NODE, ctx());
     expect(result).toEqual({ outcome: "success", value: "open" });
+  });
+});
+
+// ── U18 (R15): the autoResolveReviewComments setting gates the loop ────────────
+// buildRespondCallback reads settings.autoResolveReviewComments. When false the
+// loop is inert: it dispatches no agent, fetches no threads, pushes nothing, and
+// replies to no thread — review threads are left for a human. Default (true /
+// undefined) preserves today's always-on behavior. This is INDEPENDENT of the
+// auto-merge gate (a separate graph node), so disabling auto-merge does not turn
+// off resolution and enabling resolution does not force a merge.
+describe("Review-response auto-resolution setting gate (U18)", () => {
+  let rootDir: string;
+  let store: TaskStore;
+  let entity: PrEntity;
+
+  beforeEach(async () => {
+    rootDir = makeTmpDir();
+    store = new TaskStore(rootDir, join(rootDir, ".fusion-global"));
+    await store.init();
+    entity = store.ensurePrEntityForSource({ ...SOURCE, state: "open", prNumber: 9 });
+    entity = store.updatePrEntity(entity.id, { headOid: "head-1", unverified: false });
+  });
+
+  afterEach(async () => {
+    store.close();
+    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function respondOps(over: Partial<PrRespondGithubOps> = {}): {
+    ops: PrRespondGithubOps;
+    calls: { getReviewThreads: number; replies: number; resolves: number };
+  } {
+    const calls = { getReviewThreads: 0, replies: 0, resolves: 0 };
+    const ops: PrRespondGithubOps = {
+      // Return NO actionable threads. The enabled-path tests only need to prove the
+      // gate let the loop through (getReviewThreads ran); with no actionable thread
+      // the run returns early WITHOUT dispatching the mutating agent — which keeps
+      // these unit tests off the real-AI-CLI path. A disabled loop never even gets
+      // here (it short-circuits before fetching threads).
+      getReviewThreads: async () => {
+        calls.getReviewThreads += 1;
+        return [];
+      },
+      getViewerLogin: async () => "fusion-bot",
+      checkPrStillOpen: async () => ({ open: true, headOid: "head-1" }),
+      replyToThread: async () => {
+        calls.replies += 1;
+      },
+      resolveThread: async () => {
+        calls.resolves += 1;
+      },
+      getCwd: () => rootDir,
+      getTaskId: () => "T-1",
+      ...over,
+    };
+    return { ops, calls };
+  }
+
+  it("disabled → loop is inert: no thread fetch, no reply, returns disagreed-only", async () => {
+    await store.updateSettings({ autoResolveReviewComments: false });
+    const { ops, calls } = respondOps();
+    const audited: string[] = [];
+    const respond = buildRespondCallback(() => store, ops, (reason) => audited.push(reason));
+
+    const result = await respond({
+      task: { id: "T-1" } as unknown as TaskDetail,
+      node: { id: "r", kind: "pr-respond" } as WorkflowIrNode,
+      entity,
+      context: {},
+    });
+
+    expect(result).toEqual({ value: "disagreed-only" });
+    // Inert: the loop never even fetched threads, never replied, never resolved.
+    expect(calls.getReviewThreads).toBe(0);
+    expect(calls.replies).toBe(0);
+    expect(calls.resolves).toBe(0);
+    expect(audited).toContain("pr-respond-auto-resolve-disabled");
+  });
+
+  it("default (setting unset) → loop runs: fetches threads (always-on preserved)", async () => {
+    // Do NOT touch the setting; the default is true.
+    const { ops, calls } = respondOps();
+    const respond = buildRespondCallback(() => store, ops);
+
+    await respond({
+      task: { id: "T-1" } as unknown as TaskDetail,
+      node: { id: "r", kind: "pr-respond" } as WorkflowIrNode,
+      entity,
+      context: {},
+    });
+
+    // The loop proceeded far enough to fetch review threads — it is NOT inert.
+    expect(calls.getReviewThreads).toBe(1);
+  });
+
+  it("explicitly enabled → loop runs (independent of auto-merge being off)", async () => {
+    await store.updateSettings({ autoResolveReviewComments: true, autoMerge: false });
+    const { ops, calls } = respondOps();
+    const respond = buildRespondCallback(() => store, ops);
+
+    await respond({
+      task: { id: "T-1" } as unknown as TaskDetail,
+      node: { id: "r", kind: "pr-respond" } as WorkflowIrNode,
+      entity,
+      context: {},
+    });
+
+    // Resolution ran even though auto-merge is off — the two gates are independent.
+    expect(calls.getReviewThreads).toBe(1);
   });
 });

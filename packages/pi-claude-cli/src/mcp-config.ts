@@ -142,3 +142,32 @@ export function writeMcpConfig(
 
   return configFilePath;
 }
+
+/** A stdio MCP server spec for ACP `session/new.mcpServers` (U11 — Route A). */
+export interface AcpMcpServerSpec {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+}
+
+/**
+ * Build the ACP `mcpServers` spec for the same schema-only `custom-tools` server
+ * `writeMcpConfig` produces for `--mcp-config` — but as the inline ACP shape
+ * (`session/new.mcpServers`) instead of a config-file path (U11). Writes the
+ * tool-schema file and points the server at the shared `mcp-schema-server.cjs`.
+ * Returns `[]` when there are no custom tools (Route B read-only posture).
+ */
+export function buildAcpMcpServers(
+  toolDefs: McpToolDef[],
+  cacheKey?: string,
+): AcpMcpServerSpec[] {
+  if (toolDefs.length === 0) return [];
+  const suffix = cacheKey ? `${process.pid}-${cacheKey}` : `${process.pid}`;
+  const schemaFilePath = join(tmpdir(), `pi-claude-mcp-schemas-${suffix}.json`);
+  writeFileSync(schemaFilePath, JSON.stringify(toolDefs));
+  const serverPath = join(dirname(fileURLToPath(import.meta.url)), "mcp-schema-server.cjs");
+  return [
+    { name: "custom-tools", command: "node", args: [serverPath, schemaFilePath], env: [] },
+  ];
+}

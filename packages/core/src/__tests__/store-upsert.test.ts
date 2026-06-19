@@ -35,6 +35,46 @@ describe("TaskStore", () => {
   const insertLogEntryWithTimestamp = (...args: any[]) => (harness as any).insertLogEntryWithTimestamp(...args);
   const taskDir = (taskId: string) => join(rootDir, ".fusion", "tasks", taskId);
 
+  describe("task commit association diff stats", () => {
+    it("round-trips nullable additions and deletions without coercing unknown stats to zero", async () => {
+      const withStats = await store.upsertTaskCommitAssociation({
+        taskLineageId: "lineage-loc-stats",
+        taskIdSnapshot: "FN-6704",
+        commitSha: "abc123",
+        commitSubject: "feat: capture stats",
+        authoredAt: "2026-06-19T00:00:00.000Z",
+        matchedBy: "canonical-lineage-trailer",
+        confidence: "canonical",
+        additions: 12,
+        deletions: 3,
+      });
+      expect(withStats.additions).toBe(12);
+      expect(withStats.deletions).toBe(3);
+
+      await store.upsertTaskCommitAssociation({
+        taskLineageId: "lineage-loc-stats",
+        taskIdSnapshot: "FN-6704",
+        commitSha: "def456",
+        commitSubject: "fix: unknown stats",
+        authoredAt: "2026-06-19T01:00:00.000Z",
+        matchedBy: "canonical-lineage-trailer",
+        confidence: "canonical",
+      });
+
+      const associations = await store.getTaskCommitAssociationsByLineageId("lineage-loc-stats");
+      const persistedWithStats = associations.find((association) => association.commitSha === "abc123");
+      const persistedUnknownStats = associations.find((association) => association.commitSha === "def456");
+      expect(persistedWithStats).toMatchObject({ additions: 12, deletions: 3 });
+      expect(persistedUnknownStats?.additions).toBeUndefined();
+      expect(persistedUnknownStats?.deletions).toBeUndefined();
+
+      const rawUnknown = (store as any).db.prepare(
+        `SELECT additions, deletions FROM task_commit_associations WHERE commitSha = ?`,
+      ).get("def456") as { additions: number | null; deletions: number | null };
+      expect(rawUnknown).toEqual({ additions: null, deletions: null });
+    });
+  });
+
   describe("upsertTask regression coverage", () => {
     it("creates tasks successfully on a fresh database schema", async () => {
       const freshRoot = makeTmpDir();

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ProjectCard } from "../ProjectCard";
 import type { RegisteredProject, ProjectHealth, ProjectStatus } from "@fusion/core";
@@ -42,6 +42,10 @@ function makeHealth(overrides: Partial<ProjectHealth> = {}): ProjectHealth {
 }
 
 const noop = () => {};
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("ProjectCard", () => {
   it("renders project name and path", () => {
@@ -273,6 +277,50 @@ describe("ProjectCard", () => {
       />
     );
 
+    expect(screen.getByText("Never")).toBeDefined();
+  });
+
+  it("preserves byte-identical relative time output buckets for last activity", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-17T20:00:00.000Z"));
+
+    const cases = [
+      ["under-minute", "2026-06-17T19:59:30.000Z", "Just now"],
+      ["minute", "2026-06-17T19:55:00.000Z", "5m ago"],
+      ["hour", "2026-06-17T17:00:00.000Z", "3h ago"],
+      ["day", "2026-06-14T20:00:00.000Z", "3d ago"],
+      ["future", "2026-06-17T20:00:01.000Z", "Just now"],
+      ["invalid", "not-a-date", "Invalid Date"],
+      ["older", "2026-06-10T20:00:00.000Z", new Date("2026-06-10T20:00:00.000Z").toLocaleDateString()],
+    ] as const;
+
+    render(
+      <>
+        {cases.map(([id, timestamp]) => (
+          <ProjectCard
+            key={id}
+            project={makeProject({ id, lastActivityAt: timestamp })}
+            health={makeHealth({ projectId: id, lastActivityAt: timestamp })}
+            onSelect={noop}
+            onPause={noop}
+            onResume={noop}
+            onRemove={noop}
+          />
+        ))}
+        <ProjectCard
+          project={makeProject({ id: "never", lastActivityAt: undefined })}
+          health={makeHealth({ projectId: "never", lastActivityAt: undefined })}
+          onSelect={noop}
+          onPause={noop}
+          onResume={noop}
+          onRemove={noop}
+        />
+      </>,
+    );
+
+    for (const [, , expected] of cases) {
+      expect(screen.getAllByText(expected).length).toBeGreaterThan(0);
+    }
     expect(screen.getByText("Never")).toBeDefined();
   });
 

@@ -168,6 +168,10 @@ import { registerProxyRoutes } from "./routes/register-proxy-routes.js";
 import { registerModelRoutes } from "./routes/register-model-routes.js";
 import { registerCustomProviderRoutes } from "./routes/register-custom-provider-routes.js";
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
+import { registerCommandCenterRoutes } from "./routes/register-command-center-routes.js";
+import { registerKnowledgeRoutes } from "./routes/register-knowledge-routes.js";
+import { registerSignalRoutes } from "./routes/register-signal-routes.js";
+import { registerMonitorRoutes } from "./routes/monitor-routes.js";
 import { registerAuthRoutes } from "./routes/register-auth-routes.js";
 import { registerRuntimeProviderRoutes } from "./routes/register-runtime-provider-routes.js";
 import { registerFnBinaryRoutes } from "./routes/register-fn-binary-routes.js";
@@ -1989,6 +1993,26 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   registerUsageRoutes(routeContext);
+  /*
+  FNXC:DashboardRoutes 2026-06-16-09:46:
+  PR #1683 wires the Command Center / SDLC registrars into the dashboard router: U9 analytics+live, U14 knowledge index, U11 external-signal webhooks, U13 monitor ingest/metrics. All inherit the server-level daemon bearer auth and getScopedStore project scoping; the signal/monitor ingest paths add their own per-provider/ingest-secret verification on top — none is an unauthenticated task-creation endpoint.
+  */
+  // U9 — Command Center analytics + live snapshot endpoints. Thin adapters over
+  // the core aggregators; inherit standard auth + getScopedStore project scoping.
+  registerCommandCenterRoutes(routeContext);
+  // U14 — persistent knowledge index query + incremental-refresh endpoints.
+  // Inherit standard auth + getScopedStore project scoping (same as U9); the
+  // index holds sensitive repo/PR content so no endpoint is unauthenticated or
+  // cross-project readable.
+  registerKnowledgeRoutes(routeContext);
+  // U11 — inbound external signal webhooks (Sentry/Datadog/PagerDuty/generic).
+  // Each route HMAC-verifies against a per-provider secret; never an
+  // unauthenticated task-creation endpoint.
+  registerSignalRoutes(routeContext);
+  // U13 — Monitor stage: deployment + incident ingestion (bearer-token authed,
+  // never unauthenticated) + MTTR/deploy/incident metrics read. Closes the loop
+  // by opening storm-guarded fix tasks back in triage.
+  registerMonitorRoutes(routeContext);
   registerUpdateCheckRoutes(routeContext);
   registerDiagnosticsRoutes(routeContext);
   // CLI Agent Executor hook ingestion (U17) — per-session token auth, exempt from

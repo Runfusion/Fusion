@@ -6,8 +6,8 @@ import {
   normalizeMergeAdvanceAutoSyncMode,
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
-import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, OAuthDeviceCodeInfo } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
+import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { splitSettingsSave } from "./settings/save-split";
 import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
@@ -213,6 +213,11 @@ type SettingsSection = {
 
 const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
 const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
+
+function resolveMaxAutoMergeRetriesForSettingsForm(settings?: { maxAutoMergeRetries?: unknown } | null): number {
+  const configured = Number(settings?.maxAutoMergeRetries);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 3;
+}
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
   // Global group (shared across all Fusion projects)
@@ -630,6 +635,7 @@ export function SettingsModal({
     overlapIgnorePaths: [],
     autoMerge: true,
     mergeStrategy: "direct",
+    maxAutoMergeRetries: 3,
     mergeIntegrationWorktree: "reuse-task-worktree",
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: false },
@@ -686,6 +692,8 @@ export function SettingsModal({
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResponse | null>(null);
+  const [updateInstallLoading, setUpdateInstallLoading] = useState(false);
+  const [updateInstallResult, setUpdateInstallResult] = useState<UpdateInstallResponse | null>(null);
   const gitHubStarCount = useGitHubStarCount();
   const [starClicked, markStarClicked] = useStarClickedFlag();
   const [prefixError, setPrefixError] = useState<string | null>(null);
@@ -889,6 +897,7 @@ export function SettingsModal({
           ...s,
           mergeIntegrationWorktree: normalizeMergeIntegrationWorktreeMode(s.mergeIntegrationWorktree),
           mergeAdvanceAutoSync: normalizeMergeAdvanceAutoSyncMode(s.mergeAdvanceAutoSync),
+          maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(s),
         };
         setForm(normalizedSettings);
         setInitialValues(normalizedSettings); // Store initial values to detect explicit clears
@@ -963,6 +972,7 @@ export function SettingsModal({
 
   const handleCheckForUpdates = useCallback(async () => {
     setUpdateCheckLoading(true);
+    setUpdateInstallResult(null);
 
     try {
       const result = await checkForUpdates();
@@ -972,7 +982,7 @@ export function SettingsModal({
         addToast(result.error, "error");
       }
     } catch (error) {
-      const message = getErrorMessage(error) || "Failed to check for updates";
+      const message = getErrorMessage(error) || t("settings.general.updateCheckFailed", "Failed to check for updates");
       setUpdateCheckResult({
         currentVersion: appVersion ?? "unknown",
         latestVersion: null,
@@ -983,7 +993,37 @@ export function SettingsModal({
     } finally {
       setUpdateCheckLoading(false);
     }
-  }, [addToast, appVersion]);
+  }, [addToast, appVersion, t]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    setUpdateInstallLoading(true);
+    setUpdateInstallResult(null);
+
+    try {
+      const result = await installUpdate(projectId);
+      setUpdateInstallResult(result);
+
+      if (result.error) {
+        addToast(result.error, "error");
+        return;
+      }
+
+      if (result.updated) {
+        addToast(t("settings.general.updateSuccessToast", "Update installed. Restart Fusion to apply it."), "success");
+      }
+    } catch (error) {
+      const message = getErrorMessage(error) || t("settings.general.updateFailed", "Update failed");
+      setUpdateInstallResult({
+        currentVersion: updateCheckResult?.currentVersion ?? appVersion ?? "unknown",
+        latestVersion: updateCheckResult?.latestVersion ?? null,
+        updated: false,
+        error: message,
+      });
+      addToast(message, "error");
+    } finally {
+      setUpdateInstallLoading(false);
+    }
+  }, [addToast, appVersion, projectId, t, updateCheckResult]);
 
   const renderUpdateCheckResultContent = useCallback(() => {
     if (!updateCheckResult) {
@@ -995,23 +1035,58 @@ export function SettingsModal({
     }
 
     if (updateCheckResult.updateAvailable && updateCheckResult.latestVersion) {
+      const installSucceeded = updateInstallResult?.updated === true;
+      const installError = updateInstallResult?.error;
+
       return (
         <>
-          {t("settings.general.updateAvailablePrefix", "v{{version}} available", { version: updateCheckResult.latestVersion })} ·{" "}
-          <a
-            href="https://runfusion.ai"
-            target="_blank"
-            rel="noreferrer"
-            className="settings-update-result-link"
-          >
-            {t("settings.general.learnMore", "Learn more")}
-          </a>
+          <span>
+            {t("settings.general.updateAvailablePrefix", "v{{version}} available", { version: updateCheckResult.latestVersion })} ·{" "}
+            <a
+              href="https://runfusion.ai"
+              target="_blank"
+              rel="noreferrer"
+              className="settings-update-result-link"
+            >
+              {t("settings.general.learnMore", "Learn more")}
+            </a>
+          </span>
+          {installSucceeded ? (
+            <span className="settings-update-install-status settings-update-install-status--success" aria-live="polite">
+              {t("settings.general.updateSuccess", "Updated to v{{version}} — restart Fusion to apply", {
+                version: updateInstallResult.latestVersion ?? updateCheckResult.latestVersion,
+              })}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm settings-update-now-btn"
+              onClick={() => {
+                void handleInstallUpdate();
+              }}
+              disabled={updateInstallLoading}
+            >
+              {updateInstallLoading ? (
+                <>
+                  <RefreshCw size={12} className="spinning" aria-hidden="true" />
+                  {t("settings.general.updating", "Updating…")}
+                </>
+              ) : (
+                t("settings.general.updateNow", "Update now")
+              )}
+            </button>
+          )}
+          {installError && (
+            <span className="settings-update-install-status settings-update-install-status--error" aria-live="polite">
+              {t("settings.general.updateFailedWithMessage", "Update failed: {{message}}", { message: installError })}
+            </span>
+          )}
         </>
       );
     }
 
     return t("settings.general.upToDate", "You're up to date ✓");
-  }, [updateCheckResult]);
+  }, [handleInstallUpdate, t, updateCheckResult, updateInstallLoading, updateInstallResult]);
 
   // Load auth status when the authentication section is active
   const loadAuthStatus = useCallback(async () => {
@@ -2185,6 +2260,7 @@ export function SettingsModal({
           binaryPath: form.worktrunk?.binaryPath?.trim() || undefined,
           onFailure: form.worktrunk?.onFailure ?? "fail",
         },
+        maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(form),
         taskPrefix: form.taskPrefix?.trim() || undefined,
         githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
         githubAuthToken: form.githubAuthToken?.trim() || undefined,

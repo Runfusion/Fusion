@@ -38,6 +38,14 @@ function findRawRgbViolations(source: string, fileName: string): string[] {
   );
 }
 
+function findRawRgbViolationsIncludingFallbacks(source: string, fileName: string): string[] {
+  const lines = source.split(/\r?\n/);
+
+  return lines.flatMap((line, index) =>
+    /rgba?\(/.test(line) ? [`${fileName}:${index + 1}:${line.trim()}`] : []
+  );
+}
+
 function buildRawRgbFailureMessage(violations: string[]): string {
   return [
     "Raw rgb/rgba() found in component CSS.",
@@ -72,6 +80,25 @@ describe("component CSS color token hygiene", () => {
 
     const violations = cssFiles.flatMap((filePath) =>
       findRawRgbViolations(readFileSync(filePath, "utf8"), formatComponentCssPath(filePath))
+    );
+
+    expect(violations, buildRawRgbFailureMessage(violations)).toEqual([]);
+  });
+
+  it("contains no raw rgb/rgba calls anywhere in command-center component CSS", () => {
+    /*
+    FNXC:CommandCenterStyling 2026-06-18-00:00:
+    Command Center has a stricter invariant than the global guard: raw rgb/rgba is forbidden even inside var() fallbacks because undefined surface/border tokens must keep concrete-hex color-mix fallbacks. Use the recursive component CSS scan because loadAllAppCss() only includes top-level components/*.css and does not load command-center subdirectories.
+    */
+    const cssFiles = findComponentCssFiles().filter((filePath) =>
+      formatComponentCssPath(filePath).startsWith("command-center/")
+    );
+
+    const violations = cssFiles.flatMap((filePath) =>
+      findRawRgbViolationsIncludingFallbacks(
+        readFileSync(filePath, "utf8"),
+        formatComponentCssPath(filePath)
+      )
     );
 
     expect(violations, buildRawRgbFailureMessage(violations)).toEqual([]);

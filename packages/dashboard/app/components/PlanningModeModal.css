@@ -630,7 +630,7 @@
   display: block;
   margin-bottom: var(--space-xs);
   color: var(--text-muted);
-  font-size: var(--font-size-xs, 12px);
+  font-size: 0.8rem;
 }
 
 .planning-comment-section .planning-textarea {

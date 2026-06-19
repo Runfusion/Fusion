@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskDocument, TaskStore } from "@fusion/core";
 import {
+  createChatTaskDocumentTools,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
 } from "../agent-tools.js";
@@ -220,6 +221,113 @@ describe("task_document_read tool", () => {
 
     expect(getText(result)).toContain("ERROR: Failed to read task documents");
     expect(getText(result)).toContain("read timeout");
+  });
+});
+
+describe("chat task document tools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function findChatTool(name: "fn_task_document_write" | "fn_task_document_read", store: TaskStore) {
+    const tool = createChatTaskDocumentTools(store).find((candidate) => candidate.name === name);
+    expect(tool).toBeDefined();
+    return tool!;
+  }
+
+  it("exposes canonical document tool names for chat agents", () => {
+    const { store } = createMockStore();
+
+    expect(createChatTaskDocumentTools(store).map((tool) => tool.name)).toEqual([
+      "fn_task_document_write",
+      "fn_task_document_read",
+    ]);
+  });
+
+  it("writes a document to the explicit task_id", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2020", key: "plan", revision: 5 }));
+
+    const tool = findChatTool("fn_task_document_write", store);
+    const result = await runTool(tool, "call-chat-write", {
+      task_id: "FN-2020",
+      key: "plan",
+      content: "Chat-authored plan",
+      author: "chat-agent",
+    });
+
+    expect(upsertTaskDocument).toHaveBeenCalledWith("FN-2020", {
+      key: "plan",
+      content: "Chat-authored plan",
+      author: "chat-agent",
+    });
+    expect(getText(result)).toContain("Saved document \"plan\"");
+    expect(getText(result)).toContain("revision 5");
+  });
+
+  it("reads a document from the explicit task_id", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(createMockDocument({ taskId: "FN-2021", key: "notes", content: "Chat notes" }));
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-read", { task_id: "FN-2021", key: "notes" });
+
+    expect(getTaskDocument).toHaveBeenCalledWith("FN-2021", "notes");
+    expect(getText(result)).toContain("Document: notes");
+    expect(getText(result)).toContain("Chat notes");
+  });
+
+  it("returns not found for a missing explicit-task document key", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(null);
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-missing", { task_id: "FN-2022", key: "missing" });
+
+    expect(getTaskDocument).toHaveBeenCalledWith("FN-2022", "missing");
+    expect(getText(result)).toContain("Document \"missing\" not found.");
+  });
+
+  it("lists documents for the explicit task_id when key is omitted", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockResolvedValue([
+      createMockDocument({ taskId: "FN-2023", key: "plan", revision: 1 }),
+      createMockDocument({ taskId: "FN-2023", key: "docs", revision: 2 }),
+    ]);
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-list", { task_id: "FN-2023" });
+
+    expect(getTaskDocuments).toHaveBeenCalledWith("FN-2023");
+    expect(getText(result)).toContain("Task documents:");
+    expect(getText(result)).toContain("- plan (revision 1");
+    expect(getText(result)).toContain("- docs (revision 2");
+  });
+
+  it("returns clean errors for non-existent explicit task writes", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new Error("Task FN-404 not found"));
+
+    const tool = findChatTool("fn_task_document_write", store);
+    const result = await runTool(tool, "call-chat-write-error", {
+      task_id: "FN-404",
+      key: "plan",
+      content: "No target",
+    });
+
+    expect(getText(result)).toContain("ERROR: Failed to save document \"plan\" for task FN-404");
+    expect(getText(result)).toContain("Task FN-404 not found");
+  });
+
+  it("returns clean errors for non-existent explicit task reads", async () => {
+    const { store, getTaskDocuments } = createMockStore();
+    getTaskDocuments.mockRejectedValue(new Error("Task FN-405 not found"));
+
+    const tool = findChatTool("fn_task_document_read", store);
+    const result = await runTool(tool, "call-chat-read-error", { task_id: "FN-405" });
+
+    expect(getText(result)).toContain("ERROR: Failed to read task documents for task FN-405");
+    expect(getText(result)).toContain("Task FN-405 not found");
   });
 });
 

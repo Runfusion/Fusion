@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "_comment": "FNXC:CustomWorkflowReliability 2026-06-19-00:00: FN-6694 requires this manifest to encode goal G-MPW67VQR-0001-97S3's release-check checklist as objective, runnable seam evidence instead of prose-only QA signoff.",
+  "checklist": [
+    {
+      "id": "author-import-save-discover-reload",
+      "title": "Custom workflow authoring, import, invalid rejection, save, discovery, selection, and reload",
+      "journey": "A custom workflow can be authored/imported, rejected on invalid IR, saved, discovered, selected, and reloaded.",
+      "seams": [
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/workflow-definition-store.test.ts"
+        },
+        {
+          "package": "@fusion/dashboard",
+          "file": "packages/dashboard/src/routes/__tests__/workflow-import-export.test.ts"
+        },
+        {
+          "package": "@fusion/dashboard",
+          "file": "packages/dashboard/src/routes/__tests__/workflow-design-route.test.ts"
+        },
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/workflow-selection-store.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "selected-workflow-execution-fail-closed",
+      "title": "Selected workflow execution and fail-closed missing custom workflow IDs",
+      "journey": "A task can execute the selected workflow through runtime primitives, and explicit missing custom workflow IDs fail closed.",
+      "seams": [
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/workflow-selection-store.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-task-runtime.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "gate-advisory-readonly-revise-required-artifact",
+      "title": "Gate, advisory, readonly, REVISE, and required-artifact observability",
+      "journey": "Gate/advisory/readonly/REVISE/required-artifact behavior is observable in task state, workflow results, task documents, and logs.",
+      "seams": [
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-malformed-verdict-gate.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-required-artifact-gate.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workflow-step-readonly-allowlist.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/executor-workflow-revision-scope.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "automerge-hard-cancel-file-scope-recovery",
+      "title": "autoMerge:false, hard-cancel, file-scope, and recovery invariants",
+      "journey": "autoMerge:false, hard-cancel, file-scope, and recovery invariants are preserved under custom workflow execution.",
+      "seams": [
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/workflow-and-file-scope.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/reliability-interactions/workflow-interpreter-cutover.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/self-healing-custom-workflow-recovery.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "restart-selection-progress-run-audit",
+      "title": "Restart durability for workflow selection, progress, and recovery evidence",
+      "journey": "Engine/scheduler restart preserves workflow selection and progress, and any recovery emits typed run-audit evidence instead of silent lifecycle mutation.",
+      "seams": [
+        {
+          "package": "@fusion/core",
+          "file": "packages/core/src/__tests__/workflow-restart-durability.test.ts"
+        },
+        {
+          "package": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/self-healing-custom-workflow-recovery.test.ts"
+        }
+      ]
+    }
+  ],
+  "manual": []
+}

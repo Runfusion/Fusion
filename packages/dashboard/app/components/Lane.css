@@ -60,6 +60,7 @@
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
+  touch-action: pan-x pan-y;
 }
 
 .board.board-workflow-columns > .column {
@@ -68,6 +69,7 @@
   height: 100%;
   min-height: 0;
   scroll-snap-align: center;
+  touch-action: pan-x pan-y;
 }
 
 .lane {
@@ -96,7 +98,7 @@
 }
 
 .lane-header:focus-visible {
-  outline: 2px solid var(--focus-ring, var(--color-primary));
+  outline: 2px solid var(--todo);
   outline-offset: -2px;
 }
 
@@ -129,12 +131,14 @@
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
   min-height: 0;
+  touch-action: pan-x pan-y;
 }
 
 .lane-columns > .column {
   flex: 0 0 clamp(280px, 28vw, 340px);
   /* Repo convention (mobile-scroll-snap test): snap-align must be `center`. */
   scroll-snap-align: center;
+  touch-action: pan-x pan-y;
 }
 
 .lane-columns::-webkit-scrollbar {
@@ -151,9 +155,9 @@
   margin: 4px 12px 0;
   padding: 6px 8px;
   font-size: 0.8rem;
-  color: var(--danger, #d9534f);
-  background: color-mix(in srgb, var(--danger, #d9534f) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger, #d9534f) 35%, transparent);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
   border-radius: var(--radius-sm, 6px);
 }
 

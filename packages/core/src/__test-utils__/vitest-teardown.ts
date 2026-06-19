@@ -6,11 +6,13 @@
  * the run-local worker/home directories as leaks.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 export const WORKER_ROOT_OWNER_FILE = ".fusion-test-worker-root-owner";
+const FUSION_TEST_RUN_TOKEN_ENV = "FUSION_TEST_RUN_TOKEN";
+const LEGACY_TEST_HOME_PREFIX = "fn-test-home-";
 
 let workerRootRmSync = rmSync;
 let workerRootSleepMsSync = sleepMsSync;
@@ -32,7 +34,35 @@ function isEnoent(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
-export function removeWorkerRootWithRetry(workerRoot: string, retries = 3, delayMs = 75): void {
+export function removeLegacyTopLevelHomeRoots(tempRoot = tmpdir()): void {
+  /*
+  FNXC:TestIsolation 2026-06-14-00:36:
+  FN-6430 found stale top-level `fn-test-home-*` roots after CLI package-load runs; current workers create HOME under `fusion-test-workers-*`, so top-level homes are legacy leftovers that can bleed settings/cache state into nested lanes.
+  Sweep only a single temp-root level by prefix during setup/teardown, never a recursive temp-tree walk.
+  */
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(tempRoot);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.startsWith(LEGACY_TEST_HOME_PREFIX)) continue;
+    try {
+      workerRootRmSync(join(tempRoot, entry), { recursive: true, force: true });
+    } catch {
+      // Best effort only. A future invocation will retry the bounded prefix sweep.
+    }
+  }
+}
+
+export function removeWorkerRootWithRetry(workerRoot: string, retries = 8, delayMs = 75): void {
+  /*
+  FNXC:TestIsolation 2026-06-17-19:02:
+  Broad core/package runs can finish workers while macOS still drains redirected temp files or SQLite WAL handles under `fusion-test-workers-*`.
+  Keep teardown bounded but long enough to absorb transient ENOTEMPTY/EBUSY cleanup races rather than leaking a per-invocation worker root.
+  */
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -52,15 +82,19 @@ export function removeWorkerRootWithRetry(workerRoot: string, retries = 3, delay
 }
 
 export default function setup(): () => Promise<void> {
+  removeLegacyTopLevelHomeRoots();
   // Use a fresh root for each Vitest invocation. A static shared root makes the
   // setup-time redirect sweep proportional to stale directories left by every
   // prior interrupted run.
   const workerRoot = resolve(mkdtempSync(join(tmpdir(), "fusion-test-workers-")));
   try {
-    writeFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), `${process.pid}\n`);
+    const runToken = process.env[FUSION_TEST_RUN_TOKEN_ENV];
+    const tokenLine = runToken && runToken.trim().length > 0 ? `runToken=${runToken}\n` : "";
+    writeFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), `${process.pid}\n${tokenLine}`);
   } catch {
     // Best effort only. The marker protects active roots from external orphan
-    // pruning; teardown still owns this root by absolute path.
+    // pruning; FN-6396 adds the runner token so stale pid reuse cannot keep an
+    // orphaned root alive. Teardown still owns this root by absolute path.
   }
   process.env.FUSION_TEST_WORKER_ROOT = workerRoot;
 
@@ -74,5 +108,6 @@ export default function setup(): () => Promise<void> {
     // redirected temp dirs are still closing. Retry boundedly so a brief busy-fd
     // race does not leak the per-invocation fusion-test-workers-* root.
     removeWorkerRootWithRetry(workerRoot);
+    removeLegacyTopLevelHomeRoots();
   };
 }

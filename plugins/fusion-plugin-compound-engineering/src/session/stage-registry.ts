@@ -99,6 +99,19 @@ const STAGE_DEFINITIONS: CeStageDefinition[] = [
     label: "Work",
     artifactGlob: "docs/work/**/*.md",
   },
+  {
+    /*
+     * FNXC:CompoundEngineering 2026-06-16-19:40:
+     * debug is an operator-launchable investigation session appended after work so the existing strategy→ideate→brainstorm→plan→work auto-advance chain remains unchanged.
+     */
+    stageId: "debug",
+    order: 600,
+    skillId: "ce-debug",
+    artifactLocation: "docs/debug/",
+    icon: "Bug",
+    label: "Debug",
+    artifactGlob: "docs/debug/**/*.md",
+  },
 ];
 
 const REGISTRY = new Map<string, CeStageDefinition>(STAGE_DEFINITIONS.map((s) => [s.stageId, s]));

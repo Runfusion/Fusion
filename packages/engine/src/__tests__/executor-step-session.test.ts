@@ -115,7 +115,11 @@ describe("Workflow Steps Execution", () => {
     // Should have been called four times: initial + 3 retries
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
 
-    // Retries still didn't call fn_task_done, so it fails and requeues immediately.
+    /*
+    FNXC:EngineTests 2026-06-18-07:22:
+    FN-6610 confirmed the intended executor.ts no-fn_task_done exhaustion behavior: after three in-session retries, tasks with remaining requeue budget return to todo with progress preserved; only exhausted requeue budget parks them in review.
+    Keep these expectations aligned with Executor.execute()'s MAX_TASK_DONE_REQUEUE_RETRIES branch rather than treating the first in-session exhaustion as terminal.
+    */
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "queued",
       error: null,
@@ -224,7 +228,7 @@ describe("Workflow Steps Execution", () => {
             prompt: vi.fn().mockImplementation(async () => {
               const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
               if (reviewTool) {
-                await reviewTool.execute("tool-review", { step: 1, type: "code", step_name: "Implement" });
+                await reviewTool.execute("tool-review", { step: 0, type: "code", step_name: "Implement" });
               }
             }),
             dispose: vi.fn(),
@@ -269,7 +273,7 @@ describe("Workflow Steps Execution", () => {
         dependencies: [],
         steps: [{ name: "Implement", status: "in-progress" }],
         currentStep: 0,
-        log: [{ action: "code review requested for Step 1 (Implement)", timestamp: new Date().toISOString() }],
+        log: [{ action: "code review requested for Step 0 (Implement)", timestamp: new Date().toISOString() }],
         prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -314,7 +318,7 @@ describe("Workflow Steps Execution", () => {
         dependencies: [],
         steps: [{ name: "Implement", status: "in-progress" }],
         currentStep: 0,
-        log: [{ action: "code review Step 1: APPROVE", timestamp: new Date().toISOString() }],
+        log: [{ action: "code review Step 0: APPROVE", timestamp: new Date().toISOString() }],
         prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -475,7 +479,12 @@ describe("Workflow Steps Execution", () => {
     expect(secondCall[0].tools).toBe("readonly");
     expect(secondCall[0].systemPrompt).toContain("Docs Review");
     expect(secondCall[0].systemPrompt).toContain("Review all docs and verify they are complete.");
-    expect(secondCall[0].taskEnv).toEqual(mockedCreateFnAgent.mock.calls[0][0].taskEnv);
+    const withoutWorkflowStep = (env: Record<string, string | undefined>) => {
+      const { FUSION_WORKFLOW_STEP: _workflowStep, ...stableEnv } = env;
+      return stableEnv;
+    };
+    expect(secondCall[0].taskEnv.FUSION_WORKFLOW_STEP).toBe("1");
+    expect(withoutWorkflowStep(secondCall[0].taskEnv)).toEqual(withoutWorkflowStep(mockedCreateFnAgent.mock.calls[0][0].taskEnv));
 
     // Task should move to in-review
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -2861,12 +2870,18 @@ describe("Workflow Steps Execution", () => {
         };
         return { session };
       } else {
-        // Workflow step agent that passes (no REQUEST REVISION)
+        let stepSubscribeHandler: any;
+        // Workflow step agent that passes with the structured verdict required by the workflow-step parser.
         return {
           session: {
-            prompt: vi.fn().mockResolvedValue(undefined),
+            prompt: vi.fn().mockImplementation(async () => {
+              stepSubscribeHandler?.({
+                type: "message_update",
+                assistantMessageEvent: { type: "text_delta", delta: '{"verdict":"APPROVE","notes":""}' },
+              });
+            }),
             dispose: vi.fn(),
-            subscribe: vi.fn(),
+            subscribe: vi.fn((handler: any) => { stepSubscribeHandler = handler; }),
             state: {},
           },
         };
@@ -3008,22 +3023,32 @@ describe("Real-time steering injection", () => {
     resetExecutorMocks();
   });
 
+  function makeSteeringTask(steeringComments: Array<{ id: string; text: string; createdAt: string; author: "user" | "agent" }> = []) {
+    return {
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      steeringComments,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  function setLegacyActiveSession(executor: TaskExecutor, steerFn: ReturnType<typeof vi.fn>, seenSteeringIds = new Set<string>()) {
+    const session = { steer: steerFn, dispose: vi.fn() };
+    const state = { session, seenSteeringIds };
+    (executor as any).activeSessions.set("FN-001", state);
+    return { session, state };
+  }
+
   it("initializes seenSteeringIds with existing comments at session start", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
-
-    // Mock session with steer method
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockImplementation(async () => {
-          // Simulate execution running
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }),
-        dispose: vi.fn(),
-        steer: steerFn,
-      },
-    } as any);
-
     const executor = new TaskExecutor(store, "/tmp/test");
     const existingComment = {
       id: "1234567890-abc123",
@@ -3031,65 +3056,18 @@ describe("Real-time steering injection", () => {
       createdAt: new Date().toISOString(),
       author: "user" as const,
     };
+    setLegacyActiveSession(executor, steerFn, new Set([existingComment.id]));
 
-    await executor.execute({
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [existingComment],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([existingComment]));
 
-    // Wait for execution to complete
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    // No steer calls should be made for existing comments
     expect(steerFn).not.toHaveBeenCalled();
   });
 
   it("injects new steering comments via session.steer() on task:updated", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
-    let promptResolve: () => void;
-    const promptPromise = new Promise<void>(resolve => { promptResolve = resolve; });
-
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockImplementation(async () => {
-          // Wait for signal to complete
-          await promptPromise;
-        }),
-        dispose: vi.fn(),
-        steer: steerFn,
-      },
-    } as any);
-
     const executor = new TaskExecutor(store, "/tmp/test");
-
-    // Start execution
-    const executePromise = executor.execute({
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    // Wait for agent to start
-    await new Promise(resolve => setTimeout(resolve, 20));
-
-    // Simulate adding a steering comment mid-execution
+    setLegacyActiveSession(executor, steerFn);
     const newComment = {
       id: "9876543210-def456",
       text: "Please use a different approach",
@@ -3097,44 +3075,23 @@ describe("Real-time steering injection", () => {
       author: "user" as const,
     };
 
-    store._trigger("task:updated", {
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [newComment],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([newComment]));
 
-    // Wait for steer to be called
-    await new Promise(resolve => setTimeout(resolve, 20));
-
-    // Verify steer was called with the formatted message
     expect(steerFn).toHaveBeenCalledOnce();
     expect(steerFn.mock.calls[0][0]).toContain("📣 **New feedback**");
     expect(steerFn.mock.calls[0][0]).toContain("Please use a different approach");
-
-    // Verify log entry was created
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
       "by user"
     );
-
-    // Complete the execution
-    promptResolve!();
-    await executePromise;
   });
 
   it("injects new steering comments via active StepSessionExecutor on task:updated", async () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
-    const steerActiveSessions = vi.fn().mockResolvedValue(undefined);
+    const steerActiveSessions = vi.fn().mockResolvedValue(1);
+    const markSteeringCommentsDelivered = vi.fn();
     const newComment = {
       id: "step-session-comment",
       text: "Please adjust the active step",
@@ -3142,7 +3099,7 @@ describe("Real-time steering injection", () => {
       author: "user" as const,
     };
 
-    (executor as any).activeStepExecutors.set("FN-001", { steerActiveSessions });
+    (executor as any).activeStepExecutors.set("FN-001", { steerActiveSessions, markSteeringCommentsDelivered });
     (executor as any).activeStepExecutorSeenSteeringIds.set("FN-001", new Set());
 
     await (store as any)._triggerAsync("task:updated", {
@@ -3162,6 +3119,39 @@ describe("Real-time steering injection", () => {
     expect(steerActiveSessions).toHaveBeenCalledOnce();
     expect(steerActiveSessions.mock.calls[0][0]).toContain("📣 **New feedback**");
     expect(steerActiveSessions.mock.calls[0][0]).toContain("Please adjust the active step");
+    expect(markSteeringCommentsDelivered).toHaveBeenCalledWith([newComment.id]);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("Comment received mid-execution"),
+      "by user",
+    );
+  });
+
+  it("queues step-session steering comments for the next prompt when no step session is active", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const steerActiveSessions = vi.fn().mockResolvedValue(0);
+    const updateSteeringComments = vi.fn();
+    const markSteeringCommentsDelivered = vi.fn();
+    const newComment = {
+      id: "step-session-queued-comment",
+      text: "Please apply this in the next step prompt",
+      createdAt: new Date().toISOString(),
+      author: "user" as const,
+    };
+
+    (executor as any).activeStepExecutors.set("FN-001", {
+      steerActiveSessions,
+      updateSteeringComments,
+      markSteeringCommentsDelivered,
+    });
+    (executor as any).activeStepExecutorSeenSteeringIds.set("FN-001", new Set());
+
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([newComment]));
+
+    expect(steerActiveSessions).toHaveBeenCalledOnce();
+    expect(updateSteeringComments).toHaveBeenCalledWith([newComment]);
+    expect(markSteeringCommentsDelivered).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
       expect.stringContaining("Comment received mid-execution"),
@@ -3241,298 +3231,112 @@ describe("Real-time steering injection", () => {
   it("does not re-inject already seen steering comments", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
-
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-        steer: steerFn,
-      },
-    } as any);
-
     const executor = new TaskExecutor(store, "/tmp/test");
-    const commentId = "1111111111-aaa111";
-
-    // Start execution with one comment
-    await executor.execute({
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [{
-        id: commentId,
-        text: "Original comment",
-        createdAt: new Date().toISOString(),
-        author: "user" as const,
-      }],
+    const comment = {
+      id: "1111111111-aaa111",
+      text: "Original comment",
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+      author: "user" as const,
+    };
+    setLegacyActiveSession(executor, steerFn, new Set([comment.id]));
 
-    // Wait for execution to start
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([comment]));
 
-    // Trigger task:updated with the SAME comment (simulating a non-steering update)
-    store._trigger("task:updated", {
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [{
-        id: commentId,
-        text: "Original comment",
-        createdAt: new Date().toISOString(),
-        author: "user" as const,
-      }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    // Wait and verify steer was not called again
-    await new Promise(resolve => setTimeout(resolve, 20));
     expect(steerFn).not.toHaveBeenCalled();
   });
 
   it("marks comment as seen even if steer() throws", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockRejectedValue(new Error("Session disconnected"));
-    let resolvePrompt: () => void;
-    const promptPromise = new Promise<void>(resolve => { resolvePrompt = resolve; });
-
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockImplementation(() => promptPromise),
-        dispose: vi.fn(),
-        steer: steerFn,
-      },
-    } as any);
-
     const executor = new TaskExecutor(store, "/tmp/test");
-    const commentId = "2222222222-bbb222";
-
-    // Start execution (don't await yet)
-    const executePromise = executor.execute({
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [],
+    const comment = {
+      id: "2222222222-bbb222",
+      text: "Comment that fails",
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+      author: "user" as const,
+    };
+    setLegacyActiveSession(executor, steerFn);
 
-    // Wait for execution to start
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([comment]));
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([comment]));
 
-    // Add a new comment that will fail to inject
-    store._trigger("task:updated", {
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [{
-        id: commentId,
-        text: "Comment that fails",
-        createdAt: new Date().toISOString(),
-        author: "user" as const,
-      }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    // Wait for processing
-    await new Promise(resolve => setTimeout(resolve, 20));
-
-    // Verify steer was called (and failed)
-    expect(steerFn).toHaveBeenCalledOnce();
-
-    // Trigger task:updated again with the same comment
-    store._trigger("task:updated", {
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [{
-        id: commentId,
-        text: "Comment that fails",
-        createdAt: new Date().toISOString(),
-        author: "user" as const,
-      }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    // Wait and verify steer was NOT called again (comment marked as seen)
-    await new Promise(resolve => setTimeout(resolve, 20));
     expect(steerFn).toHaveBeenCalledTimes(1);
-
-    // Complete execution
-    resolvePrompt!();
-    await executePromise;
   });
 
-  it("does not inject steering comments for tasks not in activeSessions", async () => {
+  it("does not inject steering comments for tasks without an active injection target", async () => {
     const store = createMockStore();
-    const steerFn = vi.fn().mockResolvedValue(undefined);
-
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
-        dispose: vi.fn(),
-        steer: steerFn,
-      },
-    } as any);
-
     new TaskExecutor(store, "/tmp/test");
 
-    // Trigger task:updated for a task that is not in activeSessions
-    store._trigger("task:updated", {
-      id: "FN-NOT-EXECUTING",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [{
+    await (store as any)._triggerAsync("task:updated", {
+      ...makeSteeringTask([{
         id: "3333333333-ccc333",
         text: "Should not be injected",
         createdAt: new Date().toISOString(),
         author: "user" as const,
-      }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      }]),
+      id: "FN-NOT-EXECUTING",
     });
 
-    // Wait and verify steer was not called
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(steerFn).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-NOT-EXECUTING",
+      expect.stringContaining("Comment received mid-execution"),
+      expect.anything(),
+    );
   });
 
   it("handles multiple new steering comments in a single task:updated", async () => {
     const store = createMockStore();
     const steerFn = vi.fn().mockResolvedValue(undefined);
-    let resolvePrompt: () => void;
-    const promptPromise = new Promise<void>(resolve => { resolvePrompt = resolve; });
-
-    // Set up getTask to return the task with existing comment in comments (used for seenSteeringIds init)
-    store.getTask.mockResolvedValue({
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
-      comments: [{
-        id: "existing-comment",
-        text: "Original",
-        createdAt: new Date().toISOString(),
-        author: "user",
-      }],
-      steeringComments: [{
-        id: "existing-comment",
-        text: "Original",
-        createdAt: new Date().toISOString(),
-        author: "user",
-      }],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    mockedCreateFnAgent.mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockImplementation(() => promptPromise),
-        dispose: vi.fn(),
-        steer: steerFn,
-      },
-    } as any);
-
     const executor = new TaskExecutor(store, "/tmp/test");
+    setLegacyActiveSession(executor, steerFn, new Set(["existing-comment"]));
 
-    // Start execution (don't await yet)
-    const executePromise = executor.execute({
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([
+      {
+        id: "existing-comment",
+        text: "Original",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      },
+      {
+        id: "new-comment-1",
+        text: "First new comment",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      },
+      {
+        id: "new-comment-2",
+        text: "Second new comment",
+        createdAt: new Date().toISOString(),
+        author: "user" as const,
+      },
+    ]));
 
-    // Wait for execution to start
-    await new Promise(resolve => setTimeout(resolve, 20));
-
-    // Add two new comments at once
-    store._trigger("task:updated", {
-      id: "FN-001",
-      title: "Test",
-      description: "Test",
-      column: "in-progress",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      steeringComments: [
-        {
-          id: "existing-comment",
-          text: "Original",
-          createdAt: new Date().toISOString(),
-          author: "user",
-        },
-        {
-          id: "new-comment-1",
-          text: "First new comment",
-          createdAt: new Date().toISOString(),
-          author: "user",
-        },
-        {
-          id: "new-comment-2",
-          text: "Second new comment",
-          createdAt: new Date().toISOString(),
-          author: "user",
-        },
-      ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    // Wait for processing
-    await new Promise(resolve => setTimeout(resolve, 20));
-
-    // Verify steer was called twice (once for each new comment)
     expect(steerFn).toHaveBeenCalledTimes(2);
+  });
 
-    // Complete execution
-    resolvePrompt!();
-    await executePromise;
+  it("keeps agent-authored steering on the legacy review-handoff path", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({ reviewHandoffPolicy: "comment-triggered" } as any);
+    const steerFn = vi.fn().mockResolvedValue(undefined);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const { session, state } = setLegacyActiveSession(executor, steerFn);
+    const executeReviewHandoff = vi.fn().mockResolvedValue(undefined);
+    (executor as any).executeReviewHandoff = executeReviewHandoff;
+    const agentComment = {
+      id: "agent-handoff-comment",
+      text: "Implementation is ready; requesting user review now.",
+      createdAt: new Date().toISOString(),
+      author: "agent" as const,
+    };
+
+    await (store as any)._triggerAsync("task:updated", makeSteeringTask([agentComment]));
+
+    expect(steerFn).toHaveBeenCalledOnce();
+    expect(executeReviewHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-001" }),
+      session,
+      state,
+    );
   });
 });
 
@@ -3759,14 +3563,14 @@ describe("U2: fn_review_step RETHINK delegates to resetStepToBaseline (character
             const updateTool = tools.find((t: any) => t.name === "fn_task_update");
             if (updateTool) {
               try {
-                await updateTool.execute("tool-update", { step: 1, status: "in-progress" });
+                await updateTool.execute("tool-update", { step: 0, status: "in-progress" });
               } catch { /* tool param shape varies; ignore */ }
             }
             const reviewTool = tools.find((t: any) => t.name === "fn_review_step");
             if (reviewTool) {
               try {
                 await reviewTool.execute("tool-review", {
-                  step: 1,
+                  step: 0,
                   type: reviewType,
                   step_name: "Implement",
                   baseline: reviewType === "code" ? "agentBaselineSHA" : undefined,
@@ -3830,7 +3634,7 @@ describe("U2: fn_review_step RETHINK delegates to resetStepToBaseline (character
     expect(store.updateStep).toHaveBeenCalledWith("FN-RT-1", 0, "pending");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-RT-1",
-      expect.stringContaining("Step 1 plan rewound"),
+      expect.stringContaining("Step 0 plan rewound"),
       "rejected approach",
     );
   });

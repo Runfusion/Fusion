@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { AlertCircle, Lightbulb, Layers, Target, Terminal, X } from "lucide-react";
 import type { AiSessionSummary, CliNeedsAttentionVariant } from "../api";
 
-type CliActionId = "advance" | "retry" | "cancel" | "reauthenticate" | "relaunch";
+export type CliActionId = "advance" | "retry" | "cancel" | "reauthenticate" | "relaunch";
 
 interface SessionNotificationBannerProps {
   sessions: AiSessionSummary[];
@@ -13,11 +13,11 @@ interface SessionNotificationBannerProps {
   onDismissAll: () => void;
   /**
    * CLI agent needs-attention / confirm-advance actions (CLI Agent Executor,
-   * U11). `advance` wires the userExited "Advance" verb + generic-tier
-   * confirm-advance; the others map to existing endpoints where present, else
-   * are no-op callbacks marked TODO-wire by the caller.
+   * U11). Every enabled CLI action must have an observable effect in the host;
+   * unsupported actions should be returned from `getCliActionDisabledReason`.
    */
   onCliAction?: (session: AiSessionSummary, action: CliActionId) => void;
+  getCliActionDisabledReason?: (session: AiSessionSummary, action: CliActionId) => string | null | undefined;
 }
 
 // `cli-agent` extends the previously-closed union: a SINGLE Terminal icon for
@@ -139,6 +139,7 @@ export function SessionNotificationBanner({
   onDismissSession,
   onDismissAll,
   onCliAction,
+  getCliActionDisabledReason,
 }: SessionNotificationBannerProps) {
   const { t } = useTranslation("app");
   const [dismissRevision, setDismissRevision] = useState(0);
@@ -300,24 +301,39 @@ export function SessionNotificationBanner({
                 </div>
 
                 <div className="session-notification-banner__actions">
-                  {variantSpec.actions.map((action) => (
-                    <button
-                      key={action}
-                      className="session-notification-banner__resume"
-                      data-cli-action={action}
-                      onClick={() => {
-                        // "advance" wires confirm-advance; other verbs hit
-                        // existing endpoints or remain TODO-wire no-ops upstream.
-                        onCliAction?.(session, action);
-                        if (action === "cancel" || action === "advance") {
-                          dismissLocally(session);
-                          onDismissSession(session.id);
-                        }
-                      }}
-                    >
-                      {t(CLI_ACTION_LABELS[action].key, CLI_ACTION_LABELS[action].defaultVal)}
-                    </button>
-                  ))}
+                  {variantSpec.actions.map((action) => {
+                    const label = t(CLI_ACTION_LABELS[action].key, CLI_ACTION_LABELS[action].defaultVal);
+                    const disabledReason = !onCliAction
+                      ? t("sessionBanner.cli.actionUnavailable", "Action unavailable")
+                      : getCliActionDisabledReason?.(session, action);
+                    const disabled = Boolean(disabledReason);
+
+                    return (
+                      <button
+                        key={action}
+                        className={`session-notification-banner__resume${disabled ? " session-notification-banner__resume--disabled" : ""}`}
+                        data-cli-action={action}
+                        data-cli-action-disabled={disabled ? "true" : undefined}
+                        disabled={disabled}
+                        aria-label={disabled ? `${label} unavailable: ${disabledReason}` : undefined}
+                        title={disabledReason ?? undefined}
+                        onClick={() => {
+                          if (disabled) return;
+                          /*
+                           * FNXC:SessionBanner 2026-06-14-19:32:
+                           * Enabled CLI action buttons must call the host handler; unsupported or missing-id actions render disabled instead so no visible action can fall through to a silent no-op. Advance and cancel preserve the banner's local-dismiss contract after firing the observable host action.
+                           */
+                          onCliAction?.(session, action);
+                          if (action === "cancel" || action === "advance") {
+                            dismissLocally(session);
+                            onDismissSession(session.id);
+                          }
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                   <button
                     className="session-notification-banner__dismiss"
                     onClick={() => {

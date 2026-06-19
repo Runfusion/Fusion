@@ -34,6 +34,10 @@ function formatDuration(startedAt?: string, completedAt?: string): string | null
   return `${String(mins).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
 }
 
+/*
+ * FNXC:RelativeTime 2026-06-17-20:48:
+ * FN-6618 keeps PR check freshness local because this surface requires seconds-granularity `updated Ns ago` copy and null for empty/unparseable values, which getRelativeTimeBucket does not express.
+ */
 function relativeTime(value?: string): string | null {
   if (!value) return null;
   const ts = Date.parse(value);

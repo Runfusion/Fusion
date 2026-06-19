@@ -1,6 +1,6 @@
 import { computeBlockerFanoutMap } from "./blocker-fanout.js";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES } from "./types.js";
-import type { Task, TaskPriority } from "./types.js";
+import type { ProjectSettings, Task, TaskPriority } from "./types.js";
 
 export interface TaskPrioritySortable {
   id: string;
@@ -90,7 +90,7 @@ const UNBLOCK_ACTIVE_COLUMNS = new Set<Task["column"]>(["triage", "todo", "in-pr
 const DONE_COLUMNS = new Set<Task["column"]>(["done", "archived"]);
 
 export interface BuildUnblockWeightMapOptions {
-  maxAutoMergeRetries?: number;
+  maxAutoMergeRetries?: ProjectSettings["maxAutoMergeRetries"];
 }
 
 function countUnmetDependencies(task: Task, taskById: Map<string, Task>): number {

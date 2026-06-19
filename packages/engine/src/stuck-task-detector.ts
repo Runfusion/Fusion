@@ -37,6 +37,16 @@ interface TrackedTask {
   /** Number of ignored fn_task_update rebuffs since the last progress event. */
   ignoredStepUpdateCount: number;
   /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * FN-6598 requires long fn_run_verification subprocesses to count as healthy in-flight work instead of loop churn. Track active runs with a count so nested or overlapping verification calls do not clear suppression until every run ends.
+   */
+  verificationActiveCount: number;
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * Verification suppression must be bounded by the command's own hard timeout plus a small cleanup grace, so a missing end signal cannot blind stuck detection forever.
+   */
+  verificationDeadlineAt: number | null;
+  /**
    * Set once the executor has already observed a loop in the current execute()
    * lifecycle. FN-5168 only escalates to no-progress churn after the existing
    * loop recovery path already had one chance to compact-and-resume.
@@ -85,6 +95,7 @@ const LOOP_ACTIVITY_THRESHOLD = 60;
  * is still churning on completed work instead of advancing.
  */
 const NO_PROGRESS_CHURN_THRESHOLD = 25;
+const VERIFICATION_DEADLINE_GRACE_MS = 5_000;
 
 export interface StuckTaskDetectorOptions {
   /** Polling interval in milliseconds. Default: 30000 (30 seconds). */
@@ -219,6 +230,8 @@ export class StuckTaskDetector {
             lastProgressAt: now,
             activitySinceProgress: 0,
             ignoredStepUpdateCount: 0,
+            verificationActiveCount: 0,
+            verificationDeadlineAt: null,
             loopObservedInLifecycle: false,
             recoveryInProgress: false,
             canonicalTaskId: canonicalId,
@@ -235,6 +248,8 @@ export class StuckTaskDetector {
             lastProgressAt: now,
             activitySinceProgress: 0,
             ignoredStepUpdateCount: 0,
+            verificationActiveCount: 0,
+            verificationDeadlineAt: null,
             loopObservedInLifecycle: false,
             recoveryInProgress: false,
             canonicalTaskId: canonicalId,
@@ -251,6 +266,8 @@ export class StuckTaskDetector {
       lastProgressAt: now,
       activitySinceProgress: 0,
       ignoredStepUpdateCount: 0,
+      verificationActiveCount: 0,
+      verificationDeadlineAt: null,
       loopObservedInLifecycle: false,
       recoveryInProgress: false,
       canonicalTaskId: canonicalId,
@@ -315,6 +332,45 @@ export class StuckTaskDetector {
     return undefined;
   }
 
+  private isVerificationActive(entry: TrackedTask, now: number): boolean {
+    return entry.verificationActiveCount > 0
+      && entry.verificationDeadlineAt !== null
+      && now < entry.verificationDeadlineAt;
+  }
+
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * fn_run_verification owns its subprocess timeout and emits line/synthetic heartbeats while alive. During that bounded active window, no-progress loop/churn classification is suspended because subprocess output is forward progress, not agent churn.
+   */
+  beginVerification(taskId: string, timeoutMs: number): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (!entry) return;
+    const now = Date.now();
+    entry.lastActivity = now;
+    entry.verificationActiveCount++;
+    const deadline = now + Math.max(0, timeoutMs) + VERIFICATION_DEADLINE_GRACE_MS;
+    entry.verificationDeadlineAt = Math.max(entry.verificationDeadlineAt ?? 0, deadline);
+    stuckLog.log(`Verification started for ${taskId} (active=${entry.verificationActiveCount})`);
+  }
+
+  /**
+   * FNXC:Reliability 2026-06-17-16:05:
+   * Ending verification refreshes activity and clears accumulated subprocess heartbeat churn so a healthy long command does not get killed immediately after returning.
+   */
+  endVerification(taskId: string): void {
+    const entry = this.findTrackedEntry(taskId);
+    if (!entry) return;
+    if (entry.verificationActiveCount > 0) {
+      entry.verificationActiveCount--;
+    }
+    entry.lastActivity = Date.now();
+    entry.activitySinceProgress = 0;
+    if (entry.verificationActiveCount === 0) {
+      entry.verificationDeadlineAt = null;
+    }
+    stuckLog.log(`Verification ended for ${taskId} (active=${entry.verificationActiveCount})`);
+  }
+
   /**
    * Record a step progress event for a task's agent session.
    * Called on step transitions (in-progress, done, skipped).
@@ -329,6 +385,8 @@ export class StuckTaskDetector {
       entry.lastProgressAt = Date.now();
       entry.activitySinceProgress = 0;
       entry.ignoredStepUpdateCount = 0;
+      entry.verificationActiveCount = 0;
+      entry.verificationDeadlineAt = null;
       entry.recoveryInProgress = false;
     }
   }
@@ -403,10 +461,18 @@ export class StuckTaskDetector {
     const now = Date.now();
     const inactivityMs = now - entry.lastActivity;
     const noProgressMs = now - entry.lastProgressAt;
+    const verificationActive = this.isVerificationActive(entry, now);
 
     // Check inactivity first — if there's been zero activity, it's just inactive
     if (inactivityMs >= timeoutMs) {
       return "inactivity";
+    }
+
+    // FN-6598: active verification output is healthy progress for loop/churn
+    // accounting, but inactivity remains unsuppressed above and the verification
+    // deadline restores normal detection if the subprocess never ends.
+    if (verificationActive) {
+      return null;
     }
 
     // FN-5168: only escalate to churn after loop recovery already had one chance
@@ -605,6 +671,8 @@ export class StuckTaskDetector {
       entry.lastProgressAt = now;
       entry.activitySinceProgress = 0;
       entry.ignoredStepUpdateCount = 0;
+      entry.verificationActiveCount = 0;
+      entry.verificationDeadlineAt = null;
       entry.loopObservedInLifecycle = false;
       entry.recoveryInProgress = false;
     }
@@ -631,6 +699,7 @@ export class StuckTaskDetector {
    *   `lastProgressAt` still exceeds `taskStuckTimeoutMs` and ignored step-update rebuffs reach 25+
    * - **loop**: `lastProgressAt` older than `taskStuckTimeoutMs` AND `activitySinceProgress >= 60`
    *   (agent is actively doing things but not advancing steps)
+   * - Active `fn_run_verification`: suppresses loop/no-progress-churn until the command ends or its own deadline elapses; inactivity remains governed by `lastActivity`.
    */
   private async checkStuckTasks(): Promise<void> {
     if (this.tracked.size === 0) return;

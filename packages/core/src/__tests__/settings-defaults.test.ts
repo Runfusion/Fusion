@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveMaxAutoMergeRetries } from "../in-review-stall.js";
 import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS } from "../settings-schema.js";
 import {
   __resetLegacyCwdMainWarningForTests,
@@ -23,6 +24,17 @@ describe("settings defaults invariants", () => {
 
   it("keeps project worktreesDir unset by default", () => {
     expect(DEFAULT_PROJECT_SETTINGS.worktreesDir).toBeUndefined();
+  });
+
+  it("defaults maxAutoMergeRetries to the historical project-scoped cap", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.maxAutoMergeRetries).toBe(DEFAULT_MAX_AUTO_MERGE_RETRIES);
+    expect("maxAutoMergeRetries" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+    expect(resolveMaxAutoMergeRetries(undefined)).toBe(3);
+    expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: 1 })).toBe(1);
+    expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: 5 })).toBe(5);
+    expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: 0 })).toBe(3);
+    expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: -1 })).toBe(3);
+    expect(resolveMaxAutoMergeRetries({ maxAutoMergeRetries: Number.NaN })).toBe(3);
   });
 
   it("resolves worktrunk as disabled when both scopes are unset or empty", () => {

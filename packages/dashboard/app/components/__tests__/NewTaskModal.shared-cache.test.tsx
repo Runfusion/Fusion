@@ -18,10 +18,21 @@ vi.mock("../../api", async (importOriginal) => {
 vi.mock("../../hooks/useSetupReadiness", () => ({ useSetupReadiness: vi.fn(() => ({ hasAiProvider: true, hasGithub: true, loading: false })) }));
 vi.mock("../../hooks/useConfirm", () => ({ useConfirm: vi.fn(() => ({ confirm: vi.fn().mockResolvedValue(true) })) }));
 vi.mock("../../hooks/useMobileKeyboard", () => ({ useMobileKeyboard: vi.fn(() => ({ keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0, keyboardOpen: false })) }));
-vi.mock("../../hooks/useMobileScrollLock", () => ({ useMobileScrollLock: vi.fn() }));
+vi.mock("../../hooks/useMobileScrollLock", () => ({
+  useMobileScrollLock: vi.fn(),
+  useMobileKeyboardViewportLock: vi.fn(),
+  useMobileViewportRestoreReset: vi.fn(),
+}));
 vi.mock("../../hooks/useNodes", () => ({ useNodes: vi.fn(() => ({ nodes: [] })) }));
-vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)", useViewportMode: vi.fn(() => "desktop") }));
+vi.mock("../../hooks/useViewportMode", () => {
+  const useViewportMode = vi.fn(() => "desktop");
+  return {
+    MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+    getViewportMode: () => useViewportMode(),
+    isMobileViewport: () => useViewportMode() === "mobile",
+    useViewportMode,
+  };
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearUpdateCheckCache,
   performUpdateCheck,
+  performUpdateInstall,
   readCachedUpdateCheck,
   ttlForFrequency,
   __resetStartupRefreshFlag,
@@ -159,6 +160,50 @@ describe("update-check", () => {
     await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(value), "utf-8");
 
     expect(readCachedUpdateCheck(fusionDir)).toEqual(value);
+  });
+
+  it("performUpdateInstall installs latest and clears the update-check cache", async () => {
+    const cachePath = join(fusionDir, "update-check.json");
+    await writeFile(cachePath, JSON.stringify({ ok: true }), "utf-8");
+    const execFake = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(execFake).toHaveBeenCalledWith("npm install -g @runfusion/fusion@latest", {
+      timeout: 120_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    expect(result).toEqual({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true });
+    expect(existsSync(cachePath)).toBe(false);
+  });
+
+  it("performUpdateInstall retries once with --force for legacy bin collisions", async () => {
+    const collision = Object.assign(new Error("EEXIST: file already exists, /usr/local/bin/fn"), {
+      stderr: "runfusion.ai legacy bin collision",
+    });
+    const execFake = vi
+      .fn()
+      .mockRejectedValueOnce(collision)
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+
+    expect(execFake).toHaveBeenCalledTimes(2);
+    expect(execFake).toHaveBeenNthCalledWith(1, "npm install -g @runfusion/fusion@latest", expect.any(Object));
+    expect(execFake).toHaveBeenNthCalledWith(2, "npm install --force -g @runfusion/fusion@latest", expect.any(Object));
+    expect(result).toEqual({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true });
+  });
+
+  it("performUpdateInstall returns an error result for non-collision install failures", async () => {
+    const execFake = vi.fn().mockRejectedValue(Object.assign(new Error("npm unavailable"), { stderr: "registry down" }));
+
+    await expect(performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir })).resolves.toEqual({
+      currentVersion: "1.0.0",
+      latestVersion: "2.0.0",
+      updated: false,
+      error: "registry down",
+    });
+    expect(execFake).toHaveBeenCalledTimes(1);
   });
 
   describe("frequency", () => {

@@ -163,8 +163,7 @@ async function runWith(
 }
 
 describe("one-shot session output parsing", () => {
-  it("buildOneShotSettings carries each adapter's documented non-interactive args", () => {
-    expect(buildOneShotSettings("claude-code", "P").oneShotArgs).toEqual(["-p", "P"]);
+  it("buildOneShotSettings carries each supported adapter's documented non-interactive args", () => {
     expect(buildOneShotSettings("codex", "P").oneShotArgs).toEqual(["exec", "--json", "P"]);
     expect(buildOneShotSettings("droid", "P").oneShotArgs).toEqual([
       "exec",
@@ -181,11 +180,8 @@ describe("one-shot session output parsing", () => {
     expect(extractJsonObjects("no json here")).toEqual([]);
   });
 
-  it("parseOneShotOutput picks the claude result frame", () => {
-    const out = '{"type":"system"}\n{"type":"result","result":"done","is_error":false}';
-    const parsed = parseOneShotOutput("claude-code", out);
-    expect(parsed?.text).toBe("done");
-    expect(parsed?.parsed.type).toBe("result");
+  it("claude-code no longer has a supported -p one-shot path", () => {
+    expect(buildOneShotSettings("claude-code", "P").oneShotArgs).toEqual([]);
   });
 
   it("boundedStderrTail caps very long output", () => {
@@ -213,12 +209,12 @@ describe("one-shot session lifecycle", () => {
   }
 
   it("creates a read-only session record, streams terminal output, reaps on completion", async () => {
-    const h = newHarness(["claude-code"]);
+    const h = newHarness(["codex"]);
     let captured: CliSession | null = null;
     const result = await (async () => {
       const promise = runOneShotSession({
         manager: h.manager,
-        adapterId: "claude-code",
+        adapterId: "codex",
         projectId: "proj-1",
         purpose: "validator",
         prompt: "p",
@@ -229,7 +225,7 @@ describe("one-shot session lifecycle", () => {
       // While live, the session record exists and is read-only, terminal streams.
       const sessions = h.store.listSessions({ projectId: "proj-1" });
       captured = sessions[0] ?? null;
-      pty.emitData('{"type":"result","result":"ok","is_error":false}');
+      pty.emitData('{"text":"ok"}');
       pty.emitExit(0);
       return promise;
     })();

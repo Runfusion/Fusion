@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { TaskStore } from "@fusion/core";
-import { createPlanningBoardTools } from "../planning-board-tools.js";
+import { MAX_TASK_LIST_TEXT_CHARS, type TaskStore } from "@fusion/core";
+import { createPlanningBoardTools, resolveTaskListFormatter } from "../planning-board-tools.js";
 
 function createStoreMock(overrides?: {
   listTasks?: TaskStore["listTasks"];
@@ -13,6 +13,31 @@ function createStoreMock(overrides?: {
     }),
   } as unknown as TaskStore;
 }
+
+
+describe("fn_task_list resilience (FN-6573)", () => {
+  it("returns bounded text when formatter exports are unavailable", () => {
+    const boardLines = [
+      `FN-1 (todo): Dashboard duplicate check ${"x".repeat(6_000)}`,
+      `FN-2 (triage): Dashboard duplicate check ${"x".repeat(6_000)}`,
+    ];
+
+    /*
+    FNXC:TaskListOutput 2026-06-17-07:38:
+    FN-6573 drives the dashboard formatter resolver seam because the tool closure imports the live @fusion/core namespace at module load. The seam reproduces stale dist namespaces where formatTaskListText, or both task-list helpers, are absent and must still produce one bounded text block.
+    */
+    for (const coreNamespace of [
+      { formatTaskListText: undefined, clampTaskListText: () => "unused" },
+      { formatTaskListText: undefined, clampTaskListText: undefined },
+    ]) {
+      const formatter = resolveTaskListFormatter(coreNamespace);
+      const text = formatter(boardLines, { clamp: coreNamespace.clampTaskListText }).trimEnd();
+      expect(text).toBeTruthy();
+      expect(text.length).toBeLessThanOrEqual(MAX_TASK_LIST_TEXT_CHARS);
+    }
+  });
+});
+
 
 describe("createPlanningBoardTools", () => {
   it("fn_task_list does not throw TypeError on happy path and excludes done tasks", async () => {

@@ -544,6 +544,7 @@ function createMockAuthStorage(overrides: Partial<AuthStorageLike> = {}): AuthSt
     ]),
     hasAuth: vi.fn().mockReturnValue(false),
     get: vi.fn().mockReturnValue(undefined),
+    getApiKey: vi.fn().mockResolvedValue(undefined),
     login: vi.fn().mockImplementation((_provider: string, callbacks: any) => {
       // Simulate onAuth callback with a URL, then resolve
       callbacks.onAuth({ url: "https://auth.example.com/login", instructions: "Open in browser" });
@@ -604,6 +605,7 @@ describe("GET /auth/status", () => {
     vi.mocked(authStorage.getOAuthProviders).mockReset();
     vi.mocked(authStorage.hasAuth).mockReset();
     vi.mocked(authStorage.get).mockReset();
+    vi.mocked(authStorage.getApiKey).mockReset();
     vi.mocked(authStorage.login).mockReset();
     vi.mocked(authStorage.getApiKeyProviders).mockReset();
     vi.mocked(authStorage.hasApiKey).mockReset();
@@ -614,6 +616,7 @@ describe("GET /auth/status", () => {
     vi.mocked(authStorage.getOAuthProviders).mockReturnValue([{ id: "github-copilot", name: "GitHub Copilot" }]);
     vi.mocked(authStorage.hasAuth).mockReturnValue(false);
     vi.mocked(authStorage.get).mockReturnValue(undefined);
+    vi.mocked(authStorage.getApiKey).mockResolvedValue(undefined);
     vi.mocked(authStorage.login).mockImplementation((_provider: string, callbacks: any) => {
       callbacks.onAuth({ url: "https://auth.example.com/login", instructions: "Open in browser" });
       return Promise.resolve();
@@ -758,6 +761,54 @@ describe("GET /auth/status", () => {
     expect(githubCopilot).toMatchObject({ authenticated: true, expired: false });
     expect(claude).toMatchObject({ authenticated: false, expired: true });
     expect(geminiOauth).toMatchObject({ authenticated: false, expired: false });
+  });
+
+  it("attempts async refresh for expired oauth before reporting status", async () => {
+    const now = Date.now();
+    let refreshed = false;
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      type: "oauth",
+      access: refreshed ? "refreshed-token" : "expired-token",
+      refresh: "refresh",
+      expires: refreshed ? now + 3_600_000 : now - 1_000,
+    }));
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      refreshed = true;
+      return "refreshed-token";
+    });
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic");
+    expect(anthropic).toMatchObject({ authenticated: true, expired: false });
+  });
+
+  it("keeps expired oauth status when async refresh fails", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockReturnValue({
+      type: "oauth",
+      access: "expired-token",
+      refresh: "refresh",
+      expires: now - 1_000,
+    });
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("refresh failed"));
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
   });
 
   it("reports loginInProgress for oauth providers with active logins", async () => {
@@ -920,6 +971,50 @@ describe("GET /providers/claude-cli/status", () => {
     expect(res.body.ready).toBe(true);
     expect(res.body.binary).toMatchObject({ available: true, version: "claude 1.0.0" });
     expect(res.body.extension).toMatchObject({ status: "ok" });
+  });
+
+  it("surfaces ACP transport state + the bridge auth-failure signal", async () => {
+    const probeSpy = vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: true, version: "claude 1.0.0", probeDurationMs: 10,
+    });
+    const signalPath = join(tmpdir(), "fusion-acp-bridge-auth.json");
+    const prevBridge = process.env.FUSION_CLAUDE_ACP_BRIDGE;
+    const prevFlag = process.env.FUSION_CLAUDE_ACP;
+    process.env.FUSION_CLAUDE_ACP_BRIDGE = "/abs/node_modules/.bin/claude-code-cli-acp";
+    process.env.FUSION_CLAUDE_ACP = "1";
+    writeFileSync(signalPath, JSON.stringify({ authFailed: true, reason: "Not logged in" }));
+    try {
+      const res = await GET(buildApp(), "/api/providers/claude-cli/status");
+      expect(res.status).toBe(200);
+      expect(res.body.acp).toMatchObject({ enabled: true, bridgeAvailable: true, active: true, authFailed: true });
+      expect(res.body.acp.authReason).toContain("Not logged in");
+    } finally {
+      probeSpy.mockRestore();
+      rmSync(signalPath, { force: true });
+      if (prevBridge === undefined) delete process.env.FUSION_CLAUDE_ACP_BRIDGE;
+      else process.env.FUSION_CLAUDE_ACP_BRIDGE = prevBridge;
+      if (prevFlag === undefined) delete process.env.FUSION_CLAUDE_ACP;
+      else process.env.FUSION_CLAUDE_ACP = prevFlag;
+    }
+  });
+
+  it("reports acp inactive + no auth failure when the bridge isn't published", async () => {
+    const probeSpy = vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: true, version: "claude 1.0.0", probeDurationMs: 10,
+    });
+    const prevBridge = process.env.FUSION_CLAUDE_ACP_BRIDGE;
+    delete process.env.FUSION_CLAUDE_ACP_BRIDGE;
+    rmSync(join(tmpdir(), "fusion-acp-bridge-auth.json"), { force: true });
+    try {
+      const res = await GET(buildApp(), "/api/providers/claude-cli/status");
+      expect(res.body.acp.bridgeAvailable).toBe(false);
+      expect(res.body.acp.active).toBe(false);
+      expect(res.body.acp.authFailed).toBe(false);
+    } finally {
+      probeSpy.mockRestore();
+      if (prevBridge === undefined) delete process.env.FUSION_CLAUDE_ACP_BRIDGE;
+      else process.env.FUSION_CLAUDE_ACP_BRIDGE = prevBridge;
+    }
   });
 });
 

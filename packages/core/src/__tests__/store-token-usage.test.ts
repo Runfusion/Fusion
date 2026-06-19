@@ -28,6 +28,8 @@ describe("TaskStore", () => {
         totalTokens: 204,
         firstUsedAt: "2026-04-23T10:00:00.000Z",
         lastUsedAt: "2026-04-23T10:05:00.000Z",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
       };
 
       const task = await harness.store().createTask({
@@ -52,6 +54,8 @@ describe("TaskStore", () => {
         totalTokens: 345,
         firstUsedAt: "2026-04-23T12:00:00.000Z",
         lastUsedAt: "2026-04-23T12:30:00.000Z",
+        modelProvider: "openai",
+        modelId: "gpt-5",
       };
 
       const updated = await harness.store().updateTask(task.id, { tokenUsage });

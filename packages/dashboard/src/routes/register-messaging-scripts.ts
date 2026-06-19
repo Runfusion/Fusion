@@ -148,6 +148,11 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       }
 
       const sessionId = result.session.id;
+      /*
+      FNXC:ScriptRunTerminalReadiness 2026-06-17-17:38:
+      Saved-script execution creates a fresh PTY and injects the command programmatically, so wait for the shell's initial output plus the bounded quiet window before writing to avoid dropped or garbled leading bytes.
+      */
+      await terminalService.waitForReady(sessionId);
       terminalService.writeInput(sessionId, `${fullCommand}\n`);
 
       res.status(201).json({

@@ -12,7 +12,7 @@
 
 .reliability-card {
   padding: var(--space-lg);
-  border: var(--border-width-thin, 0.0625rem) solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card);
 }
@@ -55,7 +55,7 @@
 }
 
 .reliability-headline {
-  font-size: var(--font-size-2xl, 1.75rem);
+  font-size: 1.75rem;
   font-weight: 700;
 }
 
@@ -72,6 +72,34 @@
   gap: var(--space-sm);
 }
 
+/*
+FNXC:Reliability 2026-06-19-00:00:
+Reliability charts use shared recharts wrappers, whose ResponsiveContainer needs a measurable parent block-size. Keep the scoped section token-sized so the new charts render while preserving the view's flex-fill scroll contract.
+*/
+.reliability-chart-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+  margin-block-start: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.reliability-chart-section h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.reliability-chart-section .cc-recharts-chart,
+.reliability-chart-section .cc-recharts-empty {
+  block-size: clamp(calc(var(--space-2xl) * 4), 34vh, calc(var(--space-2xl) * 7));
+}
+
 .reliability-table {
   width: 100%;
   border-collapse: collapse;
@@ -82,7 +110,7 @@
 .reliability-table td {
   text-align: left;
   padding: var(--space-xs) var(--space-sm);
-  border-bottom: var(--border-width-thin, 0.0625rem) solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .reliability-stat-row {
@@ -158,5 +186,14 @@
   .reliability-section-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .reliability-chart-section {
+    padding: var(--space-sm);
+  }
+
+  .reliability-chart-section .cc-recharts-chart,
+  .reliability-chart-section .cc-recharts-empty {
+    block-size: clamp(calc(var(--space-2xl) * 3), 46vh, calc(var(--space-2xl) * 6));
   }
 }

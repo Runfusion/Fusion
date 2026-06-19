@@ -27,10 +27,10 @@
  *   --dashboard-curated
  *       Assert that every `*.test.{ts,tsx}` file under packages/dashboard/app
  *       and packages/dashboard/src is included by at least one *executed*
- *       dashboard quality project, OR listed on the explicit skip-list with a
- *       non-empty reason. Fails (exit 1) otherwise. This closes the curated-gate
- *       coverage hole: a new dashboard test file that nobody registered trips
- *       this guard.
+ *       dashboard quality project, OR listed on the explicit skip-list / dated
+ *       quarantine ledger with a non-empty reason. Fails (exit 1) otherwise.
+ *       This closes the curated-gate coverage hole: a new dashboard test file
+ *       that nobody registered trips this guard.
  *
  * The capture spec (which packages/projects to enumerate) is data, not code:
  * it lives in scripts/lib/test-inventory-spec.json so the CI shard planner and
@@ -48,9 +48,10 @@ const REPO_ROOT = resolve(__dirname, "..");
 
 const DEFAULT_SPEC_PATH = join(__dirname, "lib", "test-inventory-spec.json");
 const DASHBOARD_SKIPLIST_PATH = join(__dirname, "lib", "dashboard-curated-skiplist.json");
+const TEST_QUARANTINE_PATH = join(__dirname, "lib", "test-quarantine.json");
 
 // ---------------------------------------------------------------------------
-// Spec + skip-list loading
+// Spec + skip-list / quarantine loading
 // ---------------------------------------------------------------------------
 
 function loadSpec(specPathOverride) {
@@ -71,6 +72,17 @@ function loadSkipList(skipListPathOverride) {
     throw new Error(`skip-list ${skipListPath} must have an "entries" array`);
   }
   return { skipListPath, entries: raw.entries };
+}
+
+function loadQuarantineList(quarantinePathOverride) {
+  const quarantinePath =
+    quarantinePathOverride || process.env.FUSION_TEST_QUARANTINE || TEST_QUARANTINE_PATH;
+  if (!existsSync(quarantinePath)) return { quarantinePath, entries: [] };
+  const raw = JSON.parse(readFileSync(quarantinePath, "utf8"));
+  if (!Array.isArray(raw.entries)) {
+    throw new Error(`quarantine ledger ${quarantinePath} must have an "entries" array`);
+  }
+  return { quarantinePath, entries: raw.entries };
 }
 
 // ---------------------------------------------------------------------------
@@ -201,9 +213,10 @@ function walkTestFiles(rootDir, repoRoot) {
  * @param {Set<string>} opts.includedFiles repo-relative files executed by quality projects
  * @param {string[]} opts.allTestFiles repo-relative dashboard app/src test files
  * @param {Array<{file:string,reason:string}>} opts.skipList
+ * @param {Array<{file:string,reason:string,quarantinedAt?:string}>} [opts.quarantineList]
  * @returns {{ ok: boolean, errors: string[] }}
  */
-export function validateDashboardCurated({ includedFiles, allTestFiles, skipList }) {
+export function validateDashboardCurated({ includedFiles, allTestFiles, skipList, quarantineList = [] }) {
   const errors = [];
   const skipByFile = new Map();
   for (const entry of skipList) {
@@ -214,27 +227,63 @@ export function validateDashboardCurated({ includedFiles, allTestFiles, skipList
     if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
       errors.push(`skip-list entry for ${entry.file} has an empty "reason"`);
     }
+    /*
+    FNXC:DashboardTesting 2026-06-14-10:27:
+    FN-6445 requires the curated skip-list to enumerate only dashboard tests no quality project executes. FN-6442 found useChatRooms.test.ts was both skip-listed and matched by the hooks/utils quality lane, which overstated the genuinely ungated orphan count; reject that overlap at validation time.
+    */
+    if (includedFiles.has(entry.file)) {
+      errors.push(
+        `skip-list entry for ${entry.file} overlaps a file already executed by a quality project; the skip-list is for genuinely non-executed files only — remove this entry`,
+      );
+    }
     skipByFile.set(entry.file, entry);
   }
 
-  // A skip-listed file that is actually covered is allowed but noisy; we don't
-  // error on it (it keeps the guard green while a flaky file is being fixed).
+  const quarantineByFile = new Map();
+  for (const entry of quarantineList) {
+    if (!entry || typeof entry.file !== "string" || entry.file.length === 0) {
+      errors.push(`quarantine entry missing "file": ${JSON.stringify(entry)}`);
+      continue;
+    }
+    if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
+      errors.push(`quarantine entry for ${entry.file} has an empty "reason"`);
+    }
+    if (typeof entry.quarantinedAt !== "string" || entry.quarantinedAt.trim().length === 0) {
+      errors.push(`quarantine entry for ${entry.file} has an empty "quarantinedAt"`);
+    }
+    quarantineByFile.set(entry.file, entry);
+  }
+
+  /*
+  FNXC:DashboardTesting 2026-06-14-08:42:
+  A quarantined dashboard test is intentionally not executed by quality projects, but it must not be re-added to the curated skip-list. Treat the dated quarantine ledger as a second explicit registration source so rescued tests can leave the skip-list while failing tests remain governed by the deletion ratchet.
+  */
   for (const file of allTestFiles) {
     if (includedFiles.has(file)) continue;
     if (skipByFile.has(file)) continue;
+    if (quarantineByFile.has(file)) continue;
     errors.push(
-      `dashboard test file is not executed by any quality project and is not skip-listed: ${file}`,
+      `dashboard test file is not executed by any quality project and is not skip-listed or quarantined: ${file}`,
     );
   }
 
-  // Stale skip-list entries pointing at deleted files are a soft error so the
-  // list doesn't rot, but only when the file genuinely no longer exists.
+  // Stale explicit registrations pointing at deleted files are a soft error so
+  // the lists don't rot, but only when the file genuinely no longer exists.
   for (const entry of skipList) {
     if (!entry || typeof entry.file !== "string") continue;
     if (!allTestFiles.includes(entry.file) && !includedFiles.has(entry.file)) {
       const abs = join(REPO_ROOT, entry.file);
       if (!existsSync(abs)) {
         errors.push(`skip-list references a non-existent file: ${entry.file}`);
+      }
+    }
+  }
+  for (const entry of quarantineList) {
+    if (!entry || typeof entry.file !== "string") continue;
+    if (!allTestFiles.includes(entry.file) && !includedFiles.has(entry.file)) {
+      const abs = join(REPO_ROOT, entry.file);
+      if (!existsSync(abs)) {
+        errors.push(`quarantine ledger references a non-existent file: ${entry.file}`);
       }
     }
   }
@@ -321,7 +370,8 @@ async function main() {
     ].sort();
     const includedFiles = listExecutedDashboardQualityFiles();
     const { entries: skipList } = loadSkipList();
-    const { ok, errors } = validateDashboardCurated({ includedFiles, allTestFiles, skipList });
+    const { entries: quarantineList } = loadQuarantineList();
+    const { ok, errors } = validateDashboardCurated({ includedFiles, allTestFiles, skipList, quarantineList });
     if (!ok) {
       console.error(`✗ dashboard curated-gate guard failed (${errors.length} issue(s)):`);
       for (const e of errors) console.error(`    - ${e}`);
@@ -330,7 +380,7 @@ async function main() {
     console.log(
       `✓ dashboard curated gate complete: ${allTestFiles.length} test files, ${
         includedFiles.size
-      } executed, ${skipList.length} skip-listed`,
+      } executed, ${skipList.length} skip-listed, ${quarantineList.length} quarantined`,
     );
     return;
   }

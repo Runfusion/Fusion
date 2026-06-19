@@ -301,6 +301,78 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     manager.stop();
   });
 
+  it("self-heals Codex transcript-desync post-done wedges without swallowing generic 400s", async () => {
+    const codexEnvelope = "Codex error: " + JSON.stringify({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "No tool call found for function call output with call_id call_2KewW55MyBgwZoNtMubFNpUb.",
+        param: "input",
+      },
+      status: 400,
+    });
+    const symmetricLogEvidence = "No function call found for function call output with call_id call_2KewW55MyBgwZoNtMubFNpUb.";
+    const envelopeWedged = makeTask({
+      id: "FN-6594-CODEX-ENVELOPE-WEDGED",
+      column: "in-review",
+      status: "failed",
+      error: codexEnvelope,
+      steps: [{ name: "Implement", status: "done" as const }],
+      log: [{ timestamp: new Date(Date.now() - 60_000).toISOString(), action: "Task marked done by agent" } as any],
+    });
+    const logEvidenceWedged = makeTask({
+      id: "FN-6594-CODEX-LOG-WEDGED",
+      column: "in-review",
+      status: "failed",
+      error: "Session failed while replaying transcript",
+      steps: [{ name: "Implement", status: "done" as const }],
+      log: [
+        { timestamp: new Date(Date.now() - 60_000).toISOString(), action: "Task marked done by agent" } as any,
+        {
+          timestamp: new Date(Date.now() - 30_000).toISOString(),
+          action: "executor post-done continuation failed",
+          outcome: symmetricLogEvidence,
+        } as any,
+      ],
+    });
+    const badInputWedged = makeTask({
+      id: "FN-6594-BAD-INPUT-WEDGED",
+      column: "in-review",
+      status: "failed",
+      error: "400 invalid_request_error: invalid temperature",
+      steps: [{ name: "Implement", status: "done" as const }],
+      log: [
+        { timestamp: new Date(Date.now() - 60_000).toISOString(), action: "Task marked done by agent" } as any,
+        { timestamp: new Date(Date.now() - 30_000).toISOString(), action: "quota exceeded" } as any,
+      ],
+    });
+    const store = createSelfHealingStore([envelopeWedged, logEvidenceWedged, badInputWedged]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+    expect(await manager.recoverPostDoneNonContinuableWedge()).toBe(2);
+
+    for (const recovered of [envelopeWedged, logEvidenceWedged]) {
+      expect(recovered.column).toBe("in-review");
+      expect(recovered.status).toBeUndefined();
+      expect(recovered.error).toBeUndefined();
+      expect(recovered.completionHandoffLimboRecoveryCount).toBe(1);
+      expect(
+        (recovered.log ?? []).some((entry: any) => entry.action.includes("Auto-recovered completed-task non-continuable wedge")),
+      ).toBe(true);
+      expect(
+        ((store as any).__audits as any[]).some(
+          (event: any) => event.mutationType === "task:auto-recover-post-done-noncontinuable-wedge" && event.target === recovered.id,
+        ),
+      ).toBe(true);
+    }
+
+    expect(badInputWedged.status).toBe("failed");
+    expect(badInputWedged.error).toBe("400 invalid_request_error: invalid temperature");
+    expect(badInputWedged.completionHandoffLimboRecoveryCount).toBeUndefined();
+    expect(((store as any).__audits as any[]).some((event: any) => event.target === badInputWedged.id)).toBe(false);
+    manager.stop();
+  });
+
   it("falls through to terminal failure after the non-continuable fresh-session retry budget is exhausted", async () => {
     const task = makeTask({
       id: "FN-5866-INCOMPLETE-EXHAUSTED",

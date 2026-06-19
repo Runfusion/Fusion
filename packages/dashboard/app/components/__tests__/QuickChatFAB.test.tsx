@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Agent } from "../../api";
 import type { ChatSession } from "@fusion/core";
 import * as apiModule from "../../api";
@@ -12,6 +12,7 @@ import { useChatRooms } from "../../hooks/useChatRooms";
 import * as mobileScrollLock from "../../hooks/useMobileScrollLock";
 import { QuickChatFAB } from "../QuickChatFAB";
 import { FileBrowserProvider } from "../../context/FileBrowserContext";
+import { getPersistedLastQuickChatSessionId } from "../../hooks/quickChatLastSessionStorage";
 
 vi.mock("../../api", () => ({
   fetchResumeChatSession: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("../../api", () => ({
   fetchChatSessions: vi.fn(),
   createChatSession: vi.fn(),
   fetchChatMessages: vi.fn(),
+  updateChatSession: vi.fn(),
   streamChatResponse: vi.fn(),
   cancelChatResponse: vi.fn(),
   fetchModels: vi.fn(),
@@ -29,8 +31,15 @@ vi.mock("../../api", () => ({
 }));
 
 vi.mock("../../hooks/useAgents", () => ({ useAgents: vi.fn() }));
-vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)", useViewportMode: vi.fn() }));
+vi.mock("../../hooks/useViewportMode", () => {
+  const useViewportMode = vi.fn();
+  return {
+    MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+    getViewportMode: () => useViewportMode(),
+    isMobileViewport: () => useViewportMode() === "mobile",
+    useViewportMode,
+  };
+});
 vi.mock("../../hooks/useMobileKeyboard", () => ({ useMobileKeyboard: vi.fn() }));
 vi.mock("../../hooks/useAppSettings", () => ({ useAppSettings: vi.fn() }));
 vi.mock("../../hooks/useChatRooms", () => ({ useChatRooms: vi.fn() }));
@@ -39,6 +48,7 @@ const mockFetchResumeChatSession = vi.mocked(apiModule.fetchResumeChatSession);
 const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
 const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
+const mockUpdateChatSession = vi.mocked(apiModule.updateChatSession);
 const mockFetchModels = vi.mocked(apiModule.fetchModels);
 const mockFetchDiscoveredSkills = vi.mocked(apiModule.fetchDiscoveredSkills);
 const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
@@ -115,6 +125,68 @@ function createDeferredPromise<T>() {
   return { promise, resolve, reject };
 }
 
+function mockQuickChatVisualViewport({ height = 800, offsetTop = 0, width = 390 } = {}) {
+  const visualViewport = new EventTarget() as VisualViewport;
+  Object.defineProperties(visualViewport, {
+    height: { value: height, writable: true, configurable: true },
+    width: { value: width, writable: true, configurable: true },
+    offsetTop: { value: offsetTop, writable: true, configurable: true },
+    offsetLeft: { value: 0, writable: true, configurable: true },
+    pageTop: { value: 0, writable: true, configurable: true },
+    pageLeft: { value: 0, writable: true, configurable: true },
+    scale: { value: 1, writable: true, configurable: true },
+  });
+  Object.defineProperty(window, "visualViewport", { value: visualViewport, configurable: true, writable: true });
+  return visualViewport;
+}
+
+async function driveQuickChatVisualViewport(
+  visualViewport: VisualViewport,
+  { height, offsetTop, eventType = "resize" }: { height: number; offsetTop: number; eventType?: "resize" | "scroll" },
+) {
+  setQuickChatVisualViewportSample(visualViewport, { height, offsetTop });
+
+  await act(async () => {
+    visualViewport.dispatchEvent(new Event(eventType));
+  });
+}
+
+function setQuickChatVisualViewportSample(
+  visualViewport: VisualViewport,
+  { height, offsetTop }: { height: number; offsetTop: number },
+) {
+  Object.defineProperties(visualViewport, {
+    height: { value: height, writable: true, configurable: true },
+    offsetTop: { value: offsetTop, writable: true, configurable: true },
+  });
+}
+
+function mockRequestAnimationFrames() {
+  const originalRaf = window.requestAnimationFrame;
+  const originalCancelRaf = window.cancelAnimationFrame;
+  const rafQueue: FrameRequestCallback[] = [];
+  window.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+    rafQueue.push(cb);
+    return rafQueue.length;
+  });
+  window.cancelAnimationFrame = vi.fn();
+
+  return {
+    async drain() {
+      await act(async () => {
+        while (rafQueue.length > 0) {
+          const cb = rafQueue.shift();
+          cb?.(performance.now());
+        }
+      });
+    },
+    restore() {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCancelRaf;
+    },
+  };
+}
+
 describe("QuickChatFAB session-first UX", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -152,6 +224,7 @@ describe("QuickChatFAB session-first UX", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     mockFetchChatSessions.mockResolvedValue({ sessions: [modelSession, agentSession] });
     mockCreateChatSession.mockResolvedValue({ session: { ...modelSession, id: "session-new" } });
+    mockUpdateChatSession.mockResolvedValue({ session: { ...modelSession, title: "Renamed model thread" } });
     mockCancelChatResponse.mockResolvedValue({ success: true });
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       handlers.onDone?.({ messageId: "msg-stream" });
@@ -173,6 +246,70 @@ describe("QuickChatFAB session-first UX", () => {
     ]);
   });
 
+  it("renders compact question tool calls and sends answers through quick chat", async () => {
+    mockFetchChatMessages.mockResolvedValue({
+      messages: [{
+        id: "msg-question",
+        sessionId: "session-model",
+        role: "assistant",
+        content: "Need input",
+        metadata: { toolCalls: [{ toolName: "ask_user", args: { question: "Pick?", options: ["Alpha", "Beta"] }, isError: false, status: "completed" }] },
+        createdAt: "2026-05-16T00:00:00.000Z",
+      }],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByTestId("chat-question-response")).toHaveClass("chat-question-response--compact");
+    expect(document.querySelector(".chat-tool-call")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("chat-question-response-option-q-0-opt-0"));
+    fireEvent.click(screen.getByTestId("chat-question-response-submit"));
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-model",
+        "> Q: Pick?\nAlpha",
+        expect.any(Object),
+        undefined,
+        "proj-1",
+      );
+    });
+  });
+
+  it("keeps non-question quick chat tool calls generic and historical questions read-only", async () => {
+    mockFetchChatMessages.mockResolvedValue({
+      messages: [
+        {
+          id: "msg-tool",
+          sessionId: "session-model",
+          role: "assistant",
+          content: "Read file",
+          metadata: { toolCalls: [{ toolName: "read", args: { path: "foo.ts" }, isError: false, status: "completed" }] },
+          createdAt: "2026-05-16T00:00:02.000Z",
+        },
+        { id: "msg-user", sessionId: "session-model", role: "user", content: "> Q: Pick?\nBeta", createdAt: "2026-05-16T00:00:01.000Z" },
+        {
+          id: "msg-question",
+          sessionId: "session-model",
+          role: "assistant",
+          content: "Need input",
+          metadata: { toolCalls: [{ toolName: "ask_user", args: { question: "Pick?", options: ["Alpha", "Beta"] }, isError: false, status: "completed" }] },
+          createdAt: "2026-05-16T00:00:00.000Z",
+        },
+      ],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByTestId("chat-question-response")).toHaveTextContent("Answered");
+    expect(screen.getByTestId("chat-question-response-submitted-answer")).toHaveTextContent("Beta");
+    expect(screen.queryByTestId("chat-question-response-submit")).not.toBeInTheDocument();
+    expect(screen.getByText("read")).toBeInTheDocument();
+  });
+
   it("removes header mode toggle and renders session dropdown", async () => {
     render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
@@ -182,6 +319,28 @@ describe("QuickChatFAB session-first UX", () => {
     fireEvent.click(screen.getByTestId("quick-chat-session-dropdown-trigger"));
     expect(screen.getByTestId("quick-chat-session-option-session-model")).toHaveClass("quick-chat-session-option--active");
     expect(screen.getByTestId("quick-chat-session-option-session-agent")).toBeInTheDocument();
+  });
+
+  it("renames a quick chat session from the dropdown and updates the panel title", async () => {
+    mockUpdateChatSession.mockResolvedValueOnce({ session: { ...modelSession, title: "Renamed model thread" } });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByTestId("quick-chat-active-session-title")).toHaveTextContent("Model thread");
+    fireEvent.click(screen.getByTestId("quick-chat-session-dropdown-trigger"));
+    expect(screen.getByTestId("quick-chat-session-rename-session-model")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("quick-chat-session-rename-session-model"));
+
+    const input = screen.getByTestId("quick-chat-rename-input") as HTMLInputElement;
+    expect(input.value).toBe("Model thread");
+    fireEvent.change(input, { target: { value: "Renamed model thread" } });
+    fireEvent.click(screen.getByTestId("quick-chat-rename-save"));
+
+    await waitFor(() => {
+      expect(mockUpdateChatSession).toHaveBeenCalledWith("session-model", { title: "Renamed model thread" }, "proj-1");
+      expect(screen.getByTestId("quick-chat-active-session-title")).toHaveTextContent("Renamed model thread");
+    });
   });
 
   it("renders unread dots for unread sessions and hides active session dot", async () => {
@@ -302,6 +461,128 @@ describe("QuickChatFAB session-first UX", () => {
     expect(screen.getByTestId("quick-chat-new-model-select")).toBeInTheDocument();
   });
 
+  it("keeps a persisted model session through same-target auto-init before sessions load", async () => {
+    localStorage.setItem("fusion:quick-chat-last-session:proj-1", "model-last-opened");
+    const sessionsDeferred = createDeferredPromise<{ sessions: ChatSession[] }>();
+    mockFetchChatSessions.mockReturnValueOnce(sessionsDeferred.promise);
+    mockFetchResumeChatSession.mockResolvedValue({
+      session: {
+        ...modelSession,
+        id: "model-auto-resolved",
+        updatedAt: "2026-05-13T12:00:00.000Z",
+        lastMessageAt: "2026-05-13T12:00:00.000Z",
+      },
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-1");
+    });
+    expect(mockFetchResumeChatSession).not.toHaveBeenCalled();
+    expect(getPersistedLastQuickChatSessionId("proj-1")).toBe("model-last-opened");
+
+    sessionsDeferred.resolve({
+      sessions: [
+        {
+          ...modelSession,
+          id: "model-last-opened",
+          updatedAt: "2026-05-13T10:00:00.000Z",
+          lastMessageAt: "2026-05-13T10:00:00.000Z",
+        },
+        {
+          ...modelSession,
+          id: "model-auto-resolved",
+          updatedAt: "2026-05-13T12:00:00.000Z",
+          lastMessageAt: "2026-05-13T12:00:00.000Z",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-session-dropdown")).toHaveValue("model-last-opened");
+      expect(getPersistedLastQuickChatSessionId("proj-1")).toBe("model-last-opened");
+    });
+  });
+
+  it("restores the persisted session from the mobile FAB path", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    localStorage.setItem("fusion:quick-chat-last-session:proj-1", "mobile-last-opened");
+    mockFetchChatSessions.mockResolvedValueOnce({
+      sessions: [
+        {
+          ...modelSession,
+          id: "mobile-last-opened",
+          updatedAt: "2026-05-13T10:00:00.000Z",
+          lastMessageAt: "2026-05-13T10:00:00.000Z",
+        },
+        {
+          ...modelSession,
+          id: "mobile-newer-same-target",
+          updatedAt: "2026-05-13T12:00:00.000Z",
+          lastMessageAt: "2026-05-13T12:00:00.000Z",
+        },
+      ],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-session-dropdown")).toHaveValue("mobile-last-opened");
+      expect(getPersistedLastQuickChatSessionId("proj-1")).toBe("mobile-last-opened");
+    });
+  });
+
+  it("keeps a persisted agent session through same-target auto-init before sessions load", async () => {
+    localStorage.setItem("fusion:quick-chat-last-session:proj-1", "agent-last-opened");
+    const sessionsDeferred = createDeferredPromise<{ sessions: ChatSession[] }>();
+    mockFetchChatSessions.mockReturnValueOnce(sessionsDeferred.promise);
+    mockFetchResumeChatSession.mockResolvedValue({
+      session: {
+        ...agentSession,
+        id: "agent-auto-resolved",
+        updatedAt: "2026-05-13T12:00:00.000Z",
+        lastMessageAt: "2026-05-13T12:00:00.000Z",
+      },
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(mockFetchChatSessions).toHaveBeenCalledWith("proj-1");
+    });
+    expect(mockFetchResumeChatSession).not.toHaveBeenCalled();
+    expect(getPersistedLastQuickChatSessionId("proj-1")).toBe("agent-last-opened");
+
+    sessionsDeferred.resolve({
+      sessions: [
+        {
+          ...agentSession,
+          id: "agent-last-opened",
+          updatedAt: "2026-05-13T10:00:00.000Z",
+          lastMessageAt: "2026-05-13T10:00:00.000Z",
+        },
+        {
+          ...agentSession,
+          id: "agent-auto-resolved",
+          updatedAt: "2026-05-13T12:00:00.000Z",
+          lastMessageAt: "2026-05-13T12:00:00.000Z",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-session-dropdown")).toHaveValue("agent-last-opened");
+      expect(screen.getByTestId("quick-chat-input")).toHaveAttribute("placeholder", "Message Agent One");
+      expect(getPersistedLastQuickChatSessionId("proj-1")).toBe("agent-last-opened");
+    });
+  });
+
   it("restores the persisted last opened active session before latest activity", async () => {
     localStorage.setItem("fusion:quick-chat-last-session:proj-1", "older-updated");
     mockFetchChatSessions.mockResolvedValueOnce({
@@ -331,14 +612,14 @@ describe("QuickChatFAB session-first UX", () => {
     expect(mockFetchResumeChatSession).not.toHaveBeenCalled();
   });
 
-  it("falls back to the latest touched session when the persisted id is stale", async () => {
+  it("falls back to the latest conversation session when the persisted id is stale", async () => {
     localStorage.setItem("fusion:quick-chat-last-session:proj-1", "missing-session");
     mockFetchChatSessions.mockResolvedValueOnce({
       sessions: [
         {
           ...modelSession,
           id: "older-updated",
-          updatedAt: "2026-05-13T10:00:00.000Z",
+          updatedAt: "2026-05-13T12:00:00.000Z",
           lastMessageAt: "2026-05-13T10:00:00.000Z",
         },
         {
@@ -359,7 +640,8 @@ describe("QuickChatFAB session-first UX", () => {
     });
   });
 
-  it("skips archived newest sessions and restores the newest active session", async () => {
+  it("skips archived persisted sessions and restores the newest active session", async () => {
+    localStorage.setItem("fusion:quick-chat-last-session:proj-1", "archived-newest");
     mockFetchChatSessions.mockResolvedValueOnce({
       sessions: [
         {
@@ -800,6 +1082,82 @@ describe("QuickChatFAB session-first UX", () => {
     expect(screen.getByTestId("quick-chat-session-option-session-model")).toBeInTheDocument();
   });
 
+  it("FN-6518: desktop opening Quick Chat focuses the enabled composer", async () => {
+    const raf = mockRequestAnimationFrames();
+
+    try {
+      render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+      fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+      const input = await screen.findByTestId("quick-chat-input") as HTMLTextAreaElement;
+      await waitFor(() => expect(input).not.toBeDisabled());
+      await raf.drain();
+
+      expect(document.activeElement).toBe(input);
+    } finally {
+      raf.restore();
+    }
+  });
+
+  it("FN-6518: desktop composer focuses after the session becomes ready post-open", async () => {
+    const raf = mockRequestAnimationFrames();
+    const deferredSessions = createDeferredPromise<{ sessions: ChatSession[] }>();
+    mockFetchChatSessions.mockImplementationOnce(() => deferredSessions.promise);
+
+    try {
+      render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+      fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+      const input = await screen.findByTestId("quick-chat-input") as HTMLTextAreaElement;
+      expect(input).toBeDisabled();
+      deferredSessions.resolve({ sessions: [modelSession, agentSession] });
+      await waitFor(() => expect(input).not.toBeDisabled());
+      await raf.drain();
+
+      expect(document.activeElement).toBe(input);
+    } finally {
+      raf.restore();
+    }
+  });
+
+  it("FN-6518: mobile opening Quick Chat hands focus from stealth input to composer", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const input = await screen.findByTestId("quick-chat-input") as HTMLTextAreaElement;
+    await waitFor(() => expect(input).not.toBeDisabled());
+
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("FN-6518: auto-focus does not steal focus from an external control", async () => {
+    const raf = mockRequestAnimationFrames();
+    const externalFocusTarget = document.createElement("button");
+    externalFocusTarget.type = "button";
+    externalFocusTarget.textContent = "External focus target";
+    document.body.appendChild(externalFocusTarget);
+
+    try {
+      const { rerender } = render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" open={false} onOpenChange={vi.fn()} />);
+      externalFocusTarget.focus();
+      expect(document.activeElement).toBe(externalFocusTarget);
+
+      rerender(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" open onOpenChange={vi.fn()} />);
+      const input = await screen.findByTestId("quick-chat-input") as HTMLTextAreaElement;
+      await waitFor(() => expect(input).not.toBeDisabled());
+      await raf.drain();
+
+      expect(document.activeElement).toBe(externalFocusTarget);
+    } finally {
+      externalFocusTarget.remove();
+      raf.restore();
+    }
+  });
+
   it("FN-6301: iOS first tap focuses composer without canceling native focus, then sends", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     window.dispatchEvent(new Event("resize"));
@@ -848,6 +1206,35 @@ describe("QuickChatFAB session-first UX", () => {
     }
   });
 
+  it("Android send fires exactly once for a full pointerdown+touchstart+click tap", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    const isIOSSpy = vi.spyOn(mobileScrollLock, "isIOS").mockReturnValue(false);
+    mockStreamChatResponse.mockImplementation(() => ({ close: vi.fn(), isConnected: () => true }));
+    try {
+      render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+      fireEvent.click(screen.getByTestId("quick-chat-fab"));
+      const input = await screen.findByTestId("quick-chat-input") as HTMLTextAreaElement;
+      await waitFor(() => expect(input).not.toBeDisabled());
+      fireEvent.change(input, { target: { value: "Hello" } });
+
+      const sendButton = screen.getByTestId("quick-chat-send");
+      // Real Android tap dispatches pointerdown + touchstart + click within one
+      // task, with no React flush between them (unlike separate fireEvent calls).
+      // Dispatch them in a single act() so state batching mirrors the device.
+      await act(async () => {
+        sendButton.dispatchEvent(Object.assign(new Event("pointerdown", { bubbles: true, cancelable: true }), { pointerType: "touch" }));
+        sendButton.dispatchEvent(new Event("touchstart", { bubbles: true, cancelable: true }));
+        sendButton.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      });
+
+      await waitFor(() => expect(mockStreamChatResponse).toHaveBeenCalledTimes(1));
+    } finally {
+      isIOSSpy.mockRestore();
+    }
+  });
+
   it("FN-6301: Android mobile composer touchstart leaves native focus uncanceled", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     window.dispatchEvent(new Event("resize"));
@@ -874,6 +1261,196 @@ describe("QuickChatFAB session-first UX", () => {
     } finally {
       isIOSSpy.mockRestore();
     }
+  });
+
+  it("FN-6498: mobile visualViewport tracking skips duplicate resize/scroll writes and clears stale variables", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 280,
+      viewportHeight: 520,
+      viewportOffsetTop: 0,
+      keyboardOpen: true,
+    });
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0 });
+    const styleWriteSpy = vi.spyOn(CSSStyleDeclaration.prototype, "setProperty");
+    const styleRemoveSpy = vi.spyOn(CSSStyleDeclaration.prototype, "removeProperty");
+
+    const rendered = render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const panel = await screen.findByTestId("quick-chat-panel");
+    await screen.findByTestId("quick-chat-input");
+
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("800px");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+    const initialWriteCount = styleWriteSpy.mock.calls.length;
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 520, offsetTop: 0, eventType: "resize" });
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("520px");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+    const writesAfterResize = styleWriteSpy.mock.calls.length;
+    expect(writesAfterResize - initialWriteCount).toBe(2);
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 520, offsetTop: 0, eventType: "scroll" });
+    expect(styleWriteSpy.mock.calls.length).toBe(writesAfterResize);
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 360, offsetTop: 24, eventType: "resize" });
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("360px");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("24px");
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 800, offsetTop: 0, eventType: "resize" });
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("800px");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+
+    rendered.unmount();
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("");
+    expect(styleRemoveSpy).toHaveBeenCalledWith("--vv-height");
+    expect(styleRemoveSpy).toHaveBeenCalledWith("--vv-offset-top");
+
+    styleWriteSpy.mockRestore();
+    styleRemoveSpy.mockRestore();
+  });
+
+  it("FN-6503: re-samples Android first-open keyboard settle on composer focus handoff", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOverlap: 280,
+      viewportHeight: 520,
+      viewportOffsetTop: 0,
+      keyboardOpen: true,
+    });
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0 });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const panel = await screen.findByTestId("quick-chat-panel");
+    const input = await screen.findByTestId("quick-chat-input");
+
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("800px");
+    setQuickChatVisualViewportSample(visualViewport, { height: 520, offsetTop: 0 });
+    fireEvent.focusIn(input);
+
+    await waitFor(() => {
+      expect(panel.style.getPropertyValue("--vv-height")).toBe("520px");
+    });
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByTestId("quick-chat-close"));
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("");
+
+    setQuickChatVisualViewportSample(visualViewport, { height: 800, offsetTop: 0 });
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const reopenedPanel = await screen.findByTestId("quick-chat-panel");
+    expect(reopenedPanel.style.getPropertyValue("--vv-height")).toBe("800px");
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 520, offsetTop: 0, eventType: "resize" });
+    expect(reopenedPanel.style.getPropertyValue("--vv-height")).toBe("520px");
+    expect(reopenedPanel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+  });
+
+  it("FN-6503: preserves iOS offsetTop compensation and desktop no-op viewport mirroring", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0 });
+
+    const rendered = render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const panel = await screen.findByTestId("quick-chat-panel");
+    const input = await screen.findByTestId("quick-chat-input");
+
+    setQuickChatVisualViewportSample(visualViewport, { height: 360, offsetTop: 24 });
+    fireEvent.focusIn(input);
+
+    await waitFor(() => {
+      expect(panel.style.getPropertyValue("--vv-height")).toBe("360px");
+      expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("24px");
+    });
+
+    rendered.unmount();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("desktop");
+    const desktopVisualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0, width: 1024 });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    const focusSpy = vi.spyOn(document.querySelector(".quick-chat-stealth-input") as HTMLInputElement, "focus");
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const desktopPanel = await screen.findByTestId("quick-chat-panel");
+    setQuickChatVisualViewportSample(desktopVisualViewport, { height: 520, offsetTop: 0 });
+    fireEvent.focusIn(desktopPanel);
+
+    expect(desktopPanel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(desktopPanel.style.getPropertyValue("--vv-offset-top")).toBe("");
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it("FN-6498: close while suppressing dismiss samples resets tracking for reopen", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0 });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const input = await screen.findByTestId("quick-chat-input") as HTMLTextAreaElement;
+    const firstPanel = await screen.findByTestId("quick-chat-panel");
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 360, offsetTop: 24, eventType: "resize" });
+    expect(firstPanel.style.getPropertyValue("--vv-height")).toBe("360px");
+    expect(firstPanel.style.getPropertyValue("--vv-offset-top")).toBe("24px");
+
+    fireEvent.blur(input);
+    expect(firstPanel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(firstPanel.style.getPropertyValue("--vv-offset-top")).toBe("");
+    fireEvent.click(screen.getByTestId("quick-chat-close"));
+    expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 800, offsetTop: 0, eventType: "resize" });
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    const reopenedPanel = await screen.findByTestId("quick-chat-panel");
+    expect(reopenedPanel.style.getPropertyValue("--vv-height")).toBe("800px");
+    expect(reopenedPanel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+
+    await driveQuickChatVisualViewport(visualViewport, { height: 520, offsetTop: 0, eventType: "resize" });
+    expect(reopenedPanel.style.getPropertyValue("--vv-height")).toBe("520px");
+    expect(reopenedPanel.style.getPropertyValue("--vv-offset-top")).toBe("0px");
+  });
+
+  it("FN-6498: desktop quick chat does not attach visualViewport tracking listeners", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("desktop");
+    const visualViewport = mockQuickChatVisualViewport({ height: 800, offsetTop: 0, width: 1024 });
+    const addListenerSpy = vi.spyOn(visualViewport, "addEventListener");
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByTestId("quick-chat-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("quick-chat-resize-n")).toBeInTheDocument();
+    expect(addListenerSpy).not.toHaveBeenCalledWith("resize", expect.any(Function));
+    expect(addListenerSpy).not.toHaveBeenCalledWith("scroll", expect.any(Function));
+  });
+
+  it("FN-6498: missing visualViewport leaves mobile panel on CSS fallback without listeners", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true, writable: true });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel.style.getPropertyValue("--vv-height")).toBe("");
+    expect(panel.style.getPropertyValue("--vv-offset-top")).toBe("");
   });
 
   it("uses icon-only model tag without pill styling when mobile header fallback is active", async () => {
@@ -1108,8 +1685,51 @@ describe("QuickChatFAB session-first UX", () => {
     fireEvent.click(screen.getByTestId("quick-chat-send"));
 
     expect(await screen.findByTestId("quick-chat-streaming-message")).toBeInTheDocument();
-    expect(screen.getByTestId("quick-chat-waiting")).toHaveTextContent("Connecting…");
+    expect(screen.getByTestId("quick-chat-waiting")).toHaveTextContent("Working…");
     expect(mockStreamChatResponse).toHaveBeenCalledTimes(2);
+  });
+
+  it("FN-6513: keeps the live tail anchored while a response is streaming", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "msg-before-stream",
+          sessionId: "session-model",
+          role: "assistant",
+          content: "Before streaming",
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+      ],
+    });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onChunk?.("streaming answer");
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const messages = await screen.findByTestId("quick-chat-messages");
+    let scrollTopValue = 0;
+    const scrollHeightValue = 1400;
+    Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+    Object.defineProperty(messages, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    fireEvent.change(input, { target: { value: "Stream a reply" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    expect(await screen.findByTestId("quick-chat-streaming-message")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(scrollTopValue).toBe(scrollHeightValue);
+    });
   });
 
   it("shows the streaming indicator instead of the loading placeholder while waiting for a long reply", async () => {
@@ -1127,7 +1747,7 @@ describe("QuickChatFAB session-first UX", () => {
     fireEvent.click(screen.getByTestId("quick-chat-send"));
 
     expect(await screen.findByTestId("quick-chat-streaming-message")).toBeInTheDocument();
-    expect(screen.getByTestId("quick-chat-waiting")).toHaveTextContent("Connecting…");
+    expect(screen.getByTestId("quick-chat-waiting")).toHaveTextContent("Working…");
     expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
   });
 
@@ -1189,6 +1809,79 @@ describe("QuickChatFAB session-first UX", () => {
     expect(panel).toHaveStyle({ width: "420px", height: "360px" });
   });
 
+  it("FN-6502: opens taller by default on tablet without persisting the computed size", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("tablet");
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel).toHaveStyle({ width: "320px", height: "720px" });
+    expect(localStorage.getItem("fusion:quick-chat-size-proj-1")).toBeNull();
+  });
+
+  it("FN-6502: keeps the desktop default size unchanged when no persisted size exists", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("desktop");
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel).toHaveStyle({ width: "320px", height: "400px" });
+  });
+
+  it("FN-6502: restores an existing desktop persisted size on desktop", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:quick-chat-size-proj-1", JSON.stringify({ width: 500, height: 520 }));
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel).toHaveStyle({ width: "500px", height: "520px" });
+  });
+
+  it("FN-6502: tablet open does not overwrite a pre-existing desktop persisted size", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("tablet");
+    const persistedSize = { width: 500, height: 520 };
+    localStorage.setItem("fusion:quick-chat-size-proj-1", JSON.stringify(persistedSize));
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel).toHaveStyle({ width: "500px", height: "520px" });
+    expect(JSON.parse(localStorage.getItem("fusion:quick-chat-size-proj-1") || "null")).toEqual(persistedSize);
+  });
+
+  it("FN-6502: portrait mobile keeps inline panel sizing disabled for the full-screen CSS sheet", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const panel = await screen.findByTestId("quick-chat-panel");
+    expect(panel.style.width).toBe("");
+    expect(panel.style.height).toBe("");
+    expect(panel.style.right).toBe("");
+    expect(panel.style.bottom).toBe("");
+  });
+
   it("shows jump-to-latest only after leaving live tail and scrolls back on click", async () => {
     mockFetchChatMessages.mockResolvedValueOnce({
       messages: [
@@ -1226,6 +1919,139 @@ describe("QuickChatFAB session-first UX", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("quick-chat-jump-to-latest")).toBeNull();
     });
+  });
+
+  it("FN-6513: re-anchors a direct thread after async loading settles", async () => {
+    const deferredMessages = createDeferredPromise<{
+      messages: Array<{ id: string; sessionId: string; role: "assistant"; content: string; createdAt: string }>;
+    }>();
+    mockFetchChatMessages.mockImplementation(() => deferredMessages.promise);
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+    await waitFor(() => expect(mockFetchChatMessages).toHaveBeenCalled());
+
+    const messages = await screen.findByTestId("quick-chat-messages");
+    let scrollTopValue = 0;
+    let scrollHeightValue = 120;
+    Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+    Object.defineProperty(messages, "clientHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(messages, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+
+    expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+    fireEvent.scroll(messages);
+    expect(screen.getByTestId("quick-chat-jump-to-latest")).toBeInTheDocument();
+
+    scrollHeightValue = 1400;
+    deferredMessages.resolve({
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `direct-msg-${index}`,
+        sessionId: "session-model",
+        role: "assistant" as const,
+        content: `Loaded direct message ${index}`,
+        createdAt: `2026-06-16T00:00:${String(index).padStart(2, "0")}.000Z`,
+      })),
+    });
+
+    await waitFor(() => {
+      expect(scrollTopValue).toBe(scrollHeightValue);
+    });
+  });
+
+  it("FN-6513: re-anchors a mobile room thread after async loading settles", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+    mockUseViewportMode.mockReturnValue("mobile");
+    const originalRaf = window.requestAnimationFrame;
+    const originalCancelRaf = window.cancelAnimationFrame;
+    const rafQueue: FrameRequestCallback[] = [];
+    window.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    });
+    window.cancelAnimationFrame = vi.fn();
+    const room = {
+      id: "room-6513",
+      name: "engineering",
+      slug: "engineering",
+      memberCount: 2,
+      createdAt: "2026-06-16T00:00:00.000Z",
+      updatedAt: "2026-06-16T00:00:10.000Z",
+    };
+    const roomMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `room-msg-${index}`,
+      roomId: room.id,
+      role: index % 2 === 0 ? "assistant" as const : "user" as const,
+      content: `Loaded room message ${index}`,
+      createdAt: `2026-06-16T00:00:${String(index).padStart(2, "0")}.000Z`,
+    }));
+    let finishRoomLoad: (() => void) | null = null;
+    mockUseAppSettings.mockReturnValue({ experimentalFeatures: { chatRooms: true } } as ReturnType<typeof useAppSettings>);
+    mockUseChatRooms.mockImplementation(() => {
+      const [messagesLoading, setMessagesLoading] = useState(true);
+      finishRoomLoad = () => setMessagesLoading(false);
+      return {
+        rooms: [room],
+        roomsLoading: false,
+        roomsError: null,
+        activeRoom: room,
+        activeRoomMembers: [],
+        messages: roomMessages,
+        messagesLoading,
+        selectRoom: vi.fn(),
+        createRoom: vi.fn(),
+        deleteRoom: vi.fn(),
+        sendRoomMessage: vi.fn(),
+        clearRoom: vi.fn(),
+        refreshRooms: vi.fn(),
+      };
+    });
+
+    try {
+      render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+      fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+      const messages = await screen.findByTestId("quick-chat-messages");
+      let scrollTopValue = 0;
+      let scrollHeightValue = 120;
+      Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => scrollHeightValue });
+      Object.defineProperty(messages, "clientHeight", { configurable: true, get: () => 20 });
+      Object.defineProperty(messages, "scrollTop", {
+        configurable: true,
+        get: () => scrollTopValue,
+        set: (value: number) => {
+          scrollTopValue = value;
+        },
+      });
+
+      expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+      while (rafQueue.length > 0) {
+        const cb = rafQueue.shift();
+        cb?.(performance.now());
+      }
+      expect(scrollTopValue).toBe(scrollHeightValue);
+      scrollTopValue = 0;
+      fireEvent.scroll(messages);
+      expect(screen.getByTestId("quick-chat-jump-to-latest")).toBeInTheDocument();
+
+      scrollHeightValue = 1400;
+      await act(async () => {
+        finishRoomLoad?.();
+      });
+
+      await waitFor(() => {
+        expect(scrollTopValue).toBe(scrollHeightValue);
+      });
+    } finally {
+      window.requestAnimationFrame = originalRaf;
+      window.cancelAnimationFrame = originalCancelRaf;
+    }
   });
 
   it("FN-3910: anchors to live tail on initial controlled open", async () => {

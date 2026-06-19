@@ -522,9 +522,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
-        githubTracking: settings?.githubTrackingEnabledByDefault === true
-          ? (githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined)
-          : undefined,
+        githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
         priority,
         nodeId,
         acknowledgedDuplicates: overrides?.acknowledgedDuplicates,
@@ -1418,16 +1416,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
   const selectedNode = nodeId ? nodes.find((node) => node.id === nodeId) : undefined;
   const projectGithubTrackingDefault = settings?.githubTrackingEnabledByDefault === true;
-  const githubTrackingProjectEnabled = projectGithubTrackingDefault;
-  const effectiveGithubTracking = githubTrackingProjectEnabled
-    ? (githubTrackingOverride ?? true)
-    : false;
-  const githubToggleDisabledLabel = t("tasks.githubTrackingDisabled", "GitHub tracking is disabled for this project — enable it in Settings to use per-task tracking");
-  const githubToggleLabel = githubTrackingProjectEnabled
-    ? (effectiveGithubTracking
-      ? t("tasks.githubTrackingOn", "GitHub tracking ON for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") })
-      : t("tasks.githubTrackingOff", "GitHub tracking OFF for next task"))
-    : githubToggleDisabledLabel;
+  const effectiveGithubTracking = githubTrackingOverride ?? projectGithubTrackingDefault;
+  const githubToggleLabel = effectiveGithubTracking
+    ? t("tasks.githubTrackingOn", "GitHub tracking ON for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") })
+    : t("tasks.githubTrackingOff", "GitHub tracking OFF for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") });
 
   // Show expanded controls based on disclosure state (user preference), not textarea focus
   const showExpandedControls = isDisclosureExpanded;
@@ -1532,17 +1524,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
             <button
               type="button"
-              className={`btn btn-sm ${githubTrackingProjectEnabled && effectiveGithubTracking ? "btn-primary" : ""}`}
+              className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
               onClick={() => {
-                if (!githubTrackingProjectEnabled) {
-                  return;
-                }
-                setGithubTrackingOverride((prev) => (prev ?? true) ? false : true);
+                setGithubTrackingOverride((prev) => !(prev ?? projectGithubTrackingDefault));
               }}
               onMouseDown={(e) => e.preventDefault()}
-              disabled={!githubTrackingProjectEnabled}
               aria-pressed={effectiveGithubTracking}
-              aria-disabled={!githubTrackingProjectEnabled || undefined}
               data-testid="quick-entry-github-toggle"
               title={githubToggleLabel}
               aria-label={githubToggleLabel}

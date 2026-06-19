@@ -44,6 +44,7 @@ import { subscribeSse } from "../sse-bus";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -90,19 +91,30 @@ function readMailboxSidebarWidth(projectId?: string): number {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function formatTimestamp(ts: string, t?: TFunction<"app">): string {
-  const date = new Date(ts);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+  /*
+   * FNXC:RelativeTime 2026-06-17-20:48:
+   * FN-6618 shares bucket math while preserving MailboxView's composed count + mailbox.ago i18n shape, future-as-Just-now behavior, and Invalid Date fallback.
+   */
+  const bucket = getRelativeTimeBucket(ts);
+  if (!bucket) {
+    const timestampMs = Date.parse(ts);
+    if (Number.isFinite(timestampMs) && Date.now() - timestampMs < 0) return t ? t("mailbox.justNow", "Just now") : "Just now";
+    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
 
-  if (diffMins < 1) return t ? t("mailbox.justNow", "Just now") : "Just now";
-  if (diffMins < 60) return `${diffMins}m ${t ? t("mailbox.ago", "ago") : "ago"}`;
-  if (diffHours < 24) return `${diffHours}h ${t ? t("mailbox.ago", "ago") : "ago"}`;
-  if (diffDays < 7) return `${diffDays}d ${t ? t("mailbox.ago", "ago") : "ago"}`;
-
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  switch (bucket.bucket) {
+    case "just-now":
+      return t ? t("mailbox.justNow", "Just now") : "Just now";
+    case "minutes":
+      return `${bucket.count}m ${t ? t("mailbox.ago", "ago") : "ago"}`;
+    case "hours":
+      return `${bucket.count}h ${t ? t("mailbox.ago", "ago") : "ago"}`;
+    case "days":
+      return `${bucket.count}d ${t ? t("mailbox.ago", "ago") : "ago"}`;
+    case "weeks":
+    case "older":
+      return bucket.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
 }
 
 function participantLabel(

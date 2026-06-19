@@ -39,6 +39,9 @@ export interface NearDuplicateCandidate {
   createdAt?: number;
 }
 
+export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
+export type { NearDuplicateCanonicalState } from "./near-duplicate-canonical.js";
+
 export interface NearDuplicateMatch {
   id: string;
   score: number;

@@ -48,6 +48,14 @@ html {
 /* === Utility Classes === */
 .visually-hidden {
   position: absolute;
+  /* Pin to the containing block's origin. Without offsets an absolute box
+     renders at its static-flow position; inside a horizontal scroller (e.g.
+     the kanban board) that position is off-screen-right, and because the
+     scroll container isn't a positioned containing block its overflow can't
+     clip the span — so it balloons documentElement.scrollWidth and triggers
+     iOS shrink-to-fit zoom-out + whole-page panning on mobile. */
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;
@@ -112,6 +120,8 @@ html {
   /* Typography */
   --font-primary: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* FNXC:DashboardStyling 2026-06-19-05:50: FN-6703 defines the xs font-size token so tokenized mobile mailbox tabs satisfy the dashboard CSS token-validity guard without relying on an undefined fallback. */
+  --font-size-xs: 0.8rem;
 
   /* Spacing Scale */
   --space-xs: 4px;
@@ -150,15 +160,16 @@ html {
   --standalone-bottom-gap: 0px;
 
   /* Shadow tokens */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 8px rgba(88, 166, 255, 0.3);
-  --glow-success: 0 0 8px rgba(46, 160, 67, 0.3);
-  --glow-warning: 0 0 8px rgba(227, 179, 65, 0.3);
-  --glow-danger: 0 0 8px rgba(248, 81, 73, 0.3);
-  --focus-ring: 0 0 0 2px rgba(88, 166, 255, 0.15);
-  --focus-ring-strong: 0 0 0 2px rgba(88, 166, 255, 0.3);
+  /* FNXC:DashboardTheming 2026-06-15-00:00: Global token translucency uses color-mix(in srgb, var(--token) N%, transparent); raw RGB alpha color calls are banned outside var() fallbacks for FN-6489. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 10%, transparent);
+  --shadow-md: 0 4px 6px color-mix(in srgb, #000000 10%, transparent);
+  --shadow-lg: 0 4px 24px color-mix(in srgb, #000000 40%, transparent);
+  --shadow-glow: 0 0 8px color-mix(in srgb, var(--todo) 30%, transparent);
+  --glow-success: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --glow-warning: 0 0 8px color-mix(in srgb, #e3b541 30%, transparent);
+  --glow-danger: 0 0 8px color-mix(in srgb, var(--color-error) 30%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--todo) 15%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--todo) 30%, transparent);
 
   /* Animation tokens.
      --duration-* are bare durations, safe anywhere (animation shorthands,
@@ -222,6 +233,13 @@ svg.spin {
   --surface-muted: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
   --surface-emphasis: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --surface-hover-strong: color-mix(in srgb, var(--surface) 88%, var(--text) 12%);
+  /*
+   FNXC:DashboardSurfaceTokens 2026-06-18-21:29:
+   FN-6678 defines neutral surface tiers and a subtle border because the command-center subtree, NewTaskModal, and related dashboard surfaces consume these tokens via bare var() calls. Keep them tokenized so light and dark modes cascade from each theme's --surface, --text, and --border values instead of resolving unset.
+  */
+  --surface-1: color-mix(in srgb, var(--surface) 97%, var(--text) 3%);
+  --surface-2: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
   --bg-secondary: color-mix(in srgb, var(--surface) 70%, var(--card));
   --bg-tertiary: color-mix(in srgb, var(--surface) 40%, var(--card));
   --border: #30363d;
@@ -309,19 +327,19 @@ svg.spin {
   --cta-text: #fff;
   --cta-bg-hover: #2ea043;
   --cta-border-hover: #3fb950;
-  --cta-glow: 0 0 8px rgba(46, 160, 67, 0.3);
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
 
   /* === Agent State Colors === */
-  --state-idle-bg: rgba(139, 148, 158, 0.15);
+  --state-idle-bg: color-mix(in srgb, var(--state-idle-text) 15%, transparent);
   --state-idle-text: #8b949e;
   --state-idle-border: #8b949e;
-  --state-active-bg: rgba(46, 160, 67, 0.15);
+  --state-active-bg: color-mix(in srgb, var(--cta-border) 15%, transparent);
   --state-active-text: #3fb950;
   --state-active-border: #3fb950;
-  --state-paused-bg: rgba(227, 179, 65, 0.15);
+  --state-paused-bg: color-mix(in srgb, var(--state-paused-text) 15%, transparent);
   --state-paused-text: #e3b541;
   --state-paused-border: #e3b541;
-  --state-error-bg: rgba(248, 81, 73, 0.15);
+  --state-error-bg: color-mix(in srgb, var(--state-error-text) 15%, transparent);
   --state-error-text: #f85149;
   --state-error-border: #f85149;
 
@@ -417,11 +435,11 @@ svg.spin {
   /* === Mission autopilot indicators === */
   --autopilot-pulse: var(--color-success);
   --autopilot-icon: #eab308;
-  --autopilot-shadow: rgba(34, 197, 94, 0.4);
+  --autopilot-shadow: color-mix(in srgb, var(--color-success) 40%, transparent);
 
   /* === Mission toggle & badge backgrounds === */
-  --toggle-checked-bg: rgba(34, 197, 94, 0.2);
-  --meta-badge-bg: rgba(63, 185, 80, 0.1);
+  --toggle-checked-bg: color-mix(in srgb, var(--color-success) 20%, transparent);
+  --meta-badge-bg: color-mix(in srgb, var(--color-success) 10%, transparent);
 
   /* === Mission event type colors (semantic — adapted for light in [data-theme="light"]) === */
   --event-error-text: #fca5a5;
@@ -429,17 +447,17 @@ svg.spin {
   --event-task-text: #6ee7b7;
   --event-slice-text: #fcd34d;
   --event-autopilot-text: #d8b4fe;
-  --event-error-bg: rgba(239, 68, 68, 0.15);
-  --event-state-bg: rgba(59, 130, 246, 0.15);
-  --event-task-bg: rgba(16, 185, 129, 0.15);
-  --event-slice-bg: rgba(245, 158, 11, 0.15);
-  --event-autopilot-bg: rgba(168, 85, 247, 0.15);
+  --event-error-bg: color-mix(in srgb, #ef4444 15%, transparent);
+  --event-state-bg: color-mix(in srgb, #3b82f6 15%, transparent);
+  --event-task-bg: color-mix(in srgb, #10b981 15%, transparent);
+  --event-slice-bg: color-mix(in srgb, #f59e0b 15%, transparent);
+  --event-autopilot-bg: color-mix(in srgb, #a855f7 15%, transparent);
 
   /* === Card mission badge === */
   --badge-mission-text: #a78bfa;
   --badge-mission-text-hover: #c4b5fd;
-  --badge-mission-bg: rgba(167, 139, 250, 0.12);
-  --badge-mission-bg-hover: rgba(167, 139, 250, 0.22);
+  --badge-mission-bg: color-mix(in srgb, var(--badge-mission-text) 12%, transparent);
+  --badge-mission-bg-hover: color-mix(in srgb, var(--badge-mission-text-hover) 22%, transparent);
 
   /* === Terminal background === */
   --terminal-bg: #1e1e1e;
@@ -458,6 +476,9 @@ svg.spin {
   --surface-muted: color-mix(in srgb, var(--surface) 97%, var(--text) 3%);
   --surface-emphasis: color-mix(in srgb, var(--surface) 95%, var(--text) 5%);
   --surface-hover-strong: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
+  --surface-1: color-mix(in srgb, var(--surface) 98%, var(--text) 2%);
+  --surface-2: color-mix(in srgb, var(--surface) 95%, var(--text) 5%);
+  --border-subtle: color-mix(in srgb, var(--border) 60%, transparent);
   --bg: #ffffff;
   --surface: #f6f8fa;
   --card: #ffffff;
@@ -648,7 +669,7 @@ html .column.drag-over * {
  * Runtime provider settings card — unified layout used by Hermes / OpenClaw /
  * Paperclip cards. Header (large logo + name + status), description, form,
  * footer action row.
- * font-size values intentionally raw — no --font-size-* tokens defined yet
+ * FNXC:DashboardStyling 2026-06-19-05:50: Runtime-card font-size values remain intentionally raw; --font-size-xs is now the defined dashboard token used by mobile mailbox tabs where token-validity tests require a real custom property.
  * ------------------------------------------------------------------------- */
 
 .runtime-card {
@@ -1239,7 +1260,7 @@ body {
 }
 
 .modal-send-to-background:hover {
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .modal-send-to-background:focus-visible {
@@ -3268,6 +3289,20 @@ input[type="range"]:focus-visible {
     grid-template-columns: repeat(6, minmax(260px, 1fr));
     overflow-x: auto;
   }
+
+  /*
+  FNXC:CommandCenterStyling 2026-06-18-20:30:
+  Command Center tablet rendering needs the same definite project-content flex chain as mobile so the shell and tabpanel resolve a real height instead of collapsing or overflowing the document at 769px–1024px (FN-6679).
+  */
+  .project-content {
+    display: flex;
+    flex: 1;
+    align-items: stretch;
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
 }
 
 /* === Mobile Responsive Overrides ===
@@ -3417,11 +3452,70 @@ input[type="range"]:focus-visible {
     display: none;
   }
 
+  .board > .column,
+  .column,
+  .column-header,
+  .column-body {
+    touch-action: pan-x pan-y;
+  }
+
   .board > .column {
     width: 300px;
     min-width: 300px;
     flex-shrink: 0;
     scroll-snap-align: center;
+  }
+
+  /* Workflow-mode board: reassert the definite flex fill chain at the phone
+     tier after the generic mobile .board/.column overrides. The board keeps
+     the document-pan lock on ancestors while scrolling internally. */
+  .project-content {
+    display: flex;
+    flex: 1;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .project-content > .board-workflow-view,
+  .board-workflow-view {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    align-self: stretch;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .board.board-workflow-columns {
+    display: flex;
+    flex-direction: row;
+    flex: 1 1 auto;
+    align-self: stretch;
+    align-items: stretch;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+    scroll-snap-type: x proximity;
+  }
+
+  .board.board-workflow-columns > .column {
+    flex: 1 0 300px;
+    min-width: 300px;
+    height: 100%;
+    min-height: 0;
   }
 
   /* Column header: natural height from padding and font is sufficient */

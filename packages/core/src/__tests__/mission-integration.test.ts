@@ -82,17 +82,45 @@ async function createHierarchy(store: TaskStore) {
 describe("MissionStore integration with TaskStore", () => {
   let rootDir: string;
   let taskStore: TaskStore;
+  let storesToClose: TaskStore[];
+
+  /**
+   * FNXC:CoreTests 2026-06-17-14:36:
+   * Restart-fidelity coverage must prove committed mission rows survive TaskStore.close() and a fresh
+   * TaskStore(rootDir).init() across every mission read path, including empty and populated hierarchies.
+   * Register reopened stores so fake timers and WAL-backed SQLite handles are closed before temp-root
+   * cleanup instead of leaking across package fan-out.
+   */
+  function registerStore(store: TaskStore): TaskStore {
+    storesToClose.push(store);
+    return store;
+  }
+
+  async function openRestartedStore(): Promise<TaskStore> {
+    taskStore.close();
+    const restarted = registerStore(
+      new TaskStore(rootDir, join(rootDir, ".fusion-global-settings")),
+    );
+    await restarted.init();
+    taskStore = restarted;
+    return restarted;
+  }
 
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-01T00:00:00.000Z"));
 
     rootDir = makeTmpDir();
-    taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
+    storesToClose = [];
+    taskStore = registerStore(new TaskStore(rootDir, join(rootDir, ".fusion-global-settings")));
     await taskStore.init();
   });
 
   afterEach(async () => {
+    for (const store of [...storesToClose].reverse()) {
+      store.close();
+    }
+    storesToClose = [];
     vi.useRealTimers();
     await rm(rootDir, { recursive: true, force: true });
   });
@@ -409,9 +437,7 @@ describe("MissionStore integration with TaskStore", () => {
       missionStore.updateMission(mission.id, { status: "active", autopilotEnabled: true });
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const retrieved = missionStore2.getMission(mission.id);
@@ -435,9 +461,7 @@ describe("MissionStore integration with TaskStore", () => {
       missionStore.updateMission(mission.id, { autopilotState: "inactive" });
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const retrieved = missionStore2.getMission(mission.id);
@@ -460,9 +484,7 @@ describe("MissionStore integration with TaskStore", () => {
       missionStore.linkFeatureToTask(feature.id, task.id);
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const retrieved = missionStore2.getFeature(feature.id);
@@ -483,9 +505,7 @@ describe("MissionStore integration with TaskStore", () => {
       missionStore.updateFeatureStatus(feature.id, "blocked");
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const hierarchy = missionStore2.getMissionWithHierarchy(mission.id);
@@ -505,9 +525,7 @@ describe("MissionStore integration with TaskStore", () => {
       missionStore.logMissionEvent(mission.id, "feature_triaged", "Feature triaged");
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const events = missionStore2.getMissionEvents(mission.id);
@@ -529,15 +547,95 @@ describe("MissionStore integration with TaskStore", () => {
       ]);
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const hierarchy = missionStore2.getMissionWithHierarchy(mission.id);
       expect(hierarchy!.milestones[0].id).toBe(milestones[2].id);
       expect(hierarchy!.milestones[1].id).toBe(milestones[0].id);
       expect(hierarchy!.milestones[2].id).toBe(milestones[1].id);
+    });
+
+    it("persists all mission hierarchy read paths across store restart", async () => {
+      const missionStore = taskStore.getMissionStore();
+      const emptyMission = missionStore.createMission({ title: "Empty Restart Mission" });
+      vi.advanceTimersByTime(1);
+      missionStore.logMissionEvent(emptyMission.id, "mission_created", "Empty mission event");
+
+      const { mission, milestones } = await createHierarchy(taskStore);
+      const firstMilestone = milestones[0];
+      const firstSlice = firstMilestone.slices[0];
+      const firstFeature = firstSlice.features[0];
+
+      missionStore.updateMission(mission.id, { status: "active" });
+      missionStore.updateMilestone(firstMilestone.id, {
+        planningNotes: "Persist milestone planning",
+        verification: "Persist milestone verification",
+      });
+      missionStore.updateSlice(firstSlice.id, {
+        planningNotes: "Persist slice planning",
+        verification: "Persist slice verification",
+      });
+      missionStore.updateFeature(firstFeature.id, {
+        status: "in-progress",
+        lastValidatorStatus: "running",
+      });
+      missionStore.reorderMilestones(mission.id, [
+        milestones[2].id,
+        milestones[0].id,
+        milestones[1].id,
+      ]);
+      vi.advanceTimersByTime(1);
+      missionStore.logMissionEvent(mission.id, "mission_started", "Populated mission event");
+
+      const taskStore2 = await openRestartedStore();
+      const missionStore2 = taskStore2.getMissionStore();
+
+      const emptyHierarchy = missionStore2.getMissionWithHierarchy(emptyMission.id);
+      expect(emptyHierarchy).toBeDefined();
+      expect(emptyHierarchy?.milestones).toEqual([]);
+      expect(missionStore2.getMissionEvents(emptyMission.id).events).toHaveLength(1);
+
+      const retrievedMission = missionStore2.getMission(mission.id);
+      const retrievedMilestone = missionStore2.getMilestone(firstMilestone.id);
+      const retrievedSlice = missionStore2.getSlice(firstSlice.id);
+      const retrievedFeature = missionStore2.getFeature(firstFeature.id);
+      const hierarchy = missionStore2.getMissionWithHierarchy(mission.id);
+      const events = missionStore2.getMissionEvents(mission.id);
+
+      expect(retrievedMission).toMatchObject({ id: mission.id, status: "active" });
+      expect(retrievedMilestone).toMatchObject({
+        id: firstMilestone.id,
+        planningNotes: "Persist milestone planning",
+        verification: "Persist milestone verification",
+      });
+      expect(retrievedSlice).toMatchObject({
+        id: firstSlice.id,
+        planningNotes: "Persist slice planning",
+        verification: "Persist slice verification",
+      });
+      expect(retrievedFeature).toMatchObject({
+        id: firstFeature.id,
+        status: "in-progress",
+        lastValidatorStatus: "running",
+      });
+      expect(hierarchy).toBeDefined();
+      expect(hierarchy?.milestones).toHaveLength(3);
+      expect(hierarchy?.milestones[0].id).toBe(milestones[2].id);
+      expect(hierarchy?.milestones.every((milestone) => milestone.slices.length === 2)).toBe(true);
+      expect(
+        hierarchy?.milestones.every((milestone) =>
+          milestone.slices.every((slice) => {
+            const hierarchySlice = slice as typeof slice & { features: Array<{ id: string }> };
+            return hierarchySlice.features.length === 3;
+          }),
+        ),
+      ).toBe(true);
+      expect(events.events).toHaveLength(1);
+      expect(events.events[0]).toMatchObject({
+        eventType: "mission_started",
+        description: "Populated mission event",
+      });
     });
 
     it("persists planning notes and verification across store restart", async () => {
@@ -555,9 +653,7 @@ describe("MissionStore integration with TaskStore", () => {
       });
 
       // Restart store
-      taskStore.close();
-      const taskStore2 = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
-      await taskStore2.init();
+      const taskStore2 = await openRestartedStore();
       const missionStore2 = taskStore2.getMissionStore();
 
       const retrievedMilestone = missionStore2.getMilestone(milestone.id);

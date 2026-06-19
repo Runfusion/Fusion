@@ -6,6 +6,12 @@ import { computeMaxWorkers } from "../core/src/__test-utils__/vitest-workers";
 
 const maxWorkers = computeMaxWorkers({ defaultCap: 3 });
 
+/*
+FNXC:DashboardTests 2026-06-17-17:02:
+Dashboard tests must be insulated from release-oriented shells that export NODE_ENV=production. Force test mode before Vitest resolves React and Testing Library so jsdom projects keep React.act and do not fail after slow browser-environment startup.
+*/
+process.env.NODE_ENV = "test";
+
 // Curated-gate skip-list (plan U2 / R7). Files listed here run in NO project on
 // purpose (pre-existing failures discovered when the curated-gate hole was
 // closed). The skip-list is the single source of truth shared with
@@ -46,6 +52,7 @@ const qualityAppFoundationUiTests = [
   "app/__tests__/column-fixed-width.test.ts",
   "app/__tests__/component-css-no-raw-rgba.test.ts",
   "app/__tests__/dashboard-component-color-tokenization.test.ts",
+  "app/__tests__/dashboard-css-token-validity.css.test.ts",
   "app/__tests__/dashboard-footer-mobile-layout.test.ts",
   "app/__tests__/detail-body-mobile-overflow.test.ts",
   "app/__tests__/dev-server-layout-css.test.ts",
@@ -231,9 +238,46 @@ const qualityAppComponentBatchBTests = buildComponentQualityInclude(batchedQuali
 const qualityAppAppOnlyTests = ["app/components/__tests__/App.test.tsx"];
 const qualityAppChatOnlyTests = ["app/components/__tests__/ChatView.test.tsx"];
 const qualityAppSettingsOnlyTests = ["app/components/__tests__/SettingsModal.test.tsx"];
+/*
+FNXC:DashboardTestQuarantine 2026-06-14-17:01:
+FN-6454 applied the quarantine deletion ratchet to every dashboard test quarantined on 2026-06-14.
+Keep this list empty until a new flaky dashboard test is quarantined with a matching ledger entry.
+
+FNXC:DashboardTestQuarantine 2026-06-16-21:31:
+FN-6514 rescued QuickEntryBox before the 2026-06-30 deletion deadline by restoring its mutated jsdom viewport, visibility, and object-URL globals in file teardown.
+Keep it out of this exclude list so the broad app backfill lane exercises its aria-expanded regression coverage without quarantine drift.
+
+FNXC:DashboardTestQuarantine 2026-06-16-19:21:
+FN-6496 merge verification observed github-tracking-hook fail during the changed-test backfill shard with temp-directory cleanup ENOTEMPTY, then pass on isolated rerun.
+Quarantine the cleanup-flaky file under the deletion ratchet rather than changing production or test timing outside the chat-streaming scope.
+
+FNXC:DashboardTestQuarantine 2026-06-17-16:12:
+FN-6593 deletes github-tracking-hook under the ratchet because the temp-cleanup ENOTEMPTY flake did not have a non-appeasement root-cause fix in this follow-up.
+Keep the ledger entry and exclude removed together; git history remains the archive for this dropped GitHub tracking hook coverage.
+
+FNXC:DashboardTestQuarantine 2026-06-18-06:12:
+FN-6633 workspace verification observed unrelated QuickEntryBox focus and chat-routes SSE lifecycle flakes after the targeted chat prompt regression suite passed.
+Quarantine the files under the deletion ratchet so this prompt-only chat guidance change does not appease flaky timing/focus behavior.
+
+FNXC:DashboardTestQuarantine 2026-06-18-09:02:
+FN-6642 rescued QuickEntryBox after the single-file and full app-backfill lanes passed with the exclude removed.
+Keep QuickEntryBox out of this list so focus-restoration coverage remains active instead of deleting useful user-facing behavior coverage.
+
+FNXC:DashboardTestQuarantine 2026-06-18-09:07:
+FN-6642 rescued chat-routes by fixing the shared engine mock to return an iterable chat-task-document tool list during broad API lanes.
+Keep chat-routes out of this list so SSE lifecycle coverage remains active and the ledger/config stay in lockstep.
+
+FNXC:DashboardTestQuarantine 2026-06-19-03:22:
+FN-6690 workspace verification observed session-cross-tab fail only during the broad dashboard API backfill shard with temp-directory cleanup ENOTEMPTY, then pass on isolated rerun.
+Quarantine the cleanup-flaky file under the deletion ratchet rather than changing timing or session-locking behavior outside the lazy-view CSS chunk scope.
+
+FNXC:DashboardTestQuarantine 2026-06-19-05:20:
+FN-6697 workspace verification observed the QuickEntryBox post-submit focus restoration test fail only in the broad dashboard app backfill shard, then pass on targeted rerun.
+Quarantine the focus-timing flake under the deletion ratchet instead of changing unrelated terminal shortcut behavior or appeasing the test.
+*/
 const quarantinedDashboardTests: string[] = [
+  "src/__tests__/session-cross-tab.test.ts",
   "app/components/__tests__/QuickEntryBox.test.tsx",
-  "src/__tests__/routes-settings.test.ts",
 ];
 
 const qualityApiTests = [
@@ -388,6 +432,7 @@ export default defineConfig({
           name: "dashboard-app-quality",
           environment: "jsdom",
           include: qualityAppTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -397,6 +442,7 @@ export default defineConfig({
           name: "dashboard-app-quality-foundation-api",
           environment: "jsdom",
           include: qualityAppFoundationApiShardTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -406,6 +452,7 @@ export default defineConfig({
           name: "dashboard-app-quality-foundation-ui",
           environment: "jsdom",
           include: qualityAppFoundationUiShardTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -415,6 +462,7 @@ export default defineConfig({
           name: "dashboard-app-quality-foundation-hooks-utils",
           environment: "jsdom",
           include: qualityAppFoundationHooksAndUtilsTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -424,6 +472,7 @@ export default defineConfig({
           name: "dashboard-app-quality-components-a",
           environment: "jsdom",
           include: qualityAppComponentBatchATests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -433,6 +482,7 @@ export default defineConfig({
           name: "dashboard-app-quality-components-b",
           environment: "jsdom",
           include: qualityAppComponentBatchBTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -442,6 +492,7 @@ export default defineConfig({
           name: "dashboard-app-quality-app",
           environment: "jsdom",
           include: qualityAppAppOnlyTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -451,6 +502,7 @@ export default defineConfig({
           name: "dashboard-app-quality-chat",
           environment: "jsdom",
           include: qualityAppChatOnlyTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -460,6 +512,7 @@ export default defineConfig({
           name: "dashboard-app-quality-settings",
           environment: "jsdom",
           include: qualityAppSettingsOnlyTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [/app\//] },
         },
       },
@@ -469,6 +522,7 @@ export default defineConfig({
           name: "dashboard-api-quality",
           environment: "node",
           include: qualityApiTests,
+          exclude: quarantinedDashboardTests,
           css: { include: [] },
         },
       },
@@ -478,7 +532,7 @@ export default defineConfig({
           name: "dashboard-app-quality-backfill",
           environment: "jsdom",
           include: qualityAppBackfillTests,
-          exclude: backfillAppExclude,
+          exclude: [...backfillAppExclude, ...quarantinedDashboardTests],
           css: { include: [/app\//] },
         },
       },
@@ -488,7 +542,7 @@ export default defineConfig({
           name: "dashboard-api-quality-backfill",
           environment: "node",
           include: qualityApiBackfillTests,
-          exclude: backfillApiExclude,
+          exclude: [...backfillApiExclude, ...quarantinedDashboardTests],
           css: { include: [] },
         },
       },
@@ -498,6 +552,7 @@ export default defineConfig({
           name: "dashboard-app",
           environment: "jsdom",
           include: ["app/**/*.test.{ts,tsx}"],
+          exclude: quarantinedDashboardTests,
           // Process CSS imports only for jsdom tests that assert on
           // getComputedStyle. Node API tests do not need CSS transforms.
           css: { include: [/app\//] },
@@ -509,6 +564,7 @@ export default defineConfig({
           name: "dashboard-api",
           environment: "node",
           include: ["src/**/*.test.{ts,tsx}"],
+          exclude: quarantinedDashboardTests,
           css: { include: [] },
         },
       },

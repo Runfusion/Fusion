@@ -1,4 +1,11 @@
 import type { Settings } from "./types.js";
+import type {
+  ModelGovernancePredicate,
+  RouterDecision,
+  RouterLane,
+  RouterTaskContext,
+} from "./model-router.js";
+import { routeModel } from "./model-router.js";
 
 export interface ResolvedModelSelection {
   provider?: string;
@@ -182,4 +189,74 @@ export function resolveTaskPlanningModel(
     ),
     settings,
   );
+}
+
+// ── Fusion Model Router lane wrappers (U17 / KTD9) ─────────────────────────
+//
+// These are the **governed** session-start lanes: execution, planning, and
+// validation. Each first resolves the lane's default pair exactly as today (the
+// router's counterfactual), then hands it to the selection layer. The router is
+// OFF by default — when disabled it returns the default pair byte-identically,
+// so these wrappers are safe drop-ins. The non-routed resolvers above remain
+// untouched; the settings-only resolvers, `resolveProjectDefaultModel`, and
+// `resolveTitleSummarizerSettingsModel` are **ungoverned** (no task signal /
+// non-session purpose) and the router never touches them.
+
+/** Options shared by the router-aware lane resolvers. */
+export interface RouterLaneOptions {
+  /** Per-task per-lane override pair (e.g. a column-agent binding). When complete,
+   *  the router defers to it. */
+  overridePair?: ResolvedModelSelection | null;
+  /** Classification signal for the conservative v0 allowlist. */
+  context?: RouterTaskContext;
+  /** Governance gate — the router never returns a pair this rejects. */
+  isPermitted?: ModelGovernancePredicate;
+}
+
+function routeLane(
+  lane: RouterLane,
+  defaultPair: ResolvedModelSelection,
+  settings: Partial<Settings> | undefined,
+  options: RouterLaneOptions | undefined,
+): RouterDecision {
+  return routeModel({
+    lane,
+    defaultPair,
+    overridePair: options?.overridePair ?? null,
+    context: options?.context,
+    settings,
+    isPermitted: options?.isPermitted,
+  });
+}
+
+/**
+ * Router-aware execution-lane resolution. Returns the full {@link RouterDecision}
+ * (selection + counterfactual + reason) so the caller can emit telemetry and wire
+ * the escalation seam. With the router disabled, `decision.selection` equals
+ * {@link resolveTaskExecutionModel}.
+ */
+export function routeTaskExecutionModel(
+  task: TaskModelLike,
+  settings?: Partial<Settings>,
+  options?: RouterLaneOptions,
+): RouterDecision {
+  return routeLane("execution", resolveTaskExecutionModel(task, settings), settings, options);
+}
+
+/** Router-aware planning-lane resolution. See {@link routeTaskExecutionModel}. */
+export function routeTaskPlanningModel(
+  task: TaskModelLike,
+  settings?: Partial<Settings>,
+  options?: RouterLaneOptions,
+): RouterDecision {
+  return routeLane("planning", resolveTaskPlanningModel(task, settings), settings, options);
+}
+
+/** Router-aware validation-lane resolution. See {@link routeTaskExecutionModel}. */
+export function routeTaskValidatorModel(
+  task: TaskModelLike,
+  settings?: Partial<Settings>,
+  options?: RouterLaneOptions,
+): RouterDecision {
+  return routeLane("validation", resolveTaskValidatorModel(task, settings), settings, options);
 }

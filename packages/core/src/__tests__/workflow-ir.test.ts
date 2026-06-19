@@ -62,6 +62,86 @@ describe("parseWorkflowIr — v2 columns & placement", () => {
     expect(() => parseWorkflowIr(ir)).toThrow(/undefined column 'ghost'/);
   });
 
+  it("rejects a dangling top-level edge with an unknown target node", () => {
+    const ir = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        { id: "a", kind: "prompt", column: "only" },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [
+        { from: "start", to: "a" },
+        { from: "a", to: "end" },
+        { from: "a", to: "ghost" },
+      ],
+    );
+
+    expect(() => parseWorkflowIr(ir)).toThrow(WorkflowIrError);
+    expect(() => parseWorkflowIr(ir)).toThrow(
+      /Workflow edge 'a' -> 'ghost' references undefined node 'ghost'/,
+    );
+  });
+
+  it("rejects a dangling top-level edge with an unknown source node", () => {
+    const ir = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        { id: "a", kind: "prompt", column: "only" },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [
+        { from: "start", to: "a" },
+        { from: "a", to: "end" },
+        { from: "ghost", to: "a" },
+      ],
+    );
+
+    expect(() => parseWorkflowIr(ir)).toThrow(WorkflowIrError);
+    expect(() => parseWorkflowIr(ir)).toThrow(
+      /Workflow edge 'ghost' -> 'a' references undefined node 'ghost'/,
+    );
+  });
+
+  it("does not false-positive on valid top-level edges or legal rework-region edges", () => {
+    const validIr = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        { id: "a", kind: "prompt", column: "only" },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [
+        { from: "start", to: "a" },
+        { from: "a", to: "end" },
+      ],
+    );
+    const reworkIr = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        {
+          id: "head",
+          kind: "hold",
+          column: "only",
+          config: { release: "external-event", reworkRegion: true, maxReworkCycles: 3 },
+        },
+        { id: "body", kind: "prompt", column: "only" },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [
+        { from: "start", to: "head" },
+        { from: "head", to: "body", condition: "outcome:go" },
+        { from: "head", to: "end", condition: "outcome:rework-exhausted" },
+        { from: "body", to: "head", condition: "outcome:again", kind: "rework" },
+      ],
+    );
+
+    expect(() => parseWorkflowIr(validIr)).not.toThrow();
+    expect(() => parseWorkflowIr(reworkIr)).not.toThrow();
+  });
+
   it("rejects duplicate column ids within a workflow", () => {
     const ir = v2(
       [

@@ -58,7 +58,11 @@ describe("compound engineering plugin manifest", () => {
       "ce-plan",
       "ce-work",
       "ce-code-review",
+      "ce-debug",
       "ce-compound",
+      "ce-commit",
+      "ce-commit-push-pr",
+      "ce-resolve-pr-feedback",
     ];
     expect(COMPOUND_ENGINEERING_SKILLS.map((s) => s.skillId)).toEqual(expectedIds);
     expect(plugin.skills).toBe(COMPOUND_ENGINEERING_SKILLS);
@@ -85,7 +89,7 @@ describe("compound engineering plugin manifest", () => {
     const expectedKeys = [
       "defaultProvider",
       "defaultModelId",
-      "enabledStages",
+      "disabledStages",
       "reconcileOnHooks",
       "reconcileIntervalMinutes",
     ].sort();

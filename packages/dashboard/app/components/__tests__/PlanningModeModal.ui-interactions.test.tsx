@@ -1,7 +1,12 @@
+/*
+FNXC:DashboardTests 2026-06-14-08:31:
+FN-6441 rescued this orphaned component test after standalone dashboard-app execution passed without assertion, timeout, or source-code changes. Keep the planning modal UI-interaction coverage in app backfill so question flow, summary, and breakdown interactions remain executed after leaving the skip-list.
+
+FNXC:DashboardTests 2026-06-14-08:32:
+PlanningModeModal calls useToast(), which throws without a ToastProvider. These tests render it bare, so the hook stays mocked in the same style as PlanningModeModal.autosize.test.tsx instead of introducing broad provider wiring during skip-list rescue.
+*/
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// PlanningModeModal calls useToast(), which throws without a ToastProvider.
-// These tests render it bare, so mock the hook (mirrors PlanningModeModal.autosize.test.tsx).
 vi.mock("../../hooks/useToast", () => ({
   useToast: () => ({
     addToast: vi.fn(),
@@ -68,6 +73,7 @@ import {
 } from "./PlanningModeModal.test-helpers";
 
 vi.mock("../../api", () => ({
+  api: vi.fn().mockResolvedValue({ sessions: [] }),
   startPlanning: (...args: any[]) => mockStartPlanning(...args),
   startPlanningStreaming: (...args: any[]) => mockStartPlanningStreaming(...args),
   createPlanningDraft: (...args: any[]) => mockCreatePlanningDraft(...args),
@@ -99,6 +105,7 @@ vi.mock("../../api", () => ({
   fetchGlobalSettings: vi.fn().mockResolvedValue({}),
   fetchModels: (...args: any[]) => mockFetchModels(...args),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
   refineText: vi.fn(),
   getRefineErrorMessage: vi.fn((err: any) => err?.message || "Failed to refine"),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
@@ -112,6 +119,8 @@ vi.mock("../../hooks/useConfirm", () => ({
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  getViewportMode: () => mockUseViewportMode(),
+  isMobileViewport: () => mockUseViewportMode() === "mobile",
   useViewportMode: () => mockUseViewportMode(),
 }));
 

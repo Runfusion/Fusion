@@ -1,3 +1,7 @@
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 confirmed this GitHub delete route/API suite is deterministic under dashboard-api, so it must run in backfill instead of remaining a curated skip-list orphan.
+*/
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";

@@ -7,7 +7,6 @@ import {
   retrySubtaskSession,
   connectSubtaskStream,
   createTasksFromBreakdown,
-  cancelSubtaskBreakdown,
   fetchAiSession,
   parseConversationHistory,
   type SubtaskItem,
@@ -97,6 +96,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   const [showThinking, setShowThinking] = useState(true);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isStartingBreakdown, setIsStartingBreakdown] = useState(false);
   // Local description: synced from prop, can fall back to localStorage
   const [localDescription, setLocalDescription] = useState(initialDescription);
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +162,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     setShowThinking(true);
     setIsReconnecting(false);
     setIsRetrying(false);
+    setIsStartingBreakdown(false);
     setError(null);
     setDirty(false);
     setBranchMode("project-default");
@@ -171,34 +172,52 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     autoStartedRef.current = false;
   }, [localDescription, projectId]);
 
+  const keepSessionReachableInBackground = useCallback(() => {
+    if (!sessionId) return;
+
+    /**
+     * FNXC:SubtaskBreakdown 2026-06-16-21:10:
+     * Closing the modal is an exit affordance, not an explicit discard. Preserve running and review-ready subtask sessions in the background-session list so users can resume from BackgroundTasksIndicator instead of losing AI work.
+     */
+    if (view.type !== "generating" && view.type !== "editing") return;
+
+    const resumableStatus = view.type === "generating" ? "generating" : "awaiting_input";
+    broadcastUpdate({
+      sessionId,
+      status: resumableStatus,
+      needsInput: resumableStatus === "awaiting_input",
+      owningTabId: sessionTabId,
+      type: "subtask",
+      title: localDescription.trim() || undefined,
+      projectId: projectId ?? null,
+    });
+  }, [broadcastUpdate, localDescription, projectId, sessionId, sessionTabId, view.type]);
+
   const handleSendToBackground = useCallback(() => {
+    keepSessionReachableInBackground();
     streamRef.current?.close();
     streamRef.current = null;
     onClose();
-  }, [onClose]);
+  }, [keepSessionReachableInBackground, onClose]);
 
   const handleClose = useCallback(async () => {
     const hasUnsavedChanges = dirty || view.type === "editing" || view.type === "creating";
     if (hasUnsavedChanges) {
       const shouldClose = await confirm({
-        title: t("subtasks.discardChangesTitle", "Discard Changes"),
-        message: t("subtasks.discardChangesMessage", "Close subtask breakdown? Unsaved changes will be lost."),
-        danger: true,
+        title: t("subtasks.keepSessionTitle", "Keep subtask session available?"),
+        message: t("subtasks.keepSessionMessage", "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume."),
       });
       if (!shouldClose) {
         return;
       }
     }
-    if (sessionId) {
-      try {
-        await cancelSubtaskBreakdown(sessionId, projectId, sessionTabId);
-      } catch {
-        // ignore cancel errors
-      }
-    }
+
+    keepSessionReachableInBackground();
+    streamRef.current?.close();
+    streamRef.current = null;
     resetState();
     onClose();
-  }, [dirty, onClose, resetState, sessionId, sessionTabId, view.type, projectId, confirm]);
+  }, [dirty, keepSessionReachableInBackground, onClose, resetState, view.type, confirm, t]);
 
   const connectToSubtaskStream = useCallback(
     (activeSessionId: string) => {
@@ -275,16 +294,28 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     setConversationHistory([]);
     setThinkingOutput("");
     setIsReconnecting(false);
+    setIsStartingBreakdown(true);
 
     try {
       const { sessionId } = await startSubtaskBreakdown(localDescription.trim(), projectId);
       setView({ type: "generating", sessionId });
+      broadcastUpdate({
+        sessionId,
+        status: "generating",
+        needsInput: false,
+        owningTabId: sessionTabId,
+        type: "subtask",
+        title: localDescription.trim() || undefined,
+        projectId: projectId ?? null,
+      });
       connectToSubtaskStream(sessionId);
     } catch (err) {
       setError(getErrorMessage(err) || t("subtasks.errorStartBreakdown", "Failed to start subtask breakdown"));
       setView({ type: "initial" });
+    } finally {
+      setIsStartingBreakdown(false);
     }
-  }, [connectToSubtaskStream, localDescription, projectId]);
+  }, [broadcastUpdate, connectToSubtaskStream, localDescription, projectId, sessionTabId, t]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -636,31 +667,38 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
           )}
 
           {view.type === "initial" && (
-            <div className="planning-initial">
+            <div className="planning-loading" data-testid="subtask-progress-state">
               <div className="planning-view-scroll">
-                <p className="text-muted">{t("subtasks.preparingBreakdown", "Preparing to break this task into subtasks.")}</p>
+                {/*
+                 * FNXC:SubtaskBreakdown 2026-06-16-00:00:
+                 * Subtask generation must show live progress as soon as a run is requested, before the session id or streamed thinking exists, so users do not see a dead static preparation state.
+                 */}
+                <Loader2 size={40} className="spin icon-todo" aria-hidden="true" />
+                <p>{isStartingBreakdown ? t("subtasks.startingBreakdown", "Starting subtask breakdown...") : t("subtasks.preparingBreakdown", "Preparing to break this task into subtasks.")}</p>
+                <p className="text-muted">{t("subtasks.progressHint", "Fusion will keep working while the AI prepares subtasks.")}</p>
                 <pre className="planning-thinking-output">{localDescription}</pre>
               </div>
             </div>
           )}
 
           {view.type === "generating" && (
-            <div className="planning-loading">
+            <div className="planning-loading" data-testid="subtask-progress-state">
               {conversationHistory.length > 0 && (
                 <>
                   <ConversationHistory entries={conversationHistory} defaultShowThinking={true} />
                   <div className="conversation-separator" />
                 </>
               )}
-              <Loader2 size={40} className="spin icon-todo" />
-              <p>{t("subtasks.generatingSubtasks", "AI is generating subtasks...")}</p>
+              <Loader2 size={40} className="spin icon-todo" aria-hidden="true" />
+              <p>{isReconnecting ? t("subtasks.reconnecting", "Reconnecting…") : t("subtasks.generatingSubtasks", "AI is generating subtasks...")}</p>
+              <p className="text-muted">{t("subtasks.progressHint", "Fusion will keep working while the AI prepares subtasks.")}</p>
               <div className="planning-thinking-container">
                 <button className="planning-thinking-toggle" onClick={() => setShowThinking(!showThinking)} type="button">
                   {showThinking ? t("subtasks.hideThinking", "Hide thinking") : t("subtasks.showThinking", "Show thinking")}
                 </button>
-                {showThinking && thinkingOutput && (
+                {showThinking && (
                   <div className="planning-thinking-output">
-                    <pre>{thinkingOutput}</pre>
+                    {thinkingOutput ? <pre>{thinkingOutput}</pre> : <p className="text-muted">{t("subtasks.waitingForThinking", "Waiting for AI progress updates...")}</p>}
                   </div>
                 )}
               </div>

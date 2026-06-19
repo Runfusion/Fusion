@@ -19,13 +19,24 @@
   padding-left: calc(var(--mobile-wf-depth, 0) * var(--space-md));
 }
 
+.mobile-wf-node-actions {
+  display: inline-flex;
+  align-items: stretch;
+  gap: var(--space-xs);
+}
+
+.mobile-wf-node-actions--connect {
+  justify-content: flex-end;
+  padding-left: calc((var(--mobile-wf-depth, 0) * var(--space-md)) + var(--space-xs));
+}
+
 .mobile-wf-node-main {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-sm);
   min-width: 0;
-  min-height: var(--wf-editor-touch-target, 44px);
+  min-height: var(--wf-editor-touch-target);
   padding: var(--space-sm);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -94,12 +105,17 @@
   font-size: 0.78rem;
 }
 
-.mobile-wf-node-expand {
+/*
+FNXC:WorkflowSimpleEditor 2026-06-17-03:02:
+Simple-editor step order is editable on touch and compact desktop surfaces, so move controls use the same minimum touch target and focus/active treatment as existing outline buttons without creating hidden shells for read-only or structural rows.
+*/
+.mobile-wf-node-expand,
+.mobile-wf-node-move,
+.mobile-wf-connect-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--wf-editor-touch-target, 44px);
-  min-height: var(--wf-editor-touch-target, 44px);
+  min-height: var(--wf-editor-touch-target);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
@@ -111,17 +127,69 @@
     box-shadow var(--transition-fast);
 }
 
-.mobile-wf-node-expand:hover {
+.mobile-wf-node-expand,
+.mobile-wf-node-move {
+  width: var(--wf-editor-touch-target);
+}
+
+.mobile-wf-node-move:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled, 0.5);
+  transform: none;
+}
+
+.mobile-wf-connect-button {
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.mobile-wf-node-expand:hover,
+.mobile-wf-node-move:not(:disabled):hover,
+.mobile-wf-connect-button:hover {
   background: var(--bg-tertiary);
 }
 
-.mobile-wf-node-expand:focus-visible {
+.mobile-wf-node-expand:focus-visible,
+.mobile-wf-node-move:focus-visible,
+.mobile-wf-connect-button:focus-visible,
+.mobile-wf-connect-select:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
 }
 
-.mobile-wf-node-expand:active {
+.mobile-wf-node-expand:active,
+.mobile-wf-node-move:not(:disabled):active,
+.mobile-wf-connect-button:active {
   transform: scale(0.97);
+}
+
+.mobile-wf-connect-picker {
+  display: grid;
+  gap: var(--space-xs);
+  padding-left: calc((var(--mobile-wf-depth, 0) * var(--space-md)) + var(--space-xs));
+}
+
+.mobile-wf-connect-label {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.mobile-wf-connect-select {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .mobile-wf-node-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mobile-wf-node-actions {
+    justify-content: flex-end;
+  }
+
+  .mobile-wf-connect-button {
+    flex: 1;
+  }
 }
 
 .mobile-wf-node-meta {

@@ -1063,10 +1063,10 @@ describe("executeHeartbeat", () => {
         columnMovedAt: oldEnoughForBaseScore,
       } as unknown as TaskDetail;
       const scenarios = [
-        { name: "engineer default", role: "engineer", settings: {}, runtimeConfig: {}, shouldClaim: false, promptText: "engineerBacklogAutoClaim disabled" },
+        { name: "engineer default", role: "engineer", settings: {}, runtimeConfig: {}, shouldClaim: false, promptText: "compatible backlog blocked; engineerBacklogAutoClaim disabled", assertEngineerGuidance: true },
         { name: "engineer project opt-in", role: "engineer", settings: { engineerBacklogAutoClaim: true }, runtimeConfig: {}, shouldClaim: true },
         { name: "engineer runtime opt-in overrides project off", role: "engineer", settings: { engineerBacklogAutoClaim: false }, runtimeConfig: { engineerBacklogAutoClaim: true }, shouldClaim: true },
-        { name: "engineer runtime opt-out overrides project on", role: "engineer", settings: { engineerBacklogAutoClaim: true }, runtimeConfig: { engineerBacklogAutoClaim: false }, shouldClaim: false, promptText: "engineerBacklogAutoClaim disabled" },
+        { name: "engineer runtime opt-out overrides project on", role: "engineer", settings: { engineerBacklogAutoClaim: true }, runtimeConfig: { engineerBacklogAutoClaim: false }, shouldClaim: false, promptText: "compatible backlog blocked; engineerBacklogAutoClaim disabled", assertEngineerGuidance: true },
         { name: "executor unchanged", role: "executor", settings: { engineerBacklogAutoClaim: false }, runtimeConfig: {}, shouldClaim: true },
         { name: "reviewer blocked with opt-in", role: "reviewer", settings: { engineerBacklogAutoClaim: true }, runtimeConfig: {}, shouldClaim: false, promptText: "executor or opted-in engineer role required" },
         { name: "custom blocked with opt-in", role: "custom", settings: { engineerBacklogAutoClaim: true }, runtimeConfig: {}, shouldClaim: false, promptText: "executor or opted-in engineer role required" },
@@ -1112,6 +1112,13 @@ describe("executeHeartbeat", () => {
           expect(store.claimTaskForAgent, scenario.name).not.toHaveBeenCalled();
           const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0] as string;
           expect(executionPrompt, scenario.name).toContain(scenario.promptText);
+          if ("assertEngineerGuidance" in scenario && scenario.assertEngineerGuidance) {
+            expect(executionPrompt, scenario.name).toContain("Snapshot found 1 eligible Todo task(s), but this engineer-role agent is not opted into backlog auto-claim.");
+            expect(executionPrompt, scenario.name).toContain("Settings → Scheduling & Capacity → \"Let engineer agents auto-claim backlog tasks\" (settings.engineerBacklogAutoClaim)");
+            expect(executionPrompt, scenario.name).toContain("Agents → Agent Detail → Settings → Heartbeat Settings → \"Engineer Backlog Auto-Claim\" (runtimeConfig.engineerBacklogAutoClaim)");
+            expect(executionPrompt, scenario.name).toContain("Next action: delegate one of the listed tasks to an executor/opted-in engineer or create a coordination follow-up");
+            expect(executionPrompt, scenario.name).toContain("- FN-CANDIDATE: Implementation reliability");
+          }
         }
       }
     });

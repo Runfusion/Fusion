@@ -584,13 +584,15 @@ const mockUseViewportMode = vi.fn(() => "desktop");
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
-  getViewportMode: () => "desktop",
+  getViewportMode: () => mockUseViewportMode(),
+  isMobileViewport: () => mockUseViewportMode() === "mobile",
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom
 vi.mock("../../hooks/useMobileScrollLock", () => ({
   useMobileScrollLock: vi.fn(),
   useMobileKeyboardViewportLock: vi.fn(),
+  useMobileViewportRestoreReset: vi.fn(),
   isIOS: () => true,
   _resetLockState: vi.fn(),
 }));

@@ -20,6 +20,19 @@ export interface AcpCallbacks {
   onToolEnd?: (toolName: string, isError: boolean, result?: unknown) => void;
 }
 
+/**
+ * A stdio MCP server forwarded to the agent on `session/new` (U10 — Route A).
+ * `env` is explicit name/value pairs; inherited `process.env` is NEVER forwarded
+ * to the untrusted agent. Maps 1:1 onto an ACP `mcpServers` entry and onto what
+ * `pi-claude-cli`'s `mcp-config.ts` builds for `--mcp-config`.
+ */
+export interface AcpMcpServer {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+}
+
 /** Per-category permission disposition (mirrors the engine policy shape). */
 export type GateDisposition = "allow" | "block" | "require-approval";
 
@@ -92,6 +105,12 @@ export interface AgentRuntimeOptions {
   defaultThinkingLevel?: string;
   /** Per-run permission gate, populated by the engine. See PermissionGate. */
   actionGateContext?: PermissionGate;
+  /**
+   * MCP servers to forward on `session/new` (U10 — Route A). When present and
+   * non-empty, the agent can call these tools (each call still routes through the
+   * U5 permission floor). Absent/empty preserves Route B's read-only ask posture.
+   */
+  mcpServers?: AcpMcpServer[];
 }
 
 /** Live ACP session state tracked by the runtime adapter. */
@@ -123,6 +142,10 @@ export interface AcpSession {
 
 export type AgentSession = AcpSession;
 
+export interface AgentPromptResult {
+  stopReason?: string;
+}
+
 export interface AgentSessionResult {
   session: AgentSession;
   sessionFile?: string;
@@ -133,7 +156,7 @@ export interface AgentRuntime {
   id: string;
   name: string;
   createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult>;
-  promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void>;
+  promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void | AgentPromptResult>;
   describeModel(session: AgentSession): string;
   dispose?(session: AgentSession): Promise<void>;
 }

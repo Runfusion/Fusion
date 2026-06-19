@@ -92,7 +92,7 @@ fn dashboard
 
 On first launch, Fusion opens an onboarding wizard with three steps:
 
-1. **AI Setup** — choose a provider and authenticate (you only need one to start). Anthropic/Claude and OpenAI Codex use a pasted authorization-code OAuth flow in onboarding and Settings (sign in, then paste the final redirect URL or code back into Fusion), and Fusion warns before login so you remember to copy the browser address bar URL before the redirect tab appears to fail. **Anthropic — via Claude CLI** remains available as a separate optional path. Deprecated Google Gemini CLI / Antigravity entries are hidden; Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code options remain available.
+1. **AI Setup** — choose a provider and authenticate (you only need one to start). Anthropic/Claude and OpenAI Codex use a pasted authorization-code OAuth flow in onboarding and Settings (sign in, then paste the final redirect URL or code back into Fusion), and Fusion warns before login so you remember to copy the browser address bar URL before the redirect tab appears to fail. After the initial Claude OAuth login, Fusion normally refreshes the OAuth credential automatically with the stored refresh token when the access token expires, so repeated manual re-login is not usually required. **Anthropic — via Claude CLI** remains available as a separate optional path. Deprecated Google Gemini CLI / Antigravity entries are hidden; Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code options remain available.
 2. **GitHub (Optional)** — connect GitHub for issue import and PR workflows
 3. **First Task** — create your first task or import one from GitHub
 
@@ -124,11 +124,17 @@ Use the 💡 button to open AI planning mode:
 
 Use the 🌳 button to generate 2–5 subtasks, reorder them, and link dependencies before creating tasks.
 
-You can also use expanded board controls (Refine, Deps, Attachments, model overrides, agent assignment) or the CLI (`fn task create`, `fn task plan`) when needed.
+You can also use expanded board controls (Refine, Deps, Attachments, model overrides, agent assignment, and workflow selection) or the CLI (`fn task create`, `fn task plan`) when needed.
+
+## Choose a Workflow
+
+Most tasks can use the default **Coding** workflow. When the workflow selector is visible on a task or board creation surface, choose a different workflow if the work needs a shorter path, extra review, stepwise execution, Compound Engineering skills, or a custom policy your project authored.
+
+Built-ins include task-selectable Coding, Quick fix, Review-heavy, plugin-gated Compound engineering, and Stepwise coding workflows, plus PR lifecycle fragments for workflow authors. For the full catalog and runtime behavior, see [Workflow Steps](./workflow-steps.md#workflow-overview). To inspect built-ins or author custom workflows, open the dashboard [Workflow Editor](./workflow-editor.md).
 
 ## Understand the Task Lifecycle
 
-Fusion uses six columns:
+Fusion uses six default lifecycle columns:
 
 1. **Planning** — raw idea; AI writes plan
 2. **Todo** — planned and queued
@@ -136,6 +142,8 @@ Fusion uses six columns:
 4. **In Review** — implementation complete, awaiting merge/finalization
 5. **Done** — merged and complete
 6. **Archived** — retained for history, optionally cleaned up from filesystem
+
+Custom workflows can define their own graph policy, typed settings, fields, and (when workflow columns are enabled) column behavior. The default columns remain the baseline mental model for ordinary coding tasks.
 
 ## Daily CLI Commands
 
@@ -152,5 +160,7 @@ fn task unpause FN-001
 
 - [Architecture](./architecture.md) — system internals and package layout
 - [Task Management](./task-management.md) — deeper task workflow and lifecycle details
-- [Dashboard Guide](./dashboard-guide.md) — board and UI features
-- [Settings Reference](./settings-reference.md) — project and global configuration
+- [Dashboard Guide](./dashboard-guide.md) — board, workflow editor, chat, and UI features
+- [Workflow Steps](./workflow-steps.md) — built-in workflows and execution semantics
+- [Workflow Editor](./workflow-editor.md) — visual workflow authoring
+- [Settings Reference](./settings-reference.md) — project, global, and workflow configuration

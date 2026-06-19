@@ -26,6 +26,7 @@ const originalScrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLEleme
 const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 const originalRequestAnimationFrame = window.requestAnimationFrame;
 const originalCancelAnimationFrame = window.cancelAnimationFrame;
+const originalMatchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -96,7 +97,42 @@ function getCssAfter(css: string, marker: string): string {
   return markerIndex >= 0 ? css.slice(markerIndex) : "";
 }
 
-function mockLogs(entries: AgentLogEntry[] = [], loading = false) {
+function getCssDeclaration(rule: string, propertyName: string): string {
+  const declarationMatch = new RegExp(`${propertyName}\\s*:\\s*([^;]+);`).exec(rule);
+  return declarationMatch?.[1]?.trim() ?? "";
+}
+
+function getRootTokenPxValues(css: string): Record<string, number> {
+  const rootRule = getCssRuleBlock(css, ":root");
+  const tokenValues: Record<string, number> = {};
+  for (const match of rootRule.matchAll(/(--(?:space|icon-size)-[\w-]+)\s*:\s*(\d+)px;/g)) {
+    tokenValues[match[1]] = Number(match[2]);
+  }
+  return tokenValues;
+}
+
+function resolveCssPxToken(value: string, tokenValues: Record<string, number>): number {
+  const tokenName = /^var\((--[\w-]+)\)$/.exec(value.trim())?.[1];
+  if (!tokenName || tokenValues[tokenName] === undefined) {
+    throw new Error(`Unable to resolve CSS token value: ${value}`);
+  }
+  return tokenValues[tokenName];
+}
+
+function resolveCssCalcSumPx(value: string, tokenValues: Record<string, number>): number {
+  const calcBody = /^calc\((var\(--[\w-]+\)(?:\s*\+\s*var\(--[\w-]+\))+)\)$/.exec(value.trim())?.[1];
+  const tokenNames = [...(calcBody?.matchAll(/var\((--[\w-]+)\)/g) ?? [])].map((match) => match[1]);
+  if (tokenNames.length === 0 || tokenNames.some((tokenName) => tokenValues[tokenName] === undefined)) {
+    throw new Error(`Unable to resolve CSS calc sum: ${value}`);
+  }
+  return tokenNames.reduce((sum, tokenName) => sum + tokenValues[tokenName], 0);
+}
+
+function mockLogs(
+  entries: AgentLogEntry[] = [],
+  loading = false,
+  overrides: Partial<ReturnType<typeof useAgentLogs>> = {},
+) {
   mockedUseAgentLogs.mockReturnValue({
     entries,
     loading,
@@ -105,6 +141,7 @@ function mockLogs(entries: AgentLogEntry[] = [], loading = false) {
     hasMore: false,
     total: entries.length,
     loadingMore: false,
+    ...overrides,
   });
 }
 
@@ -117,6 +154,17 @@ function expectComposerSendableAfterDraft(message = "Please continue") {
 
   fireEvent.change(input, { target: { value: message } });
   expect(sendButton).not.toBeDisabled();
+}
+
+function expectTranscriptTextOrder(...texts: string[]) {
+  const transcriptText = screen.getByTestId("task-chat-transcript").textContent ?? "";
+  let previousIndex = -1;
+  for (const text of texts) {
+    const index = transcriptText.indexOf(text);
+    expect(index, `Expected transcript to contain ${text}`).toBeGreaterThanOrEqual(0);
+    expect(index, `Expected ${text} to appear after the previous transcript text`).toBeGreaterThan(previousIndex);
+    previousIndex = index;
+  }
 }
 
 function expectNoInactiveSessionHint() {
@@ -258,6 +306,7 @@ describe("TaskChatTab", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     restoreMetricDescriptor("scrollTop", originalScrollTopDescriptor);
     restoreMetricDescriptor("scrollHeight", originalScrollHeightDescriptor);
     restoreMetricDescriptor("clientHeight", originalClientHeightDescriptor);
@@ -271,6 +320,11 @@ describe("TaskChatTab", () => {
       writable: true,
       value: originalCancelAnimationFrame,
     });
+    if (originalMatchMediaDescriptor) {
+      Object.defineProperty(window, "matchMedia", originalMatchMediaDescriptor);
+    } else {
+      delete (window as Partial<Window>).matchMedia;
+    }
   });
 
   it("subscribes to live agent logs only when active", () => {
@@ -283,41 +337,65 @@ describe("TaskChatTab", () => {
     expect(screen.getByText(/No agent output yet/)).toBeTruthy();
   });
 
-  it("renders the collapsed expand toggle and calls the toggle handler", () => {
+  it("renders the collapsed icon-only expand toggle inside the chat view and calls the toggle handler", () => {
     const onToggleExpanded = vi.fn();
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} expanded={false} onToggleExpanded={onToggleExpanded} />);
 
     const toggle = screen.getByTestId("task-chat-expand-toggle");
+    const transcript = screen.getByTestId("task-chat-transcript");
+    expect(screen.getByTestId("task-chat-tab")).toContainElement(toggle);
+    expect(transcript).not.toContainElement(toggle);
+    expect(document.querySelector(".task-chat-toolbar")).toBeNull();
+    expect(toggle).toHaveClass("btn-icon");
+    expect(toggle).toHaveClass("task-chat-expand-toggle--overlay");
     expect(toggle).toHaveAttribute("aria-label", "Expand chat to full modal");
     expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(toggle).toHaveTextContent("Expand");
+    expect(toggle).not.toHaveTextContent("Expand");
+    expect(toggle).not.toHaveTextContent("Collapse");
 
     fireEvent.click(toggle);
     expect(onToggleExpanded).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the expanded collapse toggle", () => {
+  it("renders the expanded icon-only collapse toggle", () => {
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} expanded onToggleExpanded={vi.fn()} />);
 
     const toggle = screen.getByTestId("task-chat-expand-toggle");
     expect(toggle).toHaveAttribute("aria-label", "Collapse chat");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(toggle).toHaveTextContent("Collapse");
+    expect(toggle).not.toHaveTextContent("Collapse");
+    expect(toggle).not.toHaveTextContent("Expand");
   });
 
-  it("renders the expand toggle while the transcript is loading", () => {
+  it("renders the icon-only expand toggle while the transcript is loading", () => {
     mockLogs([], true);
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} onToggleExpanded={vi.fn()} />);
 
-    expect(screen.getByTestId("task-chat-expand-toggle")).toBeInTheDocument();
+    const toggle = screen.getByTestId("task-chat-expand-toggle");
+    expect(screen.getByTestId("task-chat-tab")).toContainElement(toggle);
+    expect(toggle).not.toHaveTextContent("Expand");
     expect(screen.getByText("Loading agent output…")).toBeInTheDocument();
   });
 
-  it("renders the expand toggle in the empty transcript state", () => {
+  it("renders the icon-only expand toggle in the empty transcript state", () => {
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} onToggleExpanded={vi.fn()} />);
 
-    expect(screen.getByTestId("task-chat-expand-toggle")).toBeInTheDocument();
+    const toggle = screen.getByTestId("task-chat-expand-toggle");
+    expect(screen.getByTestId("task-chat-tab")).toContainElement(toggle);
+    expect(toggle).not.toHaveTextContent("Expand");
     expect(screen.getByText(/No agent output yet/)).toBeInTheDocument();
+  });
+
+  it("renders the icon-only expand toggle in the populated transcript state", () => {
+    mockLogs([makeEntry({ agent: "executor", text: "executor output" })]);
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} onToggleExpanded={vi.fn()} />);
+
+    const transcript = screen.getByTestId("task-chat-transcript");
+    const toggle = screen.getByTestId("task-chat-expand-toggle");
+    expect(screen.getByTestId("task-chat-tab")).toContainElement(toggle);
+    expect(transcript).not.toContainElement(toggle);
+    expect(toggle).not.toHaveTextContent("Expand");
+    expect(within(transcript).getByText("executor output")).toBeInTheDocument();
   });
 
   it("labels every agent role and the legacy undefined-agent fallback", () => {
@@ -351,6 +429,36 @@ describe("TaskChatTab", () => {
     expect(screen.getByText("2 entries")).toBeTruthy();
     expect(screen.getByLabelText("Executor messages")).toBeTruthy();
     expect(screen.getByLabelText("Reviewer messages")).toBeTruthy();
+  });
+
+  it("renders a relative timestamp for a single-entry agent group", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T15:00:00.000Z"));
+    mockLogs([
+      makeEntry({ agent: "executor", text: "single timestamped response", timestamp: "2026-06-17T14:59:30.000Z" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    expect(screen.getByText("1 entry")).toBeVisible();
+    expect(screen.getByTestId("task-chat-group-time")).toHaveTextContent("just now");
+  });
+
+  it("renders the latest-entry relative timestamp alongside multi-entry group meta", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T15:00:00.000Z"));
+    mockLogs([
+      makeEntry({ agent: "executor", text: "older group entry", timestamp: "2026-06-17T14:50:00.000Z" }),
+      makeEntry({ agent: "executor", text: "latest group entry", timestamp: "2026-06-17T14:58:00.000Z" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const executorGroup = screen.getByLabelText("Executor messages");
+    const groupMeta = executorGroup.querySelector(".task-chat-group-meta");
+    expect(groupMeta).not.toBeNull();
+    expect(within(groupMeta as HTMLElement).getByText("2 entries")).toBeVisible();
+    expect(within(groupMeta as HTMLElement).getByTestId("task-chat-group-time")).toHaveTextContent("2m ago");
   });
 
   it("renders a single text entry as one text bubble", () => {
@@ -761,6 +869,145 @@ describe("TaskChatTab", () => {
     expect(metrics.scrollTop).toBe(120);
   });
 
+  it("loads previous messages on scroll-to-top and via the expanded-mode button", async () => {
+    const user = userEvent.setup();
+    const metrics = mockTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240, initialScrollTop: 1000 });
+    const loadMore = vi.fn(async () => {});
+    mockLogs([makeEntry({ agent: "executor", text: "current output" })], false, { hasMore: true, loadMore });
+
+    render(<TaskChatTab task={makeTask()} active expanded onToggleExpanded={vi.fn()} addToast={vi.fn()} />);
+
+    metrics.scrollTop = 0;
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    await waitFor(() => expect(loadMore).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByTestId("task-chat-load-previous"));
+    expect(loadMore).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders load-previous affordances only for available older history", () => {
+    const loadMore = vi.fn(async () => {});
+    mockLogs([makeEntry({ agent: "executor", text: "current output" })], false, { hasMore: true, loadMore });
+    const { unmount } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    const button = screen.getByTestId("task-chat-load-previous");
+    expect(button).toBeVisible();
+    expect(button).toHaveAccessibleName("Load previous messages");
+    unmount();
+
+    mockLogs([makeEntry({ agent: "executor", text: "current output" })], false, { hasMore: true, loadingMore: true, loadMore });
+    const loading = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(screen.getByTestId("task-chat-load-previous-loading")).toHaveTextContent("Loading earlier messages…");
+    expect(screen.queryByTestId("task-chat-load-previous")).not.toBeInTheDocument();
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    expect(loadMore).not.toHaveBeenCalled();
+    loading.unmount();
+
+    mockLogs([makeEntry({ agent: "executor", text: "current output" })], false, { hasMore: false, loadMore });
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(screen.queryByTestId("task-chat-load-previous")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("task-chat-load-previous-loading")).not.toBeInTheDocument();
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    expect(loadMore).not.toHaveBeenCalled();
+  });
+
+  it("preserves scroll position when older entries are prepended", async () => {
+    const metrics = mockTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240, initialScrollTop: 0 });
+    const loadMoreDeferred = deferred<void>();
+    const loadMore = vi.fn(() => loadMoreDeferred.promise);
+    const currentEntries = [
+      makeEntry({ agent: "executor", text: "current first", timestamp: "2026-06-12T00:00:02.000Z" }),
+      makeEntry({ agent: "executor", text: "current latest", timestamp: "2026-06-12T00:00:03.000Z" }),
+    ];
+    mockLogs(currentEntries, false, { hasMore: true, loadMore });
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active expanded onToggleExpanded={vi.fn()} addToast={vi.fn()} />);
+    metrics.scrollTop = 0;
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+
+    metrics.scrollHeight = 1400;
+    mockLogs([
+      makeEntry({ agent: "executor", text: "older history", timestamp: "2026-06-12T00:00:01.000Z" }),
+      ...currentEntries,
+    ], false, { hasMore: false, loadMore });
+    await act(async () => {
+      loadMoreDeferred.resolve();
+      await loadMoreDeferred.promise;
+    });
+    rerender(<TaskChatTab task={makeTask()} active expanded onToggleExpanded={vi.fn()} addToast={vi.fn()} />);
+
+    expect(metrics.scrollTop).toBe(400);
+    expect(metrics.scrollTop).not.toBe(metrics.scrollHeight);
+    expect(screen.getByTestId("task-chat-jump-to-bottom")).toBeVisible();
+  });
+
+  it("keeps live appends following the bottom while load-previous is in flight", async () => {
+    const user = userEvent.setup();
+    const metrics = mockTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240, initialScrollTop: 0 });
+    const loadMoreDeferred = deferred<void>();
+    const loadMore = vi.fn(() => loadMoreDeferred.promise);
+    const currentEntries = [makeEntry({ agent: "executor", text: "current output", timestamp: "2026-06-12T00:00:02.000Z" })];
+    mockLogs(currentEntries, false, { hasMore: true, loadMore });
+
+    const { rerender } = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(metrics.scrollTop).toBe(1000);
+    await user.click(screen.getByTestId("task-chat-load-previous"));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+
+    metrics.scrollHeight = 1300;
+    mockLogs([
+      ...currentEntries,
+      makeEntry({ agent: "executor", text: "live tail", timestamp: "2026-06-12T00:00:03.000Z" }),
+    ], false, { hasMore: true, loadMore });
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+    expect(metrics.scrollTop).toBe(1300);
+
+    metrics.scrollHeight = 1700;
+    mockLogs([
+      makeEntry({ agent: "executor", text: "older history", timestamp: "2026-06-12T00:00:01.000Z" }),
+      ...currentEntries,
+      makeEntry({ agent: "executor", text: "live tail", timestamp: "2026-06-12T00:00:03.000Z" }),
+    ], false, { hasMore: false, loadMore });
+    await act(async () => {
+      loadMoreDeferred.resolve();
+      await loadMoreDeferred.promise;
+    });
+    rerender(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    expect(metrics.scrollTop).toBe(1700);
+    expect(screen.queryByTestId("task-chat-jump-to-bottom")).not.toBeInTheDocument();
+  });
+
+  it("preserves steering-comment ordering after older entries are prepended", async () => {
+    const metrics = mockTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240, initialScrollTop: 0 });
+    const loadMoreDeferred = deferred<void>();
+    const loadMore = vi.fn(() => loadMoreDeferred.promise);
+    const currentEntries = [makeEntry({ agent: "executor", text: "newer agent output", timestamp: "2026-06-12T00:00:03.000Z" })];
+    const task = makeTask({
+      steeringComments: [makeSteeringComment({ text: "middle user guidance", createdAt: "2026-06-12T00:00:02.000Z" })],
+    });
+    mockLogs(currentEntries, false, { hasMore: true, loadMore });
+
+    const { rerender } = render(<TaskChatTab task={task} active addToast={vi.fn()} />);
+    metrics.scrollTop = 0;
+    fireEvent.scroll(screen.getByTestId("task-chat-transcript"));
+
+    metrics.scrollHeight = 1400;
+    mockLogs([
+      makeEntry({ agent: "executor", text: "older agent output", timestamp: "2026-06-12T00:00:01.000Z" }),
+      ...currentEntries,
+    ], false, { hasMore: false, loadMore });
+    await act(async () => {
+      loadMoreDeferred.resolve();
+      await loadMoreDeferred.promise;
+    });
+    rerender(<TaskChatTab task={task} active addToast={vi.fn()} />);
+
+    const transcriptText = screen.getByTestId("task-chat-transcript").textContent ?? "";
+    expect(transcriptText.indexOf("older agent output")).toBeLessThan(transcriptText.indexOf("middle user guidance"));
+    expect(transcriptText.indexOf("middle user guidance")).toBeLessThan(transcriptText.indexOf("newer agent output"));
+  });
+
   it("does not render the jump-to-bottom button for loading or empty transcripts", () => {
     mockLogs([], true);
     const loading = render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
@@ -792,6 +1039,24 @@ describe("TaskChatTab", () => {
     expect(jumpButton).toBeVisible();
     expect(jumpButton).toHaveAccessibleName("Jump to latest message");
     expect(screen.getByRole("button", { name: "Jump to latest message" })).toBe(jumpButton);
+  });
+
+  it("keeps the icon-only expand toggle accessible after transcript scrolling", () => {
+    const metrics = mockTranscriptMetrics({ scrollHeight: 1200, clientHeight: 240, initialScrollTop: 0 });
+    mockLogs([makeEntry({ agent: "executor", text: "scrollable output" })]);
+
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} expanded={false} onToggleExpanded={vi.fn()} />);
+    const transcript = screen.getByTestId("task-chat-transcript");
+
+    metrics.scrollTop = 600;
+    fireEvent.scroll(transcript);
+
+    const toggle = screen.getByTestId("task-chat-expand-toggle");
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toBeVisible();
+    expect(toggle).toHaveAccessibleName("Expand chat to full modal");
+    expect(toggle).not.toHaveTextContent("Expand");
+    expect(transcript).not.toContainElement(toggle);
   });
 
   it("clicking the jump-to-bottom button snaps to the latest message and removes the control", async () => {
@@ -887,6 +1152,126 @@ describe("TaskChatTab", () => {
     expect(onTaskUpdated).not.toHaveBeenCalled();
   });
 
+  it("sends an in-progress task steering message on plain Enter", async () => {
+    const onTaskUpdated = vi.fn();
+    const updatedTask = makeTask();
+    mockedAddSteeringComment.mockResolvedValue(updatedTask);
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} onTaskUpdated={onTaskUpdated} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    fireEvent.change(input, { target: { value: "Plain Enter guidance" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).toHaveBeenCalledWith("FN-001", "Plain Enter guidance", "project-1");
+    });
+    expect(mockedAddSteeringComment).toHaveBeenCalledTimes(1);
+    expect(mockedRefineTask).not.toHaveBeenCalled();
+    expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+  });
+
+  it("sends a done-task refinement on plain Enter", async () => {
+    const refinementTask = makeTask({ id: "FN-224", column: "todo" });
+    mockedRefineTask.mockResolvedValue(refinementTask);
+    render(<TaskChatTab task={makeTask({ column: "done" })} projectId="project-1" active addToast={vi.fn()} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    fireEvent.change(input, { target: { value: "Plain Enter refinement" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(mockedRefineTask).toHaveBeenCalledWith("FN-001", "Plain Enter refinement", "project-1");
+    });
+    expect(mockedRefineTask).toHaveBeenCalledTimes(1);
+    expect(mockedAddSteeringComment).not.toHaveBeenCalled();
+  });
+
+  it("keeps Shift+Enter as textarea newline input without sending", async () => {
+    const user = userEvent.setup();
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    await user.click(input);
+    await user.keyboard("Line one");
+    await user.keyboard("{Shift>}{Enter}{/Shift}Line two");
+
+    expect(input).toHaveValue("Line one\nLine two");
+    expect(mockedAddSteeringComment).not.toHaveBeenCalled();
+    expect(mockedRefineTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "   \n  "])("does not send a %s draft on Enter", async (draft) => {
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    fireEvent.change(input, { target: { value: draft } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).not.toHaveBeenCalled();
+      expect(mockedRefineTask).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not submit another Enter while a send is already in flight", async () => {
+    const send = deferred<Task>();
+    mockedAddSteeringComment.mockReturnValue(send.promise);
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    fireEvent.change(input, { target: { value: "Only send once" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole("button", { name: "Sending" })).toBeDisabled();
+
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(mockedAddSteeringComment).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      send.resolve(makeTask());
+      await send.promise;
+    });
+  });
+
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229", { keyCode: 229 }],
+  ])("does not send Enter during IME composition signaled by %s", async (_label, eventPatch) => {
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    fireEvent.change(input, { target: { value: "Composing text" } });
+    const event = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true });
+    for (const [key, value] of Object.entries(eventPatch)) {
+      Object.defineProperty(event, key, { value });
+    }
+    fireEvent(input, event);
+
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).not.toHaveBeenCalled();
+      expect(mockedRefineTask).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each([
+    ["Cmd+Enter", { metaKey: true }],
+    ["Ctrl+Enter", { ctrlKey: true }],
+  ])("keeps %s sending for backward compatibility", async (_label, modifier) => {
+    mockedAddSteeringComment.mockResolvedValue(makeTask());
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    fireEvent.change(input, { target: { value: "Shortcut guidance" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter", ...modifier });
+
+    await waitFor(() => {
+      expect(mockedAddSteeringComment).toHaveBeenCalledWith("FN-001", "Shortcut guidance", "project-1");
+    });
+    expect(mockedAddSteeringComment).toHaveBeenCalledTimes(1);
+  });
+
   it.each([undefined, null, "failed", "done"])("routes done-task sends to refineTask regardless of %s status", async (status) => {
     const user = userEvent.setup();
     mockedRefineTask.mockResolvedValue(makeTask({ id: "FN-333", column: "todo" }));
@@ -938,6 +1323,7 @@ describe("TaskChatTab", () => {
     expect(within(transcript).getByText("You")).toBeVisible();
     expect(within(transcript).getByText("Please inspect the failing test")).toBeVisible();
     expect(within(transcript).getByTestId("task-chat-entry-user")).toBeVisible();
+    expect(within(transcript).getByTestId("task-chat-user-time")).toBeVisible();
     expect(mockedAddSteeringComment).toHaveBeenCalledWith("FN-001", "Please inspect the failing test", "project-1");
 
     await act(async () => {
@@ -949,12 +1335,127 @@ describe("TaskChatTab", () => {
     expect(input).toHaveValue("");
   });
 
-  it("renders persisted user steering comments but not agent-authored steering comments", () => {
+  it("renders a just-now timestamp for an optimistic user message", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T15:00:00.000Z"));
+    mockedAddSteeringComment.mockReturnValue(deferred<Task>().promise);
+    render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: "Optimistic timestamp" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const transcript = screen.getByTestId("task-chat-transcript");
+    expect(within(transcript).getByText("Optimistic timestamp")).toBeVisible();
+    expect(within(transcript).getByTestId("task-chat-user-time")).toHaveTextContent("just now");
+  });
+
+  it("renders a sent user message after pre-existing agent output under client-behind-server clock skew", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+    mockLogs([
+      makeEntry({ agent: "executor", text: "agent output with server timestamp", timestamp: "2026-06-12T00:00:05.000Z" }),
+    ]);
+    const send = deferred<Task>();
+    mockedAddSteeringComment.mockReturnValue(send.promise);
+    render(<TaskChatTab task={makeTask({ column: "in-progress", assignedAgentId: "agent-1" })} projectId="project-1" active addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: "Please stay below the agent output" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expectTranscriptTextOrder("agent output with server timestamp", "Please stay below the agent output");
+  });
+
+  it.each([
+    ["in-review client-ahead mobile", makeTask({ column: "in-review", assignedAgentId: "agent-1", status: "reviewing" }), "2026-06-12T00:00:10.000Z", true],
+    ["in-progress clock-sync desktop", makeTask({ column: "in-progress", assignedAgentId: "agent-1", status: "queued" }), "2026-06-12T00:00:05.000Z", false],
+  ])("keeps sent user messages at the transcript tail for %s", (_label, task, now, mobile) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    mockMatchMedia(mobile);
+    mockLogs([
+      makeEntry({ agent: "executor", text: "pre-existing agent output", timestamp: "2026-06-12T00:00:05.000Z" }),
+    ]);
+    mockedAddSteeringComment.mockReturnValue(deferred<Task>().promise);
+    render(<TaskChatTab task={task} projectId="project-1" active addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: "Tail guidance" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expectTranscriptTextOrder("pre-existing agent output", "Tail guidance");
+  });
+
+  it("renders agent follow-up below the newly-sent user message", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+    const task = makeTask({ steeringComments: [makeSteeringComment({ id: "old-user", text: "historical guidance", createdAt: "2026-06-12T00:00:02.000Z" })] });
+    mockLogs([
+      makeEntry({ agent: "executor", text: "pre-existing output", timestamp: "2026-06-12T00:00:05.000Z" }),
+    ]);
+    mockedAddSteeringComment.mockReturnValue(deferred<Task>().promise);
+    const { rerender } = render(<TaskChatTab task={task} projectId="project-1" active addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: "New steering" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expectTranscriptTextOrder("historical guidance", "pre-existing output", "New steering");
+
+    mockLogs([
+      makeEntry({ agent: "executor", text: "pre-existing output", timestamp: "2026-06-12T00:00:05.000Z" }),
+      makeEntry({ agent: "executor", text: "agent follow-up after steering", timestamp: "2026-06-12T00:00:06.000Z" }),
+    ]);
+    rerender(<TaskChatTab task={task} projectId="project-1" active addToast={vi.fn()} />);
+
+    expectTranscriptTextOrder("pre-existing output", "New steering", "agent follow-up after steering");
+  });
+
+  it("keeps a reconciled persisted steering comment at the clamped tail without duplication", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+    mockLogs([
+      makeEntry({ agent: "executor", text: "agent output before send", timestamp: "2026-06-12T00:00:05.000Z" }),
+    ]);
+    const send = deferred<Task>();
+    mockedAddSteeringComment.mockReturnValue(send.promise);
+    const persistedComment = makeSteeringComment({ id: "steer-reconciled", text: "Reconciled guidance", createdAt: "2026-06-12T00:00:01.000Z" });
+    const { rerender } = render(<TaskChatTab task={makeTask()} projectId="project-1" active addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: "Reconciled guidance" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expectTranscriptTextOrder("agent output before send", "Reconciled guidance");
+
+    await act(async () => {
+      send.resolve(makeTask({ steeringComments: [persistedComment] }));
+      await send.promise;
+    });
+    rerender(<TaskChatTab task={makeTask({ steeringComments: [persistedComment] })} projectId="project-1" active addToast={vi.fn()} />);
+
+    expectTranscriptTextOrder("agent output before send", "Reconciled guidance");
+    expect(within(screen.getByTestId("task-chat-transcript")).getAllByText("Reconciled guidance")).toHaveLength(1);
+  });
+
+  it("inserts done-task refinement messages immediately at the transcript tail", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+    mockLogs([
+      makeEntry({ agent: "reviewer", text: "final agent summary", timestamp: "2026-06-12T00:00:05.000Z" }),
+    ]);
+    mockedRefineTask.mockReturnValue(deferred<Task>().promise);
+    render(<TaskChatTab task={makeTask({ column: "done", status: "done", assignedAgentId: undefined })} projectId="project-1" active addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText("Message active agent session"), { target: { value: "Please refine this task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expectTranscriptTextOrder("final agent summary", "Please refine this task");
+    expect(mockedRefineTask).toHaveBeenCalledWith("FN-001", "Please refine this task", "project-1");
+  });
+
+  it("renders persisted user steering comments with a relative timestamp but not agent-authored steering comments", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T15:00:00.000Z"));
     render(
       <TaskChatTab
         task={makeTask({
           steeringComments: [
-            makeSteeringComment({ id: "user-steer", text: "Persisted user guidance", author: "user" }),
+            makeSteeringComment({ id: "user-steer", text: "Persisted user guidance", author: "user", createdAt: "2026-06-17T14:00:00.000Z" }),
             makeSteeringComment({ id: "agent-steer", text: "Internal agent note", author: "agent" }),
           ],
         })}
@@ -966,7 +1467,31 @@ describe("TaskChatTab", () => {
     const transcript = screen.getByTestId("task-chat-transcript");
     expect(within(transcript).getByText("You")).toBeVisible();
     expect(within(transcript).getByText("Persisted user guidance")).toBeVisible();
+    expect(within(transcript).getByTestId("task-chat-user-time")).toHaveTextContent("1h ago");
     expect(within(transcript).queryByText("Internal agent note")).not.toBeInTheDocument();
+  });
+
+  it("omits invalid relative timestamps without crashing or rendering invalid-date text", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", text: "invalid agent timestamp", timestamp: "not-a-date" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({
+          steeringComments: [makeSteeringComment({ id: "invalid-user-time", text: "invalid user timestamp", createdAt: "not-a-date" })],
+        })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+
+    const transcript = screen.getByTestId("task-chat-transcript");
+    expect(within(transcript).getByText("invalid agent timestamp")).toBeVisible();
+    expect(within(transcript).getByText("invalid user timestamp")).toBeVisible();
+    expect(within(transcript).queryByTestId("task-chat-group-time")).not.toBeInTheDocument();
+    expect(within(transcript).queryByTestId("task-chat-user-time")).not.toBeInTheDocument();
+    expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
   });
 
   it("deduplicates optimistic messages when matching persisted comments arrive", async () => {
@@ -1477,6 +2002,34 @@ describe("TaskChatTab", () => {
     expect(css).not.toContain("62vh");
   });
 
+  it("positions the icon-only expand toggle as a tokenized chat-view overlay with no toolbar shell", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const tabRule = getCssRuleBlock(css, ".task-chat-tab");
+    const transcriptRule = getCssRuleBlock(css, ".task-chat-transcript");
+    const toggleRule = getCssRuleBlock(css, ".task-chat-expand-toggle");
+    const overlayRule = getCssRuleBlock(css, ".task-chat-expand-toggle--overlay");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileOverlayRule = getCssRuleBlock(mobileCss, ".task-chat-expand-toggle--overlay");
+
+    expect(css).not.toContain(".task-chat-toolbar");
+    expect(tabRule).toContain("position: relative");
+    expect(transcriptRule).toContain("position: relative");
+    expect(toggleRule).toContain("justify-content: center");
+    expect(toggleRule).toContain("min-inline-size: var(--space-2xl)");
+    expect(toggleRule).toContain("min-block-size: var(--space-2xl)");
+    expect(toggleRule).not.toContain("gap");
+    expect(overlayRule).toContain("position: absolute");
+    expect(overlayRule).toContain("top: var(--space-md)");
+    expect(overlayRule).toContain("right: var(--space-md)");
+    expect(overlayRule).toContain("background: var(--surface)");
+    expect(overlayRule).toContain("border-color: var(--border)");
+    expect(overlayRule).toContain("box-shadow: var(--shadow-sm)");
+    expect(mobileOverlayRule).toContain("top: var(--space-sm)");
+    expect(mobileOverlayRule).toContain("right: var(--space-sm)");
+    expect(mobileOverlayRule).toContain("min-inline-size");
+    expect(mobileOverlayRule).toContain("min-block-size");
+  });
+
   it("keeps tokenized sticky styling for the jump-to-bottom control on desktop and mobile", () => {
     const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
     const jumpRule = getCssRuleBlock(css, ".task-chat-jump-to-bottom");
@@ -1496,6 +2049,79 @@ describe("TaskChatTab", () => {
     expect(mobileJumpRule).toContain("min-block-size");
   });
 
+  it("keeps tokenized mobile touch targets for the load-previous affordance", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const rowRule = getCssRuleBlock(css, ".task-chat-load-previous-row");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileRowRule = getCssRuleBlock(mobileCss, ".task-chat-load-previous-row");
+    const mobileButtonRule = getCssRuleBlock(mobileCss, ".task-chat-load-previous,");
+
+    expect(rowRule).toContain("justify-content: center");
+    expect(rowRule).toContain("min-block-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(css).toContain("gap: var(--space-xs)");
+    expect(css).toContain("color: var(--text-muted)");
+    expect(rowRule).not.toContain("px");
+    expect(css).not.toContain("#");
+    expect(mobileRowRule).toContain("min-block-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(mobileButtonRule).toContain("min-block-size: calc(var(--space-2xl) + var(--space-sm))");
+  });
+
+  it("scales the task chat send glyph without shrinking the desktop or mobile touch target", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const sharedStyles = readFileSync(resolve(__dirname, "../../styles.css"), "utf8");
+    const sendRule = getCssRuleBlock(css, ".task-chat-send");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileSendRule = getCssRuleBlock(mobileCss, ".task-chat-send");
+    const mobileInputRule = getCssRuleBlock(mobileCss, ".task-chat-input");
+    const tokenValues = getRootTokenPxValues(sharedStyles);
+    const defaultIconSizePx = tokenValues["--icon-size-md"];
+    const desktopIconSizePx = resolveCssPxToken(getCssDeclaration(sendRule, "--btn-icon-size"), tokenValues);
+    const mobileIconSizePx = resolveCssCalcSumPx(getCssDeclaration(mobileSendRule, "--btn-icon-size"), tokenValues);
+    const desktopBoxSizePx = resolveCssCalcSumPx(getCssDeclaration(sendRule, "inline-size"), tokenValues);
+    const mobileBoxSizePx = resolveCssCalcSumPx(getCssDeclaration(mobileSendRule, "inline-size"), tokenValues);
+    const mobileInputMinHeightPx = resolveCssCalcSumPx(getCssDeclaration(mobileInputRule, "min-height"), tokenValues);
+
+    expect(defaultIconSizePx).toBe(16);
+    expect(desktopIconSizePx).toBeGreaterThan(defaultIconSizePx);
+    expect(mobileIconSizePx).toBeGreaterThan(defaultIconSizePx);
+    expect(mobileBoxSizePx).toBeGreaterThan(desktopBoxSizePx);
+    expect(mobileIconSizePx).toBeGreaterThan(desktopIconSizePx);
+    expect(desktopIconSizePx / desktopBoxSizePx).toBeGreaterThanOrEqual(0.75);
+    expect(mobileIconSizePx / mobileBoxSizePx).toBeGreaterThanOrEqual(0.8);
+    expect(mobileInputMinHeightPx).toBe(mobileBoxSizePx);
+    expect(sendRule).toContain("inline-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(sendRule).toContain("min-inline-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(sendRule).toContain("block-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(sendRule).toContain("min-block-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(mobileSendRule).toContain("inline-size: calc(var(--space-2xl) + var(--space-lg))");
+    expect(mobileSendRule).toContain("min-inline-size: calc(var(--space-2xl) + var(--space-lg))");
+    expect(mobileSendRule).toContain("block-size: calc(var(--space-2xl) + var(--space-lg))");
+    expect(mobileSendRule).toContain("min-block-size: calc(var(--space-2xl) + var(--space-lg))");
+    expect(mobileInputRule).toContain("min-height: calc(var(--space-2xl) + var(--space-lg))");
+  });
+
+  it("keeps task chat timestamp styling tokenized and mobile-safe", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const groupMetaRule = getCssRuleBlock(css, ".task-chat-group-meta");
+    const userHeaderRule = getCssRuleBlock(css, ".task-chat-user-header");
+    const timestampRule = getCssRuleBlock(css, ".task-chat-timestamp");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileUserHeaderRule = getCssRuleBlock(mobileCss, ".task-chat-user-header");
+    const mobileTimestampRule = getCssRuleBlock(mobileCss, ".task-chat-timestamp");
+
+    expect(groupMetaRule).toContain("display: inline-flex");
+    expect(groupMetaRule).toContain("flex-wrap: wrap");
+    expect(groupMetaRule).toContain("gap: var(--space-xs)");
+    expect(timestampRule).toContain("color: var(--text-muted)");
+    expect(timestampRule).toContain("font-size: calc(var(--space-md) - (var(--space-xs) / 2))");
+    expect(timestampRule).not.toContain("px");
+    expect(timestampRule).not.toContain("#");
+    expect(userHeaderRule).toContain("display: inline-flex");
+    expect(userHeaderRule).toContain("flex-wrap: wrap");
+    expect(mobileUserHeaderRule).toContain("justify-content: flex-end");
+    expect(mobileTimestampRule).toContain("white-space: normal");
+  });
+
   it("keeps mobile breakpoint scaffolding for the transcript, composer, and collapsible groups", () => {
     const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
     const sendRule = getCssRuleBlock(css, ".task-chat-send");
@@ -1507,13 +2133,15 @@ describe("TaskChatTab", () => {
     expect(css).toContain(".task-chat-transcript");
     expect(css).toContain(".task-chat-jump-to-bottom");
     expect(css).toContain(".task-chat-composer-row");
+    expect(sendRule).toContain("--btn-icon-size: var(--space-2xl)");
     expect(sendRule).toContain("inline-size: calc(var(--space-2xl) + var(--space-sm))");
     expect(sendRule).toContain("block-size: calc(var(--space-2xl) + var(--space-sm))");
     expect(sendRule).not.toContain("gap");
     expect(mobileComposerRule).toContain("align-items: flex-end");
     expect(mobileComposerRule).not.toContain("flex-direction: column");
     expect(mobileComposerRule).not.toContain("align-items: stretch");
-    expect(mobileSendRule).toContain("inline-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(mobileSendRule).toContain("--btn-icon-size: calc(var(--space-2xl) + var(--space-sm))");
+    expect(mobileSendRule).toContain("inline-size: calc(var(--space-2xl) + var(--space-lg))");
     expect(css).toContain(".task-chat-tool-group-summary");
     expect(css).toContain(".task-chat-tool-group-names");
     expect(css).toContain(".task-chat-tool-group-error-count");

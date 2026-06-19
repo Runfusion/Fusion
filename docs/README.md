@@ -20,7 +20,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | Guide | Description |
 |---|---|
 | [Getting Started](./getting-started.md) | Installation, first-run, first task, and daily workflow basics |
-| [Dashboard Guide](./dashboard-guide.md) | Board/list views, terminal, git manager, files, planning, and UI tools |
+| [Dashboard Guide](./dashboard-guide.md) | Board/list views, chat, workflow selection/editor, terminal, git manager, files, planning, and UI tools |
 | [CLI Reference](./cli-reference.md) | Complete `fn` command reference with subcommands, flags, and examples |
 | [Remote Access](./remote-access.md) | Operator runbook for Tailscale/Cloudflare setup, tokenized login links, security caveats, and troubleshooting |
 | [Native Shell Connection Guide](./native-shell.md) | Canonical mobile/desktop shell onboarding, profile management, QR/manual setup, and remote handoff behavior |
@@ -35,15 +35,17 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Goals Refinement Evidence Pack](./goals-refinement-evidence-pack.md) | Structured observation template and two-observation threshold for conditional Slice 4 activation requests |
 | [Research](./research.md) | Research runs, provider setup, dashboard/CLI usage, findings, exports, and task integration |
 | [Research View UX Spec](./research-view-ux-spec.md) | Canonical layout and capability-state messaging spec for the Research dashboard view (FN-4138, informs FN-4134/FN-4135) |
-| [Workflow Steps](./workflow-steps.md) | Reusable quality gates, templates, pre/post-merge phases, and workflow execution results |
-| [Custom Non-Coding Workflows MVP Spec](./custom-workflows-mvp-spec.md) | Decision-ready MVP spec for user-authored non-coding workflow definitions, lifecycle mapping, metrics, and risk checklist |
+| [Workflow Steps](./workflow-steps.md) | Workflow overview, built-in workflow catalog, per-task selection, runtime semantics, reusable quality gates, templates, phases, and execution results |
+| [Workflow Editor](./workflow-editor.md) | Visual workflow editor guide for opening, viewing, authoring, validating, importing/exporting, custom fields/columns/settings, and tuning workflows |
+| [Custom Workflow Reliability Acceptance Map](./custom-workflow-reliability-acceptance-map.md) | End-to-end reliability acceptance criteria for custom workflow authoring, selection, execution, recovery, restart durability, and deferred journeys |
+| [Custom Non-Coding Workflows MVP Spec](./custom-workflows-mvp-spec.md) | MVP framing for user-authored non-coding workflows, lifecycle mapping, metrics, and risk checklist |
 | [Task Evaluations](./evals.md) | Eval scoring contract, evidence persistence, score categories, and evaluation pipeline |
 | [Multi-Project](./multi-project.md) | Central registry architecture, project management, isolation modes, and migration paths |
 
 ### Configuration & Agents
 | Guide | Description |
 |---|---|
-| [Settings Reference](./settings-reference.md) | Global and project settings, defaults, API endpoints, and model selection hierarchy |
+| [Settings Reference](./settings-reference.md) | Global/project settings, workflow setting values, model/fallback lane hierarchy, defaults, and API endpoints |
 | [Agents](./agents.md) | Agent management, presets, prompts, heartbeat behavior, spawning, and mailbox workflows |
 
 ### Architecture & Development
@@ -64,6 +66,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Sandbox Backends](./sandbox.md) | Pluggable sandbox backends for executor command isolation (bubblewrap, spawn-based) |
 | [Secrets](./secrets.md) | Encrypted secrets storage, per-secret access policies, scopes, and agent tool wiring |
 | [Testing](./testing.md) | Full testing lanes, worker fanout guidance, test taxonomy, and file organization |
+| [Real iOS Safari Acceptance Surface](./ios-acceptance.md) | Provisioning runbook and harness usage for terminal verification gates on physical or cloud real-iOS Safari |
 | [Solutions Catalog](./solutions/) | Documented solutions to past problems (bugs, architecture patterns, best practices) organized by category |
 | [Localization Contributing Guide](./i18n-contributing.md) | Conventions for contributing translations, locale file structure, and i18n tooling |
 | [Mobile](../MOBILE.md) | Capacitor/PWA mobile development setup and workflow |
@@ -79,8 +82,13 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Memory Plugin Contract](./memory-plugin-contract.md) | Pluggable memory backend architecture, interface contract, and migration strategy |
 | [Compound Engineering Plugin](./plugins/compound-engineering.md) | CE workflow dashboard surface: artifact hub, interactive sessions, work→board bridge, and bidirectional sync |
 | [External Plugin Authoring](./plugins/external-authoring.md) | Step-by-step guide for authoring plugins using an installed `fn` CLI (no monorepo access needed) |
+| [External Plugin Proof-Point Runbook](./plugins/external-proof-point-runbook.md) | Repeatable release-validation runbook for proving an external plugin runs against a published Fusion CLI build |
 
 ### Audit Reports
+<!--
+FNXC:DocsIndex 2026-06-15-01:35:
+docs/upstream/ artifacts are indexed under Audit Reports for FN-6479 instead of treating docs/upstream/ as an intentional-orphan directory.
+-->
 | Report | Description |
 |---|---|
 | [UX Audit Report](./ux-audit-report.md) | Comprehensive UX audit with prioritized recommendations for dashboard improvements |
@@ -118,6 +126,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Workflow Policy Ownership Map](./workflow-policy-ownership-map.md) | U1 characterization map classifying production merge, retry, scheduling, and recovery policy branches before workflow-policy migration cutover |
 | [Test-Speed Baseline (2026-06-03)](./test-speed-baseline-2026-06-03.md) | Measured per-file test timing baseline and optimization targets (successor to FN-5048 audit) |
 | [ACP Runtime Contract](./acp-contract.md) | Agent Client Protocol plugin launch/readiness contract and failure taxonomy |
+| [ACP MCP Passthrough & Permission Forwarding Upstream Sponsorship (FN-6475)](./upstream/claude-code-cli-acp-mcp-permission-forwarding.md) | Ready-to-file upstream sponsorship for `claude-code-cli-acp` ACP `session/new.mcpServers` passthrough and permission-gate traversal; Route A remains NOT GO until proven |
 | [Mission Completion Gate Contract](./missions-completion-contract.md) | Decision record for mission completion gate invariants and acceptance flow |
 
 | [Lost-Work Tasks Incident (2026-05-23)](./incidents/2026-05-23-lost-work-tasks.md) | Incident catalog of 9 lost-work tasks from no-op finalize and reuse-handoff bugs |
@@ -131,5 +140,6 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 ## Suggested Reading Paths
 
 - **New user:** Getting Started → Dashboard Guide → Task Management
+- **Workflow author:** Dashboard Guide → Workflow Editor → Workflow Steps → Settings Reference
 - **Power user / automation owner:** Settings Reference → Workflow Steps → Agents
 - **Maintainer / contributor:** Architecture → Multi-Project → Contributing

@@ -42,7 +42,7 @@ export class GenerationGuard {
     sessionId: string,
     timeoutMs: number,
     handlers: TimeoutHandlers,
-    op: () => Promise<T>,
+    op: (abortSignal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     this.cancelInternal(sessionId, "displaced");
 
@@ -69,7 +69,7 @@ export class GenerationGuard {
     });
 
     try {
-      return await Promise.race([op(), abortPromise]);
+      return await Promise.race([op(abort.signal), abortPromise]);
     } catch (err) {
       if (isAbortError(err)) {
         const cause = this.abortCause.get(abort) ?? "user-stop";

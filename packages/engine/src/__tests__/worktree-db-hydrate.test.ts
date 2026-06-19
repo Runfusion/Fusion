@@ -9,16 +9,29 @@ import { createHash } from "node:crypto";
 import { Database, DatabaseSync } from "@fusion/core";
 import { hydrateWorktreeDb } from "../worktree-db-hydrate.js";
 
+function ensureProjectFusionDir(projectDir: string): void {
+  /*
+  FNXC:EngineTests 2026-06-18-07:22:
+  FN-6610 isolated this suite's SQLite-open symptom to direct `Database` / `DatabaseSync` setup calls on paths minted through the shared tmpdir redirect, not to a subprocess cwd/HOME path.
+  Revalidate the redirected project scratch directory immediately before test SQLite opens so sibling worker-root cleanup cannot leave `new DatabaseSync(...)` pointed at a swept parent.
+  */
+  const fusionDir = join(projectDir, ".fusion");
+  mkdirSync(fusionDir, { recursive: true });
+  if (!existsSync(join(fusionDir, "fusion.db"))) {
+    const db = new Database(fusionDir);
+    db.init();
+    db.close();
+  }
+}
+
 function makeProject(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
-  mkdirSync(join(dir, ".fusion"), { recursive: true });
-  const db = new Database(join(dir, ".fusion"));
-  db.init();
-  db.close();
+  ensureProjectFusionDir(dir);
   return dir;
 }
 
 function insertTask(projectDir: string, id: string, deletedAt: string | null = null): void {
+  ensureProjectFusionDir(projectDir);
   const db = new DatabaseSync(join(projectDir, ".fusion", "fusion.db"));
   const now = new Date().toISOString();
   db.prepare(
@@ -28,6 +41,7 @@ function insertTask(projectDir: string, id: string, deletedAt: string | null = n
 }
 
 function insertDoc(projectDir: string, taskId: string): void {
+  ensureProjectFusionDir(projectDir);
   const db = new DatabaseSync(join(projectDir, ".fusion", "fusion.db"));
   const now = new Date().toISOString();
   db.prepare("INSERT OR REPLACE INTO task_documents (id, taskId, key, content, revision, author, metadata, createdAt, updatedAt) VALUES (?, ?, 'notes', 'hello', 1, 'test', NULL, ?, ?)")

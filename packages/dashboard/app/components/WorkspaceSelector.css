@@ -50,7 +50,7 @@
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface-elevated, var(--surface));
+  background: var(--surface-1);
   box-shadow: var(--shadow-lg);
 }
 

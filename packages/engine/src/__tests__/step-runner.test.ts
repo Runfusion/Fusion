@@ -220,8 +220,8 @@ describe("resetStepToBaseline", () => {
     expect(store.updateStep).toHaveBeenCalledWith("FN-001", 2, "pending");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      // 0-indexed step 2 → 1-indexed "Step 3"
-      expect.stringContaining("Step 3 plan rewound"),
+      // 0-indexed step 2 is displayed as "Step 2" to match PROMPT.md headings.
+      expect.stringContaining("Step 2 plan rewound"),
       "plan rejected",
     );
   });

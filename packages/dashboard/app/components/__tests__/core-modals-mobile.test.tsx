@@ -81,7 +81,10 @@ describe("core modals mobile css coverage", () => {
     const tabletRule = getLastRuleBlock(tabletBlock, ".modal.task-detail-modal");
     expect(tabletRule).toContain("height: 92vh;");
     expect(extractVhHeight(tabletRule)).toBeGreaterThan(extractVhHeight(baseRule));
-    expect(tabletRule).toContain("max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - 16px);");
+    expect(tabletRule).toContain("width: 98vw;");
+    expect(tabletRule).toContain("max-width: 98vw;");
+    expect(tabletBlock).toContain("--overlay-padding-top: 6vh;");
+    expect(tabletRule).toContain("max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - var(--space-md));");
 
     const mobileRule = getLastRuleBlock(mobileBlock, ".modal.task-detail-modal");
     expect(mobileRule).toContain("height: 100dvh;");

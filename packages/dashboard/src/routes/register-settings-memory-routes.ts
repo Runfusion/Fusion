@@ -45,6 +45,7 @@ import {
   updatePiExtensionDisabledIds,
 } from "@fusion/core";
 import {
+  buildSessionSkillContextSync,
   createFnAgent as engineCreateFnAgent,
   getActiveNotificationService,
   probeWorktrunk,
@@ -62,6 +63,21 @@ import { resolveGithubTrackingAuth } from "../github-auth.js";
 import { generateRemoteToken, issueRemoteAuthToken, maskRemoteToken } from "../remote-auth.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import type { ApiRoutesContext } from "./types.js";
+
+type SkillPluginRunner = Parameters<typeof buildSessionSkillContextSync>[3];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let createFnAgentForInsights: any = engineCreateFnAgent;
+
+/** @internal Inject a mock createFnAgent for memory insight route tests. */
+export function __setCreateFnAgentForInsights(mock: typeof createFnAgentForInsights): void {
+  createFnAgentForInsights = mock;
+}
+
+/** @internal Reset the memory insight route createFnAgent binding. */
+export function __resetCreateFnAgentForInsights(): void {
+  createFnAgentForInsights = engineCreateFnAgent;
+}
 
 interface SettingsMemoryRouteDeps {
   githubToken?: string;
@@ -1551,9 +1567,16 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
             throw new ApiError(503, "AI service unavailable for dream processing");
           }
 
+          const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, options?.pluginRunner as SkillPluginRunner);
+
+          /*
+          FNXC:MemoryInsightsSkills 2026-06-17-19:33:
+          Memory dream processing uses an agent session to synthesize durable insights, so enabled plugin skills must be requested the same way executor sessions request them.
+          */
           const agentResult = await createFnAgentForInsights({
             cwd: rootDir,
             tools: "readonly",
+            ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
             defaultProvider: resolvedProvider,
             defaultModelId: resolvedModelId,
             systemPrompt: "You are a helpful AI assistant that synthesizes memory into durable insights.",
@@ -1608,9 +1631,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
   });
 
   // ── Memory Insights Routes ───────────────────────────────────────────
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const createFnAgentForInsights: any = engineCreateFnAgent;
 
   /**
    * GET /api/memory/insights
@@ -1705,10 +1725,17 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const { provider: resolvedProvider, modelId: resolvedModelId } =
         resolvePlanningSettingsModel(settings);
 
+      const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, options?.pluginRunner as SkillPluginRunner);
+
+      /*
+      FNXC:MemoryInsightsSkills 2026-06-17-19:33:
+      Manual insight extraction is an agent-acting lane, so it must request executor fallback and enabled plugin skills before prompting the insight agent.
+      */
       // Create AI agent session for extraction
       const agentResult = await createFnAgentForInsights({
         cwd: rootDir,
         tools: "readonly",
+        ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
         defaultProvider: resolvedProvider,
         defaultModelId: resolvedModelId,
         systemPrompt: "You are a helpful AI assistant that extracts insights from working memory.",

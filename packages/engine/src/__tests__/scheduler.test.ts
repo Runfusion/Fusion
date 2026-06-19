@@ -1815,7 +1815,7 @@ describe("Scheduler", () => {
 
       const call = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => c[0] === "FN-C");
       expect(String(call?.[1])).toContain("gate=maxConcurrent");
-      expect(String(call?.[1])).toContain("maxConcurrent used=1/2");
+      expect(String(call?.[1])).toContain("maxConcurrent used=2/2");
       expect(String(call?.[1])).toContain("holders: FN-A");
     });
 
@@ -1840,7 +1840,7 @@ describe("Scheduler", () => {
 
       const call = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => c[0] === "FN-D");
       expect(String(call?.[1])).toContain("gate=maxWorktrees");
-      expect(String(call?.[1])).toContain("maxWorktrees used=2/3");
+      expect(String(call?.[1])).toContain("maxWorktrees used=3/3");
       expect(String(call?.[1])).toContain("holders: FN-A, FN-B");
     });
 
@@ -1864,8 +1864,122 @@ describe("Scheduler", () => {
 
       const call = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => c[0] === "FN-B");
       expect(String(call?.[1])).toContain("gate=semaphore");
-      expect(String(call?.[1])).toContain("semaphore used=0/1");
+      expect(String(call?.[1])).toContain("semaphore used=1/1");
       expect(String(call?.[1])).toContain("semaphore slots may include triage/merge agents outside in-progress");
+    });
+
+    it.each([false, true])("FN-6423: logs queue-point capacity without negative semaphore usage (workflowColumns=%s)", async (workflowColumns) => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const semaphore = new AgentSemaphore(3);
+      (semaphore as any)._active = -9;
+      const tasks = [
+        createMockTask({ id: "FN-6412", column: "in-progress" }),
+        createMockTask({ id: "FN-B", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-C", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-D", column: "todo", dependencies: [] }),
+      ];
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 15,
+          maxWorktrees: 3,
+          experimentalFeatures: { workflowColumns },
+        }),
+      });
+
+      const scheduler = new Scheduler(store, { semaphore });
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-B",
+        "in-progress",
+        expect.objectContaining({ moveSource: "scheduler" }),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-C",
+        "in-progress",
+        expect.objectContaining({ moveSource: "scheduler" }),
+      );
+      const call = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => c[0] === "FN-D");
+      const reason = String(call?.[1]);
+      expect(reason).toContain("queued — concurrency limit reached");
+      expect(reason).not.toMatch(/semaphore used=-/);
+      expect(reason).not.toContain("maxWorktrees used=1/3");
+      expect(reason).toContain("maxWorktrees used=3/3");
+      expect(reason).toContain("semaphore used=3/3");
+      const gateLabel = reason.match(/gate=([^;]+)/)?.[1] ?? "";
+      for (const gate of gateLabel.split(", ").filter(Boolean)) {
+        const usedLimit = reason.match(new RegExp(`${gate} used=(\\d+)/(\\d+)`));
+        expect(usedLimit, `${gate} must have used/limit details`).not.toBeNull();
+        expect(Number(usedLimit?.[1])).toBeGreaterThanOrEqual(Number(usedLimit?.[2]));
+      }
+    });
+
+    it("FN-6423: dispatches ready tasks while maxWorktrees still has slack", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-A", column: "in-progress" }),
+        createMockTask({ id: "FN-B", column: "todo", dependencies: [] }),
+      ];
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 15, maxWorktrees: 3 }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-B",
+        "in-progress",
+        expect.objectContaining({ moveSource: "scheduler" }),
+      );
+      const concurrencyReasonCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "FN-B" && String(call[1]).includes("queued — concurrency limit reached"),
+      );
+      expect(concurrencyReasonCalls).toHaveLength(0);
+    });
+
+    it("FN-6423: preserves legitimate maxWorktrees queueing at the true limit", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-A", column: "in-progress" }),
+        createMockTask({ id: "FN-B", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-C", column: "todo", dependencies: [] }),
+      ];
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 15, maxWorktrees: 2 }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-B",
+        "in-progress",
+        expect.objectContaining({ moveSource: "scheduler" }),
+      );
+      const call = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => c[0] === "FN-C");
+      const reason = String(call?.[1]);
+      expect(reason).toContain("gate=maxWorktrees");
+      expect(reason).toContain("maxWorktrees used=2/2");
+      expect(formatConcurrencyLimitMemoKey({
+        available: 0,
+        bindingGates: ["maxWorktrees"],
+        maxConcurrentGate: { used: 2, limit: 15, slack: 13 },
+        maxWorktreesGate: { used: 2, limit: 2, slack: 0 },
+        holders: { maxConcurrent: ["FN-A"], maxWorktrees: ["FN-A"] },
+      })).toBe("queued-concurrency:maxWorktrees");
     });
 
     it("recovers an idle leaked semaphore slot before dispatching", async () => {
@@ -2005,7 +2119,7 @@ describe("Scheduler", () => {
         (call: unknown[]) => call[0] === "FN-C" && String(call[1]).includes("queued — concurrency limit reached"),
       );
       expect(concurrencyReasonCalls).toHaveLength(1);
-      expect(String(concurrencyReasonCalls[0]?.[1])).toContain("semaphore used=1/2");
+      expect(String(concurrencyReasonCalls[0]?.[1])).toContain("semaphore used=2/2");
     });
 
     it("suppresses re-log and re-audit when only binding holder identity changes", async () => {

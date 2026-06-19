@@ -875,7 +875,7 @@ async function persistImportedSkills(
 }
 
 export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
-  const { router, getProjectContext, rethrowAsApiError } = ctx;
+  const { router, getProjectContext, rethrowAsApiError, options } = ctx;
   const agentGenerationDiagnostics = createSessionDiagnostics("agent-generation");
 
   router.post("/agents/onboarding/start-streaming", async (req, res) => {
@@ -922,6 +922,7 @@ export function registerAgentGenerationRoutes(ctx: ApiRoutesContext): void {
         planningModelProvider,
         planningModelId,
         settings.promptOverrides,
+        options?.pluginRunner as Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3],
       );
 
       res.status(201).json({ sessionId });

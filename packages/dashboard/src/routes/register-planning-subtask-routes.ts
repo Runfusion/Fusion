@@ -12,6 +12,8 @@ import type { AiSessionStore } from "../ai-session-store.js";
 import type { ApiRoutesContext } from "./types.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection, resolveEntryPointBranchAssignment } from "./branch-selection.js";
 
+type SkillPluginRunner = Parameters<typeof import("@fusion/engine").buildSessionSkillContextSync>[3];
+
 interface PlanningSubtaskRouteDeps {
   store: TaskStore;
   aiSessionStore?: AiSessionStore;
@@ -490,6 +492,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         settings.promptOverrides,
         planningDepth,
         customQuestionCount,
+        ctx.options?.pluginRunner as SkillPluginRunner,
       );
       res.status(201).json(result);
     } catch (err: unknown) {
@@ -660,6 +663,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           resolvedPlanningProvider,
           resolvedPlanningModelId,
           settings.promptOverrides,
+          ctx.options?.pluginRunner as SkillPluginRunner,
         );
         res.status(201).json({ sessionId: existingSessionId });
         return;
@@ -684,6 +688,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           },
           planningDepth,
           customQuestionCount,
+          pluginRunner: ctx.options?.pluginRunner as SkillPluginRunner,
         },
       );
       res.status(201).json({ sessionId });

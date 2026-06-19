@@ -33,7 +33,6 @@ const createDefaultProps = () => ({
   modalOpen: false,
   onOpenSettings: vi.fn(),
   onOpenActivityLog: vi.fn(),
-  onOpenSystemStats: vi.fn(),
   onOpenMailbox: vi.fn(),
   onOpenNodes: vi.fn(),
   mailboxUnreadCount: 0,
@@ -59,7 +58,7 @@ describe("MobileNavBar", () => {
     mockViewport("mobile");
   });
 
-  it("renders seven tab buttons (tasks + agents + missions + chat + mailbox + skills + more) when showSkillsTab is true", () => {
+  it("renders eight tab buttons (tasks + agents + missions + chat + mailbox + command center + skills + more) when showSkillsTab is true", () => {
     render(<MobileNavBar {...createDefaultProps()} showSkillsTab={true} />);
 
     expect(screen.getByTestId("mobile-nav-tab-tasks")).toBeDefined();
@@ -67,6 +66,7 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-missions")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-chat")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
+    expect(screen.getByTestId("mobile-nav-tab-command-center")).toBeDefined();
     expect(screen.getByTestId("mobile-nav-tab-skills")).toBeDefined();
     expect(screen.queryByTestId("mobile-nav-tab-roadmaps")).toBeNull();
     expect(screen.getByTestId("mobile-nav-tab-more")).toBeDefined();
@@ -174,7 +174,7 @@ describe("MobileNavBar", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("plugin:fusion-plugin-dependency-graph:queue");
   });
 
-  it("limits primary plugin tabs on mobile and overflows extra primary views into More", () => {
+  it("demotes primary plugin tabs on mobile and renders them in More", () => {
     render(
       <MobileNavBar
         {...createDefaultProps()}
@@ -191,10 +191,11 @@ describe("MobileNavBar", () => {
       />,
     );
 
-    expect(screen.getByTestId("mobile-nav-tab-plugin-fusion-plugin-dependency-graph-graph")).toBeDefined();
+    expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-dependency-graph-graph")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-dependency-graph-queue")).toBeNull();
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-dependency-graph-graph")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-dependency-graph-queue")).toBeDefined();
   });
 
@@ -251,6 +252,22 @@ describe("MobileNavBar", () => {
     render(<MobileNavBar {...props} view="board" />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-mailbox"));
     expect(props.onChangeView).toHaveBeenCalledWith("mailbox");
+  });
+
+  it("places Command Center immediately after Mailbox and routes from the top-level tab", () => {
+    const props = createDefaultProps();
+    render(<MobileNavBar {...props} view="board" mailboxUnreadCount={3} mailboxPendingApprovalCount={1} />);
+
+    const mailboxTab = screen.getByTestId("mobile-nav-tab-mailbox");
+    const commandCenterTab = screen.getByTestId("mobile-nav-tab-command-center");
+    expect(mailboxTab.compareDocumentPosition(commandCenterTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(commandCenterTab.previousElementSibling).toBe(mailboxTab);
+
+    fireEvent.click(commandCenterTab);
+    expect(props.onChangeView).toHaveBeenCalledWith("command-center");
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.queryByTestId("mobile-more-item-command-center")).toBeNull();
   });
 
   it("agents tab calls onChangeView with 'agents'", () => {
@@ -393,7 +410,6 @@ describe("MobileNavBar", () => {
 
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-activity")).toBeDefined();
-    expect(screen.getByTestId("mobile-more-item-system-stats")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();
@@ -403,6 +419,7 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-github")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-usage")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-projects")).toBeDefined();
+    expect(screen.queryByTestId("mobile-more-item-command-center")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-chat")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-roadmaps")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-insights")).toBeNull();
@@ -413,6 +430,28 @@ describe("MobileNavBar", () => {
     render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{}} />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.queryByTestId("mobile-more-item-roadmaps")).toBeNull();
+  });
+
+  it("renders Compound Engineering primary plugin only in the More sheet while Command Center follows Mailbox", () => {
+    render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        pluginDashboardViews={[
+          {
+            pluginId: "fusion-plugin-compound-engineering",
+            view: { viewId: "compound-engineering", label: "Compound Engineering", componentPath: "./CompoundEngineeringView", icon: "Sparkles", placement: "primary", order: 36 },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("mobile-nav-tab-command-center").previousElementSibling).toBe(screen.getByTestId("mobile-nav-tab-mailbox"));
+    expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-compound-engineering-compound-engineering")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-compound-engineering-compound-engineering")).toBeDefined();
+    expect(screen.queryAllByTestId("mobile-more-item-plugin-fusion-plugin-compound-engineering-compound-engineering")).toHaveLength(1);
+    expect(screen.queryByTestId("mobile-more-item-command-center")).toBeNull();
   });
 
   it("suppresses legacy roadmaps entries when roadmap plugin view is registered", () => {
@@ -561,17 +600,6 @@ describe("MobileNavBar", () => {
 
     expect(container.querySelector(".mobile-more-sheet")).toBeNull();
     expect(props.onOpenActivityLog).toHaveBeenCalledOnce();
-  });
-
-  it("system stats item in more sheet calls onOpenSystemStats", () => {
-    const props = createDefaultProps();
-    const { container } = render(<MobileNavBar {...props} />);
-
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    fireEvent.click(screen.getByTestId("mobile-more-item-system-stats"));
-
-    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
-    expect(props.onOpenSystemStats).toHaveBeenCalledOnce();
   });
 
   it("closes sheet and calls handler when item is clicked", () => {

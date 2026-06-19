@@ -26,12 +26,15 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
+import { registerBeforeExitCleanup } from "./process-lifecycle.js";
 import {
   createSessionDiagnostics,
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
 import {
+  buildSessionSkillContextSync,
+  createChatTaskDocumentTools,
   createFnAgent as engineCreateFnAgent,
   createWorkflowAuthoringTools,
 } from "@fusion/engine";
@@ -44,6 +47,7 @@ const PLANNING_NO_AMBIENT_TASK_ID = "";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
+type SkillPluginRunner = Parameters<typeof buildSessionSkillContextSync>[3];
 
 const PLANNING_BUILTIN_WEB_TOOLS = ["WebSearch", "WebFetch"] as const;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -335,6 +339,8 @@ interface Session {
   store?: TaskStore;
   /** Project root captured at session creation; mirrors `store` for agent rebuild. */
   rootDir?: string;
+  /** Plugin runner captured while the server is alive so rebuilt planning agents keep plugin-contributed skills. */
+  pluginRunner?: SkillPluginRunner;
   /** Callback for streaming events to SSE clients */
   streamCallback?: PlanningStreamCallback;
   /** Accumulated thinking output for display */
@@ -594,7 +600,7 @@ const cleanupInterval = setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL_MS)
 cleanupInterval.unref?.();
 
 // Handle graceful shutdown
-process.on("beforeExit", () => {
+registerBeforeExitCleanup(() => {
   clearInterval(cleanupInterval);
 });
 
@@ -794,6 +800,7 @@ export async function createSession(
   promptOverrides?: PromptOverrideMap,
   planningDepth?: PlanningDepth,
   customQuestionCount?: number,
+  pluginRunner?: SkillPluginRunner,
 ): Promise<{ sessionId: string; firstQuestion: PlanningQuestion }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -825,6 +832,7 @@ export async function createSession(
     updatedAt: new Date(),
     store,
     rootDir,
+    pluginRunner,
   };
 
   sessions.set(sessionId, session);
@@ -841,14 +849,26 @@ export async function createSession(
     await ensureEngineReady();
   }
 
+  const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, pluginRunner);
+
+  /*
+  FNXC:PlanningSkills 2026-06-17-19:33:
+  Planning sessions are agent-acting lanes with planning and workflow tools, so they must request the same executor role fallback plus enabled plugin skills (for example ce-debug) as task execution sessions.
+  */
   const agentResult = await createFnAgent({
     cwd: rootDir,
     systemPrompt,
     tools: "readonly",
+    ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
     customTools: [
       ...createPlanningBoardTools(store),
       ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
+      /*
+      FNXC:PlanningTools 2026-06-18-07:11:
+      FN-6640 gives planning agents parity with chat for `fn_task_document_write` and `fn_task_document_read` after FN-6635. The planning lane has no ambient task (`PLANNING_NO_AMBIENT_TASK_ID`), so these document tools must require an explicit `task_id`, mirroring no-ambient workflow authoring tools.
+      */
+      ...createChatTaskDocumentTools(store),
     ],
     onThinking: () => {
       // Non-streaming path ignores thinking output
@@ -1147,6 +1167,7 @@ export async function startExistingSession(
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
+  pluginRunner?: SkillPluginRunner,
 ): Promise<void> {
   let session = sessions.get(sessionId);
 
@@ -1229,7 +1250,8 @@ export async function startExistingSession(
 
   persistSession(session, "generating");
   planningStreamManager.registerInitialTurn(sessionId, () => {
-    initializeAgent(session, rootDir, store, modelProvider, modelId, promptOverrides).catch((err) => {
+    session.pluginRunner = pluginRunner;
+    initializeAgent(session, rootDir, store, modelProvider, modelId, promptOverrides, undefined, undefined, pluginRunner).catch((err) => {
       diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
       persistSession(session, "error", err.message || "Failed to initialize AI agent");
       planningStreamManager.broadcast(sessionId, {
@@ -1265,6 +1287,7 @@ export async function createSessionWithAgent(
     ntfyConfig?: PlanningNtfyConfig;
     planningDepth?: PlanningDepth;
     customQuestionCount?: number;
+    pluginRunner?: SkillPluginRunner;
   },
 ): Promise<string> {
   // Check rate limit
@@ -1298,6 +1321,7 @@ export async function createSessionWithAgent(
     lastGeneratedThinking: "",
     createdAt: new Date(),
     updatedAt: new Date(),
+    pluginRunner: options?.pluginRunner,
   };
 
   sessions.set(sessionId, session);
@@ -1313,6 +1337,7 @@ export async function createSessionWithAgent(
       promptOverrides,
       options?.planningDepth,
       options?.customQuestionCount,
+      options?.pluginRunner,
     ).catch((err) => {
       diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
       persistSession(session, "error", err.message || "Failed to initialize AI agent");
@@ -1338,23 +1363,58 @@ async function initializeAgent(
   promptOverrides?: PromptOverrideMap,
   planningDepth?: PlanningDepth,
   customQuestionCount?: number,
+  pluginRunner?: SkillPluginRunner,
 ): Promise<void> {
   try {
-    session.agent = await createPlanningAgent(
-      session,
-      rootDir,
-      store,
-      modelProvider,
-      modelId,
-      promptOverrides,
-      planningDepth,
-      customQuestionCount,
-    );
-    session.updatedAt = new Date();
+    await runGenerationWithTimeout(session, async (abortSignal) => {
+      /*
+      FNXC:PlanningSession 2026-06-16-20:23:
+      FN-6511 requires planning agent construction to be bounded before the first prompt starts. Keep createFnAgent inside the active generation timeout so model-registry or extension-discovery stalls transition the SSE session to a terminal error instead of leaving it pinned in generating.
+      */
+      const agentPromise = createPlanningAgent(
+        session,
+        rootDir,
+        store,
+        modelProvider,
+        modelId,
+        promptOverrides,
+        planningDepth,
+        customQuestionCount,
+        pluginRunner,
+      );
+
+      void agentPromise.then((lateAgent) => {
+        if (abortSignal.aborted) {
+          nonfatal(
+            () => lateAgent?.session?.dispose?.(),
+            diagnostics,
+            "Error disposing late-created planning agent",
+            { sessionId: session.id, operation: "dispose-late-agent" },
+          );
+        }
+      }, () => undefined);
+
+      const agent = await agentPromise;
+      if (abortSignal.aborted) {
+        nonfatal(
+          () => agent?.session?.dispose?.(),
+          diagnostics,
+          "Error disposing aborted planning agent",
+          { sessionId: session.id, operation: "dispose-aborted-agent" },
+        );
+        throw createAbortError();
+      }
+      session.agent = agent;
+      session.updatedAt = new Date();
+    });
 
     // Send initial message to get first question
     await continueAgentConversation(session, session.initialPlan);
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return;
+    }
+
     const errorMessage = err instanceof Error ? err.message : "Failed to initialize AI agent";
     diagnostics.errorFromException("Agent initialization error for session", err, { sessionId: session.id, operation: "initialize-agent" });
     session.error = errorMessage;
@@ -1376,6 +1436,7 @@ async function createPlanningAgent(
   promptOverrides?: PromptOverrideMap,
   planningDepth?: PlanningDepth,
   customQuestionCount?: number,
+  pluginRunner?: SkillPluginRunner,
 ): Promise<AgentResult> {
   // Ensure engine is loaded before using createFnAgent
   await ensureEngineReady();
@@ -1385,14 +1446,22 @@ async function createPlanningAgent(
   const depthPromptSuffix = buildDepthPromptSuffix(planningDepth, customQuestionCount);
   const systemPrompt = depthPromptSuffix ? `${baseSystemPrompt}\n\n${depthPromptSuffix}` : baseSystemPrompt;
 
+  const skillContext = buildSessionSkillContextSync(null, "executor", rootDir, pluginRunner);
+
+  /*
+  FNXC:PlanningSkills 2026-06-17-19:33:
+  Streaming planning sessions share the executor skill contract because custom planning/workflow tools can benefit from agent-declared skills and enabled plugin skills exactly like task execution.
+  */
   return createFnAgent({
     cwd: rootDir,
     systemPrompt,
     tools: "readonly",
+    ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
     customTools: [
       ...createPlanningBoardTools(store),
       ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
+      ...createChatTaskDocumentTools(store),
     ],
     ...(modelProvider && modelId
       ? {
@@ -1465,7 +1534,7 @@ async function ensureSessionAgent(
     );
   }
 
-  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, promptOverrides);
+  session.agent = await createPlanningAgent(session, effectiveRootDir, effectiveStore, undefined, undefined, promptOverrides, undefined, undefined, session.pluginRunner);
 
   if (historyForReplay.length === 0) {
     return;
@@ -1560,6 +1629,7 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   const timer = setTimeout(() => {
     timeoutTriggered = true;
     setSessionError(session, "AI generation timed out. You can retry or start a new session.");
+    disposeSessionAgentForRetry(session);
     abortController.abort();
   }, GENERATION_TIMEOUT_MS);
   const generationRecord = { abortController, timer };
@@ -2026,18 +2096,19 @@ export async function submitResponse(
     };
 
     session.error = undefined;
+    /*
+    FNXC:DashboardSessionPersistence 2026-06-14-09:09:
+    Persist the user's answered planning turn before the agent generates the next question or errors. AiSessionStore snapshots happen inside continueAgentConversation, so history must already include the submitted answer for retry replay and SQLite round-trip tests to observe durable state.
+    */
+    session.history.push(historyEntry);
     persistSession(session, "generating");
 
     if (!session.agent) {
-      await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
+      await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
     }
 
     const message = formatResponseForAgent(currentQuestion, responses);
     await continueAgentConversation(session, message);
-
-    if (!session.error) {
-      session.history.push(historyEntry);
-    }
   }
 
   // Return the current state (will be updated via SSE)

@@ -13,8 +13,8 @@ These tools are **not** part of the user-invokable extension surface. They are i
 |---|---|---|---|
 | `fn_task_create` | triage, executor, heartbeat | Create a follow-up task from within an agent run | `description` (string), `dependencies?` (string[]), `priority?` (`low` \| `normal` \| `high` \| `urgent`), `workflow_id?` (string) |
 | `fn_task_log` | executor, heartbeat | Write significant task log entries | `message` (string), `outcome?` (string) |
-| `fn_task_document_write` | triage, executor, heartbeat | Save/update a named task document revision | `key` (string), `content` (string), `author?` (string) |
-| `fn_task_document_read` | triage, executor, heartbeat | Read one task document or list all | `key?` (string) |
+| `fn_task_document_write` | triage, executor, heartbeat; chat/planning (explicit `task_id`) | Save/update a named task document revision | `key` (string), `content` (string), `author?` (string); chat/planning also require `task_id` (string) |
+| `fn_task_document_read` | triage, executor, heartbeat; chat/planning (explicit `task_id`) | Read one task document or list all | `key?` (string); chat/planning also require `task_id` (string) |
 | `fn_goal_list` | triage, executor, heartbeat | List goals with concise citation-ready snippets and active-goal warning details | `status?` (`active` \| `archived` \| `all`) |
 | `fn_goal_show` | triage, executor, heartbeat | Show one goal's full detail on demand, including the full description body | `id` (string) |
 | `fn_workflow_list` | executor | List the project's custom workflows (read-only built-ins plus user definitions) | none |
@@ -30,6 +30,8 @@ These tools are **not** part of the user-invokable extension surface. They are i
 | `fn_workflow_create` | executor, chat, planning | Create a custom workflow definition from a graph IR (validated server-side). v2 IR supports step-inversion constructs: `parse-steps`, `foreach` (mode/isolation/concurrency/maxReworkCycles), `step-execute`, `step-review`, `code` nodes, `rework` edges, plus `artifacts` and custom `fields` declarations | `name` (string), `description?` (string), `ir` (object), `layout?` (object) |
 | `fn_workflow_update` | executor, chat, planning | Update a custom workflow definition's name/description/ir/layout (built-ins cannot be edited; same step-inversion IR constructs as create; editing `fields` orphans rather than destroys existing task values) | `workflow_id` (string), `name?` (string), `description?` (string), `ir?` (object), `layout?` (object), `rehome_to?` (string) |
 | `fn_workflow_delete` | executor, chat, planning | Delete a custom workflow definition (built-ins cannot be deleted); selecting tasks are re-homed to the default workflow's entry column | `workflow_id` (string) |
+<!-- FNXC:SkillSync 2026-06-17-23:05: Engine session-scoped `fn_*` tools registered in `packages/engine` must be mirrored in this reference because `packages/cli/src/__tests__/skill-sync.test.ts` treats the backticked tool names here as the documentation source of truth and fails the CLI + gate suites on drift. -->
+| `fn_ask_question` | chat | Ask the user a structured question that renders as an interactive chat card; after calling it, end the turn and wait for the user's next message | `questions` (array of objects with `question`, optional `header`, optional `description`, optional `type`, optional `options`, optional `multiSelect`) |
 | `fn_task_promote` | executor | Promote a held task out of a manual-release hold column (defaults to the current task) | `task_id?` (string) |
 | `fn_trait_list` | executor, chat, planning | List the registered column trait catalog (built-in and plugin traits) | none |
 | `fn_memory_search` | triage, executor, heartbeat | Search project memory plus per-agent layered memory snippets | `query` (string), `limit?` (number) |
@@ -68,10 +70,10 @@ Note: step-session execution (`step-session-executor.ts`) reuses executor coordi
 
 | Tool | Purpose | Parameters |
 |---|---|---|
-| `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`), task dependencies, and/or workflow-defined custom field values | `step?` (number, 1-indexed), `status?` (enum), `dependencies?` (string[]), `custom_fields?` (object keyed by field id; validated against the workflow field schema, `null` clears a field) |
+| `fn_task_update` | Update a spec step status (`pending`/`in-progress`/`done`/`skipped`), task dependencies, and/or workflow-defined custom field values | `step?` (number, 0-indexed; matches `### Step N:` in PROMPT.md, Step 0 = Preflight), `status?` (enum), `dependencies?` (string[]), `custom_fields?` (object keyed by field id; validated against the workflow field schema, `null` clears a field) |
 | `fn_task_add_dep` | Add a dependency to current task (confirmation-gated) | `task_id` (string), `confirm?` (boolean) |
 | `fn_task_done` | Mark task complete and optionally store summary | `summary?` (string) |
-| `fn_review_step` | Spawn step plan/code reviewer | `step` (number), `type` (`plan` \| `code`), `step_name` (string), `baseline?` (string) |
+| `fn_review_step` | Spawn step plan/code reviewer | `step` (number, 0-indexed; matches `### Step N:` in PROMPT.md), `type` (`plan` \| `code`), `step_name` (string), `baseline?` (string) |
 | `fn_spawn_agent` | Spawn child agent in separate worktree | `name` (string), `role` (enum), `task` (string) |
 
 ## Merger-only runtime tools (`merger.ts`)

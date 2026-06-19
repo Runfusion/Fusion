@@ -46,8 +46,15 @@ vi.mock("../../hooks/useQuickChat", () => ({
 }));
 vi.mock("../../hooks/useFileMention", () => ({ useFileMention: vi.fn(() => ({ mentionActive: false, detectMention: vi.fn(), dismissMention: vi.fn(), handleKeyDown: vi.fn(), selectTask: vi.fn(), selectFile: vi.fn(), tasks: [], files: [], combinedItems: [], loading: false, mentionQuery: "", selectedIndex: 0, setSelectedIndex: vi.fn() })) }));
 vi.mock("../../hooks/useMobileKeyboard", () => ({ useMobileKeyboard: vi.fn(() => ({ keyboardOpen: false, keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0 })) }));
-vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)", useViewportMode: vi.fn(() => "desktop") }));
+vi.mock("../../hooks/useViewportMode", () => {
+  const useViewportMode = vi.fn(() => "desktop");
+  return {
+    MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+    getViewportMode: () => useViewportMode(),
+    isMobileViewport: () => useViewportMode() === "mobile",
+    useViewportMode,
+  };
+});
 vi.mock("react-markdown", () => ({ default: ({ children }: { children: string }) => children }));
 
 function deferred<T>() {

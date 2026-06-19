@@ -16,6 +16,10 @@ Reviews code changes using dynamically selected reviewer personas. Spawns parall
 - Can be invoked standalone
 - Can run as a read-only or autofix review step inside larger workflows
 
+### Running inside Fusion (autonomous workflow step)
+
+When `FUSION_WORKFLOW_STEP` is set, you run as a Fusion workflow step (no synchronous user). Dispatch the reviewer personas with `fn_spawn_agent`, not `Task`: for each persona, read its def from `${FUSION_CE_AGENTS_DIR}/<persona>.md` (e.g. `ce-correctness-reviewer.md`), strip the frontmatter, and pass the body as `fn_spawn_agent`'s `systemPromptOverride` with `role: "reviewer"` and the review scope as `task`. If `FUSION_CE_AGENTS_DIR` is unset or a def is missing, run that persona's review inline rather than failing. Do not call `AskUserQuestion`; this step's verdict is its output (the gate consumes it).
+
 ## Argument Parsing
 
 Parse `$ARGUMENTS` for the following optional tokens. Strip each recognized token before interpreting the remainder as the PR number, GitHub URL, or branch name.

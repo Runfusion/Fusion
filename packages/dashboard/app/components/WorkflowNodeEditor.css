@@ -48,7 +48,7 @@
   justify-content: space-between;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
-  background: var(--accent-subtle, color-mix(in srgb, #3b82f6 12%, transparent));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-bottom: 1px solid var(--border);
   color: var(--text);
   font-size: 0.85rem;
@@ -398,7 +398,7 @@
 
 .wf-editor-readonly-note {
   font-size: 0.75rem;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -473,7 +473,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
 }
 
 .wf-templates-entries {
@@ -507,7 +507,7 @@
 
 .wf-templates-badge {
   padding: 0 var(--space-xs);
-  background: var(--accent-subtle, color-mix(in srgb, #3b82f6 12%, transparent));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 0.7rem;
@@ -566,6 +566,53 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
+}
+
+/*
+FNXC:WorkflowEditorTheme 2026-06-19-05:22:
+React Flow ships white default controls and mini-map chrome, but the workflow editor must inherit Fusion theme tokens in both dark and light modes. Scope overrides to the canvas so other React Flow consumers keep their local contracts.
+*/
+.wf-editor-canvas .react-flow__controls {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.wf-editor-canvas .react-flow__controls-button {
+  background: var(--surface);
+  border: 0;
+  border-bottom: var(--btn-border-width) solid var(--border);
+  color: var(--text);
+  fill: currentColor;
+}
+
+.wf-editor-canvas .react-flow__controls-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.wf-editor-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.wf-editor-canvas .react-flow__minimap {
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.wf-editor-canvas .react-flow__minimap-node {
+  fill: var(--bg-secondary);
+  stroke: var(--border);
+}
+
+.wf-editor-canvas .react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--surface) 70%, transparent);
 }
 
 .wf-mobile-shell {
@@ -903,7 +950,7 @@
 .wf-inspector-note {
   margin: 0;
   font-size: 0.78rem;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
 }
 
 .wf-inspector-note--info {
@@ -1219,7 +1266,7 @@
 .wf-workflow-description,
 .wf-workflow-description--readonly {
   font-size: 0.78rem;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
   background: none;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -1266,7 +1313,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
 }
 
 .wf-template-option {
@@ -1281,12 +1328,12 @@
 }
 
 .wf-template-option:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .wf-template-option.selected {
   border-color: var(--accent);
-  background: var(--bg-active);
+  background: var(--surface-hover-strong);
 }
 
 .wf-template-option:focus-visible {
@@ -1309,7 +1356,7 @@
 
 .wf-template-option-count {
   font-size: 0.72rem;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
 }
 
 .wf-create-error {
@@ -1333,6 +1380,84 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.wf-column-add,
+.wf-column-move,
+.wf-column-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.wf-column-add {
+  flex: 0 0 auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.wf-column-move,
+.wf-column-remove {
+  width: 1.75rem;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+.wf-column-add:hover:not(:disabled),
+.wf-column-move:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.wf-column-remove:hover:not(:disabled) {
+  border-color: var(--ws-error);
+  background: color-mix(in srgb, var(--ws-error) 12%, transparent);
+  color: var(--ws-error);
+}
+
+.wf-column-add:focus-visible,
+.wf-column-move:focus-visible,
+.wf-column-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-add:disabled,
+.wf-column-move:disabled,
+.wf-column-remove:disabled {
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+}
+
+.wf-column-panel-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.wf-column-panel-errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--ws-error);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ws-error) 10%, transparent);
 }
 
 .wf-column-list {
@@ -1382,6 +1507,15 @@
   margin: 0;
 }
 
+.wf-column-traits,
+.wf-column-agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px dashed var(--border);
+}
+
 .wf-column-trait-options {
   display: flex;
   flex-wrap: wrap;
@@ -1396,10 +1530,119 @@
   color: var(--text-muted);
 }
 
-.wf-column-traits-label {
+/*
+FNXC:WorkflowEditorTheme 2026-06-19-05:22:
+Column trait toggles are left-sidebar workflow controls; keep their enabled and disabled checkbox chrome on the workflow accent token instead of React/browser defaults.
+*/
+.wf-column-trait input[type="checkbox"] {
+  accent-color: var(--todo);
+}
+
+.wf-column-traits-label,
+.wf-column-agent-label {
   font-size: 0.65rem;
+  font-weight: 600;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.wf-column-agent-select {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.72rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.wf-column-agent-select:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.wf-column-agent-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-column-agent-select:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.wf-column-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px var(--space-xs);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.wf-column-agent-badge--stale {
+  border-color: color-mix(in srgb, var(--ws-warning) 55%, var(--border));
+  background: color-mix(in srgb, var(--ws-warning) 12%, transparent);
+  color: var(--ws-warning);
+}
+
+.wf-column-agent-error,
+.wf-column-agent-stale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0;
+  font-size: 0.68rem;
+}
+
+.wf-column-agent-error {
+  color: var(--ws-error);
+}
+
+.wf-column-agent-stale {
+  color: var(--ws-warning);
+}
+
+.wf-column-agent-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.wf-column-agent-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 1px var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.wf-column-agent-mode-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+
+.wf-column-agent-mode-option:has(input:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  cursor: not-allowed;
 }
 
 /* ── U10/R11: Design-with-AI affordances ─────────────────────────────────── */
@@ -1431,7 +1674,7 @@
 }
 
 .wf-ai-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .wf-ai-create-body {
@@ -1682,6 +1925,8 @@
   .wf-field input,
   .wf-field textarea,
   .wf-field select,
+  .wf-column-name,
+  .wf-column-agent-select,
   .wf-templates-filter,
   .wf-ai-prompt {
     min-height: var(--wf-editor-touch-target);

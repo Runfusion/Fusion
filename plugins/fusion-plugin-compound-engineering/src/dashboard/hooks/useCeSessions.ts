@@ -77,19 +77,27 @@ export function useCeSessions(options: UseCeSessionsOptions = {}): UseCeSessions
     };
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const next = await transport.list(projectId);
-      if (mounted.current) {
-        setSessions(next);
-        setError(undefined);
+  // clearErrorOnSuccess: a user-initiated refresh (or the initial fetch) clears
+  // any prior error on success. Background refreshes (poll fallback, push
+  // events) pass false so a successful list fetch doesn't silently erase an
+  // error a cancel/remove just surfaced — an in-flight session keeps the poll
+  // running, which would otherwise wipe the action error before the user sees it.
+  const refresh = useCallback(
+    async (clearErrorOnSuccess = true) => {
+      try {
+        const next = await transport.list(projectId);
+        if (mounted.current) {
+          setSessions(next);
+          if (clearErrorOnSuccess) setError(undefined);
+        }
+      } catch (err) {
+        if (mounted.current) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (mounted.current) setLoading(false);
       }
-    } catch (err) {
-      if (mounted.current) setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }, [transport, projectId]);
+    },
+    [transport, projectId],
+  );
 
   // Initial fetch (and on project switch).
   useEffect(() => {
@@ -102,7 +110,7 @@ export function useCeSessions(options: UseCeSessionsOptions = {}): UseCeSessions
   useEffect(() => {
     if (!enabled || !subscribe) return;
     return subscribe(() => {
-      void refresh();
+      void refresh(false);
     });
   }, [enabled, subscribe, refresh]);
 
@@ -111,7 +119,7 @@ export function useCeSessions(options: UseCeSessionsOptions = {}): UseCeSessions
   useEffect(() => {
     if (!enabled || !anyInFlight) return;
     const timer = setInterval(() => {
-      void refresh();
+      void refresh(false);
     }, pollIntervalMs);
     return () => clearInterval(timer);
   }, [enabled, anyInFlight, pollIntervalMs, refresh]);

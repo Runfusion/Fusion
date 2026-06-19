@@ -8,6 +8,7 @@ import { useAgentLogs } from "../hooks/useAgentLogs";
 import type { ToastType } from "../hooks/useToast";
 import { getErrorMessage } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
+import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { AgentAvatar } from "./AgentAvatar";
 import { clampChatInputHeight, resolveChatInputOverflowY } from "../utils/chatInputAutosize";
 import { markdownComponents } from "./AgentLogViewer";
@@ -51,6 +52,7 @@ const STEERING_BLOCKED_STATUSES = new Set([
 ]);
 const REVIEW_STEERABLE_STATUSES = new Set(["reviewing", "merging", "merging-fix", "fixing"]);
 const BOTTOM_FOLLOW_THRESHOLD = 48;
+const TOP_LOAD_THRESHOLD = 48;
 
 function isTranscriptNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
@@ -95,6 +97,14 @@ function getTimestampMs(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function getLatestTranscriptTimestampMs(entries: readonly AgentLogEntry[], userMessages: readonly UserChatMessage[]): number {
+  return Math.max(
+    0,
+    ...entries.map((entry) => getTimestampMs(entry.timestamp)),
+    ...userMessages.map((message) => getTimestampMs(message.createdAt)),
+  );
+}
+
 function getUserMessageDedupKey(message: Pick<SteeringComment, "id" | "text" | "createdAt">): string {
   return message.id ? `id:${message.id}` : `fallback:${message.text}:${message.createdAt}`;
 }
@@ -116,12 +126,12 @@ function mergeUserMessages(persistedComments: readonly SteeringComment[] | undef
     messages.push(message);
   };
 
+  for (const message of optimisticMessages) {
+    addMessage(message);
+  }
   for (const comment of persistedComments ?? []) {
     if (comment.author !== "user") continue;
     addMessage({ id: comment.id, text: comment.text, createdAt: comment.createdAt });
-  }
-  for (const message of optimisticMessages) {
-    addMessage(message);
   }
 
   return messages;
@@ -392,11 +402,22 @@ function TaskChatSegmentView({ segment }: { segment: TaskChatSegment }) {
   return <TaskChatText entries={segment.entries} />;
 }
 
+/*
+FNXC:TaskChatTimestamps 2026-06-17-15:43:
+FN-6597 requires small relative timestamps on both task-chat agent group headers and user message headers, computed at render time from existing transcript timestamps without adding a live timer.
+*/
 function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
+  const relativeTime = formatRelativeTimeAgo(message.createdAt);
+
   return (
     <section className="task-chat-user-group" aria-label="You message">
       <div className="task-chat-user-header">
         <div className="task-chat-role-label">You</div>
+        {relativeTime ? (
+          <span className="task-chat-timestamp" data-testid="task-chat-user-time">
+            {relativeTime}
+          </span>
+        ) : null}
       </div>
       <article className="task-chat-entry task-chat-entry--user" data-testid="task-chat-entry-user">
         <div className="markdown-body task-chat-markdown">
@@ -410,7 +431,7 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
 }
 
 export function TaskChatTab({ task, projectId, active, addToast, sessionLive, onTaskUpdated, expanded = false, onToggleExpanded }: TaskChatTabProps) {
-  const { entries, loading } = useAgentLogs(task.id, active, projectId);
+  const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<UserChatMessage[]>([]);
@@ -418,6 +439,11 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
   const transcriptRef = useRef<HTMLDivElement>(null);
   const previousEntryCountRef = useRef(0);
   const previousScrollHeightRef = useRef(0);
+  const previousFirstEntryKeyRef = useRef<string | null>(null);
+  const previousAgentEntryCountRef = useRef(0);
+  const pendingPrependScrollHeightRef = useRef<number | null>(null);
+  const pendingPrependScrollTopRef = useRef(0);
+  const loadMoreInFlightRef = useRef(false);
   const previousActiveRef = useRef(false);
   const anchorFrameRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -428,6 +454,7 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
   );
   const transcriptItems = useMemo(() => buildTranscriptItems(entries, userMessages), [entries, userMessages]);
   const transcriptItemCount = entries.length + userMessages.length;
+  const firstEntryKey = entries[0] ? getEntryKey(entries[0], 0) : null;
   const activeSession = isActiveAgentSession(task, { sessionLive });
   const isDoneTask = task.column === "done";
   const sessionHint = isDoneTask
@@ -524,18 +551,43 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
     if (!active) {
       previousEntryCountRef.current = transcriptItemCount;
       previousScrollHeightRef.current = container.scrollHeight;
+      previousFirstEntryKeyRef.current = firstEntryKey;
+      previousAgentEntryCountRef.current = entries.length;
       return;
     }
 
     if (transcriptItemCount === 0) {
       previousEntryCountRef.current = transcriptItemCount;
       previousScrollHeightRef.current = container.scrollHeight;
+      previousFirstEntryKeyRef.current = firstEntryKey;
+      previousAgentEntryCountRef.current = entries.length;
       return;
     }
 
     const previousCount = previousEntryCountRef.current;
     const previousScrollHeight = previousScrollHeightRef.current || container.scrollHeight;
-    if (transcriptItemCount > previousCount) {
+    const previousFirstEntryKey = previousFirstEntryKeyRef.current;
+    const previousAgentEntryCount = previousAgentEntryCountRef.current;
+    const prependedOlderEntries = Boolean(
+      pendingPrependScrollHeightRef.current !== null
+        && transcriptItemCount > previousCount
+        && entries.length > previousAgentEntryCount
+        && firstEntryKey
+        && (!previousFirstEntryKey || firstEntryKey !== previousFirstEntryKey),
+    );
+
+    if (prependedOlderEntries) {
+      /*
+       * FNXC:TaskDetailChat 2026-06-16-23:03:
+       * Task-detail chat must load older paginated agent history at the top without disturbing the reader's viewport. Treat a changed first agent-log key as a prepend so bottom-follow remains reserved for live appends at the transcript tail.
+       */
+      const previousTop = pendingPrependScrollTopRef.current;
+      const previousHeight = pendingPrependScrollHeightRef.current ?? previousScrollHeight;
+      const heightDelta = container.scrollHeight - previousHeight;
+      container.scrollTop = previousTop + Math.max(0, heightDelta);
+      pendingPrependScrollHeightRef.current = null;
+      setIsTranscriptAtBottom(isTranscriptNearBottom(container));
+    } else if (transcriptItemCount > previousCount) {
       const shouldFollow = previousCount === 0 || previousScrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD;
       if (shouldFollow) {
         container.scrollTop = container.scrollHeight;
@@ -543,20 +595,42 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
       } else {
         setIsTranscriptAtBottom(isTranscriptNearBottom(container));
       }
+      if (pendingPrependScrollHeightRef.current !== null) {
+        pendingPrependScrollHeightRef.current = container.scrollHeight;
+        pendingPrependScrollTopRef.current = container.scrollTop;
+      }
     } else {
       setIsTranscriptAtBottom(isTranscriptNearBottom(container));
     }
 
     previousEntryCountRef.current = transcriptItemCount;
     previousScrollHeightRef.current = container.scrollHeight;
-  }, [active, transcriptItemCount]);
+    previousFirstEntryKeyRef.current = firstEntryKey;
+    previousAgentEntryCountRef.current = entries.length;
+  }, [active, entries.length, firstEntryKey, transcriptItemCount]);
+
+  const loadPreviousMessages = useCallback(async () => {
+    const container = transcriptRef.current;
+    if (!container || !active || !hasMore || loadingMore || loadMoreInFlightRef.current) return;
+    pendingPrependScrollHeightRef.current = container.scrollHeight;
+    pendingPrependScrollTopRef.current = container.scrollTop;
+    loadMoreInFlightRef.current = true;
+    try {
+      await loadMore();
+    } finally {
+      loadMoreInFlightRef.current = false;
+    }
+  }, [active, hasMore, loadMore, loadingMore]);
 
   const handleTranscriptScroll = useCallback(() => {
     const container = transcriptRef.current;
     if (!container) return;
     previousScrollHeightRef.current = container.scrollHeight;
     setIsTranscriptAtBottom(isTranscriptNearBottom(container));
-  }, []);
+    if (container.scrollTop <= TOP_LOAD_THRESHOLD) {
+      void loadPreviousMessages();
+    }
+  }, [loadPreviousMessages]);
 
   const scrollTranscriptToBottom = useCallback(() => {
     const container = transcriptRef.current;
@@ -571,10 +645,16 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
     const text = draft.trim();
     if (!text || sending) return;
 
+    const latestTimestampMs = getLatestTranscriptTimestampMs(entries, userMessages);
+    const optimisticCreatedAtMs = Math.max(Date.now(), latestTimestampMs + 1);
+    /*
+    FNXC:TaskDetailChat 2026-06-17-08:12:
+    Freshly-sent user steering must appear immediately at the transcript tail below current agent output and keep that display order after persistence reconciliation, so the agent's follow-up thinking or response renders after the user's bubble even when client and server clocks are skewed.
+    */
     const optimisticMessage: UserChatMessage = {
-      id: `optimistic-${task.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: `optimistic-${task.id}-${optimisticCreatedAtMs}-${Math.random().toString(36).slice(2)}`,
       text,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(optimisticCreatedAtMs).toISOString(),
       optimistic: true,
     };
     setOptimisticMessages((current) => [...current, optimisticMessage]);
@@ -591,7 +671,7 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
         if (persistedComment) {
           setOptimisticMessages((current) => current.map((message) => (
             message.id === optimisticMessage.id
-              ? { id: persistedComment.id, text: persistedComment.text, createdAt: persistedComment.createdAt, optimistic: true }
+              ? { id: persistedComment.id, text: persistedComment.text, createdAt: message.createdAt, optimistic: true }
               : message
           )));
         }
@@ -604,30 +684,35 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
     } finally {
       setSending(false);
     }
-  }, [addToast, draft, isDoneTask, onTaskUpdated, projectId, sending, task.id]);
+  }, [addToast, draft, entries, isDoneTask, onTaskUpdated, projectId, sending, task.id, userMessages]);
 
+  /**
+   * FNXC:TaskDetailChat 2026-06-13-19:05:
+   * Task-detail chat follows chat composer keyboard expectations: Enter sends, Shift+Enter keeps textarea newline entry, Cmd/Ctrl+Enter remains supported for existing users, and IME composition Enter is ignored so CJK candidate selection is not submitted mid-composition.
+   */
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      void handleSubmit();
-    }
+    if (event.key !== "Enter") return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.shiftKey) return;
+
+    event.preventDefault();
+    void handleSubmit();
   }, [handleSubmit]);
 
   return (
     <div className="task-chat-tab" data-testid="task-chat-tab">
       {onToggleExpanded ? (
-        <div className="task-chat-toolbar">
-          <button
-            type="button"
-            className="btn btn-sm task-chat-expand-toggle"
-            onClick={onToggleExpanded}
-            aria-label={expanded ? "Collapse chat" : "Expand chat to full modal"}
-            aria-pressed={expanded}
-            data-testid="task-chat-expand-toggle"
-          >
-            {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-            <span>{expanded ? "Collapse" : "Expand"}</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn btn-icon btn-sm task-chat-expand-toggle task-chat-expand-toggle--overlay"
+          onClick={onToggleExpanded}
+          aria-label={expanded ? "Collapse chat" : "Expand chat to full modal"}
+          aria-pressed={expanded}
+          data-testid="task-chat-expand-toggle"
+        >
+          {/* FNXC:TaskChat 2026-06-13-00:00: FN-6425 refines FN-6405 by keeping the task-chat expand affordance icon-only and pinned to the chat view corner so transcript scrolling never removes access to expansion controls. */}
+          {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+        </button>
       ) : null}
       <div
         className="task-chat-transcript"
@@ -636,6 +721,26 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
         aria-live="polite"
         data-testid="task-chat-transcript"
       >
+        {hasMore || loadingMore ? (
+          <div className="task-chat-load-previous-row">
+            {loadingMore ? (
+              <div className="task-chat-load-previous-status" role="status" data-testid="task-chat-load-previous-loading">
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                <span>Loading earlier messages…</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm task-chat-load-previous"
+                onClick={() => { void loadPreviousMessages(); }}
+                aria-label="Load previous messages"
+                data-testid="task-chat-load-previous"
+              >
+                Load previous messages
+              </button>
+            )}
+          </div>
+        ) : null}
         {loading && transcriptItemCount === 0 ? (
           <div className="task-chat-empty" role="status">
             <Loader2 className="animate-spin" aria-hidden="true" />
@@ -655,13 +760,22 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
               icon: getRoleIcon(item.role),
             };
             const segments = segmentGroupEntries(item.entries);
+            const latestEntryTimestamp = item.entries[item.entries.length - 1]?.timestamp ?? "";
+            const relativeTime = formatRelativeTimeAgo(latestEntryTimestamp);
             return (
               <section className="task-chat-group" key={`${item.role ?? "agent"}-${itemIndex}`} aria-label={`${item.label} messages`}>
                 <header className="task-chat-group-header">
                   <AgentAvatar agent={avatarAgent} className="task-chat-avatar" />
                   <div>
                     <div className="task-chat-role-label">{item.label}</div>
-                    <div className="task-chat-group-meta">{item.entries.length === 1 ? "1 entry" : `${item.entries.length} entries`}</div>
+                    <div className="task-chat-group-meta">
+                      <span>{item.entries.length === 1 ? "1 entry" : `${item.entries.length} entries`}</span>
+                      {relativeTime ? (
+                        <span className="task-chat-timestamp" data-testid="task-chat-group-time">
+                          {relativeTime}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </header>
                 <div className="task-chat-group-bubbles">

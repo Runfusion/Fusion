@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractIntentSignature, findNearDuplicates } from "../near-duplicate.js";
+import { extractIntentSignature, findNearDuplicates, isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "../near-duplicate.js";
 
 const fn5144Title = "Create PR dialog missing /pr/options /pr/preflight /pr/generate-metadata routes";
 const fn5144Description =
@@ -47,6 +47,23 @@ describe("extractIntentSignature", () => {
         "register-git-github.ts",
       ]),
     );
+  });
+});
+
+describe("near-duplicate canonical activity predicates", () => {
+  it("treats non-terminal live columns as active", () => {
+    expect(isActiveNearDuplicateColumn("triage")).toBe(true);
+    expect(isActiveNearDuplicateColumn("todo")).toBe(true);
+    expect(isActiveNearDuplicateColumn("in-progress")).toBe(true);
+    expect(isActiveNearDuplicateColumn("in-review")).toBe(true);
+  });
+
+  it("treats archived, done, soft-deleted, and missing canonicals as inactive", () => {
+    expect(isNearDuplicateCanonicalInactive(undefined)).toBe(true);
+    expect(isNearDuplicateCanonicalInactive({ column: "archived" })).toBe(true);
+    expect(isNearDuplicateCanonicalInactive({ column: "done" })).toBe(true);
+    expect(isNearDuplicateCanonicalInactive({ column: "todo", deletedAt: "2026-06-14T00:00:00.000Z" })).toBe(true);
+    expect(isNearDuplicateCanonicalInactive({ column: "todo", deletedAt: null })).toBe(false);
   });
 });
 

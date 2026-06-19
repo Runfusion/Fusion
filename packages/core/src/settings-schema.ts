@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_AUTO_MERGE_RETRIES } from "./in-review-stall.js";
 import type { CliAgentSettings, GlobalSettings, ProjectSettings, Settings } from "./types.js";
 
 export interface MergeRequestContractShadowSettingsSource {
@@ -69,6 +70,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   defaultProvider: undefined,
   defaultModelId: undefined,
   testMode: undefined,
+  modelRouterEnabled: undefined,
+  modelRouterCheapProvider: undefined,
+  modelRouterCheapModelId: undefined,
   mergeRequestContractShadowEnabled: false,
   fallbackProvider: undefined,
   fallbackModelId: undefined,
@@ -252,6 +256,9 @@ export const DEFAULT_PROJECT_SETTINGS = {
   groupOverlappingFiles: true,
   overlapIgnorePaths: [],
   autoMerge: true,
+  // U18 (R15): the Review-response loop is default-on. Independent of `autoMerge` —
+  // with this on but auto-merge off, review threads are resolved but the PR is not merged.
+  autoResolveReviewComments: true,
   testMode: undefined,
   mergeRequestContractShadowEnabled: false,
   mergeStrategy: "direct",
@@ -314,6 +321,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   ],
   prerebaseDivergenceThreshold: 50,
   mergeConflictStrategy: "smart-prefer-main",
+  /**
+   * FNXC:AutoMergeRetries 2026-06-17-04:20:
+   * Project settings own the auto-merge conflict retry cap because existing engine/dashboard consumers already resolve project settings; the default imports core's stall-detection fallback to keep every surface on the historical value of 3.
+   */
+  maxAutoMergeRetries: DEFAULT_MAX_AUTO_MERGE_RETRIES,
   merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: false },
   mergeDiffVolumeMinLines: undefined,
   mergeDiffVolumeThreshold: undefined,
@@ -330,9 +342,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // planOnlyScopeLeakEnforcement, workflowRevisionForkOnScopeMismatch,
   // strictScopeEnforcement, buildRetryCount, verificationFixRetries,
   // requirePlanApproval) MOVED to workflow settings (U4) — see
-  // MOVED_SETTINGS_KEYS. `buildTimeoutMs` is NOT moved (no engine reader) and
-  // stays a plain project setting:
+  // MOVED_SETTINGS_KEYS. `buildTimeoutMs` and `verificationCommandTimeoutMs`
+  // are NOT moved and stay plain project settings. Keep verificationCommandTimeoutMs
+  // undefined so fn_run_verification preserves legacy per-scope defaults until a
+  // project opts into a single default budget.
   buildTimeoutMs: 300_000,
+  verificationCommandTimeoutMs: undefined,
   ephemeralAgentsEnabled: true,
   agentProvisioning: {},
   sandboxProvisioning: {},

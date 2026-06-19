@@ -1,3 +1,7 @@
+/*
+FNXC:TaskDetailTabs 2026-06-17-08:20:
+FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+*/
 import { describe, it, expect, vi } from "vitest";
 import { useState } from "react";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
@@ -76,6 +80,7 @@ describe("TaskDetailModal", () => {
       const user = userEvent.setup();
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             sourceIssue: {
               provider: "github",
@@ -138,6 +143,7 @@ describe("TaskDetailModal", () => {
     it("does not render GitHub badge for non-github providers", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             sourceIssue: {
               provider: "gitlab",
@@ -163,6 +169,7 @@ describe("TaskDetailModal", () => {
     it("hides source issue read section when sourceIssue metadata is missing", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ sourceIssue: undefined })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -180,6 +187,7 @@ describe("TaskDetailModal", () => {
     it("prefills source issue inputs in edit mode", async () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -214,6 +222,7 @@ describe("TaskDetailModal", () => {
     it("renders source issue block below Model Configuration in edit mode", async () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -255,6 +264,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -304,6 +314,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -346,6 +357,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -385,6 +397,7 @@ describe("TaskDetailModal", () => {
     it("shows Edit button in header when task is in triage column", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -402,6 +415,7 @@ describe("TaskDetailModal", () => {
     it("shows Edit button in header when task is in todo column", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -419,6 +433,7 @@ describe("TaskDetailModal", () => {
     it("does not show Edit button when task is in in-progress column", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "in-progress", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -436,6 +451,7 @@ describe("TaskDetailModal", () => {
     it("does not show Edit button when already in edit mode", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -460,6 +476,7 @@ describe("TaskDetailModal", () => {
     it("entering edit mode shows title input and description textarea", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task", description: "Test description" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -486,6 +503,7 @@ describe("TaskDetailModal", () => {
     it("clicking Cancel exits edit mode without saving", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -518,6 +536,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Original title", description: "Original description" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -551,6 +570,7 @@ describe("TaskDetailModal", () => {
     it("Save button is enabled in edit mode", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -576,6 +596,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -608,6 +629,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -644,6 +666,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Original" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -674,6 +697,7 @@ describe("TaskDetailModal", () => {
     it("Escape key exits edit mode", async () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test title" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -701,6 +725,7 @@ describe("TaskDetailModal", () => {
     it("edit mode shows both title and description fields", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test title", description: "Test description" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -722,6 +747,7 @@ describe("TaskDetailModal", () => {
     it("edit mode renders model configuration and workflow steps", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -749,6 +775,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", dependencies: ["FN-002"] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -782,6 +809,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", priority: "normal" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -817,6 +845,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", executionMode: "standard" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -843,6 +872,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", executionMode: "fast" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -869,6 +899,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", executionMode: "fast" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -890,6 +921,7 @@ describe("TaskDetailModal", () => {
     it("renders normalized priority in detail metadata", async () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", description: "Priority metadata", priority: undefined })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -913,6 +945,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", priority: "high", executionMode: "standard" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -956,6 +989,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "triage",
@@ -995,6 +1029,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", description: "Priority metadata", priority: "high" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1022,6 +1057,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", description: "Priority metadata", priority: "low" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1054,6 +1090,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", executionMode: "standard" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1085,6 +1122,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", executionMode: "fast" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1113,6 +1151,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", executionMode: "standard" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1143,6 +1182,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", executionMode: "standard" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1165,6 +1205,7 @@ describe("TaskDetailModal", () => {
     it("renders no-commits-expected toggle after plan and before attachments", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -1197,6 +1238,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", noCommitsExpected: false })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1217,6 +1259,7 @@ describe("TaskDetailModal", () => {
     it("pre-populates form with existing task values", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", title: "My Task", description: "My Description" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1243,6 +1286,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", branch: "feature/fn-3422", baseBranch: "develop" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1275,6 +1319,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", branch: "feature/fn-3422", baseBranch: "develop" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1301,6 +1346,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", branch: "feature/fn-3422", baseBranch: "main" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1345,6 +1391,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={initialTask}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1404,6 +1451,7 @@ describe("TaskDetailModal", () => {
 
         return (
           <TaskDetailModal
+            initialTab="definition"
             task={task}
             onClose={noop}
             onMoveTask={noopMove}
@@ -1462,6 +1510,7 @@ describe("TaskDetailModal", () => {
     it("renders Save and Cancel in the modal footer, not inside the edit form body", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1496,6 +1545,7 @@ describe("TaskDetailModal", () => {
     it("renders keyboard hint in the modal footer when editing", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "triage", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1520,6 +1570,7 @@ describe("TaskDetailModal", () => {
     it("shows normal modal actions (not edit actions) when not editing", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", title: "Test task" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1556,6 +1607,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1589,6 +1641,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1618,6 +1671,7 @@ describe("TaskDetailModal", () => {
     it("shows Assign Agent button when task has no assigned agent", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ assignedAgentId: undefined })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1647,6 +1701,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ assignedAgentId: "agent-002" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1680,6 +1735,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ assignedAgentId: undefined })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1715,6 +1771,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ assignedAgentId: "agent-005" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1768,6 +1825,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={task}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1813,6 +1871,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={task}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1847,6 +1906,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={detail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1886,6 +1946,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={task}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1960,6 +2021,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={task}
           onClose={noop}
           onMoveTask={noopMove}
@@ -2034,6 +2096,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={strippedTask}
           onClose={noop}
           onMoveTask={noopMove}
@@ -2083,6 +2146,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={task}
           onClose={noop}
           onMoveTask={noopMove}
@@ -2122,6 +2186,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onOpenDetail={noop}
@@ -2153,6 +2218,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onOpenDetail={noop}
@@ -2181,6 +2247,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onOpenDetail={noop}
@@ -2208,6 +2275,7 @@ describe("TaskDetailModal", () => {
     it("renders after the prompt/spec section in read mode", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -2236,6 +2304,7 @@ describe("TaskDetailModal", () => {
     it("renders linked issue as link when url exists", async () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             githubTracking: {
               enabled: true,
@@ -2295,6 +2364,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={optimisticTask}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2319,6 +2389,7 @@ describe("TaskDetailModal", () => {
     it("shows section when tracking is disabled and task is in an eligible column", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ column: "todo", githubTracking: { enabled: false } })}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2351,6 +2422,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={optimisticTask}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2390,6 +2462,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -2432,6 +2505,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -2476,6 +2550,7 @@ describe("TaskDetailModal", () => {
     it("hides the inline enable button when tracking is already enabled", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ column: "todo", githubTracking: { enabled: true } })}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2493,6 +2568,7 @@ describe("TaskDetailModal", () => {
     it("hides the inline enable button when an issue is already linked", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             column: "todo",
             githubTracking: {
@@ -2546,6 +2622,7 @@ describe("TaskDetailModal", () => {
     it("hides section when tracking is disabled and task is not in an eligible column", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ column: "done", githubTracking: { enabled: false } })}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2582,6 +2659,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "done", githubTracking: { enabled: true } })}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2611,6 +2689,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",
@@ -2654,6 +2733,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "in-progress",
@@ -2713,6 +2793,7 @@ describe("TaskDetailModal", () => {
 
         return (
           <TaskDetailModal
+            initialTab="definition"
             task={taskState}
             onClose={noop}
             onOpenDetail={noopOpenDetail}
@@ -2759,6 +2840,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ id: "FN-001", column: "todo", githubTracking: { enabled: true, repoOverride: "runfusion/fusion" } })}
           onClose={noop}
           onOpenDetail={noopOpenDetail}
@@ -2794,6 +2876,7 @@ describe("TaskDetailModal", () => {
       mockConfirm.mockResolvedValueOnce(false);
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             id: "FN-001",
             column: "todo",

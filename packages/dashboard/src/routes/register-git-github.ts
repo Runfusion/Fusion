@@ -43,6 +43,7 @@ import { GitHubTrackingCommentService } from "../github-tracking-comments.js";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
 import { GitHubTrackingReconciler, RECONCILE_SCAN_LIMIT } from "../github-tracking-reconciler.js";
 import { GitHubSourceIssueCloseService } from "../github-source-issue-close.js";
+import { KnowledgeIndexRefreshService } from "../knowledge-index-refresh.js";
 import { githubRateLimiter } from "../github-poll.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
 import { generatePrMetadata } from "../pr-metadata-generator.js";
@@ -388,12 +389,14 @@ async function computePrPreflight(task: Task, repoRoot: string, requestedBase?: 
   ).catch(() => "0");
   response.commitsPresent = Number.parseInt(commitCountOutput, 10) > 0;
 
-  const mergeTreeOutput = await prRouteCommandRunner.run(
+  const mergeTreeResult = await prRouteCommandRunner.tryRun(
     `git merge-tree --write-tree --name-only ${shellQuote(baseRef)} ${shellQuote(safeHead)}`,
     repoRoot,
     PR_PREFLIGHT_TIMEOUT_MS,
-  ).catch(() => "");
-  response.conflictsWithBase = mergeTreeOutput.trim().length > 0;
+  );
+  // `git merge-tree --write-tree` exits 0 for clean merges and 1 for real conflicts;
+  // stdout can be non-empty in both cases, so conflict state must come from the exit code.
+  response.conflictsWithBase = !mergeTreeResult.ok && mergeTreeResult.code === 1;
 
   const [commitLogOutput, numstatOutput, nameStatusOutput] = await Promise.all([
     prRouteCommandRunner.run(
@@ -2483,6 +2486,12 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     githubSourceIssueCloseService.start();
     ctx.registerDispose(() => githubSourceIssueCloseService.stop());
 
+    // U14 — incremental knowledge-index refresh on task completion. Listens for
+    // task:moved → done and re-indexes just that task as a knowledge page.
+    const knowledgeIndexRefreshService = new KnowledgeIndexRefreshService(store);
+    knowledgeIndexRefreshService.start();
+    ctx.registerDispose(() => knowledgeIndexRefreshService.stop());
+
     const githubTrackingStateService = new GitHubTrackingStateService(store);
     const githubTrackingReconciler = new GitHubTrackingReconciler();
     const reconcileScheduledStores = new WeakSet<TaskStore>();
@@ -2533,6 +2542,12 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       attachedStateStores.add(projectStore);
       githubTrackingStateService.attach(projectStore);
       githubSourceIssueCloseService.attach(projectStore);
+      // FNXC:Knowledge 2026-06-16-14:32:
+      // Knowledge index refresh on task:moved→done must run for every registered project store, not just the primary.
+      // Mirror the GitHubTrackingStateService/GitHubSourceIssueCloseService attach/detach lifecycle so non-primary
+      // projects also re-index completed tasks. attach() is idempotent (guards on its per-store listener Map), so
+      // re-attaching the primary store here is harmless even though start() already attached the default store.
+      knowledgeIndexRefreshService.attach(projectStore);
 
       if (!reconcileScheduledStores.has(projectStore)) {
         reconcileScheduledStores.add(projectStore);
@@ -2589,10 +2604,42 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       for (const projectStore of attachedStateStores) {
         githubTrackingStateService.detach(projectStore);
         githubSourceIssueCloseService.detach(projectStore);
+        knowledgeIndexRefreshService.detach(projectStore);
       }
       githubTrackingStateService.stop();
     });
   }
+
+  /**
+   * POST /api/git/github/backfill-source-issue-closed-at
+   * FNXC:GithubSourceIssueBackfill 2026-06-18-18:53:
+   * Historical source-issue closed-at backfills are opt-in manual sweeps, not periodic reconciliation work. The route is project-scoped, accepts offset/limit pagination, clamps batches to RECONCILE_SCAN_LIMIT, and returns { scanned, filled, skipped, errors, hasMore } so callers can iterate until hasMore is false without analytics-time network calls.
+   */
+  router.post("/git/github/backfill-source-issue-closed-at", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const body = (req.body ?? {}) as { offset?: unknown; limit?: unknown };
+      const offset = body.offset === undefined ? 0 : Number(body.offset);
+      const limit = body.limit === undefined ? RECONCILE_SCAN_LIMIT : Number(body.limit);
+      if (!Number.isInteger(offset) || offset < 0) {
+        throw badRequest("offset must be a non-negative integer");
+      }
+      if (!Number.isInteger(limit) || limit < 0) {
+        throw badRequest("limit must be a non-negative integer");
+      }
+
+      const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(scopedStore, {
+        offset,
+        limit: Math.min(limit, RECONCILE_SCAN_LIMIT),
+      });
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
 
   /**
    * GET /api/git/remotes

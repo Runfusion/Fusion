@@ -45,6 +45,7 @@ function makeInteractiveData(opts: {
   settings?: SettingsValues;
   models?: ModelItem[];
   taskDetail?: TaskDetailData | null;
+  updateAgentState?: (id: string, state: string) => Promise<void>;
   remote?: Partial<{
     getSettings: () => Promise<{ activeProvider: "tailscale" | "cloudflare" | null; tailscaleEnabled: boolean; cloudflareEnabled: boolean; shortLivedEnabled: boolean; shortLivedTtlMs: number }>;
     getStatus: () => Promise<{ provider: "tailscale" | "cloudflare" | null; state: "stopped" | "starting" | "running" | "error"; url: string | null; lastError: string | null }>;
@@ -105,7 +106,7 @@ function makeInteractiveData(opts: {
     }) as TaskItem,
     listAgents: async () => agents,
     getAgentDetail: async (_id: string) => detail,
-    updateAgentState: async (_id: string, _state: string) => {},
+    updateAgentState: opts.updateAgentState ?? (async (_id: string, _state: string) => {}),
     deleteAgent: async (_id: string) => {},
     getSettings: async () => settings,
     updateSettings: async (_partial: Partial<SettingsValues>) => {},
@@ -406,6 +407,105 @@ describe("Agents view", () => {
     await waitForFrameContains(lastFrame, "Run logs (1)");
     await waitForFrameContains(lastFrame, "plan generated");
 
+    unmount();
+  });
+
+  it("starts the selected agent with s without leaving the Agents view", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    const updateAgentState = vi.fn(async (_id: string, _state: string) => {});
+    const agents: AgentItem[] = [
+      { id: "a1", name: "worker-1", state: "idle", role: "executor" },
+    ];
+    controller.setInteractiveData(makeInteractiveData({ agents, updateAgentState }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("agents");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "worker-1");
+
+    stdin.write("s");
+    await vi.waitFor(() => expect(updateAgentState).toHaveBeenCalledWith("a1", "active"));
+    await waitForFrameUpdateAfterInput();
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.mode).toBe("interactive");
+    expect(snapshot.interactiveView).toBe("agents");
+    unmount();
+  });
+
+  it("switches to Main with m from the Agents view", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    const agents: AgentItem[] = [
+      { id: "a1", name: "worker-1", state: "idle", role: "executor" },
+    ];
+    controller.setInteractiveData(makeInteractiveData({ agents }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("agents");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "worker-1");
+
+    stdin.write("m");
+    await waitForFrameUpdateAfterInput();
+
+    expect(controller.getSnapshot().mode).toBe("status");
+    unmount();
+  });
+
+  it("keeps the s-to-Main alias in non-Agents interactive views", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setInteractiveData(makeInteractiveData({
+      projects: [{ id: "p1", name: "alpha", path: "/tmp/alpha" }],
+      tasks: [{ id: "t1", title: "first", description: "", column: "todo" }],
+    }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("board");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "alpha");
+
+    stdin.write("s");
+    await waitForFrameUpdateAfterInput();
+
+    expect(controller.getSnapshot().mode).toBe("status");
+    unmount();
+  });
+
+  it("keeps s as a no-op when already in status mode", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setMode("status");
+    controller.setInteractiveView("agents");
+
+    const { stdin, unmount } = render(renderDashboardAppNode(controller));
+    stdin.write("s");
+    await waitForFrameUpdateAfterInput();
+
+    expect(controller.getSnapshot().mode).toBe("status");
+    unmount();
+  });
+
+  it("treats s as a no-op in an empty Agents view", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    const updateAgentState = vi.fn(async (_id: string, _state: string) => {});
+    controller.setInteractiveData(makeInteractiveData({ agents: [], updateAgentState }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("agents");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "Agent Detail");
+
+    stdin.write("s");
+    await waitForFrameUpdateAfterInput();
+
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.mode).toBe("interactive");
+    expect(snapshot.interactiveView).toBe("agents");
+    expect(updateAgentState).not.toHaveBeenCalled();
     unmount();
   });
 });

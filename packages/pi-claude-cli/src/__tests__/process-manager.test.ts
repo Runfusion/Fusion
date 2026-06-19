@@ -16,7 +16,6 @@ vi.mock("node:child_process", () => ({
     proc.pid = 12345;
     return proc;
   }),
-  execSync: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
@@ -38,15 +37,13 @@ vi.mock("node:os", () => ({
   tmpdir: mocks.tmpdir,
 }));
 
-import { spawn, execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   spawnClaude,
   buildClaudeSpawnArgs,
   writeUserMessage,
   cleanupProcess,
   captureStderr,
-  validateCliPresence,
-  validateCliAuth,
   validateCliPresenceAsync,
   validateCliAuthAsync,
   forceKillProcess,
@@ -365,47 +362,6 @@ describe("captureStderr", () => {
 
     const getStderr = captureStderr(proc);
     expect(getStderr()).toBe("");
-  });
-});
-
-describe("validateCliPresence", () => {
-  it("does not throw when claude --version succeeds", () => {
-    (execSync as any).mockReturnValue(Buffer.from("1.0.0"));
-    expect(() => validateCliPresence()).not.toThrow();
-  });
-
-  it("throws with install instructions when claude --version fails", () => {
-    (execSync as any).mockImplementation(() => {
-      throw new Error("command not found");
-    });
-
-    expect(() => validateCliPresence()).toThrow();
-    try {
-      validateCliPresence();
-    } catch (e: any) {
-      expect(e.message).toContain("Claude Code CLI not found");
-      expect(e.message).toContain("npm install");
-    }
-  });
-});
-
-describe("validateCliAuth", () => {
-  it("returns true when claude auth status succeeds", () => {
-    (execSync as any).mockReturnValue(Buffer.from("Logged in"));
-    expect(validateCliAuth()).toBe(true);
-  });
-
-  it("returns false and warns when claude auth status fails", () => {
-    (execSync as any).mockImplementation(() => {
-      throw new Error("not authenticated");
-    });
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    expect(validateCliAuth()).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("not authenticated"),
-    );
-    warnSpy.mockRestore();
   });
 });
 

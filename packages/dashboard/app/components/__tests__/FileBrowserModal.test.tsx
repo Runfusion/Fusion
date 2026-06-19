@@ -9,10 +9,40 @@ import * as workspacesHook from "../../hooks/useWorkspaces";
 vi.mock("../../hooks/useWorkspaceFileBrowser");
 vi.mock("../../hooks/useWorkspaceFileEditor");
 vi.mock("../../hooks/useWorkspaces");
+vi.mock("../../hooks/useViewportMode", () => {
+  const mode = () => (window.innerWidth <= 768 ? "mobile" : "desktop");
+  return {
+    MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+    getViewportMode: mode,
+    isMobileViewport: () => mode() === "mobile",
+    useViewportMode: mode,
+  };
+});
 
 const mockUseWorkspaceFileBrowser = vi.mocked(workspaceBrowserHook.useWorkspaceFileBrowser);
 const mockUseWorkspaceFileEditor = vi.mocked(workspaceEditorHook.useWorkspaceFileEditor);
 const mockUseWorkspaces = vi.mocked(workspacesHook.useWorkspaces);
+
+function mockSelectionRect() {
+  const rect = new DOMRect(10, 20, 80, 12);
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: vi.fn(() => rect),
+  });
+  Object.defineProperty(Range.prototype, "getClientRects", {
+    configurable: true,
+    value: vi.fn(() => ({ 0: rect, length: 1, item: () => rect, [Symbol.iterator]: function* () { yield rect; } }) as DOMRectList),
+  });
+}
+
+function selectNodeText(node: Node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = document.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  document.dispatchEvent(new Event("selectionchange"));
+}
 
 describe("FileBrowserModal", () => {
   const mockOnClose = vi.fn();
@@ -104,6 +134,64 @@ describe("FileBrowserModal", () => {
     });
 
     expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined);
+  });
+
+  it("sends selected code text from the embedded editor to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+        onSendSelectionToTask={onSendSelectionToTask}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("file1.ts"));
+    await waitFor(() => expect(screen.getByLabelText("Editor for file1.ts")).toBeInTheDocument());
+    selectNodeText(document.querySelector(".cm-content") as Node);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Investigate this file." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: file1.ts"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("console.log"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Investigate this file."));
+  });
+
+  it("sends selected markdown preview text from the embedded editor to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    mockUseWorkspaceFileEditor.mockReturnValue({
+      ...defaultEditorState,
+      content: "# Heading\n\nPreview body",
+      originalContent: "# Heading\n\nPreview body",
+    });
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile="README.md"
+        isOpen={true}
+        onClose={mockOnClose}
+        onSendSelectionToTask={onSendSelectionToTask}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getAllByText("README.md").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: /toggle editor options/i }));
+    fireEvent.click(screen.getByRole("button", { name: /preview mode/i }));
+    selectNodeText(await screen.findByText("Preview body"));
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Turn preview note into work." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: README.md"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Preview body"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Turn preview note into work."));
   });
 
   it("opens with an initial file selected", async () => {

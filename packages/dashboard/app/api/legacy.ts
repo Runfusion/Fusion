@@ -724,6 +724,13 @@ export function retryTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
 }
 
+export function relaunchCliSession(sessionId: string, projectId?: string): Promise<{ ok: boolean; taskId?: string }> {
+  return api<{ ok: boolean; taskId?: string }>(
+    withProjectId(`/cli-sessions/${encodeURIComponent(sessionId)}/relaunch`, projectId),
+    { method: "POST" },
+  );
+}
+
 export function recoverBranchBinding(id: string, projectId?: string): Promise<RecoverBranchBindingOutcome> {
   return api<RecoverBranchBindingOutcome>(withProjectId(`/tasks/${id}/recover-branch-binding`, projectId), { method: "POST" });
 }
@@ -808,6 +815,19 @@ export function checkForUpdate(projectId?: string): Promise<UpdateCheckResponse>
 
 export function refreshUpdateCheck(projectId?: string): Promise<UpdateCheckResponse> {
   return api<UpdateCheckResponse>(withProjectId("/update-check/refresh", projectId), {
+    method: "POST",
+  });
+}
+
+export interface UpdateInstallResponse {
+  currentVersion: string;
+  latestVersion: string | null;
+  updated: boolean;
+  error?: string;
+}
+
+export function installUpdate(projectId?: string): Promise<UpdateInstallResponse> {
+  return api<UpdateInstallResponse>(withProjectId("/update-check/install", projectId), {
     method: "POST",
   });
 }
@@ -1654,6 +1674,18 @@ export interface ClaudeCliStatus {
     reason?: string;
   } | null;
   ready: boolean;
+  /** Route A ACP transport state (Claude CLI via the claude-code-cli-acp bridge). */
+  acp?: {
+    /** experimentalFeatures.claudeCliAcp (default ON). */
+    enabled: boolean;
+    /** The acp-runtime plugin published a bundled bridge path. */
+    bridgeAvailable: boolean;
+    /** Claude CLI is actually routing through the bridge (enabled + flag + bridge). */
+    active: boolean;
+    /** The bridged `claude` returned "Not logged in" — needs fallback or re-auth (R17). */
+    authFailed: boolean;
+    authReason?: string;
+  };
 }
 
 export interface DroidCliStatus {
@@ -7164,6 +7196,14 @@ export interface KillVitestResponse {
   pids: number[];
 }
 
+export interface GithubSourceIssueClosedAtBackfillResult {
+  scanned: number;
+  filled: number;
+  skipped: number;
+  errors: number;
+  hasMore: boolean;
+}
+
 export function fetchSystemStats(projectId?: string): Promise<SystemStatsResponse> {
   return api<SystemStatsResponse>(withProjectId("/system-stats", projectId));
 }
@@ -7172,6 +7212,23 @@ export function killVitestProcesses(projectId?: string): Promise<KillVitestRespo
   return api<KillVitestResponse>(withProjectId("/kill-vitest", projectId), {
     method: "POST",
   });
+}
+
+/**
+ * FNXC:GithubSourceIssueBackfill 2026-06-18-19:20:
+ * Thin client for the FN-6674 manual source-issue closed-at backfill endpoint. Callers own bounded pagination until `hasMore === false`; this helper keeps the GitHub lookup in the explicit operator action path and out of analytics/render-time data loading.
+ */
+export function apiBackfillGithubSourceIssueClosedAt(
+  options: { offset?: number; limit?: number } = {},
+  projectId?: string,
+): Promise<GithubSourceIssueClosedAtBackfillResult> {
+  return api<GithubSourceIssueClosedAtBackfillResult>(
+    withProjectId("/git/github/backfill-source-issue-closed-at", projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({ offset: options.offset, limit: options.limit }),
+    },
+  );
 }
 
 /** Fetch unified activity feed */
@@ -9453,7 +9510,7 @@ export function fetchChatSession(id: string, projectId?: string): Promise<ChatSe
 /** Update a chat session (title, status) */
 export function updateChatSession(
   id: string,
-  updates: { title?: string; status?: string },
+  updates: { title?: string | null; status?: string },
   projectId?: string,
 ): Promise<ChatSessionResponse> {
   return api<ChatSessionResponse>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId), {

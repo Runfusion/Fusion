@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { builtinModules } from "node:module";
 import { parse } from "yaml";
+import { applyPrepackTransform } from "../../scripts/prepare-publish-manifest.mjs";
 
 const workspaceRoot = join(__dirname, "..", "..", "..", "..");
 
@@ -30,6 +31,43 @@ function loadCliPrepackScript(): string {
 function hasProjectArg(script: string | undefined, project: string): boolean {
   const parts = script?.trim().split(/\s+/) ?? [];
   return parts.some((part, index) => part === "--project" && parts[index + 1] === project);
+}
+
+function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
+  const dependencies = pkg.dependencies ?? {};
+  const peerDependencies = pkg.peerDependencies ?? {};
+  const peerDependenciesMeta = pkg.peerDependenciesMeta ?? {};
+
+  for (const dependencyName of Object.keys(dependencies)) {
+    expect(
+      peerDependenciesMeta[dependencyName]?.optional,
+      `${label}: runtime dependency "${dependencyName}" must not also be an optional peer; npm/pnpm may omit it from clean standalone installs.`,
+    ).not.toBe(true);
+  }
+
+  for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
+    expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
+      dependencyName,
+      "^0.79.1",
+    );
+    expect(peerDependencies, `${label}: ${dependencyName} must not be a peer dependency`).not.toHaveProperty(
+      dependencyName,
+    );
+    expect(peerDependenciesMeta, `${label}: ${dependencyName} must not have peer metadata`).not.toHaveProperty(
+      dependencyName,
+    );
+  }
+
+  expect(dependencies, `${label}: typebox must not be promoted into runtime dependencies`).not.toHaveProperty(
+    "typebox",
+  );
+  expect(peerDependencies, `${label}: typebox remains the optional peer control`).toHaveProperty(
+    "typebox",
+    "*",
+  );
+  expect(peerDependenciesMeta.typebox, `${label}: typebox remains optional peer metadata`).toEqual({
+    optional: true,
+  });
 }
 
 describe("CLI package.json publishing config", () => {
@@ -91,6 +129,15 @@ describe("CLI package.json publishing config", () => {
   it("declares ioredis as a runtime dependency for badge pub/sub", () => {
     const deps = Object.keys(pkg.dependencies || {});
     expect(deps).toContain("ioredis");
+  });
+
+  /**
+   * FNXC:Packaging 2026-06-13-16:36:
+   * Standalone npm/pnpm installs may omit a package when the published manifest declares it as both a runtime dependency and an optional peer. Keep the pi runtime packages as plain dependencies so dist/bin.js and dist/extension.js can resolve their static imports outside the monorepo, while leaving typebox as the optional-peer control because Fusion does not import it at runtime.
+   */
+  it("does not declare runtime dependencies as optional peers in source or published manifests", () => {
+    assertRuntimeDepsAreNotOptionalPeers(pkg, "source manifest");
+    assertRuntimeDepsAreNotOptionalPeers(applyPrepackTransform(pkg), "published manifest");
   });
 
   it("defines test:docs-index as a single-file docs README index lane", () => {

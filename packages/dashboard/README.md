@@ -345,9 +345,9 @@ Access a fully functional PTY (pseudo-terminal) shell directly from the dashboar
   - `Escape` - Close terminal modal
 
 ### Saved Scripts
-Saved scripts (managed via the Scripts modal or QuickScripts dropdown in the header) launch inside the existing interactive Terminal modal instead of a separate read-only output dialog. This gives users a consistent terminal experience and lets them interact with the shell after the script starts — for example, to inspect output files, run follow-up commands, or debug failures.
+Saved scripts (managed via the Scripts modal or QuickScripts dropdown in the header) launch inside the existing interactive Terminal modal instead of a separate read-only output dialog. Each run opens a dedicated new terminal tab backed by a fresh PTY session, so script output never overwrites an existing shell. This gives users a consistent terminal experience and lets them interact with the shell after the script starts — for example, to inspect output files, run follow-up commands, or debug failures.
 
-**Modal Handoff**: When a script is launched from the Scripts modal, the modal closes immediately so the Terminal modal becomes the topmost surface — the user never sees both overlays stacked. The script command is sent to the terminal as an `initialCommand` once the PTY session connects. Running a different script while the terminal is already open sends the new command without needing to close and reopen the modal.
+**Modal Handoff**: When a script is launched from the Scripts modal, the modal closes immediately so the Terminal modal becomes the topmost surface — the user never sees both overlays stacked. The script command is sent to the new terminal tab as an `initialCommand` once the fresh PTY session connects. Running any script, including the same script again while the terminal is already open, creates another dedicated tab without needing to close and reopen the modal.
 
 **Features**:
 - **Real PTY Terminal**: Spawns a real shell (bash/zsh/powershell) using node-pty for authentic terminal behavior
@@ -769,6 +769,32 @@ For real-time PR/issue badge updates, configure a GitHub App instead of relying 
 
 **Fallback Behavior:**
 When webhook delivery is unavailable, the 5-minute refresh endpoints (`/api/tasks/:id/pr/status`, `/api/tasks/:id/issue/status`) continue to work as the fallback path. Staleness is computed from persisted `lastCheckedAt` timestamps only (no in-memory poller state).
+
+### External Signal Ingestion (Sentry / Datadog / PagerDuty / generic webhook)
+
+Inbound signals from error trackers and alerting tools are ingested into triage
+tasks via `POST /api/signals/:provider`. Every endpoint requires a valid HMAC
+signature against a per-provider secret — there is no unauthenticated
+task-creation endpoint. Secrets come from the environment and are never
+source-controlled:
+
+- `FUSION_SIGNAL_WEBHOOK_SECRET` — generic webhook (`POST /api/signals/webhook`).
+  Sign the raw body with HMAC-SHA256 in `X-Fusion-Signature` (hex, optional
+  `sha256=` prefix) and send `X-Fusion-Timestamp` (epoch ms) for the replay
+  window. Payload: `{ id, title, body?, severity?, link?, groupingKey?, timestamp?, meta? }`.
+  If `groupingKey` is omitted it falls back to `source + normalized-title`.
+- `FUSION_SIGNAL_SENTRY_SECRET` — Sentry (`POST /api/signals/sentry`), verifies
+  `Sentry-Hook-Signature`; `groupingKey` = Sentry `issue.id`.
+- `FUSION_SIGNAL_DATADOG_SECRET` — Datadog (`POST /api/signals/datadog`),
+  verifies `X-Datadog-Signature`; `groupingKey` = monitor `aggreg_key`/`alert_id`.
+- `FUSION_SIGNAL_PAGERDUTY_SECRET` — PagerDuty (`POST /api/signals/pagerduty`),
+  verifies `X-PagerDuty-Signature` (`v1=<hex>`); `groupingKey` = `incident.id`.
+
+**Security:** mandatory HMAC (401 on missing/invalid secret or signature),
+replay window (±5 min) + delivery-id nonce dedup, persistent external-id dedup,
+~1 MB body cap (413), per-source rate limit (429), field-length caps on
+normalized fields, and SSRF-untrusted handling of payload URLs (stored as data,
+never fetched). The `meta` JSON is stored as data and never rendered as raw HTML.
 
 ### Multi-Instance Deployments
 

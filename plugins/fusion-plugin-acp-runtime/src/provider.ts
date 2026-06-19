@@ -29,7 +29,7 @@ import { createEventBridge } from "./event-bridge.js";
 import { resolvePermission, type ResolvePermissionOptions } from "./control-handler.js";
 import { createFsHandlers } from "./fs-capabilities.js";
 import { boundIdentifier } from "./sanitize.js";
-import type { AcpCallbacks, PermissionGate } from "./types.js";
+import type { AcpCallbacks, AcpMcpServer, PermissionGate } from "./types.js";
 
 /** Options enabling the U7 fs client capabilities on the bridging handler. */
 export interface FsHandlerBuildOptions {
@@ -346,14 +346,19 @@ export interface NewAcpSessionResult {
 }
 
 /**
- * Open a fresh ACP session via `session/new`. Always passes an empty
- * `mcpServers` (KTD5 — Fusion custom-tool forwarding is deferred).
+ * Open a fresh ACP session via `session/new`. Forwards `opts.mcpServers` (U10 —
+ * Route A): when present and non-empty, the agent can call those Fusion tools and
+ * each call still routes through the U5 permission floor. Defaults to `[]` so
+ * Route B read-only ask turns keep their no-tools posture.
  */
 export async function newAcpSession(
   connection: AcpConnection,
-  opts: { cwd: string },
+  opts: { cwd: string; mcpServers?: AcpMcpServer[] },
 ): Promise<NewAcpSessionResult> {
-  const res = await connection.conn.newSession({ cwd: opts.cwd, mcpServers: [] });
+  const res = await connection.conn.newSession({
+    cwd: opts.cwd,
+    mcpServers: opts.mcpServers ?? [],
+  });
   // `sessionId` is agent-supplied/untrusted (U6/Risk S7): bound its length and
   // strip path separators / NUL bytes before it is stored on the session or
   // could ever touch a resume-file path.

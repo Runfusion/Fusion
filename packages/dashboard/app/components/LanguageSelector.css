@@ -22,21 +22,21 @@
   display: inline-flex;
   align-items: center;
   padding: 6px 12px;
-  border: 1px solid var(--border-color, #333);
+  border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary, transparent);
-  color: var(--text-primary, inherit);
+  color: var(--text);
   font-size: 0.875rem;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .language-option:hover {
-  border-color: var(--accent-color, #4a9eff);
+  border-color: var(--accent);
 }
 
 .language-option.active {
-  border-color: var(--accent-color, #4a9eff);
-  background: var(--accent-color-subtle, color-mix(in srgb, #4a9eff 12%, transparent));
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   font-weight: 600;
 }

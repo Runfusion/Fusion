@@ -53,6 +53,16 @@ export {
 import { existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import {
+  computeLockfileHash,
+  getConfiguredWorktreeInitCommand,
+  getDependencySyncCommand,
+  hasInstallState,
+  installWorktreeDependencies,
+  INSTALL_MARKER_RELPATH,
+  readInstallMarker,
+  writeInstallMarker,
+} from "./merge-dependency-sync.js";
 import { resolveTaskWorktreePath } from "./worktree-paths.js";
 import { resolveTaskWorkingBranch } from "./worktree-names.js";
 import {
@@ -64,6 +74,7 @@ import { isBranchAuthoritativeForTask } from "./branch-conflicts.js";
 import { hostname } from "node:os";
 import {
   buildTaskLineageTrailer,
+  evaluateNoCommitsNoOpFinalize,
   getTaskMergeBlocker,
   normalizeMergeConflictStrategy,
   normalizeMergeStrategyOverlapBehavior,
@@ -499,9 +510,15 @@ export async function getStagedFiles(cwd: string): Promise<string[]> {
   }
 }
 
-export function hasInstallState(rootDir: string): boolean {
-  return existsSync(join(rootDir, "node_modules")) || existsSync(join(rootDir, ".pnp.cjs"));
-}
+export {
+  computeLockfileHash,
+  getConfiguredWorktreeInitCommand,
+  getDependencySyncCommand,
+  hasInstallState,
+  INSTALL_MARKER_RELPATH,
+  readInstallMarker,
+  writeInstallMarker,
+};
 
 export function shouldSyncDependenciesForMerge(
   stagedFiles: string[],
@@ -513,23 +530,6 @@ export function shouldSyncDependenciesForMerge(
   return stagedFiles.some((file) =>
     DEPENDENCY_SYNC_TRIGGER_PATTERNS.some((pattern) => matchGlob(file, pattern)),
   );
-}
-
-function getConfiguredWorktreeInitCommand(settings?: Pick<Settings, "worktreeInitCommand"> | null): string | null {
-  const trimmed = settings?.worktreeInitCommand?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function getDependencySyncCommand(rootDir: string, settings?: Settings | null): string | null {
-  const configuredCommand = getConfiguredWorktreeInitCommand(settings);
-  if (configuredCommand) return configuredCommand;
-  if (existsSync(join(rootDir, "pnpm-lock.yaml"))) return "pnpm install --frozen-lockfile";
-  if (existsSync(join(rootDir, "package-lock.json"))) return "npm install";
-  if (existsSync(join(rootDir, "yarn.lock"))) return "yarn install --frozen-lockfile";
-  if (existsSync(join(rootDir, "bun.lock")) || existsSync(join(rootDir, "bun.lockb"))) {
-    return "bun install --frozen-lockfile";
-  }
-  return null;
 }
 
 type MergeWorktreeCommandResult = Awaited<ReturnType<typeof runConfiguredMergeWorktreeCommand>>;
@@ -570,40 +570,6 @@ function formatPostMergeInitFailureOutcome(initResult: MergeWorktreeCommandResul
   return fallback.length > 0 ? fallback : "Command failed";
 }
 
-const INSTALL_MARKER_RELPATH = join("node_modules", ".fusion-install-marker");
-const LOCKFILE_CANDIDATES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "bun.lock"];
-
-function computeLockfileHash(rootDir: string): string | null {
-  for (const name of LOCKFILE_CANDIDATES) {
-    const p = join(rootDir, name);
-    if (existsSync(p)) {
-      try {
-        return createHash("sha256").update(readFileSync(p)).digest("hex");
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
-function readInstallMarker(rootDir: string): string | null {
-  try {
-    const value = readFileSync(join(rootDir, INSTALL_MARKER_RELPATH), "utf-8").trim();
-    return value || null;
-  } catch {
-    return null;
-  }
-}
-
-function writeInstallMarker(rootDir: string, hash: string): void {
-  try {
-    writeFileSync(join(rootDir, INSTALL_MARKER_RELPATH), hash);
-  } catch {
-    // Best-effort: a missing marker just means the next merge re-runs install.
-  }
-}
-
 async function syncDependenciesForMerge(
   store: TaskStore,
   rootDir: string,
@@ -611,44 +577,15 @@ async function syncDependenciesForMerge(
   settings?: Settings | null,
   signal?: AbortSignal,
 ): Promise<void> {
-  const configuredCommand = getConfiguredWorktreeInitCommand(settings);
-  const installCommand = getDependencySyncCommand(rootDir, settings);
-  if (!installCommand) return;
-
-  const shouldUseInstallMarker = configuredCommand === null;
-
-  // Skip the install if node_modules is present and the lockfile content
-  // matches the hash recorded after the last successful install. Caller's
-  // shouldSyncDependenciesForMerge gate already filters most no-ops; this
-  // covers the case where package.json (but not the lockfile) is staged, and
-  // the case where multiple merge attempts hit the same worktree in a row.
-  const lockHash = shouldUseInstallMarker ? computeLockfileHash(rootDir) : null;
-  if (lockHash && hasInstallState(rootDir) && readInstallMarker(rootDir) === lockHash) {
-    mergerLog.log(`${taskId}: skipping dependency sync (lockfile unchanged since last install)`);
-    await store.logEntry(
-      taskId,
-      `Skipping dependency sync: lockfile hash matches last successful ${installCommand}`,
-    );
-    return;
-  }
-
-  throwIfAborted(signal, taskId);
-  mergerLog.log(`${taskId}: syncing dependencies before merge verification`);
-  await store.logEntry(taskId, `Syncing dependencies before merge verification: ${installCommand}`);
-  try {
-    await execAsync(installCommand, {
-      cwd: rootDir,
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 300_000,
-    });
-    throwIfAborted(signal, taskId);
-    if (lockHash) writeInstallMarker(rootDir, lockHash);
-  } catch (error: any) {
-    throwIfAborted(signal, taskId);
-    const details = error?.stderr || error?.stdout || error?.message || String(error);
-    throw new Error(`Dependency sync failed for ${taskId}: ${details}`.trim());
-  }
+  await installWorktreeDependencies({
+    cwd: rootDir,
+    settings,
+    taskId,
+    signal,
+    context: "before merge verification",
+    logger: mergerLog,
+    log: async (message) => { await store.logEntry(taskId, message); },
+  });
 }
 
 // ── Default test command inference ────────────────────────────────────
@@ -1477,6 +1414,8 @@ async function runDeterministicVerification(
   signal?: AbortSignal,
 ): Promise<VerificationResult> {
   const result: VerificationResult = { allPassed: true };
+  const settings = await store.getSettings();
+  const verificationCommandTimeoutMs = settings.verificationCommandTimeoutMs;
 
   // Nothing to verify
   if (!testCommand && !buildCommand) {
@@ -1603,7 +1542,7 @@ async function runDeterministicVerification(
     failedCommandLabel: "testCommand" | "buildCommand",
   ): Promise<VerificationCommandResult> => {
     const firstAttempt = await runVerificationCommand(
-      store, rootDir, taskId, command, type, signal,
+      store, rootDir, taskId, command, type, signal, verificationCommandTimeoutMs,
     );
     if (firstAttempt.success) {
       return firstAttempt;
@@ -1637,7 +1576,7 @@ async function runDeterministicVerification(
     }
 
     const retryAttempt = await runVerificationCommand(
-      store, rootDir, taskId, command, type, signal,
+      store, rootDir, taskId, command, type, signal, verificationCommandTimeoutMs,
     );
     if (retryAttempt.success) {
       result.environmentFault = {
@@ -1750,9 +1689,10 @@ async function runVerificationCommand(
   command: string,
   type: "test" | "build",
   signal?: AbortSignal,
+  timeoutMsOverride?: number,
 ): Promise<VerificationCommandResult> {
   throwIfAborted(signal, taskId);
-  return runVerificationCommandShared(store, rootDir, taskId, command, type, signal, mergerLog, "merger", VERIFICATION_EXTRA_ENV);
+  return runVerificationCommandShared(store, rootDir, taskId, command, type, signal, mergerLog, "merger", VERIFICATION_EXTRA_ENV, timeoutMsOverride);
 }
 
 /**
@@ -3893,7 +3833,7 @@ async function generateAiMergeSubject(
  * is a denormalized convenience for lineage lookups, not a correctness
  * invariant, so a missed write must not block the merge.
  */
-async function recordCommitAssociationFromHead(
+export async function recordCommitAssociationFromHead(
   store: TaskStore,
   rootDir: string,
   taskId: string,
@@ -3917,6 +3857,17 @@ async function recordCommitAssociationFromHead(
     );
     return;
   }
+  let additions: number | undefined;
+  let deletions: number | undefined;
+  try {
+    const shortstat = (await execAsync("git show --shortstat --format= HEAD", { cwd: rootDir })).stdout;
+    const parsed = parseShortstatSummary(shortstat);
+    additions = parsed.insertions;
+    deletions = parsed.deletions;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`${taskId}: commit-association diff stats unavailable; persisting lineage without LOC stats (${message})`);
+  }
   await store.upsertTaskCommitAssociation({
     taskLineageId: lineageId,
     taskIdSnapshot: taskId,
@@ -3925,6 +3876,8 @@ async function recordCommitAssociationFromHead(
     authoredAt,
     matchedBy: "canonical-lineage-trailer",
     confidence: "canonical",
+    additions,
+    deletions,
   });
 }
 
@@ -7434,6 +7387,51 @@ async function tryEarlyEmptyOwnDiffFinalize(input: {
     return null;
   }
 
+  const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+  if (noCommitsFinalize.blocked) {
+    const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
+    /*
+     * FNXC:Lifecycle 2026-06-14-20:06:
+     * FN-6461/FN-6455 requires the early empty-own-diff fast-path to block before mergeDetails writes or branch/worktree cleanup so incomplete release/ops work remains recoverable.
+     */
+    await store.updateTask(taskId, { error: reason });
+    await store.logEntry(
+      taskId,
+      `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+      JSON.stringify({
+        doneCount: noCommitsFinalize.doneCount,
+        incompleteCount: noCommitsFinalize.incompleteCount,
+        branch,
+        mergeTargetBranch,
+        lane: "early-empty-own-diff",
+      }, null, 2),
+    );
+    await audit.database({
+      type: "task:no-commits-finalize-blocked-incomplete-steps" as Parameters<typeof audit.database>[0]["type"],
+      target: taskId,
+      metadata: {
+        reason,
+        doneCount: noCommitsFinalize.doneCount,
+        incompleteCount: noCommitsFinalize.incompleteCount,
+        branch,
+        mergeTargetBranch,
+        lane: "early-empty-own-diff",
+      },
+    });
+    await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as any);
+    return {
+      task,
+      branch,
+      merged: false,
+      noOp: false,
+      ok: true,
+      reason,
+      error: reason,
+      worktreeRemoved: false,
+      branchDeleted: false,
+    };
+  }
+
   const noOpReason = `early fast-path: branch ${branch} has ${aheadCount} own commit(s) but zero net diff vs merge-base of ${mergeTargetBranch}`;
   const mergedAt = new Date().toISOString();
   const mergeDetails: MergeDetails = {
@@ -8446,6 +8444,52 @@ export async function aiMergeTask(
       // — NOT a legitimate no-op. Demote to the unproven-recovery path which
       // moves the task back to todo with progress preserved instead of
       // clearing modifiedFiles to [].
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      if (noCommitsFinalize.blocked) {
+        const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
+        /*
+         * FNXC:Lifecycle 2026-06-14-20:08:
+         * FN-6461/FN-6455 extends the FN-5490 no-op demotion pattern to no-commits tasks whose skipped/incomplete steps outweigh completed work.
+         */
+        await store.updateTask(taskId, { error: reason });
+        await store.logEntry(
+          taskId,
+          `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+          JSON.stringify({
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            classification: classification.kind,
+            baseRef: classification.baseRef,
+            lane: "legacy-no-op-classifier",
+          }, null, 2),
+        );
+        await (store as any).recordRunAuditEvent?.({
+          domain: "database",
+          mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
+          target: taskId,
+          metadata: {
+            reason,
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            classification: classification.kind,
+            baseRef: classification.baseRef,
+            lane: "legacy-no-op-classifier",
+          },
+        });
+        await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as any);
+        await releaseReuseHandoffEarly("no-commits-incomplete-blocked");
+        return {
+          task,
+          branch,
+          merged: false,
+          noOp: false,
+          ok: true,
+          reason,
+          worktreeRemoved: false,
+          branchDeleted: false,
+          error: reason,
+        };
+      }
       if (task.modifiedFiles && task.modifiedFiles.length > 0) {
         const reason = `lost-work-detected: ${task.modifiedFiles.length} modifiedFiles claimed but no commit landed`;
         await store.updateTask(taskId, { error: reason });
@@ -8705,6 +8749,44 @@ export async function aiMergeTask(
       result.mergeTargetSource = mergeTarget.source;
       mergerLog.log(`${taskId}: branch missing; recovered owned landed commit ${classification.commit.sha.slice(0, 8)}`);
     } else {
+      const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+      if (noCommitsFinalize.blocked) {
+        const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
+        /*
+         * FNXC:Lifecycle 2026-06-14-20:10:
+         * FN-6461/FN-6455 applies the same no-commits incomplete-work guard when branch-missing classification would otherwise finalize a zero-change task.
+         */
+        result.error = reason;
+        result.reason = reason;
+        result.noOp = false;
+        await store.updateTask(taskId, { error: reason });
+        await store.logEntry(
+          taskId,
+          `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+          JSON.stringify({
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            classification: classification.kind,
+            baseRef: classification.baseRef,
+            lane: "legacy-branch-missing-no-op",
+          }, null, 2),
+        );
+        await (store as any).recordRunAuditEvent?.({
+          domain: "database",
+          mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
+          target: taskId,
+          metadata: {
+            reason,
+            doneCount: noCommitsFinalize.doneCount,
+            incompleteCount: noCommitsFinalize.incompleteCount,
+            classification: classification.kind,
+            baseRef: classification.baseRef,
+            lane: "legacy-branch-missing-no-op",
+          },
+        });
+        await store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" } as any);
+        return result;
+      }
       const noOpReason = `branch has zero commits ahead of ${classification.baseRef}`;
       const mergedAt = new Date().toISOString();
       await store.updateTask(taskId, {
@@ -10316,6 +10398,8 @@ export async function aiMergeTask(
           authoredAt: mergeDetails.mergedAt ?? new Date().toISOString(),
           matchedBy: "canonical-lineage-trailer",
           confidence: "canonical",
+          additions: mergeDetails.insertions,
+          deletions: mergeDetails.deletions,
         });
       }
     }

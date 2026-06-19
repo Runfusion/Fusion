@@ -109,7 +109,7 @@
 }
 
 .reflection-card:hover {
-  border-color: var(--border-active);
+  border-color: var(--border);
   background: var(--card-hover);
 }
 
@@ -119,7 +119,7 @@
 }
 
 .reflection-card--expanded {
-  border-color: var(--color-primary);
+  border-color: var(--accent);
 }
 
 .reflection-card-header {
@@ -149,8 +149,8 @@
 }
 
 .reflection-trigger-manual {
-  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
 }
 
 .reflection-trigger-user-requested {
@@ -221,7 +221,7 @@
   content: "→";
   position: absolute;
   left: 0;
-  color: var(--color-primary);
+  color: var(--accent);
 }
 
 .reflection-metrics {

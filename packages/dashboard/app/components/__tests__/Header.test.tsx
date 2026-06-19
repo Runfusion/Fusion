@@ -113,18 +113,6 @@ describe("Header", () => {
     expect(screen.getByTitle("Import from GitHub")).toBeDefined();
   });
 
-  it("renders system stats button on desktop when handler is provided", () => {
-    renderHeader({ onOpenSystemStats: vi.fn() }, "desktop");
-    expect(screen.getByTitle("System Stats")).toBeDefined();
-  });
-
-  it("calls onOpenSystemStats when system stats button is clicked", () => {
-    const onOpenSystemStats = vi.fn();
-    renderHeader({ onOpenSystemStats }, "desktop");
-    fireEvent.click(screen.getByTitle("System Stats"));
-    expect(onOpenSystemStats).toHaveBeenCalled();
-  });
-
   it("calls onOpenSettings when settings button is clicked", () => {
     const onOpenSettings = vi.fn();
     renderHeader({ onOpenSettings });
@@ -309,6 +297,30 @@ describe("Header", () => {
     it("renders view overflow trigger when an experimental overflow feature is enabled", () => {
       renderHeader({ onChangeView: noop, experimentalFeatures: { insights: true } });
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
+    });
+
+    it("keeps desktop Documents inline and Command Center only in overflow", () => {
+      renderHeader({ onChangeView: noop, showAgentsTab: true }, "desktop");
+
+      expect(screen.getByTitle("Documents view")).toBeInTheDocument();
+      expect(screen.queryByTestId("view-toggle-command-center")).toBeNull();
+
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.getByTestId("view-overflow-command-center")).toBeInTheDocument();
+      expect(screen.queryByTestId("view-overflow-documents")).toBeNull();
+    });
+
+    it("promotes Command Center after Agents and moves Documents to overflow on tablet", () => {
+      renderHeader({ onChangeView: noop, showAgentsTab: true }, "tablet");
+
+      const agentsButton = screen.getByTitle("Agents view");
+      const commandCenterButton = screen.getByTestId("view-toggle-command-center");
+      expect(commandCenterButton.previousElementSibling).toBe(agentsButton);
+      expect(screen.queryByTitle("Documents view")).toBeNull();
+
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.getByTestId("view-overflow-documents")).toBeInTheDocument();
+      expect(screen.queryByTestId("view-overflow-command-center")).toBeNull();
     });
 
     it("renders view overflow trigger when skills tab is enabled", () => {

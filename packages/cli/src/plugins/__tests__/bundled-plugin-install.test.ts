@@ -3,17 +3,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Mocks ────────────────────────────────────────────────────────────
 // vi.mock factories are hoisted, so we use vi.hoisted() for mock references.
 
-const { mockExistsSync, mockStatSync, mockReadFile, mockFsStat, mockCopyFile, mockValidatePluginManifest } = vi.hoisted(() => ({
-  mockExistsSync: vi.fn<(path: string) => boolean>(),
-  mockStatSync: vi.fn<(path: string) => { isDirectory: () => boolean }>(),
-  mockReadFile: vi.fn<(path: string, encoding: string) => Promise<string>>(),
-  mockFsStat: vi.fn<(path: string) => Promise<{ isDirectory: () => boolean }>>(),
-  mockCopyFile: vi.fn<(src: string, dest: string) => Promise<void>>(),
-  mockValidatePluginManifest: vi.fn<(manifest: unknown) => { valid: boolean; errors: string[] }>(),
-}));
+const { mockExistsSync, mockReaddirSync, mockStatSync, mockReadFile, mockFsStat, mockCopyFile, mockValidatePluginManifest } =
+  vi.hoisted(() => ({
+    mockExistsSync: vi.fn<(path: string) => boolean>(),
+    mockReaddirSync: vi.fn<
+      (path: string, options: { withFileTypes: true; encoding: "utf8" }) => Array<{ name: string; isDirectory: () => boolean }>
+    >(),
+    mockStatSync: vi.fn<(path: string) => { isDirectory: () => boolean; mtimeMs?: number }>(),
+    mockReadFile: vi.fn<(path: string, encoding: string) => Promise<string>>(),
+    mockFsStat: vi.fn<(path: string) => Promise<{ isDirectory: () => boolean }>>(),
+    mockCopyFile: vi.fn<(src: string, dest: string) => Promise<void>>(),
+    mockValidatePluginManifest: vi.fn<(manifest: unknown) => { valid: boolean; errors: string[] }>(),
+  }));
 
 vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
+  readdirSync: mockReaddirSync,
   statSync: mockStatSync,
 }));
 
@@ -201,7 +206,8 @@ async function getResolvedBundledPath(): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockStatSync.mockImplementation(() => ({ isDirectory: () => false }));
+  mockReaddirSync.mockReturnValue([{ name: "index.ts", isDirectory: () => false }]);
+  mockStatSync.mockImplementation(() => ({ isDirectory: () => false, mtimeMs: 0 }));
   mockFsStat.mockImplementation(async () => ({ isDirectory: () => false }));
   mockCopyFile.mockResolvedValue();
 });
@@ -217,8 +223,27 @@ describe("resolvePluginEntryPath", () => {
     expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/bundled.js");
   });
 
-  it("prefers dist/index.js when bundled.js is unavailable", () => {
+  it("prefers src/index.ts when bundled.js is unavailable and src is newer than dist", () => {
     mockExistsSync.mockImplementation((p: string) => p.endsWith("/src/index.ts") || p.endsWith("/dist/index.js"));
+    mockStatSync.mockImplementation((p: string) => ({
+      isDirectory: () => false,
+      mtimeMs: p.endsWith("/dist/index.js") ? 1 : 2,
+    }));
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/src/index.ts");
+  });
+
+  it("prefers dist/index.js when bundled.js is unavailable and dist is newer", () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("/src/index.ts") || p.endsWith("/dist/index.js"));
+    mockStatSync.mockImplementation((p: string) => ({
+      isDirectory: () => false,
+      mtimeMs: p.endsWith("/dist/index.js") ? 2 : 1,
+    }));
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/dist/index.js");
+  });
+
+  it("prefers dist/index.js when bundled.js is unavailable and mtimes are equal", () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("/src/index.ts") || p.endsWith("/dist/index.js"));
+    mockStatSync.mockImplementation(() => ({ isDirectory: () => false, mtimeMs: 1 }));
     expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/dist/index.js");
   });
 
@@ -252,6 +277,7 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
     }));
     vi.doMock("node:fs", () => ({
       existsSync: mockExistsSync,
+      readdirSync: mockReaddirSync,
       statSync: mockStatSync,
     }));
     vi.doMock("node:fs/promises", () => ({

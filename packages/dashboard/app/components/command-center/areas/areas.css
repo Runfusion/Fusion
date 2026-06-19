@@ -1,0 +1,325 @@
+/*
+FNXC:CommandCenterStyling 2026-06-17-18:46:
+Area headings, table metadata, and empty states use --text-muted so the analytics surfaces satisfy the canonical text-token guard without raw color fallbacks.
+*/
+
+/* Command Center historical analytics areas (U5).
+ * Animation durations use --duration-* tokens only (never --transition-*).
+ */
+
+.cc-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-inline-size: 0;
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:31:
+FN-6680 preserves the FN-6664 section rhythm while adding real-layout shrink guarantees: jsdom missed mobile min-content pressure, so chart-bearing sections must bound their inline axis before shared chart primitives render labels, tables, or gauges.
+*/
+.cc-area-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-inline-size: 0;
+}
+
+.cc-area-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.cc-area-section-title {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/*
+FNXC:CommandCenterCharts 2026-06-18-23:24:
+FN-6683 recharts wrappers must stay responsive without creating an inner scroll owner or fixed pixel box. Give chart sections a token-sized block axis so ResponsiveContainer can measure while .cc-tabpanel remains the vertical scroll container on mobile.
+*/
+.cc-area .cc-recharts-chart,
+.cc-area .cc-recharts-empty {
+  inline-size: 100%;
+  block-size: calc(var(--space-2xl) * 7 + var(--space-lg));
+  min-inline-size: 0;
+}
+
+/* Reuse the shell's stat-grid/stat-card look. */
+.cc-area .cc-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--space-2xl) * 5)), 1fr));
+  gap: var(--space-md);
+}
+
+.cc-stat-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:CommandCenterTokens 2026-06-18-15:14:
+The Tokens area needs a real hour/day/week control and live token-number motion. Keep controls on existing .btn styling, make count-up motion decorative, and collapse the control cleanly on mobile.
+*/
+.cc-token-granularity {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+}
+
+.cc-token-granularity .btn.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-1));
+}
+
+.cc-token-count-live {
+  animation: cc-token-count-pop var(--duration-normal) ease-out both;
+}
+
+@keyframes cc-token-count-pop {
+  from {
+    transform: translateY(var(--space-xs));
+    opacity: 0.7;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-token-count-live {
+    animation: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-area-section-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cc-token-granularity {
+    justify-content: flex-start;
+    inline-size: 100%;
+  }
+}
+
+/* ---- Tables ---- */
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+FN-6680 keeps table-heavy chart areas on the same --border-width/--border-subtle/--radius-md/--surface-1 rhythm as chart cards while preserving the one allowed horizontal overflow owner: .cc-table-wrap.
+*/
+.cc-table-wrap {
+  max-inline-size: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.cc-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-table th,
+.cc-table td {
+  padding: var(--space-sm) var(--space-md);
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.cc-table th:first-child,
+.cc-table td:first-child {
+  text-align: left;
+}
+
+.cc-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.cc-table th.cc-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.cc-table th.cc-sortable:hover {
+  color: var(--text);
+}
+
+.cc-table tbody tr {
+  cursor: pointer;
+}
+
+.cc-table tbody tr.cc-row-selected {
+  background: var(--surface-2);
+}
+
+.cc-table tbody tr.cc-row-selected td {
+  color: var(--text);
+}
+
+.cc-sort-caret {
+  margin-inline-start: var(--space-xs);
+  font-size: 0.7em;
+  color: var(--accent);
+}
+
+/* Unavailable sentinel ("—") with a help cursor for its tooltip. */
+.cc-unavailable {
+  color: var(--text-muted);
+  cursor: help;
+  border-bottom: 1px dotted var(--border-subtle);
+}
+
+.cc-loading-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.cc-area-empty,
+.cc-area-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.cc-area-error {
+  color: var(--color-error);
+}
+
+.cc-pricing-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+The Team view must use dashboard design tokens only, preserve .cc-tabpanel as the scroll owner on mobile, and match the shared card rhythm (--space-md gap/padding, 1px solid --border-subtle, --radius-md, --surface-1) while keeping decorative motion duration-token based with reduced-motion disabled.
+*/
+.cc-team-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.cc-team-chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-inline-size: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  animation: cc-team-panel-reveal var(--duration-fast) ease-out both;
+}
+
+.cc-team-spark-panel {
+  grid-column: 1 / -1;
+}
+
+.cc-muted-hint,
+.cc-team-agent-role {
+  color: var(--text-muted);
+}
+
+.cc-muted-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.cc-team-agent-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.cc-team-agent-name,
+.cc-team-agent-role {
+  display: block;
+}
+
+.cc-team-agent-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cc-team-agent-role {
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+@keyframes cc-team-panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-xs));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-team-chart-panel {
+    animation: none;
+  }
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-20:30:
+Tablet Command Center areas share the FN-6679 overflow fix with the shell: area stat grids and Team charts must shrink within .cc-tabpanel instead of extending the document inline axis.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .cc-area .cc-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-2xl) * 5)), 1fr));
+  }
+
+  .cc-team-chart-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-team-spark-panel {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-team-chart-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-team-spark-panel {
+    grid-column: auto;
+  }
+
+  .cc-team-chart-panel {
+    padding: var(--space-sm);
+  }
+}

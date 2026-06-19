@@ -37,6 +37,70 @@ function findRule(blocks: string[], selector: RegExp): string {
   return rule;
 }
 
+function expectNoHardcodedWhiteBackground(rule: string): void {
+  expect(rule).not.toMatch(/background(?:-color)?\s*:[^;]*(?:#fff|#ffffff|\bwhite\b)/i);
+}
+
+describe("WorkflowNodeEditor themed React Flow CSS contract", () => {
+  it("FN-6701 themes zoom controls, mini-map, and sidebar checkboxes with tokens", () => {
+    const baseCss = loadAllAppCssBaseOnly();
+
+    // Surface Enumeration: WorkflowNodeEditor.tsx is the only React Flow <Controls /> / <MiniMap pannable zoomable /> mount; WorkflowResultsTab and MobileWorkflowGraphView do not mount those affordances. Left-sidebar checkbox surfaces are WorkflowSettingsPanel, WorkflowFieldsPanel, and WorkflowColumnPanel trait toggles; inspector .wf-field--checkbox stays covered by WorkflowNodeEditor.css.
+    const controlsRule = findRule([baseCss], /\.wf-editor-canvas \.react-flow__controls\s*\{[^}]*\}/);
+    expect(controlsRule).toMatch(/background\s*:\s*var\(--surface\)\s*;/);
+    expect(controlsRule).toMatch(/border\s*:\s*var\(--btn-border-width\) solid var\(--border\)\s*;/);
+    expect(controlsRule).toMatch(/color\s*:\s*var\(--text\)\s*;/);
+    expectNoHardcodedWhiteBackground(controlsRule);
+
+    const controlsButtonRule = findRule([baseCss], /\.wf-editor-canvas \.react-flow__controls-button\s*\{[^}]*\}/);
+    expect(controlsButtonRule).toMatch(/background\s*:\s*var\(--surface\)\s*;/);
+    expect(controlsButtonRule).toMatch(/border-bottom\s*:\s*var\(--btn-border-width\) solid var\(--border\)\s*;/);
+    expect(controlsButtonRule).toMatch(/color\s*:\s*var\(--text\)\s*;/);
+    expect(controlsButtonRule).toMatch(/fill\s*:\s*currentColor\s*;/);
+    expectNoHardcodedWhiteBackground(controlsButtonRule);
+
+    const controlsButtonHoverRule = findRule(
+      [baseCss],
+      /\.wf-editor-canvas \.react-flow__controls-button:hover\s*\{[^}]*\}/,
+    );
+    expect(controlsButtonHoverRule).toMatch(/background\s*:\s*var\(--surface-hover\)\s*;/);
+    expect(controlsButtonHoverRule).toMatch(/color\s*:\s*var\(--text\)\s*;/);
+    expectNoHardcodedWhiteBackground(controlsButtonHoverRule);
+
+    const controlsSvgRule = findRule([baseCss], /\.wf-editor-canvas \.react-flow__controls-button svg\s*\{[^}]*\}/);
+    expect(controlsSvgRule).toMatch(/fill\s*:\s*currentColor\s*;/);
+    expect(controlsSvgRule).toMatch(/stroke\s*:\s*currentColor\s*;/);
+
+    const minimapRule = findRule([baseCss], /\.wf-editor-canvas \.react-flow__minimap\s*\{[^}]*\}/);
+    expect(minimapRule).toMatch(/background\s*:\s*var\(--surface\)\s*;/);
+    expect(minimapRule).toMatch(/border\s*:\s*var\(--btn-border-width\) solid var\(--border\)\s*;/);
+    expectNoHardcodedWhiteBackground(minimapRule);
+
+    const minimapNodeRule = findRule([baseCss], /\.wf-editor-canvas \.react-flow__minimap-node\s*\{[^}]*\}/);
+    expect(minimapNodeRule).toMatch(/fill\s*:\s*var\(--bg-secondary\)\s*;/);
+    expect(minimapNodeRule).toMatch(/stroke\s*:\s*var\(--border\)\s*;/);
+
+    const minimapMaskRule = findRule([baseCss], /\.wf-editor-canvas \.react-flow__minimap-mask\s*\{[^}]*\}/);
+    expect(minimapMaskRule).toMatch(/fill\s*:\s*color-mix\(in srgb, var\(--surface\) 70%, transparent\)\s*;/);
+
+    for (const selector of [
+      /\.wf-setting--checkbox input\[type="checkbox"\]\s*\{[^}]*\}/,
+      /\.wf-field--checkbox input\[type="checkbox"\]\s*\{[^}]*\}/,
+      /\.wf-column-trait input\[type="checkbox"\]\s*\{[^}]*\}/,
+    ]) {
+      const checkboxRule = findRule([baseCss], selector);
+      expect(checkboxRule).toMatch(/accent-color\s*:\s*var\(--todo\)\s*;/);
+      expectNoHardcodedWhiteBackground(checkboxRule);
+    }
+
+    const lightThemeOverrides = [...baseCss.matchAll(/\[data-theme="light"\][^{]*\{[^}]*\}/g)].map((match) => match[0]);
+    for (const overrideRule of lightThemeOverrides.filter((rule) => /react-flow__|wf-(?:setting|field|column-trait)/.test(rule))) {
+      expect(overrideRule).toMatch(/var\(--/);
+      expectNoHardcodedWhiteBackground(overrideRule);
+    }
+  });
+});
+
 describe("WorkflowNodeEditor edge visibility CSS contract", () => {
   it("keeps swimlane bands translucent so built-in workflow edges remain visible", () => {
     const editorCss = readComponentCss("WorkflowNodeEditor.css");
@@ -164,7 +228,7 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     expect(mobileEdgeDetailInspectorRule).toMatch(/flex\s*:\s*1 1 auto\s*;/);
     expect(mobileEdgeDetailInspectorRule).toMatch(/max-height\s*:\s*none\s*;/);
 
-    const mobileTabsRule = findRule(mobileBlocks, /\.wf-mobile-tabs\s*\{[^}]*\}/);
+    const mobileTabsRule = findRule([editorCss], /\.wf-mobile-tabs\s*\{[^}]*\}/);
     expect(mobileTabsRule).toMatch(/flex\s*:\s*0 0 auto\s*;/);
 
     const collapsedToggleRule = findRule([editorCss], /\.wf-inspector-toggle--collapsed\s*\{[^}]*\}/);
@@ -245,7 +309,7 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     const editorCss = readComponentCss("WorkflowNodeEditor.css");
     const mobileBlocks = extractMediaBlocks(editorCss, "(max-width: 768px)");
 
-    const modalRule = findRule(mobileBlocks, /\.wf-editor-modal,\s*\.wf-create-modal\s*\{[^}]*\}/);
+    const modalRule = findRule([baseCss], /\.wf-editor-modal\s*\{[^}]*\}/);
     expect(modalRule).toMatch(/--wf-editor-touch-target\s*:\s*calc\(var\(--space-xl\) \+ var\(--space-lg\) \+ var\(--space-xs\)\)\s*;/);
 
     const listAndActionRule = findRule(

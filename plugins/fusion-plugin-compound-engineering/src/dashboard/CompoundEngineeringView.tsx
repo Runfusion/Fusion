@@ -14,6 +14,11 @@ import type { CeSession, CeSessionStatus } from "../session/session-store.js";
 
 const CE_PLUGIN_ID = "fusion-plugin-compound-engineering";
 
+/**
+ * FNXC:CompoundEngineeringUI 2026-06-17-00:52:
+ * The dashboard surface keeps CE-specific data-testid values and semantics intact while adding shared Fusion classes to panels and controls so plugin layout inherits the system button/card rhythm.
+ */
+
 /** Resolve a lucide icon name (from the registry) to a component, with fallback. */
 function resolveIcon(name: string): LucideIcon {
   const icons = LucideIcons as unknown as Record<string, LucideIcon>;
@@ -105,7 +110,7 @@ function SessionsPanel({
             >
               <button
                 type="button"
-                className="ce-session-open"
+                className="btn ce-session-open"
                 data-testid="ce-session-open"
                 disabled={disabled}
                 onClick={() => onOpen(s)}
@@ -129,7 +134,7 @@ function SessionsPanel({
               ) : (
                 <button
                   type="button"
-                  className="btn-icon ce-session-cancel"
+                  className="btn btn-icon ce-session-cancel"
                   data-testid="ce-session-cancel"
                   disabled={disabled}
                   onClick={() => onCancel(s)}
@@ -234,7 +239,7 @@ function StageGroup({
 }) {
   const empty = group.entries.length === 0;
   return (
-    <section className="ce-group" data-testid="ce-group" data-stage={group.stage} data-empty={empty ? "true" : "false"}>
+    <section className="ce-group card" data-testid="ce-group" data-stage={group.stage} data-empty={empty ? "true" : "false"}>
       <header className="ce-group-header">
         <h3>{group.label}</h3>
         <span className="ce-group-count">{group.entries.length}</span>

@@ -126,6 +126,13 @@ describe("SecretsView mobile layout contracts", () => {
     expect(normalizedCss).not.toMatch(/\b\d+px\b/);
   });
 
+  it("grows the root container to fill the project-content flex row", () => {
+    const rootBlock = extractRuleBlock(secretsViewCss, ".secrets-view");
+
+    expect(rootBlock).toMatch(/flex\s*:\s*1\s+1\s+auto/);
+    expect(rootBlock).toMatch(/width\s*:\s*100%/);
+  });
+
   it("keeps the mobile media block free of button and modal-close overrides", () => {
     const mobileCss = extractMobileMediaBlocks(secretsViewCss);
 

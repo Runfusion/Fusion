@@ -15,6 +15,7 @@ import type { PromptOverrideMap } from "@fusion/core";
 import { resolvePrompt } from "@fusion/core";
 
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+import { registerBeforeExitCleanup } from "./process-lifecycle.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const createFnAgent: any = engineCreateFnAgent;
@@ -200,7 +201,7 @@ const cleanupInterval = setInterval(cleanupExpiredRateLimits, CLEANUP_INTERVAL_M
 cleanupInterval.unref?.();
 
 // Handle graceful shutdown
-process.on("beforeExit", () => {
+registerBeforeExitCleanup(() => {
   clearInterval(cleanupInterval);
 });
 

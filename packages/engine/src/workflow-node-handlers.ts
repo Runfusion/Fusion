@@ -1,5 +1,5 @@
 import { WorkflowIrError, getStepParser, instanceNodeId } from "@fusion/core";
-import type { NotificationEvent, NotificationPayload, TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
+import type { NotificationEvent, NotificationPayload, Settings, TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 
 import type { WorkflowNodeHandler, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import { createPrNodeHandlers, createAutoMergeGateHandler, type PrNodeDeps } from "./pr-nodes.js";
@@ -9,6 +9,7 @@ import {
   type WorkflowPrimitiveContext,
   type WorkflowRuntimePrimitives,
 } from "./runtime-primitives.js";
+import { runWorkflowMergeAttemptNode } from "./workflow-merge-nodes.js";
 
 export type WorkflowSeamName =
   | "planning"
@@ -875,6 +876,13 @@ export function createDefaultNodeHandlers(
   | "parse-steps"
   | "code"
   | "notify"
+  | "merge-gate"
+  | "merge-attempt"
+  | "manual-merge-hold"
+  | "retry-backoff"
+  | "recovery-router"
+  | "branch-group-member-integration"
+  | "branch-group-promotion"
   | "pr-create"
   | "pr-respond"
   | "pr-merge",
@@ -918,6 +926,33 @@ export function createDefaultNodeHandlers(
     "parse-steps": parseSteps,
     code: createCodeNodeHandler(deps?.runCode),
     notify: createNotifyHandler(deps?.notifyDispatch),
+    "merge-gate": async (_node, ctx) => {
+      const settingsAutoMerge = (ctx.settings as Partial<Settings> | undefined)?.autoMerge;
+      const autoMerge = ctx.task.autoMerge !== false && settingsAutoMerge !== false;
+      return {
+        outcome: "success",
+        value: autoMerge ? "auto-on" : "auto-off",
+      };
+    },
+    "merge-attempt": async (_node, ctx) => {
+      if (!deps?.primitives) return { outcome: "failure", value: "merge-primitives-unwired" };
+      const attempt = typeof ctx.context["workflow:work-item-attempt"] === "number"
+        ? ctx.context["workflow:work-item-attempt"]
+        : undefined;
+      return runWorkflowMergeAttemptNode(
+        { primitives: deps.primitives },
+        primitiveContextForNode(_node, ctx.task, ctx.context, attempt),
+        ctx.task,
+      );
+    },
+    "manual-merge-hold": async () => ({ outcome: "failure", value: "manual-required" }),
+    "retry-backoff": async () => ({ outcome: "success" }),
+    "recovery-router": async (_node, ctx) => ({
+      outcome: "success",
+      value: typeof ctx.context.recoveryOutcome === "string" ? ctx.context.recoveryOutcome : "wake-merge",
+    }),
+    "branch-group-member-integration": async () => ({ outcome: "success" }),
+    "branch-group-promotion": async () => ({ outcome: "success" }),
     ...prNodes,
   };
 }

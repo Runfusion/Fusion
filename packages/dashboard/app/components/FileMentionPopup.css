@@ -233,7 +233,7 @@
 }
 
 .chat-new-dialog {
-  background: var(--bg-elevated, var(--bg));
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: var(--space-xl);
@@ -357,7 +357,7 @@
 }
 
 .chat-new-dialog-agent-item:hover {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
 }
 
 .chat-new-dialog-agent-item--selected {

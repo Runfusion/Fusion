@@ -1238,6 +1238,23 @@ function validateV2(ir: WorkflowIrV2): void {
     }
   }
 
+  /*
+  FNXC:WorkflowValidation 2026-06-17-13:17:
+  Top-level workflow edges must reference declared top-level nodes. Fail closed on dangling endpoints so imported, AI-designed, and editor-authored IR cannot persist an edge to a non-existent node (FN-6583 / FN-6580 readiness gap).
+  */
+  for (const edge of ir.edges) {
+    if (!nodesById.has(edge.from)) {
+      throw new WorkflowIrError(
+        `Workflow edge '${edge.from}' -> '${edge.to}' references undefined node '${edge.from}'`,
+      );
+    }
+    if (!nodesById.has(edge.to)) {
+      throw new WorkflowIrError(
+        `Workflow edge '${edge.from}' -> '${edge.to}' references undefined node '${edge.to}'`,
+      );
+    }
+  }
+
   const outgoing = buildOutgoing(ir.edges);
   validateParallelism(ir.nodes, outgoing, nodesById);
 

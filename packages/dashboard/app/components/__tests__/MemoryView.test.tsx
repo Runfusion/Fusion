@@ -4,6 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryView } from "../MemoryView";
 import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 
+const { capturedFileEditorProps } = vi.hoisted(() => ({
+  capturedFileEditorProps: [] as Array<{ filePath: string; onSendSelectionToTask?: (description: string) => void }>,
+}));
+
 const mockUseMemoryData = vi.fn();
 
 vi.mock("../../hooks/useMemoryData", () => ({
@@ -11,7 +15,10 @@ vi.mock("../../hooks/useMemoryData", () => ({
 }));
 
 vi.mock("../FileEditor", () => ({
-  FileEditor: ({ filePath }: { filePath: string }) => <div aria-label={`Editor for ${filePath}`} />,
+  FileEditor: (props: { filePath: string; onSendSelectionToTask?: (description: string) => void }) => {
+    capturedFileEditorProps.push(props);
+    return <div aria-label={`Editor for ${props.filePath}`} />;
+  },
 }));
 
 vi.mock("lucide-react", () => ({
@@ -94,6 +101,7 @@ function createMemoryData(overrides: Record<string, unknown> = {}) {
 describe("MemoryView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    capturedFileEditorProps.length = 0;
     mockUseMemoryData.mockReturnValue(createMemoryData());
   });
 
@@ -108,6 +116,44 @@ describe("MemoryView", () => {
     render(<MemoryView addToast={vi.fn()} />);
 
     expect(screen.queryByText("This memory backend is read-only. Changes cannot be saved.")).not.toBeInTheDocument();
+  });
+
+  it("passes selection-to-task callback to the memory file editor", () => {
+    const onSendSelectionToTask = vi.fn();
+
+    render(<MemoryView addToast={vi.fn()} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    expect(capturedFileEditorProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          filePath: ".fusion/memory/MEMORY.md",
+          onSendSelectionToTask,
+        }),
+      ]),
+    );
+  });
+
+  it("passes selection-to-task callback to the raw insights editor", async () => {
+    const onSendSelectionToTask = vi.fn();
+    mockUseMemoryData.mockReturnValue(
+      createMemoryData({
+        insightsExists: true,
+        insightsContent: "## Patterns\n- Keep useful notes",
+      }),
+    );
+
+    render(<MemoryView addToast={vi.fn()} onSendSelectionToTask={onSendSelectionToTask} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Insights" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit Raw" }));
+
+    expect(capturedFileEditorProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          filePath: ".fusion/memory/INSIGHTS.md",
+          onSendSelectionToTask,
+        }),
+      ]),
+    );
   });
 
   it("shows read-only warning after backend resolves as non-writable", () => {

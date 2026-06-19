@@ -1,7 +1,15 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { loadAllAppCss } from "../test/cssFixture";
+
+type DecodedPng = {
+  width: number;
+  height: number;
+  colorType: number;
+  pixels: Buffer;
+};
 
 function getStandaloneDisplayModeBlock(css: string): string {
   const match = /@media\s*\(\s*display-mode:\s*standalone\s*\)\s*\{/.exec(css);
@@ -21,6 +29,89 @@ function getStandaloneDisplayModeBlock(css: string): string {
   return css.slice(start, i);
 }
 
+function decodeRgbaPng(filePath: string): DecodedPng {
+  const buffer = readFileSync(filePath);
+  const signature = buffer.subarray(0, 8).toString("hex");
+  expect(signature).toBe("89504e470d0a1a0a");
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idatChunks: Buffer[] = [];
+
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const data = buffer.subarray(dataStart, dataEnd);
+
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data.readUInt8(8);
+      colorType = data.readUInt8(9);
+    } else if (type === "IDAT") {
+      idatChunks.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+
+    offset = dataEnd + 4;
+  }
+
+  expect(bitDepth).toBe(8);
+  expect(colorType).toBe(6);
+
+  const bytesPerPixel = 4;
+  const stride = width * bytesPerPixel;
+  const inflated = inflateSync(Buffer.concat(idatChunks));
+  const pixels = Buffer.alloc(width * height * bytesPerPixel);
+  let inputOffset = 0;
+  let outputOffset = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[inputOffset];
+    inputOffset += 1;
+
+    for (let x = 0; x < stride; x += 1) {
+      const raw = inflated[inputOffset + x];
+      const left = x >= bytesPerPixel ? pixels[outputOffset + x - bytesPerPixel] : 0;
+      const up = y > 0 ? pixels[outputOffset + x - stride] : 0;
+      const upLeft = y > 0 && x >= bytesPerPixel ? pixels[outputOffset + x - stride - bytesPerPixel] : 0;
+      let value: number;
+
+      if (filter === 0) {
+        value = raw;
+      } else if (filter === 1) {
+        value = raw + left;
+      } else if (filter === 2) {
+        value = raw + up;
+      } else if (filter === 3) {
+        value = raw + Math.floor((left + up) / 2);
+      } else if (filter === 4) {
+        const predictor = left + up - upLeft;
+        const pa = Math.abs(predictor - left);
+        const pb = Math.abs(predictor - up);
+        const pc = Math.abs(predictor - upLeft);
+        const paeth = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+        value = raw + paeth;
+      } else {
+        throw new Error(`Unsupported PNG filter ${filter} in ${filePath}`);
+      }
+
+      pixels[outputOffset + x] = value & 0xff;
+    }
+
+    inputOffset += stride;
+    outputOffset += stride;
+  }
+
+  return { width, height, colorType, pixels };
+}
+
 describe("PWA configuration", () => {
   it("manifest defines required PWA fields and icon sizes", () => {
     const manifestPath = resolve(__dirname, "../public/manifest.json");
@@ -29,7 +120,7 @@ describe("PWA configuration", () => {
       short_name?: string;
       start_url?: string;
       display?: string;
-      icons?: Array<{ sizes?: string }>;
+      icons?: Array<{ src?: string; sizes?: string; type?: string; purpose?: string }>;
     };
 
     expect(manifest.name).toBe("Fusion");
@@ -37,8 +128,18 @@ describe("PWA configuration", () => {
     expect(manifest.start_url).toBe("/");
     expect(manifest.display).toBe("standalone");
     expect(Array.isArray(manifest.icons)).toBe(true);
-    expect(manifest.icons?.some((icon) => icon.sizes?.includes("192"))).toBe(true);
-    expect(manifest.icons?.some((icon) => icon.sizes?.includes("512"))).toBe(true);
+    expect(manifest.icons).toContainEqual({
+      src: "/icons/icon-192.png",
+      sizes: "192x192",
+      type: "image/png",
+      purpose: "any",
+    });
+    expect(manifest.icons).toContainEqual({
+      src: "/icons/icon-512.png",
+      sizes: "512x512",
+      type: "image/png",
+      purpose: "any",
+    });
   });
 
   it("index.html includes required PWA meta tags", () => {
@@ -93,7 +194,7 @@ describe("PWA configuration", () => {
     expect(swSource).toContain('addEventListener("install"');
     expect(swSource).toContain('addEventListener("fetch"');
     expect(swSource).toContain('addEventListener("activate"');
-    expect(swSource).toMatch(/fusion-cache-v\d+/);
+    expect(swSource).toContain('const CACHE_NAME = "fusion-cache-v4";');
   });
 
   it("service worker bypasses SSE requests instead of trying to cache them", () => {
@@ -162,21 +263,60 @@ describe("PWA configuration", () => {
       expect(logoSvg).not.toContain("r=\"20\"");
     });
 
-    it("PWA icon files exist with correct sizes", async () => {
-      const fs = await import("node:fs");
+    it("PWA icon files exist, decode to expected sizes, and are opaque non-blank PNGs", () => {
+      const icons = [
+        { path: resolve(__dirname, "../public/icons/icon-192.png"), size: 192 },
+        { path: resolve(__dirname, "../public/icons/icon-512.png"), size: 512 },
+      ];
 
-      const icon192Path = resolve(__dirname, "../public/icons/icon-192.png");
-      const icon512Path = resolve(__dirname, "../public/icons/icon-512.png");
+      for (const icon of icons) {
+        expect(existsSync(icon.path)).toBe(true);
+        expect(statSync(icon.path).size).toBeGreaterThan(icon.size * 12);
 
-      expect(fs.existsSync(icon192Path)).toBe(true);
-      expect(fs.existsSync(icon512Path)).toBe(true);
+        const png = decodeRgbaPng(icon.path);
+        expect(png.width).toBe(icon.size);
+        expect(png.height).toBe(icon.size);
+        expect(png.colorType).toBe(6);
 
-      // Verify PNG files have reasonable size (not empty)
-      const stats192 = fs.statSync(icon192Path);
-      const stats512 = fs.statSync(icon512Path);
+        let opaquePixels = 0;
+        let transparentPixels = 0;
+        let brandMarkPixels = 0;
+        const brandBackground = [0x1a, 0x1a, 0x2e];
 
-      expect(stats192.size).toBeGreaterThan(100);
-      expect(stats512.size).toBeGreaterThan(100);
+        for (let index = 0; index < png.pixels.length; index += 4) {
+          const alpha = png.pixels[index + 3];
+          if (alpha === 255) opaquePixels += 1;
+          else transparentPixels += 1;
+
+          const colorDistance =
+            Math.abs(png.pixels[index] - brandBackground[0]) +
+            Math.abs(png.pixels[index + 1] - brandBackground[1]) +
+            Math.abs(png.pixels[index + 2] - brandBackground[2]);
+          if (colorDistance > 8) brandMarkPixels += 1;
+        }
+
+        expect(transparentPixels).toBe(0);
+        expect(opaquePixels).toBe(icon.size * icon.size);
+        expect(brandMarkPixels).toBeGreaterThan(icon.size * icon.size * 0.1);
+      }
+    });
+
+    it("wires the same PWA icons through manifest, apple touch, and service-worker precache", () => {
+      const manifest = JSON.parse(readFileSync(resolve(__dirname, "../public/manifest.json"), "utf8")) as {
+        icons?: Array<{ src?: string; sizes?: string; purpose?: string }>;
+      };
+      const indexHtml = readFileSync(resolve(__dirname, "../index.html"), "utf8");
+      const swSource = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
+      const iconSources = ["/icons/icon-192.png", "/icons/icon-512.png"];
+
+      for (const iconSource of iconSources) {
+        expect(manifest.icons?.some((icon) => icon.src === iconSource && icon.purpose === "any")).toBe(true);
+        expect(swSource).toContain(`"${iconSource}"`);
+      }
+
+      expect(indexHtml).toContain('<link rel="icon" type="image/svg+xml" href="/logo.svg" />');
+      expect(indexHtml).toContain('<link rel="apple-touch-icon" href="/icons/icon-192.png" />');
+      expect(swSource).toContain('const CACHE_NAME = "fusion-cache-v4";');
     });
   });
 });

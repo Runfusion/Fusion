@@ -69,6 +69,10 @@ vi.mock("../project-store-resolver.js", async () => {
   };
 });
 
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 rescues this route/API suite from the curated skip-list; awaited store closure and retrying temp cleanup prevent singleton/resource leakage from turning backfill coverage into a flaky orphan.
+*/
 describe("Insights routes", () => {
   let rootA: string;
   const disposableRouters: Array<{ __disposeSweeper?: () => void }> = [];
@@ -138,17 +142,17 @@ describe("Insights routes", () => {
       disposableRouters.pop()?.__disposeSweeper?.();
     }
     try {
-      storeA.close();
+      await storeA.close();
     } catch {
       // no-op
     }
     try {
-      storeB.close();
+      await storeB.close();
     } catch {
       // no-op
     }
-    await rm(rootA, { recursive: true, force: true });
-    await rm(rootB, { recursive: true, force: true });
+    await rm(rootA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    await rm(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
   it("GET /api/insights/runs and /api/insights/runs/:id are not shadowed by /:id", async () => {

@@ -57,7 +57,7 @@ export interface LaneProps {
   availableModels?: ModelInfo[];
   onPlanningMode?: (initialPlan: string) => void;
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;

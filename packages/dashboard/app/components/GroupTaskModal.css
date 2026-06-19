@@ -1,17 +1,17 @@
 .group-task-modal {
-  max-width: min(var(--layout-content-max-width), calc(100vw - var(--spacing-2xl)));
+  max-width: min(var(--layout-content-max-width), calc(100vw - var(--space-2xl)));
 }
 
 .group-task-modal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: var(--space-md);
 }
 
 .group-task-modal-state {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: var(--space-sm);
 }
 
 .group-task-modal-error {
@@ -24,22 +24,22 @@
 .group-task-modal-actions {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--space-sm);
 }
 
 .group-task-modal-summary-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: var(--space-sm);
 }
 
 .group-task-modal-label {
-  color: var(--color-text-secondary);
+  color: var(--text-muted);
 }
 
 .group-task-modal-progress-text {
-  color: var(--color-text-secondary);
+  color: var(--text-muted);
 }
 
 .group-task-modal-members {
@@ -48,13 +48,13 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  gap: var(--space-xs);
 }
 
 .group-task-modal-member {
   display: grid;
   grid-template-columns: auto 1fr auto auto auto;
-  gap: var(--spacing-sm);
+  gap: var(--space-sm);
   align-items: center;
 }
 

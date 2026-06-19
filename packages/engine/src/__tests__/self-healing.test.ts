@@ -441,11 +441,12 @@ describe("SelfHealingManager", () => {
       );
     });
 
-    it("re-queues incomplete stuck-loop exhaustion in todo without review handoff", async () => {
+    it("parks incomplete stuck-loop exhaustion in todo without review handoff or automatic retry", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "FN-001",
         column: "in-progress",
         stuckKillCount: 6,
+        assignedAgentId: "agent-1",
         steps: [
           { name: "Preflight", status: "done" },
           { name: "Delivery", status: "in-progress" },
@@ -457,23 +458,32 @@ describe("SelfHealingManager", () => {
       const result = await manager.checkStuckBudget("FN-001", "loop");
 
       expect(result).toBe(false);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 7 });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        stuckKillCount: 7,
+        status: "failed",
+        error: expect.stringContaining("STUCK_LOOP_EXHAUSTED"),
+        paused: true,
+        pausedReason: "stuck-loop-exhausted-manual-intervention-required",
+        pausedByAgentId: "self-healing",
+        assignedAgentId: null,
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutNodeId: null,
+        checkoutRunId: null,
+        checkoutLeaseRenewedAt: null,
+        checkoutLeaseEpoch: 0,
+        nextRecoveryAt: null,
+      }));
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
         moveSource: "engine",
         recoveryRehome: true,
       });
-      expect(store.updateTask).toHaveBeenLastCalledWith("FN-001", expect.objectContaining({
-        stuckKillCount: 7,
-        paused: false,
-        pausedReason: null,
-        status: "queued",
-      }));
       expect(store.handoffToReview).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Re-queued in todo with progress preserved; scheduler may retry without manual unpause.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.",
       );
     });
 
@@ -509,7 +519,7 @@ describe("SelfHealingManager", () => {
       }));
     });
 
-    it("falls back to executor requeue when todo parking fails", async () => {
+    it("does not fall back to executor requeue when todo parking fails", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "FN-001",
         column: "in-progress",
@@ -525,8 +535,13 @@ describe("SelfHealingManager", () => {
 
       const result = await manager.checkStuckBudget("FN-001", "loop");
 
-      expect(result).toBe(true);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-001", { stuckKillCount: 7 });
+      expect(result).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        stuckKillCount: 7,
+        status: "failed",
+        paused: true,
+        pausedReason: "stuck-loop-exhausted-manual-intervention-required",
+      }));
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", {
         preserveProgress: true,
         preserveStatus: true,
@@ -542,11 +557,74 @@ describe("SelfHealingManager", () => {
       expect(store.handoffToReview).not.toHaveBeenCalled();
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); falling back to executor stuck-kill requeue.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); task was marked failed/paused in place and will not be automatically retried.",
       );
     });
 
-    it("logs post-move requeue patch failures without executor fallback", async () => {
+    it("does not requeue when in-place park succeeds but success logging fails", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-001",
+        column: "in-progress",
+        stuckKillCount: 6,
+        steps: [
+          { name: "Preflight", status: "done" },
+          { name: "Delivery", status: "in-progress" },
+        ],
+      } as unknown as Task);
+      (store.moveTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("database is busy"));
+      (store.logEntry as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("log unavailable"));
+
+      manager.start();
+
+      const result = await manager.checkStuckBudget("FN-001", "loop");
+
+      expect(result).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        stuckKillCount: 7,
+        status: "failed",
+        paused: true,
+        pausedReason: "stuck-loop-exhausted-manual-intervention-required",
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({
+        paused: false,
+        status: "queued",
+      }));
+      expect(store.handoffToReview).not.toHaveBeenCalled();
+    });
+
+    it("logs in-place park patch failures after todo move failure without executor fallback", async () => {
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-001",
+        column: "in-progress",
+        stuckKillCount: 6,
+        steps: [
+          { name: "Preflight", status: "done" },
+          { name: "Delivery", status: "in-progress" },
+        ],
+      } as unknown as Task);
+      (store.updateTask as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({} as Task)
+        .mockRejectedValueOnce(new Error("write conflict"));
+      (store.moveTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("database is busy"));
+
+      manager.start();
+
+      const result = await manager.checkStuckBudget("FN-001", "loop");
+
+      expect(result).toBe(false);
+      expect(store.updateTask).toHaveBeenCalledTimes(2);
+      expect(store.handoffToReview).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-001",
+        "STUCK_LOOP_EXHAUSTED: incomplete task failed to move to todo (database is busy), and the in-place park patch also failed (write conflict); pre-move park metadata was already applied, but operator verification is required before retry.",
+      );
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-001",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Failed to move task to todo (database is busy); task was marked failed/paused in place and will not be automatically retried.",
+      );
+    });
+
+    it("logs post-move park patch failures without executor fallback", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "FN-001",
         column: "in-progress",
@@ -573,11 +651,11 @@ describe("SelfHealingManager", () => {
       });
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move requeue patch failed (write conflict); scheduler retry may wait for the next state repair pass.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move park patch failed (write conflict); operator repair is required before retry.",
       );
-      expect(store.logEntry).toHaveBeenCalledWith(
+      expect(store.logEntry).not.toHaveBeenCalledWith(
         "FN-001",
-        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Re-queued in todo with progress preserved; scheduler may retry without manual unpause.",
+        "STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (7/6), last reason=loop. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.",
       );
       expect(store.handoffToReview).not.toHaveBeenCalled();
     });
@@ -3862,6 +3940,131 @@ describe("SelfHealingManager", () => {
         expect.stringContaining("Auto-finalized no-op (proven): start point on main; modifiedFiles cleared"),
       );
       expect(enqueueMerge).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("FN-6461: demotes no-commits no-op review tasks with skipped-out work", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-6461'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'main'..'fusion/fn-6461'")) return "0\n" as any;
+        return "" as any;
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-6461",
+          column: "in-review",
+          paused: false,
+          status: null,
+          worktree: "/tmp/test-project/.worktrees/fn-6461",
+          branch: "fusion/fn-6461",
+          noCommitsExpected: true,
+          steps: [
+            { name: "Preflight", status: "done" },
+            { name: "Dry-run", status: "skipped" },
+            { name: "Execute", status: "skipped" },
+            { name: "Verify", status: "skipped" },
+            { name: "Testing", status: "skipped" },
+            { name: "Documentation", status: "skipped" },
+          ],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.finalizeNoOpReviewTasks();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-6461", expect.objectContaining({ error: expect.stringContaining("done=1, incomplete=5") }));
+      expect(store.moveTask).toHaveBeenCalledWith("FN-6461", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }));
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-6461", "done");
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-6461",
+        expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
+        expect.stringContaining("self-healing-finalize-no-op-review"),
+      );
+      expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
+        target: "FN-6461",
+      }));
+
+      managerWithRecovery.stop();
+    });
+
+    it("FN-6461: still finalizes all-done no-commits no-op review tasks", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-6462'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'main'..'fusion/fn-6462'")) return "0\n" as any;
+        return "" as any;
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-6462",
+          column: "in-review",
+          paused: false,
+          status: null,
+          worktree: "/tmp/test-project/.worktrees/fn-6462",
+          branch: "fusion/fn-6462",
+          noCommitsExpected: true,
+          steps: [{ name: "Preflight", status: "done" }, { name: "Verify", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.finalizeNoOpReviewTasks();
+
+      expect(result).toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-6462", "done");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-6462", "todo", expect.anything());
+
+      managerWithRecovery.stop();
+    });
+
+    it("FN-6461: stranded todo recovery does not promote skipped-to-completion no-commits tasks", async () => {
+      const recoverCompletedTask = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-6463",
+          column: "todo",
+          paused: false,
+          status: null,
+          noCommitsExpected: true,
+          steps: [{ name: "Preflight", status: "done" }, { name: "Execute", status: "skipped" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverCompletedTask).not.toHaveBeenCalled();
 
       managerWithRecovery.stop();
     });

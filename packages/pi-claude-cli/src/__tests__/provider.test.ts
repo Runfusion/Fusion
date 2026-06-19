@@ -20,7 +20,6 @@ vi.mock("node:child_process", () => ({
     (proc as any).pid = 99999;
     return proc;
   }),
-  execSync: vi.fn(() => Buffer.from("1.0.0")),
 }));
 
 // Mock @earendil-works/pi-ai

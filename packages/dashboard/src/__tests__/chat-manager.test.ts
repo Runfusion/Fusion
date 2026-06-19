@@ -1,9 +1,16 @@
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 confirmed this ChatManager API-path suite is deterministic under dashboard-api, so it must run in backfill instead of remaining a curated skip-list orphan.
+*/
 /**
  * Tests for ChatManager - specifically text accumulation behavior
  * These tests verify the fix for FN-1857: Chat assistant messages not persisted after navigating away
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   ChatManager,
   __setBuildAgentChatPrompt,
@@ -13,6 +20,7 @@ import {
   chatStreamManager,
   __getChatDiagnostics,
   __setChatDiagnostics,
+  CHAT_ASK_QUESTION_GUIDANCE,
 } from "../chat.js";
 
 // ── Mock Setup ──────────────────────────────────────────────────────────────
@@ -76,6 +84,10 @@ const mockAgentStore = {
 
 function createChatManager(pluginRunner?: Record<string, unknown>, messageStore?: Record<string, unknown>): ChatManager {
   return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, pluginRunner as any, undefined, messageStore as any);
+}
+
+function createChatManagerForRoot(rootDir: string): ChatManager {
+  return new ChatManager(mockChatStore as any, rootDir, mockAgentStore as any);
 }
 
 function createChatManagerWithSettings(settings: {
@@ -408,6 +420,84 @@ describe("ChatManager.sendMessage", () => {
     }
   });
 
+  it("exposes fn_task_document_* tools to the chat agent when a task store is present", async () => {
+    let capturedTools: Array<{ name: string; execute?: (...args: any[]) => Promise<any> }> = [];
+    __setCreateFnAgent(async (options: any) => {
+      capturedTools = options.customTools ?? [];
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+      };
+    });
+
+    const taskStore = {
+      upsertTaskDocument: vi.fn().mockResolvedValue({
+        id: "doc-1",
+        taskId: "FN-6635",
+        key: "docs",
+        content: "Saved from chat",
+        revision: 1,
+        author: "chat-agent",
+        createdAt: "2026-06-18T06:51:00.000Z",
+        updatedAt: "2026-06-18T06:51:00.000Z",
+      }),
+    } as any;
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      undefined,
+      undefined,
+      taskStore,
+    );
+
+    await chatManager.sendMessage("chat-001", "Save this as task docs");
+
+    const names = capturedTools.map((tool) => tool.name);
+    expect(names).toContain("fn_task_document_write");
+    expect(names).toContain("fn_task_document_read");
+
+    const writeTool = capturedTools.find((tool) => tool.name === "fn_task_document_write");
+    const writeResult = await writeTool?.execute?.("call-doc-write", {
+      task_id: "FN-6635",
+      key: "docs",
+      content: "Saved from chat",
+      author: "chat-agent",
+    });
+
+    expect(taskStore.upsertTaskDocument).toHaveBeenCalledWith("FN-6635", {
+      key: "docs",
+      content: "Saved from chat",
+      author: "chat-agent",
+    });
+    expect(writeResult?.content?.[0]?.text).toContain("Saved document \"docs\"");
+  });
+
+  it("does not expose fn_task_document_* tools when no task store is present", async () => {
+    let capturedTools: Array<{ name: string }> = [];
+    __setCreateFnAgent(async (options: any) => {
+      capturedTools = options.customTools ?? [];
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Try saving docs");
+
+    const names = capturedTools.map((tool) => tool.name);
+    expect(names).not.toContain("fn_task_document_write");
+    expect(names).not.toContain("fn_task_document_read");
+  });
+
   it("persists and clears durable in-flight generation snapshots during streaming", async () => {
     let onTextCb: ((delta: string) => void) | undefined;
 
@@ -594,6 +684,289 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     expect(createOptions.tools).toBe("coding");
+  });
+
+  it("requests bound agent and enabled plugin skills for regular chat", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Skills ready" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: { skills: ["agent-debug", "ce-debug"] },
+    });
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug", enabled: true } },
+        { pluginId: "disabled-plugin", skill: { name: "disabled-debug", enabled: false } },
+      ]),
+    };
+
+    const chatManager = createChatManager(pluginRunner);
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
+    expect(createOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/test",
+      sessionPurpose: "executor",
+    });
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug", "ce-debug"]);
+    expect(createOptions.skillSelection.requestedSkillNames).not.toContain("disabled-debug");
+  });
+
+  it("requests enabled plugin skills for model-only QuickChat sessions", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: null,
+      status: "active",
+    });
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Plugin skill ready" }] },
+        },
+      };
+    });
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+      ]),
+    };
+
+    const chatManager = createChatManager(pluginRunner);
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+    expect(createOptions.skillSelection.sessionPurpose).toBe("executor");
+  });
+
+  it("merges plugin skills when a bound chat agent has no metadata skills", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Fallback skills ready" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: {},
+    });
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug", enabled: true } },
+      ]),
+    };
+
+    const chatManager = createChatManager(pluginRunner);
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("loads a single-segment /skill command and strips it from the chat prompt", async () => {
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Skill command ready" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: { skills: ["agent-debug"] },
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "/skill:ce-debug please debug this");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug", "ce-debug"]);
+    expect(promptSpy).toHaveBeenCalledTimes(1);
+    const promptContent = promptSpy.mock.calls[0]?.[0] as string;
+    expect(promptContent).toBe("please debug this");
+    expect(promptContent).not.toContain("/skill:");
+    expect(mockChatStore.addMessage).toHaveBeenCalledWith("chat-001", expect.objectContaining({
+      role: "user",
+      content: "/skill:ce-debug please debug this",
+    }));
+  });
+
+  it("loads two-segment and multiple /skill commands in typed order", async () => {
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Multiple skills ready" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: { skills: [] },
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "start /skill:review/pr please /skill:gamma now");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "review/pr", "gamma"]);
+    const promptContent = promptSpy.mock.calls[0]?.[0] as string;
+    expect(promptContent).toBe("start please now");
+    expect(promptContent).not.toContain("/skill:");
+  });
+
+  it("dedupes typed /skill commands against agent and plugin skills case-insensitively", async () => {
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Deduped" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: { skills: ["ce-debug"] },
+    });
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "review/pr", enabled: true } },
+      ]),
+    };
+
+    const chatManager = createChatManager(pluginRunner);
+    await chatManager.sendMessage("chat-001", "/skill:CE-DEBUG /skill:review/pr/SKILL.md use both");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["ce-debug", "review/pr"]);
+    const names = createOptions.skillSelection.requestedSkillNames.filter((name: string) => name.toLowerCase() === "ce-debug");
+    expect(names).toHaveLength(1);
+    expect(promptSpy.mock.calls[0]?.[0]).toBe("use both");
+  });
+
+  it("creates skill selection for model-only QuickChat when /skill is typed without plugin skills", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: null,
+      status: "active",
+    });
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Model-only skill ready" }] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "/skill:foo answer directly");
+
+    expect(createOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/test",
+      sessionPurpose: "executor",
+    });
+    expect(createOptions.skillSelection.requestedSkillNames).toContain("foo");
+    expect(promptSpy.mock.calls[0]?.[0]).toBe("answer directly");
+  });
+
+  it("leaves skill selection and prompt content unchanged when no /skill command is present", async () => {
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Plain reply" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: { skills: ["agent-debug"] },
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "plain hello");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug"]);
+    expect(promptSpy.mock.calls[0]?.[0]).toBe("plain hello");
+  });
+
+  it("keeps agent skills when the chat plugin runner lacks skill discovery", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Agent skill ready" }] },
+        },
+      };
+    });
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      runtimeConfig: {},
+      metadata: { skills: ["agent-debug"] },
+    });
+
+    const chatManager = createChatManager({ getRuntimeById: vi.fn() });
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.skillSelection.requestedSkillNames).toEqual(["agent-debug"]);
   });
 
   it("accumulates thinking output separately from text", async () => {
@@ -784,6 +1157,7 @@ describe("ChatManager.sendMessage", () => {
     }));
     expect(createResolvedSession).toHaveBeenCalledWith(expect.objectContaining({
       customTools: expect.arrayContaining([
+        expect.objectContaining({ name: "fn_ask_question" }),
         expect.objectContaining({ name: "fn_send_message" }),
         expect.objectContaining({ name: "fn_read_messages" }),
       ]),
@@ -844,7 +1218,7 @@ describe("ChatManager.sendMessage", () => {
     }));
   });
 
-  it("does not inject mailbox tools for non-agent chat sessions", async () => {
+  it("injects ask-question but not mailbox tools for non-agent chat sessions", async () => {
     mockChatStore.getSession.mockReturnValue({
       id: "chat-001",
       agentId: null,
@@ -872,9 +1246,21 @@ describe("ChatManager.sendMessage", () => {
 
     await chatManager.sendMessage("chat-001", "Hello");
 
-    expect(createResolvedSession).toHaveBeenCalledWith(expect.not.objectContaining({
-      customTools: expect.anything(),
-    }));
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    const customTools = createOptions?.customTools ?? [];
+    expect(customTools.map((tool: { name: string }) => tool.name)).toContain("fn_ask_question");
+    expect(customTools.map((tool: { name: string }) => tool.name)).not.toContain("fn_send_message");
+    expect(customTools.map((tool: { name: string }) => tool.name)).not.toContain("fn_read_messages");
+    expect(createOptions?.systemPrompt).toContain(CHAT_ASK_QUESTION_GUIDANCE);
+  });
+
+  it("guides chat agents to use ask-question cards for option sets", () => {
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("## Asking the User");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("fn_ask_question");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toMatch(/options|choices|alternatives/);
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("instead of listing options only in prose");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("single_select");
+    expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("multi_select");
   });
 
   it("uses the assigned built-in pi agent model when the chat session has no explicit model override", async () => {
@@ -1283,6 +1669,55 @@ describe("ChatManager.sendMessage", () => {
 
     expect(createOptions.systemPrompt).toContain("You are a helpful AI assistant integrated into the fn task board system.");
     expect(createOptions.systemPrompt).not.toContain("## Soul");
+  });
+
+  it("inlines text attachments and forwards image attachments to the chat agent", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fn-chat-agent-attachments-"));
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    try {
+      await mkdir(join(rootDir, ".fusion", "chat-attachments", "chat-001"), { recursive: true });
+      await writeFile(join(rootDir, ".fusion", "chat-attachments", "chat-001", "note.txt"), "session attachment bytes");
+      await writeFile(join(rootDir, ".fusion", "chat-attachments", "chat-001", "image.png"), Buffer.from([9, 8, 7]));
+
+      __setCreateFnAgent(async () => ({
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Done" }] },
+        },
+      }));
+
+      const chatManager = createChatManagerForRoot(rootDir);
+      await chatManager.sendMessage("chat-001", "What is attached?", undefined, undefined, [
+        {
+          id: "att-text",
+          filename: "note.txt",
+          originalName: "note.txt",
+          mimeType: "text/plain",
+          size: 24,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+        {
+          id: "att-image",
+          filename: "image.png",
+          originalName: "image.png",
+          mimeType: "image/png",
+          size: 3,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+      ]);
+
+      expect(promptSpy).toHaveBeenCalledTimes(1);
+      const [promptArgument, promptOptions] = promptSpy.mock.calls[0] ?? [];
+      expect(promptArgument).toContain("[User attached: note.txt (text/plain, 24B), image.png (image/png, 3B)]");
+      expect(promptArgument).toContain("## Attachments");
+      expect(promptArgument).toContain("session attachment bytes");
+      expect(promptOptions).toEqual({
+        images: [{ type: "image", data: Buffer.from([9, 8, 7]).toString("base64"), mimeType: "image/png" }],
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("sends only the new user message — prior turns come from the resumed CLI session, not the prompt", async () => {
@@ -2049,6 +2484,73 @@ describe("ChatManager generation isolation", () => {
     // The slot was correctly cleaned up by sendTwo (the most recent owner)
     // and not re-deleted/corrupted by sendOne's late finally.
     expect(chatManager.isGenerating("chat-001")).toBe(false);
+  });
+
+  it("sendRoomMessage inlines room text attachments and forwards room image attachments", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fn-chat-room-agent-attachments-"));
+    const promptSpy = vi.fn().mockResolvedValue(undefined);
+    try {
+      await mkdir(join(rootDir, ".fusion", "chat-room-attachments", "room-1"), { recursive: true });
+      await writeFile(join(rootDir, ".fusion", "chat-room-attachments", "room-1", "room-note.txt"), "room attachment bytes");
+      await writeFile(join(rootDir, ".fusion", "chat-room-attachments", "room-1", "room-image.webp"), Buffer.from([5, 4, 3]));
+
+      (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team" });
+      (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([
+        { roomId: "room-1", agentId: "agent-001", role: "member", addedAt: "2026-01-01" },
+      ]);
+      (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({
+        id: input.role === "user" ? "user-room-msg" : "assistant-room-msg",
+        roomId: "room-1",
+        ...input,
+      }));
+
+      mockAgentStore.listAgents.mockResolvedValue([
+        { id: "agent-001", name: "Avery", role: "executor", state: "idle" },
+      ]);
+      mockAgentStore.getAgent.mockResolvedValue({ id: "agent-001", name: "Avery", role: "executor", state: "idle" });
+
+      __setCreateResolvedAgentSession(async () => ({
+        session: {
+          prompt: promptSpy,
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Room answer" }] },
+        },
+        provider: "test",
+        model: "test",
+        fallbackInfo: undefined,
+      } as any));
+
+      const chatManager = createChatManagerForRoot(rootDir);
+      await chatManager.sendRoomMessage("room-1", "hello @Avery", [
+        {
+          id: "att-room-text",
+          filename: "room-note.txt",
+          originalName: "room-note.txt",
+          mimeType: "text/plain",
+          size: 21,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+        {
+          id: "att-room-image",
+          filename: "room-image.webp",
+          originalName: "room-image.webp",
+          mimeType: "image/webp",
+          size: 3,
+          createdAt: "2026-06-16T00:00:00.000Z",
+        },
+      ]);
+
+      expect(promptSpy).toHaveBeenCalledTimes(1);
+      const [promptArgument, promptOptions] = promptSpy.mock.calls[0] ?? [];
+      expect(promptArgument).toContain("Latest user message to answer:\n\nhello @Avery");
+      expect(promptArgument).toContain("## Attachments");
+      expect(promptArgument).toContain("room attachment bytes");
+      expect(promptOptions).toEqual({
+        images: [{ type: "image", data: Buffer.from([5, 4, 3]).toString("base64"), mimeType: "image/webp" }],
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("sendRoomMessage persists assistant room replies", async () => {

@@ -81,6 +81,7 @@ export async function accumulateSessionTokenUsage(
     const newCacheWrite = (task.tokenUsage?.cacheWriteTokens ?? 0) + cacheWriteDelta;
 
     const role = options?.role ?? "executor";
+    const model = (session as { model?: { provider?: string; id?: string } }).model;
     const tokenUsage = {
       inputTokens: newInput,
       outputTokens: newOutput,
@@ -89,6 +90,12 @@ export async function accumulateSessionTokenUsage(
       totalTokens: newInput + newOutput + newCached + newCacheWrite,
       firstUsedAt: task.tokenUsage?.firstUsedAt ?? now,
       lastUsedAt: now,
+      /*
+       * FNXC:TokenAnalytics 2026-06-18-16:23:
+       * Token accumulation must snapshot the actually-used session model for by-model analytics without touching task.modelProvider/task.modelId, which would pin future model resolution.
+       */
+      modelProvider: model?.provider ?? task.tokenUsage?.modelProvider,
+      modelId: model?.id ?? task.tokenUsage?.modelId,
     };
 
     cacheMetricsLog.log(JSON.stringify({

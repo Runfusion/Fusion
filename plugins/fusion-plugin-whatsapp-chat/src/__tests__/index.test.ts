@@ -9,8 +9,12 @@ const connectionInstances: Array<{
   logout: ReturnType<typeof vi.fn>;
 }> = [];
 
+/**
+ * FNXC:WhatsAppPluginTest 2026-06-17-10:07:
+ * Vitest 4 requires vi.fn() mocks used with new to use a function or class implementation; an arrow-backed mock makes new WhatsAppConnection(...) throw TypeError because the implementation is not constructable.
+ */
 vi.mock("../connection.js", () => {
-  const ctor = vi.fn((ctx: PluginContext) => {
+  const ctor = vi.fn(function WhatsAppConnectionMock(ctx: PluginContext) {
     const root = ctx.taskStore.getRootDir();
     const instance = {
       start: vi.fn(async () => {}),

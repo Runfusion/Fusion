@@ -7,10 +7,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AgentStore, TaskStore } from "@fusion/core";
 import {
   buildCliWithRealDashboardAssets,
-  extensionBundlePath,
+  cliRoot,
 } from "./bundle-output-helpers";
 
-vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 });
+/*
+FNXC:CliTests 2026-06-14-03:43:
+This opt-in built-extension integration suite keeps the one-time 300s beforeAll build override, but every per-test and per-hook path must stay under Vitest's default 5s test and 10s hook caps.
+FN-6436 removed the hidden file-wide 30s timeout appeasement after FN-6430 fixed the shared CLI isolation path and FN-6431 established the sibling REMOVE audit pattern.
+*/
+const extensionBundlePath = join(cliRoot, "dist", "extension.js");
 
 const SHOULD_RUN_EXTENSION_INTEGRATION =
   process.env.FUSION_TEST_EXTENSION_INTEGRATION === "1" ||
@@ -216,7 +221,7 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
     const deleteTool = api.tools.get("fn_agent_delete")!;
     const deleted = await deleteTool.execute(
       "delete-agent-1",
-      { id: created.details.agentId },
+      { agent_id: created.details.agentId },
       undefined,
       undefined,
       makeCtx(tmpDir),
@@ -260,9 +265,18 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
 
   it("returns explicit error when fn_delegate_task hits task-id collision", async () => {
     const agent = await seedAgent(tmpDir, { name: "release-agent" });
-    const delegateTool = api.tools.get("fn_delegate_task")!;
-    const createSpy = vi.spyOn(TaskStore.prototype, "createTask").mockRejectedValueOnce(new Error("Task ID already exists: FN-001"));
+    const store = new TaskStore(tmpDir);
+    await store.init();
+    store.getDatabase().exec(`
+      CREATE TRIGGER force_delegate_collision
+      BEFORE INSERT ON tasks
+      WHEN NEW.description = 'collision task'
+      BEGIN
+        SELECT RAISE(ABORT, 'Task ID already exists: FN-001');
+      END;
+    `);
 
+    const delegateTool = api.tools.get("fn_delegate_task")!;
     const result = await delegateTool.execute(
       "delegate-collision",
       { agent_id: agent.id, description: "collision task" },
@@ -274,6 +288,5 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Task ID already exists: FN-001");
     expect(result.details.error).toContain("Task ID already exists: FN-001");
-    createSpy.mockRestore();
   });
 });

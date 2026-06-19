@@ -58,11 +58,11 @@ describe("AcpRuntimeAdapter (U3)", () => {
     }
   });
 
-  it("promptWithFallback drives a full turn to completion", async () => {
+  it("promptWithFallback drives a full turn to completion and surfaces stopReason", async () => {
     const adapter = makeAdapter();
     const { session } = await adapter.createSession(makeOptions());
     try {
-      await expect(adapter.promptWithFallback(session, "hello")).resolves.toBeUndefined();
+      await expect(adapter.promptWithFallback(session, "hello")).resolves.toEqual({ stopReason: "end_turn" });
     } finally {
       await adapter.dispose(session);
     }

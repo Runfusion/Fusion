@@ -1,12 +1,15 @@
 export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agent-logger.js";
 export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agent-action-gate.js";
+export { createFusionAuthStorage } from "./auth-storage.js";
 export {
   createTaskCreateTool,
+  createChatTaskDocumentTools,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
   createSendMessageTool,
   createReadMessagesTool,
+  createAskQuestionTool,
   createWorkflowListTool,
   createWorkflowGetTool,
   createWorkflowSelectTool,
@@ -16,9 +19,12 @@ export {
   createTraitListTool,
   createWorkflowAuthoringTools,
   taskCreateParams,
+  chatTaskDocumentReadParams,
+  chatTaskDocumentWriteParams,
   taskDocumentReadParams,
   taskDocumentWriteParams,
   taskLogParams,
+  askQuestionParams,
   workflowListParams,
   workflowSelectParams,
   executeApprovedAgentProvisioning,
@@ -147,6 +153,17 @@ export {
   type WorkflowWorkDispatch,
   type WorkflowWorkSchedulerStore,
 } from "./workflow-work-scheduler.js";
+export {
+  classifyMergePrimitiveResult,
+  runWorkflowMergeAttemptNode,
+  type WorkflowMergeNodeDeps,
+} from "./workflow-merge-nodes.js";
+export {
+  processDueWorkflowWorkItem,
+  workflowMergeWorkKinds,
+  type WorkflowWorkProcessorOptions,
+  type WorkflowWorkProcessorResult,
+} from "./workflow-work-processor.js";
 export { MeshLeaseManager, type MeshLeaseManagerOptions, type LeaseRecoveryContext } from "./mesh-lease-manager.js";
 export { MissionAutopilot, type MissionAutopilotOptions } from "./mission-autopilot.js";
 export { MissionExecutionLoop, type MissionExecutionLoopOptions, type ValidationResult, loopLog } from "./mission-execution-loop.js";
@@ -170,7 +187,6 @@ export {
   type AutostashHandle,
 } from "./merger.js";
 export {
-  registerMergeTraitHooks,
   resolveMergePolicy,
   type ResolvedMergePolicy,
   type MergeFileScopeMode,
@@ -252,10 +268,13 @@ export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, typ
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, type AgentOptions, type AgentResult } from "./pi.js";
 export {
   createInteractiveAiSessionWith,
+  createCliAgentPlanningSessionWith,
+  resolvePlanningExecutorSession,
   parseAgentResponse as parseInteractiveAgentResponse,
   type InteractiveAgentSession,
   type InteractiveAgentResult,
   type InteractiveAgentFactory,
+  type PlanningExecutorSelection,
 } from "./interactive-ai-session.js";
 export { selectPermanentAgentForTask, listEligibleExecutorAgents } from "./agent-assignment.js";
 
@@ -270,7 +289,7 @@ import type {
   CreateInteractiveAiSessionOptions,
 } from "@fusion/core";
 import { createFnAgent as _createFnAgentForCore } from "./pi.js";
-import { createInteractiveAiSessionWith } from "./interactive-ai-session.js";
+import { resolvePlanningExecutorSession } from "./interactive-ai-session.js";
 
 const _createAiSessionAdapter: CreateAiSessionFactory = async (options: CreateAiSessionOptions): Promise<AiSessionResult> => {
   return _createFnAgentForCore({
@@ -282,12 +301,14 @@ const _createAiSessionAdapter: CreateAiSessionFactory = async (options: CreateAi
   });
 };
 
-// Interactive (multi-turn, await-input) adapter: builds the prompt→parse→
-// retry→pause→resume loop on top of the one-shot createFnAgent.
+// Interactive (multi-turn, await-input) adapter: resolves the default
+// model-backed planning executor, then builds the prompt→parse→retry→pause→
+// resume loop on top of the one-shot createFnAgent.
 const _createInteractiveAiSessionAdapter: CreateInteractiveAiSessionFactory = (
   options: CreateInteractiveAiSessionOptions,
 ) =>
-  createInteractiveAiSessionWith(
+  resolvePlanningExecutorSession(
+    { kind: "model" },
     (opts) =>
       _createFnAgentForCore({
         cwd: opts.cwd,
@@ -354,6 +375,12 @@ export {
   type SkillSelectionResult,
   type SkillDiagnostic,
 } from "./skill-resolver.js";
+/*
+FNXC:ChatSkills 2026-06-16-19:08:
+Dashboard chat consumes the synchronous session skill helper so chat sessions request the same agent and enabled plugin skills as executor sessions.
+Do not re-export the local SessionPurpose from session-skill-context here because runtime-resolution already owns the public SessionPurpose export.
+*/
+export { buildSessionSkillContextSync, type SessionSkillContextResult } from "./session-skill-context.js";
 export { AgentReflectionService, type AgentReflectionServiceOptions } from "./agent-reflection.js";
 export { AgentSelfImproveService, type AgentSelfImproveServiceOptions } from "./agent-self-improve.js";
 export {
@@ -610,7 +637,13 @@ export {
   type RunCodeNodeOptions,
 } from "./code-node-runner.js";
 // Agent runtime abstraction
-export { type AgentRuntime, type AgentRuntimeOptions, type AgentSessionResult } from "./agent-runtime.js";
+export {
+  type AgentPromptResult,
+  type AgentRuntime,
+  type AgentRuntimeOptions,
+  type AgentSessionResult,
+} from "./agent-runtime.js";
+export { askAcpOnce, type AskAcpOnceOptions, type AskAcpOnceResult } from "./cli-agent-ask.js";
 export {
   resolveRuntime,
   getDefaultPiRuntime,

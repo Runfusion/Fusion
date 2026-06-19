@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Goal } from "@fusion/core";
-import { Plus, Sparkles } from "lucide-react";
+import { Link, Plus, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { draftGoalDescription, getRefineErrorMessage } from "../api";
@@ -10,7 +10,14 @@ import "./GoalsView.css";
 export interface GoalsViewProps {
   initialGoals?: Goal[];
   anchorGoalId?: string;
+  onNavigateToMission?: (missionId: string) => void;
 }
+
+type LinkedMission = {
+  id: string;
+  title: string;
+  status: string;
+};
 
 const MAX_ACTIVE_GOALS = 5;
 const WARNING_THRESHOLD = 3;
@@ -21,7 +28,7 @@ function isCapError(payload: unknown): boolean {
   return Boolean(payload && typeof payload === "object" && "code" in payload && (payload as { code?: unknown }).code === "ACTIVE_GOAL_LIMIT_EXCEEDED");
 }
 
-export function GoalsView({ initialGoals, anchorGoalId }: GoalsViewProps) {
+export function GoalsView({ initialGoals, anchorGoalId, onNavigateToMission }: GoalsViewProps) {
   const { t } = useTranslation("app");
   const [goals, setGoals] = useState<Goal[]>(() => initialGoals ?? []);
   const [highlightedGoalId, setHighlightedGoalId] = useState<string | null>(null);
@@ -42,6 +49,11 @@ export function GoalsView({ initialGoals, anchorGoalId }: GoalsViewProps) {
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [expandedGoalDescriptions, setExpandedGoalDescriptions] = useState<Set<string>>(() => new Set());
+  const [missions, setMissions] = useState<LinkedMission[]>([]);
+  const [linkedMissionsByGoal, setLinkedMissionsByGoal] = useState<Record<string, LinkedMission[]>>({});
+  const [missionPickerByGoal, setMissionPickerByGoal] = useState<Record<string, string>>({});
+  const [linkingMissionGoalId, setLinkingMissionGoalId] = useState<string | null>(null);
+  const [unlinkingMissionKey, setUnlinkingMissionKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialGoals !== undefined) {
@@ -81,6 +93,73 @@ export function GoalsView({ initialGoals, anchorGoalId }: GoalsViewProps) {
       active = false;
     };
   }, [initialGoals]);
+
+  useEffect(() => {
+    let active = true;
+    const loadMissions = async () => {
+      try {
+        const response = await fetch("/api/missions");
+        if (!response.ok) {
+          throw new Error(`Failed to load missions (${response.status})`);
+        }
+        const payload = (await response.json()) as { missions?: LinkedMission[] } | LinkedMission[];
+        const nextMissions = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload.missions)
+            ? payload.missions
+            : [];
+        if (active) {
+          setMissions(nextMissions.map((mission) => ({ id: mission.id, title: mission.title, status: mission.status })));
+        }
+      } catch {
+        if (active) {
+          setErrorMessage(t("goals.missionsLoadError", "Unable to load missions right now. Please try again."));
+        }
+      }
+    };
+
+    void loadMissions();
+
+    return () => {
+      active = false;
+    };
+  }, [t]);
+
+  const loadLinkedMissionsForGoal = async (goalId: string): Promise<LinkedMission[]> => {
+    const response = await fetch(`/api/goals/${encodeURIComponent(goalId)}/missions`);
+    if (!response.ok) {
+      throw new Error(`Failed to load linked missions (${response.status})`);
+    }
+    const payload = (await response.json()) as { missions?: LinkedMission[] };
+    return Array.isArray(payload.missions) ? payload.missions : [];
+  };
+
+  useEffect(() => {
+    let active = true;
+    const loadLinkedMissions = async () => {
+      if (goals.length === 0) {
+        setLinkedMissionsByGoal({});
+        return;
+      }
+
+      try {
+        const entries = await Promise.all(goals.map(async (goal) => [goal.id, await loadLinkedMissionsForGoal(goal.id)] as const));
+        if (active) {
+          setLinkedMissionsByGoal(Object.fromEntries(entries));
+        }
+      } catch {
+        if (active) {
+          setErrorMessage(t("goals.linkedMissionsLoadError", "Unable to load linked missions right now. Please try again."));
+        }
+      }
+    };
+
+    void loadLinkedMissions();
+
+    return () => {
+      active = false;
+    };
+  }, [goals, t]);
 
   const activeCount = useMemo(() => goals.filter((goal) => goal.status === "active").length, [goals]);
   const showWarning = activeCount >= WARNING_THRESHOLD && activeCount <= MAX_ACTIVE_GOALS;
@@ -263,6 +342,57 @@ export function GoalsView({ initialGoals, anchorGoalId }: GoalsViewProps) {
       }
       return next;
     });
+  }
+
+  function getLinkableMissions(goalId: string): LinkedMission[] {
+    const linkedIds = new Set((linkedMissionsByGoal[goalId] ?? []).map((mission) => mission.id));
+    return missions.filter((mission) => !linkedIds.has(mission.id));
+  }
+
+  /**
+   * FNXC:Goals 2026-06-15-15:28:
+   * Goals cards now manage the reverse side of mission-goal links so users can link, unlink, and navigate to missions without switching to Mission detail first.
+   * Keep each card's linked list refreshed after mutations and hide already-linked missions to make duplicate INSERT OR IGNORE attempts unnecessary in normal UI flow.
+   */
+  async function refreshLinkedMissions(goalId: string) {
+    const linkedMissions = await loadLinkedMissionsForGoal(goalId);
+    setLinkedMissionsByGoal((current) => ({ ...current, [goalId]: linkedMissions }));
+    setMissionPickerByGoal((current) => ({ ...current, [goalId]: "" }));
+  }
+
+  async function linkMissionToGoal(goalId: string) {
+    const missionId = missionPickerByGoal[goalId];
+    if (!missionId) return;
+
+    try {
+      setLinkingMissionGoalId(goalId);
+      setErrorMessage(null);
+      const response = await fetch(`/api/missions/${encodeURIComponent(missionId)}/goals/${encodeURIComponent(goalId)}`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`Failed to link mission (${response.status})`);
+      }
+      await refreshLinkedMissions(goalId);
+    } catch {
+      setErrorMessage(t("goals.linkMissionError", "Unable to link mission right now. Please try again."));
+    } finally {
+      setLinkingMissionGoalId(null);
+    }
+  }
+
+  async function unlinkMissionFromGoal(goalId: string, missionId: string) {
+    try {
+      setUnlinkingMissionKey(`${goalId}:${missionId}`);
+      setErrorMessage(null);
+      const response = await fetch(`/api/missions/${encodeURIComponent(missionId)}/goals/${encodeURIComponent(goalId)}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(`Failed to unlink mission (${response.status})`);
+      }
+      await refreshLinkedMissions(goalId);
+    } catch {
+      setErrorMessage(t("goals.unlinkMissionError", "Unable to unlink mission right now. Please try again."));
+    } finally {
+      setUnlinkingMissionKey(null);
+    }
   }
 
   async function updateGoalArchiveStatus(goal: Goal) {
@@ -501,6 +631,63 @@ export function GoalsView({ initialGoals, anchorGoalId }: GoalsViewProps) {
                   </div>
                 </>
               )}
+              <section className="goals-linked-missions" aria-label={t("goals.linkedMissions", "Linked missions")}>
+                <div className="goals-linked-missions-header">
+                  <h4 className="goals-linked-missions-title">{t("goals.linkedMissionsTitle", "Linked Missions")}</h4>
+                  <span className="goals-linked-missions-count">
+                    {t("goals.linkedMissionsCount", { count: linkedMissionsByGoal[goal.id]?.length ?? 0, defaultValue_one: "{{count}} linked", defaultValue_other: "{{count}} linked" })}
+                  </span>
+                </div>
+                <div className="goals-linked-missions-controls">
+                  <select
+                    className="input goals-linked-missions-picker"
+                    data-testid={`goal-mission-picker-${goal.id}`}
+                    value={missionPickerByGoal[goal.id] ?? ""}
+                    onChange={(event) => setMissionPickerByGoal((current) => ({ ...current, [goal.id]: event.target.value }))}
+                    aria-label={t("goals.missionPicker", "Mission to link")}
+                    disabled={linkingMissionGoalId === goal.id || getLinkableMissions(goal.id).length === 0}
+                  >
+                    <option value="">{t("goals.selectMission", "Select a mission")}</option>
+                    {getLinkableMissions(goal.id).map((mission) => (
+                      <option key={mission.id} value={mission.id}>{mission.title}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-primary goals-linked-missions-link-button"
+                    data-testid={`goal-mission-link-button-${goal.id}`}
+                    disabled={!missionPickerByGoal[goal.id] || linkingMissionGoalId === goal.id}
+                    onClick={() => void linkMissionToGoal(goal.id)}
+                  >
+                    <Link size={16} aria-hidden="true" />
+                    {linkingMissionGoalId === goal.id ? t("goals.linkingMission", "Linking…") : t("goals.linkMission", "Link mission")}
+                  </button>
+                </div>
+                {(linkedMissionsByGoal[goal.id]?.length ?? 0) > 0 ? (
+                  <div className="goals-linked-missions-list">
+                    {(linkedMissionsByGoal[goal.id] ?? []).map((mission) => (
+                      <div key={mission.id} className="goals-linked-mission-chip" data-testid={`goal-linked-mission-chip-${mission.id}`}>
+                        <button type="button" className="btn goals-linked-mission-link" onClick={() => onNavigateToMission?.(mission.id)}>
+                          {mission.title}
+                        </button>
+                        <span className="goals-linked-mission-status">{mission.status}</span>
+                        <button
+                          type="button"
+                          className="btn-icon goals-linked-mission-unlink"
+                          data-testid={`goal-linked-mission-unlink-${mission.id}`}
+                          aria-label={t("goals.unlinkMission", "Unlink mission")}
+                          disabled={unlinkingMissionKey === `${goal.id}:${mission.id}`}
+                          onClick={() => void unlinkMissionFromGoal(goal.id, mission.id)}
+                        >
+                          <X size={16} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="goals-linked-missions-empty">{t("goals.noLinkedMissions", "No linked missions.")}</p>
+                )}
+              </section>
             </article>
           ))}
         </div>

@@ -20,6 +20,22 @@ When asking the user a question, use the platform's blocking question tool: `Ask
 
 Ask one question at a time. Prefer a concise single-select choice when natural options exist.
 
+### Running inside Fusion (autonomous workflow step)
+
+When the environment variable `FUSION_WORKFLOW_STEP` is set, you are running as a **Fusion workflow step**, not an interactive session. There is no synchronous blocking-question tool — `AskUserQuestion` has no listener here and must NOT be called. Adapt as follows:
+
+- **Asking the user a question:** emit a single await-input block in your output and stop. Fusion parses it, pauses the task (`awaiting-user-input`), and surfaces it to a human via the task card; when they answer, this step re-runs with their reply available as the latest steering comment. Emit at most one question per run, exactly in this form:
+
+  ```
+  ===FUSION_AWAIT_INPUT===
+  <your single clear question, including any options as a short list>
+  ===END_FUSION_AWAIT_INPUT===
+  ```
+
+  On the re-run, read the most recent steering comment as the answer and continue. Only emit the block for questions that genuinely block planning (per Phase 0.5 / Phase 2). If `FUSION_HEADLESS` is also set, do **not** emit questions at all — take the headless path (record assumptions in a `## Assumptions` section and proceed).
+
+- **Spawning sub-agents (research / reviewer personas):** Fusion's spawn primitive is `fn_spawn_agent`, not `Task`. To run a named `ce-*` persona, read its definition from the directory in `FUSION_CE_AGENTS_DIR` (e.g. `${FUSION_CE_AGENTS_DIR}/ce-repo-research-analyst.md`), strip the YAML frontmatter, and pass the remaining body as `fn_spawn_agent`'s `systemPromptOverride` (with `role: "reviewer"` for review personas, `role: "executor"` otherwise) and the task scope as `task`. If `FUSION_CE_AGENTS_DIR` is unset or the def is missing, fall back to running the analysis inline yourself (single-agent) rather than failing.
+
 ## Feature Description
 
 <feature_description> #$ARGUMENTS </feature_description>

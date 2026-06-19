@@ -4,8 +4,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-primary, #0f1117);
-  color: var(--text-primary, #e5e7eb);
+  background: var(--bg);
+  color: var(--text);
   z-index: 9999;
   padding: 1.5rem;
 }
@@ -14,7 +14,7 @@
   max-width: 420px;
   width: 100%;
   text-align: center;
-  background: var(--bg-elevated, #1a1d27);
+  background: var(--surface-1);
   border: 1px solid var(--border-subtle, #2a2f3a);
   border-radius: 12px;
   padding: 2rem 1.75rem;

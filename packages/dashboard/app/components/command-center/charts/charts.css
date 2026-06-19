@@ -1,0 +1,498 @@
+/*
+FNXC:CommandCenterStyling 2026-06-19-00:00:
+FN-6686 requires Command Center CSS to use canonical --accent and --text tokens. Undefined legacy accent/text-primary aliases made chart primitives inherit fallback colors; the scoped token guard prevents reintroducing those aliases after the FN-6682 review finding.
+*/
+
+/*
+FNXC:CommandCenterStyling 2026-06-17-18:46:
+Chart labels and legends must use --text-muted so command-center CSS stays aligned with the FN-4286 canonical text-token guard and avoids raw color fallbacks.
+*/
+
+/* Command Center hand-rolled CSS-bar chart primitives.
+ *
+ * Animation durations MUST use --duration-* tokens (bare durations).
+ * NEVER use --transition-* here: those are duration+easing pairs and silently
+ * invalidate animation declarations (see animation-duration-tokens.css.test.ts).
+ */
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:31:
+FN-6680 re-checked FN-6664 in a real Blink layout engine because jsdom does not compute grid/flex min-content sizes. Chart primitives and their text-bearing children need explicit logical shrink bounds so long labels cannot crush tracks or create hidden horizontal overflow inside the mobile tabpanel.
+*/
+.cc-bar-chart,
+.cc-stacked-bar,
+.cc-sparkline,
+.cc-token-series,
+.cc-token-series-plot,
+.cc-token-series-axis,
+.cc-line-chart,
+.cc-radial-gauge,
+.cc-funnel,
+.cc-funnel-stage {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+/* ---- Bar ---- */
+.cc-bar-chart {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cc-bar-row {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--space-2xl) * 2 + var(--space-lg)), 32%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-bar-label {
+  min-inline-size: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-bar-track {
+  min-inline-size: 0;
+  position: relative;
+  block-size: var(--space-md);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.cc-bar-fill {
+  block-size: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  transition: width var(--transition-normal);
+}
+
+.cc-bar-value {
+  min-inline-size: 0;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-align: end;
+}
+
+/* ---- StackedBar ---- */
+.cc-stacked-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cc-stacked-track {
+  display: flex;
+  block-size: var(--space-md);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.cc-stacked-segment {
+  block-size: 100%;
+  background: var(--accent);
+  transition: width var(--transition-normal);
+}
+
+.cc-stacked-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.cc-stacked-legend-item {
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.cc-stacked-swatch {
+  inline-size: var(--space-sm);
+  block-size: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  display: inline-block;
+}
+
+/* ---- Sparkline ---- */
+.cc-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  block-size: var(--space-2xl);
+}
+
+.cc-sparkline-bar {
+  flex: 1 1 0;
+  min-inline-size: 1px;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: height var(--transition-normal);
+}
+
+/* ---- TokenSeriesChart ---- */
+/*
+FNXC:CommandCenterStyling 2026-06-18-15:14:
+The token-over-time chart is live-updated and animated, but the motion is decorative. Use tokenized dimensions/colors and disable height animation for reduced-motion users while keeping empty and all-zero data readable.
+*/
+.cc-token-series {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+}
+
+.cc-token-series-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  block-size: clamp(calc(var(--space-2xl) * 2), 24vw, calc(var(--space-2xl) * 5));
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent), var(--surface-1);
+  overflow: hidden;
+}
+
+.cc-token-series-bar {
+  flex: 1 1 0;
+  min-inline-size: var(--space-xs);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 45%, var(--surface-2)));
+  box-shadow: 0 0 var(--space-sm) color-mix(in srgb, var(--accent) 24%, transparent);
+  transition: height var(--transition-normal);
+  animation: cc-token-series-rise var(--duration-normal) ease-out both;
+}
+
+.cc-token-series-empty {
+  inline-size: 100%;
+  block-size: 2px;
+  align-self: flex-end;
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+}
+
+.cc-token-series-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-token-series-axis span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-token-series-axis span:last-child {
+  text-align: end;
+}
+
+@keyframes cc-token-series-rise {
+  from {
+    transform: scaleY(0.82);
+    opacity: 0.72;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-token-series-bar {
+    transition: none;
+    animation: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-token-series-plot {
+    block-size: clamp(calc(var(--space-2xl) + var(--space-xl)), 38vw, calc(var(--space-2xl) * 4));
+    padding: var(--space-sm);
+  }
+}
+
+/* ---- LineChart ---- */
+/*
+FNXC:CommandCenterStyling 2026-06-18-14:29:
+Line-chart motion is decorative, token-timed, and disabled for reduced-motion users; sizing and stroke colors stay on design tokens so the Activity area remains readable across desktop and mobile without chart-specific hardcoded colors or lengths.
+*/
+.cc-line-chart {
+  display: block;
+  inline-size: 100%;
+  block-size: clamp(calc(var(--space-2xl) * 2), 22vw, calc(var(--space-2xl) * 5));
+  aspect-ratio: 5 / 2;
+  color: var(--accent);
+  overflow: hidden;
+}
+
+.cc-line-chart-series {
+  color: var(--accent);
+}
+
+.cc-line-chart-series:nth-child(2n) {
+  color: var(--color-success);
+}
+
+.cc-line-chart-series:nth-child(3n) {
+  color: var(--color-warning);
+}
+
+.cc-line-chart-path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: cc-line-chart-draw calc(var(--duration-slow) * 4) ease-out forwards;
+}
+
+.cc-line-chart-point {
+  fill: var(--surface-1);
+  stroke: currentColor;
+  stroke-width: 2px;
+}
+
+@keyframes cc-line-chart-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-line-chart-path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-line-chart {
+    block-size: clamp(calc(var(--space-2xl) * 2), 44vw, calc(var(--space-2xl) * 4));
+    aspect-ratio: auto;
+  }
+}
+
+/* ---- Recharts wrappers ---- */
+/*
+FNXC:CommandCenterCharts 2026-06-19-05:24:
+ResponsiveContainer measures its direct parent. Keep the shared recharts wrapper non-zero by default so Activity, Team, Overview, and any future Command Center chart surface render populated data instead of a blank zero-height box; scoped area/overview CSS may restate this size but must not remove the measurable block axis.
+*/
+.cc-recharts-chart,
+.cc-recharts-empty {
+  inline-size: 100%;
+  block-size: calc(var(--space-2xl) * 7 + var(--space-lg));
+  min-inline-size: 0;
+}
+
+/* ---- RadialGauge ---- */
+.cc-radial-gauge {
+  min-inline-size: 0;
+  display: grid;
+  place-items: center;
+  gap: var(--space-sm);
+  color: var(--text);
+}
+
+.cc-radial-gauge-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: clamp(calc(var(--space-2xl) * 3), 32vw, calc(var(--space-2xl) * 4 + var(--space-lg)));
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, var(--surface-1) 0 54%, transparent 55%),
+    conic-gradient(var(--accent) var(--cc-radial-value), var(--surface-2) 0);
+  box-shadow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 35%, transparent);
+  isolation: isolate;
+  animation: cc-radial-gauge-pulse calc(var(--duration-slow) * 6) ease-in-out infinite;
+}
+
+.cc-radial-gauge-ring::before {
+  content: "";
+  position: absolute;
+  inset: var(--space-sm);
+  border-radius: inherit;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: inset 0 0 var(--space-md) color-mix(in srgb, var(--accent) 22%, transparent);
+  animation: cc-radial-gauge-sweep calc(var(--duration-slow) * 8) linear infinite;
+}
+
+.cc-radial-gauge-core {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  inline-size: 58%;
+  aspect-ratio: 1;
+  background: var(--surface-1);
+  border-radius: 50%;
+  box-shadow: inset 0 0 var(--space-md) var(--surface-2);
+}
+
+.cc-radial-gauge-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-radial-gauge-label {
+  max-inline-size: 100%;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+@keyframes cc-radial-gauge-pulse {
+  0%,
+  100% {
+    filter: saturate(1);
+  }
+  50% {
+    filter: saturate(1.35);
+  }
+}
+
+@keyframes cc-radial-gauge-sweep {
+  from {
+    transform: rotate(0turn);
+  }
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-radial-gauge-ring,
+  .cc-radial-gauge-ring::before {
+    animation: none;
+  }
+}
+
+/* ---- Funnel ---- */
+.cc-funnel {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cc-funnel-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.cc-funnel-header {
+  min-inline-size: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.cc-funnel-label,
+.cc-funnel-conversion,
+.cc-funnel-value {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.cc-funnel-conversion {
+  flex: 0 1 auto;
+  text-align: end;
+}
+
+.cc-funnel-conversion {
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-funnel-track {
+  block-size: var(--space-lg);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.cc-funnel-fill {
+  block-size: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  transition: width var(--transition-normal);
+}
+
+.cc-funnel-value {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* ---- Loading shimmer (used by chart skeletons) ---- */
+.cc-chart-skeleton {
+  block-size: var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  animation: cc-chart-pulse var(--duration-slow) ease-in-out infinite;
+}
+
+@keyframes cc-chart-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+
+@media (max-width: 768px) {
+  .cc-bar-row {
+    grid-template-columns: minmax(0, 1fr) minmax(calc(var(--space-2xl) + var(--space-lg)), 2fr);
+    align-items: start;
+  }
+
+  .cc-bar-value {
+    grid-column: 1 / -1;
+    justify-self: end;
+    max-inline-size: 100%;
+  }
+
+  .cc-radial-gauge-ring {
+    inline-size: clamp(calc(var(--space-2xl) * 2 + var(--space-lg)), 44vw, calc(var(--space-2xl) * 4));
+  }
+
+  .cc-sparkline {
+    block-size: clamp(var(--space-2xl), 18vw, calc(var(--space-2xl) + var(--space-xl)));
+  }
+}

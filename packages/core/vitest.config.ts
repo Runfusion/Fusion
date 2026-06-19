@@ -4,6 +4,32 @@ import { computeMaxWorkers } from "./src/__test-utils__/vitest-workers";
 
 const maxWorkers = computeMaxWorkers();
 
+const quarantinedCoreTests = [
+  /*
+  FNXC:CoreTests 2026-06-13-17:43:
+  The full workspace suite must not fail on suite-load-sensitive tests that pass standalone or only fail after excessive wall time. Quarantine observed core offenders after package-lane hook timeouts instead of appeasing them with wider hook timeouts.
+
+  FNXC:CoreTests 2026-06-14-02:14:
+  FN-6433 re-ran the core quarantine batch after FN-6430's shared fixture cleanup and rescued all five files without timeout or assertion changes. Keep this array empty unless a future quarantine is mirrored in scripts/lib/test-quarantine.json in the same commit.
+
+  FNXC:CoreTests 2026-06-15-03:13:
+  FN-6481 observed the disk-backed concurrent write test fail in the changed-package workspace lane with a transient SQLite BEGIN IMMEDIATE lock after the gate had already passed. Quarantine the flaky file instead of widening lock-recovery timeouts or weakening assertions.
+
+  FNXC:CoreTests 2026-06-15-07:39:
+  FN-6486 rescued store-concurrent-writes by making the transient lock helper release independent of event-loop timer scheduling, then removed the quarantine in lockstep with scripts/lib/test-quarantine.json. Keep this array empty unless a future observed flake is mirrored in the ledger in the same commit.
+
+  FNXC:CoreTests 2026-06-17-17:21:
+  FN-6596 verification observed task-list-format and test-project timing out only in the broad changed-package core lane after the merge gate had passed; both files passed immediate isolated reruns. Quarantine the suite-load flakes without widening timeouts or weakening assertions.
+
+  FNXC:CoreTests 2026-06-17-17:55:
+  FN-6592 rescued mission-integration by closing every reopened TaskStore handle and strengthening restart-fidelity assertions across mission hierarchy read paths. Keep the quarantine absent in both this exclude list and scripts/lib/test-quarantine.json unless a future observed flake is mirrored in both files.
+
+  FNXC:CoreTests 2026-06-17-19:03:
+  FN-6600 re-ran the core quarantine candidates under the broad-run worker budget and rescued the current core ledger entries without timeout, retry, assertion, or worker-budget appeasement.
+  Keep core quarantines mirrored here only when a loaded run still fails after shared teardown cleanup has been ruled out.
+  */
+];
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -14,7 +40,7 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
-    exclude: [],
+    exclude: quarantinedCoreTests,
     setupFiles: [
       "./src/__test-utils__/vitest-setup.ts",
     ],

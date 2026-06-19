@@ -39,8 +39,20 @@ export interface InReviewStallContext {
 
 /** Keep aligned with engine DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS. */
 export const DEFAULT_STALE_MERGING_MIN_AGE_MS = 5 * 60_000;
-/** Keep aligned with engine MAX_AUTO_MERGE_RETRIES (core must not import engine). */
+/** Historical default for the configurable auto-merge conflict retry cap. */
 export const DEFAULT_MAX_AUTO_MERGE_RETRIES = 3;
+
+/**
+ * FNXC:AutoMergeRetries 2026-06-17-04:20:
+ * Every engine, self-healing, dashboard, and core display surface must resolve the same project setting with defensive fallback semantics. Invalid persisted values intentionally fall back to 3 so old configs and hand-edits preserve the prior hardcoded behavior.
+ */
+export function resolveMaxAutoMergeRetries(settings?: { maxAutoMergeRetries?: unknown } | null): number {
+  const configured = Number(settings?.maxAutoMergeRetries);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.floor(configured);
+  }
+  return DEFAULT_MAX_AUTO_MERGE_RETRIES;
+}
 export const IN_REVIEW_STALL_LOG_PREFIX = "In-review stall surfaced [";
 export const IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX = "In-review stall auto-disposed [";
 export const IN_REVIEW_STALL_TERMINAL_LOG_PREFIX = "In-review stall terminal disposed [";
@@ -126,7 +138,7 @@ export function getInReviewStallReason(
   const now = context.now ?? Date.now();
   const observedAt = new Date(now).toISOString();
   const staleMergingMinAgeMs = context.staleMergingMinAgeMs ?? DEFAULT_STALE_MERGING_MIN_AGE_MS;
-  const maxAutoMergeRetries = context.maxAutoMergeRetries ?? DEFAULT_MAX_AUTO_MERGE_RETRIES;
+  const maxAutoMergeRetries = resolveMaxAutoMergeRetries(context);
 
   if (task.mergeDetails?.mergeConfirmed === true) {
     return undefined;

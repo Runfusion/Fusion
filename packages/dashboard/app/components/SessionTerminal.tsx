@@ -1,6 +1,6 @@
 import "./SessionTerminal.css";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Terminal as TerminalIcon, ShieldAlert, Settings, Eye } from "lucide-react";
 import type { Terminal as XTerm, ITerminalAddon } from "@xterm/xterm";
@@ -8,6 +8,13 @@ import { appendTokenQuery } from "../auth";
 import { api } from "../api";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { isMobileViewport, MOBILE_MEDIA_QUERY } from "../hooks/useViewportMode";
+import {
+  TERMINAL_PREFERENCES_KEY,
+  readTerminalPreferences,
+  resolveTerminalFontFamily,
+  resolveTerminalGlyphFontFamily,
+  waitForTerminalFontMetrics,
+} from "../utils/terminalPreferences";
 
 /**
  * SessionTerminal (CLI Agent Executor, U11) — shared xterm terminal for a CLI
@@ -249,6 +256,49 @@ export function SessionTerminal({
     if (showConfirmAdvance) setAdvanceDismissed(false);
   }, [showConfirmAdvance, sessionId]);
 
+  const applyLiveTerminalPreferences = useCallback(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    const terminalPreferences = readTerminalPreferences();
+    terminal.options.fontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+    containerRef.current?.style.setProperty(
+      "--terminal-glyph-font-family",
+      resolveTerminalGlyphFontFamily(terminalPreferences.fontFamily),
+    );
+    terminal.options.fontSize = terminalPreferences.fontSize;
+    terminal.options.cursorStyle = terminalPreferences.cursorStyle;
+    terminal.options.cursorBlink = terminalPreferences.cursorBlink && !readOnly && mode === "live";
+
+    try {
+      (fitAddonRef.current as { fit?: () => void } | null)?.fit?.();
+    } catch {
+      /* ignore transient measure failures */
+    }
+  }, [mode, readOnly]);
+
+  /*
+  FNXC:Terminal 2026-06-17-01:05:
+  Font and cursor preferences live-apply through the shared storage key so SessionTerminal follows changes made in another terminal surface without remounting. Renderer remains excluded from this handler because renderer addon teardown/re-attach only happens safely during the next session init.
+  */
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== TERMINAL_PREFERENCES_KEY) {
+        return;
+      }
+      applyLiveTerminalPreferences();
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [applyLiveTerminalPreferences]);
+
   // ── xterm lifecycle + WS bridge ──────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || typeof window === "undefined") return;
@@ -295,16 +345,30 @@ export function SessionTerminal({
       ]);
       if (disposed || !containerRef.current) return;
 
+      const terminalPreferences = readTerminalPreferences();
+      const resolvedFontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+      containerRef.current.style.setProperty(
+        "--terminal-glyph-font-family",
+        resolveTerminalGlyphFontFamily(terminalPreferences.fontFamily),
+      );
+
+      /*
+      FNXC:Terminal 2026-06-18-15:42:
+      SessionTerminal shares TerminalModal's recurrence #5 root cause: FN-6638's 66.76px diagnostic compared only symbols-inclusive stacks, so real iOS Safari still let the loaded symbols @font-face pollute xterm's ASCII measurement. Pass only the symbols-free resolved family to xterm on this attach surface too; DOM glyph fallback is scoped to the viewport CSS variable and never to the xterm font option used by DOM/canvas measurement or desktop WebGL.
+
+      FNXC:Terminal 2026-06-17-00:50:
+      SessionTerminal consumes the shared localStorage terminal preferences for parity with TerminalModal, but replay safety still owns input posture: cursor blink is the user preference AND-gated by !readOnly && mode === "live" so read-only, idle, and ended sessions never blink.
+      */
       const term = new Terminal({
         convertEol: false,
-        cursorBlink: !readOnly && mode === "live",
+        cursorBlink: terminalPreferences.cursorBlink && !readOnly && mode === "live",
+        cursorStyle: terminalPreferences.cursorStyle,
         disableStdin: readOnly,
         scrollback: 10000,
         // Defensive: do NOT register an OSC 52 (clipboard-write) handler. The
         // server-side neutralizer (U10) strips it; we add no client handling.
-        fontFamily:
-          'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-        fontSize: 13,
+        fontFamily: resolvedFontFamily,
+        fontSize: terminalPreferences.fontSize,
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
@@ -316,22 +380,29 @@ export function SessionTerminal({
       xtermRef.current = term;
       fitAddonRef.current = fitAddon as unknown as ITerminalAddon;
 
-      // WebGL renderer with context-loss fallback to the DOM renderer.
-      try {
-        const { WebglAddon } = await import("@xterm/addon-webgl");
-        if (!disposed) {
-          const webgl = new WebglAddon();
-          webgl.onContextLoss(() => {
-            try {
-              webgl.dispose();
-            } catch {
-              /* fall back to DOM renderer */
-            }
-          });
-          term.loadAddon(webgl);
+      /*
+      FNXC:Terminal 2026-06-17-00:55:
+      The embedded session terminal follows the shared renderer preference, but mobile viewports are a hard WebGL skip floor to avoid glyph artifacts in WebKit. Renderer changes are init-only because swapping xterm render addons mid-session is unsafe; users get the new renderer on the next mount/session.
+      */
+      const shouldLoadWebgl = terminalPreferences.renderer === "auto" && !isMobileViewport();
+      if (shouldLoadWebgl) {
+        // WebGL renderer with context-loss fallback to the DOM renderer.
+        try {
+          const { WebglAddon } = await import("@xterm/addon-webgl");
+          if (!disposed) {
+            const webgl = new WebglAddon();
+            webgl.onContextLoss(() => {
+              try {
+                webgl.dispose();
+              } catch {
+                /* fall back to DOM renderer */
+              }
+            });
+            term.loadAddon(webgl);
+          }
+        } catch {
+          /* WebGL unavailable — DOM renderer is the default fallback */
         }
-      } catch {
-        /* WebGL unavailable — DOM renderer is the default fallback */
       }
 
       try {
@@ -339,6 +410,34 @@ export function SessionTerminal({
       } catch {
         /* container not measurable yet */
       }
+
+      void (async () => {
+        const fontMetricsSettled = await waitForTerminalFontMetrics(
+          terminalPreferences.fontSize,
+          resolvedFontFamily,
+        );
+        if (
+          !fontMetricsSettled ||
+          disposed ||
+          xtermRef.current !== term ||
+          fitAddonRef.current !== fitAddon
+        ) {
+          return;
+        }
+        try {
+          /*
+          FNXC:Terminal 2026-06-18-07:15:
+          SessionTerminal shares TerminalModal's real-iOS DOM/canvas measurement path and the same user-selectable font presets. FN-6638 ruled out stack ordering with the 66.76px-identical diagnostic, so this attach surface must also reapply font options and refit after best-effort FontFaceSet settlement even when iOS rejects the multi-family shorthand; WebGL desktop remains safe because the same invalidation path refreshes renderer metrics without changing renderer selection.
+          */
+          term.options.fontFamily = resolvedFontFamily;
+          term.options.fontSize = terminalPreferences.fontSize;
+          (fitAddon as unknown as { fit: () => void }).fit();
+          sendResize(term.cols, term.rows);
+          term.refresh(0, Math.max(0, term.rows - 1));
+        } catch {
+          /* ignore teardown or transient measure failures */
+        }
+      })();
 
       // term.onData → input frames (skip entirely when read-only).
       if (!readOnly) {
@@ -456,6 +555,11 @@ export function SessionTerminal({
 
   const elevated = Boolean(posture?.elevated);
   const flagSummary = posture?.elevatedFlags?.join(", ");
+  const terminalGlyphStyle = {
+    "--terminal-glyph-font-family": resolveTerminalGlyphFontFamily(
+      readTerminalPreferences().fontFamily,
+    ),
+  } as CSSProperties;
 
   return (
     <div
@@ -537,6 +641,7 @@ export function SessionTerminal({
         className="cli-session-terminal__viewport"
         ref={containerRef}
         data-testid="cli-terminal-viewport"
+        style={terminalGlyphStyle}
       />
 
       {showConfirmAdvance && !advanceDismissed && (

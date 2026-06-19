@@ -1,0 +1,539 @@
+/*
+FNXC:CommandCenterStyling 2026-06-17-18:46:
+The FN-4286 dashboard text-token guard requires command-center secondary copy to use --text-muted, not the deprecated secondary text token or raw color fallbacks.
+
+FNXC:CommandCenterStyling 2026-06-19-18:30:
+FN-6690 fix: Command Center CSS was authored against a numeric token scale (--space-1..--space-36, --font-size-*, --border-width*) that this design system never defines, so ~186 var() refs resolved to nothing and the whole view rendered collapsed/unstyled on desktop and mobile (raw run-together tabs, no padding). The dashboard uses the NAMED 4px spacing scale only: --space-xs(4) sm(8) md(12) lg(16) xl(24) 2xl(32), with calc() of named tokens for larger values (house style, e.g. calc(var(--space-2xl) * 7 + var(--space-lg))). Font sizes are raw rem (no --font-size-* tokens exist) and border widths are raw px (--border is a color, not a width). All Command Center CSS is remapped onto these. A token-validity guard test (CommandCenter.token-validity.css.test.ts) now fails if any component CSS references a custom property not defined in styles.css, so this class of bug cannot recur. The bug slipped past the recent FN-66xx work because those tests ran in jsdom, which does not resolve CSS custom properties or compute layout.
+*/
+
+/* Command Center shell.
+ * Animation durations use --duration-* tokens only (never --transition-*).
+ */
+
+.command-center {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-height: 0;
+  inline-size: 100%;
+  padding: var(--space-lg);
+}
+
+/*
+FNXC:CommandCenter 2026-06-17-00:00:
+The Command Center must remain scrollable on mobile inside the overflow-hidden .project-content flex parent. Keep the header and tablist pinned while .cc-tabpanel owns vertical scrolling and safe-area bottom clearance.
+*/
+.cc-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.cc-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+/* ---- Tabs ---- */
+.cc-tablist {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cc-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.cc-tab:hover {
+  color: var(--text);
+}
+
+.cc-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.cc-tabpanel {
+  flex: 1;
+  min-height: 0;
+  min-inline-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  .cc-tabpanel {
+    padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0) + var(--standalone-bottom-gap));
+  }
+}
+
+/* ---- Overview ---- */
+.cc-overview {
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.cc-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--space-2xl) * 5)), 1fr));
+  gap: var(--space-md);
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+FN-6680 standardizes the Command Center card rhythm across overview, area, table, team, and system chart surfaces: use --space-md padding/gaps, 1px solid --border-subtle, --radius-md, and --surface-1 so mobile and tablet charts do not look like separate components.
+*/
+.cc-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-inline-size: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.cc-stat-label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.cc-stat-value {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.cc-stat-card--gauge {
+  align-items: center;
+  text-align: center;
+}
+
+/*
+FNXC:CommandCenterGithub 2026-06-18-19:27:
+The GitHub closed-at backfill control lives inside the existing Fixed by Fusion card and must use tokenized spacing/status colors so the operator result row stays readable on desktop and mobile without creating a separate layout surface.
+*/
+.cc-github-backfill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-github-backfill-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.cc-github-backfill-status--error {
+  color: var(--color-error);
+}
+
+.cc-github-backfill-status--warning {
+  color: var(--color-warning);
+}
+
+@media (max-width: 768px) {
+  .cc-github-backfill-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cc-github-backfill-actions .btn {
+    justify-content: center;
+    inline-size: 100%;
+  }
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:31:
+FN-6680 keeps the FN-6664 live/chart shrink contract but replaces hardcoded track minima with spacing tokens after real Blink mobile probing showed jsdom cannot catch min-content overflow or crushed chart tracks.
+
+FNXC:CommandCenterStyling 2026-06-19-19:05:
+FN-6700 reduces the live-strip decorative accent gradient, glow, and sweep intensity so the main overview card reads calmer and stays consistent with the flat stat-card surface rhythm while preserving the surface layers and motion.
+*/
+.cc-live-strip {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(calc(var(--space-2xl) * 5), 1fr) minmax(calc(var(--space-2xl) * 8), 2fr) minmax(calc(var(--space-2xl) * 5), 1fr);
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent),
+    var(--surface-1);
+  box-shadow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 9%, transparent);
+  overflow: hidden;
+  font-size: 0.8125rem;
+}
+
+.cc-live-strip::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 10%, transparent), transparent);
+  opacity: 0.25;
+  transform: translateX(-100%);
+  animation: cc-live-signal-sweep calc(var(--duration-slow) * 8) linear infinite;
+  pointer-events: none;
+}
+
+.cc-live-strip-heading,
+.cc-live-strip-metrics,
+.cc-live-trend {
+  min-inline-size: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.cc-live-strip-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-live-strip-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cc-live-strip-metrics {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.cc-live-metric {
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  animation: cc-live-signal-pulse calc(var(--duration-slow) * 6) ease-in-out infinite;
+}
+
+.cc-live-metric-value {
+  color: var(--text);
+  font-size: 1.125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+FNXC:CommandCenterTokens 2026-06-18-15:14:
+Overview token totals now live-poll and should visibly count up on change in both the stat card and live strip. The animation is decorative and must be disabled for reduced-motion users.
+*/
+.cc-token-count-live {
+  animation: cc-token-count-pop var(--duration-normal) ease-out both;
+}
+
+@keyframes cc-token-count-pop {
+  from {
+    transform: translateY(var(--space-xs));
+    opacity: 0.7;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.cc-live-metric-label,
+.cc-live-trend-label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cc-live-trend {
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cc-live-trend .cc-sparkline {
+  block-size: calc(var(--space-2xl) + var(--space-sm));
+}
+
+.cc-live-trend .cc-sparkline-bar {
+  box-shadow: 0 0 var(--space-sm) color-mix(in srgb, var(--accent) 28%, transparent);
+  animation: cc-live-signal-pulse calc(var(--duration-slow) * 5) ease-in-out infinite;
+}
+
+@keyframes cc-live-signal-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes cc-live-signal-pulse {
+  0%,
+  100% {
+    opacity: 0.78;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-live-strip::before,
+  .cc-live-metric,
+  .cc-live-trend .cc-sparkline-bar,
+  .cc-token-count-live {
+    animation: none;
+  }
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-00:00:
+Overview charts must use dashboard tokens only and keep motion decorative; animations use --duration-* values and are disabled for reduced-motion users so the graph-rich snapshot does not violate accessibility or the mobile scroll contract.
+
+FNXC:CommandCenterStyling 2026-06-19-19:05:
+FN-6700 tones down the overview chart-card diagonal accent, glow, and sheen so these primary cards retain their animated surface treatment without visually overpowering the flat stat-card rhythm.
+*/
+.cc-overview-charts {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+  align-items: stretch;
+}
+
+.cc-overview-chart-card {
+  min-inline-size: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent),
+    var(--surface-1);
+  box-shadow: 0 0 var(--space-lg) color-mix(in srgb, var(--accent) 7%, transparent);
+  overflow: hidden;
+  animation: cc-overview-chart-rise var(--duration-normal) ease-out both;
+}
+
+.cc-overview-chart-card--trend {
+  grid-column: 1 / -1;
+}
+
+.cc-overview-chart-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 8%, transparent), transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: cc-overview-chart-sheen calc(var(--duration-slow) * 7) ease-in-out infinite;
+}
+
+.cc-overview-chart-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.cc-overview-chart-header p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.cc-overview-chart-card .cc-bar-chart,
+.cc-overview-chart-card .cc-sparkline,
+.cc-overview-chart-card .cc-recharts-chart,
+.cc-overview-chart-card .cc-recharts-empty {
+  position: relative;
+  z-index: 1;
+}
+
+/*
+FNXC:CommandCenterCharts 2026-06-18-23:49:
+Overview recharts cards use token-derived height so ResponsiveContainer can render without adding an inner scroll container; .cc-tabpanel remains the only vertical scroller at mobile widths.
+*/
+.cc-overview-chart-card .cc-recharts-chart,
+.cc-overview-chart-card .cc-recharts-empty {
+  inline-size: 100%;
+  block-size: calc(var(--space-2xl) * 7 + var(--space-lg));
+  min-inline-size: 0;
+}
+
+.cc-overview-chart-card .cc-sparkline {
+  block-size: calc(var(--space-2xl) * 2);
+}
+
+.cc-overview-chart-card .cc-bar-fill,
+.cc-overview-chart-card .cc-sparkline-bar {
+  box-shadow: 0 0 var(--space-sm) color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+@keyframes cc-overview-chart-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-sm));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cc-overview-chart-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  45%,
+  55% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-overview-chart-card,
+  .cc-overview-chart-card::before {
+    animation: none;
+  }
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-20:30:
+The Command Center subtree previously had no tablet tier, so at 769px–1024px the shell relied on desktop grids while the parent flex chain could collapse. Restore the flex/scroll-owner contract and collapse the widest live/chart grids before they create document overflow (FN-6679).
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .command-center {
+    flex: 1;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .cc-tabpanel {
+    flex: 1;
+    min-block-size: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .cc-live-strip,
+  .cc-overview-charts,
+  .cc-team-chart-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-live-strip-metrics {
+    min-inline-size: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cc-overview-chart-card--trend,
+  .cc-team-spark-panel {
+    grid-column: auto;
+  }
+
+  .cc-stat-grid,
+  .cc-area .cc-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-2xl) * 5)), 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-live-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .cc-live-strip-metrics {
+    min-inline-size: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .cc-overview-charts {
+    min-inline-size: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .cc-overview-chart-card--trend {
+    grid-column: auto;
+  }
+}
+
+/* ---- States ---- */
+.cc-loading,
+.cc-error,
+.cc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.cc-error {
+  color: var(--color-error);
+}
+
+.cc-loading .cc-chart-skeleton {
+  block-size: var(--space-lg);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  animation: cc-shell-pulse var(--duration-slow) ease-in-out infinite;
+}
+
+@keyframes cc-shell-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}

@@ -80,11 +80,11 @@ describe("fn_review_step indexing", () => {
     resetExecutorMocks();
   });
 
-  it("uses step=2 to update internal step index 1", async () => {
+  it("uses step=1 to update internal step index 1", async () => {
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "ok", summary: "ok" } as any);
     const { tools, store, stepStates } = await captureTools();
 
-    await tools.fn_review_step("call-1", { step: 2, type: "code", step_name: "Implement", baseline: "abc" });
+    await tools.fn_review_step("call-1", { step: 1, type: "code", step_name: "Implement", baseline: "abc" });
 
     expect(stepStates[1].status).toBe("done");
     expect(store.updateStep).toHaveBeenCalledWith("FN-TEST", 1, "in-progress");
@@ -95,28 +95,28 @@ describe("fn_review_step indexing", () => {
     mockedReviewStep.mockResolvedValue({ verdict: "RETHINK", review: "redo", summary: "redo" } as any);
     const { tools, store, navigateTree } = await captureTools();
 
-    await tools.fn_task_update("set-cp", { step: 2, status: "in-progress" });
-    await tools.fn_review_step("call-1", { step: 2, type: "code", step_name: "Implement", baseline: "abc" });
+    await tools.fn_task_update("set-cp", { step: 1, status: "in-progress" });
+    await tools.fn_review_step("call-1", { step: 1, type: "code", step_name: "Implement", baseline: "abc" });
 
     expect(store.updateStep).toHaveBeenCalledWith("FN-TEST", 1, "pending");
     expect(navigateTree).toHaveBeenCalled();
   });
 
-  it("REVISE verdict for step=2 blocks fn_task_update step=2 done", async () => {
+  it("REVISE verdict for step=1 blocks fn_task_update step=1 done", async () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "fix", summary: "fix" } as any);
     const { tools } = await captureTools();
 
-    await tools.fn_review_step("call-1", { step: 2, type: "code", step_name: "Implement", baseline: "abc" });
-    const result = await tools.fn_task_update("call-2", { step: 2, status: "done" });
+    await tools.fn_review_step("call-1", { step: 1, type: "code", step_name: "Implement", baseline: "abc" });
+    const result = await tools.fn_task_update("call-2", { step: 1, status: "done" });
 
-    expect(result.content[0].text).toContain("Cannot mark Step 2 as done");
+    expect(result.content[0].text).toContain("Cannot mark Step 1 as done");
   });
 
   it("rejects out-of-range steps without reviewer call", async () => {
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "ok", summary: "ok" } as any);
     const { tools, store } = await captureTools();
 
-    const invalids = [0, -1, 4];
+    const invalids = [-1, 3, 4];
     for (const step of invalids) {
       const result = await tools.fn_review_step("bad", { step, type: "code", step_name: "Implement", baseline: "abc" });
       expect(result.details.error).toBe("invalid_step");

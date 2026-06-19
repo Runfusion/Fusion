@@ -1,3 +1,7 @@
+/*
+FNXC:TaskDetailTabs 2026-06-17-08:20:
+FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+*/
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -47,6 +51,7 @@ describe("TaskDetailModal", () => {
 
       return render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -81,6 +86,7 @@ describe("TaskDetailModal", () => {
 
       return render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ prompt: "# Hello\n\nContent", ...taskOverrides })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -220,6 +226,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -288,6 +295,7 @@ describe("TaskDetailModal", () => {
 
         const { container } = render(
           <TaskDetailModal
+            initialTab="definition"
             task={makeTask({ prompt: "# Hello\n\nContent" })}
             onClose={noop}
             onMoveTask={noopMove}
@@ -333,6 +341,7 @@ describe("TaskDetailModal", () => {
 
         const { container } = render(
           <TaskDetailModal
+            initialTab="definition"
             task={makeTask({ prompt: "# Hello\n\nContent" })}
             onClose={noop}
             onMoveTask={noopMove}
@@ -408,6 +417,7 @@ describe("TaskDetailModal", () => {
 
         const { container } = render(
           <TaskDetailModal
+            initialTab="definition"
             task={makeTask({
               prompt: "# Hello\n\nContent",
               planningModelProvider: "google",
@@ -459,6 +469,7 @@ describe("TaskDetailModal", () => {
 
         const { container } = render(
           <TaskDetailModal
+            initialTab="definition"
             task={makeTask({ prompt: "# Hello\n\nContent" })}
             onClose={noop}
             onMoveTask={noopMove}
@@ -505,6 +516,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -561,6 +573,7 @@ describe("TaskDetailModal", () => {
 
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ prompt: "# Hello\n\nContent", assignedAgentId: "agent-1", status: "executing", column: "in-progress" })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -589,6 +602,7 @@ describe("TaskDetailModal", () => {
     it("renders step progress section when steps exist", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [
               { name: "Step 1", status: "done" },
@@ -611,6 +625,7 @@ describe("TaskDetailModal", () => {
     it("shows '(no steps defined)' when steps array is empty", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ steps: [] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -628,6 +643,7 @@ describe("TaskDetailModal", () => {
     it("renders correct number of segments matching step count", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [
               { name: "Step 1", status: "done" },
@@ -651,6 +667,7 @@ describe("TaskDetailModal", () => {
     it("segments have correct status modifier classes", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [
               { name: "Step 1", status: "done" },
@@ -678,6 +695,7 @@ describe("TaskDetailModal", () => {
     it("segments have correct inline background colors based on status", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [
               { name: "Step 1", status: "done" },
@@ -707,6 +725,7 @@ describe("TaskDetailModal", () => {
     it("displays singular completion label for one-step tasks", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [{ name: "Step 1", status: "done" }],
           })}
@@ -726,6 +745,7 @@ describe("TaskDetailModal", () => {
     it("displays correct completion count", () => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [
               { name: "Step 1", status: "done" },
@@ -750,6 +770,7 @@ describe("TaskDetailModal", () => {
     it("has data-tooltip attribute with step name and status on each segment", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             steps: [
               { name: "Initialize project", status: "done" },
@@ -773,6 +794,7 @@ describe("TaskDetailModal", () => {
     it("step progress only renders in Definition tab, not in Agent Log subview", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             prompt: "# Test",
             steps: [
@@ -802,6 +824,7 @@ describe("TaskDetailModal", () => {
     it("step progress is hidden in Comments tab", () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             prompt: "# Test",
             steps: [
@@ -834,6 +857,7 @@ describe("TaskDetailModal", () => {
     ])("never shows a separate Commits tab for done tasks (%s) — changes are in the Changes tab", (_label, taskOverrides) => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask(taskOverrides)}
           onClose={noop}
           onMoveTask={noopMove}
@@ -860,6 +884,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onMoveTask={noopMove}
@@ -893,6 +918,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask()}
           onClose={noop}
           onMoveTask={noopMove}
@@ -925,6 +951,7 @@ describe("TaskDetailModal", () => {
     ])("Workflow tab is always rendered (%s)", (_label, taskOverrides) => {
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask(taskOverrides)}
           onClose={noop}
           onMoveTask={noopMove}
@@ -954,6 +981,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ enabledWorkflowSteps: ["WS-001"] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -982,6 +1010,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ enabledWorkflowSteps: ["WS-001"] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1007,6 +1036,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ enabledWorkflowSteps: ["WS-001"] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1034,6 +1064,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ enabledWorkflowSteps: ["WS-001"] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1077,6 +1108,7 @@ describe("TaskDetailModal", () => {
 
       render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({ enabledWorkflowSteps: ["WS-001", "WS-002"] })}
           onClose={noop}
           onMoveTask={noopMove}
@@ -1100,6 +1132,7 @@ describe("TaskDetailModal", () => {
     it("hides Definition content when Workflow tab is active", async () => {
       const { container } = render(
         <TaskDetailModal
+          initialTab="definition"
           task={makeTask({
             enabledWorkflowSteps: ["WS-001"],
             prompt: "# Test prompt",

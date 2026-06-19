@@ -1,8 +1,9 @@
 import { definePlugin } from "@fusion/plugin-sdk";
 import type { FusionPlugin, PluginRuntimeFactory, PluginRuntimeManifestMetadata } from "@fusion/plugin-sdk";
-import { resolveCliSettings } from "./cli-spawn.js";
+import { resolveCliSettings, resolveBundledClaudeBridgeBinary } from "./cli-spawn.js";
 import { AcpRuntimeAdapter } from "./runtime-adapter.js";
 import { killAllProcesses } from "./process-manager.js";
+import { setupHooks, setupManifest } from "./setup.js";
 
 // Reap any live agent subprocesses on hard process exit so none are orphaned
 // (KTD4 — the registry SIGKILL is the authoritative no-orphan guarantee). Scoped
@@ -48,15 +49,46 @@ const plugin: FusionPlugin = definePlugin({
             "will be auto-approved under an allow-all policy. Prefer an approval-required policy.",
         );
       }
+      // FNXC:ClaudeAcp 2026-06-15-11:40:
+      // KTD10 (Route A): publish the bundled `claude-code-cli-acp` bridge path
+      // process-wide so the pi-claude-cli provider's kill-switch can resolve it
+      // WITHOUT a manual FUSION_CLAUDE_ACP_BRIDGE env var. This only PUBLISHES the
+      // path — the ACP transport stays OFF until an operator sets
+      // FUSION_CLAUDE_ACP=1 (the rollout gate). An explicit env override wins, and
+      // the resolver is identity-pinned to the plugin-owned node_modules/.bin shim
+      // so a same-named global binary cannot replace the reviewed bridge.
+      if (!process.env.FUSION_CLAUDE_ACP_BRIDGE) {
+        const resolved = resolveBundledClaudeBridgeBinary();
+        if (resolved.kind === "resolved") {
+          process.env.FUSION_CLAUDE_ACP_BRIDGE = resolved.path;
+          ctx.logger.info(
+            "ACP Runtime: published bundled Claude bridge path for Route A " +
+              "(transport stays off until FUSION_CLAUDE_ACP=1).",
+          );
+        } else {
+          ctx.logger.info(`ACP Runtime: bundled Claude bridge not resolved (${resolved.reason}); Route A unavailable.`);
+        }
+      }
     },
   },
   runtime: {
     metadata: acpRuntimeMetadata,
     factory: acpRuntimeFactory,
   },
+  setup: {
+    manifest: setupManifest,
+    hooks: setupHooks,
+  },
 });
 
 export default plugin;
 export { AcpRuntimeAdapter };
-export { resolveCliSettings } from "./cli-spawn.js";
-export type { AcpCliSettings } from "./cli-spawn.js";
+export { checkSetup, setupHooks, setupManifest, validateBundledBridgeIdentity } from "./setup.js";
+export {
+  CLAUDE_CODE_CLI_ACP_BINARY,
+  bundledClaudeBridgeBinPath,
+  resolveBundledClaudeBridgeBinary,
+  resolveClaudeBridgeAskSettings,
+  resolveCliSettings,
+} from "./cli-spawn.js";
+export type { AcpBinaryResolution, AcpCliSettings } from "./cli-spawn.js";

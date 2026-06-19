@@ -32,7 +32,11 @@ vi.mock("../../hooks/useWorktrunkInstallStatus", () => ({
 }));
 
 vi.mock("../../hooks/useViewportMode", () => ({
-  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)", useViewportMode: () => "desktop" }));
+  MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  useViewportMode: () => "desktop",
+  getViewportMode: () => "desktop",
+  isMobileViewport: () => false,
+}));
 vi.mock("../../hooks/useMobileKeyboard", () => ({
   useMobileKeyboard: () => ({ keyboardOpen: false, keyboardOverlap: 0, viewportHeight: null, viewportOffsetTop: 0 }),
 }));

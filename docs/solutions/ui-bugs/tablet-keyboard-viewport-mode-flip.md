@@ -44,6 +44,8 @@ This preserves landscape-phone behavior while preventing keyboard-driven height 
 
 ChatView also keeps a defense-in-depth CSS guard from FN-6210: `.chat-sidebar` has a non-mobile `max-width` matching `CHAT_SIDEBAR_MAX_WIDTH`, with the mobile media rule overriding it back to `100%`. That guard bounds the sidebar even if viewport-mode state is temporarily wrong and the inline sidebar width is removed.
 
+FN-6516 refined the FN-6494 keyboard-open behavior: tablet chat sidebars remain visible at the user's current/persisted width while the software keyboard is open, rather than narrowing to the minimum width. Resize controls still stay disabled while typing, collapsed sidebars remain collapsed, and the FN-6210 `max-width` CSS guard remains the upper bound.
+
 ## Regression coverage
 
 Cover the invariant rather than the single repro:

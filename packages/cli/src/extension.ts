@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import * as fusionCore from "@fusion/core";
 import {
   TaskStore,
   COLUMNS,
@@ -25,6 +26,7 @@ import {
   getTaskDuplicateLineage,
   resolveAgentProvisioningPolicy,
   TASK_PRIORITIES,
+  MAX_TASK_LIST_TEXT_CHARS,
   resolveSecretAccessPolicy,
   getProjectRootFromWorktree,
   resolveTaskGithubTracking,
@@ -57,6 +59,39 @@ import { existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
+type TaskListFormatter = (
+  lines: string[],
+  opts?: { maxChars?: number; clamp?: TaskListClamp },
+) => string;
+
+export function inlineTaskListFallback(
+  lines: string[],
+  opts: { maxChars?: number } = {},
+): string {
+  /*
+  FNXC:TaskListOutput 2026-06-18-03:20:
+  FN-6629 requires stale-runtime fallback formatting to mirror the shared host-safe task-list budget; otherwise missing @fusion/core formatter exports can re-emit imageified column-filtered listings.
+  */
+  const maxChars = Math.max(1, Math.floor(opts.maxChars ?? MAX_TASK_LIST_TEXT_CHARS));
+  try {
+    const text = lines.join("\n");
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return text.slice(0, Math.max(0, maxChars - 1)) + "…";
+  } catch {
+    return "";
+  }
+}
+
+export function resolveTaskListFormatter(core: { formatTaskListText?: unknown }): TaskListFormatter {
+  return typeof core.formatTaskListText === "function"
+    ? (core.formatTaskListText as TaskListFormatter)
+    : inlineTaskListFallback;
+}
+
 
 /** #1403: display a column's label, falling back to the raw id for
  *  workflow-defined custom columns that have no legacy label. */
@@ -120,6 +155,23 @@ async function getStore(cwd: string): Promise<TaskStore> {
   await store.init();
   storeCache.set(projectRoot, store);
   return store;
+}
+
+/** @internal Exposed so tests and the extension shutdown hook can close cached stores deterministically; not a public CLI API contract. */
+export function closeCachedStores(): void {
+  /*
+  FNXC:CliTests 2026-06-17-23:58:
+  FN-6626 found the CLI extension cache cleared real TaskStore instances without closing them, leaving SQLite/WAL handles to survive module resets and making canonical-project-root task-tool tests timeout under suite load.
+  Close every cached store deterministically on extension shutdown and in tests; do not appease the load-sensitive seam with timeouts, retries, or worker changes.
+  */
+  for (const store of storeCache.values()) {
+    try {
+      store.close();
+    } catch (error) {
+      console.warn("[fusion-extension] cached TaskStore close skipped", error);
+    }
+  }
+  storeCache.clear();
 }
 
 function getFusionDir(cwd: string): string {
@@ -802,9 +854,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       const perColumn = params.limit ?? 10;
+      const requestedColumn = params.column as ColumnId | undefined;
       const lines: string[] = [];
       for (const col of COLUMNS) {
-        if (params.column && params.column !== col) continue;
+        if (requestedColumn && requestedColumn !== col) continue;
 
         const colTasks = tasks.filter((t) => t.column === col);
         if (colTasks.length === 0) continue;
@@ -821,8 +874,29 @@ export default function kbExtension(pi: ExtensionAPI) {
         lines.push("");
       }
 
+      const emptyStateText = requestedColumn
+        ? `No tasks in ${columnLabel(requestedColumn)} (${requestedColumn}).`
+        : "No matching tasks.";
+
+      /*
+      FNXC:TaskListOutput 2026-06-16-17:47:
+      FN-6492 routes CLI fn_task_list through the shared clamp so large column-filtered board reads remain text-only instead of being converted to host attachments.
+
+      FNXC:TaskListOutput 2026-06-17-05:46:
+      FN-6570 resolves the clamp from the runtime @fusion/core namespace and lets formatTaskListText fall back when stale dist/interoperability paths omit clampTaskListText, preventing heartbeat board reads from crashing.
+
+      FNXC:TaskListOutput 2026-06-17-07:25:
+      FN-6573 requires CLI fn_task_list to resolve formatTaskListText from the runtime @fusion/core namespace with a typeof guard and a self-contained bounded fallback. A stale @fusion/core dist missing the FN-6570 formatter export crashed ambient heartbeat agents as `(0 , _core.formatTaskListText) is not a function`; the tool must now return bounded text instead.
+
+      FNXC:TaskListOutput 2026-06-18-04:46:
+      FN-6630 refines FN-6492 by requiring filtered fn_task_list calls against empty target columns to return explicit empty-state text. Host runtimes can imageify empty content blocks as `(see attached image)`, so this call site must never emit empty or whitespace-only text.
+      */
+      const formatter = resolveTaskListFormatter(fusionCore);
+      const text = lines.length === 0
+        ? emptyStateText
+        : formatter(lines, { clamp: fusionCore.clampTaskListText }).trimEnd();
       return {
-        content: [{ type: "text", text: lines.join("\n").trimEnd() }],
+        content: [{ type: "text", text: text.trim().length > 0 ? text : emptyStateText }],
         details: { count: tasks.length },
       };
     },
@@ -3842,6 +3916,100 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_agent_set_instructions ───────────────────────────────────
+
+  /**
+   * FNXC:AgentManagement 2026-06-19-06:58:
+   * Managing agents need a scoped runtime tool for updating a direct or indirect report's operating instructions without granting peer, ancestor, or self-mutation rights.
+   * The no-agent caller path remains privileged for CLI/user control, while agent callers must appear as an ancestor in the target's chain of command so AgentStore config revisions preserve an auditable record of each instruction edit.
+   */
+  pi.registerTool({
+    name: "fn_agent_set_instructions",
+    label: "fn: Set Agent Instructions",
+    description:
+      "Set the instructionsText and/or instructionsPath of one of the caller's direct or indirect reports. " +
+      "At least one of instructions_text or instructions_path is required; pass an empty string to clear a field. " +
+      "The change is persisted and recorded as a config revision.",
+    promptSnippet: "Update operating instructions for an agent in your management subtree",
+    promptGuidelines: [
+      "Use to update operating instructions for an agent in your management subtree",
+      "You can only target your own direct or indirect reports, not yourself, peers, or ancestors",
+      "Provide instructions_text, instructions_path, or both; use an explicit empty string to clear a field",
+    ],
+    parameters: Type.Object({
+      agent_id: Type.String({ description: "Target agent whose instructions to set" }),
+      instructions_text: Type.Optional(
+        Type.String({ description: "Inline instructions. Pass an empty string to clear." }),
+      ),
+      instructions_path: Type.Optional(
+        Type.String({ description: "Path to a markdown instructions file. Pass an empty string to clear." }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: getFusionDir(ctx.cwd) });
+      await agentStore.init();
+
+      const hasInstructionsText = params.instructions_text !== undefined;
+      const hasInstructionsPath = params.instructions_path !== undefined;
+      if (!hasInstructionsText && !hasInstructionsPath) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Provide instructions_text and/or instructions_path to update agent instructions." }],
+          isError: true,
+          details: { outcome: "invalid", error: "instructions_text or instructions_path is required" },
+        };
+      }
+
+      const target = await agentStore.resolveAgent(params.agent_id);
+      if (!target) {
+        return {
+          content: [{ type: "text" as const, text: `Agent '${params.agent_id}' not found` }],
+          isError: true,
+          details: { outcome: "not_found", error: "Agent not found", agentId: params.agent_id },
+        };
+      }
+
+      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const callerAgentId = fnCtx.agentId;
+      if (callerAgentId) {
+        if (callerAgentId === target.id) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: You can only set instructions for your own direct or indirect reports, not yourself." }],
+            isError: true,
+            details: { outcome: "denied", agentId: target.id, callerAgentId, rule: "direct-or-indirect-reports-only" },
+          };
+        }
+
+        const chain = await agentStore.getChainOfCommand(target.id);
+        const callerIndex = chain.findIndex((agent) => agent.id === callerAgentId);
+        if (callerIndex < 1) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: You can only set instructions for your own direct or indirect reports." }],
+            isError: true,
+            details: { outcome: "denied", agentId: target.id, callerAgentId, rule: "direct-or-indirect-reports-only" },
+          };
+        }
+      }
+
+      const updatedFields: string[] = [];
+      if (hasInstructionsText) updatedFields.push("instructionsText");
+      if (hasInstructionsPath) updatedFields.push("instructionsPath");
+
+      const updated = await agentStore.updateAgent(target.id, {
+        ...(hasInstructionsText ? { instructionsText: params.instructions_text } : {}),
+        ...(hasInstructionsPath ? { instructionsPath: params.instructions_path } : {}),
+      });
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Updated ${updated.name} (${updated.id}) instructions: ${updatedFields.join(", ")}`,
+        }],
+        details: { outcome: "updated", agentId: updated.id, updatedFields },
+      };
+    },
+  });
+
   // ── fn_agent_delete ─────────────────────────────────────────────
 
   pi.registerTool({
@@ -4531,6 +4699,6 @@ export default function kbExtension(pi: ExtensionAPI) {
       dashboardProcess = null;
       dashboardPort = null;
     }
-    storeCache.clear();
+    closeCachedStores();
   });
 }

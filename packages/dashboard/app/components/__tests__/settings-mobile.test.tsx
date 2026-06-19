@@ -107,6 +107,8 @@ vi.mock("../../api", () => ({
     qmdInstallCommand: "bun install -g @tobilu/qmd",
   })),
   fetchDashboardHealth: vi.fn(() => Promise.resolve({ status: "ok", version: "1.2.3", uptime: 120 })),
+  checkForUpdates: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updateAvailable: true })),
+  installUpdate: vi.fn(() => Promise.resolve({ currentVersion: "1.0.0", latestVersion: "2.0.0", updated: true })),
   fetchGlobalSettings: vi.fn(() => Promise.resolve({ ...defaultSettings })),
   // SettingsModal renders ProjectDefaultWorkflowField → WorkflowSelector, which loads these on mount.
   fetchWorkflows: vi.fn(() => Promise.resolve([])),
@@ -222,6 +224,23 @@ describe("SettingsModal mobile adaptations", () => {
     await user.click(updateButton);
 
     expect(updateButton).toBeTruthy();
+  });
+
+  it("keeps update-now button reachable from the mobile footer", async () => {
+    mockSettingsViewport(true);
+    const user = userEvent.setup();
+    const { container, findByRole, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const modalActions = container.querySelector(".modal-actions");
+    expect(modalActions).toBeTruthy();
+
+    await user.click(within(modalActions as HTMLElement).getByRole("button", { name: "Check for updates" }));
+    const updateNow = await findByRole("button", { name: "Update now" });
+    expect((modalActions as HTMLElement).contains(updateNow)).toBe(true);
+
+    await user.click(updateNow);
+    expect(await findByText("Updated to v2.0.0 — restart Fusion to apply")).toBeTruthy();
   });
 
   it("excludes research sections from mobile picker when researchView is disabled", async () => {

@@ -22,7 +22,7 @@
 }
 
 .task-field-required {
-  color: var(--accent-danger, #e5484d);
+  color: var(--color-error);
 }
 
 .task-field-control {
@@ -38,10 +38,10 @@
   width: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
-  border: 1px solid var(--border-color, #2a2d34);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--input-bg, #16181d);
-  color: var(--text-primary, #e6e6e6);
+  background: var(--surface-1);
+  color: var(--text);
   font-size: 13px;
   font-family: inherit;
 }
@@ -67,9 +67,9 @@
 
 .task-field-chip {
   padding: 3px 10px;
-  border: 1px solid var(--border-color, #2a2d34);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--chip-bg, #1c1f26);
+  background: var(--surface-2);
   color: var(--text-muted, #b4b8c0);
   font-size: 12px;
   cursor: pointer;
@@ -103,7 +103,7 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--text-primary, #e6e6e6);
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -126,7 +126,7 @@
   width: 34px;
   height: 18px;
   border-radius: 999px;
-  background: var(--border-color, #2a2d34);
+  background: var(--border);
   position: relative;
   transition: background 0.15s ease;
 }
@@ -158,19 +158,19 @@
 /* Inline validation error */
 .task-field-error {
   font-size: 12px;
-  color: var(--accent-danger, #e5484d);
+  color: var(--color-error);
 }
 
 .task-field-row.has-error .task-field-input,
 .task-field-row.has-error .task-field-textarea,
 .task-field-row.has-error .task-field-select {
-  border-color: var(--accent-danger, #e5484d);
+  border-color: var(--color-error);
 }
 
 /* Collapsible detail-section group */
 .task-fields-group,
 .task-fields-orphaned {
-  border-top: 1px solid var(--border-color, #2a2d34);
+  border-top: 1px solid var(--border);
   padding-top: 8px;
 }
 
@@ -201,7 +201,7 @@
 
 .task-fields-orphaned-count {
   margin-left: auto;
-  background: var(--chip-bg, #1c1f26);
+  background: var(--surface-2);
   border-radius: 999px;
   padding: 0 8px;
   font-size: 11px;

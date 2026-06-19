@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Loader2 } from "lucide-react";
+import { LineChart, PieChart } from "./command-center/charts/recharts";
+import type { LineChartSeries, PieChartDatum } from "./command-center/charts/recharts";
 import "./ReliabilityView.css";
 
 type ReliabilityResponse = {
@@ -102,12 +104,36 @@ export function ReliabilityView() {
 
   const perDayRows = useMemo(() => {
     if (!data?.perDay) return [];
-    return showEmptyDays ? data.perDay : data.perDay.filter((row) => row.hasSamples !== false);
+    const filteredRows = showEmptyDays ? data.perDay : data.perDay.filter((row) => row.hasSamples !== false);
+    return [...filteredRows].sort((left, right) => left.date.localeCompare(right.date));
   }, [data?.perDay, showEmptyDays]);
 
-  const mergeAttemptTaskCount = useMemo(
-    () => Object.values(data?.mergeAttempts.histogram ?? {}).reduce((sum, count) => sum + count, 0),
+  /*
+  FNXC:Reliability 2026-06-19-00:00:
+  The in-review trend chart must reuse the same perDayRows source as the table, including the Show empty days filter, so visual and tabular reliability surfaces never disagree about which dates are represented.
+  */
+  const flowChartSeries = useMemo<LineChartSeries[]>(() => {
+    const hasFlowSamples = perDayRows.some((row) => row.tasksEnteredInReview > 0 || row.tasksBouncedToInProgress > 0);
+    if (!hasFlowSamples) return [];
+    return [
+      { label: t("reliability.flowChart.entered", "Entered"), values: perDayRows.map((row) => row.tasksEnteredInReview) },
+      { label: t("reliability.flowChart.bounced", "Bounced"), values: perDayRows.map((row) => row.tasksBouncedToInProgress) },
+    ];
+  }, [perDayRows, t]);
+
+  const mergeAttemptsHistogramEntries = useMemo(
+    () => Object.entries(data?.mergeAttempts.histogram ?? {}).sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true })),
     [data?.mergeAttempts.histogram],
+  );
+
+  const mergeAttemptsChartData = useMemo<PieChartDatum[]>(
+    () => mergeAttemptsHistogramEntries.map(([bucket, count]) => ({ label: bucket, value: count })),
+    [mergeAttemptsHistogramEntries],
+  );
+
+  const mergeAttemptTaskCount = useMemo(
+    () => mergeAttemptsHistogramEntries.reduce((sum, [, count]) => sum + count, 0),
+    [mergeAttemptsHistogramEntries],
   );
 
   const windowStartLabel = data
@@ -166,6 +192,14 @@ export function ReliabilityView() {
               {showEmptyDays ? t("reliability.hideEmptyDays", "Hide empty days") : t("reliability.showEmptyDays", "Show empty days")}
             </button>
           </div>
+          <div className="reliability-chart-section" data-testid="reliability-flow-chart">
+            <h4>{t("reliability.flowChart.heading", "Entered vs bounced trend")}</h4>
+            <LineChart
+              series={flowChartSeries}
+              ariaLabel={t("reliability.flowChart.aria", "In-review entered vs bounced per day")}
+              emptyLabel={t("reliability.flowChart.empty", "No in-review flow data")}
+            />
+          </div>
           <table className="reliability-table">
             <thead><tr><th>{t("reliability.table.date", "Date")}</th><th>{t("reliability.table.entered", "Entered")}</th><th>{t("reliability.table.bounced", "Bounced")}</th></tr></thead>
             <tbody>
@@ -196,8 +230,16 @@ export function ReliabilityView() {
           <h3>{t("reliability.mergeAttempts.heading", "Merge attempts")}</h3>
           <div className="reliability-stat-row"><span>{t("reliability.mergeAttempts.mean", "Mean")}</span><strong>{data?.mergeAttempts.mean?.toFixed(2) ?? "—"}</strong></div>
           <div className="reliability-stat-row"><span>{t("reliability.mergeAttempts.max", "Max")}</span><strong>{data?.mergeAttempts.max ?? "—"}</strong></div>
+          <div className="reliability-chart-section" data-testid="reliability-merge-attempts-chart">
+            <h4>{t("reliability.mergeAttemptsChart.heading", "Attempts distribution")}</h4>
+            <PieChart
+              data={mergeAttemptsChartData}
+              ariaLabel={t("reliability.mergeAttemptsChart.aria", "Merge attempts histogram")}
+              emptyLabel={t("reliability.mergeAttemptsChart.empty", "No merge attempt data")}
+            />
+          </div>
           <ul className="reliability-histogram">
-            {Object.entries(data?.mergeAttempts.histogram ?? {}).map(([bucket, count]) => (
+            {mergeAttemptsHistogramEntries.map(([bucket, count]) => (
               <li key={bucket}>
                 <span>{bucket}</span>
                 <div className="reliability-histogram-bar-wrap"><div className="reliability-histogram-bar" style={{ width: `${Math.min(count * 20, 100)}%` }} /></div>

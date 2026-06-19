@@ -25,8 +25,9 @@ import { request } from "../../test-request.js";
 
 /** Captures the prompt the route fed the agent and returns canned `text`. */
 function makeFakeAgent(text: string) {
-  const captured: { systemPrompt?: string; userPrompt?: string } = {};
+  const captured: { systemPrompt?: string; userPrompt?: string; options?: any } = {};
   const factory: any = async (opts: any) => {
+    captured.options = opts;
     captured.systemPrompt = opts.systemPrompt;
     let textListener: ((delta: string) => void) | undefined;
     const session = {
@@ -142,6 +143,14 @@ describe("POST /api/workflows/design (U7/R11/KTD-6)", () => {
       rethrowAsApiError: (err: unknown) => {
         throw err instanceof ApiError ? err : new ApiError(500, err instanceof Error ? err.message : String(err));
       },
+      options: {
+        pluginRunner: {
+          getPluginSkills: () => [
+            { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+            { pluginId: "disabled-plugin", skill: { name: "disabled-skill", enabled: false } },
+          ],
+        },
+      },
     } as unknown as Parameters<typeof registerWorkflowRoutes>[0]);
     app.use("/api", router);
     app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -158,15 +167,34 @@ describe("POST /api/workflows/design (U7/R11/KTD-6)", () => {
     rmSync(globalDir, { recursive: true, force: true });
   });
 
-  const postJson = (path: string, body: unknown) =>
-    request(app, "POST", path, JSON.stringify(body), { "Content-Type": "application/json" });
+  const postJson = (path: string, body: unknown, targetApp = app) =>
+    request(targetApp, "POST", path, JSON.stringify(body), { "Content-Type": "application/json" });
+
+  function createAppWithoutPluginRunner() {
+    const degradedApp = express();
+    degradedApp.use(express.json());
+    const router = express.Router();
+    registerWorkflowRoutes({
+      router,
+      getProjectContext: async () => ({ store, engine: undefined, projectId: undefined }),
+      rethrowAsApiError: (err: unknown) => {
+        throw err instanceof ApiError ? err : new ApiError(500, err instanceof Error ? err.message : String(err));
+      },
+    } as unknown as Parameters<typeof registerWorkflowRoutes>[0]);
+    degradedApp.use("/api", router);
+    degradedApp.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      if (err instanceof ApiError) sendErrorResponse(res, err.statusCode, err.message, { details: err.details });
+      else sendErrorResponse(res, 500, err instanceof Error ? err.message : String(err));
+    });
+    return degradedApp;
+  }
 
   async function userDefCount() {
     return (await store.listWorkflowDefinitions()).filter((w) => !isBuiltinWorkflowId(w.id)).length;
   }
 
   it("valid linear IR → 200 {ir, interpreterOnly:false} with layout", async () => {
-    const { factory } = makeFakeAgent(JSON.stringify(linearIr()));
+    const { factory, captured } = makeFakeAgent(JSON.stringify(linearIr()));
     __setCreateFnAgentForDesign(factory);
 
     const res = await postJson("/api/workflows/design", { prompt: "a coding flow" });
@@ -176,6 +204,26 @@ describe("POST /api/workflows/design (U7/R11/KTD-6)", () => {
     expect(res.body.layout).toBeTruthy();
     expect(Object.keys(res.body.layout).length).toBeGreaterThan(0);
     expect(res.body.strippedApprovalFlags).toBe(false);
+    expect(captured.options?.skillSelection).toMatchObject({
+      projectRootDir: rootDir,
+      sessionPurpose: "executor",
+    });
+    expect(captured.options?.skillSelection?.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("uses executor fallback skills when workflow design has no plugin runner", async () => {
+    const degradedApp = createAppWithoutPluginRunner();
+    const { factory, captured } = makeFakeAgent(JSON.stringify(linearIr()));
+    __setCreateFnAgentForDesign(factory);
+
+    const res = await postJson("/api/workflows/design", { prompt: "a coding flow" }, degradedApp);
+
+    expect(res.status).toBe(200);
+    expect(captured.options?.skillSelection).toMatchObject({
+      projectRootDir: rootDir,
+      sessionPurpose: "executor",
+    });
+    expect(captured.options?.skillSelection?.requestedSkillNames).toEqual(["fusion"]);
   });
 
   it("non-streaming agent session without .on() → reads last assistant message", async () => {

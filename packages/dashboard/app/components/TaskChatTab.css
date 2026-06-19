@@ -1,33 +1,46 @@
 .task-chat-tab {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-md);
+  /* FNXC:TaskDetailChat 2026-06-13-19:55: Chat box should sit in the chat view without excess vertical spacing around the composer (FN-6418), so the transcript-to-composer gap is tighter than the default card stack. */
+  gap: var(--space-sm);
   min-height: 0;
   height: 100%;
-}
-
-.task-chat-toolbar {
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: flex-end;
-  gap: var(--space-sm);
 }
 
 .task-chat-expand-toggle {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
+  justify-content: center;
+  min-inline-size: var(--space-2xl);
+  min-block-size: var(--space-2xl);
+  padding: 0;
+}
+
+/*
+FNXC:TaskChat 2026-06-13-00:00:
+FN-6425 requires the chat expand control to stay inside the chat view as an icon-only affordance while remaining reachable at every transcript scroll offset. Anchor it to the non-scrolling task-chat wrapper rather than the transcript content.
+*/
+.task-chat-expand-toggle--overlay {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 3;
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .task-chat-transcript {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-lg);
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-md);
+  padding: calc(var(--space-md) + var(--space-2xl)) var(--space-md) var(--space-md);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-secondary);
@@ -42,6 +55,25 @@
   padding: var(--space-xl);
   color: var(--text-muted);
   text-align: center;
+}
+
+.task-chat-load-previous-row {
+  display: flex;
+  justify-content: center;
+  min-block-size: calc(var(--space-2xl) + var(--space-sm));
+}
+
+.task-chat-load-previous,
+.task-chat-load-previous-status {
+  min-block-size: calc(var(--space-2xl) + var(--space-sm));
+}
+
+.task-chat-load-previous-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
 }
 
 .task-chat-jump-to-bottom {
@@ -102,8 +134,18 @@
 }
 
 .task-chat-group-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
   color: var(--text-muted);
   font-size: var(--space-md);
+}
+
+.task-chat-timestamp {
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) - (var(--space-xs) / 2));
+  white-space: nowrap;
 }
 
 .task-chat-group-bubbles {
@@ -122,6 +164,10 @@
 }
 
 .task-chat-user-header {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
   padding-inline: var(--space-sm);
   color: var(--text-muted);
 }
@@ -300,7 +346,8 @@
   flex: 0 0 auto;
   flex-direction: column;
   gap: var(--space-sm);
-  padding: var(--space-md);
+  /* FNXC:TaskDetailChat 2026-06-13-19:55: Chat box should sit in the chat view without excess vertical spacing around the composer (FN-6418), while preserving readable horizontal inset for the input row. */
+  padding: var(--space-sm) var(--space-md);
 }
 
 .task-chat-session-hint {
@@ -321,7 +368,21 @@
   flex: 1 1 auto;
 }
 
+/*
+FNXC:TaskDetailChat 2026-06-16-19:45:
+FN-6507 requires the Task Detail chat send glyph to scale with the larger square touch target on desktop and mobile. Override only this button's global .btn-icon size so Send and Loader2 stay visually proportional without changing the tap box or sibling chat send buttons.
+
+FNXC:TaskDetailChat 2026-06-17-18:05:
+FN-6604 corrects the FN-6507 no-op where var(--space-lg) resolved to the same 16px value as the global --icon-size-md default. Use var(--space-xl) so the glyph resolves to 24px and fills the 40px desktop and mobile send button proportionally while preserving the tap box.
+
+FNXC:TaskDetailChat 2026-06-18-06:36:
+FN-6639 corrects the FN-6604 sizing because var(--space-xl) rendered a 24px glyph that filled only about 60% of the 40px button and still looked too small on mobile. Use var(--space-2xl) so Send and Loader2 render at 32px, about 80% fill, on desktop and mobile while preserving the tap box alignment.
+
+FNXC:TaskDetailChat 2026-06-18-12:00:
+FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN-6639: those passes only grew the glyph token inside a fixed 40px box, so the mobile affordance was never larger than desktop and still felt too small. Grow only the mobile box to calc(var(--space-2xl) + var(--space-lg)) and the mobile glyph to calc(var(--space-2xl) + var(--space-sm)), roughly 83% fill, while raising the mobile composer textarea min-height to the same 48px token sum for bottom alignment. Desktop stays intentionally unchanged.
+*/
 .task-chat-send {
+  --btn-icon-size: var(--space-2xl);
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -335,28 +396,35 @@
 
 @media (max-width: 768px) {
   .task-chat-tab {
-    gap: var(--space-sm);
+    gap: var(--space-xs);
   }
 
-  .task-chat-toolbar {
-    justify-content: stretch;
-  }
-
-  .task-chat-expand-toggle {
-    justify-content: center;
-    width: 100%;
+  .task-chat-expand-toggle--overlay {
+    top: var(--space-sm);
+    right: var(--space-sm);
+    min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
   }
 
   .task-chat-transcript {
     flex: 1 1 auto;
     min-height: 0;
-    padding: var(--space-sm);
+    padding: calc(var(--space-sm) + var(--space-2xl)) var(--space-sm) var(--space-sm);
   }
 
   .task-chat-jump-to-bottom {
     right: var(--space-sm);
     bottom: var(--space-sm);
     min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .task-chat-load-previous-row {
+    min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .task-chat-load-previous,
+  .task-chat-load-previous-status {
     min-block-size: calc(var(--space-2xl) + var(--space-sm));
   }
 
@@ -374,6 +442,11 @@
 
   .task-chat-user-header {
     align-self: flex-end;
+    justify-content: flex-end;
+  }
+
+  .task-chat-timestamp {
+    white-space: normal;
   }
 
   .task-chat-entry--user {
@@ -401,7 +474,7 @@
   }
 
   .task-chat-composer {
-    padding: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
   }
 
   .task-chat-composer-row {
@@ -409,8 +482,15 @@
     gap: var(--space-xs);
   }
 
+  .task-chat-input {
+    min-height: calc(var(--space-2xl) + var(--space-lg));
+  }
+
   .task-chat-send {
-    inline-size: calc(var(--space-2xl) + var(--space-sm));
-    min-inline-size: calc(var(--space-2xl) + var(--space-sm));
+    --btn-icon-size: calc(var(--space-2xl) + var(--space-sm));
+    inline-size: calc(var(--space-2xl) + var(--space-lg));
+    min-inline-size: calc(var(--space-2xl) + var(--space-lg));
+    block-size: calc(var(--space-2xl) + var(--space-lg));
+    min-block-size: calc(var(--space-2xl) + var(--space-lg));
   }
 }

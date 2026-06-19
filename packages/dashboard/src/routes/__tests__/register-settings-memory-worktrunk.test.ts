@@ -2,13 +2,52 @@
 
 import express from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { registerSettingsMemoryRoutes } from "../register-settings-memory-routes.js";
+import {
+  __resetCreateFnAgentForInsights,
+  __setCreateFnAgentForInsights,
+  registerSettingsMemoryRoutes,
+} from "../register-settings-memory-routes.js";
 import { request as performRequest } from "../../test-request.js";
 
-const { resolveWorktrunkBinaryMock, probeWorktrunkMock } = vi.hoisted(() => ({
+const {
+  resolveWorktrunkBinaryMock,
+  probeWorktrunkMock,
+  readMemoryMock,
+  readInsightsMemoryMock,
+  buildInsightExtractionPromptMock,
+  processAndAuditInsightExtractionMock,
+  processMemoryDreamsMock,
+  processAgentMemoryDreamsMock,
+  resolvePlanningSettingsModelMock,
+} = vi.hoisted(() => ({
   resolveWorktrunkBinaryMock: vi.fn(),
   probeWorktrunkMock: vi.fn(),
+  readMemoryMock: vi.fn(),
+  readInsightsMemoryMock: vi.fn(),
+  buildInsightExtractionPromptMock: vi.fn(),
+  processAndAuditInsightExtractionMock: vi.fn(),
+  processMemoryDreamsMock: vi.fn(),
+  processAgentMemoryDreamsMock: vi.fn(),
+  resolvePlanningSettingsModelMock: vi.fn(),
 }));
+
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+  return {
+    ...actual,
+    readMemory: readMemoryMock,
+    readInsightsMemory: readInsightsMemoryMock,
+    buildInsightExtractionPrompt: buildInsightExtractionPromptMock,
+    processAndAuditInsightExtraction: processAndAuditInsightExtractionMock,
+    processMemoryDreams: processMemoryDreamsMock,
+    processAgentMemoryDreams: processAgentMemoryDreamsMock,
+    AgentStore: class {
+      async init() {}
+      async listAgents() { return []; }
+    },
+    resolvePlanningSettingsModel: resolvePlanningSettingsModelMock,
+  };
+});
 
 vi.mock("@fusion/engine", async () => {
   const actual = await vi.importActual<typeof import("@fusion/engine")>("@fusion/engine");
@@ -19,17 +58,19 @@ vi.mock("@fusion/engine", async () => {
   };
 });
 
-function createApp() {
+function createApp(pluginRunner?: Record<string, unknown>) {
   const router = express.Router();
   const scopedStore = {
-    getSettings: vi.fn(async () => ({ worktrunk: { enabled: false } })),
+    getSettings: vi.fn(async () => ({ worktrunk: { enabled: false }, memoryDreamsEnabled: true })),
+    getRootDir: vi.fn(() => "/tmp/project"),
+    getFusionDir: vi.fn(() => "/tmp/project/.fusion"),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => patch),
   };
 
   registerSettingsMemoryRoutes(
     {
       router,
-      options: {},
+      options: { pluginRunner },
       store: {} as any,
       runtimeLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as any,
       getProjectContext: vi.fn(async () => ({ store: scopedStore, projectId: "p1" })),
@@ -69,6 +110,14 @@ describe("register-settings-memory-routes worktrunk gate", () => {
   beforeEach(() => {
     resolveWorktrunkBinaryMock.mockReset();
     probeWorktrunkMock.mockReset();
+    readMemoryMock.mockReset();
+    readInsightsMemoryMock.mockReset();
+    buildInsightExtractionPromptMock.mockReset();
+    processAndAuditInsightExtractionMock.mockReset();
+    processMemoryDreamsMock.mockReset();
+    processAgentMemoryDreamsMock.mockReset();
+    resolvePlanningSettingsModelMock.mockReset();
+    __resetCreateFnAgentForInsights();
   });
 
   it("rejects worktrunk.enabled=true when binary is unavailable", async () => {
@@ -114,5 +163,149 @@ describe("register-settings-memory-routes worktrunk gate", () => {
     expect(resolveWorktrunkBinaryMock).not.toHaveBeenCalled();
     expect(probeWorktrunkMock).not.toHaveBeenCalled();
     expect(scopedStore.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes enabled plugin skills to memory dream processing", async () => {
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+        { pluginId: "disabled-plugin", skill: { name: "disabled-skill", enabled: false } },
+      ]),
+    };
+    const { app } = createApp(pluginRunner);
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "dream result"),
+          state: { messages: [{ role: "assistant", content: "dream result" }] },
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    processMemoryDreamsMock.mockImplementation(async (_rootDir: string, executePrompt: (prompt: string) => Promise<string>) => {
+      await executePrompt("dream prompt");
+      return { dreams: true, longTermUpdates: false };
+    });
+    processAgentMemoryDreamsMock.mockResolvedValue([]);
+
+    const res = await performRequest(app, "POST", "/api/memory/dream", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("uses executor fallback skills when memory dream processing has no plugin runner", async () => {
+    const { app } = createApp();
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "dream result"),
+          state: { messages: [{ role: "assistant", content: "dream result" }] },
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    processMemoryDreamsMock.mockImplementation(async (_rootDir: string, executePrompt: (prompt: string) => Promise<string>) => {
+      await executePrompt("dream prompt");
+      return { dreams: false, longTermUpdates: false };
+    });
+    processAgentMemoryDreamsMock.mockResolvedValue([]);
+
+    const res = await performRequest(app, "POST", "/api/memory/dream", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
+  });
+
+  it("passes enabled plugin skills to manual insight extraction", async () => {
+    const pluginRunner = {
+      getPluginSkills: vi.fn(() => [
+        { pluginId: "fusion-plugin-compound-engineering", skill: { name: "ce-debug" } },
+        { pluginId: "disabled-plugin", skill: { name: "disabled-skill", enabled: false } },
+      ]),
+    };
+    const { app } = createApp(pluginRunner);
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "{\"insights\":[]}"),
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    readMemoryMock.mockResolvedValue({ content: "working notes" });
+    readInsightsMemoryMock.mockResolvedValue(null);
+    buildInsightExtractionPromptMock.mockReturnValue("extract insights");
+    processAndAuditInsightExtractionMock.mockResolvedValue({
+      extraction: { summary: "Extracted", insightCount: 0 },
+      pruning: { applied: false },
+    });
+
+    const res = await performRequest(app, "POST", "/api/memory/extract", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(pluginRunner.getPluginSkills).toHaveBeenCalledTimes(1);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion", "ce-debug"]);
+  });
+
+  it("uses executor fallback skills when manual insight extraction has no plugin runner", async () => {
+    const { app } = createApp();
+    let capturedOptions: any;
+    __setCreateFnAgentForInsights(async (options: any) => {
+      capturedOptions = options;
+      return {
+        session: {
+          prompt: vi.fn(async () => "{\"insights\":[]}"),
+          dispose: vi.fn(),
+        },
+      };
+    });
+    resolvePlanningSettingsModelMock.mockReturnValue({ provider: "mock", modelId: "model" });
+    readMemoryMock.mockResolvedValue({ content: "working notes" });
+    readInsightsMemoryMock.mockResolvedValue(null);
+    buildInsightExtractionPromptMock.mockReturnValue("extract insights");
+    processAndAuditInsightExtractionMock.mockResolvedValue({
+      extraction: { summary: "Extracted", insightCount: 0 },
+      pruning: { applied: false },
+    });
+
+    const res = await performRequest(app, "POST", "/api/memory/extract", "{}", {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(capturedOptions.skillSelection).toMatchObject({
+      projectRootDir: "/tmp/project",
+      sessionPurpose: "executor",
+    });
+    expect(capturedOptions.skillSelection.requestedSkillNames).toEqual(["fusion"]);
   });
 });

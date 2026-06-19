@@ -339,9 +339,10 @@ describe("TaskCard mobile", () => {
     expectRuleToContain(css, ".card-footer-row", "row-gap: var(--space-xs);");
   });
 
-  it("keeps TaskCard footer-chip cluster anchored by first chip rules", () => {
+  it("keeps TaskCard footer-chip cluster anchored by the right wrapper", () => {
     const css = loadAllAppCss();
-    expectRuleToContain(css, ".card-footer-row > .card-time-indicator:first-of-type", "margin-left: auto;");
+    expectRuleToContain(css, ".card-footer-row-right", "margin-left: auto;");
+    expect(css).not.toContain(".card-footer-row > .card-time-indicator:first-of-type");
 
     const timeIndicatorRule = css.match(/\.card-time-indicator\s*\{[^}]*\}/)?.[0] ?? "";
     expect(timeIndicatorRule).not.toContain("margin-left: auto;");

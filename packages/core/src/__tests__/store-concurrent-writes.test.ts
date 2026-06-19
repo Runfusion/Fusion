@@ -36,7 +36,13 @@ async function holdWriteLock(
       process.exit(0);
     };
     if (${JSON.stringify(releaseMode)} === "timer") {
-      setTimeout(release, ${holdMs});
+      /*
+      FNXC:CoreTests 2026-06-15-07:38:
+      FN-6486 rescues this WAL lock-recovery regression by removing the helper's event-loop timer dependency. Under package-lane load, a delayed setTimeout could keep the external writer lock past the recovery window and mimic a product failure; a synchronous child-process sleep preserves the transient lock invariant without widening test or SQLite retry timeouts.
+      */
+      const signal = new Int32Array(new SharedArrayBuffer(4));
+      Atomics.wait(signal, 0, 0, ${holdMs});
+      release();
     } else {
       process.stdin.setEncoding("utf8");
       process.stdin.on("data", (chunk) => {

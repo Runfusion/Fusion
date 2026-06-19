@@ -10,6 +10,7 @@ import { useMemoryData } from "../hooks/useMemoryData";
 interface MemoryViewProps {
   projectId?: string;
   addToast: (message: string, type: "success" | "error" | "info") => void;
+  onSendSelectionToTask?: (description: string) => void;
 }
 
 type Tab = "working" | "insights" | "engines";
@@ -98,7 +99,7 @@ function countTotalInsights(categories: ParsedInsightCategory[]): number {
   return categories.reduce((sum, cat) => sum + cat.items.length, 0);
 }
 
-export function MemoryView({ projectId, addToast }: MemoryViewProps) {
+export function MemoryView({ projectId, addToast, onSendSelectionToTask }: MemoryViewProps) {
   const { t } = useTranslation("app");
   const [activeTab, setActiveTab] = useState<Tab>("working");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
@@ -454,6 +455,7 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
                         onChange={setSelectedFileContent}
                         readOnly={!isWritable}
                         filePath={selectedFilePath}
+                        onSendSelectionToTask={onSendSelectionToTask}
                       />
                     </div>
                   </div>
@@ -671,6 +673,7 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
                     onChange={setInsightsEditorContent}
                     readOnly={false}
                     filePath=".fusion/memory/INSIGHTS.md"
+                    onSendSelectionToTask={onSendSelectionToTask}
                   />
                 </div>
                 <div className="memory-action-bar">

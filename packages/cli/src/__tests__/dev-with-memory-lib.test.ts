@@ -69,12 +69,22 @@ describe("dev-with-memory prebuild options", () => {
     ]);
   });
 
-  it("defaults dashboard startup to client-only prebuild instead of full workspace build", () => {
+  it("rebuilds core + engine + dashboard (UI) for dashboard startup, not the full workspace", () => {
+    // FN-6638/stale-dist: dev dashboard must refresh engine + core dist (not
+    // just the client bundle) so landed fixes are not silently stale.
     expect(resolvePrebuildMode("auto", ["dashboard", "--port", "4050"])).toBe("client");
     expect(getPrebuildCommand("client")).toEqual({
       command: "pnpm",
-      args: ["--filter", "@fusion/dashboard", "build:client"],
-      label: "dashboard client build",
+      args: [
+        "--filter",
+        "@fusion/core",
+        "--filter",
+        "@fusion/engine",
+        "--filter",
+        "@fusion/dashboard",
+        "build",
+      ],
+      label: "core + engine + dashboard build",
     });
   });
 

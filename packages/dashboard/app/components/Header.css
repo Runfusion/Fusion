@@ -8,6 +8,19 @@
   background: var(--surface);
 }
 
+/*
+FNXC:MobileShell 2026-06-16-18:10:
+Native shells (Capacitor Android API 35+, iOS notch, installed PWA standalone) draw the
+webview edge-to-edge, so the top app chrome renders UNDER the OS status bar and the
+brand/controls overlap it. Reserve the status-bar height by adding env(safe-area-inset-top)
+to the header's top padding; the header's own surface background then fills behind the
+status bar so it reads as intentional. The inset resolves to 0 on web/desktop and
+non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (index.html).
+*/
+.header {
+  padding-top: calc(var(--space-md) + env(safe-area-inset-top, 0px));
+}
+
 .header-wrapper {
   position: relative;
 }

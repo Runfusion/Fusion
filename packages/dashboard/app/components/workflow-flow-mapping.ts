@@ -97,6 +97,36 @@ export const columnBandNodeId = (columnId: string): string => `__col__:${columnI
 export const isColumnBandNode = (id: string): boolean => id.startsWith("__col__:");
 export const columnIdFromBandNode = (id: string): string => id.slice("__col__:".length);
 
+/**
+ * FNXC:WorkflowEditor 2026-06-16-23:15:
+ * Re-adding a workflow column creates a fresh generated id, so every authored node column reference must be reconciled against the current column set. Clear stale references, especially on the structural start node, before save-time IR validation can reject with `references undefined column`.
+ */
+export function reconcileNodeColumns(
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+  columns: WorkflowIrColumn[],
+): FlowNode<WorkflowFlowNodeData>[] {
+  if (columns.length === 0) {
+    let changed = false;
+    const next = nodes.map((node) => {
+      if (isColumnBandNode(node.id) || node.type === "group" || node.data.column === undefined) return node;
+      changed = true;
+      return { ...node, data: { ...node.data, column: undefined } };
+    });
+    return changed ? next : nodes;
+  }
+
+  const columnIds = new Set(columns.map((column) => column.id));
+  let changed = false;
+  const next = nodes.map((node) => {
+    const column = node.data.column;
+    if (isColumnBandNode(node.id) || node.type === "group" || column === undefined || columnIds.has(column)) return node;
+    changed = true;
+    return { ...node, data: { ...node.data, column: undefined } };
+  });
+
+  return changed ? next : nodes;
+}
+
 /** The y-origin of the band for the column at `index`. */
 export function bandTop(index: number): number {
   return COLUMN_BAND_TOP + index * COLUMN_BAND_HEIGHT;
@@ -790,6 +820,21 @@ function mergedFlags(
   return { flags, capacityTraitIds, unknown };
 }
 
+/*
+FNXC:CustomWorkflows 2026-06-16-22:30:
+The workflow editor's client-side trait validator mirrors the server validator, including traitIds used to identify the exact composed traits behind blocking save errors.
+*/
+function traitIdsWithFlags(
+  traits: WorkflowIrColumn["traits"],
+  catalog: Map<string, TraitCatalogEntry>,
+  names: Array<keyof CatalogFlags>,
+): string[] {
+  return traits
+    .map((ct) => catalog.get(ct.trait))
+    .filter((def): def is TraitCatalogEntry => !!def && names.some((name) => !!def.flags[name]))
+    .map((def) => def.id);
+}
+
 /** Client mirror of core's validateColumnTraits, driven by the trait catalog. */
 export function validateColumnsClient(
   columns: WorkflowIrColumn[],
@@ -815,7 +860,7 @@ export function validateColumnsClient(
         code: "complete-with-wip",
         severity: "error",
         columnId: col.id,
-        traitIds: capacityTraitIds,
+        traitIds: traitIdsWithFlags(col.traits, byId, ["complete", "countsTowardWip"]),
         message: `Column '${col.name || col.id}' is both a completion column and counts toward WIP`,
       });
     }
@@ -833,7 +878,7 @@ export function validateColumnsClient(
         code: "complete-with-intake",
         severity: "error",
         columnId: col.id,
-        traitIds: [],
+        traitIds: traitIdsWithFlags(col.traits, byId, ["complete", "intake"]),
         message: `Column '${col.name || col.id}' is both a completion column and an intake column`,
       });
     }
@@ -842,7 +887,7 @@ export function validateColumnsClient(
         code: "archived-with-wip",
         severity: "error",
         columnId: col.id,
-        traitIds: [],
+        traitIds: traitIdsWithFlags(col.traits, byId, ["archived", "countsTowardWip"]),
         message: `Column '${col.name || col.id}' is archived but counts toward WIP`,
       });
     }

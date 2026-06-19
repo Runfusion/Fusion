@@ -1,3 +1,7 @@
+/*
+FNXC:TaskDetailTabs 2026-06-17-08:20:
+FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+*/
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
@@ -34,6 +38,7 @@ function renderSummarizeTitleModal(overrides: Parameters<typeof makeTask>[0] = {
 
   const result = render(
     <TaskDetailModal
+      initialTab="definition"
       task={task}
       onClose={noop}
       onMoveTask={noopMove}
@@ -169,6 +174,7 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           githubTracking: { enabled: true },
           title: "",
@@ -194,6 +200,7 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           githubTracking: { enabled: true },
           title: "Real title",
@@ -217,6 +224,7 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           githubTracking: { enabled: true },
           title: "",
@@ -281,6 +289,7 @@ describe("TaskDetailModal Logs activity loading", () => {
 
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeSlimTask() as any}
         onClose={noop}
         onMoveTask={noopMove}
@@ -418,6 +427,7 @@ describe("TaskDetailModal Logs agent loading", () => {
 
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({ prompt: "# Loaded" })}
         onClose={noop}
         onMoveTask={noopMove}
@@ -442,6 +452,7 @@ describe("TaskDetailModal branch group surfacing", () => {
   it("renders branch group card when task has group context", () => {
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({ branchContext: { groupId: "BG-1", source: "planning", assignmentMode: "shared" } })}
         onClose={noop}
         onMoveTask={noopMove}
@@ -466,6 +477,7 @@ describe("TaskDetailModal delete affordance", () => {
 
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({ column: "done" })}
         onClose={onClose}
         onMoveTask={noopMove}
@@ -494,6 +506,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           column: "in-review",
           inReviewStall: {
@@ -531,6 +544,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           column: "in-review",
           mergeRetries: 3,
@@ -557,6 +571,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     const user = userEvent.setup();
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           column: "in-review",
           inReviewStall: {
@@ -583,6 +598,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
   it("FN-4570: hides merge-blocker diagnostic while task is actively merging", () => {
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={makeTask({
           column: "in-review",
           status: "merging-fix",
@@ -631,6 +647,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
   ])("does not render diagnostic row for $label", ({ task }) => {
     render(
       <TaskDetailModal
+        initialTab="definition"
         task={task}
         onClose={noop}
         onMoveTask={noopMove}

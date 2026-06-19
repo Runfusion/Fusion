@@ -42,6 +42,10 @@ export interface CeFlowProps {
 
 // ── Transcript parsing ───────────────────────────────────────────────────────
 
+/**
+ * FNXC:CompoundEngineeringUI 2026-06-17-00:52:
+ * CE flow markup keeps its rendered text and test ids stable while adding shared .input/.btn/.btn-icon hooks so dashboard theme spacing and focus conventions style interactive controls consistently.
+ */
 const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
 
 type DisplayItem =
@@ -284,6 +288,7 @@ function RichQuestion({
           }}
         >
           <textarea
+            className="input"
             data-testid="ce-flow-text-input"
             aria-label={question.question}
             value={text}
@@ -355,6 +360,7 @@ function RichQuestion({
                 <li key={opt.id}>
                   <label className="ce-flow-checkbox">
                     <input
+                      className="ce-flow-checkbox-input"
                       type="checkbox"
                       data-option={opt.id}
                       checked={checked}
@@ -418,6 +424,7 @@ function DegradedQuestion({
         }}
       >
         <textarea
+          className="input"
           data-testid="ce-flow-degraded-input"
           aria-label={question.question}
           value={text}
@@ -483,6 +490,7 @@ function QuestionPanel({
           <div className="ce-flow-guidance-row">
             <textarea
               id="ce-flow-guidance-input"
+              className="input"
               data-testid="ce-flow-guidance-input"
               value={guidance}
               disabled={disabled}
@@ -542,7 +550,7 @@ export function CeFlow(props: CeFlowProps) {
         {onCancel && cancellable ? (
           <button
             type="button"
-            className="btn-icon ce-flow-cancel"
+            className="btn btn-icon ce-flow-cancel"
             data-testid="ce-flow-cancel"
             onClick={onCancel}
             disabled={Boolean(busy)}

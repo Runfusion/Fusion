@@ -69,7 +69,7 @@
 .wf-field-id-static {
   font-family: var(--font-mono, monospace);
   font-size: 0.7rem;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
   background: var(--surface-2, color-mix(in srgb, #ffffff 4%, transparent));
   padding: 1px 6px;
   border-radius: var(--radius-sm);
@@ -113,7 +113,7 @@
 .wf-field-sub > span {
   font-size: 0.65rem;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
 }
 
 .wf-field--checkbox {
@@ -122,6 +122,14 @@
   gap: 4px;
   font-size: 0.7rem;
   color: var(--text-muted);
+}
+
+/*
+FNXC:WorkflowEditorTheme 2026-06-19-05:22:
+Field-list checkboxes share the editor sidebar surface and must stay theme-accented across editable and built-in read-only workflow states.
+*/
+.wf-field--checkbox input[type="checkbox"] {
+  accent-color: var(--todo);
 }
 
 .wf-field-required {
@@ -140,7 +148,7 @@
 .wf-field-options-label {
   font-size: 0.65rem;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: var(--text-dim);
 }
 
 .wf-field-option-row {
@@ -170,7 +178,7 @@
 }
 
 .wf-field-color-swatch.is-active {
-  outline: 2px solid var(--text-primary, #fff);
+  outline: 2px solid var(--text);
   outline-offset: 1px;
 }
 

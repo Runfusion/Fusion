@@ -10,6 +10,18 @@ CI blocks PRs on exactly four checks (`.github/workflows/pr-checks.yml`): **Lint
 
 Gate membership is the explicit allow-list in `packages/engine/vitest.config.ts` (`engine-core` project). Admission requires evidence of value (the test catches real regressions); tests never graduate in by default. A flaky gate test is evicted by deleting its allow-list line — the eviction PR does not need the flaky test to pass. The whole `engine-core` project must stay under ~60s wall-clock.
 
+## Weekly signal-per-second baseline
+
+Refresh and publish the test feedback-loop baseline in #leads once per weekly cycle:
+
+```bash
+pnpm test:gate  # capture wall-time in ms
+pnpm test       # capture wall-time in ms
+node scripts/test-feedback-baseline.mjs --record --gate-ms <ms> --test-ms <ms> --print-leads
+```
+
+The generated `docs/test-feedback-loop-baseline.md` is the publication artifact: it reports gate wall-time, `pnpm test` wall-time, the slowest 20 test files from `scripts/test-timings.json`, and the current quarantine/flake count from `scripts/lib/test-quarantine.json`. Keep the trend flat or net-negative; use the slowest-file list to drive FN-5048 rewrites and deletion-ratchet reviews instead of adding low-signal coverage.
+
 **The gate's blind spot, stated honestly:** typecheck + build + boot smoke + curated suite does not run the union suite a merge creates. Logic regressions outside the curated set land non-blocking by design — that is the accepted trade: the old broad gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage.
 
 ## Required workspace gates
@@ -28,9 +40,19 @@ pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (N
 
 `pnpm test:full` runs each package's default test script with capped worker fanout (`FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=2 pnpm -r --workspace-concurrency=2 test`). Do not casually raise worker counts; dashboard/jsdom and integration-heavy packages destabilize when oversubscribed. Use `VITEST_MAX_WORKERS=<n>` only for targeted package-level investigation.
 
+<!-- FNXC:CustomWorkflowReliability 2026-06-19-00:00: FN-6694 adds an executable custom-workflow reliability release-check lane for QA signoff, but it must stay out of the merge gate so reliability evidence does not inflate every PR's wall-time. -->
+Custom workflow reliability release signoff has a dedicated on-demand lane: `pnpm test:workflow-release-check` runs the manifest-listed targeted seams from `scripts/lib/workflow-reliability-release-check.json`, while `--dry-run` validates the manifest and prints planned commands and `--json` emits machine-readable item/seam evidence. This lane is **not** part of the merge gate and should not be added to `test:gate` or the `engine-core` allow-list.
+
+<!-- FNXC:iOSAcceptance 2026-06-18-17:25: Terminal acceptance gates that depend on real mobile Safari must use the credential-driven real-iOS surface runbook instead of treating desktop WebKit or jsdom as evidence. -->
+Terminal acceptance tasks that require real mobile Safari should use [`docs/ios-acceptance.md`](./ios-acceptance.md) for the `--check` run-vs-NO-OP probe, credential wiring, and physical/cloud real-iOS evidence workflow.
+
+Agents running verification through `fn_run_verification` are bounded by default: project `verificationCommandTimeoutMs` when set, otherwise 300s for package scope and 900s for workspace scope, with an 1800s hard cap. Marathon invocations such as root `pnpm test`, `pnpm test:full`, `pnpm verify:workspace`, whole-package tests without file filters, and shell repeat loops are soft-capped unless the agent explicitly passes `allowFullSuite: true`; the escape hatch still emits progress heartbeats and respects the hard cap. Prefer targeted commands such as `pnpm --filter @fusion/<pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot` before opting into a full run.
+
 ## Fresh-worktree dist bootstrap
 
 `pnpm test` auto-runs `scripts/ensure-test-artifacts.mjs` to rebuild missing/stale dist artifacts. Dashboard and `dependency-graph` package lanes auto-bootstrap too. If you hit opaque `Failed to resolve import "./cli-spawn.js"` (or similar), treat it as bootstrap regression against FN-4605 — don't work around with a manual `pnpm build`.
+
+Public `@fusion/core` exports consumed by runtime tools should include a literal built-dist guard (for example importing `packages/core/dist/index.js`) when package test aliases otherwise resolve `@fusion/core` to source.
 
 ## Dashboard Test Lanes
 
@@ -44,6 +66,19 @@ pnpm --filter @fusion/dashboard test:build          # built client output contra
 ```
 
 Run `test:deep` when changing broad dashboard architecture, shared modal/view infrastructure, or route registration. Run `test:browser-smoke` for layout/responsive/navigation/modal/CSS changes. Run `test:build` for Vite output, lazy-loading, chunking, or client-dist changes.
+
+<!-- FNXC:DashboardStyling 2026-06-19-00:00: FN-6693 promotes the dashboard-wide raw-CSS token-validity guard because jsdom does not resolve custom properties; run `app/__tests__/dashboard-css-token-validity.css.test.ts` with the CSS contract tests when adding component CSS variables or remapping design tokens. -->
+The dashboard CSS contract lane includes `app/__tests__/dashboard-css-token-validity.css.test.ts`, which scans raw component/app CSS and fails any `var(--token)` reference that is not defined by CSS, assigned by React inline style, or explicitly allowlisted as runtime-local. Run it with `component-css-no-raw-rgba`, `dashboard-component-color-tokenization`, and `text-token-canonicalization` when touching design-token usage.
+
+<!-- FNXC:CommandCenterTesting 2026-06-18-23:10: FN-6680 proved Command Center mobile chart regressions can pass jsdom because jsdom does not compute flex/grid layout, aspect-ratio, clamp(), min-content shrinking, overflow widths, or resolved heights. -->
+<!-- FNXC:CommandCenterTesting 2026-06-19-02:09: FN-6685 added a real emitted-CSS `[data-smoke="command-center-charts"]` fixture so recharts pie/line/empty states are measured in Blink at mobile and desktop breakpoints, including lazy Command Center CSS chunks that index.html does not link directly. -->
+Command Center responsive chart fixes need evidence beyond jsdom. Keep the jsdom scroll-owner tests for rule/structure coverage, but pair them with `packages/dashboard/app/components/command-center/__tests__/CommandCenter.mobile-chart-layout.test.ts`, which reads the co-located Command Center CSS files directly and asserts the mobile shrink/height/border rules that real layout depends on. For visible defects, also capture a real browser/device (or headless Chrome/Blink) reproduction with `scrollWidth > clientWidth`, zero/clipped `clientHeight`, or stretch measurements; do not close a Command Center mobile chart bug on jsdom-green assertions alone. The local `pnpm --filter @fusion/dashboard test:browser-smoke --require-browser` lane now includes `[data-smoke="command-center-charts"]` and gates representative Command Center recharts pie, line, and empty states at 390×844 mobile plus desktop viewports for visible SVG/container height, overflow containment, empty-state text, and chart scroll-owner violations.
+
+The shared mobile/tablet overflow-containment net lives at `packages/dashboard/app/__tests__/dashboard-overflow-containment.test.tsx`. It covers board/kanban columns, task-detail modal shell, workflow/simple workflow editors, and Activity Log modal at mobile, tablet, and landscape-phone breakpoints. Run it directly when touching dashboard viewport containment or shared modal/workflow CSS:
+
+```bash
+pnpm --filter @fusion/dashboard exec vitest run --project dashboard-app app/__tests__/dashboard-overflow-containment.test.tsx --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'
+```
 
 `pnpm --filter @fusion/dashboard test` runs the curated app/API quality gate through
 `packages/dashboard/scripts/run-quality-tests.mjs` (FN-6308). The orchestrator keeps
@@ -95,6 +130,8 @@ every entry needs a non-empty `reason` (empty reasons are rejected). Skip-list p
   that is pre-existing-failing orphans (tests that were never executed in CI and
   fail in isolation) and `build-output.test.ts` (runs standalone via `test:build`
   after a Vite build). Each carries a one-line reason.
+- <!-- FNXC:DashboardTesting 2026-06-14-08:00: Skip-listed dashboard tests need actionable ownership; placeholder IDs block rescue/delete follow-through, so every non-standalone reason cites a concrete Fusion tracking task. --> Every skip-list `reason` for a pre-existing failing/orphaned test must reference a concrete `FN-NNNN` tracking task; if the test is rescued, remove the entry instead of leaving a tracking placeholder.
+- <!-- FNXC:DashboardTesting 2026-06-14-10:27: FN-6445 closes the useChatRooms.test.ts tracking drift from FN-6442: a skip-list entry that is already matched by any quality project is not a genuine ungated orphan and would overstate the orphan count. --> The guard rejects any skip-list entry whose file is already executed by a quality project. Remove the entry instead; the skip-list is only for genuinely non-executed files.
 - To remove a file from the skip-list: fix the test, confirm it passes under its
   project, delete the skip-list entry. The backfill lane then executes it.
 - The skip-list is shared verbatim with `vitest.config.ts`, which excludes the same
@@ -142,6 +179,24 @@ Flaky tests are quarantined ON SIGHT and deleted on a 2-week clock. This is writ
 
 **Rescue** (before the clock runs out) requires both: evidence the test catches real regressions, and a root-cause fix for the flake. Stabilization passes — widened timeouts, retries, loosened assertions — are appeasement, not rescue, and are banned (for agents especially).
 
+### Vitest timeout-appeasement guard
+
+`scripts/check-no-test-timeout-appeasement.mjs` runs in the fast `pretest`, `pretest:full`, and `test:gate` paths. It scans tracked `packages/**/*.test.*` and `plugins/**/*.test.*` files for per-file or suite-level Vitest timeout bumps, including `vi.setConfig({ testTimeout: ... })`, `vi.setConfig({ hookTimeout: ... })`, and bare `testTimeout:` / `hookTimeout:` properties in test files. It deliberately ignores global `vitest.config.*` timeouts.
+
+Legitimate legacy exceptions must be recorded in `scripts/lib/test-timeout-appeasement-allowlist.json` as `{ "file": "<repo-relative test path>", "reason": "<owning cleanup/quarantine task and rationale>", "allowlistedAt": "YYYY-MM-DD" }`. Allowlisting is temporary: the real fix is to quarantine the flaky test or narrow the slow seam, then remove both the timeout bump and the allowlist entry.
+
+**CLI shared-fixture rescue pattern (FN-6430):** the 2026-06-14 `@runfusion/fusion` quarantine batch passed direct runs but timed out or bled state only under package/workspace load. The rescue fixed the shared isolation seam, not the timeout: sweep stale top-level `fn-test-home-*` roots with a bounded one-level prefix scan, reject inherited `HOME` values that do not live under the current `fusion-test-workers-*` root, recreate/remark the worker root before each `mkdtemp`, reset module/singleton fixture state in the affected suites, close real stores created by research helpers, and narrow slow real-store seams by moving package imports out of timed test bodies. When rescuing a similar CLI batch, prove it with repeated rescued-file runs plus `pnpm --filter @runfusion/fusion test`, audit rescued files for `vi.setConfig`/`testTimeout`/`hookTimeout` appeasement, and keep ledger/config removals in the same commit.
+
+**Non-CLI quarantine sweep pattern (FN-6433):** for engine/core/dashboard batches, first remove quarantine excludes only in temporary local configs and run the exact quarantined files together so suite-load coupling is visible before editing the ledger. Rescue is valid when the grouped package lane proves the invariant now holds (for example, FN-6433 fixed engine cross-file interference by replacing broad `activeSessionRegistry.clear()` cleanup with path-scoped unregistering) or when a prior shared-fixture fix is demonstrated under package load. Delete duplicate/low-value files under the ratchet when another deterministic suite owns the same invariant. Finish by making `scripts/lib/test-quarantine.json` and every package Vitest exclude array converge in one commit, then prove the empty/non-empty state with package lanes, `pnpm test:gate`, `pnpm test`, `pnpm build`, and the bounded temp-leak output from `pnpm test`.
+
+**2026-06-15 rescue batch (FN-6486):** two same-day quarantines were rescued before their 2026-06-29 deletion deadline. `store-concurrent-writes.test.ts` kept its WAL/`transactionImmediate` regression value by making the external lock helper's timed release use synchronous `Atomics.wait` inside the child process, removing event-loop timer scheduling as the load-only flake source without widening retry windows. `extension-task-tools.test.ts` kept its worktree-root task-tool coverage by closing each real `TaskStore` fixture before temp-root removal and using non-hoisted mock cleanup. The reusable pattern is to remove scheduler/resource leaks in the helper or fixture seam, then prove the rescue with repeated exact-file runs plus package lanes, not with timeout bumps, retries, assertion loosening, or worker changes.
+
+**2026-06-17 core cleanup rescue (FN-6600):** a broad `@fusion/core` timeout cluster was accompanied by `fusion-test-workers-*` `ENOTEMPTY`, while the named files passed in isolation and then under the package lane with the broad-run worker budget. The rescue hardened the shared worker-root teardown's bounded `ENOTEMPTY`/`EBUSY` retry window and added explicit cleanup-invariant coverage, then removed the same-day core quarantine entries in ledger/config lockstep after proving the unexcluded package lane. Reusable pattern: when multiple core files fail with a shared worker-root cleanup signature, fix or prove the shared cleanup seam first; only quarantine residual files after the loaded unexcluded core lane still fails without a seam fix.
+
+**2026-06-18 engine isolation rescue (FN-6610):** a full `@fusion/engine` lane reported unrelated expectation drift, vanished-cwd/git-config errors, and SQLite `unable to open database file` failures. The reusable isolation fix is to revalidate the shared test cwd/HOME/worker-root seam at the operation boundary: subprocess wrappers recreate the owned worker root, HOME, and cwd immediately before `git`, direct SQLite setup helpers recreate their redirected `.fusion` parent before `DatabaseSync`, and regression coverage removes the redirect sink/HOME/cwd mid-test before proving `mkdtemp`, SQLite open, and git config all still work. Do not mask this class with retries, worker reductions, or timeout bumps; quarantine only residual files after the shared seam and direct-open parents are proven under package load.
+
+**2026-06-16 rescue (FN-6514):** `packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx` was rescued before its 2026-06-30 deletion deadline. The file still caught real quick-entry behavior regressions, but it leaked jsdom descriptors for `window.innerWidth`, `window.matchMedia`, `document.visibilityState`, `URL.createObjectURL`, and `URL.revokeObjectURL`; a mobile viewport helper could leave later tests in the same dashboard backfill shard observing `innerWidth=375` and mismatched responsive assertions. The rescue removed the ledger/config quarantine entries in lockstep, captured each original `PropertyDescriptor` at module load, restored those descriptors (or deleted own properties that were originally absent) in `afterEach`, and added a guard test that mutates all rescued globals before asserting they return to their original descriptors. Reusable pattern: any test file that changes jsdom globals with `Object.defineProperty` or spies on replaceable globals must snapshot the original descriptor at the top of the file, restore it in every `afterEach`, and prove the invariant with a guard test; do not use timeout bumps, retries, worker changes, or blanket `vi.restoreAllMocks()` when module mocks depend on stable implementations.
+
 **Gate eviction:** a flake inside the merge gate cannot block all merges while red — it is evicted by removing its line from the `engine-core` allow-list (no quarantine entry needed unless it should also leave the non-blocking tier).
 
 **Gate admission:** the mirror operation — add the test's path to the `engine-core` `include` array in `packages/engine/vitest.config.ts`, citing the evidence of value (a real regression it caught) in the PR. Keep the project under its ~60s wall-clock budget.
@@ -186,6 +241,24 @@ shard artifacts into `.timings/` first (the default lookup directory), or pass
 `--inputs-dir <path>` to point at wherever they were downloaded. A future
 scheduled job can gate on freshness via `node scripts/ci-test-shard.mjs --check-timings-staleness`,
 which exits non-zero when the snapshot is missing or older than the 30-day budget.
+
+## Weekly test velocity baseline
+
+FN-6612 tracks feedback-loop velocity as signal-per-second, not as a new blocking gate. Refresh the weekly baseline from a clean worktree with:
+
+```bash
+pnpm test:velocity -- --measure --write-report
+```
+
+The script runs `pnpm test:gate`, `pnpm smoke:boot`, and `pnpm test` with bounded async process supervision, then appends the measured row to `scripts/test-velocity-history.json` and rewrites the postable artifact at `docs/test-velocity-baseline.md`. It reads the slowest 20 files from the committed `scripts/test-timings.json` snapshot and the flake/quarantine count plus 14-day deletion-clock buckets directly from `scripts/lib/test-quarantine.json`; do not run the full suite just to populate the slowest-file table.
+
+Use cheap report-only regeneration when measurements already exist:
+
+```bash
+pnpm test:velocity
+```
+
+Each week, copy the `Post to #leads` block from `docs/test-velocity-baseline.md`. If a measured command fails because the local environment is not ready, keep the failure recorded in the report instead of fabricating a time, then fix or rerun separately as appropriate. Do not wire `pnpm test:velocity`, `test:full`, or any slow-suite expansion into PR checks; the merge gate stays the thin Lint, Typecheck, Build, and Gate path.
 
 ## Targeted commands
 
@@ -315,6 +388,7 @@ Prefer `it.each` over copy-pasted `it()` blocks. When trimming, keep: first case
 Copy this checklist into a bug-fix or UI-affordance add/remove task's `## Surface Enumeration` section and make the implementation tests prove the invariant across every checked surface. This checklist applies to bug-fix tasks and UI-affordance add/remove tasks that add, remove, or restructure icons, buttons, chevrons/arrows, toggles, badges, menu entries, or click targets. See `AGENTS.md` → **Standing Rule: Fix the Invariant, Not the Repro (FN-5893)** for the enforced planning/review contract.
 
 - [ ] Providers / bridges / execution paths touched by the invariant
+- [ ] Long-running subprocess or verification-active surfaces when the invariant involves engine liveness, stuck detection, or command execution (`fn_run_verification`, configured commands, timeout/deadline behavior)
 - [ ] Desktop + mobile breakpoints / platforms that exercise the behavior
 - [ ] Empty / undefined / duplicate / populated data states
 - [ ] Shared hooks / components / modules / helpers reusing the logic

@@ -8,6 +8,7 @@
 import { getModels } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { streamViaCli } from "./src/provider.js";
+import { streamViaAcp } from "./src/acp-driver.js";
 import {
   validateCliPresenceAsync,
   validateCliAuthAsync,
@@ -18,8 +19,31 @@ import {
   getCustomToolDefs,
   toolsFromContext,
   writeMcpConfig,
+  buildAcpMcpServers,
   type McpToolDef,
 } from "./src/mcp-config.js";
+
+/**
+ * Route A kill-switch (U11). When `FUSION_CLAUDE_ACP=1` AND a bridge binary path
+ * is available (`FUSION_CLAUDE_ACP_BRIDGE`, injected by the engine seam per
+ * KTD10), the provider drives Claude through the ACP bridge instead of
+ * `claude -p`. OFF by default: the live `-p` path is untouched until soak.
+ */
+function resolveAcpBridgePath(): string | undefined {
+  if (process.env.FUSION_CLAUDE_ACP !== "1") return undefined;
+  const p = process.env.FUSION_CLAUDE_ACP_BRIDGE;
+  return typeof p === "string" && p.length > 0 ? p : undefined;
+}
+
+/** Resolve custom tool defs the same way ensureMcpConfig does (context → registry). */
+function resolveToolDefs(
+  pi: ExtensionAPI,
+  contextTools?: ReadonlyArray<{ name: string; description: string; parameters: Record<string, unknown> }>,
+): McpToolDef[] {
+  let toolDefs = toolsFromContext(contextTools);
+  if (toolDefs.length === 0 && Array.isArray(pi.getAllTools())) toolDefs = getCustomToolDefs(pi);
+  return toolDefs;
+}
 
 // Kill all active Claude subprocesses on process exit to prevent orphans
 process.on("exit", killAllProcesses);
@@ -220,14 +244,29 @@ export default function (pi: ExtensionAPI) {
       api: "pi-claude-cli",
       models,
       streamSimple: (model, context, options) => {
-        const configPath = ensureMcpConfig(
-          pi,
-          (context as { tools?: ReadonlyArray<{
-            name: string;
-            description: string;
-            parameters: Record<string, unknown>;
-          }> }).tools,
-        );
+        const contextTools = (context as { tools?: ReadonlyArray<{
+          name: string;
+          description: string;
+          parameters: Record<string, unknown>;
+        }> }).tools;
+
+        // Route A (U11): drive Claude through the ACP bridge when the kill-switch
+        // is on AND a bridge path is injected. OFF by default → `-p` path below.
+        const bridgePath = resolveAcpBridgePath();
+        if (bridgePath) {
+          const toolDefs = resolveToolDefs(pi, contextTools);
+          const hash = createHash("sha1").update(JSON.stringify(toolDefs)).digest("hex").slice(0, 12);
+          return streamViaAcp(model, context, {
+            ...options,
+            bridgePath,
+            mcpServers: buildAcpMcpServers(toolDefs, hash),
+            // Forward only HOME/PATH so the bridged `claude` authenticates from the
+            // login/keychain session (R17); never inherited process.env or API keys.
+            bridgeEnv: { HOME: process.env.HOME, PATH: process.env.PATH },
+          });
+        }
+
+        const configPath = ensureMcpConfig(pi, contextTools);
         return streamViaCli(model, context, {
           ...options,
           mcpConfigPath: configPath,

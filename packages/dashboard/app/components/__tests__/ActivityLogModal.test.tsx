@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ActivityLogModal } from "../ActivityLogModal";
 import * as apiModule from "../../api";
@@ -16,6 +16,10 @@ const mockFetchActivityLog = vi.mocked(apiModule.fetchActivityLog);
 const mockClearActivityLog = vi.mocked(apiModule.clearActivityLog);
 
 describe("ActivityLogModal", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   const mockOnClose = vi.fn();
   const mockOnOpenTaskDetail = vi.fn();
 
@@ -110,6 +114,41 @@ describe("ActivityLogModal", () => {
     await waitFor(() => {
       const entries = screen.getAllByTestId("activity-entry");
       expect(entries).toHaveLength(3);
+    });
+  });
+
+  it("preserves byte-identical relative timestamp buckets", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-17T20:00:00.000Z"));
+    mockFetchActivityLog.mockResolvedValueOnce([
+      { id: "now", timestamp: "2026-06-17T19:59:30.000Z", type: "task:created", details: "now" },
+      { id: "minute", timestamp: "2026-06-17T19:55:00.000Z", type: "task:created", details: "minute" },
+      { id: "hour", timestamp: "2026-06-17T17:00:00.000Z", type: "task:created", details: "hour" },
+      { id: "day", timestamp: "2026-06-14T20:00:00.000Z", type: "task:created", details: "day" },
+      { id: "future", timestamp: "2026-06-17T20:00:01.000Z", type: "task:created", details: "future" },
+      { id: "invalid", timestamp: "not-a-date", type: "task:created", details: "invalid" },
+      { id: "older", timestamp: "2026-06-10T20:00:00.000Z", type: "task:created", details: "older" },
+    ] as ActivityLogEntry[]);
+
+    const { container } = render(
+      <ActivityLogModal
+        isOpen={true}
+        onClose={mockOnClose}
+        tasks={mockTasks}
+        onOpenTaskDetail={mockOnOpenTaskDetail}
+      />
+    );
+
+    await waitFor(() => {
+      const times = Array.from(container.querySelectorAll(".activity-log-entry-time")).map((node) => node.textContent);
+      expect(times).toEqual(expect.arrayContaining([
+        "Just now",
+        "5m ago",
+        "3h ago",
+        "3d ago",
+        "Invalid Date",
+        new Date("2026-06-10T20:00:00.000Z").toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      ]));
     });
   });
 

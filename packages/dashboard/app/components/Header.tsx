@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock, Gauge } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -65,7 +65,6 @@ export interface HeaderProps {
   activePlanningSessionCount?: number;
   onOpenUsage?: (anchorRect?: DOMRect | null) => void;
   onOpenActivityLog?: () => void;
-  onOpenSystemStats?: () => void;
   /** Opens the mailbox view */
   onOpenMailbox?: () => void;
   /** Unread message count for badge display */
@@ -140,7 +139,6 @@ export function Header({
   activePlanningSessionCount = 0,
   onOpenUsage,
   onOpenActivityLog,
-  onOpenSystemStats,
   onOpenMailbox,
   mailboxUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
@@ -262,9 +260,10 @@ export function Header({
       experimentalFeatures?.memoryView ||
       experimentalFeatures?.devServerView ||
       !hideFullNav ||
+      isTablet ||
       pluginDashboardViews.some((entry) => entry.view.placement !== "primary")
     );
-  }, [onChangeView, experimentalFeatures, todosEnabled, showSkillsTab, hideFullNav, pluginDashboardViews]);
+  }, [onChangeView, experimentalFeatures, todosEnabled, showSkillsTab, hideFullNav, isTablet, pluginDashboardViews]);
 
   const getEffectiveViewport = useCallback(() => {
     const vv = window.visualViewport;
@@ -1020,6 +1019,23 @@ export function Header({
                 <Bot size={16} />
               </button>
             )}
+            {isTablet && (
+              /*
+              FNXC:Navigation 2026-06-19-12:00:
+              Tablet navigation promotes Command Center immediately after Agents while desktop keeps Command Center in the More-views overflow.
+              Documents moves to the tablet More-views overflow below to conserve horizontal space without changing desktop ordering.
+              */
+              <button
+                className={`view-toggle-btn${view === "command-center" ? " active" : ""}`}
+                onClick={() => onChangeView("command-center")}
+                title={t("header.commandCenterView", "Command Center")}
+                aria-label={t("header.commandCenterView", "Command Center")}
+                aria-pressed={view === "command-center"}
+                data-testid="view-toggle-command-center"
+              >
+                <Gauge size={16} />
+              </button>
+            )}
             <button
               className={`view-toggle-btn${view === "missions" ? " active" : ""}`}
               onClick={() => onChangeView("missions")}
@@ -1042,15 +1058,17 @@ export function Header({
                 <span className="status-dot status-dot--pending header-chat-unread-dot" aria-label={t("header.unreadChatResponse", "Unread chat response")} />
               )}
             </button>
-            <button
-              className={`view-toggle-btn${view === "documents" ? " active" : ""}`}
-              onClick={() => onChangeView("documents")}
-              title={t("header.documentsView", "Documents view")}
-              aria-label={t("header.documentsView", "Documents view")}
-              aria-pressed={view === "documents"}
-            >
-              <FileText size={16} />
-            </button>
+            {!isTablet && (
+              <button
+                className={`view-toggle-btn${view === "documents" ? " active" : ""}`}
+                onClick={() => onChangeView("documents")}
+                title={t("header.documentsView", "Documents view")}
+                aria-label={t("header.documentsView", "Documents view")}
+                aria-pressed={view === "documents"}
+              >
+                <FileText size={16} />
+              </button>
+            )}
             <button
               className={`view-toggle-btn${view === "mailbox" ? " active" : ""}`}
               onClick={() => onChangeView("mailbox")}
@@ -1092,7 +1110,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${["research", "skills", "insights", "memory", "secrets", "reliability", "dev-server", "devserver", "graph", "stash-recovery"].includes(view) || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || (todosEnabled && todosOpen) || isPluginViewId(view) ? " active" : ""}`}
+                  className={`view-toggle-btn${["research", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph", "stash-recovery"].includes(view) || (!isTablet && view === "command-center") || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || (todosEnabled && todosOpen) || isPluginViewId(view) ? " active" : ""}`}
                   onClick={() => setIsViewOverflowOpen((prev) => !prev)}
                   title={t("header.moreViews", "More views")}
                   aria-label={t("header.moreViews", "More views")}
@@ -1220,18 +1238,34 @@ export function Header({
                       <Lock size={14} />
                       <span>{t("header.secretsView", "Secrets")}</span>
                     </button>
-                    <button
-                      className={`view-toggle-overflow-item${view === "reliability" ? " active" : ""}`}
-                      onClick={() => {
-                        onChangeView("reliability");
-                        setIsViewOverflowOpen(false);
-                      }}
-                      role="menuitem"
-                      data-testid="view-overflow-reliability"
-                    >
-                      <Activity size={14} />
-                      <span>{t("header.reliabilityView", "Reliability")}</span>
-                    </button>
+                    {isTablet && (
+                      <button
+                        className={`view-toggle-overflow-item${view === "documents" ? " active" : ""}`}
+                        onClick={() => {
+                          onChangeView("documents");
+                          setIsViewOverflowOpen(false);
+                        }}
+                        role="menuitem"
+                        data-testid="view-overflow-documents"
+                      >
+                        <FileText size={14} />
+                        <span>{t("header.documentsView", "Documents view")}</span>
+                      </button>
+                    )}
+                    {!isTablet && (
+                      <button
+                        className={`view-toggle-overflow-item${view === "command-center" ? " active" : ""}`}
+                        onClick={() => {
+                          onChangeView("command-center");
+                          setIsViewOverflowOpen(false);
+                        }}
+                        role="menuitem"
+                        data-testid="view-overflow-command-center"
+                      >
+                        <Gauge size={14} />
+                        <span>{t("header.commandCenterView", "Command Center")}</span>
+                      </button>
+                    )}
                     {experimentalFeatures?.devServerView && (
                       <button
                         className={`view-toggle-overflow-item${view === "dev-server" || view === "devserver" ? " active" : ""}`}
@@ -1299,13 +1333,6 @@ export function Header({
             data-testid="desktop-header-usage-btn"
           >
             <Activity size={16} />
-          </button>
-        )}
-
-        {/* System Stats button - desktop only */}
-        {!isCompact && onOpenSystemStats && (
-          <button className="btn-icon" onClick={onOpenSystemStats} title={t("header.systemStats", "System Stats")} data-testid="desktop-header-system-stats-btn">
-            <Monitor size={16} />
           </button>
         )}
 

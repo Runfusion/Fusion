@@ -16,6 +16,26 @@ import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 
 type StoredCredential = StoredAuthCredential;
 
+const OAUTH_REFRESH_BUFFER_MS = 60_000;
+const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
+const ANTHROPIC_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ANTHROPIC_DEFAULT_SCOPES = ["user:profile"];
+const OAUTH_REFRESH_TIMEOUT_MS = 10_000;
+const OAUTH_REFRESH_FAILURE_COOLDOWN_MS = 30_000;
+
+type OAuthTokenResponse = {
+  access_token?: unknown;
+  accessToken?: unknown;
+  refresh_token?: unknown;
+  refreshToken?: unknown;
+  expires_in?: unknown;
+  expiresIn?: unknown;
+  expires_at?: unknown;
+  expiresAt?: unknown;
+  scope?: unknown;
+  scopes?: unknown;
+};
+
 export function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || homedir();
 }
@@ -95,6 +115,146 @@ function resolveOAuthApiKey(providerId: string, credential: StoredCredential): s
   return getOAuthProvider(providerId)?.getApiKey(credential as OAuthCredentials);
 }
 
+function shouldRefreshOAuthCredential(credential: StoredCredential): boolean {
+  return credential.type === "oauth"
+    && typeof credential.refresh === "string"
+    && credential.refresh.length > 0
+    && typeof credential.expires === "number"
+    && Number.isFinite(credential.expires)
+    && Date.now() >= credential.expires - OAUTH_REFRESH_BUFFER_MS;
+}
+
+function isSameOAuthCredentialIdentity(
+  left: StoredCredential | undefined,
+  right: StoredCredential,
+): boolean {
+  return left?.type === "oauth"
+    && right.type === "oauth"
+    && left.access === right.access
+    && left.refresh === right.refresh
+    && left.expires === right.expires;
+}
+
+function getOAuthScopes(credential: StoredCredential): string[] {
+  const scopes = Array.isArray(credential.scopes)
+    ? credential.scopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0)
+    : [];
+  return scopes.length > 0 ? scopes : ANTHROPIC_DEFAULT_SCOPES;
+}
+
+function parseExpiryMs(data: OAuthTokenResponse, now: number): number {
+  const expiresAt = data.expires_at ?? data.expiresAt;
+  if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) {
+    return expiresAt;
+  }
+  if (typeof expiresAt === "string") {
+    const parsed = Date.parse(expiresAt);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  const expiresIn = data.expires_in ?? data.expiresIn;
+  if (typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0) {
+    return now + expiresIn * 1000;
+  }
+
+  return now + 3_600_000;
+}
+
+function parseScopes(data: OAuthTokenResponse, fallback: string[]): string[] {
+  if (Array.isArray(data.scopes)) {
+    const scopes = data.scopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0);
+    if (scopes.length > 0) {
+      return scopes;
+    }
+  }
+  if (typeof data.scope === "string") {
+    const scopes = data.scope.split(/\s+/).filter(Boolean);
+    if (scopes.length > 0) {
+      return scopes;
+    }
+  }
+  return fallback;
+}
+
+async function refreshAnthropicOAuthCredential(credential: StoredCredential): Promise<StoredCredential | undefined> {
+  const refresh = credential.refresh;
+  if (!refresh) {
+    return undefined;
+  }
+
+  const scopes = getOAuthScopes(credential);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OAUTH_REFRESH_TIMEOUT_MS);
+
+  try {
+    /*
+    FNXC:ClaudeOAuth 2026-06-13-22:46:
+    Fusion must renew expired Claude OAuth credentials with the stored refresh token so users are not forced through repeated manual Claude re-login when the access token expires.
+    Persist the rotated access token in Fusion auth storage because model execution and dashboard usage resolve credentials through different runtime paths.
+    */
+    const response = await fetch(ANTHROPIC_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "claude-code-fusion-dashboard",
+      },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: refresh,
+        client_id: ANTHROPIC_OAUTH_CLIENT_ID,
+        scope: scopes.join(" "),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const data = await response.json() as OAuthTokenResponse;
+    const access = typeof data.access_token === "string"
+      ? data.access_token
+      : typeof data.accessToken === "string"
+        ? data.accessToken
+        : undefined;
+    if (!access) {
+      return undefined;
+    }
+
+    const now = Date.now();
+    const nextRefresh = typeof data.refresh_token === "string"
+      ? data.refresh_token
+      : typeof data.refreshToken === "string"
+        ? data.refreshToken
+        : refresh;
+
+    return {
+      ...credential,
+      type: "oauth",
+      access,
+      refresh: nextRefresh,
+      expires: parseExpiryMs(data, now),
+      scopes: parseScopes(data, scopes),
+    };
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function refreshOAuthCredential(providerId: string, credential: StoredCredential): Promise<StoredCredential | undefined> {
+  if (!shouldRefreshOAuthCredential(credential)) {
+    return credential;
+  }
+  if (providerId !== "anthropic") {
+    return undefined;
+  }
+  return refreshAnthropicOAuthCredential(credential);
+}
+
 function resolveStoredCredentialApiKey(providerId: string, credential: StoredCredential | undefined): string | undefined {
   if (credential?.type === "api_key") {
     return resolveStoredApiKey(credential.key);
@@ -146,6 +306,13 @@ export function createFusionAuthStorage(): AuthStorage {
   let supplementalCredentials = readSupplementalCredentials();
   // models.json provider API keys — final fallback after primary auth and supplemental auth.json files
   let modelsJsonApiKeys = readModelsJsonApiKeys();
+  /*
+  FNXC:ClaudeOAuth 2026-06-13-22:46:
+  Dashboard auth-status polling can run while model execution also resolves credentials, so expired Claude credentials need one refresh attempt per provider at a time.
+  Cache an in-flight refresh and briefly cool down failed attempts so repeated polls do not stampede the Anthropic token endpoint.
+  */
+  const oauthRefreshInFlight = new Map<string, Promise<StoredCredential | undefined>>();
+  const oauthRefreshCooldownUntil = new Map<string, number>();
 
   // Providers the user has explicitly logged out from. These should not be
   // "resurrected" from supplemental credential files (e.g. ~/.claude/.credentials.json).
@@ -172,6 +339,46 @@ export function createFusionAuthStorage(): AuthStorage {
         primary.set(provider, credential as AuthCredential);
       }
     }
+  };
+
+  const refreshProviderOAuthCredential = async (
+    provider: string,
+    credential: StoredCredential,
+  ): Promise<StoredCredential | undefined> => {
+    if (!shouldRefreshOAuthCredential(credential)) {
+      return credential;
+    }
+
+    const now = Date.now();
+    const cooldownUntil = oauthRefreshCooldownUntil.get(provider);
+    if (cooldownUntil && cooldownUntil > now) {
+      return undefined;
+    }
+
+    const existing = oauthRefreshInFlight.get(provider);
+    if (existing) {
+      return existing;
+    }
+
+    const refreshPromise = refreshOAuthCredential(provider, credential)
+      .then((refreshed) => {
+        if (refreshed) {
+          oauthRefreshCooldownUntil.delete(provider);
+        } else {
+          oauthRefreshCooldownUntil.set(provider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
+        }
+        return refreshed;
+      })
+      .catch(() => {
+        oauthRefreshCooldownUntil.set(provider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
+        return undefined;
+      })
+      .finally(() => {
+        oauthRefreshInFlight.delete(provider);
+      });
+
+    oauthRefreshInFlight.set(provider, refreshPromise);
+    return refreshPromise;
   };
 
   syncSupplementalOauthCredentials();
@@ -205,6 +412,7 @@ export function createFusionAuthStorage(): AuthStorage {
         return (provider: string, credential: AuthCredential) => {
           target.set(provider, credential);
           loggedOutProviders.delete(provider);
+          oauthRefreshCooldownUntil.delete(provider);
         };
       }
 
@@ -300,6 +508,32 @@ export function createFusionAuthStorage(): AuthStorage {
           if (primaryKey) return primaryKey;
 
           // 2. Supplemental auth.json credentials (.pi + .codex)
+          const refreshCandidate = choosePreferredStoredCredential(
+            target.get(provider) as StoredCredential | undefined,
+            supplementalCredentials[provider],
+          ) ?? {};
+          const refreshWasNeeded = shouldRefreshOAuthCredential(refreshCandidate);
+          const refreshedCredential = await refreshProviderOAuthCredential(provider, refreshCandidate);
+          if (refreshedCredential?.type === "oauth" && refreshedCredential.access) {
+            if (refreshWasNeeded) {
+              /*
+              FNXC:ClaudeOAuth 2026-06-13-22:46:
+              A manual re-login or replacement credential must win over an older in-flight refresh response.
+              Re-check the credential identity before persisting so a delayed refresh cannot restore stale OAuth material after the user already fixed auth.
+              */
+              const latestCredential = choosePreferredStoredCredential(
+                target.get(provider) as StoredCredential | undefined,
+                supplementalCredentials[provider],
+              );
+              if (!isSameOAuthCredentialIdentity(latestCredential, refreshCandidate)) {
+                return resolveStoredCredentialApiKey(provider, latestCredential);
+              }
+            }
+            target.set(provider, refreshedCredential as AuthCredential);
+            loggedOutProviders.delete(provider);
+            return resolveStoredCredentialApiKey(provider, refreshedCredential);
+          }
+
           const supplementalKey = resolveStoredCredentialApiKey(provider, supplementalCredentials[provider]);
           if (supplementalKey) return supplementalKey;
 

@@ -410,7 +410,11 @@ describe("Skill-Extension Sync", () => {
     const engineTools = getEngineSessionToolNames();
     const documented = getDocumentedEngineToolNames();
     const missing = engineTools.filter((name) => !documented.includes(name));
-    expect(missing).toEqual([]);
+    // FNXC:SkillSync 2026-06-17-23:06: This test enforces the invariant that every engine session-scoped `fn_*` registration across the engine source set must be mirrored in `engine-tools.md`, so failures must print the exact undocumented names instead of hiding drift behind a generic deep-equality diff.
+    expect(
+      missing,
+      `undocumented engine tools in engine-tools.md: ${missing.join(", ") || "none"}`,
+    ).toEqual([]);
   });
 
   it("covers the full Fusion skill markdown surface", () => {

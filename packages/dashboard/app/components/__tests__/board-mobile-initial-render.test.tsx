@@ -74,6 +74,12 @@ function extractRule(content: string, selector: string): string {
   return content.match(new RegExp(`${escapedSelector}\\s*\\{[^}]*\\}`))?.[0] ?? "";
 }
 
+function expectLogicalOrPhysicalMinSize(rule: string, axis: "block" | "inline"): void {
+  const logicalProp = axis === "block" ? "min-block-size" : "min-inline-size";
+  const physicalProp = axis === "block" ? "min-height" : "min-width";
+  expect(rule).toSatisfy((value: string) => value.includes(`${logicalProp}: 0`) || value.includes(`${physicalProp}: 0`));
+}
+
 const workflowPayload = {
   flagEnabled: true,
   defaultWorkflowId: "builtin:coding",
@@ -265,11 +271,19 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     const tabletBoardRule = extractRule(tabletCss, ".board");
     const mobileBoardRule = extractRule(mobileCss, ".board");
     const mobileColumnRule = extractRule(mobileCss, ".board > .column");
+    const mobileProjectContentRule = extractRule(mobileCss, ".project-content");
+    const mobileWorkflowViewRule = extractRule(mobileCss, ".board-workflow-view");
+    const mobileWorkflowColumnsRule = extractRule(mobileCss, ".board.board-workflow-columns");
+    const mobileWorkflowColumnRule = extractRule(mobileCss, ".board.board-workflow-columns > .column");
     const projectContentRule = extractRule(cssContent, ".project-content");
 
     expect(projectContentRule).toContain("display: flex");
-    expect(projectContentRule).toContain("min-height: 0");
-    expect(projectContentRule).toContain("min-width: 0");
+    /*
+     * FNXC:BoardMobileCss 2026-06-19-03:16:
+     * The fill-height invariant accepts logical min-size properties because styles.css canonicalizes .project-content to writing-mode-safe min-block-size/min-inline-size declarations.
+     */
+    expectLogicalOrPhysicalMinSize(projectContentRule, "block");
+    expectLogicalOrPhysicalMinSize(projectContentRule, "inline");
 
     expect(baseBoardRule).toContain("box-sizing: border-box");
     expect(baseBoardRule).toContain("flex: 1 1 auto");
@@ -316,6 +330,37 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     expect(mobileColumnRule).toContain("width: 300px");
     expect(mobileColumnRule).toContain("min-width: 300px");
     expect(mobileColumnRule).toContain("flex-shrink: 0");
+
+    expect(mobileProjectContentRule).toContain("display: flex");
+    expect(mobileProjectContentRule).toContain("align-items: stretch");
+    expect(mobileProjectContentRule).toContain("width: 100%");
+    expectLogicalOrPhysicalMinSize(mobileProjectContentRule, "block");
+    expect(mobileProjectContentRule).toContain("overflow: hidden");
+
+    expect(mobileWorkflowViewRule).toContain("display: flex");
+    expect(mobileWorkflowViewRule).toContain("flex-direction: column");
+    expect(mobileWorkflowViewRule).toContain("flex: 1 1 auto");
+    expect(mobileWorkflowViewRule).toContain("width: 100%");
+    expect(mobileWorkflowViewRule).toContain("height: 100%");
+    expect(mobileWorkflowViewRule).toContain("min-height: 0");
+    expect(mobileWorkflowViewRule).toContain("overflow: hidden");
+
+    expect(mobileWorkflowColumnsRule).toContain("display: flex");
+    expect(mobileWorkflowColumnsRule).toContain("flex: 1 1 auto");
+    expect(mobileWorkflowColumnsRule).toContain("align-items: stretch");
+    expect(mobileWorkflowColumnsRule).toContain("width: 100%");
+    expect(mobileWorkflowColumnsRule).toContain("height: 100%");
+    expect(mobileWorkflowColumnsRule).toContain("min-height: 0");
+    expect(mobileWorkflowColumnsRule).toContain("overflow-x: auto");
+    expect(mobileWorkflowColumnsRule).toContain("overscroll-behavior-x: contain");
+    expect(mobileWorkflowColumnsRule).toContain("touch-action: pan-x pan-y");
+    expect(mobileWorkflowColumnsRule).toContain("scroll-snap-type: x proximity");
+    expect(mobileWorkflowColumnsRule).not.toContain("scroll-snap-type: x mandatory");
+
+    expect(mobileWorkflowColumnRule).toContain("flex: 1 0 300px");
+    expect(mobileWorkflowColumnRule).toContain("min-width: 300px");
+    expect(mobileWorkflowColumnRule).toContain("height: 100%");
+    expect(mobileWorkflowColumnRule).toContain("min-height: 0");
   });
 
   it("renders the board main element and all column children for empty and populated states", () => {
@@ -348,6 +393,72 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     expect(columns).toHaveLength(6);
     expect(document.querySelector("[data-testid='column-triage']")).toHaveAttribute("data-task-count", "1");
     expect(document.querySelector("[data-testid='column-todo']")).toHaveAttribute("data-task-count", "1");
+
+    viewportSpy.mockRestore();
+  });
+
+  it("renders workflow-mode columns for empty and populated states at mobile width with and without the toolbar", async () => {
+    vi.useRealTimers();
+    const viewportSpy = mockViewport(390);
+    apiMocks.fetchBoardWorkflows.mockResolvedValue(workflowPayload);
+
+    const { rerender } = render(
+      <Board
+        {...boardProps}
+        onCreateWorkflow={vi.fn()}
+        onOpenWorkflowEditor={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector(".board-workflow-view")).not.toBeNull();
+    });
+
+    expect(document.querySelector(".board-workflow-toolbar")).not.toBeNull();
+    let board = document.querySelector("main.board.board-workflow-columns");
+    expect(board).not.toBeNull();
+
+    let columns = document.querySelectorAll(".board-workflow-columns [data-testid^='column-']");
+    expect(columns).toHaveLength(6);
+    for (const column of columns) {
+      expect(column).toHaveClass("column");
+      expect(column).toHaveAttribute("data-task-count", "0");
+    }
+
+    rerender(
+      <Board
+        {...boardProps}
+        onCreateWorkflow={vi.fn()}
+        onOpenWorkflowEditor={vi.fn()}
+        tasks={[
+          { id: "FN-1", title: "Workflow planning task", column: "triage" },
+          { id: "FN-2", title: "Workflow todo task", column: "todo" },
+        ] as any}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector("main.board.board-workflow-columns")).not.toBeNull();
+    });
+
+    board = document.querySelector("main.board.board-workflow-columns");
+    expect(board).not.toBeNull();
+
+    columns = document.querySelectorAll(".board-workflow-columns [data-testid^='column-']");
+    expect(columns).toHaveLength(6);
+    expect(document.querySelector(".board-workflow-columns [data-testid='column-triage']")).toHaveAttribute("data-task-count", "1");
+    expect(document.querySelector(".board-workflow-columns [data-testid='column-todo']")).toHaveAttribute("data-task-count", "1");
+
+    cleanup();
+
+    render(<Board {...boardProps} />);
+
+    await waitFor(() => {
+      expect(document.querySelector("main.board.board-workflow-columns")).not.toBeNull();
+    });
+
+    expect(document.querySelector(".board-workflow-toolbar")).toBeNull();
+    expect(document.querySelectorAll(".board-workflow-columns [data-testid^='column-']")).toHaveLength(6);
 
     viewportSpy.mockRestore();
   });

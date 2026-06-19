@@ -23,6 +23,7 @@ import type {
   GitFileChange,
   GitRemoteDetailed,
 } from "../api";
+import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import {
   api,
   fetchConfig,
@@ -155,21 +156,32 @@ function useCopyToClipboard(addToast: (msg: string, type?: ToastType) => void) {
   );
 }
 
-/** Format relative date. Returns "—" for invalid/empty dates. */
+/**
+ * Format relative date. Returns "—" for invalid/empty dates.
+ *
+ * FNXC:RelativeTime 2026-06-17-20:48:
+ * FN-6618 shares relative-time bucket math while preserving GitManagerModal's empty/invalid "—" guard, future-as-just-now behavior, and <30d day threshold keyed from total days.
+ */
 function relativeDate(dateStr: string | undefined | null): string {
   if (!dateStr) return "—";
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return "—";
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 30) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
+
+  const bucket = getRelativeTimeBucket(dateStr);
+  if (!bucket) return "just now";
+
+  switch (bucket.bucket) {
+    case "just-now":
+      return "just now";
+    case "minutes":
+      return `${bucket.count}m ago`;
+    case "hours":
+      return `${bucket.count}h ago`;
+    case "days":
+    case "weeks":
+    case "older":
+      return bucket.days < 30 ? `${bucket.days}d ago` : date.toLocaleDateString();
+  }
 }
 
 // ── Props ─────────────────────────────────────────────────────────

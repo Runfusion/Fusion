@@ -283,18 +283,24 @@ function formatBacklogAutoClaimRoleStatus(agent: Agent, allowEngineer: boolean):
   if (agent.role === "engineer") {
     return allowEngineer
       ? "enabled"
-      : "enabled (no role-compatible candidates; engineerBacklogAutoClaim disabled)";
+      : "enabled (compatible backlog blocked; engineerBacklogAutoClaim disabled)";
   }
   return allowEngineer
     ? "enabled (no role-compatible candidates; executor or opted-in engineer role required)"
     : "enabled (no role-compatible candidates; executor role required)";
 }
 
+/**
+ * FNXC:AgentRouting 2026-06-17-18:56:
+ * Engineer-role no-task wakes can see compatible backlog that remains unclaimable because backlog auto-claim is executor-only by default.
+ * Preserve that safety boundary while surfacing an actionable opt-in or delegation path so the agent does not treat the board as empty.
+ */
 function formatBacklogAutoClaimRoleGuidance(agent: Agent, allowEngineer: boolean, candidateCount: number): string[] {
   if (agent.role === "engineer" && !allowEngineer) {
     return [
       `- Snapshot found ${candidateCount} eligible Todo task(s), but this engineer-role agent is not opted into backlog auto-claim.`,
-      "- Backlog auto-claim is executor-only by default; set project settings.engineerBacklogAutoClaim or per-agent runtimeConfig.engineerBacklogAutoClaim to true to opt engineer agents in.",
+      "- Backlog auto-claim is executor-only by default; opt in at Settings → Scheduling & Capacity → \"Let engineer agents auto-claim backlog tasks\" (settings.engineerBacklogAutoClaim) or per agent at Agents → Agent Detail → Settings → Heartbeat Settings → \"Engineer Backlog Auto-Claim\" (runtimeConfig.engineerBacklogAutoClaim).",
+      "- Next action: delegate one of the listed tasks to an executor/opted-in engineer or create a coordination follow-up instead of treating the board as empty.",
     ];
   }
   return [
@@ -2083,6 +2089,7 @@ export class HeartbeatMonitor {
         }
 
         let autoClaimCandidates: AutoClaimCandidate[] = [];
+        let autoClaimPromptCandidates: readonly AutoClaimCandidate[] = [];
         let autoClaimSnapshotCandidateCount = 0;
         let autoClaimRoleFilteredCount = 0;
         const autoClaimEnabled = isAutoClaimRelevantTasksEnabled(agent);
@@ -2091,6 +2098,7 @@ export class HeartbeatMonitor {
           try {
             const snapshot = await this.snapshotManager.getSnapshot();
             autoClaimSnapshotCandidateCount = snapshot.tasks.length;
+            autoClaimPromptCandidates = snapshot.tasks;
             const roleCompatibleCandidates = snapshot.tasks.filter((candidate) => canAgentTakeImplementationTask(agent, candidate, { allowEngineer: engineerBacklogAutoClaim }));
             const skippedIncompatibleCount = snapshot.tasks.length - roleCompatibleCandidates.length;
             autoClaimRoleFilteredCount = skippedIncompatibleCount;
@@ -2780,7 +2788,12 @@ export class HeartbeatMonitor {
                     ? autoClaimCandidates
                       .slice(0, promptCandidateLimit)
                       .map((candidate) => `- ${candidate.id}: ${candidate.title ?? candidate.descriptionFirstLine}`)
-                    : noRoleCompatibleCandidateLines
+                    : [
+                      ...noRoleCompatibleCandidateLines,
+                      ...autoClaimPromptCandidates
+                        .slice(0, promptCandidateLimit)
+                        .map((candidate) => `- ${candidate.id}: ${candidate.title ?? candidate.descriptionFirstLine}`),
+                    ]
                 ),
               ]
               : [];

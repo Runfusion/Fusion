@@ -180,6 +180,12 @@ export type CliConfirmAdvanceListener = (info: {
   decision: "advance" | "not-yet";
 }) => void;
 
+export type CliRelaunchListener = (info: {
+  sessionId: string;
+  projectId: string;
+  taskId: string;
+}) => void;
+
 /**
  * The generic-tier "this session looks idle — advance to review?" affordance.
  * The engine pipeline layer acts on the event later; for now the transport
@@ -203,6 +209,38 @@ export class CliConfirmAdvanceRegistry {
   }
 
   getLatest(sessionId: string): "advance" | "not-yet" | undefined {
+    return this.latest.get(sessionId);
+  }
+}
+
+export interface CliRelaunchRequest {
+  sessionId: string;
+  projectId: string;
+  taskId: string;
+}
+
+/**
+ * FNXC:CliRelaunch 2026-06-14-20:16:
+ * Relaunch uses the same decoupled transport contract as confirm-advance: the authenticated route records and emits intent, while the engine listener owns task lifecycle changes so REST handlers never spawn orphan CLI processes outside the scheduler.
+ */
+export class CliRelaunchRegistry {
+  private readonly latest = new Map<string, CliRelaunchRequest>();
+  private readonly listeners = new Set<CliRelaunchListener>();
+
+  on(listener: CliRelaunchListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  record(sessionId: string, projectId: string, taskId: string): void {
+    const request = { sessionId, projectId, taskId };
+    this.latest.set(sessionId, request);
+    for (const listener of this.listeners) {
+      listener(request);
+    }
+  }
+
+  getLatest(sessionId: string): CliRelaunchRequest | undefined {
     return this.latest.get(sessionId);
   }
 }

@@ -63,6 +63,7 @@ interface FileBrowserModalProps {
   onClose: () => void;
   onWorkspaceChange?: (workspace: string) => void;
   projectId?: string;
+  onSendSelectionToTask?: (description: string) => void;
 }
 
 /**
@@ -75,6 +76,7 @@ export function FileBrowserModal({
   onClose,
   onWorkspaceChange,
   projectId,
+  onSendSelectionToTask,
 }: FileBrowserModalProps) {
   const { t } = useTranslation("app");
   const { projectName, workspaces } = useWorkspaces(projectId);
@@ -451,6 +453,7 @@ export function FileBrowserModal({
                       canToggleLineNumbers={!isBinaryFile(selectedFile)}
                       toolbarExpanded={toolbarActionsExpanded}
                       toolbarActionsId={toolbarActionsId}
+                      onSendSelectionToTask={onSendSelectionToTask}
                     />
                   </div>
                 )}

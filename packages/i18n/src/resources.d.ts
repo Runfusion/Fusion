@@ -566,6 +566,7 @@ export default interface Resources {
       "last24h": "Last 24h",
       "last7d": "Last 7 days",
       "lastHeartbeat": "Last heartbeat",
+      "lastHeartbeatAt": "Last: {{time}}",
       "latestRunLabel": "Latest run",
       "layoutAuto": "Auto",
       "layoutAutoAria": "Automatic layout",
@@ -658,6 +659,7 @@ export default interface Resources {
       "next": "Next",
       "nextExpected": "Next expected",
       "nextHeartbeat": "Next heartbeat in {{elapsed}}",
+      "nextHeartbeatAt": "Next: {{time}}",
       "noActiveAssignment": "No active assignment",
       "noActiveEligible": "No active agents eligible to pause",
       "noActivityYet": "No activity yet",
@@ -1133,6 +1135,7 @@ export default interface Resources {
         "needsInput": "needs input"
       },
       "typeLabel": {
+        "cliAgent": "CLI Agent",
         "milestoneInterview": "Milestone Interview",
         "missionInterview": "Mission Interview",
         "planning": "Planning",
@@ -1194,7 +1197,7 @@ export default interface Resources {
       "cancelButton": "Cancel",
       "clearConversationFailed": "Failed to clear conversation",
       "closeQuickChat": "Close quick chat",
-      "connectingStatus": "Connecting…",
+      "workingStatus": "Working…",
       "conversationArchived": "Conversation archived",
       "conversationDeleted": "Conversation deleted",
       "copyFailed": "Copy failed",
@@ -1345,6 +1348,27 @@ export default interface Resources {
       "stateMissing": "Not installed",
       "stateVersionMismatch": "Version mismatch",
       "succeededDuration": "Install succeeded in {{duration}}s"
+    },
+    "cliTerminal": {
+      "adapterSettings": "Adapter settings",
+      "advance": "Advance",
+      "advancePrompt": "This session looks idle — advance to review?",
+      "mobileInputPlaceholder": "Type to send to the session…",
+      "mobileKeyArrowDown": "Cursor down",
+      "mobileKeyArrowLeft": "Cursor left",
+      "mobileKeyArrowRight": "Cursor right",
+      "mobileKeyArrowUp": "Cursor up",
+      "mobileKeyCtrl": "Sticky Ctrl modifier",
+      "mobileKeyCtrlC": "Send Ctrl-C",
+      "mobileKeyEsc": "Send Escape",
+      "mobileKeyTab": "Send Tab",
+      "mobileSend": "Send",
+      "notYet": "Not yet",
+      "postureBaseline": "Baseline",
+      "postureResolved": "Resolved posture",
+      "readOnly": "Read-only",
+      "replayEnded": "Session ended",
+      "replayIdle": "Session idle"
     },
     "column": {
       "actionsAriaLabel": "{{columnLabel}} column actions",
@@ -1631,12 +1655,19 @@ export default interface Resources {
     "dirPicker": {
       "ariaLabel": "Directory browser",
       "browse": "Browse",
+      "cancel": "Cancel",
       "closeBrowser": "Close directory browser",
+      "createFolder": "New folder",
+      "createFolderAria": "Create new folder",
+      "createFolderConfirm": "Create",
+      "createFolderError": "Folder name cannot contain path separators or '..'",
+      "createFolderTitle": "Create folder",
       "defaultPlaceholder": "/path/to/your/project",
       "hideHidden": "Hide hidden",
       "hideHiddenAria": "Hide hidden directories",
       "hideHiddenTitle": "Hide hidden",
       "loading": "Loading…",
+      "newFolderPlaceholder": "Folder name",
       "noSubdirs": "No subdirectories",
       "openBrowser": "Browse directories",
       "parentDir": "Go to parent directory",
@@ -4293,8 +4324,10 @@ export default interface Resources {
         "saving": "Saving..."
       },
       "addCustom": "Add Custom Provider",
+      "apiKeyKeepPlaceholder": "Leave blank to keep current key",
       "apiKeyLabel": "API key",
       "apiTypeAnthropic": "Anthropic-compatible",
+      "apiTypeGoogle": "Google Generative AI",
       "apiTypeInvalid": "API type is invalid.",
       "apiTypeLabel": "API type",
       "apiTypeOpenAi": "OpenAI-compatible",
@@ -4878,6 +4911,16 @@ export default interface Resources {
       "valueLabel": "Value"
     },
     "sessionBanner": {
+      "cli": {
+        "advance": "Advance",
+        "authFailed": "CLI authentication failed",
+        "cancelTask": "Cancel task",
+        "reauthenticate": "Re-authenticate",
+        "relaunch": "Relaunch fresh",
+        "resumeExhausted": "Couldn't resume the session",
+        "retry": "Retry",
+        "userExited": "Agent exited before completing"
+      },
       "dismissAll": "Dismiss all",
       "dismissItem": "Dismiss {{title}}",
       "failed": "Failed",
@@ -4893,7 +4936,10 @@ export default interface Resources {
       "headerErrorSingular_other": "",
       "regionLabel": "AI sessions needing input or failed",
       "resume": "Resume",
-      "retry": "Retry"
+      "retry": "Retry",
+      "typeLabel": {
+        "cliAgent": "CLI Agent"
+      }
     },
     "settings": {
       "actions": {
@@ -4948,6 +4994,34 @@ export default interface Resources {
         "backupNow": "Backup Now",
         "creating": "Creating…"
       },
+      "cliAgents": {
+        "adapterLabel": "Adapter",
+        "approveFailed": "Failed to record autonomy approval",
+        "approvedNote": "Elevated autonomy is approved for this project.",
+        "autonomy": {
+          "default": "Default (request approvals)",
+          "elevated": "Elevated (bypass approvals)"
+        },
+        "autonomyHelp": "Elevated autonomy requires a per-project approval before the agent can launch.",
+        "autonomyLabel": "Autonomy mode",
+        "commandHelp": "Path or name of the binary to launch. A non-default value is treated as privileged and requires autonomy approval.",
+        "commandLabel": "Command override",
+        "description": "Per-adapter launch configuration for CLI coding agents driven in engine-owned terminals.",
+        "elevatedConfirmAction": "Approve elevated autonomy",
+        "elevatedConfirmBody": "Elevated autonomy lets this CLI agent bypass per-step approvals (e.g. --dangerously-skip-permissions). It can modify files and run commands without pausing. Approve only if you trust this adapter for this project.",
+        "elevatedConfirmTitle": "Approve elevated autonomy?",
+        "envHelp": "Comma-separated variable NAMES forwarded from the parent process. Service credentials (FUSION_*) are always excluded.",
+        "envLabel": "Environment variable additions",
+        "extraArgsHelp": "Appended after the adapter's computed arguments (space-separated). Bypass flags here are detected and gated.",
+        "extraArgsLabel": "Extra arguments",
+        "heading": "CLI Agents",
+        "saveFailed": "Failed to save CLI agent settings",
+        "tier": {
+          "generic": "generic",
+          "hybrid": "hybrid",
+          "native": "native"
+        }
+      },
       "closeModal": "Close conflict modal",
       "conflictModalTitle": "Resolve Settings Conflicts",
       "footer": {
@@ -4958,7 +5032,14 @@ export default interface Resources {
         "learnMore": "Learn more",
         "settingsSaved": "Settings saved",
         "upToDate": "You're up to date ✓",
-        "updateAvailablePrefix": "v{{version}} available"
+        "updateAvailablePrefix": "v{{version}} available",
+        "updateCheckFailed": "Failed to check for updates",
+        "updateFailed": "Update failed",
+        "updateFailedWithMessage": "Update failed: {{message}}",
+        "updateNow": "Update now",
+        "updateSuccess": "Updated to v{{version}} — restart Fusion to apply",
+        "updateSuccessToast": "Update installed. Restart Fusion to apply it.",
+        "updating": "Updating…"
       },
       "header": {
         "discord": "Discord"
@@ -5002,11 +5083,19 @@ export default interface Resources {
         "presetNameRequired": "Preset name is required",
         "savePreset": "Save preset"
       },
+      "movedStub": {
+        "modelLanes": "Per-phase model lanes (execution, planning, reviewer, their fallbacks, and the title summarizer) now live on the workflow.",
+        "openWorkflowSettings": "Open workflow settings",
+        "reviewVerification": "Review, verification auto-fix, and scope-enforcement settings now live on the workflow.",
+        "stepExecution": "Step execution settings (run steps in new sessions, max parallel steps) now live on the workflow.",
+        "summarizerModelInline": "The model used for summarization now lives on the workflow (title summarizer lane). Open workflow settings to choose it."
+      },
       "nav": {
         "aria": {
           "global": "Global setting",
           "project": "Project setting"
         },
+        "cliAgents": "CLI Agents",
         "tooltip": {
           "global": "Shared across all projects",
           "project": "Specific to this project"
@@ -5513,6 +5602,8 @@ export default interface Resources {
       "generatingSubtasks": "AI is generating subtasks...",
       "groupedOnSharedBranch": "Grouped on shared branch",
       "hideThinking": "Hide thinking",
+      "keepSessionMessage": "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume.",
+      "keepSessionTitle": "Keep subtask session available?",
       "modalTitle": "Subtask Breakdown",
       "moveDown": "Move down",
       "moveSubtaskDownAriaLabel": "Move subtask down",
@@ -5523,6 +5614,7 @@ export default interface Resources {
       "openGroupModal": "Open group modal",
       "planningBranchModeLabel": "Planning branch mode",
       "preparingBreakdown": "Preparing to break this task into subtasks.",
+      "progressHint": "Fusion will keep working while the AI prepares subtasks.",
       "reconnecting": "Reconnecting…",
       "remove": "Remove",
       "retry": "Retry",
@@ -5536,9 +5628,11 @@ export default interface Resources {
       "sessionActiveAnotherTabTakeover": "This session is active in another tab",
       "showThinking": "Show thinking",
       "sizeLabel": "Size",
+      "startingBreakdown": "Starting subtask breakdown...",
       "takeControl": "Take Control",
       "takingControl": "Taking control...",
       "titleLabel": "Title",
+      "waitingForThinking": "Waiting for AI progress updates...",
       "untitled": "Untitled"
     },
     "syncLog": {
@@ -6039,6 +6133,7 @@ export default interface Resources {
       },
       "tabs": {
         "changes": "Changes",
+        "chat": "Chat",
         "comments": "Comments",
         "definition": "Definition",
         "documents": "Documents",
@@ -6048,7 +6143,11 @@ export default interface Resources {
         "review": "Review",
         "routing": "Routing",
         "stats": "Stats",
+        "terminal": "Terminal",
         "workflow": "Workflow"
+      },
+      "terminal": {
+        "loading": "Loading terminal…"
       },
       "timedDuration": "Timed duration",
       "timestamps": {
@@ -6295,6 +6394,10 @@ export default interface Resources {
       "branchProgressTitle": "Parallel branches in progress",
       "cancelMove": "Cancel Move",
       "clearSelection": "Clear selection",
+      "cliNeedsAttention": "Needs attention",
+      "cliNeedsAttentionTitle": "The CLI agent needs your attention",
+      "cliWaitingOnInput": "Waiting on input",
+      "cliWaitingOnInputTitle": "The CLI agent is waiting for your input",
       "closeIssue": "Close Issue",
       "collapse": "Collapse",
       "createFailed": "Failed to create task",
@@ -6554,7 +6657,12 @@ export default interface Resources {
       "dismissLabel": "Dismiss update notice",
       "learnMore": "Learn more",
       "message": "Update available: v{{latestVersion}} (current: v{{currentVersion}}). Run fn update for an installed CLI, or pull this source checkout.",
-      "releaseNotes": "Release notes"
+      "releaseNotes": "Release notes",
+      "updateFailed": "Update failed",
+      "updateFailedWithMessage": "Update failed: {{message}}",
+      "updateNow": "Update now",
+      "updateSuccess": "Updated to v{{version}} — restart Fusion to apply",
+      "updating": "Updating…"
     },
     "usage": {
       "configureAuthHint": "Configure authentication in Settings to see usage data.",
@@ -6713,13 +6821,29 @@ export default interface Resources {
     },
     "workflowColumns": {
       "add": "Add column",
+      "agent": "Column agent",
+      "agentBadgeDefer": "Column agent (defer)",
+      "agentBadgeOverride": "Column agent (override)",
+      "agentFlagHint": "Enable both experimentalFeatures.workflowColumns and experimentalFeatures.workflowGraphExecutor to staff columns with agents",
+      "agentLabel": "Column agent",
+      "agentMode": "Agent mode",
+      "agentModeDefer": "Defer",
+      "agentModeDeferHint": "Column agent applies only when the work carries no agent/model settings of its own",
+      "agentModeOverride": "Override",
+      "agentModeOverrideHint": "Column agent supersedes node- and task-level agent/model settings",
+      "agentNone": "(none)",
+      "agentNotFound": "Agent not found — {{id}}",
+      "agentsLoadFailed": "Failed to load agents",
       "compositionBlocked": "Resolve trait conflicts on highlighted columns before saving",
+      "confirmPolicyEscalation": "Bind it anyway? The column agent will run with broader permissions than this project's default.",
       "empty": "No columns yet. Add a column to place nodes into board lanes.",
+      "escalationDeclined": "Save cancelled — column agent binding not confirmed",
       "moveDown": "Move column down",
       "moveUp": "Move column up",
       "nameLabel": "Column name",
       "newColumnName": "New column",
       "nodeUnplaced": "Not placed in a column",
+      "overriddenByColumnAgent": "Overridden by column agent {{name}} — this node's executor settings are superseded.",
       "readOnlyHint": "Built-in workflows are read-only — duplicate to edit",
       "remove": "Remove column",
       "title": "Columns",
@@ -6727,6 +6851,27 @@ export default interface Resources {
       "traitsLoadFailed": "Failed to load traits",
       "unplacedCount_one": "{{count}} nodes not placed in a column",
       "unplacedCount_other": "{{count}} nodes not placed in a column"
+    },
+    "workflowEditor": {
+      "cliAgent": {
+        "adapterLabel": "CLI adapter",
+        "adapterNote": "Drives a CLI coding agent in an engine-owned terminal for this step.",
+        "adapterPlaceholder": "— select adapter —",
+        "autonomyLabel": "Elevated autonomy (bypass approvals)",
+        "autonomyNote": "Elevated autonomy requires a per-project approval before the agent can launch. Until approved, launches with elevated posture fail.",
+        "executorOption": "CLI agent",
+        "notify": {
+          "banner": "In-app banner",
+          "bannerNotify": "Banner + push notification"
+        },
+        "notifyLabel": "Waiting-on-input notification",
+        "notifyNote": "How you are alerted when the agent pauses waiting for input on this step.",
+        "tier": {
+          "generic": "generic",
+          "hybrid": "hybrid",
+          "native": "native"
+        }
+      }
     },
     "workflowFields": {
       "add": "Add field",

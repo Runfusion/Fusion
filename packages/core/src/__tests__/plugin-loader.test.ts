@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { PluginLoader } from "../plugin-loader.js";
+import { PluginLoader, resolvePluginEntryPath } from "../plugin-loader.js";
 import * as loggerModule from "../logger.js";
 
 const scanPluginSecurityMock = vi.fn();
@@ -125,6 +125,73 @@ function droidPluginModulePath(): string {
     new URL("../../../../plugins/fusion-plugin-droid-runtime/src/index.ts", import.meta.url),
   );
 }
+
+describe("resolvePluginEntryPath", () => {
+  let pluginDir: string;
+
+  beforeEach(() => {
+    pluginDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(pluginDir, { recursive: true, force: true });
+  });
+
+  async function writeEntry(relative: string): Promise<string> {
+    const path = join(pluginDir, relative);
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, "// entry\n");
+    return path;
+  }
+
+  it("prefers fresher src/index.ts over stale dist when no bundle exists", async () => {
+    const dist = await writeEntry("dist/index.js");
+    const src = await writeEntry("src/index.ts");
+    const older = new Date("2026-01-01T00:00:00.000Z");
+    const newer = new Date("2026-01-01T00:01:00.000Z");
+    utimesSync(dist, older, older);
+    utimesSync(src, newer, newer);
+
+    expect(resolvePluginEntryPath(pluginDir)).toBe(src);
+  });
+
+  it("keeps dist/index.js when dist is newer than src", async () => {
+    const dist = await writeEntry("dist/index.js");
+    const src = await writeEntry("src/index.ts");
+    const older = new Date("2026-01-01T00:00:00.000Z");
+    const newer = new Date("2026-01-01T00:01:00.000Z");
+    utimesSync(dist, newer, newer);
+    utimesSync(src, older, older);
+
+    expect(resolvePluginEntryPath(pluginDir)).toBe(dist);
+  });
+
+  it("uses newest non-index src file for freshness and still returns src/index.ts", async () => {
+    const dist = await writeEntry("dist/index.js");
+    const src = await writeEntry("src/index.ts");
+    const settings = await writeEntry("src/settings.ts");
+    const older = new Date("2026-01-01T00:00:00.000Z");
+    const newer = new Date("2026-01-01T00:01:00.000Z");
+    utimesSync(dist, older, older);
+    utimesSync(src, older, older);
+    utimesSync(settings, newer, newer);
+
+    expect(resolvePluginEntryPath(pluginDir)).toBe(src);
+  });
+
+  it("always keeps bundled.js first regardless of dist or src freshness", async () => {
+    const bundled = await writeEntry("bundled.js");
+    const dist = await writeEntry("dist/index.js");
+    const src = await writeEntry("src/index.ts");
+    const older = new Date("2026-01-01T00:00:00.000Z");
+    const newer = new Date("2026-01-01T00:01:00.000Z");
+    utimesSync(bundled, older, older);
+    utimesSync(dist, older, older);
+    utimesSync(src, newer, newer);
+
+    expect(resolvePluginEntryPath(pluginDir)).toBe(bundled);
+  });
+});
 
 // Mock TaskStore for testing
 const mockTaskStore = {

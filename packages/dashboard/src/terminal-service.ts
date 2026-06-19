@@ -31,6 +31,14 @@ const DEFAULT_MAX_SESSIONS = 10;
 const OUTPUT_THROTTLE_MS = 16;
 const OUTPUT_BATCH_SIZE = 64 * 1024; // 64KB per WebSocket frame
 
+/*
+FNXC:TerminalReadiness 2026-06-17-17:38:
+Programmatic command injection into a brand-new PTY must wait until the shell has emitted initial output and then stayed quiet, because login shell rc/profile startup can otherwise drop or interleave leading command bytes.
+Use a short quiet window to avoid writing into an actively streaming prompt/banner and a bounded timeout so silent shells never hang script execution.
+*/
+export const READY_QUIET_WINDOW_MS = 150;
+export const READY_TIMEOUT_MS = 5_000;
+
 // Stale session threshold: sessions inactive for more than 5 minutes are eligible for eviction
 export const STALE_SESSION_THRESHOLD_MS = 300_000; // 5 minutes
 
@@ -86,6 +94,12 @@ export interface TerminalSession {
    * when it falls inside the 150 ms resize-suppression window.
    */
   resizeSuppressedChunks: string[];
+  ready: boolean;
+  firstOutputSeen: boolean;
+  lastOutputAt: number | null;
+  readyWaiters: Array<() => void>;
+  readyTimeout: NodeJS.Timeout | null;
+  readyQuietTimeout: NodeJS.Timeout | null;
   /** Internal flush callback set by createSession; used by resize debounce */
   _flushOutput: (() => void) | null;
 }
@@ -305,6 +319,47 @@ export class TerminalService extends EventEmitter {
   }
 
   /**
+   * Resolve all readiness waiters exactly once and clear readiness timers.
+   */
+  private resolveReady(session: TerminalSession): void {
+    if (session.readyTimeout) {
+      clearTimeout(session.readyTimeout);
+      session.readyTimeout = null;
+    }
+    if (session.readyQuietTimeout) {
+      clearTimeout(session.readyQuietTimeout);
+      session.readyQuietTimeout = null;
+    }
+
+    if (!session.ready) {
+      session.ready = true;
+    }
+
+    const waiters = session.readyWaiters.splice(0);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  /**
+   * Observe PTY output for readiness using first-output plus quiet-window semantics.
+   */
+  private observeReadinessOutput(session: TerminalSession): void {
+    if (session.ready) return;
+
+    session.firstOutputSeen = true;
+    session.lastOutputAt = Date.now();
+
+    if (session.readyQuietTimeout) {
+      clearTimeout(session.readyQuietTimeout);
+    }
+    session.readyQuietTimeout = setTimeout(() => {
+      session.readyQuietTimeout = null;
+      this.resolveReady(session);
+    }, READY_QUIET_WINDOW_MS);
+  }
+
+  /**
    * Update the last activity timestamp for a session
    */
   updateActivity(sessionId: string): void {
@@ -509,8 +564,19 @@ export class TerminalService extends EventEmitter {
       resizeInProgress: false,
       resizeDebounceTimeout: null,
       resizeSuppressedChunks: [],
+      ready: false,
+      firstOutputSeen: false,
+      lastOutputAt: null,
+      readyWaiters: [],
+      readyTimeout: null,
+      readyQuietTimeout: null,
       _flushOutput: null,
     };
+
+    session.readyTimeout = setTimeout(() => {
+      session.readyTimeout = null;
+      this.resolveReady(session);
+    }, READY_TIMEOUT_MS);
 
     this.sessions.set(id, session);
 
@@ -558,6 +624,8 @@ export class TerminalService extends EventEmitter {
 
     // Forward data events with throttling
     ptyProcess.onData((data: string) => {
+      this.observeReadinessOutput(session);
+
       // Always append to scrollback buffer so no output is lost
       session.scrollbackBuffer += data;
       if (session.scrollbackBuffer.length > MAX_SCROLLBACK_SIZE) {
@@ -593,6 +661,7 @@ export class TerminalService extends EventEmitter {
         clearTimeout(session.resizeDebounceTimeout);
         session.resizeDebounceTimeout = null;
       }
+      this.resolveReady(session);
       session._flushOutput = null;
       session.resizeSuppressedChunks.length = 0;
       session.outputChunks.length = 0;
@@ -604,6 +673,25 @@ export class TerminalService extends EventEmitter {
 
     console.info(`Session ${id} created successfully`);
     return { success: true, session };
+  }
+
+  /**
+   * Wait until a fresh PTY shell has produced initial output and quieted.
+   * Programmatic callers use this before sending a command; user keystrokes still call write() directly.
+   */
+  waitForReady(sessionId: string): Promise<void> {
+    if (!this.isValidSessionId(sessionId)) {
+      return Promise.resolve();
+    }
+
+    const session = this.sessions.get(sessionId);
+    if (!session || session.ready) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      session.readyWaiters.push(resolve);
+    });
   }
 
   /**
@@ -734,6 +822,7 @@ export class TerminalService extends EventEmitter {
             clearTimeout(session.resizeDebounceTimeout);
             session.resizeDebounceTimeout = null;
           }
+          this.resolveReady(session);
           try {
             this.killPtyProcess(session.pty, "SIGKILL");
           } catch {
@@ -746,6 +835,7 @@ export class TerminalService extends EventEmitter {
       return true;
     } catch (error) {
       console.error(`Error killing session ${sessionId}:`, error);
+      this.resolveReady(session);
       this.sessions.delete(sessionId);
       return false;
     }
@@ -836,6 +926,7 @@ export class TerminalService extends EventEmitter {
           clearTimeout(session.resizeDebounceTimeout);
           session.resizeDebounceTimeout = null;
         }
+        this.resolveReady(session);
         this.killPtyProcess(session.pty);
       } catch {
         // Ignore errors during cleanup

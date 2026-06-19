@@ -209,6 +209,182 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "todo")).toBe(true);
   }, 20_000);
 
+  it("FN-6461: demotes no-commits proven no-op tasks when skipped work outweighs done work", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-no-commits-noop-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b fusion/fn-no-commits");
+    git(repo, "git checkout main");
+
+    const task = {
+      id: "FN-NO-COMMITS",
+      title: "FN-NO-COMMITS",
+      description: "FN-NO-COMMITS",
+      column: "in-review",
+      branch: "fusion/fn-no-commits",
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      noCommitsExpected: true,
+      dependencies: [],
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Dry-run", status: "skipped" },
+        { name: "Execute", status: "skipped" },
+        { name: "Verify", status: "skipped" },
+        { name: "Testing", status: "skipped" },
+        { name: "Documentation", status: "skipped" },
+      ],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-NO-COMMITS",
+    } as unknown as Task;
+
+    const store = createStore(task);
+    const result = await aiMergeTask(store, repo, "FN-NO-COMMITS");
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toContain("done=1, incomplete=5");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({ error: expect.stringContaining("done=1, incomplete=5") }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NO-COMMITS", "done");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-NO-COMMITS",
+      expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
+      expect.stringContaining("legacy-no-op-classifier"),
+    );
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:no-commits-finalize-blocked-incomplete-steps",
+      target: "FN-NO-COMMITS",
+    }));
+  }, 20_000);
+
+  it("FN-6461: allows all-done no-commits proven no-op tasks to finalize", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-no-commits-done-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b fusion/fn-no-commits-done");
+    git(repo, "git checkout main");
+
+    const task = {
+      id: "FN-NO-COMMITS-DONE",
+      title: "FN-NO-COMMITS-DONE",
+      description: "FN-NO-COMMITS-DONE",
+      column: "in-review",
+      branch: "fusion/fn-no-commits-done",
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      noCommitsExpected: true,
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "done" }, { name: "Verify", status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-NO-COMMITS-DONE",
+    } as unknown as Task;
+
+    const store = createStore(task);
+    const result = await aiMergeTask(store, repo, "FN-NO-COMMITS-DONE");
+
+    expect(result.merged).toBe(true);
+    expect(result.noOp).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done");
+  }, 20_000);
+
+  it("FN-6461: demotes no-commits empty-own-diff fast-path before cleanup", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-no-commits-empty-own-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b fusion/fn-empty-block");
+    git(repo, "git commit --allow-empty -m 'test(FN-EMPTY-BLOCK): no content change'");
+    git(repo, "git checkout main");
+
+    const task = {
+      id: "FN-EMPTY-BLOCK",
+      title: "FN-EMPTY-BLOCK",
+      description: "FN-EMPTY-BLOCK",
+      column: "in-review",
+      branch: "fusion/fn-empty-block",
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      noCommitsExpected: true,
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "done" }, { name: "Execute", status: "skipped" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-EMPTY-BLOCK",
+    } as unknown as Task;
+
+    const store = createStore(task, { mergeIntegrationWorktree: "reuse-task-worktree" as any });
+    const result = await aiMergeTask(store, repo, "FN-EMPTY-BLOCK");
+
+    expect(result.merged).toBe(false);
+    expect(result.error).toContain("done=1, incomplete=1");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-BLOCK", "todo", expect.objectContaining({ preserveProgress: true, moveSource: "engine" }));
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-EMPTY-BLOCK", "done");
+    expect(git(repo, "git show-ref --verify --quiet refs/heads/fusion/fn-empty-block; echo $?")).toBe("0");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-EMPTY-BLOCK",
+      expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
+      expect.stringContaining("early-empty-own-diff"),
+    );
+  }, 20_000);
+
+  it("FN-6461: allows all-done no-commits empty-own-diff fast-path tasks", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-no-commits-empty-done-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b fusion/fn-empty-done");
+    git(repo, "git commit --allow-empty -m 'test(FN-EMPTY-DONE): no content change'");
+    git(repo, "git checkout main");
+
+    const task = {
+      id: "FN-EMPTY-DONE",
+      title: "FN-EMPTY-DONE",
+      description: "FN-EMPTY-DONE",
+      column: "in-review",
+      branch: "fusion/fn-empty-done",
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      noCommitsExpected: true,
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "done" }, { name: "Verify", status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-EMPTY-DONE",
+    } as unknown as Task;
+
+    const store = createStore(task, { mergeIntegrationWorktree: "reuse-task-worktree" as any });
+    const result = await aiMergeTask(store, repo, "FN-EMPTY-DONE");
+
+    expect(result.merged).toBe(true);
+    expect(result.noOp).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done");
+  }, 20_000);
+
   it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-merger-unproven-"));
     repos.push(repo);

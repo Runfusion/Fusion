@@ -4,6 +4,11 @@ import { WorkflowCompileError } from "../workflow-compiler.js";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import { createTaskStoreTestHarness } from "./store-test-helpers.js";
 
+/*
+FNXC:CustomWorkflows 2026-06-18-12:00:
+FN-6643 hardened the create-time workflow selection invariant: every task creation entry point that shares materializeExplicitWorkflowSteps must fail closed for unknown explicit workflow ids before creating a task row or task_workflow_selection state.
+*/
+
 /** Linear workflow with two pre-merge steps. */
 function linearIr(): WorkflowIr {
   return {
@@ -245,15 +250,29 @@ describe("TaskStore workflow selection (U3)", () => {
       expect(after).toBe(before);
     });
 
-    it("rejects an unknown workflow id before creating the task row", async () => {
-      const before = (await store.listTasks({ includeArchived: true })).length;
+    it("rejects an unknown workflow id before creating a task row across create entry points", async () => {
+      const beforeCreateTask = (await store.listTasks({ includeArchived: true })).length;
 
       await expect(
         store.createTask({ description: "bad pick", workflowId: "WF-404" }),
       ).rejects.toThrow(/not found/i);
 
-      const after = (await store.listTasks({ includeArchived: true })).length;
-      expect(after).toBe(before);
+      const afterCreateTask = (await store.listTasks({ includeArchived: true })).length;
+      expect(afterCreateTask).toBe(beforeCreateTask);
+
+      const reservedTaskId = "FN-RESERVED-404";
+      const beforeReservedCreate = (await store.listTasks({ includeArchived: true })).length;
+
+      await expect(
+        store.createTaskWithReservedId(
+          { description: "bad reserved pick", workflowId: "WF-404" },
+          { taskId: reservedTaskId, applyDefaultWorkflowSteps: true },
+        ),
+      ).rejects.toThrow(/not found/i);
+
+      const afterReservedCreate = (await store.listTasks({ includeArchived: true })).length;
+      expect(afterReservedCreate).toBe(beforeReservedCreate);
+      expect(store.getTaskWorkflowSelection(reservedTaskId)).toBeUndefined();
     });
   });
 });

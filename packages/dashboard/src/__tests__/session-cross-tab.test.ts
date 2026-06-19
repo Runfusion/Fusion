@@ -10,8 +10,9 @@ import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { setImmediate } from "node:timers";
 import { join } from "node:path";
-import { TaskStore } from "@fusion/core";
+import { Database, TaskStore } from "@fusion/core";
 import { AiSessionStore, type AiSessionRow } from "../ai-session-store.js";
 import { createApiRoutes } from "../routes.js";
 import { request } from "../test-request.js";
@@ -41,6 +42,7 @@ function makeRow(id: string, overrides: Partial<AiSessionRow> = {}): AiSessionRo
 describe("cross-tab session locking", () => {
   let tmpRoot: string;
   let taskStore: TaskStore;
+  let db: Database;
   let aiSessionStore: AiSessionStore;
   let app: express.Express;
 
@@ -48,7 +50,13 @@ describe("cross-tab session locking", () => {
     tmpRoot = mkdtempSync(join(tmpdir(), "kb-session-cross-tab-"));
     taskStore = new TaskStore(tmpRoot, join(tmpRoot, ".fusion-global-settings"), { inMemoryDb: true });
     await taskStore.init();
-    aiSessionStore = new AiSessionStore(taskStore.getDatabase());
+    /*
+    FNXC:DashboardSessionTests 2026-06-14-09:10:
+    AiSessionStore uses SQLite files that must be closed independently before tmpRoot cleanup. Keep it on a dedicated Database handle outside TaskStore's .fusion directory so TaskStore teardown cannot leave session-store writers racing recursive rm.
+    */
+    db = new Database(join(tmpRoot, ".fusion-ai-sessions"));
+    db.init();
+    aiSessionStore = new AiSessionStore(db);
 
     app = express();
     app.use(express.json());
@@ -61,6 +69,13 @@ describe("cross-tab session locking", () => {
     } catch {
       // no-op
     }
+    try {
+      db.close();
+    } catch {
+      // no-op
+    }
+    // FNXC:DashboardSessionTests 2026-06-14-09:20: TaskStore.close() closes watcher/database handles synchronously but their filesystem close callbacks settle on the next event-loop turn; drain that turn before deleting .fusion.
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await rm(tmpRoot, { recursive: true, force: true });
   });
 
@@ -109,10 +124,7 @@ describe("cross-tab session locking", () => {
     aiSessionStore.acquireLock("lock-expiry", "tab-expired");
 
     const staleTimestamp = new Date(Date.now() - 31 * 60 * 1000).toISOString();
-    taskStore
-      .getDatabase()
-      .prepare("UPDATE ai_sessions SET lockedAt = ? WHERE id = ?")
-      .run(staleTimestamp, "lock-expiry");
+    db.prepare("UPDATE ai_sessions SET lockedAt = ? WHERE id = ?").run(staleTimestamp, "lock-expiry");
 
     const released = aiSessionStore.releaseStaleLocks(30 * 60 * 1000);
 
@@ -152,14 +164,12 @@ describe("cross-tab session locking", () => {
 
     const stale = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
     const fresh = new Date(Date.now() - 60 * 1000).toISOString();
-    taskStore
-      .getDatabase()
-      .prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id IN (?, ?)")
-      .run(stale, "stale-generating", "stale-awaiting");
-    taskStore
-      .getDatabase()
-      .prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id = ?")
-      .run(fresh, "fresh-generating");
+    db.prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id IN (?, ?)").run(
+      stale,
+      "stale-generating",
+      "stale-awaiting",
+    );
+    db.prepare("UPDATE ai_sessions SET updatedAt = ? WHERE id = ?").run(fresh, "fresh-generating");
 
     const summary = aiSessionStore.cleanupStaleSessions(7 * 24 * 60 * 60 * 1000);
 

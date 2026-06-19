@@ -94,6 +94,7 @@ describe("oauth credential interop", () => {
         accessToken: "claude-access",
         refreshToken: "claude-refresh",
         expiresAt: Date.now() + 3600_000,
+        scopes: ["user:profile", "org:create_api_key"],
       },
     });
 
@@ -102,6 +103,7 @@ describe("oauth credential interop", () => {
       access: "claude-access",
       refresh: "claude-refresh",
       expires: expect.any(Number),
+      scopes: ["user:profile", "org:create_api_key"],
     });
   });
 

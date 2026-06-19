@@ -137,7 +137,7 @@
 }
 
 .cli-binary-install-btn:hover:not(:disabled) {
-  background: var(--accent-hover, #2563eb);
+  background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
 }
 
 .cli-binary-install-btn:disabled,
@@ -185,7 +185,7 @@
   flex: 1;
   font-family: var(--font-mono, ui-monospace, "SFMono-Regular", monospace);
   font-size: 12.5px;
-  color: var(--text-primary, #e6edf3);
+  color: var(--text);
   white-space: nowrap;
   overflow-x: auto;
 }

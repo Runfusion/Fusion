@@ -28,6 +28,7 @@ function createStore(listTasks: Array<Record<string, unknown>>, settings: Record
     listTasksForGithubTrackingReconcile: vi.fn().mockResolvedValue({ tasks: [], hasMore: false }),
     getSettings: vi.fn().mockResolvedValue(settings),
     getGlobalSettingsStore: vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) })),
+    updateTask: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
   } as unknown as TaskStore;
 }
@@ -104,5 +105,109 @@ describe("GitHubTrackingReconciler.reconcileSourceIssues", () => {
     expect(result.skipped).toBe(1);
     expect((store.logEntry as any)).toHaveBeenCalledWith("FN-11", "Skipped GitHub source issue reconciliation", "no auth");
     expect(mockSetIssueState).not.toHaveBeenCalled();
+  });
+});
+
+describe("GitHubTrackingReconciler.backfillSourceIssueClosedAt", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    mockGetIssue.mockResolvedValue({ state: "open" });
+  });
+
+  it("persists a real GitHub closed_at for done GitHub source issues missing closedAt", async () => {
+    const closedAt = "2026-06-18T12:34:56.000Z";
+    mockGetIssue.mockResolvedValueOnce({ state: "closed", closedAt });
+    const sourceIssue = { provider: "github", repository: "owner/repo", issueNumber: 4, url: "https://github.com/owner/repo/issues/4" };
+    const store = createStore([{ id: "FN-1", column: "done", sourceIssue }]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result).toEqual({ scanned: 1, filled: 1, skipped: 0, errors: 0, hasMore: false });
+    expect(mockGetIssue).toHaveBeenCalledWith("owner", "repo", 4);
+    expect((store.updateTask as any)).toHaveBeenCalledWith("FN-1", { sourceIssue: { ...sourceIssue, closedAt } });
+  });
+
+  it("skips open issues without writing", async () => {
+    mockGetIssue.mockResolvedValueOnce({ state: "open" });
+    const store = createStore([{ id: "FN-2", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 2 } }]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result).toEqual({ scanned: 1, filled: 0, skipped: 1, errors: 0, hasMore: false });
+    expect((store.updateTask as any)).not.toHaveBeenCalled();
+  });
+
+  it("skips closed issues with no usable closedAt without fabricating a timestamp", async () => {
+    mockGetIssue.mockResolvedValueOnce({ state: "closed" });
+    const store = createStore([{ id: "FN-3", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 3 } }]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result.skipped).toBe(1);
+    expect(result.filled).toBe(0);
+    expect((store.updateTask as any)).not.toHaveBeenCalled();
+  });
+
+  it("excludes tasks that already have sourceIssue.closedAt from the scan", async () => {
+    const store = createStore([{ id: "FN-4", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 4, closedAt: "2026-06-01T00:00:00.000Z" } }]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result).toEqual({ scanned: 0, filled: 0, skipped: 0, errors: 0, hasMore: false });
+    expect(mockGetIssue).not.toHaveBeenCalled();
+    expect((store.updateTask as any)).not.toHaveBeenCalled();
+  });
+
+  it("ignores non-github, non-done, and missing sourceIssue tasks", async () => {
+    const store = createStore([
+      { id: "FN-5", column: "todo", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 5 } },
+      { id: "FN-6", column: "done", sourceIssue: { provider: "jira", repository: "owner/repo", issueNumber: 6 } },
+      { id: "FN-7", column: "done" },
+    ]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result).toEqual({ scanned: 0, filled: 0, skipped: 0, errors: 0, hasMore: false });
+    expect(mockGetIssue).not.toHaveBeenCalled();
+  });
+
+  it("logs getIssue errors per task without throwing", async () => {
+    mockGetIssue.mockRejectedValueOnce(new Error("boom"));
+    const store = createStore([{ id: "FN-8", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 8 } }]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result).toEqual({ scanned: 1, filled: 0, skipped: 0, errors: 1, hasMore: false });
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-8", "Failed to backfill GitHub source issue closed-at", "boom");
+    expect((store.updateTask as any)).not.toHaveBeenCalled();
+  });
+
+  it("returns all-skipped and logs when auth resolution fails", async () => {
+    mockResolveGithubTrackingAuth.mockReturnValueOnce({ ok: false, message: "no auth" });
+    const store = createStore([{ id: "FN-9", column: "archived", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 9 } }]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store);
+
+    expect(result).toEqual({ scanned: 1, filled: 0, skipped: 1, errors: 0, hasMore: false });
+    expect((store.logEntry as any)).toHaveBeenCalledWith("FN-9", "Skipped GitHub source issue closed-at backfill", "no auth");
+    expect(mockGetIssue).not.toHaveBeenCalled();
+  });
+
+  it("applies offset and limit pagination with hasMore", async () => {
+    const closedAt = "2026-06-18T13:00:00.000Z";
+    mockGetIssue.mockResolvedValueOnce({ state: "closed", closedAt });
+    const store = createStore([
+      { id: "FN-10", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 10 } },
+      { id: "FN-11", column: "done", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 11 } },
+      { id: "FN-12", column: "archived", sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 12 } },
+    ]);
+
+    const result = await new GitHubTrackingReconciler().backfillSourceIssueClosedAt(store, { offset: 1, limit: 1 });
+
+    expect(result).toEqual({ scanned: 1, filled: 1, skipped: 0, errors: 0, hasMore: true });
+    expect(mockGetIssue).toHaveBeenCalledTimes(1);
+    expect(mockGetIssue).toHaveBeenCalledWith("owner", "repo", 11);
+    expect((store.updateTask as any)).toHaveBeenCalledWith("FN-11", { sourceIssue: { provider: "github", repository: "owner/repo", issueNumber: 11, closedAt } });
   });
 });

@@ -56,6 +56,7 @@ vi.mock("lucide-react", async (importOriginal) => {
     Search: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-search"} {...props} />,
     Trash2: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-trash"} {...props} />,
     Archive: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-archive"} {...props} />,
+    Pencil: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-pencil"} {...props} />,
     ChevronLeft: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-chevron-left"} {...props} />,
     Bot: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-bot"} {...props} />,
     Square: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-square"} {...props} />,
@@ -137,6 +138,7 @@ const defaultChatState: UseChatReturn = {
   selectSession: vi.fn(),
   createSession: vi.fn().mockResolvedValue({ id: "session-new", agentId: "__fn_agent__", status: "active", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" } satisfies ChatSessionInfo),
   archiveSession: vi.fn(),
+  renameSession: vi.fn(),
   deleteSession: vi.fn(),
   sendMessage: vi.fn(),
   stopStreaming: vi.fn(),
@@ -1039,6 +1041,57 @@ describe("ChatView", () => {
     expect(details?.querySelector(".chat-tool-call-status-text")).toHaveTextContent("completed");
   });
 
+  it("renders latest question tool calls as inline response UI and sends answers", async () => {
+    const sendMessage = vi.fn();
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Question Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      sendMessage,
+      messages: [
+        {
+          id: "msg-001",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Need input",
+          toolCalls: [{ toolName: "ask_user", args: { question: "Pick?", options: ["Alpha", "Beta"] }, isError: false, status: "completed" }],
+          createdAt: "2026-04-08T00:00:00.000Z",
+        },
+      ],
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("chat-question-response")).toBeInTheDocument();
+    expect(document.querySelector(".chat-tool-call")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("chat-question-response-option-q-0-opt-0"));
+    await userEvent.click(screen.getByTestId("chat-question-response-submit"));
+
+    expect(sendMessage).toHaveBeenCalledWith("> Q: Pick?\nAlpha");
+  });
+
+  it("renders historical question tool calls read-only with submitted answer", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Question Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        {
+          id: "msg-001",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Need input",
+          toolCalls: [{ toolName: "ask_user", args: { question: "Pick?", options: ["Alpha", "Beta"] }, isError: false, status: "completed" }],
+          createdAt: "2026-04-08T00:00:00.000Z",
+        },
+        { id: "msg-002", sessionId: "session-001", role: "user", content: "> Q: Pick?\nBeta", createdAt: "2026-04-08T00:01:00.000Z" },
+      ],
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("chat-question-response")).toHaveTextContent("Answered");
+    expect(screen.getByTestId("chat-question-response-submitted-answer")).toHaveTextContent("Beta");
+    expect(screen.queryByTestId("chat-question-response-submit")).not.toBeInTheDocument();
+  });
+
   it("truncates tool names when more than 5 unique", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -1489,6 +1542,71 @@ describe("ChatView", () => {
     expect(sendMessage).toHaveBeenCalledWith("Hello world", []);
   });
 
+  it("sends message on touch tap when the synthetic click is suppressed (mobile)", async () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+    try {
+      const sendMessage = vi.fn();
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [],
+        sendMessage,
+      });
+
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const textarea = screen.getByTestId("chat-input");
+      await userEvent.type(textarea, "Touch hello");
+
+      const sendButton = screen.getByTestId("chat-send-btn");
+      // iOS suppresses the trailing synthetic click after preventDefault() in the
+      // touch sequence, so the send must fire from the touch handlers. Both
+      // pointerdown (touch) and touchstart fire for one tap; the result must be a
+      // single send, not zero (bug) and not two (double-fire).
+      await act(async () => {
+        fireEvent.pointerDown(sendButton, { pointerType: "touch" });
+        fireEvent.touchStart(sendButton);
+      });
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith("Touch hello", []);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: originalInnerWidth, configurable: true });
+    }
+  });
+
+  it("FN-6576 sends each of two consecutive direct iOS taps within the click-latch window", async () => {
+    const viewportSpy = mockViewportMode("mobile");
+    const sendMessage = vi.fn();
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [],
+      sendMessage,
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const textarea = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Direct first" } });
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByTestId("chat-send-btn"), { pointerType: "touch" });
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith("Direct first", []);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Direct second" } });
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByTestId("chat-send-btn"), { pointerType: "touch" });
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith("Direct second", []);
+    viewportSpy.mockRestore();
+  });
+
   it("clears room composer on Enter after successful room send", async () => {
     localStorage.setItem("fusion:chat-scope", "rooms");
     const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
@@ -1544,6 +1662,45 @@ describe("ChatView", () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(textarea.value).toBe("");
     localStorage.removeItem("fusion:chat-scope");
+  });
+
+  it("sends room attachments when the composer text is empty", async () => {
+    localStorage.setItem("fusion:chat-scope", "rooms");
+    const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
+    const sendMessage = vi.fn();
+    setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
+    setupMockRooms({
+      activeRoom: {
+        id: "room-001",
+        projectId: "proj-123",
+        name: "backend",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      sendRoomMessage,
+    });
+
+    try {
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const textFile = new File(["room"], "room.txt", { type: "text/plain" });
+      fireEvent.change(fileInput, { target: { files: [textFile] } });
+
+      expect(await screen.findByTestId("chat-attachment-previews")).toBeInTheDocument();
+      const sendButton = screen.getByTestId("chat-send-btn");
+      expect(sendButton).not.toBeDisabled();
+
+      await userEvent.click(sendButton);
+
+      await waitFor(() => {
+        expect(sendRoomMessage).toHaveBeenCalledWith("", { files: [textFile] });
+      });
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("chat-attachment-previews")).not.toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("fusion:chat-scope");
+    }
   });
 
   it("keeps direct chat send behavior unchanged when chat rooms are enabled", async () => {
@@ -2088,6 +2245,106 @@ describe("ChatView", () => {
     expect(stopStreaming).toHaveBeenCalledTimes(1);
   });
 
+  it("FN-6576 does not let a send gesture trailing click press the swapped stop button", async () => {
+    const viewportSpy = mockViewportMode("mobile");
+    const sendMessage = vi.fn();
+    const stopStreaming = vi.fn();
+    mockUseChat.mockImplementation(() => {
+      const [isStreaming, setIsStreaming] = useState(false);
+      return {
+        ...defaultChatState,
+        activeSession: activeSessionFixture,
+        sessions: [activeSessionFixture],
+        filteredSessions: [activeSessionFixture],
+        messages: [],
+        isStreaming,
+        sendMessage: (message, files) => {
+          sendMessage(message, files);
+          setIsStreaming(true);
+        },
+        stopStreaming,
+      } satisfies UseChatReturn;
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Start streaming" } });
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByTestId("chat-send-btn"), { pointerType: "touch" });
+      fireEvent.touchStart(screen.getByTestId("chat-send-btn"));
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith("Start streaming", []);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("chat-stop-btn"));
+    });
+    expect(stopStreaming).not.toHaveBeenCalled();
+    viewportSpy.mockRestore();
+  });
+
+  it("FN-6576 allows a standalone mobile stop tap exactly once", async () => {
+    const viewportSpy = mockViewportMode("mobile");
+    const stopStreaming = vi.fn();
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [],
+      isStreaming: true,
+      stopStreaming,
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByTestId("chat-stop-btn"), { pointerType: "touch" });
+      fireEvent.touchStart(screen.getByTestId("chat-stop-btn"));
+      fireEvent.click(screen.getByTestId("chat-stop-btn"));
+    });
+    expect(stopStreaming).toHaveBeenCalledTimes(1);
+    viewportSpy.mockRestore();
+  });
+
+  it("FN-6576 allows a genuine stop tap within the send click-latch window", async () => {
+    const viewportSpy = mockViewportMode("mobile");
+    const sendMessage = vi.fn();
+    const stopStreaming = vi.fn();
+    mockUseChat.mockImplementation(() => {
+      const [isStreaming, setIsStreaming] = useState(false);
+      return {
+        ...defaultChatState,
+        activeSession: activeSessionFixture,
+        sessions: [activeSessionFixture],
+        filteredSessions: [activeSessionFixture],
+        messages: [],
+        isStreaming,
+        sendMessage: (message, files) => {
+          sendMessage(message, files);
+          setIsStreaming(true);
+        },
+        stopStreaming,
+      } satisfies UseChatReturn;
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "Start then stop" } });
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByTestId("chat-send-btn"), { pointerType: "touch" });
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByTestId("chat-stop-btn"), { pointerType: "touch" });
+      fireEvent.touchStart(screen.getByTestId("chat-stop-btn"));
+      fireEvent.click(screen.getByTestId("chat-stop-btn"));
+    });
+    expect(stopStreaming).toHaveBeenCalledTimes(1);
+    viewportSpy.mockRestore();
+  });
+
   it("renders send button when not streaming", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -2212,10 +2469,10 @@ describe("ChatView", () => {
 
       const { rerender } = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-      expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Connecting");
+      expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Working");
       rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-      expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Connecting");
+      expect(document.querySelector(".chat-message--streaming")?.textContent).toContain("Working");
       expect(screen.queryByText("Start a new conversation")).not.toBeInTheDocument();
       expect(screen.queryByText("No messages yet. Start the conversation!")).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
@@ -2237,7 +2494,7 @@ describe("ChatView", () => {
 
       const streamingMessage = document.querySelector(".chat-message--streaming") as HTMLElement | null;
       expect(streamingMessage).toBeInTheDocument();
-      expect(streamingMessage?.textContent).toContain("Connecting");
+      expect(streamingMessage?.textContent).toContain("Working");
       expect(screen.queryByText("Loading messages...")).not.toBeInTheDocument();
     });
 
@@ -2254,10 +2511,10 @@ describe("ChatView", () => {
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-      // Streaming message should show with "Connecting..." text
+      // Streaming message should show with "Working..." text
       const streamingMessage = document.querySelector(".chat-message--streaming") as HTMLElement | null;
       expect(streamingMessage).toBeInTheDocument();
-      expect(streamingMessage?.textContent).toContain("Connecting");
+      expect(streamingMessage?.textContent).toContain("Working");
 
       // Waiting class should be present
       const waitingContent = streamingMessage?.querySelector(".chat-message-content--waiting");
@@ -2791,6 +3048,112 @@ describe("Chat Session Delete Button", () => {
     await userEvent.click(deleteButton);
 
     expect(selectSession).not.toHaveBeenCalled();
+  });
+
+  it("renames from the desktop context menu with the current title prefilled", async () => {
+    const renameSession = vi.fn().mockResolvedValue(undefined);
+    const renamedSession: ChatSessionInfo = { id: "session-001", agentId: "agent-001", status: "active", title: "Renamed Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" };
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      renameSession,
+    });
+
+    const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    fireEvent.contextMenu(screen.getByTestId("chat-session-session-001"));
+    expect(screen.getByTestId("chat-context-rename")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("chat-context-rename"));
+
+    const input = screen.getByTestId("chat-rename-input") as HTMLInputElement;
+    expect(input.value).toBe("Test Chat");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Renamed Chat");
+    await userEvent.click(screen.getByTestId("chat-rename-save"));
+
+    expect(renameSession).toHaveBeenCalledWith("session-001", "Renamed Chat");
+
+    setupMockChat({
+      activeSession: renamedSession,
+      sessions: [renamedSession],
+      filteredSessions: [renamedSession],
+      renameSession,
+    });
+    await act(async () => {
+      view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    });
+
+    expect(screen.getByTestId("chat-session-session-001")).toHaveTextContent("Renamed Chat");
+    const headerTitle = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
+    expect(headerTitle).toHaveTextContent("Renamed Chat");
+  });
+
+  it("prefills rename as empty for an untitled session and names it", async () => {
+    const renameSession = vi.fn().mockResolvedValue(undefined);
+    const untitledSession: ChatSessionInfo = { id: "session-001", agentId: "agent-001", status: "active", title: null, createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" };
+    setupMockChat({
+      activeSession: untitledSession,
+      sessions: [untitledSession],
+      filteredSessions: [untitledSession],
+      renameSession,
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    fireEvent.contextMenu(screen.getByTestId("chat-session-session-001"));
+    await userEvent.click(screen.getByTestId("chat-context-rename"));
+
+    const input = screen.getByTestId("chat-rename-input") as HTMLInputElement;
+    expect(input.value).toBe("");
+    await userEvent.type(input, "Named from Untitled");
+    await userEvent.click(screen.getByTestId("chat-rename-save"));
+
+    expect(renameSession).toHaveBeenCalledWith("session-001", "Named from Untitled");
+  });
+
+  it("renames from the mobile session switcher and preserves the active header title surface", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    const renameSession = vi.fn().mockResolvedValue(undefined);
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+        sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        renameSession,
+      });
+
+      const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      expect(screen.getByTestId("chat-mobile-session-trigger")).toHaveTextContent("Mobile Chat");
+      await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
+      await userEvent.click(screen.getByTestId("chat-mobile-session-rename-session-001"));
+
+      const input = screen.getByTestId("chat-rename-input") as HTMLInputElement;
+      expect(input.value).toBe("Mobile Chat");
+      await userEvent.clear(input);
+      await userEvent.type(input, "Mobile Renamed");
+      await userEvent.click(screen.getByTestId("chat-rename-save"));
+
+      expect(renameSession).toHaveBeenCalledWith("session-001", "Mobile Renamed");
+
+      const renamedSession: ChatSessionInfo = { id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Renamed", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" };
+      setupMockChat({
+        activeSession: renamedSession,
+        sessions: [renamedSession],
+        filteredSessions: [renamedSession],
+        renameSession,
+      });
+      await act(async () => {
+        view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      });
+
+      expect(screen.getByTestId("chat-mobile-session-trigger")).toHaveTextContent("Mobile Renamed");
+      const headerTitle = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
+      expect(headerTitle).toHaveTextContent("Mobile Renamed");
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
   });
 
   it("confirming delete calls deleteSession", async () => {

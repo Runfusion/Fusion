@@ -14,7 +14,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Goal, GoalStatus, GoalUpdateInput, TaskStore } from "@fusion/core";
+import type { Goal, GoalStatus, GoalUpdateInput, Mission, TaskStore } from "@fusion/core";
 import { ApiError, badRequest, catchHandler, conflict, internalError, notFound } from "./api-error.js";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 
@@ -25,6 +25,11 @@ type GoalStoreLike = {
   updateGoal(id: string, input: GoalUpdateInput): Goal;
   archiveGoal(id: string): Goal;
   unarchiveGoal(id: string): Goal;
+};
+
+type MissionStoreLike = {
+  listMissionIdsForGoal(goalId: string): string[];
+  getMission(missionId: string): Mission | null | undefined;
 };
 
 const GOAL_ID_RE = /^G-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i;
@@ -42,6 +47,10 @@ function getProjectIdFromRequest(req: Request): string | undefined {
 
 function getGoalStore(store: TaskStore): GoalStoreLike {
   return store.getGoalStore();
+}
+
+function getMissionStore(store: TaskStore): MissionStoreLike {
+  return store.getMissionStore();
 }
 
 function validateGoalId(id: unknown): string {
@@ -129,6 +138,32 @@ export function createGoalsRouter(store: TaskStore): Router {
       const goalStore = getGoalStore(getScopedStore());
       const goals = goalStore.listGoals(rawStatus ? { status: rawStatus as GoalStatus } : undefined);
       res.json({ goals });
+    }),
+  );
+
+  /**
+   * FNXC:Goals 2026-06-15-14:45:
+   * Goals view needs the reverse side of mission-goal links so each goal card can show and edit its missions without loading the full mission hierarchy.
+   * Resolve the store's ordered link rows to current missions and skip missing mission records so stale links do not break the dashboard.
+   */
+  router.get(
+    "/:id/missions",
+    catchHandler((req, res) => {
+      const id = validateGoalId(req.params.id);
+      const scopedStore = getScopedStore();
+      const goalStore = getGoalStore(scopedStore);
+      if (!goalStore.getGoal(id)) {
+        throw notFound(`Goal ${id} not found`);
+      }
+
+      const missionStore = getMissionStore(scopedStore);
+      const missions = missionStore
+        .listMissionIdsForGoal(id)
+        .map((missionId) => missionStore.getMission(missionId))
+        .filter((mission): mission is Mission => Boolean(mission))
+        .map((mission) => ({ id: mission.id, title: mission.title, status: mission.status }));
+
+      res.json({ missions });
     }),
   );
 

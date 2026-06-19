@@ -12,7 +12,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: var(--font-size-sm, 12px);
+  font-size: 0.875rem;
   cursor: pointer;
   padding: var(--space-xs) 0;
   transition: color var(--transition-fast);
@@ -43,7 +43,7 @@
 .onboarding-disclosure-content {
   padding: var(--space-sm) 0 var(--space-sm) calc(var(--space-sm) + var(--space-lg) - var(--space-xs));
   color: var(--text-muted);
-  font-size: var(--font-size-sm, 12px);
+  font-size: 0.875rem;
   line-height: 1.5;
   animation: onboarding-disclosure-enter var(--duration-fast) ease-out;
 }

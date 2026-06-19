@@ -51,4 +51,13 @@ describe("plugin-sdk export surface", () => {
     const built = readFileSync(distPath, "utf-8");
     expect(built.includes("@fusion/")).toBe(false);
   });
+
+  it("has no @fusion specifiers in built plugin-sdk declaration artifact when present", () => {
+    const distPath = join(workspaceRoot, "packages", "cli", "dist", "plugin-sdk", "index.d.ts");
+    if (!existsSync(distPath)) {
+      return;
+    }
+    const built = readFileSync(distPath, "utf-8");
+    expect(built.includes("@fusion/")).toBe(false);
+  });
 });

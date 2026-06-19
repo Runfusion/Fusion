@@ -1,6 +1,7 @@
 import type { InReviewStallCode, InReviewStallSignal, Task } from "@fusion/core";
 
 import { MAX_AUTO_MERGE_RETRIES } from "../hooks/useBlockerFanout";
+import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
 
 export interface InReviewStallCopy {
   badgeLabel: string;
@@ -109,12 +110,17 @@ const IN_REVIEW_STALL_DEADLOCK_COPY: InReviewStallDeadlockCopy = {
     "Inspect the merge blocker/branch conflict, recover manually, then unpause to retry. If recovery needs extra implementation, create a follow-up with fn_task_refine.",
 };
 
+/**
+ * FNXC:TaskLogs 2026-06-14-14:27:
+ * In-review deadlock detection must tolerate legacy/operator task log entries that may not have an `action` field.
+ * Route through getTaskLogEntryAction so older persisted activity logs cannot crash dashboard rendering while checking for the self-healing marker.
+ */
 export function getInReviewStallDeadlockCopy(task: Pick<Task, "pausedReason" | "log">): InReviewStallDeadlockCopy | undefined {
   if (task.pausedReason === "in-review-stall-deadlock") {
     return IN_REVIEW_STALL_DEADLOCK_COPY;
   }
 
-  const hasDeadlockLog = task.log?.some((entry) => entry.action.startsWith(IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX)) ?? false;
+  const hasDeadlockLog = task.log?.some((entry) => getTaskLogEntryAction(entry).startsWith(IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX)) ?? false;
   return hasDeadlockLog ? IN_REVIEW_STALL_DEADLOCK_COPY : undefined;
 }
 

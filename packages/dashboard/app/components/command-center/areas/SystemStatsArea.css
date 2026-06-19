@@ -1,0 +1,130 @@
+/*
+FNXC:CommandCenter 2026-06-18-22:31:
+The Command Center System area replaces the standalone System Stats modal with graph-heavy telemetry while preserving the Command Center mobile scroll contract; FN-6680 keeps System chart grids shrink-bounded because jsdom cannot prove real mobile gauge/sparkline layout.
+*/
+
+.cc-system-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.cc-system-refresh .btn-icon {
+  flex: 0 0 auto;
+}
+
+.cc-system-gauges .cc-stat-card {
+  min-block-size: 100%;
+}
+
+.cc-system-chart-grid {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.cc-system-chart-grid .cc-stat-card {
+  gap: var(--space-md);
+}
+
+.cc-system-section-title-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-system-section-title-with-icon svg {
+  color: var(--text-muted);
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+System control cards sit beside chart/stat cards, so FN-6680 gives them the same tokenized border, radius, surface, gap, and padding rhythm instead of relying on incidental global .card styling.
+*/
+.cc-system-vitest-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.cc-system-vitest-card .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-system-toggle-row,
+.cc-system-threshold-row,
+.cc-system-threshold-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.cc-system-toggle-row,
+.cc-system-threshold-row {
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+
+.cc-system-threshold-controls input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.cc-system-threshold-controls .input {
+  inline-size: 5rem;
+}
+
+.cc-system-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.cc-system-note--error,
+.cc-system-value--critical {
+  color: var(--color-error);
+}
+
+.cc-system-value--warning {
+  color: var(--color-warning);
+}
+
+.cc-system-note--success {
+  color: var(--color-success);
+}
+
+@media (max-width: 768px) {
+  .cc-system-refresh {
+    align-items: flex-start;
+    justify-content: flex-start;
+    flex-direction: column;
+  }
+
+  .cc-system-chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-system-vitest-card,
+  .cc-system-toggle-row,
+  .cc-system-threshold-row,
+  .cc-system-threshold-controls {
+    align-items: stretch;
+    flex-direction: column;
+    inline-size: 100%;
+  }
+
+  .cc-system-vitest-card .btn,
+  .cc-system-threshold-controls .input {
+    inline-size: 100%;
+  }
+}

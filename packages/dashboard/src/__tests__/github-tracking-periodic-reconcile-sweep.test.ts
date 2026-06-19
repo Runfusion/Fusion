@@ -41,6 +41,10 @@ function createStore(): TaskStore {
   } as unknown as TaskStore;
 }
 
+/*
+FNXC:DashboardTests 2026-06-14-09:58:
+FN-6444 rescues the periodic reconcile route/API test by keeping the fake router aligned with the production route registrar's HTTP verbs instead of skipping the file.
+*/
 describe("GitHub tracking periodic reconcile sweep", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -60,7 +64,7 @@ describe("GitHub tracking periodic reconcile sweep", () => {
       .mockResolvedValueOnce({ scanned: 10, closed: 0, skipped: 0, errors: 0, hasMore: false });
 
     registerGitGitHubRoutes({
-      router: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+      router: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
       getProjectContext: vi.fn(),
       rethrowAsApiError: vi.fn(),
       store,
@@ -68,7 +72,7 @@ describe("GitHub tracking periodic reconcile sweep", () => {
       options: {},
     } as any);
 
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(0);
     expect(reconcileDeletedAndArchived).toHaveBeenNthCalledWith(1, store, { offset: 0, limit: 200 });
 
     await vi.advanceTimersByTimeAsync(GITHUB_TRACKING_RECONCILE_INTERVAL_MS);

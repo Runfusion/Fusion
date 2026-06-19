@@ -124,6 +124,7 @@ describe("TaskCard footer wrapping (FN-5210)", () => {
     expect(retryChip).toBeTruthy();
     expect(githubChip).toBeTruthy();
     expect(timeChip).toBeTruthy();
+    expect(rightCluster.contains(timeChip)).toBe(true);
 
     const footerStyles = getComputedStyle(footerRow);
     expect(footerStyles.flexWrap).toBe("wrap");

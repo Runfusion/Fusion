@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ function createJwt(payload: Record<string, unknown>): string {
 describe("createFusionAuthStorage", () => {
   // HOME override required — createFusionAuthStorage() has no dir parameter
   const originalHome = process.env.HOME;
+  const originalFetch = globalThis.fetch;
   let homeDir: string;
 
   beforeEach(async () => {
@@ -37,6 +38,8 @@ describe("createFusionAuthStorage", () => {
     } else {
       process.env.HOME = originalHome;
     }
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it("writes to Fusion auth and reads legacy Pi auth as fallback", async () => {
@@ -161,6 +164,203 @@ describe("createFusionAuthStorage", () => {
       type: "oauth",
       access: "claude-access-token",
       refresh: "claude-refresh-token",
+      expires: expect.any(Number),
+    });
+  });
+
+  it("refreshes and persists expired Claude OAuth credentials from Claude credential files", async () => {
+    const claudeDir = join(homeDir, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+
+    writeFileSync(
+      join(claudeDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-claude-access-token",
+          refreshToken: "claude-refresh-token",
+          expiresAt: Date.now() - 60_000,
+          scopes: ["user:profile", "org:create_api_key"],
+        },
+      }),
+    );
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: "refreshed-claude-access-token",
+        refresh_token: "rotated-claude-refresh-token",
+        expires_in: 3600,
+        scope: "user:profile org:create_api_key",
+      }),
+    } as Response);
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const authStorage = createFusionAuthStorage();
+
+    expect(await authStorage.getApiKey("anthropic")).toBe("refreshed-claude-access-token");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://platform.claude.com/v1/oauth/token",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("\"scope\":\"user:profile org:create_api_key\""),
+      }),
+    );
+    expect(authStorage.get("anthropic")).toEqual({
+      type: "oauth",
+      access: "refreshed-claude-access-token",
+      refresh: "rotated-claude-refresh-token",
+      expires: expect.any(Number),
+      scopes: ["user:profile", "org:create_api_key"],
+    });
+
+    const persisted = JSON.parse(readFileSync(getFusionAuthPath(homeDir), "utf-8"));
+    expect(persisted.anthropic).toEqual({
+      type: "oauth",
+      access: "refreshed-claude-access-token",
+      refresh: "rotated-claude-refresh-token",
+      expires: expect.any(Number),
+      scopes: ["user:profile", "org:create_api_key"],
+    });
+  });
+
+  it("does not persist an invalid Claude OAuth refresh response", async () => {
+    const claudeDir = join(homeDir, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+
+    writeFileSync(
+      join(claudeDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-claude-access-token",
+          refreshToken: "claude-refresh-token",
+          expiresAt: Date.now() - 60_000,
+        },
+      }),
+    );
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ expires_in: 3600 }),
+    } as Response) as typeof fetch;
+
+    const authStorage = createFusionAuthStorage();
+
+    expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    const persisted = JSON.parse(readFileSync(getFusionAuthPath(homeDir), "utf-8"));
+    expect(persisted.anthropic).toBeUndefined();
+  });
+
+  it("cooldowns failed Claude OAuth refresh attempts", async () => {
+    const claudeDir = join(homeDir, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+
+    writeFileSync(
+      join(claudeDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-claude-access-token",
+          refreshToken: "claude-refresh-token",
+          expiresAt: Date.now() - 60_000,
+        },
+      }),
+    );
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false } as Response);
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const authStorage = createFusionAuthStorage();
+
+    expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const persisted = JSON.parse(readFileSync(getFusionAuthPath(homeDir), "utf-8"));
+    expect(persisted.anthropic).toBeUndefined();
+  });
+
+  it("coalesces concurrent Claude OAuth refresh attempts", async () => {
+    const claudeDir = join(homeDir, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+
+    writeFileSync(
+      join(claudeDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-claude-access-token",
+          refreshToken: "claude-refresh-token",
+          expiresAt: Date.now() - 60_000,
+        },
+      }),
+    );
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: "refreshed-claude-access-token",
+        expires_in: 3600,
+      }),
+    } as Response);
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const authStorage = createFusionAuthStorage();
+
+    await expect(Promise.all([
+      authStorage.getApiKey("anthropic"),
+      authStorage.getApiKey("anthropic"),
+      authStorage.getApiKey("anthropic"),
+    ])).resolves.toEqual([
+      "refreshed-claude-access-token",
+      "refreshed-claude-access-token",
+      "refreshed-claude-access-token",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a stale Claude OAuth refresh overwrite a newer login", async () => {
+    const claudeDir = join(homeDir, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+
+    writeFileSync(
+      join(claudeDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-claude-access-token",
+          refreshToken: "claude-refresh-token",
+          expiresAt: Date.now() - 60_000,
+        },
+      }),
+    );
+
+    let resolveJson: ((value: unknown) => void) | undefined;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => new Promise((resolve) => {
+        resolveJson = resolve;
+      }),
+    } as Response);
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const authStorage = createFusionAuthStorage();
+    const pendingRefresh = authStorage.getApiKey("anthropic");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    authStorage.set("anthropic", {
+      type: "oauth",
+      access: "fresh-login-access-token",
+      refresh: "fresh-login-refresh-token",
+      expires: Date.now() + 3_600_000,
+    });
+
+    resolveJson?.({
+      access_token: "stale-refresh-access-token",
+      refresh_token: "stale-refresh-refresh-token",
+      expires_in: 3600,
+    });
+
+    await expect(pendingRefresh).resolves.toBe("fresh-login-access-token");
+    expect(authStorage.get("anthropic")).toEqual({
+      type: "oauth",
+      access: "fresh-login-access-token",
+      refresh: "fresh-login-refresh-token",
       expires: expect.any(Number),
     });
   });

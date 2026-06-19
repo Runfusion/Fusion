@@ -697,6 +697,25 @@ Some freeform text without checkboxes.`;
     expect(result).not.toContain("Project Commands");
   });
 
+  it("includes user steering comments as next-session fallback when no active step session existed", () => {
+    const task = makeTaskDetail({
+      prompt: fullPrompt,
+      steeringComments: [
+        {
+          id: "comment-1",
+          author: "user",
+          text: "Please prioritize the API invariant before refactoring.",
+          createdAt: "2026-06-17T13:45:00.000Z",
+        },
+      ],
+    });
+
+    const result = buildStepPrompt(task, 1);
+
+    expect(result).toContain("## Steering Comments");
+    expect(result).toContain("Please prioritize the API invariant before refactoring.");
+  });
+
   it("includes fn_task_done instruction at the end", () => {
     const task = makeTaskDetail({ prompt: fullPrompt });
     const result = buildStepPrompt(task, 1);
@@ -732,7 +751,7 @@ describe("buildReducedStepPrompt", () => {
 - [ ] Write unit tests
 `;
 
-  it("includes one-line attachment reference when attachments exist", () => {
+  it("includes compact attachment location and read instruction when attachments exist", () => {
     const task = makeTaskDetail({
       id: "FN-123",
       prompt: reducedPrompt,
@@ -754,11 +773,35 @@ describe("buildReducedStepPrompt", () => {
       ],
     });
 
-    const result = buildReducedStepPrompt(task, 1);
+    const result = buildReducedStepPrompt(task, 1, "/repo/project");
 
     expect(result).toContain(
-      "2 attachment(s) available at .fusion/tasks/FN-123/attachments/ — ask for context if needed.",
+      "2 attachment(s) available at `/repo/project/.fusion/tasks/FN-123/attachments/` — read the files there for context.",
     );
+    expect(result).toContain("They live at the project root and are readable even when working in a worktree.");
+    expect(result).not.toContain("ask for context");
+  });
+
+  it("falls back to project-relative attachment location when rootDir is omitted", () => {
+    const task = makeTaskDetail({
+      id: "FN-123",
+      prompt: reducedPrompt,
+      attachments: [
+        {
+          filename: "abc-shot.png",
+          originalName: "shot.png",
+          mimeType: "image/png",
+          size: 1024,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const result = buildReducedStepPrompt(task, 1);
+
+    expect(result).toContain("1 attachment(s) available at `.fusion/tasks/FN-123/attachments/`");
+    expect(result).toContain("read the files there for context");
+    expect(result).not.toContain("ask for context");
   });
 
   it("places the attachment reference after the step and before the important block", () => {
@@ -775,9 +818,8 @@ describe("buildReducedStepPrompt", () => {
       ],
     });
 
-    const result = buildReducedStepPrompt(task, 1);
-    const attachmentReference =
-      "1 attachment(s) available at .fusion/tasks/FN-001/attachments/ — ask for context if needed.";
+    const result = buildReducedStepPrompt(task, 1, "/repo/project");
+    const attachmentReference = "1 attachment(s) available at `/repo/project/.fusion/tasks/FN-001/attachments/`";
 
     expect(result.indexOf(attachmentReference)).toBeGreaterThan(result.indexOf("Add exports"));
     expect(result.indexOf(attachmentReference)).toBeLessThan(result.indexOf("IMPORTANT:"));
@@ -803,18 +845,49 @@ describe("buildReducedStepPrompt", () => {
     expect(result).not.toContain("shot.png");
   });
 
+  it("verifies context-limit recovery symptom is gone for image and non-image attachments", () => {
+    const task = makeTaskDetail({
+      id: "FN-456",
+      prompt: reducedPrompt,
+      attachments: [
+        {
+          filename: "abc-shot.png",
+          originalName: "shot.png",
+          mimeType: "image/png",
+          size: 1024,
+          createdAt: new Date().toISOString(),
+        },
+        {
+          filename: "def-config.json",
+          originalName: "config.json",
+          mimeType: "application/json",
+          size: 256,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const result = buildReducedStepPrompt(task, 1, "/repo/project");
+
+    expect(result).not.toContain("ask for context");
+    expect(result).toContain(".fusion/tasks/FN-456/attachments/");
+    expect(result).toContain("/repo/project/.fusion/tasks/FN-456/attachments/");
+  });
+
   it("omits attachment reference when attachments is undefined", () => {
     const task = makeTaskDetail({ prompt: reducedPrompt, attachments: undefined });
-    const result = buildReducedStepPrompt(task, 1);
+    const result = buildReducedStepPrompt(task, 1, "/repo/project");
 
     expect(result).not.toContain("attachment(s) available");
+    expect(result).not.toContain(".fusion/tasks/FN-001/attachments/");
   });
 
   it("omits attachment reference when attachments is empty", () => {
     const task = makeTaskDetail({ prompt: reducedPrompt, attachments: [] });
-    const result = buildReducedStepPrompt(task, 1);
+    const result = buildReducedStepPrompt(task, 1, "/repo/project");
 
     expect(result).not.toContain("attachment(s) available");
+    expect(result).not.toContain(".fusion/tasks/FN-001/attachments/");
   });
 });
 
@@ -1052,8 +1125,9 @@ describe("StepSessionExecutor", () => {
         steer: steerThree,
       });
 
-      await executor.steerActiveSessions("new guidance");
+      const steeredCount = await executor.steerActiveSessions("new guidance");
 
+      expect(steeredCount).toBe(3);
       expect(steerOne).toHaveBeenCalledWith("new guidance");
       expect(steerTwo).toHaveBeenCalledWith("new guidance");
       expect(steerThree).toHaveBeenCalledWith("new guidance");
@@ -1086,6 +1160,47 @@ describe("StepSessionExecutor", () => {
           taskEnv: { PATH: "/task/bin", TASK_ONLY: "1" },
         }),
       );
+    });
+
+    it("delivers pending steering comments in exactly one subsequent step prompt", async () => {
+      const prompt = makeStepPrompt("FN-001", 2);
+      const task = makeTaskDetail({
+        prompt,
+        steps: [
+          { name: "Step 0", status: "pending" },
+          { name: "Step 1", status: "pending" },
+        ],
+        steeringComments: [
+          {
+            id: "queued-comment",
+            author: "user",
+            text: "Please include the queued guidance.",
+            createdAt: "2026-06-17T13:45:00.000Z",
+          },
+        ],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+      const prompts: string[] = [];
+      mockedCreateFnAgent.mockImplementation(async () => ({
+        session: makeMockSession(vi.fn(async (message: string) => {
+          prompts.push(message);
+        }) as any),
+      }) as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+        pluginRunner: undefined,
+      } as any);
+
+      const result = await executor.executeAll();
+
+      expect(result).toHaveLength(2);
+      expect(prompts[0]).toContain("## Steering Comments");
+      expect(prompts[0]).toContain("Please include the queued guidance.");
+      expect(prompts[1]).not.toContain("Please include the queued guidance.");
     });
 
     it("happy path: 3-step task, all steps succeed", async () => {

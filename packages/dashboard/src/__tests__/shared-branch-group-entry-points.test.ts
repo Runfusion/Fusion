@@ -328,8 +328,8 @@ describe("shared branch-group entry-point invariants", () => {
     expect(newTask.status).toBe(201);
     const newTaskCreateCall = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[2]?.[0] as TaskCreateInput;
     const newTaskGroup = (store.getBranchGroupByBranchName as ReturnType<typeof vi.fn>).mock.results.at(-1)?.value as BranchGroup | null;
-    expect(newTaskCreateCall.branch).toBe("feature/newtask-shared/shared-entry-point-task");
-    expect(newTaskCreateCall.branch).not.toBe("feature/newtask-shared");
+    expect(newTaskCreateCall.branch).toBeUndefined();
+    expect(newTaskCreateCall.branchContext).toBeUndefined();
     const createdTaskId = newTask.body.id as string;
     const persistedTask = await store.getTask(createdTaskId);
     expect(persistedTask?.branchContext).toMatchObject({ source: "new-task", assignmentMode: "shared" });
@@ -358,7 +358,7 @@ describe("shared branch-group entry-point invariants", () => {
     await REQUEST(app, "POST", "/api/tasks", { title: "Auto task", description: "auto", branchSelection: { mode: "auto-new" } });
 
     const calls = (store.createTask as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as TaskCreateInput);
-    expect(calls[0].branch).toBe("feature/auth-shared");
+    expect(calls[0].branch).toBe("feature/auth-shared/auth-backend");
     expect(calls[0].branchContext).toMatchObject({ assignmentMode: "per-task-derived", source: "planning" });
 
     expect(calls[1].branch).toBeUndefined();

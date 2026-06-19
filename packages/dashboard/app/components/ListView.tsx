@@ -49,7 +49,11 @@ type SortDirection = "asc" | "desc";
 
 // Column visibility types
 const ALL_LIST_COLUMNS = ["title", "status", "column", "retries", "dependencies", "progress"] as const;
-const DEFAULT_LIST_COLUMNS = ["title", "status", "column", "retries"] as const;
+/*
+FNXC:ListView 2026-06-17-01:10:
+First-run list view users should see only the Title column by default for a cleaner table. Other columns remain opt-in through the Columns view-options dropdown, and any saved kb-dashboard-list-columns preference continues to override this default.
+*/
+const DEFAULT_LIST_COLUMNS = ["title"] as const;
 type ListColumn = typeof ALL_LIST_COLUMNS[number];
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: TFunction<"app">): string {

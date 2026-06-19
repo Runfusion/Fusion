@@ -51,7 +51,7 @@
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-lg);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-subtle, var(--bg));
+  background: var(--surface-subtle);
 }
 
 .insights-model-label {
@@ -244,7 +244,7 @@
 }
 
 .insights-category-item:hover {
-  background: var(--surface-elevated);
+  background: var(--surface-1);
 }
 
 .insights-category-item--active {
@@ -271,7 +271,7 @@
   flex-shrink: 0;
   font-size: 0.75rem;
   color: var(--text-muted);
-  background: var(--surface-elevated);
+  background: var(--surface-1);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
@@ -328,7 +328,7 @@
 .insights-section-count {
   font-size: 0.75rem;
   color: var(--text-muted);
-  background: var(--surface-elevated);
+  background: var(--surface-1);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
@@ -401,7 +401,7 @@
 }
 
 .insight-item-action-btn:hover:not(:disabled) {
-  background: var(--surface-elevated);
+  background: var(--surface-1);
   color: var(--accent);
 }
 

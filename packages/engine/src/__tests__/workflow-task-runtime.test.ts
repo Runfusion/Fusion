@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Settings, TaskDetail, WorkflowIr } from "@fusion/core";
+import type { Settings, TaskDetail, WorkflowIr, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 
 import { WorkflowTaskRuntime, type WorkflowTaskRuntimeDeps } from "../workflow-task-runtime.js";
 import type { WorkflowNodeResult } from "../workflow-graph-executor.js";
@@ -32,7 +32,13 @@ function recordingPrimitives(
   overrides: Partial<Record<"prepare" | "execute" | "workflowStep", WorkflowNodeResult>> & {
     prepareData?: PreparedWorktree | null;
   } = {},
-  observed: { prepared?: PreparedWorktree; executedTasks?: TaskDetail[] } = {},
+  observed: {
+    prepared?: PreparedWorktree;
+    executedTasks?: TaskDetail[];
+    mergeAttempt?: number;
+    mergeRunId?: string;
+    mergeWorkflowId?: string;
+  } = {},
 ): WorkflowRuntimePrimitives {
   const prepared: PreparedWorktree = { worktreePath: "/tmp/fusion-worktree" };
   return {
@@ -93,8 +99,11 @@ function recordingPrimitives(
       calls.push("schedule");
       return { outcome: "success" };
     },
-    requestMerge: async () => {
+    requestMerge: async (ctx) => {
       calls.push("merge");
+      observed.mergeAttempt = ctx.node.attempt;
+      observed.mergeRunId = ctx.run.runId;
+      observed.mergeWorkflowId = ctx.run.workflowId;
       return { outcome: "success", value: "merged", data: { status: "merged" } };
     },
     abortRun: async () => ({ outcome: "success" }),
@@ -396,6 +405,268 @@ describe("WorkflowTaskRuntime", () => {
     await runtime.run(task, flagOff);
 
     expect(observedRunIds).toContain("FN-9002:WF-001");
+  });
+
+  it("runs a leased workflow work item at its addressed node and persists success", async () => {
+    const calls: string[] = [];
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: selectedIr() }),
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives(calls),
+      runCustomNode: async (node) => {
+        calls.push(`custom:${node.id}`);
+        return { outcome: "success" };
+      },
+    });
+    const workItem = {
+      id: "work-1",
+      runId: "run-1",
+      taskId: task.id,
+      nodeId: "execute",
+      kind: "task",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+
+    const result = await runtime.runWorkItem(workItem, flagOff);
+
+    expect(result.disposition).toBe("completed");
+    expect(calls).toEqual(["prepare-worktree", "execute"]);
+    expect(result.visitedNodeIds).toEqual(["execute"]);
+    expect(transitions).toEqual([
+      {
+        id: "work-1",
+        state: "succeeded",
+        patch: { leaseOwner: null, leaseExpiresAt: null, lastError: null },
+      },
+    ]);
+  });
+
+  it("fails and releases a workflow work item when the addressed node fails", async () => {
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-2",
+      runId: "run-1",
+      taskId: task.id,
+      nodeId: "execute",
+      kind: "task",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: selectedIr() }),
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives([], { execute: { outcome: "failure", value: "implementation-incomplete" } }),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await runtime.runWorkItem(workItem, flagOff);
+
+    expect(result.disposition).toBe("failed");
+    expect(result.reason).toBe("implementation-incomplete");
+    expect(transitions).toEqual([
+      {
+        id: "work-2",
+        state: "failed",
+        patch: { leaseOwner: null, leaseExpiresAt: null, lastError: "implementation-incomplete" },
+      },
+    ]);
+  });
+
+  it("routes merge-gate work items off when task auto-merge is disabled", async () => {
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-merge-gate",
+      runId: "run-merge-gate",
+      taskId: task.id,
+      nodeId: "merge-gate",
+      kind: "merge",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => ({ ...task, autoMerge: false } as TaskDetail),
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await runtime.runWorkItem(workItem, { ...flagOff, autoMerge: true } as Settings);
+
+    expect(result.disposition).toBe("completed");
+    expect(result.context["node:merge-gate:value"]).toBe("auto-off");
+    expect(transitions).toEqual([
+      {
+        id: "work-merge-gate",
+        state: "succeeded",
+        patch: { leaseOwner: null, leaseExpiresAt: null, lastError: null },
+      },
+    ]);
+  });
+
+  it("persists manual merge holds as manual-required work items", async () => {
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-manual-hold",
+      runId: "run-manual-hold",
+      taskId: task.id,
+      nodeId: "merge-manual-hold",
+      kind: "manual-hold",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await runtime.runWorkItem(workItem, flagOff);
+
+    expect(result.disposition).toBe("manual-required");
+    expect(result.reason).toBe("manual-required");
+    expect(transitions).toEqual([
+      {
+        id: "work-manual-hold",
+        state: "manual-required",
+        patch: { leaseOwner: null, leaseExpiresAt: null, lastError: "manual-required" },
+      },
+    ]);
+  });
+
+  it("returns failed without persisting when work item store transitions are unwired", async () => {
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+    const workItem = {
+      id: "work-unwired",
+      runId: "run-unwired",
+      taskId: task.id,
+      nodeId: "merge-gate",
+      kind: "merge",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+
+    await expect(runtime.runWorkItem(workItem, flagOff)).resolves.toEqual(expect.objectContaining({
+      disposition: "failed",
+      reason: "workflow-work-item-store-unwired",
+    }));
+  });
+
+  it("threads work item attempt into merge primitive context", async () => {
+    const observed: { mergeAttempt?: number; mergeRunId?: string; mergeWorkflowId?: string } = {};
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-merge-attempt",
+      runId: "run-merge-attempt",
+      taskId: task.id,
+      nodeId: "merge-attempt",
+      kind: "merge",
+      state: "running",
+      attempt: 3,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => task,
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives([], {}, observed),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await runtime.runWorkItem(workItem, flagOff);
+
+    expect(result.disposition).toBe("completed");
+    expect(result.context["workflow:work-item-attempt"]).toBe(3);
+    expect(observed.mergeAttempt).toBe(3);
+    expect(observed.mergeRunId).toBe("run-merge-attempt");
+    expect(observed.mergeWorkflowId).toBe("builtin:coding");
+    expect(transitions).toEqual([
+      expect.objectContaining({ id: "work-merge-attempt", state: "succeeded" }),
+    ]);
   });
 
   it("uses the built-in workflow id in the default run id for unselected tasks", async () => {

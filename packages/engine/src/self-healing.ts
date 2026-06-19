@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -392,6 +392,10 @@ const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
  */
 const MAX_TASK_DONE_RETRIES = 3;
 export const MAX_WORKTREE_SESSION_RETRIES = 3;
+/**
+ * FNXC:AutoMergeRetries 2026-06-17-04:20:
+ * Keep this export as the historical default seed for tests and dashboard fallback alignment, but SelfHealingManager must call resolveMaxAutoMergeRetries(settings) at decision points so configured projects do not recover or stall at the old fixed value.
+ */
 export const MAX_AUTO_MERGE_RETRIES = 3;
 /**
  * FN-5627 follow-up: bounded budget for self-healing transient-merge-failure
@@ -513,8 +517,22 @@ type RebindOutcome =
   | {
     taskId: string;
     result: "skipped";
-    reason: "binding-intact" | "no-live-branch" | "ambiguous-candidates" | "no-unique-work";
+    reason:
+      | "binding-intact"
+      | "no-live-branch"
+      | "ambiguous-candidates"
+      | "no-unique-work"
+      | "unsafe-to-auto-mutate:user-paused"
+      | "unsafe-to-auto-mutate:checked-out";
     candidates?: Array<{ branch: string; aheadCount: number }>;
+  };
+
+type AutoRebindSafetyResult =
+  | { safe: true }
+  | {
+    safe: false;
+    reason: "unsafe-to-auto-mutate:user-paused" | "unsafe-to-auto-mutate:checked-out";
+    detail: string;
   };
 
 export type RebindResult = { repaired: number; outcomes: RebindOutcome[] };
@@ -1211,9 +1229,13 @@ export class SelfHealingManager {
    * Terminal contract for stuck-loop exhaustion and no-progress churn:
    * - `STUCK_LOOP_EXHAUSTED`: increments the kill budget until exhausted. Once
    *   exhausted, tasks with incomplete steps are moved back to `todo` with
-   *   progress preserved and pause metadata reapplied for manual resume or
+   *   progress preserved, marked failed, and paused for manual resume or
    *   decomposition; tasks with only terminal steps keep the legacy failed
    *   `in-review` handoff path.
+   *
+   * FNXC:SelfHealing 2026-06-14-10:51:
+   * Incomplete stuck-loop exhaustion must park work in a failed/paused state before moving columns, because a post-move patch failure must not leave the task scheduler-runnable.
+   * Engine-owned recovery must not mutate `userPaused`; user intent stays authoritative across races.
    * - `STUCK_NO_PROGRESS_CHURN`: skips the budget entirely and terminalizes on
    *   the first trigger with operator guidance to decompose or rescope.
    *
@@ -1315,8 +1337,26 @@ export class SelfHealingManager {
             return false;
           }
 
-          log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}, reason=${reason}) with incomplete steps — re-queueing in todo with progress preserved`);
-          await this.store.updateTask(taskId, { stuckKillCount: newCount });
+          log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}, reason=${reason}) with incomplete steps — parking in todo with progress preserved`);
+          const exhaustedError = `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}) after last reason=${reason}. Progress was preserved; manually retry, decompose, or rescope before execution resumes.`;
+          const parkUpdate = {
+            stuckKillCount: newCount,
+            status: "failed",
+            error: exhaustedError,
+            paused: true,
+            pausedReason: "stuck-loop-exhausted-manual-intervention-required",
+            pausedByAgentId: "self-healing",
+            assignedAgentId: null,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutNodeId: null,
+            checkoutRunId: null,
+            checkoutLeaseRenewedAt: null,
+            checkoutLeaseEpoch: 0,
+            nextRecoveryAt: null,
+          } satisfies Parameters<typeof this.store.updateTask>[1];
+
+          await this.store.updateTask(taskId, parkUpdate);
           try {
             await this.store.moveTask(taskId, "todo", {
               preserveProgress: true,
@@ -1327,34 +1367,44 @@ export class SelfHealingManager {
             });
           } catch (moveErr: unknown) {
             const moveErrMessage = moveErr instanceof Error ? moveErr.message : String(moveErr);
-            log.warn(`${taskId} moveTask(todo) failed (${moveErrMessage}) after incomplete STUCK_LOOP_EXHAUSTED terminalization — falling back to executor stuck-kill requeue`);
-            await this.store.logEntry(
-              taskId,
-              `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); falling back to executor stuck-kill requeue.`,
-            );
-            return true;
+            log.warn(`${taskId} moveTask(todo) failed (${moveErrMessage}) after incomplete STUCK_LOOP_EXHAUSTED terminalization — marking failed/paused in place`);
+            try {
+              await this.store.updateTask(taskId, parkUpdate);
+            } catch (patchErr: unknown) {
+              const patchErrMessage = patchErr instanceof Error ? patchErr.message : String(patchErr);
+              log.warn(`${taskId} in-place park patch failed after moveTask(todo) failure during incomplete STUCK_LOOP_EXHAUSTED terminalization: ${patchErrMessage}`);
+              await this.store.logEntry(
+                taskId,
+                `STUCK_LOOP_EXHAUSTED: incomplete task failed to move to todo (${moveErrMessage}), and the in-place park patch also failed (${patchErrMessage}); pre-move park metadata was already applied, but operator verification is required before retry.`,
+              );
+              return false;
+            }
+            try {
+              await this.store.logEntry(
+                taskId,
+                `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Failed to move task to todo (${moveErrMessage}); task was marked failed/paused in place and will not be automatically retried.`,
+              );
+            } catch (logErr: unknown) {
+              const logErrMessage = logErr instanceof Error ? logErr.message : String(logErr);
+              log.warn(`${taskId} failed to log in-place stuck-loop park success after moveTask(todo) failure: ${logErrMessage}`);
+            }
+            return false;
           }
 
-          const requeueUpdate = {
-            stuckKillCount: newCount,
-            paused: false,
-            pausedReason: null,
-            status: "queued",
-          } satisfies Parameters<typeof this.store.updateTask>[1];
           try {
-            await this.store.updateTask(taskId, requeueUpdate);
-          } catch (patchErr: unknown) {
-            const patchErrMessage = patchErr instanceof Error ? patchErr.message : String(patchErr);
-            log.warn(`${taskId} post-move requeue patch failed after incomplete STUCK_LOOP_EXHAUSTED terminalization: ${patchErrMessage}`);
+            await this.store.updateTask(taskId, parkUpdate);
             await this.store.logEntry(
               taskId,
-              `STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move requeue patch failed (${patchErrMessage}); scheduler retry may wait for the next state repair pass.`,
+              `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Parked in todo with progress preserved; no further automatic retries will run until an operator manually retries, decomposes, or rescopes the task.`,
+            );
+          } catch (patchErr: unknown) {
+            const patchErrMessage = patchErr instanceof Error ? patchErr.message : String(patchErr);
+            log.warn(`${taskId} post-move park patch failed after incomplete STUCK_LOOP_EXHAUSTED terminalization: ${patchErrMessage}`);
+            await this.store.logEntry(
+              taskId,
+              `STUCK_LOOP_EXHAUSTED: incomplete task moved to todo with progress preserved, but post-move park patch failed (${patchErrMessage}); operator repair is required before retry.`,
             );
           }
-          await this.store.logEntry(
-            taskId,
-            `STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget (${newCount}/${maxKills}), last reason=${reason}. Re-queued in todo with progress preserved; scheduler may retry without manual unpause.`,
-          );
           return false;
         }
 
@@ -2235,6 +2285,11 @@ export class SelfHealingManager {
         if (task.column !== "todo" || task.paused) return false;
         if (executingIds.has(task.id)) return false;
         if (task.steps.length === 0 || !task.steps.every((s) => s.status === "done" || s.status === "skipped")) return false;
+        /*
+         * FNXC:Lifecycle 2026-06-14-20:12:
+         * FN-6461 keeps skipped-to-completion no-commits tasks out of the stranded-todo promoter so a finalize guard demotion cannot loop back into in-review before an operator fixes the incomplete work.
+         */
+        if (evaluateNoCommitsNoOpFinalize(task).blocked) return false;
         if (task.error) return false;
         if (task.status && STRANDED_COMPLETED_TODO_ACTIVE_STATUSES.has(task.status)) return false;
         if (task.reviewState?.refreshStatus === "refreshing") return false;
@@ -3520,6 +3575,29 @@ export class SelfHealingManager {
     }
   }
 
+  private assertSafeToAutoRebind(task: Task): AutoRebindSafetyResult {
+    /*
+    FNXC:SelfHealingRebind 2026-06-19-12:00:
+    In-review branch rebind is metadata repair only, but it is still an engine-owned mutation.
+    Block instead of warn when authoritative user intent or a live checkout is present so recovery never overrides a user pause or rewrites task metadata underneath an active agent lease.
+    */
+    if (task.userPaused === true) {
+      return {
+        safe: false,
+        reason: "unsafe-to-auto-mutate:user-paused",
+        detail: "task is user-paused; authoritative user intent blocks automatic branch rebind",
+      };
+    }
+    if (task.checkedOutBy) {
+      return {
+        safe: false,
+        reason: "unsafe-to-auto-mutate:checked-out",
+        detail: `task is checked out by ${task.checkedOutBy}; automatic branch rebind would mutate metadata under a live lease`,
+      };
+    }
+    return { safe: true };
+  }
+
   private async emitBranchRebindAuditEvent(input: {
     taskId: string;
     mutationType: "task:auto-rebind-applied" | "task:auto-rebind-skipped";
@@ -3662,13 +3740,24 @@ export class SelfHealingManager {
               patch.baseCommitSha = derivedBaseCommit;
             }
           }
-          // TODO(FN-5066): tighten composition once helper API is final.
-          try {
-            const maybeAsserting = this as unknown as { assertSafeToAutoMutate?: (opts: unknown) => Promise<void> };
-            await maybeAsserting.assertSafeToAutoMutate?.({ taskId: task.id, reason: "in-review-branch-rebind" });
-          } catch (assertErr: unknown) {
-            const message = assertErr instanceof Error ? assertErr.message : String(assertErr);
-            log.warn(`[self-healing] assertSafeToAutoMutate warning for ${task.id}: ${message}; continuing rebind`);
+          const safety = this.assertSafeToAutoRebind(task);
+          if (!safety.safe) {
+            await this.emitBranchRebindAuditEvent({
+              taskId: task.id,
+              mutationType: "task:auto-rebind-skipped",
+              metadata: {
+                taskId: task.id,
+                reason: safety.reason,
+                detail: safety.detail,
+                branch: selected.branch,
+                aheadCount: selected.aheadCount,
+                integrationBase,
+                source: "auto-rebind-in-review",
+                previousBranch: task.branch ?? null,
+              },
+            });
+            result.outcomes.push({ taskId: task.id, result: "skipped", reason: safety.reason });
+            continue;
           }
           await this.store.updateTask(task.id, patch);
           await this.emitBranchRebindAuditEvent({
@@ -4367,6 +4456,7 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
 
       const staleMergingStatusMinAgeMs = this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS;
       const configuredFanoutMinAgeMs = this.options.staleMergingFanoutMinAgeMs ?? DEFAULT_STALE_MERGING_FANOUT_MIN_AGE_MS;
@@ -4481,10 +4571,10 @@ export class SelfHealingManager {
           } else if (
             blocker.column === "in-review" &&
             blocker.status === "failed" &&
-            (blocker.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES
+            (blocker.mergeRetries ?? 0) >= maxAutoMergeRetries
           ) {
             reasonCode = "failed-retry-exhausted";
-            reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${MAX_AUTO_MERGE_RETRIES})`;
+            reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${maxAutoMergeRetries})`;
           } else if (
             blocker.column === "in-review" &&
             blocker.status === "failed" &&
@@ -4911,7 +5001,7 @@ export class SelfHealingManager {
     return recovered;
   }
 
-  private async recordIntegrityAudit(taskId: string, mutationType: "task:finalize-unproven-blocked" | "task:finalize-lost-work-blocked" | "task:integrity-reconcile-modified-files" | "task:integrity-warning" | "task:auto-recover-stale-merger-status", metadata: Record<string, unknown>): Promise<void> {
+  private async recordIntegrityAudit(taskId: string, mutationType: "task:finalize-unproven-blocked" | "task:finalize-lost-work-blocked" | "task:no-commits-finalize-blocked-incomplete-steps" | "task:integrity-reconcile-modified-files" | "task:integrity-warning" | "task:auto-recover-stale-merger-status", metadata: Record<string, unknown>): Promise<void> {
     const auditor = createRunAuditor(this.store, {
       runId: generateSyntheticRunId("self-healing-integrity", taskId),
       agentId: "self-healing",
@@ -5099,6 +5189,38 @@ export class SelfHealingManager {
           // the audit trail of the lost work. Now we refuse to finalize and
           // move the task back to todo with progress preserved so the next
           // executor run can re-attempt.
+          const noCommitsFinalize = evaluateNoCommitsNoOpFinalize(task);
+          if (noCommitsFinalize.blocked) {
+            const reason = noCommitsFinalize.reason ?? "no-commits task has incomplete work with no net branch changes";
+            /*
+             * FNXC:Lifecycle 2026-06-14-20:14:
+             * FN-6461/FN-6455 requires self-healing no-op finalization to demote no-commits tasks with incomplete/skipped work and set an error so stranded-todo recovery will not immediately re-promote them.
+             */
+            await this.store.updateTask(task.id, { error: reason });
+            await this.store.logEntry(
+              task.id,
+              `Finalize blocked (no-commits incomplete-work guard): ${reason} — moving back to todo with progress preserved`,
+              JSON.stringify({
+                doneCount: noCommitsFinalize.doneCount,
+                incompleteCount: noCommitsFinalize.incompleteCount,
+                classification: "proven-no-op",
+                baseRef: classification.baseRef,
+                lane: "self-healing-finalize-no-op-review",
+              }, null, 2),
+            );
+            await this.recordIntegrityAudit(task.id, "task:no-commits-finalize-blocked-incomplete-steps", {
+              reason,
+              doneCount: noCommitsFinalize.doneCount,
+              incompleteCount: noCommitsFinalize.incompleteCount,
+              classification: "proven-no-op",
+              baseRef: classification.baseRef,
+              lane: "self-healing-finalize-no-op-review",
+            });
+            // #1411: backward recovery — skip order-derived adjacency.
+            await this.store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+            recovered++;
+            continue;
+          }
           if (task.modifiedFiles && task.modifiedFiles.length > 0) {
             await this.store.logEntry(
               task.id,
@@ -5304,6 +5426,7 @@ export class SelfHealingManager {
       // "pull-request"`) — see GitHub issue #21.
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const mergeable = tasks.filter((t) =>
@@ -5324,7 +5447,7 @@ export class SelfHealingManager {
         // refreshes updatedAt, preventing cooldown-based retries from ever
         // becoming eligible. Also skip tasks explicitly tagged as no-op merges
         // in case updateTask(moveTask) is briefly out-of-order during recovery.
-        (t.mergeRetries ?? 0) < MAX_AUTO_MERGE_RETRIES &&
+        (t.mergeRetries ?? 0) < maxAutoMergeRetries &&
         getTaskMergeBlocker(t) === undefined,
       );
       const unownedMergeable = mergeable.filter((task) => !this.isMergeLaneOwned(task.id));
@@ -5617,6 +5740,7 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const cycleStartMs = Date.now();
       const timeoutMs = settings.taskStuckTimeoutMs;
       if (!timeoutMs || timeoutMs <= 0) return 0;
@@ -5634,7 +5758,7 @@ export class SelfHealingManager {
           activeMergeTaskId,
           executingTaskIds,
           staleMergingMinAgeMs: this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
-          maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
+          maxAutoMergeRetries,
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
@@ -6064,13 +6188,14 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
 
       const slim = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = slim.filter((t) =>
         t.column === "in-review"
         && allowsAutoMergeProcessing(t, settings)
         && t.status === "failed"
-        && (t.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES
+        && (t.mergeRetries ?? 0) >= maxAutoMergeRetries
         && typeof t.error === "string"
         && t.error.length > 0
         && classifyTransientMergeError(t.error) !== null,
@@ -6078,7 +6203,7 @@ export class SelfHealingManager {
       if (candidates.length === 0) return 0;
 
       log.warn(
-        `Found ${candidates.length} in-review task(s) with transient merge failures stuck at mergeRetries=${MAX_AUTO_MERGE_RETRIES}; attempting auto-recovery`,
+        `Found ${candidates.length} in-review task(s) with transient merge failures stuck at mergeRetries=${maxAutoMergeRetries}; attempting auto-recovery`,
       );
 
       let recovered = 0;
@@ -6090,7 +6215,7 @@ export class SelfHealingManager {
         if (
           task.column !== "in-review"
           || task.status !== "failed"
-          || (task.mergeRetries ?? 0) < MAX_AUTO_MERGE_RETRIES
+          || (task.mergeRetries ?? 0) < maxAutoMergeRetries
         ) {
           continue;
         }
@@ -6663,6 +6788,7 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const now = Date.now();
       const inReview = await this.store.listTasks({ column: "in-review", slim: true });
       const triage = await this.store.listTasks({ column: "triage", slim: true });
@@ -6688,7 +6814,7 @@ export class SelfHealingManager {
           allowsAutoMergeProcessing(task, settings) &&
           !task.paused &&
           task.status === "failed" &&
-          (task.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES &&
+          (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
           task.mergeDetails?.mergeConfirmed !== true &&
           (hasBlockedDependents || Boolean(task.worktree)) &&
           cooldownElapsed >= DEADLOCK_RECOVERY_COOLDOWN_MS;
@@ -7020,6 +7146,7 @@ export class SelfHealingManager {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
+      const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
@@ -7027,7 +7154,7 @@ export class SelfHealingManager {
         task.column === "in-review" &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
-        (task.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES &&
+        (task.mergeRetries ?? 0) >= maxAutoMergeRetries &&
         task.mergeDetails?.mergeConfirmed !== true &&
         !executingIds.has(task.id),
       );

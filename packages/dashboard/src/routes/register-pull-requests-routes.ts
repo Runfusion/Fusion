@@ -5,6 +5,7 @@ import {
   isPrEntityActionable,
   isPrEntityAutoMergeReady,
   autoMergeGateReason,
+  summarizePrThreadActivity,
 } from "@fusion/core";
 import { badRequest, notFound, ApiError } from "../api-error.js";
 
@@ -82,8 +83,9 @@ export function isBackwardMoveBlockedByOpenPr(input: {
  * Pure derivation from authoritative entity state.
  */
 export function buildPrSummary(entity: PrEntity, threads: PrThreadState[]) {
-  const pendingThreads = threads.filter((t) => t.outcome === "pending").length;
-  const disagreedThreads = threads.filter((t) => t.outcome === "disagreed").length;
+  // U18 (R15): single-source the Review-response activity counts from @fusion/core
+  // so the dashboard, the CLI, and the Command Center never derive divergent numbers.
+  const activity = summarizePrThreadActivity(threads);
   return {
     mergeable: entity.mergeable ?? "unknown",
     reviewDecision: entity.reviewDecision ?? null,
@@ -94,8 +96,12 @@ export function buildPrSummary(entity: PrEntity, threads: PrThreadState[]) {
     autoMergeReady: isPrEntityAutoMergeReady(entity),
     actionable: isPrEntityActionable(entity),
     active: isPrEntityActive(entity),
-    pendingThreads,
-    disagreedThreads,
+    pendingThreads: activity.pending,
+    disagreedThreads: activity.disagreed,
+    // U18: threads the loop fixed, and the total it acted on (fixed + disagreed),
+    // exposed so the Command Center / Mission Control can read resolution activity.
+    fixedThreads: activity.fixed,
+    actedThreads: activity.acted,
   };
 }
 

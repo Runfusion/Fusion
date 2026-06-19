@@ -7,6 +7,7 @@ import {
   fetchChatSession,
   createChatSession,
   fetchChatMessages,
+  updateChatSession,
   attachChatStream,
   streamChatResponse,
   cancelChatResponse,
@@ -64,6 +65,7 @@ export interface UseQuickChatReturn {
   selectSession: (session: EnrichedChatSession) => Promise<void>;
   startModelChat: (modelProvider: string, modelId: string) => Promise<void>;
   startFreshSession: (agentId?: string, modelProvider?: string, modelId?: string) => Promise<void>;
+  renameSession: (id: string, title: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
   loadMessages: () => Promise<void>;
   reloadMessages: () => Promise<void>;
@@ -190,6 +192,12 @@ function mapChatMessageToInfo(message: ChatMessage): ChatMessageInfo {
   };
 }
 
+// Backstop delay before a still-pending queued message is re-confirmed and
+// force-delivered. Long enough to let the targeted flush paths (pre-session
+// activation, stream completion) deliver first; short enough that a stranded
+// message reaches the agent quickly.
+const QUEUED_MESSAGE_DELIVERY_WATCHDOG_MS = 1500;
+
 /**
  * Hook for the QuickChatFAB component.
  * Provides chat session management and SSE streaming for real-time AI responses.
@@ -214,7 +222,7 @@ export function useQuickChat(
   const [pendingMessage, setPendingMessage] = useState("");
 
   // Stream connection ref for cleanup
-  const streamRef = useRef<{ close: () => void } | null>(null);
+  const streamRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const lastAttachedGenerationRef = useRef<{ sessionId: string; replayFromEventId: number | null } | null>(null);
   const cancelledByUserRef = useRef(false);
   const cancelStreamingFlushesRef = useRef<(() => void) | null>(null);
@@ -235,6 +243,8 @@ export function useQuickChat(
   // component's useEffect that depends on switchSession.
   const activeSessionRef = useRef<EnrichedChatSession | null>(activeSession);
   activeSessionRef.current = activeSession;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   // Max retries for session init to prevent infinite toast loops
   const initRetryCountRef = useRef(0);
@@ -315,6 +325,22 @@ export function useQuickChat(
     }
   }, []);
 
+  const loadMessagesForSession = useCallback(async (sessionId: string, opts?: { commitForStreamingAttach?: boolean }) => {
+    setMessagesLoading(true);
+    try {
+      const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
+      const shouldCommitMessages = activeSessionRef.current?.id === sessionId
+        || (opts?.commitForStreamingAttach === true && lastAttachedGenerationRef.current?.sessionId === sessionId);
+      if (shouldCommitMessages) {
+        setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
+      }
+    } catch (err) {
+      console.error("[useQuickChat] Failed to load messages:", err);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, [projectId]);
+
   const attachIfGenerating = useCallback((
     sessionId: string,
     inFlightGeneration?: ChatInFlightGenerationState | null,
@@ -325,7 +351,27 @@ export function useQuickChat(
     }
 
     cancelledByUserRef.current = false;
+    const currentMessages = messagesRef.current;
+    const needsPriorThreadLoad = currentMessages.length === 0 || currentMessages[0]?.sessionId !== sessionId;
+    lastAttachedGenerationRef.current = {
+      sessionId,
+      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
+        ? inFlightGeneration.replayFromEventId
+        : null,
+    };
+    if (needsPriorThreadLoad) {
+      /*
+      FNXC:ChatStreaming 2026-06-17-16:58:
+      QuickChat mirrors main chat: a resumed in-flight assistant bubble must not hide prior user turns or assistant responses, even when attach runs before activeSessionRef observes the selected session.
+      Because streaming suppresses persisted echo handling, attach-triggered thread loads commit for the attached session instead of depending only on activeSession-bound state.
+      */
+      void loadMessagesForSession(sessionId, { commitForStreamingAttach: true });
+    }
     if (inFlightGeneration) {
+      /*
+      FNXC:ChatStreaming 2026-06-18-06:01:
+      QuickChat must mirror main chat reattach semantics: paint the durable snapshot for the first frame and seed the handler accumulators from it so post-replay deltas continue the in-flight bubble instead of clobbering prior chunks.
+      */
       setStreamingText(inFlightGeneration.streamingText);
       setStreamingThinking(inFlightGeneration.streamingThinking);
       setStreamingToolCalls(inFlightGeneration.toolCalls);
@@ -335,6 +381,9 @@ export function useQuickChat(
     const { handlers } = createChatStreamHandlers({
       sessionId,
       tempUserMessageId: "",
+      initialText: inFlightGeneration?.streamingText,
+      initialThinking: inFlightGeneration?.streamingThinking,
+      initialToolCalls: inFlightGeneration?.toolCalls,
       setStreamingText,
       setStreamingThinking,
       setStreamingToolCalls,
@@ -355,9 +404,7 @@ export function useQuickChat(
         isStreamingRef.current = false;
         streamRef.current = null;
         lastAttachedGenerationRef.current = null;
-        void fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId).then((data) => {
-          if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-        }).catch(() => {});
+        void loadMessagesForSession(sessionId);
         flushPendingMessage();
       },
       onError: (data) => {
@@ -372,9 +419,7 @@ export function useQuickChat(
         if (!options?.silent) {
           addToast?.(errorMessage, "error");
         }
-        void fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId).then((data) => {
-          if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-        }).catch(() => {});
+        void loadMessagesForSession(sessionId);
         flushPendingMessage();
       },
     });
@@ -384,14 +429,8 @@ export function useQuickChat(
         ? { lastEventId: inFlightGeneration.replayFromEventId }
         : {}),
     });
-    lastAttachedGenerationRef.current = {
-      sessionId,
-      replayFromEventId: typeof inFlightGeneration?.replayFromEventId === "number"
-        ? inFlightGeneration.replayFromEventId
-        : null,
-    };
     return true;
-  }, [addToast, projectId, flushPendingMessage]);
+  }, [addToast, loadMessagesForSession, flushPendingMessage, t, projectId]);
 
   // Fetch existing sessions and find/create one for the given target
   const initializeSession = useCallback(
@@ -418,7 +457,7 @@ export function useQuickChat(
 
           // Recover streaming state if server is still generating for this session.
           // After a reload/HMR, the server keeps generating but the UI loses
-          // all streaming state. Show the "Connecting…" indicator immediately.
+          // all streaming state. Show the "Working…" indicator immediately.
           if (existingSession.isGenerating) {
             attachIfGenerating(existingSession.id, existingSession.inFlightGeneration);
           }
@@ -450,17 +489,8 @@ export function useQuickChat(
   const loadMessages = useCallback(async () => {
     if (!activeSession) return;
 
-    setMessagesLoading(true);
-    try {
-      const sessionId = activeSession.id;
-      const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
-      if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-    } catch (err) {
-      console.error("[useQuickChat] Failed to load messages:", err);
-    } finally {
-      setMessagesLoading(false);
-    }
-  }, [activeSession, projectId]);
+    await loadMessagesForSession(activeSession.id);
+  }, [activeSession, loadMessagesForSession]);
 
   // Load messages when session changes
   useEffect(() => {
@@ -518,17 +548,8 @@ export function useQuickChat(
   // Reload messages from server (for same-session revisit)
   const reloadMessages = useCallback(async () => {
     if (!activeSession) return;
-    setMessagesLoading(true);
-    try {
-      const sessionId = activeSession.id;
-      const data = await fetchChatMessages(sessionId, { limit: 50, order: "desc" }, projectId);
-      if (activeSessionRef.current?.id === sessionId) setMessages(data.messages.slice().reverse().map(mapChatMessageToInfo));
-    } catch (err) {
-      console.error("[useQuickChat] Failed to reload messages:", err);
-    } finally {
-      setMessagesLoading(false);
-    }
-  }, [activeSession, projectId]);
+    await loadMessagesForSession(activeSession.id);
+  }, [activeSession, loadMessagesForSession]);
 
   const resetTransientComposerState = useCallback(() => {
     cancelStreamingFlushesRef.current?.();
@@ -620,6 +641,7 @@ export function useQuickChat(
 
     resetTransientComposerState();
     setActiveSession(session);
+    activeSessionRef.current = session;
 
     void Promise.resolve(fetchChatSession(session.id, projectId))
       .then(({ session: refreshedSession }) => {
@@ -813,6 +835,47 @@ export function useQuickChat(
     }
   }, [attachIfGenerating, projectId, refreshSessions, reloadMessages]);
 
+  // A stream that dropped without firing onDone/onError — commonly a mobile tab
+  // suspension severing the SSE connection — leaves isStreamingRef stuck `true`
+  // with a dead-but-non-null streamRef. Every later send then takes the "queue
+  // while streaming" branch below and strands in the composer: the message
+  // shows locally but never reaches the agent or the persisted session (so it
+  // also never appears in regular chat). When a send is queued this way,
+  // confirm with the server whether a generation is truly in flight; if not,
+  // the flag is stale, so tear down the dead stream and flush the queued send.
+  const recoverQueuedSendIfStreamStale = useCallback(async (sessionId: string) => {
+    // Fast path: an OPEN stream socket means a healthy in-flight generation, so
+    // leave the message queued for its onDone/onError to flush. Only a dead or
+    // missing stream needs recovery — this also avoids a server round-trip (and
+    // its side effects) in the common "queued while genuinely streaming" case.
+    if (streamRef.current?.isConnected()) {
+      return;
+    }
+    try {
+      const { session: refreshed } = await fetchChatSession(sessionId, projectId);
+      if (
+        // Genuinely generating server-side: the live stream will flush.
+        refreshed.isGenerating ||
+        // A stream reconnected while we were awaiting: defer to it.
+        streamRef.current?.isConnected() ||
+        activeSessionRef.current?.id !== sessionId ||
+        pendingMessageRef.current.trim().length === 0
+      ) {
+        return;
+      }
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+      }
+      setIsStreaming(false);
+      isStreamingRef.current = false;
+      flushPendingMessage();
+    } catch {
+      // Leave the queued message; another trigger (visibility resume, manual
+      // resend, stream completion) can still deliver it.
+    }
+  }, [projectId, flushPendingMessage]);
+
   /**
    * Send a message using SSE streaming.
    * @param content message text content
@@ -858,6 +921,7 @@ export function useQuickChat(
         pendingMessageRef.current = content;
         setPendingMessage(content);
         setPersistedPendingChatMessage(activeSession.id, content);
+        void recoverQueuedSendIfStreamStale(activeSession.id);
         return Promise.resolve();
       }
 
@@ -988,7 +1052,7 @@ export function useQuickChat(
       void completionPromise.catch(() => {});
       return completionPromise;
     },
-    [activeSession, projectId, addToast, reloadMessages, reconnectSessionSilently, flushPendingMessage],
+    [activeSession, projectId, addToast, reloadMessages, reconnectSessionSilently, flushPendingMessage, recoverQueuedSendIfStreamStale],
   );
 
   sendMessageRef.current = sendMessage;
@@ -1074,6 +1138,102 @@ export function useQuickChat(
     flushPendingMessage();
   }, [activeSession, flushPendingMessage]);
 
+  // Delivery backstop for queued messages. The targeted flush triggers
+  // (pre-session activation, stream onDone/onError, send-time stale recovery)
+  // each fire once on a specific transition. If the relevant one bails — a
+  // lingering stream ref at session activation, or a stream that looked healthy
+  // when we chose to wait for its onDone but then died without firing it — the
+  // queued message strands in the composer forever: shown locally but never
+  // sent to the agent or persisted (so also absent from regular chat). Whenever
+  // a message stays pending under an active session, re-confirm after a short
+  // delay and deliver it if no generation is actually in flight server-side.
+  useEffect(() => {
+    const sessionId = activeSession?.id;
+    if (!sessionId || pendingMessage.trim().length === 0) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled || pendingMessageRef.current.trim().length === 0) {
+        return;
+      }
+      void fetchChatSession(sessionId, projectId)
+        .then(({ session: refreshed }) => {
+          if (
+            cancelled ||
+            // A real generation is in flight: its stream will flush the queue.
+            refreshed.isGenerating ||
+            // A live stream reconnected while we waited: defer to it.
+            streamRef.current?.isConnected() ||
+            activeSessionRef.current?.id !== sessionId ||
+            pendingMessageRef.current.trim().length === 0
+          ) {
+            return;
+          }
+          if (streamRef.current) {
+            streamRef.current.close();
+            streamRef.current = null;
+          }
+          setIsStreaming(false);
+          isStreamingRef.current = false;
+          flushPendingMessage();
+        })
+        .catch(() => {
+          // Keep the queued message; a later trigger can still deliver it.
+        });
+    }, QUEUED_MESSAGE_DELIVERY_WATCHDOG_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeSession?.id, pendingMessage, projectId, flushPendingMessage]);
+
+  /**
+   * FNXC:Chat 2026-06-16-22:20:
+   * Quick chat shares the backend session-title PATCH path with regular chat; optimistic session-list and active-session updates keep the dropdown trigger and panel title synchronized immediately after rename.
+   */
+  const renameSession = useCallback(
+    async (id: string, title: string) => {
+      const normalizedTitle = title.trim() || null;
+      const previousSessions = sessions;
+      const previousActiveSession = activeSession;
+
+      setSessions((prev) => prev.map((session) => (session.id === id ? { ...session, title: normalizedTitle } : session)));
+      setActiveSession((prev) => (prev?.id === id ? { ...prev, title: normalizedTitle } : prev));
+
+      try {
+        const response = await updateChatSession(id, { title: normalizedTitle }, projectId);
+        const updatedSession = response.session;
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === id
+              ? {
+                  ...session,
+                  title: updatedSession.title,
+                  updatedAt: updatedSession.updatedAt,
+                }
+              : session,
+          ),
+        );
+        setActiveSession((prev) =>
+          prev?.id === id
+            ? {
+                ...prev,
+                title: updatedSession.title,
+                updatedAt: updatedSession.updatedAt,
+              }
+            : prev,
+        );
+      } catch (error) {
+        setSessions(previousSessions);
+        setActiveSession(previousActiveSession);
+        addToast?.(t("chat.failedToRenameConversation", "Failed to rename conversation"), "error");
+        throw error;
+      }
+    },
+    [activeSession, addToast, projectId, sessions, t],
+  );
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1103,6 +1263,7 @@ export function useQuickChat(
     selectSession,
     startModelChat,
     startFreshSession,
+    renameSession,
     refreshSessions,
     loadMessages,
     reloadMessages,
@@ -1125,6 +1286,7 @@ export function useQuickChat(
     selectSession,
     startModelChat,
     startFreshSession,
+    renameSession,
     refreshSessions,
     loadMessages,
     reloadMessages,

@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
+  MissingAcpEnvError,
   buildSpawnEnv,
   redactSecrets,
   captureStderr,
@@ -47,14 +48,43 @@ describe("buildSpawnEnv (KTD6b allow-list)", () => {
   it("copies only allow-listed vars and excludes secret vars", () => {
     process.env.ACP_TEST_ALLOWED = "ok";
     process.env.ACP_TEST_SECRET = "leak-me";
+    process.env.ANTHROPIC_API_KEY = "do-not-forward";
+    process.env.ANTHROPIC_AUTH_TOKEN = "do-not-forward";
     try {
       const env = buildSpawnEnv(["ACP_TEST_ALLOWED"]);
-      expect(env.ACP_TEST_ALLOWED).toBe("ok");
+      expect(env).toEqual({ ACP_TEST_ALLOWED: "ok" });
       expect(env.ACP_TEST_SECRET).toBeUndefined();
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     } finally {
       delete process.env.ACP_TEST_ALLOWED;
       delete process.env.ACP_TEST_SECRET;
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
     }
+  });
+
+  it("builds the Claude bridge env from exactly HOME and PATH", () => {
+    const env = buildSpawnEnv(["HOME", "PATH"], {
+      required: ["HOME"],
+      sourceEnv: {
+        HOME: "/Users/tester",
+        PATH: "/usr/bin",
+        ANTHROPIC_API_KEY: "do-not-forward",
+        ANTHROPIC_AUTH_TOKEN: "do-not-forward",
+        EXTRA_SECRET: "do-not-forward",
+      },
+    });
+    expect(env).toEqual({ HOME: "/Users/tester", PATH: "/usr/bin" });
+  });
+
+  it("rejects the Claude bridge env when HOME is missing", () => {
+    expect(() =>
+      buildSpawnEnv(["HOME", "PATH"], {
+        required: ["HOME"],
+        sourceEnv: { PATH: "/usr/bin" },
+      }),
+    ).toThrow(MissingAcpEnvError);
   });
 });
 

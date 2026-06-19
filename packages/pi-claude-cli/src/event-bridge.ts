@@ -420,6 +420,13 @@ export function createEventBridge(
       if (usage.input_tokens != null) output.usage.input = usage.input_tokens;
       if (usage.output_tokens != null)
         output.usage.output = usage.output_tokens;
+      // Cache tokens (parity with handleMessageStart) — the ACP usage path
+      // (OQ3) carries these too; without this they'd be silently dropped and
+      // cost for cached turns would be understated.
+      if (usage.cache_read_input_tokens != null)
+        output.usage.cacheRead = usage.cache_read_input_tokens;
+      if (usage.cache_creation_input_tokens != null)
+        output.usage.cacheWrite = usage.cache_creation_input_tokens;
       output.usage.totalTokens =
         output.usage.input +
         output.usage.output +

@@ -40,24 +40,27 @@ describe("stage skill reachability (real seam wiring)", () => {
     expect(skillPaths[0]).not.toMatch(/\.(claude|codex|gemini)[/\\]skills/);
   });
 
-  it("installing bundled skills onto a discovery root produces the stage's SKILL.md", () => {
-    const stage = getStage("brainstorm")!;
-    // Install into a temp discovery root (isolated; mirrors what the real
-    // plugin-local install produces, without writing into the repo dir).
-    const target = mkdtempSync(join(tmpdir(), "ce-skill-reach-"));
-    tmpTargets.push(target);
+  it.each(["brainstorm", "debug"])(
+    "installing bundled skills onto a discovery root produces %s's SKILL.md",
+    (stageId) => {
+      const stage = getStage(stageId)!;
+      // Install into a temp discovery root (isolated; mirrors what the real
+      // plugin-local install produces, without writing into the repo dir).
+      const target = mkdtempSync(join(tmpdir(), "ce-skill-reach-"));
+      tmpTargets.push(target);
 
-    const { results } = installBundledCeSkills({ targetRoot: target });
-    expect(results.every((r) => r.outcome === "installed" || r.outcome === "skipped")).toBe(true);
+      const { results } = installBundledCeSkills({ targetRoot: target });
+      expect(results.every((r) => r.outcome === "installed" || r.outcome === "skipped")).toBe(true);
 
-    const installedSkillMd = join(target, stage.skillId, "SKILL.md");
-    expect(existsSync(installedSkillMd)).toBe(true);
-  });
+      const installedSkillMd = join(target, stage.skillId, "SKILL.md");
+      expect(existsSync(installedSkillMd)).toBe(true);
+    },
+  );
 
-  it("the stage system prompt names the stage's ce-* skill id", () => {
-    const stage = getStage("brainstorm")!;
+  it.each(["brainstorm", "debug"])("the %s stage system prompt names the stage's ce-* skill id", (stageId) => {
+    const stage = getStage(stageId)!;
     const prompt = buildStageSystemPrompt(stage);
-    expect(prompt).toContain(stage.skillId); // "ce-brainstorm"
+    expect(prompt).toContain(stage.skillId);
     expect(prompt).toContain("question");
     expect(prompt).toContain("complete");
   });

@@ -1,4 +1,4 @@
-import type { Settings, TaskDetail, WorkflowIr, WorkflowIrNode } from "@fusion/core";
+import type { Settings, TaskDetail, WorkflowIr, WorkflowIrArtifact, WorkflowIrNode, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 import {
   BUILTIN_CODING_WORKFLOW_IR,
   getBuiltinWorkflow,
@@ -14,13 +14,15 @@ import {
   type WorkflowNodeOutcome,
 } from "./workflow-graph-executor.js";
 import {
+  WORKFLOW_ID_CONTEXT_KEY,
+  WORKFLOW_RUN_ID_CONTEXT_KEY,
   createDefaultNodeHandlers,
   createNoopLegacySeams,
   type WorkflowCustomNodeRunner,
 } from "./workflow-node-handlers.js";
 import type { WorkflowRuntimePrimitives } from "./runtime-primitives.js";
 
-export type WorkflowTaskRuntimeDisposition = "completed" | "failed";
+export type WorkflowTaskRuntimeDisposition = "completed" | "failed" | "manual-required";
 
 export interface WorkflowTaskRuntimeResult {
   disposition: WorkflowTaskRuntimeDisposition;
@@ -31,7 +33,15 @@ export interface WorkflowTaskRuntimeResult {
 }
 
 export interface WorkflowTaskRuntimeDeps extends Omit<WorkflowGraphExecutorDeps, "seams" | "runCustomNode"> {
-  store: WorkflowIrResolverStore;
+  store: WorkflowIrResolverStore & {
+    getTask?: (taskId: string) => Promise<TaskDetail>;
+    getTaskDocument?: (taskId: string, key: string) => Promise<unknown | null>;
+    transitionWorkflowWorkItem?: (
+      id: string,
+      state: WorkflowWorkItemState,
+      patch?: { now?: string; lastError?: string | null; leaseOwner?: string | null; leaseExpiresAt?: string | null },
+    ) => WorkflowWorkItem;
+  };
   primitives: WorkflowRuntimePrimitives;
   runCustomNode: WorkflowCustomNodeRunner;
   onEvent?: (event: { type: "start" | "terminal"; taskId: string; detail: string }) => void;
@@ -104,6 +114,25 @@ export class WorkflowTaskRuntime {
         reason,
       };
     }
+    if (result.outcome === "success") {
+      const missingArtifactKeys = await this.findMissingRequiredArtifacts(task.id, target.ir);
+      if (missingArtifactKeys.length > 0) {
+        const reason = `workflow-required-artifacts-missing:${missingArtifactKeys.join(",")}`;
+        const context = {
+          ...result.context,
+          "workflow:required-artifacts:missing": missingArtifactKeys,
+        };
+        this.emit("terminal", task.id, `failed:${reason}`);
+        return {
+          disposition: "failed",
+          outcome: "failure",
+          visitedNodeIds: result.visitedNodeIds,
+          context,
+          reason,
+        };
+      }
+    }
+
     const disposition: WorkflowTaskRuntimeDisposition = result.outcome === "success" ? "completed" : "failed";
     this.emit("terminal", task.id, disposition);
     return {
@@ -112,6 +141,134 @@ export class WorkflowTaskRuntime {
       visitedNodeIds: result.visitedNodeIds,
       context: result.context,
     };
+  }
+
+  public async runWorkItem(
+    workItem: WorkflowWorkItem,
+    settings: (Pick<Settings, "experimentalFeatures"> & Partial<Settings>) | undefined,
+  ): Promise<WorkflowTaskRuntimeResult> {
+    if (!this.deps.store.getTask || !this.deps.store.transitionWorkflowWorkItem) {
+      const reason = "workflow-work-item-store-unwired";
+      this.emit("terminal", workItem.taskId, `work-item:failed:${reason}`);
+      return {
+        disposition: "failed",
+        outcome: "failure",
+        visitedNodeIds: [],
+        context: {},
+        reason,
+      };
+    }
+    if (workItem.state !== "running") {
+      return this.failWorkItem(workItem, `workflow-work-item-not-running:${workItem.state}`);
+    }
+
+    let task: TaskDetail;
+    try {
+      task = await this.deps.store.getTask(workItem.taskId);
+    } catch (err) {
+      return this.failWorkItem(workItem, `workflow-work-item-task-missing:${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    let target: WorkflowRuntimeTarget;
+    try {
+      target = await this.resolveRuntimeTarget(workItem.taskId);
+    } catch (err) {
+      return this.failWorkItem(workItem, `workflow-resolution-error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const node = target.ir.nodes.find((candidate) => candidate.id === workItem.nodeId);
+    if (!node) {
+      return this.failWorkItem(workItem, `workflow-work-item-node-missing:${workItem.nodeId}`);
+    }
+
+    const invoked: string[] = [];
+    const handler = this.recordingHandlers(invoked)[node.kind];
+    if (!handler && node.kind !== "start" && node.kind !== "end") {
+      return this.failWorkItem(workItem, `workflow-work-item-node-unhandled:${node.kind}`);
+    }
+
+    const runtimeSettings = forceWorkflowGraphExecutor(settings);
+    let outcome: WorkflowNodeOutcome = "success";
+    let reason: string | undefined;
+    let context: Record<string, unknown> = {
+      [WORKFLOW_RUN_ID_CONTEXT_KEY]: workItem.runId,
+      [WORKFLOW_ID_CONTEXT_KEY]: target.workflowId,
+      "workflow:work-item-id": workItem.id,
+      "workflow:work-item-kind": workItem.kind,
+      "workflow:work-item-attempt": workItem.attempt,
+    };
+
+    try {
+      const result = handler
+        ? await handler(node, { task, settings: runtimeSettings, context })
+        : { outcome: "success" as const };
+      outcome = result.outcome;
+      if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+      context = { ...context, ...(result.contextPatch ?? {}) };
+      reason = result.outcome === "failure" ? result.value ?? "workflow-work-item-node-failed" : undefined;
+    } catch (err) {
+      outcome = "failure";
+      reason = `workflow-work-item-node-error:${err instanceof Error ? err.message : String(err)}`;
+    }
+
+    const disposition: WorkflowTaskRuntimeDisposition = outcome === "success"
+      ? "completed"
+      : reason === "manual-required"
+        ? "manual-required"
+        : "failed";
+    const terminalState: WorkflowWorkItemState = disposition === "completed"
+      ? "succeeded"
+      : disposition === "manual-required"
+        ? "manual-required"
+        : "failed";
+    this.deps.store.transitionWorkflowWorkItem(workItem.id, terminalState, {
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: reason ?? null,
+    });
+    this.emit("terminal", workItem.taskId, `work-item:${disposition}`);
+    return {
+      disposition,
+      outcome,
+      visitedNodeIds: invoked.length > 0 ? invoked : [node.id],
+      context,
+      reason,
+    };
+  }
+
+  private failWorkItem(workItem: WorkflowWorkItem, reason: string): WorkflowTaskRuntimeResult {
+    this.deps.store.transitionWorkflowWorkItem!(workItem.id, "failed", {
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      lastError: reason,
+    });
+    this.emit("terminal", workItem.taskId, `work-item:failed:${reason}`);
+    return {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: [],
+      context: {},
+      reason,
+    };
+  }
+
+  /**
+   * FNXC:WorkflowGates 2026-06-17-18:20:
+   * Custom workflow success criteria require every declared task-document artifact key to exist before terminal success. Evaluate this at the runtime terminal seam so graph paths cannot falsely complete after nodes pass while required deliverables are absent. Empty document content still satisfies the requirement because the IR contract currently requires key existence, not non-empty content.
+   */
+  private async findMissingRequiredArtifacts(taskId: string, ir: WorkflowIr): Promise<string[]> {
+    const declaredArtifacts: WorkflowIrArtifact[] = "artifacts" in ir && Array.isArray(ir.artifacts) ? ir.artifacts : [];
+    if (declaredArtifacts.length === 0) return [];
+    if (!this.deps.store.getTaskDocument) {
+      return declaredArtifacts.map((artifact) => artifact.key);
+    }
+
+    const missing: string[] = [];
+    for (const artifact of declaredArtifacts) {
+      const document = await this.deps.store.getTaskDocument(taskId, artifact.key);
+      if (!document) missing.push(artifact.key);
+    }
+    return missing;
   }
 
   private async resolveRuntimeTarget(taskId: string): Promise<WorkflowRuntimeTarget> {

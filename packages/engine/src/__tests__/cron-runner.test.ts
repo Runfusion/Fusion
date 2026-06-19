@@ -166,6 +166,23 @@ describe("CronRunner", () => {
   });
 
   describe("createAiPromptExecutor", () => {
+    it("passes executor fallback skill selection to scheduled AI prompt sessions", async () => {
+      let capturedOptions: any;
+      piModuleMocks.createFnAgent.mockImplementation(async (options: any) => {
+        capturedOptions = options;
+        return { session: { dispose: vi.fn() } };
+      });
+
+      const executor = await createAiPromptExecutor("/test/project");
+      await executor("Summarize this");
+
+      expect(capturedOptions.skillSelection).toMatchObject({
+        projectRootDir: "/test/project",
+        sessionPurpose: "executor",
+        requestedSkillNames: ["fusion"],
+      });
+    });
+
     it("returns response text even when session disposal throws", async () => {
       piModuleMocks.createFnAgent.mockImplementation(async (options: { onText?: (delta: string) => void }) => {
         options.onText?.("hello ");

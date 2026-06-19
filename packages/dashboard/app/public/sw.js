@@ -1,4 +1,4 @@
-const CACHE_NAME = "fusion-cache-v3";
+const CACHE_NAME = "fusion-cache-v4";
 const APP_SHELL_URLS = [
   "/",
   "/index.html",

@@ -8,10 +8,18 @@ import { MIN_TEMP_WORKTREE_REAP_AGE_MS } from "../self-healing.js";
 import type { RunAuditor } from "../run-audit.js";
 
 const tracked = new Set<string>();
+const registeredActivePaths = new Set<string>();
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 
 afterEach(() => {
-  activeSessionRegistry.clear();
+  /*
+  FNXC:EngineTests 2026-06-14-02:09:
+  Engine test files run in parallel and share the active-session singleton. Cleanup must unregister only paths registered by this file so one AI-merge cleanup test cannot erase another file's live session assertion under package load.
+  */
+  for (const path of registeredActivePaths) {
+    activeSessionRegistry.unregisterPath(path);
+  }
+  registeredActivePaths.clear();
   for (const dir of tracked) {
     try { rmSync(dir, RM); } catch { /* best effort */ }
   }
@@ -51,18 +59,20 @@ function makeAge(path: string, ageMs: number): void {
 describe("AI merge active-session pruning", () => {
   it("pruneExistingAiMergeWorktrees skips active-session paths", async () => {
     const projectRoot = tempProjectRoot();
-    const stale = tempAiMergeDir(projectRoot, "fusion-ai-merge-fn-777-active");
+    const stale = tempAiMergeDir(projectRoot, "fusion-ai-merge-fn-779-active");
     const canonical = realpathSync(stale);
-    activeSessionRegistry.registerPath(canonical, { taskId: "FN-777", kind: "ai-merge", ownerKey: "ai-merge:FN-777:attempt-1" });
+    activeSessionRegistry.registerPath(canonical, { taskId: "FN-779", kind: "ai-merge", ownerKey: "ai-merge:FN-779:attempt-1" });
+    registeredActivePaths.add(canonical);
     const { audit, events } = makeAudit();
 
-    await expect(pruneExistingAiMergeWorktrees("FN-777", projectRoot, audit, vi.fn(async () => undefined))).resolves.toBe(0);
+    await expect(pruneExistingAiMergeWorktrees("FN-779", projectRoot, audit, vi.fn(async () => undefined))).resolves.toBe(0);
     expect(existsSync(stale)).toBe(true);
     expect(events).toEqual([]);
 
     activeSessionRegistry.unregisterPath(canonical);
+    registeredActivePaths.delete(canonical);
     makeAge(stale, MIN_TEMP_WORKTREE_REAP_AGE_MS + 1_000);
-    await expect(pruneExistingAiMergeWorktrees("FN-777", projectRoot, audit, vi.fn(async () => undefined))).resolves.toBe(1);
+    await expect(pruneExistingAiMergeWorktrees("FN-779", projectRoot, audit, vi.fn(async () => undefined))).resolves.toBe(1);
     expect(existsSync(stale)).toBe(false);
   });
 });

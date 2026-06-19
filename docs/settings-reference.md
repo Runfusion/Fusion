@@ -46,7 +46,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
 | `ntfyBaseUrl` | `string` | `undefined` | Optional custom ntfy server base URL (must use `http://` or `https://`). If blank/unset, Fusion uses `https://ntfy.sh` for both runtime and test notifications. |
 | `ntfyAccessToken` | `string` | `undefined` | Optional ntfy access token. When set, Fusion sends `Authorization: Bearer <token>` with ntfy publish requests, including Settings → Notifications test sends. Leave blank/unset to publish without authentication. |
-| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "board-stall-unrecovered" \| "fallback-used" \| "task-created" \| "memory-dreams-processed" \| "message:agent-to-user" \| "message:agent-to-agent" \| "message:room" \| "oauth-token-expired" \| "token-budget" \| "workflow-notify")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock","board-stall-unrecovered","fallback-used","memory-dreams-processed","message:agent-to-user","message:agent-to-agent","message:room","oauth-token-expired","token-budget"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked; delivery is cooldown-throttled (first alert immediately, then suppressed for 15 minutes until gridlock resolves). `board-stall-unrecovered` fires only after a board-stall auto-recovery sweep runs and a follow-up verification tick still sees zero progress. `fallback-used` fires when Fusion recovers from a retryable model failure by switching to a configured fallback model. `task-created` fires when an agent creates a new task (requires `sourceAgentId`) and is opt-in/off by default. `memory-dreams-processed` fires when manual dream processing writes a new `DREAMS.md` entry (project and/or agent); disable it via ntfy/webhook event filters if you want to opt out. `message:agent-to-user` fires when an agent sends a direct message to the user. `message:agent-to-agent` fires when an agent sends a message to another agent (including replies). `message:room` fires when an agent posts an assistant reply in a chat room. `oauth-token-expired` fires when a provider OAuth credential reaches its expiry and needs re-authentication; Fusion also throttles that notification and the matching startup expiry warning to at most once per provider every 12 hours, and the throttle persists across server restarts. `token-budget` fires when a task crosses token soft/hard caps. `workflow-notify` is emitted by workflow `notify` nodes and is opt-in/off by default; add it to `ntfyEvents` or a provider `events` list to deliver workflow-authored notifications. If you use a custom `ntfyEvents` list, these message events must be present (or `ntfyEvents` must be unset so defaults apply) for the corresponding notifications to send. |
+| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "board-stall-unrecovered" \| "fallback-used" \| "task-created" \| "memory-dreams-processed" \| "message:agent-to-user" \| "message:agent-to-agent" \| "message:room" \| "oauth-token-expired" \| "token-budget" \| "workflow-notify")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock","board-stall-unrecovered","fallback-used","memory-dreams-processed","message:agent-to-user","message:agent-to-agent","message:room","oauth-token-expired","token-budget"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked; delivery is cooldown-throttled (first alert immediately, then suppressed for 15 minutes until gridlock resolves). `board-stall-unrecovered` fires only after a board-stall auto-recovery sweep runs and a follow-up verification tick still sees zero progress. `fallback-used` fires when Fusion recovers from a retryable model failure by switching to a configured fallback model. `task-created` fires when an agent creates a new task (requires `sourceAgentId`) and is opt-in/off by default. `memory-dreams-processed` fires when manual dream processing writes a new `DREAMS.md` entry (project and/or agent); disable it via ntfy/webhook event filters if you want to opt out. `message:agent-to-user` fires when an agent sends a direct message to the user. `message:agent-to-agent` fires when an agent sends a message to another agent (including replies). `message:room` fires when an agent posts an assistant reply in a chat room. `oauth-token-expired` fires when a provider OAuth credential reaches its expiry and still needs re-authentication after any automatic refresh path has been tried; Fusion also throttles that notification and the matching startup expiry warning to at most once per provider every 12 hours, and the throttle persists across server restarts. `token-budget` fires when a task crosses token soft/hard caps. `workflow-notify` is emitted by workflow `notify` nodes and is opt-in/off by default; add it to `ntfyEvents` or a provider `events` list to deliver workflow-authored notifications. If you use a custom `ntfyEvents` list, these message events must be present (or `ntfyEvents` must be unset so defaults apply) for the corresponding notifications to send. |
 | `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used to build deep links in notifications. |
 | `taskTokenBudget` | `{ soft?: number; hard?: number; perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } } }` | `undefined` | Global fallback per-task token budget policy. Project `taskTokenBudget` overrides this. |
 | `webhookEnabled` | `boolean` | `false` | Enable webhook notifications for task lifecycle events. Part of the legacy flat settings; prefer `notificationProviders` for new setups. |
@@ -162,7 +162,7 @@ When `id` is `"ntfy"` in `notificationProviders`, the provider `config` supports
 | `topic` | `string` | _required_ | ntfy topic name (1–64 chars, alphanumeric + `-_`). |
 | `ntfyBaseUrl` | `string` | `"https://ntfy.sh"` | Optional custom ntfy server URL. |
 | `ntfyAccessToken` | `string` | `undefined` | Optional access token. When set, provider sends `Authorization: Bearer <token>` on ntfy publishes. |
-| `events` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "board-stall-unrecovered" \| "fallback-used" \| "task-created" \| "memory-dreams-processed" \| "message:agent-to-user" \| "message:agent-to-agent" \| "message:room" \| "oauth-token-expired" \| "workflow-notify")[]` | `DEFAULT_NTFY_EVENTS` | Event filter list used by the provider. For `gridlock`, enabled events are still cooldown-throttled at runtime (15-minute suppression window, reset on full resolution). `board-stall-unrecovered` is emitted when board-stall verification fails after an attempted auto-recovery sweep. `task-created` is available as an opt-in event and only fires for agent-created tasks (`sourceAgentId` required). `memory-dreams-processed` is emitted when manual dream processing appends a new project/agent `DREAMS.md` entry. `message:agent-to-user`/`message:agent-to-agent` are emitted for mailbox messages and deep-link to the specific message when `dashboardHost` is configured. `message:room` is emitted for assistant replies in chat rooms and deep-links to the room when `dashboardHost` is configured. `oauth-token-expired` is emitted when a provider OAuth credential has expired; Fusion suppresses repeat delivery for the same provider for 12 hours even across server restarts, and applies the same persisted window to the startup expiry warning log. `workflow-notify` is emitted by workflow `notify` nodes and remains opt-in/off by default because it is not included in `DEFAULT_NTFY_EVENTS`. |
+| `events` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "board-stall-unrecovered" \| "fallback-used" \| "task-created" \| "memory-dreams-processed" \| "message:agent-to-user" \| "message:agent-to-agent" \| "message:room" \| "oauth-token-expired" \| "workflow-notify")[]` | `DEFAULT_NTFY_EVENTS` | Event filter list used by the provider. For `gridlock`, enabled events are still cooldown-throttled at runtime (15-minute suppression window, reset on full resolution). `board-stall-unrecovered` is emitted when board-stall verification fails after an attempted auto-recovery sweep. `task-created` is available as an opt-in event and only fires for agent-created tasks (`sourceAgentId` required). `memory-dreams-processed` is emitted when manual dream processing appends a new project/agent `DREAMS.md` entry. `message:agent-to-user`/`message:agent-to-agent` are emitted for mailbox messages and deep-link to the specific message when `dashboardHost` is configured. `message:room` is emitted for assistant replies in chat rooms and deep-links to the room when `dashboardHost` is configured. `oauth-token-expired` is emitted when a provider OAuth credential has expired and cannot be automatically refreshed; Fusion suppresses repeat delivery for the same provider for 12 hours even across server restarts, and applies the same persisted window to the startup expiry warning log. `workflow-notify` is emitted by workflow `notify` nodes and remains opt-in/off by default because it is not included in `DEFAULT_NTFY_EVENTS`. |
 | `dashboardHost` | `string` | `undefined` | Dashboard host for deep links in notifications. |
 
 Disable daily update checks globally:
@@ -170,6 +170,8 @@ Disable daily update checks globally:
 ```bash
 fn settings set updateCheckEnabled false
 ```
+
+When the dashboard footer reports that a newer `@runfusion/fusion` version is available, **Update now** runs the same global npm install as `fn update` (`npm install -g @runfusion/fusion@latest`) and retries once with `--force` for the legacy `fn`/`fusion` binary-collision case. A successful install updates the global package on disk, but the currently running Fusion server is not hot-swapped; restart Fusion to run the newly installed version.
 
 ---
 
@@ -183,14 +185,24 @@ govern that execution belong to the workflow.
 
 **Where to set them.** The common model lanes for a project's default workflow are
 available directly in **Settings → Project Models → Default workflow model lanes**:
-Plan/Triage, Executor, and Reviewer. Those dropdown controls use the shared model
-picker and are persisted by the Settings modal's primary **Save** action, which
-writes workflow setting values for the active project's default workflow; they do
-not restore the old project settings keys.
+Plan/Triage, Executor, Reviewer, and the Planning/Reviewer fallback lanes declared
+by the default workflow. Those dropdown controls use the shared model picker and
+are persisted by the Settings modal's primary **Save** action, which writes
+workflow setting values for the active project's default workflow; they do not
+restore the old project settings keys. The global **Fallback Model** remains in
+Settings → General Models, and workflow-specific fallbacks are also editable from
+the workflow editor Values tab. Title summarization is separate: set it in
+**Settings → Project Models → Title and Git Commit Message Summarization Model**,
+with its global baseline in Settings → General/Global Models.
 
-For step execution, review/approval policy, fallbacks, title summarization, and
-custom workflow settings, open the **workflow editor** (the workflow node editor in
-the dashboard) and select the **Settings** panel. On mobile, Settings is a
+<!--
+FNXC:WorkflowSettings 2026-06-17-09:13:
+FN-6584 follows the FN-6580 readiness audit by keeping title summarization project/global-scoped. Do not list it as a workflow-editor lane; the workflow editor owns execution/review policy and workflow-declared model lanes only.
+-->
+
+For step execution, review/approval policy, and custom workflow settings, open the
+[**workflow editor**](./workflow-editor.md) (the workflow node editor in the
+dashboard) and select the **Settings** panel. On mobile, Settings is a
 dedicated workflow editor destination beside Graph, Add, Fields, Columns, and
 Actions. It has two tabs:
 
@@ -257,13 +269,13 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 | `leanPlanning` | `false` | Workflow-native fast-mode policy: select the lean `planning-fast` prompt variant instead of the full triage spec prompt. |
 | `autoApproveSpec` | `false` | Workflow-native fast-mode policy: auto-approve generated specs and skip the independent spec reviewer. |
 
-In the dashboard Settings modal, Project Models now exposes Plan/Triage, Executor,
-and Reviewer dropdown controls for the default workflow. The modal's primary
-**Save** action persists pending default-workflow model lane overrides; there is no
-separate workflow-model save button. The workflow editor's Settings → Values tab
-uses the same dropdown picker for declared provider/model pairs, including
-fallbacks. Former locations for advanced workflow policy still show a short
-redirect stub linking to the workflow editor (for one release).
+In the dashboard Settings modal, Project Models exposes Plan/Triage, Executor,
+Reviewer, and declared fallback dropdown controls for the default workflow. The
+modal's primary **Save** action persists pending default-workflow model lane
+overrides; there is no separate workflow-model save button. The workflow editor's
+Settings → Values tab uses the same dropdown picker for declared provider/model
+pairs, including fallbacks. Former locations for advanced workflow policy still
+show a short redirect stub linking to the workflow editor (for one release).
 
 > Note: the global baseline model lanes (`executionGlobalProvider` etc.) and
 > integrity guarantees stay where they are — only the per-workflow process policy
@@ -277,9 +289,10 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 > review/approval, and per-phase model-lane keys listed under
 > [Where did my setting go?](#where-did-my-setting-go) — are no longer project
 > settings. They are documented here for type/default reference only; configure them
-> in **Settings → Project Models** for default-workflow Plan/Triage, Executor, and
-> Reviewer lanes, or in **workflow editor → Settings → Values** for advanced
-> workflow policy. They are not writable through `PUT /api/settings`.
+> in **Settings → Project Models** for default-workflow Plan/Triage, Executor,
+> Reviewer, and declared fallback lanes, or in **workflow editor → Settings →
+> Values** for advanced workflow policy. They are not writable through
+> `PUT /api/settings`.
 
 | Setting | Type | Default | Description |
 |---|---|---:|---|
@@ -295,7 +308,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `heartbeatScopeDiscipline` | `"strict" \| "lite" \| "off"` | `"strict"` | Heartbeat prompt procedure mode. `strict` keeps coordination-heavy scope discipline, `lite` restores pre-2026-05-11 wording, and `off` uses a minimal procedure. Per-agent `runtimeConfig.heartbeatScopeDiscipline` can override this default. |
 | `heartbeatPromptTemplate` | `"default" \| "compact"` | `"default"` | Heartbeat execution-prompt trim template default. Per-agent `runtimeConfig.heartbeatPromptTemplate` overrides this value. Role fallback when unset everywhere is `executor`→`default`, non-executor coordination roles→`compact`. |
 | `autoClaimCandidatesInPrompt` | `number` | `5` | Default no-task heartbeat candidate list length. Integer range `0-10`; `0` suppresses candidate prompt injection. |
-| `engineerBacklogAutoClaim` | `boolean` | `false` | Opt engineer-role agents into no-task backlog auto-claim for implementation tasks. The default remains executor-only; per-agent `runtimeConfig.engineerBacklogAutoClaim` overrides this project default, and explicit routing/delegation is unchanged. Configure the project default in **Settings → Scheduling & Capacity → Let engineer agents auto-claim backlog tasks**; configure the per-agent override in **Agents → Agent Detail → Settings → Heartbeat Settings → Engineer Backlog Auto-Claim**. |
+| `engineerBacklogAutoClaim` | `boolean` | `false` | Opt engineer-role agents into no-task backlog auto-claim for implementation tasks. The default remains executor-only; per-agent `runtimeConfig.engineerBacklogAutoClaim` overrides this project default, and explicit routing/delegation is unchanged. Configure the project default in **Settings → Scheduling & Capacity → "Let engineer agents auto-claim backlog tasks"**; configure the per-agent override in **Agents → Agent Detail → Settings → Heartbeat Settings → "Engineer Backlog Auto-Claim"**. |
 | `defaultNodeId` | `string` | `undefined` | Optional project default execution node for task dispatch. When set, tasks without a per-task `nodeId` override resolve to this node (`routing source: project-default`). See [Task Management → Node Routing](./task-management.md#node-routing). |
 | `unavailableNodePolicy` | `"block" \| "fallback-local"` | `"block"` | Project routing policy used during scheduler dispatch when a task resolves to a remote node and node health is known. `"block"` keeps the task in `todo` if the node is unhealthy; `"fallback-local"` reroutes dispatch to local execution. See [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture). |
 | `secretsAccessPolicy` | `"auto" \| "prompt" \| "deny"` | `undefined` | Project-level default secret access policy (overrides global default when present). |
@@ -306,6 +319,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `pluginTrustPolicy` | `"off" | "warn" | "enforce"` | `"warn"` | Plugin provenance enforcement mode: `off` records verification metadata only, `warn` blocks only `invalid` signatures, `enforce` allows only `verified-trusted` or `trusted-local`. |
 | `overlapIgnorePaths` | `string[]` | `[]` | Optional project-relative file or directory paths to exclude from overlap blocking (for example `docs` or `generated/openapi.json`). Entries are trimmed, deduplicated, and must not be absolute or contain `..` traversal. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. Tasks can override this per-task (including at create time in New Task modal via **Auto-merge** = Default/Enabled/Disabled); explicit overrides are tagged with `autoMergeProvenance: "user"`, while tasks left at **Default** keep following the live global setting and do not snapshot it when entering review. Legacy pre-FN-6245 in-review rows that were stamped `autoMerge: true` are marked `autoMergeProvenance: "legacy-stamp"` on startup and can be inspected/cleared with Settings → Merge → **Legacy auto-merge stamp cleanup**, `fn pr automerge-cleanup [--apply] [--json]`, or `reconcileLegacyAutoMergeStamps({ apply: true })` after operator review. For grouped branch flows, per-task `autoMerge` governs member→group-integration landing while group `autoMerge` governs group→default-branch promotion eligibility. |
+| `maxAutoMergeRetries` | `number` | `3` | Project-scoped positive-integer cap for auto-merge conflict-resolution retries before Fusion parks or bounces a task for human/recovery handling. Unset, non-finite, zero, or negative values fall back to `3` to preserve historical behavior. |
 | `mergeRequestContractShadowEnabled` | `boolean` | `false` | Phase-1 FN-5741 write-only shadow flag (project/global setting). When enabled, executor/self-healing/merger persist merge-request records and `completion_handoff_accepted` markers for observation only; legacy mergeQueue + lifecycle remains authoritative. |
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge vs PR-first). |
 | `directMergeCommitStrategy` | `"auto" \| "always-squash" \| "always-rebase"` | `"always-squash"` | Direct-merge commit routing mode. `always-squash` (default) forces the legacy squash path. `auto` keeps the legacy squash path for branches with zero or one substantive commit, but switches multi-substantive direct merges to a history-preserving rebase-and-merge/cherry-pick path so commit boundaries, subjects, and `Fusion-Task-Id` trailers survive on `main`. `always-rebase` always preserves per-commit history. Only applies when `mergeStrategy="direct"`. |
@@ -371,7 +385,7 @@ Sandbox backend precedence is:
 
 | `pushAfterMerge` | `boolean` | `false` | Auto-push to remote after successful direct merge. Includes pulling latest and AI conflict resolution. |
 | `pushRemote` | `string` | `"origin"` | Git remote (and optional branch) to push to after merge. |
-| `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation and again to bootstrap the merge worktree before AI merge verification. Useful for project-specific setup beyond package install (for example `pnpm install --frozen-lockfile`, `cp .env.local .env`, or codegen/bootstrap scripts). |
+| `worktreeInitCommand` | `string` | `undefined` | Shell command run after task worktree creation and in temporary merge worktrees before merge/review verification. In standalone AI merge, this runs inside each fresh `fusion-ai-merge-*` clean-room worktree after `git worktree add`; when unset, Fusion infers a package-manager install from the lockfile and may skip only when the install marker matches. Useful for project-specific setup beyond package install (for example `pnpm install --frozen-lockfile`, `cp .env.local .env`, or codegen/bootstrap scripts). |
 | `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
 | `buildCommand` | `string` | `undefined` | Merge-time build command (hard gate). |
 | `recycleWorktrees` | `boolean` | `false` | Default: off (opt-in). Reuse worktrees from a pool for faster startup. |
@@ -421,6 +435,7 @@ Default notes:
 | `buildRetryCount` | `number` | `0` | Build retry attempts during merge. |
 | `verificationFixRetries` | `number` | `3` | In-merge auto-fix retry attempts after deterministic test/build verification failures (0-3). |
 | `buildTimeoutMs` | `number` | `300000` | Build timeout in milliseconds (5 minutes). |
+| `verificationCommandTimeoutMs` | `number` | `undefined` | Optional project-scoped default timeout in milliseconds for executor `fn_run_verification` and configured deterministic test/build verification commands. When unset, `fn_run_verification` keeps its scope defaults (300s package, 900s workspace); when set to a positive value, it overrides both scope defaults while all verification still respects the 1800s hard cap. Set `0` or leave unset to use the legacy scope defaults. Marathon command shapes (`pnpm test`, `pnpm test:full`, `pnpm verify:workspace`, whole-package tests without file filters, and repeat loops) are soft-capped unless the agent explicitly passes `allowFullSuite: true`; opt-in full-suite runs still emit progress heartbeats and obey the hard cap. Project settings override global/default settings via the normal project settings precedence. |
 | `requirePlanApproval` | `boolean` | `false` | Require manual approval before planning → todo. |
 | `ephemeralAgentsEnabled` | `boolean` | `true` | Defaults to `true` for both new projects (seeded into `.fusion/fusion.db` on init) and upgrades from pre-FN-4153 projects (falls back to `true` whenever the persisted `config.settings` row omits the key). Users who explicitly set `false` keep that choice. When enabled, Fusion spawns short-lived `executor-FN-XXXX` workers for task execution. When disabled, only permanent executor agents run tasks; the scheduler auto-assigns dispatchable tasks using reporting-chain-aware load balancing, and tasks stay queued until an eligible permanent executor is available. |
 | `agentProvisioning` | `{ approvalMode?: "always" \| "trusted-only" \| "never"; trustedRoles?: string[]; trustedAgentIds?: string[]; alwaysApproveDelete?: boolean }` | `{}` | Approval policy for `fn_agent_create`/`fn_agent_delete` (`approvalMode` default `trusted-only`, delete approvals default on via `alwaysApproveDelete: true`). |
@@ -617,6 +632,12 @@ Recovery entrypoints in the dashboard:
 - **Settings → Research (project)**: re-enable project research or source toggles when runs are blocked by project settings.
 - **Settings → Experimental Features**: enable `researchView` when Research surfaces or `fn_research_*` tools report feature-disabled.
 
+### OAuth credential refresh
+
+Fusion automatically refreshes Claude/Anthropic OAuth credentials before reporting auth status when the stored OAuth credential includes a refresh token and the access token is expired or within the refresh buffer. A successful refresh updates auth storage and prevents `oauth-token-expired` notifications or startup warnings for that provider, so users usually do not need manual re-login after the initial Claude OAuth login.
+
+Manual re-login is still required when no refresh token is stored, the refresh request fails, or the expired OAuth credential belongs to a non-Anthropic provider. In those cases the credential remains expired, `oauth-token-expired` notifications/startup warnings may fire subject to their 12-hour provider throttle, and users should re-authenticate from **Settings → Authentication** or Model Onboarding.
+
 ### Authentication troubleshooting (mobile OAuth fallback)
 
 #### `/api/auth/login` response shape for device-code providers
@@ -797,7 +818,9 @@ Short-lived token bounds are enforced server-side:
 
 ## Model Selection Hierarchy
 
-Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited with dropdown controls from Settings -> Project Models -> Default workflow model lanes (persisted by the Settings modal's primary Save) or from workflow editor -> Settings -> Values for declared workflow lanes and fallbacks.
+Fusion resolves task models through workflow-backed lane values first, then global lane defaults, then the project/global default model fallback. The common workflow lanes are stored as setting values on the project's default workflow and can be edited with dropdown controls from Settings -> Project Models -> Default workflow model lanes (persisted by the Settings modal's primary Save) or from workflow editor -> Settings -> Values for declared workflow lanes and fallbacks. General-scope fallback selection remains the global Fallback Model picker in Settings -> General Models.
+
+Z.ai's built-in provider uses the existing `zai` auth entry / `ZAI_API_KEY` environment variable and includes `zai/glm-5.2` as a selectable model in the same dropdowns and workflow lane controls as the other built-in GLM models. If a pi extension also registers the `zai` provider, Fusion preserves the extension's models and re-adds any missing built-in Z.ai models so built-in GLM choices remain available.
 
 ### Planning model
 

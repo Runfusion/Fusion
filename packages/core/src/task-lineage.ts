@@ -42,6 +42,8 @@ export function normalizeTaskCommitAssociation(
   return {
     ...row,
     note: row.note?.trim() || undefined,
+    additions: row.additions ?? undefined,
+    deletions: row.deletions ?? undefined,
     confidence: row.confidence ?? classifyTaskCommitAssociationConfidence(row.matchedBy),
   };
 }

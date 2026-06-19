@@ -18,6 +18,7 @@ import { PrCreateModal } from "./PrCreateModal";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
+import { useCoarsePointer } from "../hooks/useCoarsePointer";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
@@ -386,7 +387,7 @@ interface TaskCardProps {
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** Called when user clicks the mission badge on a task card. */
@@ -424,6 +425,8 @@ interface TaskCardProps {
    * DISTINCT from staleness/stall badges (which U8 suppresses in these states).
    * Undefined when the task has no CLI session → no badge (card unchanged).
    */
+  /** True when the board-level task list proves the near-duplicate canonical is inactive or missing. */
+  nearDuplicateCanonicalInactive?: boolean;
   cliSessionState?: CliCardState;
 }
 
@@ -575,6 +578,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.prNode?.state === next.prNode?.state &&
     previous.prNode?.prNumber === next.prNode?.prNumber &&
     previous.cliSessionState?.agentState === next.cliSessionState?.agentState &&
+    previous.nearDuplicateCanonicalInactive === next.nearDuplicateCanonicalInactive &&
     previous.cardFieldDefs === next.cardFieldDefs &&
     (previous.cardFieldDefs == null && next.cardFieldDefs == null
       ? true
@@ -700,6 +704,7 @@ function TaskCardComponent({
   prNode,
   onOpenPullRequest,
   cliSessionState,
+  nearDuplicateCanonicalInactive,
 }: TaskCardProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
@@ -983,7 +988,12 @@ function TaskCardComponent({
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && !isAwaitingInput && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
-  const isDraggable = !disableDrag && !queued && !isPaused && !isEditing && !isArchived; // Disable drag during edit/archived or host embedding
+  // Native HTML5 drag is desktop-mouse only — it doesn't move cards via touch.
+  // On touch-primary devices the `draggable` attribute still arms the browser's
+  // touch-drag heuristic, which intermittently hijacks horizontal swipes meant
+  // to scroll the board. Drop drag on coarse pointers so panning stays reliable.
+  const isCoarsePointer = useCoarsePointer();
+  const isDraggable = !disableDrag && !queued && !isPaused && !isEditing && !isArchived && !isCoarsePointer; // Disable drag during edit/archived, host embedding, or touch
 
   // Check if this card can be edited inline
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
@@ -1015,10 +1025,16 @@ function TaskCardComponent({
   const showTrackingIndicator = hasGithubTrackingLink
     && !hasMatchingIssueInfoBadge
     && !hasMatchingSourceIssue;
+  /**
+   * FNXC:NearDuplicateDetection 2026-06-14-12:00:
+   * The card chip is a user-facing duplicate affordance, so hide it when a parent with the task list proves the canonical is inactive or missing.
+   * Undefined preserves legacy rendering for embedded card surfaces that cannot resolve the canonical locally.
+   */
   const showNearDuplicateChip = Boolean(task.sourceMetadata?.nearDuplicateOf)
     && task.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
-    && task.column !== "done";
+    && task.column !== "done"
+    && nearDuplicateCanonicalInactive !== true;
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
@@ -1787,6 +1803,9 @@ function TaskCardComponent({
     && filesChangedButton == null
     && showTrackingIndicator
     && Boolean(githubTrackedIssue);
+  const hasCardMetaBadges = showPriorityBadge
+    || task.executionMode === "fast"
+    || isAgentCreated;
 
   if (isEditing) {
     return (
@@ -1980,31 +1999,35 @@ function TaskCardComponent({
             </button>
           )
         )}
-        {isAgentCreated && (
-          <span
-            className="card-agent-created-badge"
-            title={agentCreatedTitle}
-            aria-label={agentCreatedTitle}
-          >
-            <Bot size={11} aria-hidden="true" />
-            <span className="visually-hidden">{agentCreatedTitle}</span>
-            <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
-          </span>
-        )}
-        {showPriorityBadge && (
-          <span className={`card-priority-badge card-priority-badge--${normalizedPriority}`}>
-            {normalizedPriority}
-          </span>
-        )}
-        {task.executionMode === "fast" && (
-          <span
-            className="card-execution-mode-badge card-execution-mode-badge--fast"
-            title={t("tasks.fastMode", "Fast mode")}
-            aria-label={t("tasks.fastMode", "Fast mode")}
-          >
-            <Zap aria-hidden="true" />
-            <span className="visually-hidden">{t("tasks.fastMode", "Fast mode")}</span>
-          </span>
+        {hasCardMetaBadges && (
+          <div className="card-meta-badges" data-testid="card-meta-badges">
+            {showPriorityBadge && (
+              <span className={`card-priority-badge card-priority-badge--${normalizedPriority}`}>
+                {normalizedPriority}
+              </span>
+            )}
+            {task.executionMode === "fast" && (
+              <span
+                className="card-execution-mode-badge card-execution-mode-badge--fast"
+                title={t("tasks.fastMode", "Fast mode")}
+                aria-label={t("tasks.fastMode", "Fast mode")}
+              >
+                <Zap aria-hidden="true" />
+                <span className="visually-hidden">{t("tasks.fastMode", "Fast mode")}</span>
+              </span>
+            )}
+            {isAgentCreated && (
+              <span
+                className="card-agent-created-badge"
+                title={agentCreatedTitle}
+                aria-label={agentCreatedTitle}
+              >
+                <Bot size={11} aria-hidden="true" />
+                <span className="visually-hidden">{agentCreatedTitle}</span>
+                <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
+              </span>
+            )}
+          </div>
         )}
         {task.noCommitsExpected === true && (
           <span className="card-no-commits-expected-badge" title={t("tasks.decisionOnlyTitle", "Decision-only task")}>{t("tasks.decisionOnly", "decision-only")}</span>
@@ -2023,6 +2046,19 @@ function TaskCardComponent({
           </span>
         )}
         <div className="card-header-actions">
+          {isAwaitingInput && onOpenDetailWithTab && (
+            <button
+              className="card-answer-questions-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenDetailWithTab(task, "workflow");
+              }}
+              title={t("tasks.answerQuestions", "Answer questions")}
+              aria-label={t("tasks.answerQuestions", "Answer questions")}
+            >
+              {t("tasks.answerQuestions", "Answer questions")}
+            </button>
+          )}
           {canEdit && (
             <button
               className="card-edit-btn"
@@ -2258,7 +2294,7 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {(filesChangedButton || isGitHubImportedTask || showNearDuplicateChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0 || timeIndicator) && (
+      {(filesChangedButton || isGitHubImportedTask || timeIndicator || showNearDuplicateChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
         <div className={`card-footer-row${chipFarRight ? " card-footer-row--chip-far-right" : ""}`}>
           {filesChangedButton}
           {isGitHubImportedTask && !showLinkedIssueChipForImport && (
@@ -2270,7 +2306,7 @@ function TaskCardComponent({
               <ProviderIcon provider="github" size="sm" />
             </span>
           )}
-          {(showNearDuplicateChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0 || timeIndicator) && (
+          {(timeIndicator || showNearDuplicateChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
             <div className="card-footer-row-right">
               {showNearDuplicateChip && (
                 <>
@@ -2343,6 +2379,10 @@ function TaskCardComponent({
                     <span>{`#${githubTrackedIssue.number}`}</span>
                   </a>
                 )}
+              {/*
+              FNXC:TaskCardTimingBadge 2026-06-13-17:20:
+              The execution-time badge belongs in the bottom-right footer cluster and must match sibling footer badge sizing while preserving its existing label, title, aria text, and live-update data.
+              */}
               {timeIndicator && (
                 <span
                   className="card-time-indicator"

@@ -1402,7 +1402,7 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
       stuckDetector,
     );
 
-    const result = await tool.execute("call-1", { step: 1, status: "in-progress" });
+    const result = await tool.execute("call-1", { step: 0, status: "in-progress" });
 
     expect(stuckDetector.recordIgnoredStepUpdate).toHaveBeenCalledWith("FN-001");
     expect(result.content[0].text).toContain("already done");

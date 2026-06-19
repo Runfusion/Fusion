@@ -10,7 +10,7 @@
  */
 
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -53,10 +53,17 @@ let moduleImportVersion = 0;
 /**
  * Resolve the actual loadable entry FILE path for a plugin directory. Node ESM
  * does not allow directory imports, so the registered plugin path must be the
- * explicit file the loader will dynamic-import. Preference order:
- *   1. ./bundled.js   (esbuild-bundled, shipped in npm tarball)
- *   2. ./dist/index.js (legacy prebuilt fallback)
- *   3. ./src/index.ts (workspace/dev fallback when no bundle exists)
+ * explicit file the loader will dynamic-import. Resolution keeps ./bundled.js
+ * unconditional because production npm tarballs ship that esbuild-bundled entry.
+ * In dev/worktree contexts where no bundle exists, ./dist/index.js remains the
+ * prebuilt fallback unless any file under ./src/ is newer than dist/index.js;
+ * then ./src/index.ts wins so stale gitignored dist output cannot mask a source
+ * fix (FN-6615/FN-6596).
+ *
+ * FNXC:PluginLoader 2026-06-17-19:20:
+ * Prefer fresher src over stale dist only when bundled.js is absent. This keeps
+ * production tarballs on their bundled entry while preventing dev/worktree runs
+ * from silently loading old gitignored build output after a source fix.
  *
  * Returns null when the directory exists but none of the loadable entry files
  * are present. Callers must treat that as a missing/unloadable plugin rather
@@ -65,16 +72,74 @@ let moduleImportVersion = 0;
  * Keep in sync with resolvePluginEntryPath in the CLI's
  * bundled-plugin-install.ts, which keeps a local copy so its fs mocks work.
  */
-export function resolvePluginEntryPath(pluginDir: string): string | null {
-  const candidates = [
-    join(pluginDir, "bundled.js"),
-    join(pluginDir, "dist", "index.js"),
-    join(pluginDir, "src", "index.ts"),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
+function newestSourceMtimeMs(srcDir: string): number | null {
+  let newest = Number.NEGATIVE_INFINITY;
+
+  function visit(dir: string): boolean {
+    const entries = (() => {
+      try {
+        return readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+      } catch {
+        return null;
+      }
+    })();
+    if (!entries) return false;
+
+    for (const entry of entries) {
+      const entryPath = join(dir, entry.name);
+      let entryStat: ReturnType<typeof statSync>;
+      try {
+        entryStat = statSync(entryPath);
+      } catch {
+        return false;
+      }
+
+      if (entryStat.isDirectory()) {
+        if (!visit(entryPath)) return false;
+        continue;
+      }
+
+      if (entryStat.mtimeMs > newest) {
+        newest = entryStat.mtimeMs;
+      }
     }
+
+    return true;
+  }
+
+  return visit(srcDir) && newest !== Number.NEGATIVE_INFINITY ? newest : null;
+}
+
+function isSourceNewerThanDist(srcDir: string, distIndexPath: string): boolean {
+  try {
+    const distMtimeMs = statSync(distIndexPath).mtimeMs;
+    const srcMtimeMs = newestSourceMtimeMs(srcDir);
+    return srcMtimeMs !== null && srcMtimeMs > distMtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+export function resolvePluginEntryPath(pluginDir: string): string | null {
+  const bundledPath = join(pluginDir, "bundled.js");
+  if (existsSync(bundledPath)) {
+    return bundledPath;
+  }
+
+  const distIndexPath = join(pluginDir, "dist", "index.js");
+  const srcDir = join(pluginDir, "src");
+  const srcIndexPath = join(srcDir, "index.ts");
+  const hasDist = existsSync(distIndexPath);
+  const hasSrc = existsSync(srcIndexPath);
+
+  if (hasDist && hasSrc) {
+    return isSourceNewerThanDist(srcDir, distIndexPath) ? srcIndexPath : distIndexPath;
+  }
+  if (hasDist) {
+    return distIndexPath;
+  }
+  if (hasSrc) {
+    return srcIndexPath;
   }
   return null;
 }

@@ -1,0 +1,848 @@
+/*
+FNXC:CommandCenter 2026-06-17-00:00:
+Command Center Overview must consume the same analytics endpoints as the detail tabs. These tests reproduce the prior always-empty landing page, then pin loading-before-empty, range re-derivation, and best-effort Signals behavior so Overview cannot regress into shell placeholders again.
+*/
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, within, waitFor, act } from "@testing-library/react";
+import { CommandCenter } from "../CommandCenter";
+
+const apiMock = vi.fn();
+vi.mock("../../../api/legacy", () => ({
+  api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+}));
+
+vi.mock("../../../api", () => ({
+  fetchSystemStats: () => Promise.resolve(systemStatsFixture()),
+  fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
+  killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),
+  updateGlobalSettings: () => Promise.resolve({}),
+}));
+
+function tokenFixture(totalTokens = 1_500) {
+  return {
+    from: "2026-06-08",
+    to: null,
+    groupBy: "model",
+    totals: {
+      inputTokens: Math.round(totalTokens * 0.6),
+      outputTokens: Math.round(totalTokens * 0.3),
+      cachedTokens: Math.round(totalTokens * 0.1),
+      cacheWriteTokens: 0,
+      totalTokens,
+      nTasks: totalTokens > 0 ? 5 : 0,
+    },
+    cost: totalTokens > 0 ? { usd: 12.5, unavailable: false, stale: false } : { usd: null, unavailable: true, stale: false },
+    groups:
+      totalTokens > 0
+        ? [
+            {
+              key: "gpt-4o",
+              inputTokens: 600,
+              outputTokens: 300,
+              cachedTokens: 100,
+              cacheWriteTokens: 0,
+              totalTokens: 900,
+              nTasks: 3,
+              cost: { usd: 9.0, unavailable: false, stale: false },
+            },
+            {
+              key: "claude-sonnet",
+              inputTokens: 400,
+              outputTokens: 200,
+              cachedTokens: 100,
+              cacheWriteTokens: 0,
+              totalTokens: 600,
+              nTasks: 2,
+              cost: { usd: 3.5, unavailable: false, stale: false },
+            },
+          ]
+        : [],
+  };
+}
+
+function toolsFixture(toolCalls = 30) {
+  return {
+    from: "2026-06-08",
+    to: null,
+    toolCalls,
+    byCategory: toolCalls > 0 ? [{ category: "read", count: toolCalls }] : [],
+    sessions: toolCalls > 0 ? 3 : 0,
+    interventions: { approvals: toolCalls > 0 ? 2 : 0, userSteers: toolCalls > 0 ? 1 : 0, total: toolCalls > 0 ? 3 : 0 },
+    autonomyRatio: toolCalls > 0 ? 10 : 0,
+    fullyAutonomous: toolCalls === 0,
+  };
+}
+
+function activityFixture(
+  overrides: Partial<Record<"sessions" | "messages" | "activeNodes" | "activeAgents" | "agentRuns" | "doneInRange" | "inProgress", number>> = {},
+) {
+  const sessions = overrides.sessions ?? 4;
+  const messages = overrides.messages ?? 18;
+  const activeNodes = overrides.activeNodes ?? 3;
+  const activeAgents = overrides.activeAgents ?? 2;
+  const agentRuns = overrides.agentRuns ?? 8;
+  const doneInRange = overrides.doneInRange ?? 7;
+  const inProgress = overrides.inProgress ?? 3;
+  return {
+    from: "2026-06-08",
+    to: null,
+    sessions,
+    messages,
+    activeNodes,
+    activeAgents,
+    agentRuns: { total: agentRuns, active: agentRuns > 0 ? 1 : 0, completed: Math.max(0, agentRuns - 2), failed: agentRuns > 1 ? 1 : 0 },
+    daily: messages > 0 || agentRuns > 0 ? [{ day: "2026-06-08", activeNodes, activeAgents, messages, agentRuns }] : [],
+    stickiness: activeAgents > 0 ? 0.5 : 0,
+    mttr: { value: null, unavailable: true },
+    monitor: { mttr: { value: null, unavailable: true }, incidents: 0, deployments: 0 },
+    funnel: {
+      stages: [
+        { stage: "triage", entered: doneInRange, current: 0 },
+        { stage: "in-progress", entered: inProgress, current: inProgress },
+        { stage: "done", entered: doneInRange, current: doneInRange },
+      ],
+      enteredInRange: doneInRange,
+      doneInRange,
+      completionRate: doneInRange > 0 ? 1 : 0,
+      throughputPerDay: doneInRange > 0 ? 1 : 0,
+      rangeDays: 7,
+    },
+  };
+}
+
+const emptyActivityFixture = () =>
+  activityFixture({ sessions: 0, messages: 0, activeNodes: 0, activeAgents: 0, agentRuns: 0, doneInRange: 0 });
+
+function githubFixture(filed = 0, fixed = 0) {
+  return {
+    from: "2026-06-08",
+    to: null,
+    filed,
+    fixed,
+    net: filed - fixed,
+    daily: filed || fixed ? [{ date: "2026-06-08", filed, fixed }] : [],
+    byRepo: filed || fixed ? [{ repo: "acme/alpha", filed, fixed }] : [],
+  };
+}
+
+function teamFixture(agents: unknown[] = [
+  {
+    agentId: "agent-alpha",
+    agentName: "Alpha Agent",
+    role: "executor",
+    state: "running",
+    tokens: { inputTokens: 900, outputTokens: 450, cachedTokens: 150, cacheWriteTokens: 0, totalTokens: 1500, nTasks: 2 },
+    cost: { usd: 4.25, unavailable: false, stale: false },
+    filesChanged: 7,
+    tasksCompleted: 3,
+    tasksInProgress: 1,
+    tasksInReview: 0,
+  },
+  {
+    agentId: "agent-beta",
+    agentName: "Beta Agent",
+    role: "reviewer",
+    state: "idle",
+    tokens: { inputTokens: 100, outputTokens: 50, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 150, nTasks: 1 },
+    cost: { usd: null, unavailable: true, stale: false },
+    filesChanged: 2,
+    tasksCompleted: 1,
+    tasksInProgress: 0,
+    tasksInReview: 1,
+  },
+]) {
+  return {
+    from: "2026-06-08",
+    to: null,
+    totals: {
+      tokens: { inputTokens: 1000, outputTokens: 500, cachedTokens: 150, cacheWriteTokens: 0, totalTokens: 1650, nTasks: 3 },
+      cost: { usd: 4.25, unavailable: true, stale: false },
+      filesChanged: 9,
+      tasksCompleted: 4,
+      tasksInProgress: 1,
+      tasksInReview: 1,
+    },
+    agents,
+  };
+}
+
+function signalsFixture(open = 2) {
+  return {
+    totalSignals: open,
+    open,
+    resolved: 0,
+    mttr: { value: null, unavailable: true },
+    bySource: [],
+    bySeverity: [],
+  };
+}
+
+function liveFixture(columns: Array<{ column: string; count: number }> = [{ column: "in-progress", count: 3 }]) {
+  return {
+    capturedAt: "2026-06-18T00:00:00.000Z",
+    activeSessions: 0,
+    activeRuns: 0,
+    activeNodes: 0,
+    sessions: [],
+    runs: [],
+    columns,
+  };
+}
+
+function reliabilityFixture() {
+  return {
+    windowDays: 7,
+    generatedAt: "2026-06-19T00:00:00.000Z",
+    resetAt: null,
+    headline: { inReviewFailureRate7d: 0.25 },
+    perDay: [
+      {
+        date: "2026-06-19",
+        tasksEnteredInReview: 4,
+        tasksBouncedToInProgress: 1,
+        postMergeAuditFailures: { block: 0, warn: 0, off: 0 },
+        fileScopeInvariantFailures: 0,
+        recoverAlreadyMergedReviewTasksRecoveries: 0,
+        hasSamples: true,
+      },
+    ],
+    duration: { p50Ms: 60_000, p95Ms: 120_000, sampleCount: 2 },
+    mergeAttempts: { mean: 1.5, max: 2, histogram: { "1": 1, "2": 1 } },
+  };
+}
+
+function systemStatsFixture() {
+  const gb = 1024 * 1024 * 1024;
+  const mb = 1024 * 1024;
+  return {
+    systemStats: {
+      rss: 2 * gb,
+      heapUsed: 500 * mb,
+      heapTotal: 700 * mb,
+      heapLimit: 1 * gb,
+      external: 20 * mb,
+      arrayBuffers: 8 * mb,
+      cpuPercent: 12,
+      loadAvg: [0.1, 0.2, 0.3] as [number, number, number],
+      cpuCount: 8,
+      systemTotalMem: 8 * gb,
+      systemFreeMem: 4 * gb,
+      pid: 456,
+      nodeVersion: "v22.0.0",
+      platform: "darwin/arm64",
+    },
+    taskStats: {
+      total: 1,
+      byColumn: { todo: 1 },
+      active: 0,
+      agents: { idle: 1, active: 0, running: 0, error: 0 },
+    },
+    vitestProcessCount: 0,
+    vitestLastAutoKillAt: null,
+  };
+}
+
+function mockOverviewApi({
+  tokens = tokenFixture(),
+  tools = toolsFixture(),
+  activity = activityFixture(),
+  github = githubFixture(),
+  team = teamFixture([]),
+  signals = signalsFixture(),
+  live = liveFixture(),
+}: {
+  tokens?: unknown;
+  tools?: unknown;
+  activity?: unknown;
+  github?: unknown;
+  team?: unknown;
+  signals?: unknown;
+  live?: unknown;
+} = {}) {
+  apiMock.mockImplementation((path: string) => {
+    if (path.startsWith("/command-center/tokens")) return Promise.resolve(tokens);
+    if (path.startsWith("/command-center/tools")) return Promise.resolve(tools);
+    if (path.startsWith("/command-center/activity")) return Promise.resolve(activity);
+    if (path.startsWith("/command-center/github")) return Promise.resolve(github);
+    if (path.startsWith("/command-center/team")) return team instanceof Error ? Promise.reject(team) : Promise.resolve(team);
+    if (path.startsWith("/command-center/signals")) {
+      return signals instanceof Error ? Promise.reject(signals) : Promise.resolve(signals);
+    }
+    if (path === "/command-center/live") {
+      return live instanceof Error ? Promise.reject(live) : Promise.resolve(live);
+    }
+    if (path === "/system-stats") return Promise.resolve(systemStatsFixture());
+    if (path === "/settings/global") return Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
+    return Promise.reject(new Error(`Unhandled api path: ${path}`));
+  });
+}
+
+function mockEmptyOverviewApi() {
+  mockOverviewApi({ tokens: tokenFixture(0), tools: toolsFixture(0), activity: emptyActivityFixture(), signals: signalsFixture(0), live: liveFixture([{ column: "in-progress", count: 0 }]) });
+}
+
+function statValue(testId: string) {
+  return within(screen.getByTestId(testId)).getByText((content, element) =>
+    element?.classList.contains("cc-stat-value") === true && content.length > 0,
+  ).textContent;
+}
+
+function liveMetricValue(testId = "command-center-live-tasks-in-progress") {
+  return screen.getByTestId(testId).querySelector(".cc-live-metric-value")?.textContent ?? null;
+}
+
+function expectThroughputFirstBefore(...followingTestIds: string[]) {
+  const throughput = screen.getByTestId("command-center-throughput");
+  expect(throughput.parentElement?.classList.contains("cc-overview")).toBe(true);
+  expect(throughput.parentElement?.firstElementChild).toBe(throughput);
+
+  for (const testId of followingTestIds) {
+    const followingNode = screen.getByTestId(testId);
+    expect(Boolean(throughput.compareDocumentPosition(followingNode) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  }
+}
+
+function expectDailyActivityLineBeforeTrend() {
+  const lineCard = screen.getByTestId("cc-overview-line");
+  const trendCard = screen.getByTestId("command-center-overview-chart-activity");
+  expect(Boolean(lineCard.compareDocumentPosition(trendCard) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+}
+
+beforeEach(() => {
+  apiMock.mockReset();
+  mockEmptyOverviewApi();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("CommandCenter shell", () => {
+  it("renders with the Overview tab active by default", () => {
+    render(<CommandCenter />);
+    const overviewTab = screen.getByTestId("command-center-tab-overview");
+    expect(overviewTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-panel-overview")).toBeTruthy();
+  });
+
+  it("renders throughput first while the Overview branch is loading", () => {
+    mockEmptyOverviewApi();
+    render(<CommandCenter />);
+    expect(screen.getByTestId("command-center-overview-loading")).toBeTruthy();
+    expectThroughputFirstBefore("command-center-overview-loading");
+  });
+
+  it("renders the documented empty state when there is no data (no crash)", async () => {
+    mockEmptyOverviewApi();
+    render(<CommandCenter />);
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+    expect(screen.getByTestId("command-center-overview-loading")).toBeTruthy();
+    expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
+    expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
+    expect(screen.queryByTestId("cc-overview-line")).toBeNull();
+    expect(screen.queryByTestId("command-center-overview-chart-activity")).toBeNull();
+    await screen.findByTestId("command-center-empty");
+    expectThroughputFirstBefore("command-center-empty");
+    expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
+    expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
+    expect(screen.queryByTestId("cc-overview-line")).toBeNull();
+    expect(screen.queryByTestId("command-center-overview-chart-activity")).toBeNull();
+  });
+
+  it("renders the Overview agent-runs card when run data is the only activity", async () => {
+    mockOverviewApi({
+      tokens: tokenFixture(0),
+      tools: toolsFixture(0),
+      activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 0, activeAgents: 0, agentRuns: 5, doneInRange: 0 }),
+      signals: signalsFixture(0),
+      live: liveFixture([{ column: "in-progress", count: 0 }]),
+    });
+    render(<CommandCenter />);
+
+    await waitFor(() => expect(screen.queryByTestId("command-center-empty")).toBeNull());
+    expect(statValue("command-center-stat-agentRuns")).toBe("5");
+  });
+
+  it("renders live Overview headline values when analytics data exists", async () => {
+    mockOverviewApi();
+    render(<CommandCenter />);
+
+    await waitFor(() => expect(screen.queryByTestId("command-center-empty")).toBeNull());
+    await screen.findByTestId("command-center-stat-tokens");
+
+    expect(statValue("command-center-stat-tokens")).toBe("1,500");
+    expect(screen.getByTestId("command-center-stat-tokens").textContent).toContain("$12.50");
+    expect(statValue("command-center-stat-autonomy")).toBe("10.0:1");
+    expect(statValue("command-center-stat-nodes")).toBe("3");
+    expect(statValue("command-center-stat-agentRuns")).toBe("8");
+    expect(statValue("command-center-stat-tasksDone")).toBe("7");
+    expect(statValue("command-center-stat-models")).toBe("2");
+    expect(statValue("command-center-stat-signals")).toBe("2");
+    expect(screen.getByTestId("command-center-live-strip")).toBeTruthy();
+    expectThroughputFirstBefore("command-center-stat-tokens", "command-center-live-strip");
+    expect(screen.getByTestId("command-center-live-snapshot")).toBeTruthy();
+    await waitFor(() => expect(liveMetricValue()).toBe("3"));
+    expect(screen.getByTestId("command-center-live-agents-working").textContent).toContain("2");
+    expect(screen.getByTestId("command-center-live-tokens").textContent).toContain("1,500");
+    expect(screen.getByTestId("command-center-live-open-signals").textContent).toContain("2");
+    expect(screen.getByTestId("command-center-throughput-trend")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Recent activity throughput trend" })).toBeTruthy();
+    expect(screen.getByTestId("command-center-throughput")).toBeTruthy();
+
+    const charts = screen.getByTestId("command-center-overview-charts");
+    expect(within(charts).getByText("Tokens by model")).toBeTruthy();
+    expect(within(screen.getByTestId("command-center-overview-chart-tokens")).getByText("gpt-4o")).toBeTruthy();
+    expect(within(screen.getByTestId("command-center-overview-chart-tools")).getByText("read")).toBeTruthy();
+    expect(screen.getByTestId("cc-overview-pie")).toBeTruthy();
+    expect(screen.getByTestId("cc-overview-line")).toBeTruthy();
+    expectDailyActivityLineBeforeTrend();
+    expect(screen.getByRole("img", { name: "Token share by model" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Daily activity line" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Daily activity trend" })).toBeTruthy();
+  });
+
+  it("live-polls token totals for the Overview card and live strip", async () => {
+    vi.useFakeTimers();
+    let tokenTotal = 1_500;
+    apiMock.mockImplementation((path: string) => {
+      if (path.startsWith("/command-center/tokens")) return Promise.resolve(tokenFixture(tokenTotal));
+      if (path.startsWith("/command-center/tools")) return Promise.resolve(toolsFixture());
+      if (path.startsWith("/command-center/activity")) return Promise.resolve(activityFixture());
+      if (path.startsWith("/command-center/github")) return Promise.resolve(githubFixture());
+      if (path.startsWith("/command-center/signals")) return Promise.resolve(signalsFixture(2));
+      if (path === "/command-center/live") return Promise.resolve(liveFixture([{ column: "in-progress", count: 3 }]));
+      return Promise.reject(new Error(`Unhandled api path: ${path}`));
+    });
+
+    render(<CommandCenter />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(statValue("command-center-stat-tokens")).toBe("1,500");
+
+    tokenTotal = 1_700;
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(statValue("command-center-stat-tokens")).toBe("1,700");
+    expect(screen.getByTestId("command-center-live-tokens").textContent).toContain("1,700");
+  });
+
+  it("sources live tasks in progress from current column counts instead of funnel entered", async () => {
+    mockOverviewApi({
+      activity: activityFixture({ inProgress: 12 }),
+      live: liveFixture([{ column: "in-progress", count: 2 }]),
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-live-tasks-in-progress");
+    await waitFor(() => expect(liveMetricValue()).toBe("2"));
+    expect(liveMetricValue()).not.toBe("12");
+  });
+
+  it("renders zero when the live in-progress column count is zero", async () => {
+    mockOverviewApi({ live: liveFixture([{ column: "in-progress", count: 0 }]) });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-live-tasks-in-progress");
+    await waitFor(() => expect(liveMetricValue()).toBe("0"));
+  });
+
+  it("defaults to zero when the live snapshot omits the in-progress column", async () => {
+    mockOverviewApi({ live: liveFixture([{ column: "todo", count: 5 }]) });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-live-tasks-in-progress");
+    await waitFor(() => expect(liveMetricValue()).toBe("0"));
+  });
+
+  it("renders a deterministic placeholder while the live snapshot is pending", async () => {
+    const live = new Promise(() => undefined);
+    mockOverviewApi({ live });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-live-tasks-in-progress");
+    expect(liveMetricValue()).toBe("—");
+  });
+
+  it("falls back without crashing when the live snapshot fetch fails", async () => {
+    mockOverviewApi({ live: new Error("live failed") });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-live-tasks-in-progress");
+    await waitFor(() => expect(liveMetricValue()).toBe("0"));
+    expect(screen.queryByTestId("command-center-overview-error")).toBeNull();
+  });
+
+  it("keeps the live in-progress count range-independent while tasks done follows the range", async () => {
+    apiMock.mockImplementation((path: string) => {
+      const allTime = typeof path === "string" && !path.includes("from=");
+      if (path.startsWith("/command-center/tokens")) return Promise.resolve(tokenFixture());
+      if (path.startsWith("/command-center/tools")) return Promise.resolve(toolsFixture());
+      if (path.startsWith("/command-center/activity")) {
+        return Promise.resolve(activityFixture({ doneInRange: allTime ? 21 : 7, inProgress: allTime ? 99 : 12 }));
+      }
+      if (path.startsWith("/command-center/signals")) return Promise.resolve(signalsFixture(2));
+      if (path.startsWith("/command-center/github")) return Promise.resolve(githubFixture());
+      if (path === "/command-center/live") return Promise.resolve(liveFixture([{ column: "in-progress", count: 4 }]));
+      return Promise.reject(new Error(`Unhandled api path: ${path}`));
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-tasksDone");
+    await waitFor(() => expect(liveMetricValue()).toBe("4"));
+    expect(statValue("command-center-stat-tasksDone")).toBe("7");
+
+    fireEvent.click(screen.getByTestId("cc-date-range-trigger"));
+    fireEvent.click(screen.getByTestId("cc-date-range-preset-all"));
+
+    await waitFor(() => expect(statValue("command-center-stat-tasksDone")).toBe("21"));
+    expect(liveMetricValue()).toBe("4");
+  });
+
+  it("renders cards for partially populated analytics instead of the empty state", async () => {
+    mockOverviewApi({ tokens: tokenFixture(0), tools: toolsFixture(0), activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 1, activeAgents: 0, agentRuns: 0, doneInRange: 0 }), signals: signalsFixture(0) });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-nodes");
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+    expect(statValue("command-center-stat-tokens")).toBe("0");
+    expect(statValue("command-center-stat-nodes")).toBe("1");
+    expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
+    expect(screen.queryByTestId("command-center-overview-loading")).toBeNull();
+    expect(screen.queryByTestId("command-center-overview-error")).toBeNull();
+  });
+
+  it("renders no empty chart shell when some populated sources have no chart rows", async () => {
+    mockOverviewApi({ tokens: tokenFixture(), tools: toolsFixture(0), activity: activityFixture(), signals: signalsFixture(0) });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-overview-charts");
+    expect(screen.getByTestId("command-center-overview-chart-tokens")).toBeTruthy();
+    expect(screen.getByTestId("cc-overview-pie")).toBeTruthy();
+    expect(screen.queryByTestId("command-center-overview-chart-tools")).toBeNull();
+    expect(screen.getByTestId("command-center-overview-chart-activity")).toBeTruthy();
+    expect(screen.getByTestId("cc-overview-line")).toBeTruthy();
+  });
+
+  it("handles empty, undefined, single-item, and zero chart data without NaN output", async () => {
+    const tokensWithSingleZeroGroup = {
+      ...tokenFixture(0),
+      groups: [
+        {
+          key: "idle-model",
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          nTasks: 0,
+          cost: { usd: null, unavailable: true, stale: false },
+        },
+      ],
+    };
+    const toolsWithoutCategories = { ...toolsFixture(1), byCategory: undefined };
+    const activityWithSingleZeroDay = {
+      ...activityFixture({ sessions: 0, messages: 0, activeNodes: 1, activeAgents: 0, doneInRange: 0 }),
+      daily: [{ day: "2026-06-08", activeNodes: 0, activeAgents: 0, messages: 0 }],
+    };
+    mockOverviewApi({
+      tokens: tokensWithSingleZeroGroup,
+      tools: toolsWithoutCategories,
+      activity: activityWithSingleZeroDay,
+      signals: signalsFixture(0),
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-overview-charts");
+    expect(screen.getByTestId("command-center-overview-chart-tokens").textContent).toContain("idle-model");
+    expect(screen.getByTestId("cc-overview-pie")).toBeTruthy();
+    expect(screen.queryByTestId("command-center-overview-chart-tools")).toBeNull();
+    expect(screen.getByTestId("command-center-overview-chart-activity")).toBeTruthy();
+    expect(screen.getByTestId("cc-overview-line")).toBeTruthy();
+    expect(screen.getByTestId("cc-overview-pie").textContent).not.toContain("NaN");
+    expect(screen.getByTestId("cc-overview-line").textContent).not.toContain("NaN");
+  });
+
+  it("keeps Overview populated when the signals endpoint is missing", async () => {
+    mockOverviewApi({ signals: new Error("API returned HTML instead of JSON (404)") });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-signals");
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+    expect(screen.queryByTestId("command-center-overview-error")).toBeNull();
+    expect(statValue("command-center-stat-signals")).toBe("—");
+  });
+
+  it("surfaces a settled core-source error without staying in loading", async () => {
+    apiMock.mockImplementation((path: string) => {
+      if (path.startsWith("/command-center/tokens")) return Promise.reject(new Error("tokens failed"));
+      if (path.startsWith("/command-center/tools")) return Promise.resolve(toolsFixture(0));
+      if (path.startsWith("/command-center/activity")) return Promise.resolve(emptyActivityFixture());
+      if (path.startsWith("/command-center/signals")) return Promise.resolve(signalsFixture(0));
+      if (path === "/command-center/live") return Promise.resolve(liveFixture([{ column: "in-progress", count: 0 }]));
+      return Promise.reject(new Error(`Unhandled api path: ${path}`));
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-overview-error");
+    expectThroughputFirstBefore("command-center-overview-error");
+    expect(screen.getByTestId("command-center-overview-error").textContent).toContain("tokens failed");
+    expect(screen.queryByTestId("command-center-overview-loading")).toBeNull();
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+    expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
+    expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
+    expect(screen.queryByTestId("cc-overview-line")).toBeNull();
+  });
+
+  it("re-fetches and re-derives the Overview empty state when the range changes", async () => {
+    apiMock.mockImplementation((path: string) => {
+      const populated = path.includes("from=");
+      if (path.startsWith("/command-center/tokens")) return Promise.resolve(populated ? tokenFixture() : tokenFixture(0));
+      if (path.startsWith("/command-center/tools")) return Promise.resolve(populated ? toolsFixture() : toolsFixture(0));
+      if (path.startsWith("/command-center/activity")) return Promise.resolve(populated ? activityFixture() : emptyActivityFixture());
+      if (path.startsWith("/command-center/signals")) return Promise.resolve(populated ? signalsFixture() : signalsFixture(0));
+      if (path.startsWith("/command-center/github")) return Promise.resolve(githubFixture());
+      if (path === "/command-center/live") return Promise.resolve(liveFixture([{ column: "in-progress", count: populated ? 3 : 0 }]));
+      return Promise.reject(new Error(`Unhandled api path: ${path}`));
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-tokens");
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("cc-date-range-trigger"));
+    fireEvent.click(screen.getByTestId("cc-date-range-preset-all"));
+
+    await screen.findByTestId("command-center-empty");
+    expect(screen.queryByTestId("command-center-stat-tokens")).toBeNull();
+    expect(apiMock.mock.calls.some(([path]) => typeof path === "string" && path === "/command-center/tools")).toBe(true);
+  });
+
+  it("exposes the ARIA tabs pattern (tablist + tabs + tabpanel)", () => {
+    render(<CommandCenter />);
+    const tablist = screen.getByRole("tablist");
+    const tabs = within(tablist).getAllByRole("tab");
+    // Overview, Tokens, Tools, Activity, Productivity, Team, Ecosystem, GitHub, Signals, System, Reliability, Mission Control.
+    expect(tabs.length).toBe(12);
+    // roving tabindex: exactly one tab is focusable.
+    const focusable = tabs.filter((tab) => tab.getAttribute("tabindex") === "0");
+    expect(focusable.length).toBe(1);
+    expect(screen.getByRole("tabpanel")).toBeTruthy();
+  });
+
+  it("activates a tab on click and updates aria-selected", () => {
+    render(<CommandCenter />);
+    fireEvent.click(screen.getByTestId("command-center-tab-tokens"));
+    expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-tab-overview").getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+  });
+
+  it("renders and routes the System tab exactly once", async () => {
+    mockOverviewApi();
+    render(<CommandCenter />);
+    expect(screen.getAllByTestId("command-center-tab-system")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    expect(screen.getByTestId("command-center-tab-system").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-panel-system")).toBeTruthy();
+    await screen.findByTestId("cc-area-system");
+    expect(screen.getByTestId("cc-system-cpu-gauge")).toBeTruthy();
+  });
+
+  it("renders and routes the GitHub tab exactly once", async () => {
+    mockOverviewApi({ github: githubFixture(4, 2) });
+    render(<CommandCenter />);
+    expect(screen.getAllByTestId("command-center-tab-github")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-github"));
+    expect(screen.getByTestId("command-center-tab-github").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-panel-github")).toBeTruthy();
+    await screen.findByTestId("cc-area-github");
+    expect(screen.getByTestId("cc-github-filed").textContent).toContain("4");
+    expect(screen.getByTestId("cc-github-fixed").textContent).toContain("2");
+  });
+
+  it("renders and routes the Reliability tab exactly once", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => reliabilityFixture(),
+    } as Response);
+
+    try {
+      render(<CommandCenter />);
+      expect(screen.getAllByTestId("command-center-tab-reliability")).toHaveLength(1);
+
+      fireEvent.click(screen.getByTestId("command-center-tab-reliability"));
+      expect(screen.getByTestId("command-center-tab-reliability").getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByTestId("command-center-panel-reliability")).toBeTruthy();
+      expect(await screen.findByRole("heading", { name: "Reliability" })).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledWith("/api/health/reliability");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("renders the Team tab with sortable per-agent stats and charts", async () => {
+    mockOverviewApi({ team: teamFixture() });
+    render(<CommandCenter />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+
+    await screen.findByTestId("cc-area-team");
+    expect(screen.getByTestId("command-center-tab-team").getAttribute("aria-selected")).toBe("true");
+    const alphaRow = screen.getByTestId("cc-team-row-agent-alpha");
+    expect(alphaRow).toBeTruthy();
+    expect(within(alphaRow).getByText("Alpha Agent")).toBeTruthy();
+    expect(within(alphaRow).getByText("executor")).toBeTruthy();
+    expect(screen.getByTestId("cc-team-table").textContent).toContain("1,500");
+    expect(screen.getByTestId("cc-team-table").textContent).toContain("3");
+    expect(screen.getByTestId("cc-team-tokens-chart")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Tokens by agent" })).toBeTruthy();
+    expect(screen.getByTestId("cc-team-completed-chart")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Tasks done by agent" })).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("cc-team-sort-agent"));
+    const rows = within(screen.getByTestId("cc-team-table")).getAllByRole("row").slice(1);
+    expect(rows[0].getAttribute("data-testid")).toBe("cc-team-row-agent-alpha");
+  });
+
+  it("renders the Team empty state for zero agents without an empty chart shell", async () => {
+    mockOverviewApi({ team: teamFixture([]) });
+    render(<CommandCenter />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+
+    await screen.findByTestId("cc-area-team-empty");
+    expect(screen.queryByTestId("cc-area-team")).toBeNull();
+    expect(screen.queryByTestId("cc-team-tokens-chart")).toBeNull();
+  });
+
+  it("renders Team loading and error states through AreaShell", async () => {
+    let resolveTeam: (value: unknown) => void = () => undefined;
+    mockOverviewApi({ team: new Promise((resolve) => { resolveTeam = resolve; }) });
+    const { unmount } = render(<CommandCenter />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    expect(screen.getByTestId("cc-area-team-loading")).toBeTruthy();
+    await act(async () => {
+      resolveTeam(teamFixture([]));
+    });
+    await screen.findByTestId("cc-area-team-empty");
+    unmount();
+
+    mockOverviewApi({ team: new Error("team failed") });
+    render(<CommandCenter />);
+    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+    await screen.findByTestId("cc-area-team-error");
+    expect(screen.getByTestId("cc-area-team-error").textContent).toContain("team failed");
+  });
+
+  it("keeps Team charts safe for zero-valued agents", async () => {
+    mockOverviewApi({
+      team: teamFixture([
+        {
+          agentId: "agent-zero",
+          agentName: "Zero Agent",
+          role: "executor",
+          state: "idle",
+          tokens: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 0, nTasks: 0 },
+          cost: { usd: null, unavailable: false, stale: false },
+          filesChanged: 0,
+          tasksCompleted: 0,
+          tasksInProgress: 0,
+          tasksInReview: 0,
+        },
+      ]),
+    });
+    render(<CommandCenter />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-team"));
+
+    await screen.findByTestId("cc-area-team");
+    expect(screen.getByTestId("cc-team-tokens-chart").textContent).toContain("No non-zero values");
+    expect(screen.getByTestId("cc-team-completed-chart").textContent).toContain("No non-zero values");
+    expect(screen.getByTestId("cc-area-team").textContent).not.toContain("NaN");
+  });
+
+  it("keeps existing Command Center tab test ids after adding Team", () => {
+    render(<CommandCenter />);
+    for (const id of [
+      "overview",
+      "tokens",
+      "tools",
+      "activity",
+      "productivity",
+      "ecosystem",
+      "github",
+      "signals",
+      "system",
+      "reliability",
+      "mission-control",
+      "team",
+    ]) {
+      expect(screen.getByTestId(`command-center-tab-${id}`)).toBeTruthy();
+    }
+  });
+
+  it("supports arrow-key navigation between tabs (roving tabindex)", () => {
+    render(<CommandCenter />);
+    const overviewTab = screen.getByTestId("command-center-tab-overview");
+    overviewTab.focus();
+    fireEvent.keyDown(overviewTab, { key: "ArrowRight" });
+    const tokensTab = screen.getByTestId("command-center-tab-tokens");
+    expect(tokensTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(tokensTab);
+
+    const systemTab = screen.getByTestId("command-center-tab-system");
+    systemTab.focus();
+    fireEvent.keyDown(systemTab, { key: "ArrowRight" });
+    const reliabilityTab = screen.getByTestId("command-center-tab-reliability");
+    expect(reliabilityTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(reliabilityTab);
+  });
+
+  it("wraps with ArrowLeft from the first tab to the last", () => {
+    render(<CommandCenter />);
+    const overviewTab = screen.getByTestId("command-center-tab-overview");
+    overviewTab.focus();
+    fireEvent.keyDown(overviewTab, { key: "ArrowLeft" });
+    const last = screen.getByTestId("command-center-tab-mission-control");
+    expect(last.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(last);
+  });
+
+  it("activates with Enter and Space", () => {
+    render(<CommandCenter />);
+    const toolsTab = screen.getByTestId("command-center-tab-tools");
+    fireEvent.keyDown(toolsTab, { key: "Enter" });
+    expect(toolsTab.getAttribute("aria-selected")).toBe("true");
+
+    const activityTab = screen.getByTestId("command-center-tab-activity");
+    fireEvent.keyDown(activityTab, { key: " " });
+    expect(activityTab.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("makes the active tabpanel focusable (Tab moves into the panel)", () => {
+    render(<CommandCenter />);
+    const panel = screen.getByTestId("command-center-panel-overview");
+    expect(panel.getAttribute("tabindex")).toBe("0");
+    expect(panel.getAttribute("role")).toBe("tabpanel");
+  });
+
+  it("renders a date-range picker that returns focus to its trigger on dismiss", () => {
+    render(<CommandCenter />);
+    const trigger = screen.getByTestId("cc-date-range-trigger");
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("cc-date-range-popover")).toBeTruthy();
+    // Escape dismisses and returns focus to the trigger.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("cc-date-range-popover")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+});

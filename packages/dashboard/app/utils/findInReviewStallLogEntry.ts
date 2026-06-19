@@ -1,4 +1,5 @@
 import type { InReviewStallCode, Task, TaskLogEntry } from "@fusion/core";
+import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
 
 export const IN_REVIEW_STALL_LOG_PREFIX = "In-review stall surfaced [";
 export const IN_REVIEW_STALL_LOG_REGEX = /^In-review stall surfaced \[([^\]]+)\]/;
@@ -19,7 +20,7 @@ export function findInReviewStallLogEntry(
 
   const reversed = [...task.log].reverse();
   for (const [reversedIndex, entry] of reversed.entries()) {
-    const match = entry.action.match(IN_REVIEW_STALL_LOG_REGEX);
+    const match = getTaskLogEntryAction(entry).match(IN_REVIEW_STALL_LOG_REGEX);
     if (!match || match[1] !== code) {
       continue;
     }

@@ -130,7 +130,7 @@ describe("POST /pr/resolve-conflicts", () => {
     queueTryRunSuccess("main"); // computePrPreflight base check
     queueTryRunSuccess("refs/heads/fusion/fn-001\n"); // remote branch exists
     queueRunSuccess("2\n"); // git rev-list --count
-    queueRunSuccess(""); // git merge-tree --write-tree --name-only
+    queueTryRunSuccess("tree-oid\n"); // git merge-tree --write-tree --name-only (clean exit 0)
     queueRunSuccess("abc123\tResolve conflicts\tDev\n"); // git log
     queueRunSuccess("3\t1\tsrc/a.ts\n"); // git diff --numstat
     queueRunSuccess("M\tsrc/a.ts\n"); // git diff --name-status

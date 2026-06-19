@@ -54,9 +54,9 @@ interface WorkflowResultsTabProps {
   taskPausedReason?: string;
   settings?: Settings;
   onEditWorkflow?: () => void;
-  /** U5 (R20): called after a workflow switch re-homed the card to a new column
-   *  (reconciliation present and not preserved) so the board can refresh before
-   *  the SSE catch-up arrives. */
+  /** U5 (R20): called after a workflow switch affects board placement
+   *  (any reconciliation result) so the board can refresh before the SSE
+   *  catch-up arrives; lane membership is keyed by workflow id, not column. */
   onWorkflowReconciled?: () => void;
 }
 
@@ -363,9 +363,11 @@ export function WorkflowResultsTab({
       const res = await selectTaskWorkflow(taskId, workflowId, projectId);
       setSelectedWorkflowId(res.workflowId);
       onWorkflowStepsChange?.(res.enabledWorkflowSteps);
-      // U5 (R20): the switch re-homed the card to a new column — refresh the
-      // board now rather than waiting for the SSE catch-up.
-      if (res.reconciliation && !res.reconciliation.preserved) {
+      /*
+      FNXC:CustomWorkflows 2026-06-17-07:21:
+      A workflow switch can move the card to a different board lane even when reconciliation preserves the column, because lane membership is keyed by workflow id rather than column id. Refresh the task detail for any reconciliation result so the detail modal pushes the board update before SSE catch-up.
+      */
+      if (res.reconciliation) {
         onWorkflowReconciled?.();
       }
     },

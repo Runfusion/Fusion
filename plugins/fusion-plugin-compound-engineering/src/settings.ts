@@ -8,7 +8,7 @@ import { listStages } from "./session/stage-registry.js";
  * consumption point in the existing plugin code:
  *   - Sessions group  → the orchestrator's interactive-session factory call
  *                        (`defaultProvider`/`defaultModelId`) and the launch
- *                        guard (`enabledStages`).
+ *                        guard (`disabledStages`).
  *   - Sync group      → the reconciler trigger surface (auto-drain on hooks +
  *                        the cadence hint a refresh surface reads).
  *
@@ -20,8 +20,8 @@ import { listStages } from "./session/stage-registry.js";
 export const DEFAULT_PROVIDER = "";
 export const DEFAULT_MODEL_ID = "";
 
-/** Sessions: which pipeline stages are launchable. Defaults to the full registry. */
-export const DEFAULT_ENABLED_STAGES: string[] = listStages().map((s) => s.stageId);
+/** Sessions: stage launch opt-outs. Empty means every registered stage is launchable. */
+export const DEFAULT_DISABLED_STAGES: string[] = [];
 
 /** Sync: whether the board→pipeline reconcile sweep auto-fires after lifecycle hooks. */
 export const DEFAULT_RECONCILE_ON_HOOKS = true;
@@ -48,13 +48,13 @@ export const settingsSchema: Record<string, PluginSettingSchema> = {
     group: "Sessions",
     defaultValue: DEFAULT_MODEL_ID,
   },
-  enabledStages: {
+  disabledStages: {
     type: "array",
     itemType: "string",
-    label: "Enabled Stages",
-    description: "Stage IDs that may be launched from the Compound Engineering view (for example strategy, ideate, brainstorm, plan, work).",
+    label: "Disabled Stages",
+    description: "Stage IDs hidden from launch in the Compound Engineering view. Empty means all registered stages are launchable.",
     group: "Sessions",
-    defaultValue: DEFAULT_ENABLED_STAGES,
+    defaultValue: DEFAULT_DISABLED_STAGES,
   },
 
   reconcileOnHooks: {
@@ -112,12 +112,23 @@ export function getDefaultModelId(settings: Record<string, unknown>): string | u
 }
 
 /**
- * Stage IDs that may be launched. When unset, defaults to the LIVE registry
- * (re-read here, not the import-time snapshot) so a stage registered at runtime
- * is launchable by default — disabling is an explicit opt-out, not opt-in.
+ * Stage IDs explicitly disabled by the operator. Malformed or empty values mean
+ * no opt-outs, so all registered stages remain launchable.
+ */
+export function getDisabledStages(settings: Record<string, unknown>): string[] {
+  return asStringArray(settings, "disabledStages", DEFAULT_DISABLED_STAGES);
+}
+
+/**
+ * Stage IDs that may be launched. This is the LIVE registry minus explicit
+ * disabled-stage opt-outs; stale persisted `enabledStages` snapshots are ignored.
+ *
+ * FNXC:CompoundEngineering 2026-06-17-08:06:
+ * The previous enabledStages allow-list was snapshotted into plugin settings at first install, so later appended stages such as debug were silently un-launchable on existing installs. Use disabledStages as an explicit opt-out so every registered stage is launchable by default as documented.
  */
 export function getEnabledStages(settings: Record<string, unknown>): string[] {
-  return asStringArray(settings, "enabledStages", listStages().map((s) => s.stageId));
+  const disabled = new Set(getDisabledStages(settings));
+  return listStages().map((s) => s.stageId).filter((stageId) => !disabled.has(stageId));
 }
 
 /** Whether the reconcile sweep auto-fires after lifecycle hooks. */

@@ -1205,5 +1205,55 @@ describe("Board", () => {
       });
       await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledTimes(2));
     });
+
+    it("re-homes a preserved-column task to the new workflow after workflow invalidation", async () => {
+      const preservedWorkflow = {
+        id: "wf-preserved",
+        name: "Preserved Flow",
+        columns: [
+          { id: "todo", name: "Todo", flags: { intake: true } },
+          { id: "done", name: "Done", flags: { complete: true } },
+        ],
+      };
+      fetchBoardWorkflowsMock
+        .mockResolvedValueOnce({
+          flagEnabled: true,
+          defaultWorkflowId: "builtin:coding",
+          workflows: [DEFAULT_WORKFLOW, preservedWorkflow],
+          taskWorkflowIds: { "FN-1": "builtin:coding" },
+        })
+        .mockResolvedValueOnce({
+          flagEnabled: true,
+          defaultWorkflowId: "builtin:coding",
+          workflows: [DEFAULT_WORKFLOW, preservedWorkflow],
+          taskWorkflowIds: { "FN-1": "wf-preserved" },
+        });
+      renderBoard({ projectId: "proj-1", tasks: [{
+        id: "FN-1",
+        title: "Preserved switcher",
+        description: "d",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      } as Task] });
+
+      const selector = await screen.findByLabelText("Select workflow") as HTMLSelectElement;
+      await waitFor(() => expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual(["FN-1"]));
+      expect(selector.value).toBe("builtin:coding");
+
+      await act(async () => {
+        sseHandlers["workflow:updated"]?.();
+      });
+
+      await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual([]));
+
+      fireEvent.change(selector, { target: { value: "wf-preserved" } });
+      await waitFor(() => expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id)).toEqual(["FN-1"]));
+    });
   });
 });

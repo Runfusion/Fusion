@@ -28,6 +28,39 @@ const TEST_PROJECT_ID = "proj-123";
 const QUICK_ENTRY_STORAGE_KEY = scopedKey("kb-quick-entry-text", TEST_PROJECT_ID);
 const QUICK_ENTRY_BOX_CSS = readFileSync("app/components/QuickEntryBox.css", "utf8");
 
+const originalWindowInnerWidthDescriptor = Object.getOwnPropertyDescriptor(window, "innerWidth");
+const originalWindowMatchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+const originalDocumentVisibilityStateDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+const originalCreateObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+const originalRevokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+
+function restoreDescriptor(target: object, property: PropertyKey, descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(target, property, descriptor);
+    return;
+  }
+
+  delete (target as Record<PropertyKey, unknown>)[property];
+}
+
+function restoreQuickEntryTestGlobals() {
+  restoreDescriptor(window, "innerWidth", originalWindowInnerWidthDescriptor);
+  restoreDescriptor(window, "matchMedia", originalWindowMatchMediaDescriptor);
+  restoreDescriptor(document, "visibilityState", originalDocumentVisibilityStateDescriptor);
+  restoreDescriptor(URL, "createObjectURL", originalCreateObjectURLDescriptor);
+  restoreDescriptor(URL, "revokeObjectURL", originalRevokeObjectURLDescriptor);
+}
+
+function expectQuickEntryTestGlobalsRestored() {
+  expect(Object.getOwnPropertyDescriptor(window, "innerWidth")).toEqual(originalWindowInnerWidthDescriptor);
+  expect(Object.getOwnPropertyDescriptor(window, "matchMedia")).toEqual(originalWindowMatchMediaDescriptor);
+  expect(Object.getOwnPropertyDescriptor(document, "visibilityState")).toEqual(
+    originalDocumentVisibilityStateDescriptor,
+  );
+  expect(Object.getOwnPropertyDescriptor(URL, "createObjectURL")).toEqual(originalCreateObjectURLDescriptor);
+  expect(Object.getOwnPropertyDescriptor(URL, "revokeObjectURL")).toEqual(originalRevokeObjectURLDescriptor);
+}
+
 function quickEntryMobileActionsTouchRule() {
   return (
     QUICK_ENTRY_BOX_CSS.match(
@@ -336,6 +369,23 @@ describe("QuickEntryBox", () => {
     });
     vi.useRealTimers();
     localStorage.clear();
+    restoreQuickEntryTestGlobals();
+  });
+
+  /*
+  FNXC:DashboardTestIsolation 2026-06-16-21:31:
+  QuickEntryBox runs in broad dashboard jsdom workers, so viewport, visibility, and object-URL mocks must restore their original descriptors after every test.
+  This keeps mobile `innerWidth`/`matchMedia` state from flipping later disclosure `aria-expanded` assertions under sibling-file load.
+  */
+  it("restores jsdom globals mutated by viewport and URL helpers", () => {
+    mockMobileViewport();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn() });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: vi.fn() });
+
+    restoreQuickEntryTestGlobals();
+
+    expectQuickEntryTestGlobalsRestored();
   });
 
   it("renders textarea with placeholder", () => {
@@ -1484,19 +1534,20 @@ describe("QuickEntryBox", () => {
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
     });
 
-    it("keeps GitHub toggle disabled while project settings are still loading", async () => {
+    it("keeps GitHub toggle usable while project settings are still loading", async () => {
       vi.mocked(fetchSettings).mockReturnValueOnce(new Promise(() => undefined));
       renderQuickEntryBox({});
       expandQuickEntry();
 
       const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
-      expect(githubToggle).toBeDisabled();
-      expect(githubToggle).toHaveAttribute("aria-disabled", "true");
+      // Settings still pending: override null, default false → toggle usable but unpressed.
+      expect(githubToggle).not.toBeDisabled();
+      expect(githubToggle).not.toHaveAttribute("aria-disabled");
       expect(githubToggle).toHaveAttribute("aria-pressed", "false");
       expect(githubToggle.classList.contains("btn-primary")).toBe(false);
     });
 
-    it("renders GitHub toggle disabled when project setting is disabled", async () => {
+    it("renders GitHub toggle usable when project setting is disabled", async () => {
       vi.mocked(fetchSettings).mockResolvedValueOnce({
         githubTrackingEnabledByDefault: false,
       } as any);
@@ -1504,8 +1555,8 @@ describe("QuickEntryBox", () => {
       expandQuickEntry();
 
       const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
-      expect(githubToggle).toBeDisabled();
-      expect(githubToggle).toHaveAttribute("aria-disabled", "true");
+      expect(githubToggle).not.toBeDisabled();
+      expect(githubToggle).not.toHaveAttribute("aria-disabled");
       expect(githubToggle).toHaveAttribute("aria-pressed", "false");
       expect(githubToggle.classList.contains("btn-primary")).toBe(false);
     });
@@ -1612,7 +1663,7 @@ describe("QuickEntryBox", () => {
       expect(payload.githubTracking).toBeUndefined();
     });
 
-    it("does not submit githubTracking when project setting is disabled, even if user attempts to toggle", async () => {
+    it.each(["Enter", "Save"] as const)("submits githubTracking enabled=true from an off-default project via %s", async (submitPath) => {
       vi.mocked(fetchSettings).mockResolvedValueOnce({
         githubTrackingEnabledByDefault: false,
       } as any);
@@ -1621,17 +1672,27 @@ describe("QuickEntryBox", () => {
       const textarea = screen.getByTestId("quick-entry-input");
 
       const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
-      expect(githubToggle).toBeDisabled();
+      expect(githubToggle).not.toBeDisabled();
+      expect(githubToggle).not.toHaveAttribute("aria-disabled");
+      expect(githubToggle).toHaveAttribute("aria-pressed", "false");
+
       fireEvent.click(githubToggle);
-      fireEvent.change(textarea, { target: { value: "Override github tracking" } });
-      fireEvent.keyDown(textarea, { key: "Enter" });
+      expect(githubToggle).toHaveAttribute("aria-pressed", "true");
+      expect(githubToggle.classList.contains("btn-primary")).toBe(true);
+
+      fireEvent.change(textarea, { target: { value: `Override github tracking via ${submitPath}` } });
+      if (submitPath === "Enter") {
+        fireEvent.keyDown(textarea, { key: "Enter" });
+      } else {
+        clickSave();
+      }
 
       await waitFor(() => {
         expect(props.onCreate).toHaveBeenCalled();
       });
 
       const payload = props.onCreate.mock.calls[0]?.[0];
-      expect(payload.githubTracking).toBeUndefined();
+      expect(payload.githubTracking).toEqual({ enabled: true });
     });
 
     it("submits githubTracking override when project setting is enabled", async () => {
@@ -1685,7 +1746,7 @@ describe("QuickEntryBox", () => {
       expect(payload.githubTracking).toEqual({ enabled: true });
     });
 
-    it("shows disabled GitHub tracking guidance label when project setting is disabled", async () => {
+    it("shows ON/OFF GitHub tracking labels when project setting is disabled", async () => {
       vi.mocked(fetchSettings).mockResolvedValueOnce({
         githubTrackingEnabledByDefault: false,
       } as any);
@@ -1693,12 +1754,63 @@ describe("QuickEntryBox", () => {
       expandQuickEntry();
 
       const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
-      const expectedLabel = "GitHub tracking is disabled for this project — enable it in Settings to use per-task tracking";
-      expect(githubToggle).toHaveAttribute("title", expectedLabel);
-      expect(githubToggle).toHaveAttribute("aria-label", expectedLabel);
+      const offLabel = "GitHub tracking OFF for next task (project default: off)";
+      expect(githubToggle).toHaveAttribute("title", offLabel);
+      expect(githubToggle).toHaveAttribute("aria-label", offLabel);
+
+      fireEvent.click(githubToggle);
+      const onLabel = "GitHub tracking ON for next task (project default: off)";
+      expect(githubToggle).toHaveAttribute("title", onLabel);
+      expect(githubToggle).toHaveAttribute("aria-label", onLabel);
     });
 
-    it("resets GitHub toggle to project default after successful task creation", async () => {
+    it("submits githubTracking enabled=false after off-default opt-in then opt-out", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        githubTrackingEnabledByDefault: false,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
+      fireEvent.click(githubToggle);
+      expect(githubToggle).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(githubToggle);
+      expect(githubToggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.change(textarea, { target: { value: "Explicitly keep github off" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+
+      expect(props.onCreate.mock.calls[0]?.[0].githubTracking).toEqual({ enabled: false });
+    });
+
+    it("treats absent githubTrackingEnabledByDefault as off unless overridden", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({} as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
+      expect(githubToggle).not.toBeDisabled();
+      expect(githubToggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(githubToggle);
+      expect(githubToggle).toHaveAttribute("aria-pressed", "true");
+      fireEvent.change(textarea, { target: { value: "Absent setting github opt-in" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+
+      expect(props.onCreate.mock.calls[0]?.[0].githubTracking).toEqual({ enabled: true });
+    });
+
+    it("resets GitHub toggle to on project default after successful task creation", async () => {
       vi.mocked(fetchSettings).mockResolvedValueOnce({
         githubTrackingEnabledByDefault: true,
       } as any);
@@ -1722,6 +1834,30 @@ describe("QuickEntryBox", () => {
 
       expandQuickEntry();
       expect(screen.getByTestId("quick-entry-github-toggle").getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("resets GitHub toggle to off project default after successful task creation", async () => {
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        githubTrackingEnabledByDefault: false,
+      } as any);
+      const { props } = renderQuickEntryBox({ availableModels: undefined });
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      const githubToggle = await screen.findByTestId("quick-entry-github-toggle");
+      expect(githubToggle).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(githubToggle);
+      expect(githubToggle).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.change(textarea, { target: { value: "Reset github toggle off default" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+
+      expandQuickEntry();
+      expect(screen.getByTestId("quick-entry-github-toggle").getAttribute("aria-pressed")).toBe("false");
     });
 
     it("resets Fast toggle to standard after successful task creation", async () => {

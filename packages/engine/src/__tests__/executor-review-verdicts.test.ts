@@ -732,7 +732,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     // the same step does not produce the "Cannot mark … as done" block.
     await tools.fn_review_step("c1", { step: 2, type: "code", step_name: "Testing", baseline: "a" });
 
-    const result = await tools.fn_task_update("c2", { step: 3, status: "in-progress" });
+    const result = await tools.fn_task_update("c2", { step: 2, status: "in-progress" });
     expect(result.content[0].text).not.toContain("Cannot mark");
     expect(result.content[0].text).toContain("→ in-progress");
   });
@@ -897,7 +897,7 @@ describe("RETHINK verdict handling", () => {
     });
 
     // updateStep should be called: once for in-progress, once for pending (reset)
-    expect(store.updateStep).toHaveBeenCalledWith("FN-040", 0, "pending");
+    expect(store.updateStep).toHaveBeenCalledWith("FN-040", 1, "pending");
   });
 
   it("RETHINK re-prompt includes reviewer feedback", async () => {
@@ -1012,7 +1012,7 @@ describe("RETHINK verdict handling", () => {
     expect(mockSessionManager.getLeafId).toHaveBeenCalled();
   });
 
-  it("uses step-1 checkpoint key when step 3 enters in-progress and step index 2 is reviewed", async () => {
+  it("uses zero-based checkpoint key when step 2 enters in-progress and is reviewed", async () => {
     const store = createMockStore();
     store.updateStep.mockImplementation(async (_id: string, step: number, status: string) =>
       makeStepResult(step, status),
@@ -1020,10 +1020,10 @@ describe("RETHINK verdict handling", () => {
     mockedReviewStep.mockResolvedValue({ verdict: "RETHINK", review: "Bad", summary: "Redo" });
 
     const { toolMap, mockNavigateTree } = await captureRethinkTools(store);
-    await toolMap.get("fn_task_update").execute("call-1", { step: 3, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 2, status: "in-progress" });
 
     await toolMap.get("fn_review_step").execute("call-2", {
-      step: 3,
+      step: 2,
       type: "code",
       step_name: "Testing",
       baseline: "abc123",
@@ -1239,7 +1239,7 @@ describe("Plan RETHINK verdict handling", () => {
     });
 
     // updateStep should be called with "pending" to reset the step
-    expect(store.updateStep).toHaveBeenCalledWith("FN-050", 0, "pending");
+    expect(store.updateStep).toHaveBeenCalledWith("FN-050", 1, "pending");
   });
 
   it("plan RETHINK re-prompt includes reviewer feedback and plan-specific language", async () => {
@@ -1435,10 +1435,10 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     }));
 
     const { tools } = await captureE2ETools(store);
-    const result = await tools.fn_task_update("u-warn", { step: 2, status: "in-progress" });
+    const result = await tools.fn_task_update("u-warn", { step: 1, status: "in-progress" });
 
     expect(store.updateStep).toHaveBeenCalledWith("FN-E2E", 1, "in-progress");
-    expect(result.content[0].text).toContain("Step 2 (Implement) → in-progress");
+    expect(result.content[0].text).toContain("Step 1 (Implement) → in-progress");
   });
 
   it("full sequence: plan APPROVE → code REVISE (blocked) → code APPROVE (unblocked) → done", async () => {
@@ -1513,7 +1513,7 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
       expect.objectContaining({ cwd: expect.any(String) }),
     );
     expect(mockNavigateTree).toHaveBeenCalledWith("e2e-checkpoint", { summarize: false });
-    expect(store.updateStep).toHaveBeenCalledWith("FN-E2E", 0, "pending");
+    expect(store.updateStep).toHaveBeenCalledWith("FN-E2E", 1, "pending");
 
     // Step 3: Restart the step (new approach)
     await tools.fn_task_update("u2", { step: 1, status: "in-progress" });

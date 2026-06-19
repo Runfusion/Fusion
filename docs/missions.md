@@ -46,11 +46,11 @@ Existing missions are intentionally **not** auto-linked to any goals. Fusion doe
 
 ### Manual linkage workflow
 
-Mission ↔ goal links are created and removed deliberately as part of normal planning and operations work. Read surfaces can show current associations, and operator-facing write surfaces can add or remove links when a mission should explicitly support a goal. The workflow is intentionally manual so teams can choose the correct strategic relationship per mission instead of inheriting guessed links from older data.
+Mission ↔ goal links are created and removed deliberately as part of normal planning and operations work. The dashboard exposes the relationship from both directions: Mission detail has an active-goal picker plus linked-goal chips with unlink controls, and each Goals view card has a mission picker plus linked-mission chips with unlink controls. Archived goals are never offered for new links, duplicate link attempts are no-ops at the store/API layer, and removing the last link restores the empty-state copy rather than leaving an empty control shell. The workflow is intentionally manual so teams can choose the correct strategic relationship per mission instead of inheriting guessed links from older data.
 
 ### Unlinked mission indicator
 
-Mission Manager shows an **Unlinked** indicator on active mission cards when `linkedGoalCount` is zero. This is a read-only attention badge so operators can quickly find active missions that still need an explicit goal association.
+Mission Manager shows an **Unlinked** indicator on active mission cards when `linkedGoalCount` is zero. Linking or unlinking from either dashboard surface refreshes this count so operators can quickly find active missions that still need an explicit goal association.
 
 The engine also emits a workflow insight with advisory key `unlinked_missions_advisory` when it first observes one or more active missions with zero goal links. The insight is advisory only, includes only the affected mission ids plus a count, and is deduped to one stable row so it does not spam on every scheduler heartbeat.
 
@@ -142,6 +142,7 @@ Fusion surfaces the persisted mission↔goal linkage through REST, CLI, and pi-e
 | `PATCH /api/missions/:missionId` | Update mission fields. Optional `goalIds: string[]` replaces the full linked-goal set; `[]` clears links and `undefined` leaves links unchanged. |
 | `GET /api/missions/:missionId` | Return `MissionWithHierarchy`, including `linkedGoals` as an always-present array of `Goal` objects for the selected mission and optional `eventCount` as the authoritative unfiltered mission activity total. |
 | `GET /api/missions/:missionId/goals` | List linked goals for a mission. Returns `{ goals }`. |
+| `GET /api/goals/:goalId/missions` | List linked missions for a goal. Returns `{ missions: [{ id, title, status }] }` and skips stale links whose mission row no longer resolves. |
 | `PUT /api/missions/:missionId/goals` | Replace the full linked-goal set with body `{ goalIds: string[] }`. Duplicate ids are deduplicated before reconciliation. |
 | `POST /api/missions/:missionId/goals/:goalId` | Idempotently link one goal to a mission. |
 | `DELETE /api/missions/:missionId/goals/:goalId` | Idempotently unlink one goal from a mission. |
@@ -154,7 +155,8 @@ The mission detail payload keeps `linkedGoals` separate from the milestone tree 
 - `fn mission goals <mission-id>` — list linked goals for a mission.
 - `fn mission link-goal <mission-id> <goal-id>` — idempotently link a goal; archived goals reject with `GOAL_ARCHIVED`.
 - `fn mission unlink-goal <mission-id> <goal-id>` — idempotently unlink a goal, including archived goals.
-- Mission detail screens in the dashboard render linked-goal chips in the mission header; selecting a chip opens the Goals view and scrolls/highlights the anchored goal card.
+- Dashboard Mission detail lets operators link active goals, unlink existing goal chips, and select a chip to open the Goals view at the anchored goal card.
+- Dashboard Goals cards show linked missions, let operators link/unlink missions for that goal, and select a mission chip to open Mission Manager at that mission.
 
 ## Mission Planning Tools (pi extension)
 

@@ -33,6 +33,7 @@ import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
 import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 import { registerGithubTrackingHook } from "./github-tracking-hook.js";
+import { registerBeforeExitCleanup } from "./process-lifecycle.js";
 import { createTerminalWebSocketDiagnostics } from "./terminal-websocket-diagnostics.js";
 import {
   AiSessionStore,
@@ -62,6 +63,7 @@ import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
 import { setupCliSessionWebSocket } from "./cli-session-ws.js";
 import { createCliSessionsRouter } from "./routes/cli-sessions.js";
+import type { CliRelaunchRegistry } from "./cli-session-transport.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
 import {
@@ -73,9 +75,19 @@ import {
   postMergeAuditFailuresPerDay,
   recoverAlreadyMergedReviewTasksRecoveriesPerDay,
 } from "./reliability-metrics.js";
-import { loadViewChunkManifest } from "./view-chunk-manifest.js";
+import { loadViewChunkManifest, type ViewChunkManifestEntry } from "./view-chunk-manifest.js";
+import { maybeStartOtelExporter, type OtelExporterHandle } from "./otel-exporter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+export function buildViewPreloadInjection(chunkMap: Record<string, ViewChunkManifestEntry>): string {
+  const serializedChunkMap = JSON.stringify(chunkMap).replace(/<\//g, "<\\/");
+  /*
+  FNXC:CommandCenterStyling 2026-06-19-09:43:
+  The served dashboard may open directly into a persisted lazy view before React's dynamic import runs. Inject both the modulepreload and stylesheet links from Vite's manifest so Command Center and every other co-located-CSS lazy view have their CSS requested on first paint, while in-app navigation remains owned by Vite's __vitePreload runtime.
+  */
+  return `<script>window.__FUSION_VIEW_CHUNKS__=${serializedChunkMap};(()=>{try{const chunkMap=window.__FUSION_VIEW_CHUNKS__||{};const projectId=localStorage.getItem("kb-dashboard-current-project");const scopedKey=projectId?"kb:"+projectId+":kb-dashboard-task-view":null;let taskView=(scopedKey&&localStorage.getItem(scopedKey))||localStorage.getItem("kb-dashboard-task-view");if(taskView==="devserver")taskView="dev-server";if(taskView==="roadmaps")taskView="board";if(typeof taskView!=="string"||taskView.startsWith("plugin:"))return;const chunkEntry=chunkMap[taskView];if(!chunkEntry)return;const chunkPath=typeof chunkEntry==="string"?chunkEntry:chunkEntry.file;const cssPaths=Array.isArray(chunkEntry.css)?chunkEntry.css:[];for(const cssPath of cssPaths){if(!cssPath)continue;const cssLink=document.createElement("link");cssLink.rel="stylesheet";cssLink.href=cssPath;document.head.appendChild(cssLink);}if(!chunkPath)return;const link=document.createElement("link");link.rel="modulepreload";link.href=chunkPath;link.crossOrigin="";document.head.appendChild(link);}catch{}})();</script>`;
+}
 
 function parseVersion(version: string): number[] {
   return version
@@ -148,7 +160,7 @@ function clearAiSessionCleanupInterval(): void {
   aiSessionCleanupIntervalHandle = undefined;
 }
 
-process.on("beforeExit", () => {
+registerBeforeExitCleanup(() => {
   clearAiSessionCleanupInterval();
 });
 
@@ -249,6 +261,7 @@ export interface ServerOptions {
     ticketStore: import("./cli-session-transport.js").AttachTicketStore;
     attributionLog: import("./cli-session-transport.js").CliInputAttributionLog;
     confirmAdvance: import("./cli-session-transport.js").CliConfirmAdvanceRegistry;
+    relaunch: import("./cli-session-transport.js").CliRelaunchRegistry;
     extraAllowedOrigins?: string[];
   };
   /** Optional MissionAutopilot for autonomous mission progression */
@@ -298,6 +311,11 @@ export interface ServerOptions {
     getPluginWorkflowStepTemplates?(): Array<{ pluginId: string; template: import("@fusion/core").WorkflowStepTemplate }>;
     getRuntimeById?(runtimeId: string): unknown;
     createRuntimeContext?(pluginId: string): Promise<unknown>;
+    /*
+    FNXC:ChatSkills 2026-06-16-19:10:
+    The dashboard passes this structural runner into ChatManager, which needs optional plugin skill discovery so chat can load enabled plugin skills such as ce-debug.
+    */
+    getPluginSkills?(): Array<{ pluginId: string; skill: { name: string; enabled?: boolean } }>;
     reloadPlugin?(pluginId: string): Promise<unknown>;
     checkPluginSetup?(pluginId: string): Promise<import("@fusion/core").PluginSetupCheckResult>;
     installPluginSetup?(pluginId: string): Promise<void | { success: boolean; error?: string }>;
@@ -569,6 +587,77 @@ export function loadTlsCredentialsFromEnv(
   return { cert, key, ca };
 }
 
+type CliRelaunchSessionStore = ServerOptions["cliSessionTransport"] extends infer T
+  ? T extends { store: infer S }
+    ? S & {
+        updateSession?: (id: string, input: {
+          agentState?: "dead";
+          terminationReason?: "killed";
+          nativeSessionId?: string | null;
+          resumeAttempts?: number;
+        }) => unknown;
+      }
+    : never
+  : never;
+
+interface CliRelaunchTaskStoreLike {
+  getTask(taskId: string): Promise<Task | null>;
+  updateTask(taskId: string, patch: Record<string, unknown>): Promise<unknown>;
+  moveTask(taskId: string, column: "todo", options?: Record<string, unknown>): Promise<unknown>;
+  logEntry(taskId: string, message: string, details?: string): Promise<unknown>;
+}
+
+export function wireCliRelaunchListener(options: {
+  relaunch: CliRelaunchRegistry;
+  cliSessionStore: CliRelaunchSessionStore;
+  engine?: Pick<import("@fusion/engine").ProjectEngine, "getTaskStore" | "getProjectId">;
+  runtimeLogger?: RuntimeLogger;
+}): (() => void) | undefined {
+  if (!options.engine) return undefined;
+  const taskStore = options.engine.getTaskStore() as unknown as CliRelaunchTaskStoreLike;
+  const engineProjectId = options.engine.getProjectId?.();
+
+  return options.relaunch.on((info) => {
+    void (async () => {
+      if (engineProjectId && info.projectId !== engineProjectId) return;
+
+      /*
+       * FNXC:CliRelaunch 2026-06-14-20:16:
+       * The relaunch listener guarantees a fresh launch by clearing resume linkage on the dead CLI session, then re-enters the existing task retry lifecycle via `moveTask(todo)`; it never calls the CLI manager's spawn path directly, so the scheduler/executor remains the single task-run entrypoint.
+       */
+      options.cliSessionStore.updateSession?.(info.sessionId, {
+        agentState: "dead",
+        terminationReason: "killed",
+        nativeSessionId: null,
+        resumeAttempts: 2,
+      });
+
+      const task = await taskStore.getTask(info.taskId);
+      if (!task) {
+        options.runtimeLogger?.warn?.("CLI session relaunch skipped; task not found", info);
+        return;
+      }
+
+      await taskStore.logEntry(
+        info.taskId,
+        `CLI session relaunch requested from ${info.sessionId} — clearing resume linkage and re-enqueueing for a fresh executor run`,
+      );
+      await taskStore.updateTask(info.taskId, { paused: false, status: null, error: null });
+      await taskStore.moveTask(info.taskId, "todo", {
+        preserveProgress: true,
+        moveSource: "engine",
+        recoveryRehome: true,
+      });
+    })().catch((err: unknown) => {
+      options.runtimeLogger?.warn?.("CLI session relaunch listener failed", {
+        sessionId: info.sessionId,
+        taskId: info.taskId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
+  });
+}
+
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
   // Register the universal post-create hook so every task-creation path
   // (HTTP routes, CLI, pi extension, mission triage, etc.) triggers
@@ -711,11 +800,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   let cachedIndexHtml: string | null = null;
   let cachedIndexMtimeMs: number | null = null;
   let cachedTemplatedIndexHtml: string | null = null;
-
-  const buildViewPreloadInjection = (chunkMap: Record<string, string>): string => {
-    const serializedChunkMap = JSON.stringify(chunkMap).replace(/<\//g, "<\\/");
-    return `<script>window.__FUSION_VIEW_CHUNKS__=${serializedChunkMap};(()=>{try{const chunkMap=window.__FUSION_VIEW_CHUNKS__||{};const projectId=localStorage.getItem("kb-dashboard-current-project");const scopedKey=projectId?"kb:"+projectId+":kb-dashboard-task-view":null;let taskView=(scopedKey&&localStorage.getItem(scopedKey))||localStorage.getItem("kb-dashboard-task-view");if(taskView==="devserver")taskView="dev-server";if(taskView==="roadmaps")taskView="board";if(typeof taskView!=="string"||taskView.startsWith("plugin:"))return;const chunkPath=chunkMap[taskView];if(!chunkPath)return;const link=document.createElement("link");link.rel="modulepreload";link.href=chunkPath;link.crossOrigin="";document.head.appendChild(link);}catch{}})();</script>`;
-  };
 
   const renderIndexHtml = (): string => {
     const resolvedClientDir = process.env.FUSION_CLIENT_DIR
@@ -1143,6 +1227,21 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // route the project hub's sanitized telemetry into the runner's transcript
   // handler. The listener is keyed per-session inside one closure so it composes
   // safely even if other taps exist.
+  if (options?.cliSessionTransport && options.engine) {
+    try {
+      wireCliRelaunchListener({
+        relaunch: options.cliSessionTransport.relaunch,
+        cliSessionStore: options.cliSessionTransport.store as CliRelaunchSessionStore,
+        engine: options.engine,
+        runtimeLogger,
+      });
+    } catch (err) {
+      runtimeLogger.warn?.("CLI-agent relaunch listener wiring failed", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   if (options?.cliSessionTransport && options.cliAgentHubResolver) {
     try {
       const cliTransportStore = options.cliSessionTransport.store;
@@ -1542,6 +1641,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         ticketStore: options.cliSessionTransport.ticketStore,
         attributionLog: options.cliSessionTransport.attributionLog,
         confirmAdvance: options.cliSessionTransport.confirmAdvance,
+        relaunch: options.cliSessionTransport.relaunch,
       }),
     );
   }
@@ -1618,6 +1718,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   const originalListen = dashboardApp.listen.bind(dashboardApp);
   const httpsCreds = options?.https;
+  /*
+  FNXC:Telemetry 2026-06-16-09:47:
+  U10 (PR #1683): the OTLP metrics exporter is started on listen only when FUSION_OTEL_METRICS_ENDPOINT is set (off by default) and its handle is retained here so the server "close" handler can stop the export timer — otherwise the periodic exporter would outlive the server and leak a timer in tests/restarts.
+  */
+  // U10: OTLP metrics exporter. Disabled by default — only started when
+  // FUSION_OTEL_METRICS_ENDPOINT is explicitly configured. Held here so the
+  // server "close" handler can stop its timer.
+  let otelExporter: OtelExporterHandle | null = null;
   dashboardApp.listen = ((...args: Parameters<typeof dashboardApp.listen>) => {
     const normalizedArgs = normalizeListenArgsForTests(args) as Parameters<typeof originalListen>;
 
@@ -1642,9 +1750,22 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       server = originalListen(...normalizedArgs);
     }
 
+    // U10: start the OTLP exporter (no-op unless FUSION_OTEL_METRICS_ENDPOINT
+    // is set). Failures here must never break server startup.
+    try {
+      otelExporter = maybeStartOtelExporter({ store, logger: runtimeLogger });
+    } catch (error) {
+      runtimeLogger.warn("OTLP metrics exporter failed to start", {
+        message: "OTLP metrics exporter failed to start",
+        ...normalizeErrorForLog(error),
+      });
+    }
+
     server.once("close", () => {
       clearAiSessionCleanupInterval();
       aiSessionStore.stopScheduledCleanup();
+      otelExporter?.stop();
+      otelExporter = null;
       (apiRouter as Router & { dispose?: () => void }).dispose?.();
       void stopAllDevServers().catch((error) => {
         runtimeLogger.warn("Failed to shutdown dev-server managers", {

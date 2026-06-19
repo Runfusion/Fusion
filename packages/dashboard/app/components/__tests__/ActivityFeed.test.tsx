@@ -127,6 +127,14 @@ describe("ActivityFeed", () => {
     expect(screen.getByText("5m ago")).toBeDefined();
   });
 
+  it("preserves capitalized Just now for entries under one minute old", () => {
+    const thirtySecondsAgo = new Date(Date.now() - 30_000).toISOString();
+
+    render(<ActivityFeed entries={[makeEntry({ timestamp: thirtySecondsAgo })]} />);
+
+    expect(screen.getByText("Just now")).toBeDefined();
+  });
+
   it("renders different event types with correct labels", () => {
     const entries: ActivityFeedEntry[] = [
       makeEntry({ id: "1", type: "task:created" }),

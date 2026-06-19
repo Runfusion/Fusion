@@ -55,6 +55,7 @@ describe("useModalManager", () => {
     );
 
     expect(result.current.newTaskModalOpen).toBe(false);
+    expect(result.current.newTaskInitialDescription).toBeNull();
     expect(result.current.anyModalOpen).toBe(false);
 
     act(() => {
@@ -62,6 +63,7 @@ describe("useModalManager", () => {
     });
 
     expect(result.current.newTaskModalOpen).toBe(true);
+    expect(result.current.newTaskInitialDescription).toBeNull();
     expect(result.current.anyModalOpen).toBe(true);
 
     act(() => {
@@ -69,7 +71,34 @@ describe("useModalManager", () => {
     });
 
     expect(result.current.newTaskModalOpen).toBe(false);
+    expect(result.current.newTaskInitialDescription).toBeNull();
     expect(result.current.anyModalOpen).toBe(false);
+  });
+
+  it("opens the new task modal with a seeded description and resets it on close", () => {
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openNewTaskWithDescription("File: README.md\n\nComment:\nCreate a task");
+    });
+
+    expect(result.current.newTaskModalOpen).toBe(true);
+    expect(result.current.newTaskInitialDescription).toContain("README.md");
+
+    act(() => {
+      result.current.closeNewTask();
+    });
+
+    expect(result.current.newTaskModalOpen).toBe(false);
+    expect(result.current.newTaskInitialDescription).toBeNull();
+
+    act(() => {
+      result.current.openNewTask();
+    });
+
+    expect(result.current.newTaskInitialDescription).toBeNull();
   });
 
   it("handles planning open, resume, and close lifecycle", () => {
@@ -111,6 +140,7 @@ describe("useModalManager", () => {
     expect(result.current.scriptsOpen).toBe(true);
     expect(result.current.terminalOpen).toBe(false);
     expect(result.current.terminalInitialCommand).toBeUndefined();
+    expect(result.current.terminalInitialCommandGeneration).toBe(0);
 
     await act(async () => {
       await result.current.runScript("build", "pnpm build");
@@ -119,6 +149,14 @@ describe("useModalManager", () => {
     expect(result.current.scriptsOpen).toBe(false);
     expect(result.current.terminalOpen).toBe(true);
     expect(result.current.terminalInitialCommand).toBe("pnpm build");
+    expect(result.current.terminalInitialCommandGeneration).toBe(1);
+
+    await act(async () => {
+      await result.current.runScript("build", "pnpm build");
+    });
+
+    expect(result.current.terminalInitialCommand).toBe("pnpm build");
+    expect(result.current.terminalInitialCommandGeneration).toBe(2);
   });
 
   it("tracks detail task state and supports tab-specific opens", () => {
@@ -132,7 +170,7 @@ describe("useModalManager", () => {
     });
 
     expect(result.current.detailTask?.id).toBe("FN-123");
-    expect(result.current.detailTaskInitialTab).toBe("definition");
+    expect(result.current.detailTaskInitialTab).toBe("chat");
 
     act(() => {
       result.current.openDetailWithChangesTab(task);
@@ -167,29 +205,6 @@ describe("useModalManager", () => {
     expect(result.current.settingsInitialSection).toBeUndefined();
   });
 
-  it("tracks system stats modal state and includes it in anyModalOpen", () => {
-    const { result } = renderHook(() =>
-      useModalManager({ projectId: "proj_1", planningSessions: [] }),
-    );
-
-    expect(result.current.systemStatsOpen).toBe(false);
-    expect(result.current.anyModalOpen).toBe(false);
-
-    act(() => {
-      result.current.openSystemStats();
-    });
-
-    expect(result.current.systemStatsOpen).toBe(true);
-    expect(result.current.anyModalOpen).toBe(true);
-
-    act(() => {
-      result.current.closeSystemStats();
-    });
-
-    expect(result.current.systemStatsOpen).toBe(false);
-    expect(result.current.anyModalOpen).toBe(false);
-  });
-
   it("accepts plain Task object for optimistic modal opening", () => {
     const task = createTask("FN-456");
     const { result } = renderHook(() =>
@@ -203,7 +218,7 @@ describe("useModalManager", () => {
     expect(result.current.detailTask?.id).toBe("FN-456");
     // Should not have prompt field (plain Task)
     expect("prompt" in (result.current.detailTask as unknown as Record<string, unknown>)).toBe(false);
-    expect(result.current.detailTaskInitialTab).toBe("definition");
+    expect(result.current.detailTaskInitialTab).toBe("chat");
   });
 
   it.each([

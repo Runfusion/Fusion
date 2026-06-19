@@ -2,49 +2,15 @@
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
   "entries": [
     {
-      "file": "packages/engine/src/__tests__/project-engine-manager.test.ts",
-      "reason": "Flake: setInterval-driven reconciliation races with vitest fake-timer contention under full reliability-suite load. Test passes standalone (~46ms) but times out (30s) when reliability-pool files are co-resident. FN-6206.",
-      "quarantinedAt": "2026-06-10"
-    },
     {
-      "file": "packages/engine/src/__tests__/merger-file-scope-invariant.test.ts",
-      "reason": "Flake: vi.mock('node:child_process') occasionally doesn't take under workspace-concurrent runs, letting real git binary leak and report staged files unrelated to test scope (trips FileScopeViolationError). Same logic covered by real-git fixture tests in reliability-interactions/workflow-and-file-scope. FN-6206.",
-      "quarantinedAt": "2026-06-10"
-    },
-    {
-      "file": "packages/engine/src/__tests__/merger-file-scope-invariant.test.ts",
-      "reason": "Flake: same mock-contention mode as the sibling changeset-file test above (vi.mock('node:child_process') not taking under concurrent load). FN-6206.",
-      "quarantinedAt": "2026-06-10"
-    },
-    {
-      "file": "packages/engine/src/__tests__/merger-ai-cleanup-active-session.test.ts",
-      "reason": "Flake: pruneExistingAiMergeWorktrees skips active-session paths — active-session temp AI merge dir was unexpectedly pruned during pnpm --filter @fusion/engine test in FN-6206 verification, while the same file passed standalone. Root cause suspected: realpathSync resolution mismatch or readdirSync mock interaction with activeSessionRegistry singleton under concurrent engine suite load. Discovered during FN-6206.",
-      "quarantinedAt": "2026-06-10"
-    },
-    {
-      "file": "packages/engine/src/__tests__/merger-ai-cleanup.test.ts",
-      "reason": "Flake observed during FN-6206 verification: `pruneExistingAiMergeWorktrees skips active-session paths` failed in full `pnpm --filter @fusion/engine test` runs while the file passed standalone, indicating suite-order/concurrency sensitivity. Follow-up FN-6207.",
-      "quarantinedAt": "2026-06-10"
-    },
-    {
-      "file": "packages/engine/src/__tests__/merger-ai.test.ts",
-      "reason": "Flake observed during FN-6238 verification: full `pnpm --filter @fusion/engine test` failed in two merger-ai tests with git ENOENT / unable to read current working directory after a temp checkout disappeared, while the file passed standalone (23/23). Follow-up FN-6248.",
-      "quarantinedAt": "2026-06-11"
+      "file": "packages/dashboard/src/__tests__/session-cross-tab.test.ts",
+      "reason": "FN-6690 local workspace `pnpm test` observed ENOTEMPTY while removing the test's temp .fusion directory in dashboard-api-quality-backfill shard; isolated rerun passed, indicating cleanup flake rather than a lazy-view CSS regression.",
+      "quarantinedAt": "2026-06-19"
     },
     {
       "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
-      "reason": "Flake observed during FN-6239 verification: broad `pnpm test` in dashboard backfill shard 4/4 could not find `quick-entry-priority-button` immediately after a successful task creation, while the named test passed standalone. Indicates suite-order/concurrency sensitivity unrelated to QuickChatFAB coverage.",
-      "quarantinedAt": "2026-06-11"
-    },
-    {
-      "file": "packages/engine/src/__tests__/reliability-interactions/soft-delete-blocker-residue.test.ts",
-      "reason": "Flake observed during FN-6294 verification and reproduced during FN-6319 broad `pnpm --filter @fusion/engine test`: `clearStaleBlockedBy handles missed task:deleted event with soft-deleted-blocker reason` failed because the log entry was absent, while the same file passed standalone and the narrow three-file reproduction passed. Product-code cross-check: `clearStaleBlockedBy` still has the soft-deleted-blocker branch and soft-delete-deadlock-scan-exclusion.test.ts covers it via a deterministic store double, indicating suite-order/concurrency sensitivity in this reliability-interactions fixture rather than a confirmed product bug.",
-      "quarantinedAt": "2026-06-12"
-    },
-    {
-      "file": "packages/dashboard/src/__tests__/routes-settings.test.ts",
-      "reason": "Flake observed during FN-6354 broad `pnpm test`: `GET /api/memory/audit > preserves extraction metadata across extract then audit requests` received HTTP 503 instead of 200 in the dashboard api:curated lane, while the same named test passed standalone immediately afterward. FN-6354 only changed the task-detail Chat composer UI/tests, so this is classified as unrelated suite-order/concurrency sensitivity in the dashboard API quality lane.",
-      "quarantinedAt": "2026-06-13"
+      "reason": "FN-6697 local workspace `pnpm test` observed the post-submission focus restoration test fail in the broad dashboard app backfill shard, while a targeted rerun of QuickEntryBox with MailboxModal passed the QuickEntryBox assertions; quarantine the focus-timing flake instead of appeasing it while the terminal shortcut fix remains scoped.",
+      "quarantinedAt": "2026-06-19"
     }
   ]
 }

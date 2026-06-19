@@ -268,9 +268,40 @@ describe("built-in workflows", () => {
   it("compound-engineering compiles its skill nodes to steps", () => {
     const ce = getBuiltinWorkflow("builtin:compound-engineering")!;
     const steps = compileWorkflowToSteps(ce.ir);
-    // plan + code-review (pre-merge) + document (post-merge) — seams are skipped.
-    expect(steps.length).toBeGreaterThanOrEqual(3);
+    // plan + execute (ce-work) + code-review (pre-merge) + document (post-merge)
+    // — review/merge seams are skipped.
+    expect(steps.length).toBeGreaterThanOrEqual(4);
     expect(steps.some((s) => s.name === "Plan")).toBe(true);
+  });
+
+  it("compound-engineering runs ce-work for the execute step in coding mode", () => {
+    const ce = getBuiltinWorkflow("builtin:compound-engineering")!;
+    // The IR node declares the ce-work skill executor (engine wraps the prompt
+    // with the invoke-skill preamble on the graph-interpreter path).
+    const executeNode = ce.ir.nodes.find((n) => n.id === "execute");
+    expect(executeNode?.config?.executor).toBe("skill");
+    expect(executeNode?.config?.skillName).toBe("compound-engineering:ce-work");
+    // The compiled step runs in coding mode so write/spawn tools are available.
+    const steps = compileWorkflowToSteps(ce.ir);
+    const execute = steps.find((s) => s.name === "Execute");
+    expect(execute).toBeDefined();
+    expect(execute!.toolMode).toBe("coding");
+  });
+
+  it("compound-engineering merge stage uses the CE commit/PR + resolve-feedback skills", () => {
+    const ce = getBuiltinWorkflow("builtin:compound-engineering")!;
+    const byId = (id: string) => ce.ir.nodes.find((n) => n.id === id);
+    expect(byId("commit-pr")?.config?.skillName).toBe("compound-engineering:ce-commit-push-pr");
+    expect(byId("commit-pr")?.config?.toolMode).toBe("coding");
+    expect(byId("resolve-feedback")?.config?.skillName).toBe("compound-engineering:ce-resolve-pr-feedback");
+    // KTD-6: the Fusion board-merge seam is preserved (CE prepares the PR, Fusion
+    // owns the merge transition).
+    expect(byId("merge")?.config?.seam).toBe("merge");
+    // Ordering: commit-pr → resolve-feedback → merge → document.
+    const ids = ce.ir.nodes.map((n) => n.id);
+    expect(ids.indexOf("commit-pr")).toBeLessThan(ids.indexOf("resolve-feedback"));
+    expect(ids.indexOf("resolve-feedback")).toBeLessThan(ids.indexOf("merge"));
+    expect(ids.indexOf("merge")).toBeLessThan(ids.indexOf("document"));
   });
 
   describe("store integration", () => {

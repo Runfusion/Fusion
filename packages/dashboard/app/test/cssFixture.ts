@@ -6,12 +6,19 @@ const COMPONENTS_DIR = join(APP_DIR, "components");
 
 let cached: string | null = null;
 let stylesCached: string | null = null;
+let themeDataCached: string | null = null;
 let baseOnlyCached: string | null = null;
 
 export function loadStylesCss(): string {
   if (stylesCached !== null) return stylesCached;
   stylesCached = readFileSync(join(APP_DIR, "styles.css"), "utf-8");
   return stylesCached;
+}
+
+export function loadThemeDataCss(): string {
+  if (themeDataCached !== null) return themeDataCached;
+  themeDataCached = readFileSync(join(APP_DIR, "public", "theme-data.css"), "utf-8");
+  return themeDataCached;
 }
 
 export function loadAllAppCss(): string {

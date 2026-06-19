@@ -53,17 +53,106 @@ describe("FN-5083 reliability interactions: in-review branch rebind", () => {
     return branch;
   }
 
+  function spyOnRebindAudit(manager: SelfHealingManager) {
+    return vi.spyOn(manager as any, "emitBranchRebindAuditEvent");
+  }
+
   it("rebinds and remains stable on repeated sweeps", async () => {
     const id = await createTaskInReview("stable rebind");
     const branch = await createUniqueFusionBranch(id, "stable");
     await store.updateTask(id, { branch: null, worktree: null });
 
     const manager = new SelfHealingManager(store, { rootDir });
+    const audit = spyOnRebindAudit(manager);
     const first = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
     const second = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+    const updated = await store.getTask(id);
 
     expect(first.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ taskId: id, result: "applied", branch })]));
-    expect(second.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ taskId: id })]));
+    expect(updated?.branch).toBe(branch);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: id,
+      mutationType: "task:auto-rebind-applied",
+      metadata: expect.objectContaining({ branch, source: "auto-rebind-in-review" }),
+    }));
+    expect(second.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: id, result: "skipped", reason: "binding-intact" }),
+    ]));
+  });
+
+  it("skips auto-rebind when user-paused task intent blocks engine mutation", async () => {
+    const id = await createTaskInReview("user paused safety gate");
+    const branch = await createUniqueFusionBranch(id, "paused");
+    const brokenBranch = `fusion/missing-${id.toLowerCase()}`;
+    await store.updateTask(id, { branch: brokenBranch, worktree: null });
+    const originalListTasks = store.listTasks.bind(store);
+    vi.spyOn(store, "listTasks").mockImplementationOnce(async (opts: any) => {
+      const tasks = await originalListTasks(opts);
+      return tasks.map((task: any) => task.id === id ? { ...task, userPaused: true } : task);
+    });
+
+    const manager = new SelfHealingManager(store, { rootDir });
+    const audit = spyOnRebindAudit(manager);
+    const result = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+    const updated = await store.getTask(id);
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: id, result: "skipped", reason: "unsafe-to-auto-mutate:user-paused" }),
+    ]));
+    expect(updated?.branch).toBe(brokenBranch);
+    expect(updated?.branch).not.toBe(branch);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: id,
+      mutationType: "task:auto-rebind-skipped",
+      metadata: expect.objectContaining({
+        reason: "unsafe-to-auto-mutate:user-paused",
+        branch,
+      }),
+    }));
+  });
+
+  it("skips auto-rebind when a checked-out task has a live metadata lease", async () => {
+    const id = await createTaskInReview("checked out safety gate");
+    const branch = await createUniqueFusionBranch(id, "checked-out");
+    const brokenBranch = `fusion/missing-${id.toLowerCase()}`;
+    await store.updateTask(id, { branch: brokenBranch, worktree: null, checkedOutBy: "agent-123" });
+
+    const manager = new SelfHealingManager(store, { rootDir });
+    const audit = spyOnRebindAudit(manager);
+    const result = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+    const updated = await store.getTask(id);
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: id, result: "skipped", reason: "unsafe-to-auto-mutate:checked-out" }),
+    ]));
+    expect(updated?.branch).toBe(brokenBranch);
+    expect(updated?.branch).not.toBe(branch);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: id,
+      mutationType: "task:auto-rebind-skipped",
+      metadata: expect.objectContaining({
+        reason: "unsafe-to-auto-mutate:checked-out",
+        branch,
+      }),
+    }));
+  });
+
+  it("metadata-repairs safe autoMerge false in-review tasks without lifecycle mutation", async () => {
+    const id = await createTaskInReview("manual merge metadata repair");
+    const branch = await createUniqueFusionBranch(id, "manual-merge");
+    const mainSha = git(rootDir, "rev-parse main");
+    await store.updateTask(id, { branch: null, worktree: null, baseCommitSha: mainSha, autoMerge: false });
+
+    const manager = new SelfHealingManager(store, { rootDir });
+    const result = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+    const updated = await store.getTask(id);
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ taskId: id, result: "applied", branch })]));
+    expect(updated?.branch).toBe(branch);
+    expect(updated?.column).toBe("in-review");
+    expect(updated?.status).not.toBe("failed");
+    expect(updated?.paused).not.toBe(true);
+    expect(updated?.baseCommitSha).toBe(mainSha);
   });
 
   it("preserves FN-4962 ordering with metadata reconcile before rebind", async () => {
@@ -88,8 +177,48 @@ describe("FN-5083 reliability interactions: in-review branch rebind", () => {
 
     const manager = new SelfHealingManager(store, { rootDir });
     const result = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+    const updated = await store.getTask(id);
 
     expect(result.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ taskId: id, result: "applied", branch })]));
+    expect(updated?.baseCommitSha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("preserves no-live-branch skip outcome", async () => {
+    const id = await createTaskInReview("no live branch");
+    await store.updateTask(id, { branch: null, worktree: null });
+
+    const manager = new SelfHealingManager(store, { rootDir });
+    const audit = spyOnRebindAudit(manager);
+    const result = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: id, result: "skipped", reason: "no-live-branch" }),
+    ]));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: id,
+      mutationType: "task:auto-rebind-skipped",
+      metadata: expect.objectContaining({ reason: "no-live-branch" }),
+    }));
+  });
+
+  it("preserves no-unique-work skip outcome", async () => {
+    const id = await createTaskInReview("no unique work");
+    const branch = `fusion/${id.toLowerCase()}`;
+    git(rootDir, `branch ${branch} main`);
+    await store.updateTask(id, { branch: null, worktree: null });
+
+    const manager = new SelfHealingManager(store, { rootDir });
+    const audit = spyOnRebindAudit(manager);
+    const result = await manager.reconcileInReviewBranchRebind({ includeTaskIds: new Set([id]) });
+
+    expect(result.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskId: id, result: "skipped", reason: "no-unique-work" }),
+    ]));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: id,
+      mutationType: "task:auto-rebind-skipped",
+      metadata: expect.objectContaining({ reason: "no-unique-work" }),
+    }));
   });
 
   it("skips ambiguous case-variant candidates when filesystem permits both refs", async () => {

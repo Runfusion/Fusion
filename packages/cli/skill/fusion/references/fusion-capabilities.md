@@ -67,6 +67,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_agent_stop` | Stop a running agent — pauses its execution. Transitions the agent from running/active to paused state. |
 | `fn_agent_start` | Start a stopped agent — resumes its execution. Transitions the agent from paused to active state. |
 | `fn_agent_create` | Create a new non-ephemeral agent. |
+| `fn_agent_set_instructions` | Set the instructionsText and/or instructionsPath of one of the caller's direct or indirect reports. At least one of instructions_text or instructions_path is required; pass an empty string to clear a field. The change is persisted and recorded as a config revision. |
 | `fn_agent_delete` | Delete a non-ephemeral agent. |
 | `fn_list_agents` | List all available agents in the system. Shows each agent's name, role, state, personality (soul), and current assignment. Use this to discover which agents exist and what they specialize in before delegating work. |
 | `fn_delegate_task` | Create a new task and assign it to a specific agent for execution. The task goes to 'todo' and will be picked up by the target agent on their next heartbeat cycle. Use fn_list_agents first to find available agents and their capabilities. Optionally pass workflow_id to select a workflow at creation time; use fn_workflow_list to discover valid IDs. |

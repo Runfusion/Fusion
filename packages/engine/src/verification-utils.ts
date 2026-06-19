@@ -10,6 +10,7 @@ import type { SandboxBackend, SandboxRunStreamingOptions, SandboxStreamingResult
 
 export const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
 export const VERIFICATION_COMMAND_TIMEOUT_MS = 600_000;
+export const VERIFICATION_COMMAND_HARD_CAP_MS = 1_800_000;
 export const VERIFICATION_LOG_MAX_CHARS = 20_000;
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -329,6 +330,8 @@ export async function runVerificationCommand(
    * state (required for safe concurrent verification — see mission-verification).
    */
   backend?: SandboxBackend,
+  /** Optional project-level per-command timeout override in milliseconds. Values <= 0 preserve the legacy default. */
+  timeoutMsOverride?: number,
 ): Promise<VerificationCommandResult> {
   const logger = log ?? { log: console.log, error: console.error, warn: console.warn };
   const label = (agentLabel ?? "merger") as AgentRole;
@@ -353,12 +356,20 @@ export async function runVerificationCommand(
   };
 
   const verificationStartedAt = Date.now();
+  /*
+   * FNXC:Verification 2026-06-17-14:38:
+   * Configured test/build commands share the same project verification budget as fn_run_verification so merge/step verification cannot run marathon subprocesses outside the engine-level guardrail.
+   */
+  const rawTimeoutMs = typeof timeoutMsOverride === "number" && timeoutMsOverride > 0
+    ? timeoutMsOverride
+    : VERIFICATION_COMMAND_TIMEOUT_MS;
+  const timeoutMs = Math.min(rawTimeoutMs, VERIFICATION_COMMAND_HARD_CAP_MS);
   try {
     const { stdout, stderr, bufferOverflow } = await execWithProcessGroup(
       command,
       {
         cwd: rootDir,
-        timeout: VERIFICATION_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
         maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
         signal,
         ...(extraEnv !== undefined && { env: extraEnv }),

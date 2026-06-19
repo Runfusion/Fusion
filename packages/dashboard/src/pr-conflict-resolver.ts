@@ -97,6 +97,32 @@ async function findFilesWithConflictMarkers(rootDir: string, files: string[]): P
   return conflicted;
 }
 
+function getGitExitCode(error: unknown): number | undefined {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === "number" ? code : undefined;
+}
+
+async function hasStagedChanges(cwd: string): Promise<boolean> {
+  try {
+    await runGitCommand(["diff", "--cached", "--quiet"], cwd, GIT_TIMEOUT_MS);
+    return false;
+  } catch (error) {
+    if (getGitExitCode(error) === 1) {
+      return true;
+    }
+    throw error;
+  }
+}
+
+async function stageAndCommitIfNeeded(cwd: string, commitArgs: string[]): Promise<boolean> {
+  await runGitCommand(["add", "-A"], cwd, GIT_TIMEOUT_MS);
+  if (!await hasStagedChanges(cwd)) {
+    return false;
+  }
+  await runGitCommand(["commit", ...commitArgs], cwd, GIT_TIMEOUT_MS);
+  return true;
+}
+
 async function abortMerge(cwd: string): Promise<void> {
   try {
     await runGitCommand(["merge", "--abort"], cwd, GIT_TIMEOUT_MS);
@@ -206,14 +232,22 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
         }
 
         await store.logEntry(taskId, "AI PR conflict resolution completed", `${conflictedFiles.length} conflicted file(s) resolved`);
-        await runGitCommand(["add", "-A"], cwd, GIT_TIMEOUT_MS);
-        await runGitCommand([
-          "commit",
+        const committed = await stageAndCommitIfNeeded(cwd, [
           "-m",
           `fix(FN-5949): resolve PR conflicts for ${taskId}`,
           "-m",
           `Fusion-Task-Id: ${taskId}`,
-        ], cwd, GIT_TIMEOUT_MS);
+        ]);
+        if (!committed) {
+          await abortMerge(cwd);
+          await store.logEntry(taskId, "Skipped PR conflict resolution commit", "No staged changes after AI conflict resolution");
+          return {
+            resolved: true,
+            pushed: false,
+            conflictedFiles,
+            message: `Resolved conflicts with ${baseRef}, but no merge commit was needed because there were no staged changes.`,
+          };
+        }
         await runGitCommand(["push", "-u", "origin", branchName], cwd, GIT_TIMEOUT_MS);
         await store.logEntry(taskId, "Pushed PR branch after AI conflict resolution", branchName);
 
@@ -229,14 +263,21 @@ export async function resolvePrConflicts(input: ResolvePrConflictsInput): Promis
       }
     }
 
-    await runGitCommand(["add", "-A"], cwd, GIT_TIMEOUT_MS);
-    await runGitCommand([
-      "commit",
+    const committed = await stageAndCommitIfNeeded(cwd, [
       "-m",
       `fix(FN-5949): merge ${baseRef} into ${taskId}`,
       "-m",
       `Fusion-Task-Id: ${taskId}`,
-    ], cwd, GIT_TIMEOUT_MS);
+    ]);
+    if (!committed) {
+      await store.logEntry(taskId, "Skipped PR conflict-free merge commit", `${baseRef} already merged into ${branchName}`);
+      return {
+        resolved: true,
+        pushed: false,
+        conflictedFiles: [],
+        message: `${baseRef} already merged into ${branchName}; no merge commit needed.`,
+      };
+    }
     await runGitCommand(["push", "-u", "origin", branchName], cwd, GIT_TIMEOUT_MS);
     await store.logEntry(taskId, "Pushed PR branch after conflict-free merge", branchName);
 

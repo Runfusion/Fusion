@@ -1195,7 +1195,7 @@
     "cancelButton": "Cancel",
     "clearConversationFailed": "Failed to clear conversation",
     "closeQuickChat": "Close quick chat",
-    "connectingStatus": "Connecting…",
+    "workingStatus": "Working…",
     "conversationArchived": "Conversation archived",
     "conversationDeleted": "Conversation deleted",
     "copyFailed": "Copy failed",
@@ -1250,6 +1250,16 @@
     "noSkillsAvailable": "No skills available",
     "noSkillsFound": "No skills found",
     "openQuickChat": "Open quick chat",
+    "questionAnsweredLabel": "Answered",
+    "questionAnsweredWithoutContent": "A later user reply answered this question.",
+    "questionConfirmNo": "No",
+    "questionConfirmYes": "Yes",
+    "questionResponseEyebrow": "Assistant question",
+    "questionResponseLabel": "Question from assistant",
+    "questionSelectHint": "Answer all questions to continue the chat.",
+    "questionSubmit": "Send answer",
+    "questionSubmittedAnswerLabel": "Submitted answer",
+    "questionTextPlaceholder": "Type your answer here…",
     "queuedMessage": "Queued: {{preview}}",
     "quickChatTitle": "Quick Chat",
     "relativeTimeDays_one": "{{count}}d ago",
@@ -1938,6 +1948,17 @@
     "toggleWordWrap": "Toggle word wrap",
     "wrap": "Wrap"
   },
+  "selectionComment": {
+    "addComment": "Add comment",
+    "addCommentAria": "Add a comment to the selected text and send it to a new task",
+    "cancel": "Cancel",
+    "commentAria": "Comment for the new task",
+    "commentPlaceholder": "Describe the task this snippet should become…",
+    "dialogAria": "Comment on selected text",
+    "selectedSnippet": "Selected snippet",
+    "sendToNewTask": "Send to new task",
+    "title": "Comment on selection"
+  },
   "fileMention": {
     "empty": "No tasks or files found",
     "fileHeader": "Files",
@@ -2454,7 +2475,8 @@
     "viewProjects": "View Projects",
     "viewUsage": "View usage",
     "workflows": "Workflows",
-    "workingBranch": "Working branch"
+    "workingBranch": "Working branch",
+    "commandCenterView": "Command Center"
   },
   "health": {
     "activeTasks": "Active Tasks",
@@ -3469,7 +3491,8 @@
     "terminal": "Terminal",
     "todos": "Todos",
     "usage": "Usage",
-    "workflows": "Workflows"
+    "workflows": "Workflows",
+    "commandCenter": "Command Center"
   },
   "newTaskModal": {
     "addDependencies": "Add dependencies",
@@ -4981,6 +5004,13 @@
       "learnMore": "Learn more",
       "settingsSaved": "Settings saved",
       "updateAvailablePrefix": "v{{version}} available",
+      "updateCheckFailed": "Failed to check for updates",
+      "updateFailed": "Update failed",
+      "updateFailedWithMessage": "Update failed: {{message}}",
+      "updateNow": "Update now",
+      "updateSuccess": "Updated to v{{version}} — restart Fusion to apply",
+      "updateSuccessToast": "Update installed. Restart Fusion to apply it.",
+      "updating": "Updating…",
       "upToDate": "You're up to date ✓"
     },
     "header": {
@@ -5572,6 +5602,8 @@
     "generatingSubtasks": "AI is generating subtasks...",
     "groupedOnSharedBranch": "Grouped on shared branch",
     "hideThinking": "Hide thinking",
+    "keepSessionMessage": "Close this modal and keep the subtask session available from Background Tasks? Edited fields that have not been saved to the session may be reset when you resume.",
+    "keepSessionTitle": "Keep subtask session available?",
     "modalTitle": "Subtask Breakdown",
     "moveDown": "Move down",
     "moveSubtaskDownAriaLabel": "Move subtask down",
@@ -5582,6 +5614,7 @@
     "openGroupModal": "Open group modal",
     "planningBranchModeLabel": "Planning branch mode",
     "preparingBreakdown": "Preparing to break this task into subtasks.",
+    "progressHint": "Fusion will keep working while the AI prepares subtasks.",
     "reconnecting": "Reconnecting…",
     "remove": "Remove",
     "retry": "Retry",
@@ -5595,9 +5628,11 @@
     "sessionActiveAnotherTabTakeover": "This session is active in another tab",
     "showThinking": "Show thinking",
     "sizeLabel": "Size",
+    "startingBreakdown": "Starting subtask breakdown...",
     "takeControl": "Take Control",
     "takingControl": "Taking control...",
     "titleLabel": "Title",
+    "waitingForThinking": "Waiting for AI progress updates...",
     "untitled": "Untitled"
   },
   "syncLog": {
@@ -6180,10 +6215,10 @@
     "yes": "Yes"
   },
   "taskFields": {
+    "unset": "—",
     "moreFields": "Additional fields",
     "orphaned": "Orphaned fields",
-    "saveFailed": "Failed to save field",
-    "unset": "—"
+    "saveFailed": "Failed to save field"
   },
   "taskForm": {
     "addDependencies": "Add dependencies",
@@ -6622,7 +6657,12 @@
     "dismissLabel": "Dismiss update notice",
     "learnMore": "Learn more",
     "message": "Update available: v{{latestVersion}} (current: v{{currentVersion}}). Run fn update for an installed CLI, or pull this source checkout.",
-    "releaseNotes": "Release notes"
+    "releaseNotes": "Release notes",
+    "updateFailed": "Update failed",
+    "updateFailedWithMessage": "Update failed: {{message}}",
+    "updateNow": "Update now",
+    "updateSuccess": "Updated to v{{version}} — restart Fusion to apply",
+    "updating": "Updating…"
   },
   "usage": {
     "configureAuthHint": "Configure authentication in Settings to see usage data.",
@@ -6878,6 +6918,10 @@
     "gateBlocks": "Gate (blocks)",
     "gateMode": "Gate mode",
     "insertTemplate": "Insert template {{name}}",
+    "mobileConnect": "Connect",
+    "mobileConnectTarget": "Target node",
+    "mobileConnectChooseTarget": "Choose a target…",
+    "duplicateBlocked": "That connection already exists",
     "interpreterOnly": "This workflow branches, so it runs on the graph interpreter — it can't compile to the linear step engine, but it will still run.",
     "joinAll": "All branches",
     "joinAny": "Any branch",
@@ -6899,6 +6943,9 @@
     "reviewPlan": "Plan review",
     "reviewType": "Review type",
     "splitNote": "Branches run concurrently from this node. Execute and merge seams are not allowed inside a branch.",
+    "startEntryColumn": "Entry column",
+    "startEntryColumnAuto": "— Auto (first column)",
+    "startNote": "The start node marks where a task enters the workflow.",
     "stepExecuteLabel": "Step execute",
     "summaryAwaitInput": "Waits for user input",
     "summaryCodeDefault": "TypeScript",
@@ -6996,12 +7043,6 @@
     "sha256": "SHA-256",
     "version": "Version"
   },
-  "taskFields": {
-    "unset": "—",
-    "moreFields": "Additional fields",
-    "orphaned": "Orphaned fields",
-    "saveFailed": "Failed to save field"
-  },
   "workflowEditor": {
     "cliAgent": {
       "executorOption": "CLI agent",
@@ -7043,5 +7084,43 @@
     "mobileKeyArrowDown": "Cursor down",
     "mobileKeyArrowLeft": "Cursor left",
     "mobileKeyArrowRight": "Cursor right"
+  },
+  "commandCenter": {
+    "heading": "Command Center",
+    "loading": "Loading command center...",
+    "empty": "No usage data yet. Run some agents to populate the Command Center.",
+    "areaPending": "This area renders once metrics data is available.",
+    "tablistLabel": "Command Center sections",
+    "tabs": {
+      "overview": "Overview",
+      "tokens": "Tokens",
+      "tools": "Tools",
+      "activity": "Activity",
+      "productivity": "Productivity",
+      "reliability": "Reliability",
+      "ecosystem": "Ecosystem",
+      "missionControl": "Mission Control"
+    },
+    "overview": {
+      "tokensCost": "Tokens & cost",
+      "autonomy": "Autonomy ratio",
+      "activeNodes": "Active nodes",
+      "tasksDone": "Tasks done",
+      "uniqueModels": "Unique models",
+      "openSignals": "Open signals",
+      "liveStrip": "Live activity",
+      "liveStripPending": "Live Mission Control loads with active sessions."
+    },
+    "range": {
+      "last24h": "Last 24h",
+      "last7d": "Last 7 days",
+      "last30d": "Last 30 days",
+      "allTime": "All time",
+      "custom": "Custom range",
+      "dialogLabel": "Select date range",
+      "from": "From",
+      "to": "To",
+      "invalidRange": "Start date must be on or before end date"
+    }
   }
 }

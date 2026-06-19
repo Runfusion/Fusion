@@ -316,13 +316,35 @@ describe("Transient Error Detector", () => {
         .toBe(true);
     });
 
-    it("returns false for unrelated and provider role-validation errors", () => {
+    it("returns true for Codex transcript-desync errors", () => {
+      expect(
+        isNonContinuableSessionError(
+          "No tool call found for function call output with call_id call_2KewW55MyBgwZoNtMubFNpUb.",
+        ),
+      ).toBe(true);
+      expect(
+        isNonContinuableSessionError(
+          'Codex error: {"type":"error","error":{"type":"invalid_request_error","message":"No tool call found for function call output with call_id call_2KewW55MyBgwZoNtMubFNpUb.","param":"input"},"status":400}',
+        ),
+      ).toBe(true);
+      expect(
+        isNonContinuableSessionError(
+          "No function call found for function call output with call_id call_2KewW55MyBgwZoNtMubFNpUb.",
+        ),
+      ).toBe(true);
+    });
+
+    it("returns false for unrelated, operator-actionable, and ordinary bad-input errors", () => {
       expect(isNonContinuableSessionError("socket hang up")).toBe(false);
       expect(
         isNonContinuableSessionError(
           "developer is not one of ['system', 'assistant', 'user', 'tool', 'function'] - 'messages.[0].role'",
         ),
       ).toBe(false);
+      expect(isNonContinuableSessionError("invalid api key")).toBe(false);
+      expect(isNonContinuableSessionError("quota exceeded")).toBe(false);
+      expect(isNonContinuableSessionError("billing issue: quota exceeded")).toBe(false);
+      expect(isNonContinuableSessionError("400 invalid_request_error: invalid temperature")).toBe(false);
     });
   });
 

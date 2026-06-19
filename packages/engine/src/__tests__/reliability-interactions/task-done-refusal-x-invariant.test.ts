@@ -104,7 +104,7 @@ describe("FN-4851 reliability interactions: task-done refusals x invariant", () 
     expect(getTask().taskDoneRetryCount).toBe(2);
 
     getTask().steps = [{ name: "S1", status: "in-progress" }];
-    await reviewTool.execute("rev", { step: 1, type: "code", step_name: "S1", baseline: "abc" });
+    await reviewTool.execute("rev", { step: 0, type: "code", step_name: "S1", baseline: "abc" });
     const third = await doneTool.execute("3", { summary: "Completed implementation and tests." });
     expect(third.details.refusalClass).toBe("pending-code-review-revise");
     expect(getTask().taskDoneRetryCount).toBe(3);

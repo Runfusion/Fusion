@@ -1,6 +1,6 @@
 /* === Conversation History Timeline === */
 .conversation-history {
-  border-left: 2px solid var(--border-primary);
+  border-left: 2px solid var(--border);
   padding: 0 0 0 12px;
   margin: 0 0 16px;
   max-height: 280px;
@@ -33,8 +33,8 @@
   padding: 2px 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
-  border: 1px solid var(--border-primary);
-  color: var(--text-primary);
+  border: 1px solid var(--border);
+  color: var(--text);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -42,11 +42,11 @@
 }
 
 .conversation-entry-response {
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
   padding: 8px 10px;
-  color: var(--text-primary);
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -68,7 +68,7 @@
 
 .conversation-entry-thinking pre {
   margin: 0;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
   padding: 10px;
@@ -86,7 +86,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: transparent;
   color: var(--text-muted);
@@ -99,7 +99,7 @@
 
 .conversation-thinking-toggle:hover {
   background: var(--bg-secondary);
-  color: var(--text-primary);
+  color: var(--text);
 }
 
 .conversation-thinking-toggle:focus-visible {
@@ -108,7 +108,7 @@
 }
 
 .conversation-separator {
-  border-top: 1px solid var(--border-primary);
+  border-top: 1px solid var(--border);
   margin: 4px 0 16px;
 }
 

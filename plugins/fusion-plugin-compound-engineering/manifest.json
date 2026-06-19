@@ -30,13 +30,13 @@
       "group": "Sessions",
       "defaultValue": ""
     },
-    "enabledStages": {
+    "disabledStages": {
       "type": "array",
       "itemType": "string",
-      "label": "Enabled Stages",
-      "description": "Stage IDs that may be launched from the Compound Engineering view (for example strategy, ideate, brainstorm, plan, work).",
+      "label": "Disabled Stages",
+      "description": "Stage IDs hidden from launch in the Compound Engineering view. Empty means all registered stages are launchable.",
       "group": "Sessions",
-      "defaultValue": ["strategy", "ideate", "brainstorm", "plan", "work"]
+      "defaultValue": []
     },
     "reconcileOnHooks": {
       "type": "boolean",

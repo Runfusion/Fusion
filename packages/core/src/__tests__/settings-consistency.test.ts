@@ -76,6 +76,11 @@ describe("settings consistency (U5)", () => {
       expect(isGlobalSettingsKey(key), `isGlobalSettingsKey('${key}') must be false`).toBe(false);
       expect(isProjectSettingsKey(key), `isProjectSettingsKey('${key}') must be false`).toBe(false);
     }
+
+    expect(projectKeys, "verificationCommandTimeoutMs remains a project setting, not a moved workflow setting").toContain("verificationCommandTimeoutMs");
+    expect(DEFAULT_PROJECT_SETTINGS.verificationCommandTimeoutMs).toBeUndefined();
+    expect(isProjectSettingsKey("verificationCommandTimeoutMs")).toBe(true);
+    expect(isGlobalSettingsKey("verificationCommandTimeoutMs")).toBe(false);
   });
 
   it("(d) settings-export v2 global/project section keys never overlap moved keys", async () => {

@@ -4,6 +4,10 @@
 
 Fusion uses multiple agent roles for planning, execution, review, and merge workflows.
 
+## CLI session actions
+
+The dashboard's CLI session banner uses authenticated `POST /api/cli-sessions/:id/*` routes for task-bound CLI sessions. `POST /api/cli-sessions/:id/relaunch` is project-scoped, rejects sessions that do not have a `taskId`, records a relaunch intent, and lets the engine listener clear resume linkage before moving the owning task back to `todo` for a fresh executor launch. This route backs the `resume-exhausted` banner's **Relaunch fresh** action; when a session summary has no `cliSessionId`, the client does not call the route.
+
 ## Interactive CLI Chat
 
 Use `fn chat` to message an agent from your terminal.
@@ -19,6 +23,10 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
 - `fn chat <agent-id>` opens an interactive REPL.
 - Each message is stored as a `user-to-agent` MessageStore message from `cli` with `metadata.wakeRecipient=true`.
 - Agent replies are polled from your inbox and printed as they arrive.
+- Dashboard-created agent chat sessions request the target agent's declared `metadata.skills` plus enabled plugin-contributed skills, so skills such as `ce-debug` are available in chat when the contributing plugin is enabled. Model-only QuickChat sessions request enabled plugin skills, and room responder sessions request the responder agent's skills.
+- Agent-acting session lanes share the same skill-injection contract as executor sessions: executor, merger, triage, reviewer, heartbeat, step-session, dashboard chat/room responders, CLI agent execution, planning, mission interview, milestone/slice interview, agent-onboarding interview, workflow design, memory dreams/insight extraction, and scheduled cron automation all request agent/fallback skills plus enabled plugin-contributed skills when a plugin runner is available. Utility-only lanes that only summarize/extract/generate JSON (title/PR summaries, memory compaction, subtask breakdown, text refinement, agent generation, PR metadata generation, evaluator/research synthesis, and similar one-shot helpers) intentionally stay exempt to avoid loading skills where no agent-style tool loop can use them.
+- In dashboard model-loop chat (main chat, QuickChat, and room responders), typing `/skill:{name}` requests that skill for the current AI session and strips the slash token from the prompt sent to the model. The requested skill is still subject to the normal enabled/disabled execution-skill filters; CLI-agent-backed PTY chat keeps raw terminal input semantics and does not interpret this command.
+- Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write` and `fn_task_document_read`; because neither lane has an ambient task, both tools require an explicit `task_id`.
 
 ### Flags
 
@@ -40,6 +48,18 @@ printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 ```
 
 > Replies require a running engine for the same project (for example `fn` dashboard or `fn serve`).
+
+## Agent instruction updates from agents
+
+The `fn_agent_set_instructions` extension tool lets a managing agent update a report's operating instructions without opening the dashboard. It accepts:
+
+- `agent_id` — target agent ID or resolvable agent name.
+- `instructions_text` — optional inline instructions; pass an explicit empty string to clear `instructionsText`.
+- `instructions_path` — optional markdown file path; pass an explicit empty string to clear `instructionsPath`.
+
+At least one instruction field must be provided. The tool persists changes through `AgentStore.updateAgent`, so instruction edits are captured as normal agent config revisions.
+
+Authorization is scoped to the org hierarchy. When the caller is an agent (`ctx.agentId` is present), the target must be one of that caller's direct or indirect reports; self-targeting, peer/unrelated targets, and ancestors are rejected. Direct CLI/user calls that do not carry `ctx.agentId` are treated as privileged operator actions and may update any agent.
 
 ## Agent Field Parity Matrix
 
@@ -561,7 +581,7 @@ When an identity-bearing, non-ephemeral agent wakes with no assigned task and `r
 Guardrails:
 - Only unpaused, unassigned, unchecked-out todo tasks with satisfied dependencies are considered
 - Claims are rejected for terminal/paused/owned/conflicting tasks
-- Implementation-task backlog pickup is executor-only by default. Engineer-role agents may opt in through project setting `engineerBacklogAutoClaim` or per-agent `runtimeConfig.engineerBacklogAutoClaim`; the per-agent value overrides the project default in both directions.
+- Implementation-task backlog pickup is executor-only by default. Engineer-role agents may opt in through **Settings → Scheduling & Capacity → "Let engineer agents auto-claim backlog tasks"** (`settings.engineerBacklogAutoClaim`) or **Agents → Agent Detail → Settings → Heartbeat Settings → "Engineer Backlog Auto-Claim"** (`runtimeConfig.engineerBacklogAutoClaim`); the per-agent value overrides the project default in both directions. If a no-task engineer wake shows compatible backlog while this is disabled, delegate the work or create a coordination follow-up instead of treating the board as empty.
 - Explicit task routing/delegation is not affected by the backlog auto-claim opt-in gate.
 - Checkout safety is preserved (`checkout_conflict` paths are non-fatal skips)
 - On successful claim, the same heartbeat run switches into task-scoped execution (no nested run re-entry)

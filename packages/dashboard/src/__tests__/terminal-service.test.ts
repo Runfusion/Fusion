@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TerminalService, STALE_SESSION_THRESHOLD_MS } from "../terminal-service.js";
+import {
+  READY_QUIET_WINDOW_MS,
+  READY_TIMEOUT_MS,
+  TerminalService,
+  STALE_SESSION_THRESHOLD_MS,
+} from "../terminal-service.js";
 
 // Mock node-pty
 const mockPtyProcess = {
@@ -85,6 +90,124 @@ describe("TerminalService", () => {
 
   });
 
+  describe("waitForReady", () => {
+    it("does not resolve before any PTY output or timeout", async () => {
+      vi.useFakeTimers();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+
+      let resolved = false;
+      const ready = service.waitForReady(createResult.session.id).then(() => {
+        resolved = true;
+      });
+
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      vi.advanceTimersByTime(READY_TIMEOUT_MS - 1);
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      service.cleanup();
+      await ready;
+      vi.useRealTimers();
+    });
+
+    it("resolves after first PTY output and a quiet window", async () => {
+      vi.useFakeTimers();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+
+      let resolved = false;
+      const ready = service.waitForReady(createResult.session.id).then(() => {
+        resolved = true;
+      });
+
+      mockPtyProcess._onDataCallback?.("prompt$ ");
+      vi.advanceTimersByTime(READY_QUIET_WINDOW_MS - 1);
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      vi.advanceTimersByTime(1);
+      await ready;
+      expect(resolved).toBe(true);
+      expect(createResult.session.ready).toBe(true);
+      expect(createResult.session.firstOutputSeen).toBe(true);
+      expect(createResult.session.lastOutputAt).toEqual(expect.any(Number));
+      expect(vi.getTimerCount()).toBeGreaterThanOrEqual(0);
+      vi.useRealTimers();
+    });
+
+    it("restarts the quiet window when shell output continues", async () => {
+      vi.useFakeTimers();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+
+      let resolved = false;
+      const ready = service.waitForReady(createResult.session.id).then(() => {
+        resolved = true;
+      });
+
+      mockPtyProcess._onDataCallback?.("loading profile\n");
+      vi.advanceTimersByTime(READY_QUIET_WINDOW_MS - 1);
+      mockPtyProcess._onDataCallback?.("prompt$ ");
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      vi.advanceTimersByTime(READY_QUIET_WINDOW_MS - 2);
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      vi.advanceTimersByTime(1);
+      await ready;
+      expect(resolved).toBe(true);
+      vi.useRealTimers();
+    });
+
+    it("resolves via timeout when the PTY emits nothing", async () => {
+      vi.useFakeTimers();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+
+      let resolved = false;
+      const ready = service.waitForReady(createResult.session.id).then(() => {
+        resolved = true;
+      });
+
+      vi.advanceTimersByTime(READY_TIMEOUT_MS);
+      await ready;
+      expect(resolved).toBe(true);
+      expect(createResult.session.ready).toBe(true);
+      expect(createResult.session.firstOutputSeen).toBe(false);
+      vi.useRealTimers();
+    });
+
+    it("resolves on early exit and clears readiness timers", async () => {
+      vi.useFakeTimers();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+
+      let resolved = false;
+      const ready = service.waitForReady(createResult.session.id).then(() => {
+        resolved = true;
+      });
+
+      mockPtyProcess._onExitCallback?.({ exitCode: 0 });
+      await ready;
+      expect(resolved).toBe(true);
+      expect(createResult.session.readyTimeout).toBeNull();
+      expect(createResult.session.readyQuietTimeout).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    });
+  });
+
   describe("write", () => {
     it("sends data to PTY", async () => {
       const createResult = await service.createSession();
@@ -111,6 +234,24 @@ describe("TerminalService", () => {
 
       const result = service.write(session.id, "test\0malicious");
       expect(result).toBe(false);
+    });
+
+    it("keeps user keystroke writes immediate before readiness", async () => {
+      vi.useFakeTimers();
+      const createResult = await service.createSession();
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected terminal session creation to succeed");
+
+      const waitingForReady = service.waitForReady(createResult.session.id);
+      const result = service.write(createResult.session.id, "user typed input");
+
+      expect(result).toBe(true);
+      expect(mockPtyProcess.write).toHaveBeenCalledWith("user typed input");
+      expect(createResult.session.ready).toBe(false);
+
+      service.cleanup();
+      await waitingForReady;
+      vi.useRealTimers();
     });
   });
 

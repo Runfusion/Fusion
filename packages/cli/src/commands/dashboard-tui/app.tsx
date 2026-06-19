@@ -4335,9 +4335,12 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       return;
     }
 
-    // 'm' / 's' (alias) — switch to Main (status mode). Lowercase only;
-    // capital S/M are reserved for vim-style "jump to end" semantics.
-    if (input === "m" || input === "s") {
+    /*
+    FNXC:DashboardTui 2026-06-16-17:40:
+    The global `s` shortcut remains a Main/status alias everywhere except the Agents interactive view, where `s` is reserved for starting the selected agent. Keep `m` as the universal Main switch so Agents users can start an agent without being bounced out of the view.
+    */
+    const agentsStartKeyOwnsInput = state.mode === "interactive" && state.interactiveView === "agents";
+    if (input === "m" || (input === "s" && !agentsStartKeyOwnsInput)) {
       if (state.mode === "interactive") {
         controller.setMode("status");
         return;

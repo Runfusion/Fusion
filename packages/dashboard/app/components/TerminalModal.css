@@ -1,7 +1,15 @@
+/*
+FNXC:Terminal 2026-06-13-20:02:
+The symbols-only Nerd Font must stay unicode-range-scoped to Nerd Font codepoints only; otherwise mobile DOM/canvas xterm can measure ASCII cells against the symbols font after font-display: swap and render commands like `pnpm build` with oversized inter-character spacing.
+
+FNXC:Terminal 2026-06-17-18:12:
+FN-6603 found that unicode-range scoping is not enough when the symbols face is first: iOS canvas measurement can still use that first face for xterm cell metrics while DOM glyph fallback draws ASCII from a later monospace font. Keep text fonts first in terminalPreferences and this symbols face as a fallback so powerline glyphs remain available without corrupting ASCII cell width.
+*/
 @font-face {
   font-family: "Fusion Terminal Nerd Font Symbols";
   src: url("/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
   font-display: swap;
+  unicode-range: U+23FB-23FE, U+2665, U+26A1, U+2B58, U+E000-E00A, U+E0A0-E0D7, U+E200-E2A9, U+E300-E3E3, U+E5FA-E6B7, U+E700-E8EF, U+EA60-EC1E, U+ED00-F2FF, U+F300-F533, U+F0001-F1AF0;
 }
 
 /* === Terminal Modal === */
@@ -407,7 +415,7 @@
 }
 
 .terminal-prompt {
-  color: var(--success);
+  color: var(--color-success);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -430,7 +438,7 @@
 
 .terminal-output-error {
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  border-left: 3px solid var(--failed);
+  border-left: 3px solid var(--color-error);
 }
 
 .terminal-running-indicator {
@@ -470,7 +478,7 @@
 }
 
 .terminal-input-prompt {
-  color: var(--success);
+  color: var(--color-success);
   font-weight: 600;
   font-family: var(--font-mono);
   font-size: 13px;
@@ -505,7 +513,7 @@
 
 .terminal-kill-btn {
   padding: var(--space-sm) var(--space-lg);
-  background: var(--failed);
+  background: var(--color-error);
   border: none;
   border-radius: var(--radius);
   color: white;
@@ -535,6 +543,24 @@
   height: 100%;
   min-height: 0;
   padding: var(--space-xs);
+}
+
+/*
+FNXC:Terminal 2026-06-18-07:04:
+Real iOS Safari recurrence #4 kept wide ASCII cells even after unicode-range scoping and symbols-last ordering; the supplied harness measured AGENTS.md at the same 66.76px for every stack, so ordering is ruled out. Pin text-size adjustment across xterm's measurement subtree so mobile WebKit cannot inflate DOM/canvas cell metrics, while WebGL/desktop keep the same 100% text scale and every terminal preset still resolves through terminalPreferences.
+*/
+.terminal-xterm,
+.terminal-xterm * {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/*
+FNXC:Terminal 2026-06-18-15:44:
+FN-6659 keeps the loaded symbols @font-face out of xterm's measured font option because every FN-6638 diagnostic stack that measured 66.76px still included that face. Limit the symbols fallback to DOM renderer row spans via a CSS custom property so ASCII measurement, fit, refresh, and WebGL/canvas option paths stay symbols-free while powerline glyphs can still resolve when xterm emits DOM text nodes.
+*/
+.terminal-xterm .xterm-rows span {
+  font-family: var(--terminal-glyph-font-family, inherit) !important;
 }
 
 /*
@@ -636,7 +662,7 @@
 }
 
 .terminal-status.disconnected {
-  background: var(--error);
+  background: var(--color-error);
 }
 
 @keyframes terminal-pulse {
@@ -659,12 +685,17 @@
   overflow-y: auto;
 }
 
-.terminal-shortcut-modifier-row {
+.terminal-shortcut-modifier-row,
+.terminal-shortcut-arrow-row {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
   width: 100%;
   margin-bottom: var(--space-xs);
+}
+
+.terminal-shortcut-arrow-row {
+  justify-content: center;
 }
 
 .terminal-shortcut-btn {
@@ -703,6 +734,45 @@
   border-color: var(--in-progress);
 }
 
+.terminal-preferences-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 4), 1fr));
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.terminal-preference-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.terminal-preference-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  align-self: end;
+  color: var(--text);
+}
+
+.terminal-preference-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.terminal-preference-note {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.terminal-preferences-reset {
+  align-self: end;
+  justify-self: start;
+}
+
 .terminal-status-bar {
   display: flex;
   align-items: center;
@@ -728,11 +798,11 @@
 }
 
 .terminal-connection-status.disconnected {
-  color: var(--error);
+  color: var(--color-error);
 }
 
 .terminal-exit-code {
-  color: var(--error);
+  color: var(--color-error);
   font-weight: 500;
 }
 
@@ -801,7 +871,7 @@
   padding: var(--space-md) var(--space-lg);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-bottom: 1px solid var(--border);
-  color: var(--error);
+  color: var(--color-error);
   font-size: 13px;
 }
 
@@ -813,7 +883,7 @@
 }
 
 .terminal-error-content span {
-  color: var(--error, #f48771);
+  color: var(--color-error);
   text-align: center;
 }
 
@@ -975,6 +1045,17 @@
     min-width: calc(var(--space-xl) + var(--space-md));
     min-height: calc(var(--space-xl) + var(--space-md));
     font-size: 11px;
+  }
+
+  .terminal-preferences-panel {
+    grid-template-columns: 1fr;
+    max-height: calc(var(--space-2xl) * 8);
+    overflow-y: auto;
+  }
+
+  .terminal-preference-field--checkbox,
+  .terminal-preferences-reset {
+    align-self: stretch;
   }
 
   .terminal-font-size-btn {

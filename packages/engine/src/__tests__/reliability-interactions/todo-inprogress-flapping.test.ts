@@ -290,7 +290,7 @@ describe("FN-5941 reliability interactions: todo/in-progress flapping", () => {
     manager.stop();
   });
 
-  it("still requeues a genuinely dead task when stuck-kill budget is exhausted", async () => {
+  it("parks a genuinely dead incomplete task when stuck-kill budget is exhausted", async () => {
     const task = makeTask(rootDir, {
       id: "FN-5941-DEAD",
       stuckKillCount: 6,
@@ -314,7 +314,11 @@ describe("FN-5941 reliability interactions: todo/in-progress flapping", () => {
     }));
     expect(task.column).toBe("todo");
     expect(task.stuckKillCount).toBe(7);
-    expect(task.status).toBe("queued");
+    expect(task.status).toBe("failed");
+    expect(task.paused).toBe(true);
+    expect(task.pausedReason).toBe("stuck-loop-exhausted-manual-intervention-required");
+    expect(task.error).toContain("STUCK_LOOP_EXHAUSTED");
+    expect(task.userPaused).not.toBe(true);
 
     manager.stop();
   });

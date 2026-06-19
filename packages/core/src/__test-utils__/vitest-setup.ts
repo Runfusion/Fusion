@@ -14,8 +14,9 @@
 
 import { afterEach, expect } from "vitest";
 import { createRequire, syncBuiltinESMExports } from "node:module";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { isMainThread } from "node:worker_threads";
 import { assertOutsideRealFusionPath } from "../test-safety.js";
@@ -74,6 +75,8 @@ function installWarningFilter(): void {
 installWarningFilter();
 
 const TEST_HOME_PREFIX = "fn-test-home-";
+const WORKER_ROOT_OWNER_FILE = ".fusion-test-worker-root-owner";
+const FUSION_TEST_RUN_TOKEN_ENV = "FUSION_TEST_RUN_TOKEN";
 const DEFAULT_TEST_SUBPROCESS_TIMEOUT_MS = Math.max(
   1_000,
   Number.parseInt(process.env.FUSION_TEST_SUBPROCESS_TIMEOUT_MS ?? "30000", 10) || 30_000,
@@ -170,14 +173,43 @@ if (!process.env.FUSION_MASTER_KEY_DISABLE_KEYCHAIN) {
 // bounded one-level sweep of WORKER_ROOT, and a static root can accumulate enough
 // stale worker/home dirs after interrupted runs to make every mkdtempSync call
 // take seconds.
-const WORKER_ROOT = (() => {
+function ensureTestRunToken(): string {
+  const existing = process.env[FUSION_TEST_RUN_TOKEN_ENV];
+  if (existing && existing.trim().length > 0) return existing;
+  const token = randomUUID();
+  process.env[FUSION_TEST_RUN_TOKEN_ENV] = token;
+  return token;
+}
+
+function writeWorkerRootOwnerMarker(root: string): void {
+  try {
+    writeFileSync(
+      join(root, WORKER_ROOT_OWNER_FILE),
+      `${process.pid}\nrunToken=${ensureTestRunToken()}\n`,
+    );
+  } catch {
+    // Best effort only. The marker helps the pnpm-test runner distinguish a
+    // live same-run root from stale pid reuse; local exit cleanup still owns
+    // self-minted fallback roots by absolute path.
+  }
+}
+
+const { root: WORKER_ROOT, selfMinted: SELF_MINTED_WORKER_ROOT } = (() => {
   const fromEnv = process.env.FUSION_TEST_WORKER_ROOT;
-  const root = fromEnv && fromEnv.trim().length > 0
-    ? resolve(fromEnv)
-    : realpathSync(mkdtempSync(join(tmpdir(), "fusion-test-workers-")));
+  const selfMinted = !(fromEnv && fromEnv.trim().length > 0);
+  const root = selfMinted
+    ? realpathSync(mkdtempSync(join(tmpdir(), "fusion-test-workers-")))
+    : resolve(fromEnv);
   try { mkdirSync(root, { recursive: true }); } catch { /* ignore */ }
   process.env.FUSION_TEST_WORKER_ROOT = root;
-  return root;
+  ensureTestRunToken();
+  if (selfMinted) {
+    // FN-6396/FN-6360 recurrence: without globalSetup there is no teardown
+    // owner for this fallback root. Mark it and remove the root itself on exit
+    // so an empty fusion-test-workers-* shell cannot trip check-test-isolation.
+    writeWorkerRootOwnerMarker(root);
+  }
+  return { root, selfMinted };
 })();
 
 const REAL_TMPDIR = (() => {
@@ -187,11 +219,31 @@ const REAL_TMPDIR = (() => {
     return resolve(tmpdir());
   }
 })();
+const REAL_WORKER_ROOT = (() => {
+  try {
+    return realpathSync(WORKER_ROOT);
+  } catch {
+    return resolve(WORKER_ROOT);
+  }
+})();
 
 const TMPDIR_REDIRECT_REGISTRY = join(WORKER_ROOT, ".redir-pids");
 let tmpdirRedirectSink: string | null = null;
 let tmpdirRedirectExitCleanupInstalled = false;
 let tmpdirRedirectSweepComplete = false;
+
+function ensureWorkerRoot(): void {
+  /*
+  FNXC:TestIsolation 2026-06-14-01:55:
+  Concurrent Vitest lanes can observe a worker-root cleanup race where the per-invocation root disappears after module initialization but before a worker creates HOME or cwd directories.
+  Recreate the root immediately before every mkdtemp under it so a transient sibling teardown cannot fail suite startup with ENOENT.
+
+  FNXC:TestIsolation 2026-06-14-02:08:
+  When this helper recreates a removed root, it must also restore the owner marker; otherwise the post-test isolation guard reports the still-active rebuilt root as an unowned leak.
+  */
+  mkdirSync(WORKER_ROOT, { recursive: true });
+  writeWorkerRootOwnerMarker(WORKER_ROOT);
+}
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -279,6 +331,7 @@ export const __fusionTmpdirRedirectTestHooks = {
 };
 
 function ensureTmpdirRedirectSink(): string {
+  ensureWorkerRoot();
   if (tmpdirRedirectSink) {
     // FN-6310: recovery-timeout cleanup can remove a live worker's cached
     // redirect sink; recreate it on demand so later mkdtemp calls don't ENOENT.
@@ -324,13 +377,35 @@ function redirectTmpdirPrefix<T>(prefix: T): T {
   return join(ensureTmpdirRedirectSink(), basename(prefix)) as T;
 }
 
-function ensureIsolatedHome(): void {
-  const existingHome = process.env.HOME ?? process.env.USERPROFILE;
-  if (existingHome && existingHome.includes(tmpdir()) && existingHome.includes(TEST_HOME_PREFIX)) {
-    return;
-  }
+function isWorkerHomePath(path: string | undefined): boolean {
+  if (!path) return false;
+  const resolved = (() => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  })();
+  const workerRoots = Array.from(new Set([resolve(WORKER_ROOT), REAL_WORKER_ROOT]));
+  return workerRoots.some((root) => {
+    const relativeHome = relative(root, resolved);
+    return Boolean(relativeHome)
+      && !relativeHome.startsWith("..")
+      && !isAbsolute(relativeHome)
+      && basename(resolved).startsWith(TEST_HOME_PREFIX);
+  });
+}
 
-  const tempHome = realpathSync(mkdtempSync(join(WORKER_ROOT, `${TEST_HOME_PREFIX}${process.pid}-`)));
+function isCurrentWorkerHome(path: string | undefined): boolean {
+  if (!isWorkerHomePath(path)) return false;
+  if (!existsSync(path!)) {
+    ensureWorkerRoot();
+    mkdirSync(path!, { recursive: true });
+  }
+  return existsSync(path!);
+}
+
+function assignHomeEnv(tempHome: string): void {
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
   if (process.platform === "win32") {
@@ -342,14 +417,63 @@ function ensureIsolatedHome(): void {
   }
 }
 
+function ensureIsolatedHome(): void {
+  const existingHome = process.env.HOME ?? process.env.USERPROFILE;
+  if (isCurrentWorkerHome(existingHome)) {
+    return;
+  }
+
+  ensureWorkerRoot();
+  /*
+  FNXC:TestIsolation 2026-06-14-00:31:
+  Nested or recursive Vitest lanes may inherit a parent worker's `fn-test-home-*` HOME value, which shares global settings/cache state across files and keeps CLI suites load-sensitive.
+  Reuse HOME only when it belongs to this invocation's worker root; otherwise mint a fresh per-run HOME under `fusion-test-workers-*` so teardown removes it with the worker root.
+
+  FNXC:TestIsolation 2026-06-18-07:22:
+  FN-6610 requires a live worker's HOME redirect to survive sibling teardown without leaking a new `fn-test-home-*` directory per subprocess.
+  Recreate the owned HOME path when it was swept so repeated git/config subprocesses keep one stable per-worker HOME.
+  */
+  const tempHome = realpathSync(mkdtempSync(join(WORKER_ROOT, `${TEST_HOME_PREFIX}${process.pid}-`)));
+  assignHomeEnv(tempHome);
+}
+
 ensureIsolatedHome();
 
 let workerTempDir: string | null = null;
 if (isMainThread) {
+  ensureWorkerRoot();
   workerTempDir = realpathSync(
     mkdtempSync(join(WORKER_ROOT, `w-${process.pid}-`))
   );
   process.chdir(workerTempDir);
+}
+
+function ensureWorkerCwdForSubprocess(): void {
+  if (!isMainThread) return;
+  try {
+    originalCwd();
+    return;
+  } catch {
+    // Recreate below. A child process launched while uv_cwd is invalid fails
+    // before its own command can run, so the subprocess seam must repair cwd.
+  }
+
+  ensureWorkerRoot();
+  if (!workerTempDir || !existsSync(workerTempDir)) {
+    workerTempDir = realpathSync(mkdtempSync(join(WORKER_ROOT, `w-${process.pid}-`)));
+  }
+  process.chdir(workerTempDir);
+}
+
+function ensureRuntimeIsolationForSubprocess(): void {
+  /*
+  FNXC:TestIsolation 2026-06-18-07:22:
+  FN-6610 traced engine-lane git/config failures to live workers inheriting a swept cwd or `fn-test-home-*` directory after setup.
+  Revalidate cwd and HOME immediately before subprocess launch so real-git tests do not depend on setup-time paths surviving sibling teardown or recovery cleanup.
+  */
+  ensureWorkerRoot();
+  ensureIsolatedHome();
+  ensureWorkerCwdForSubprocess();
 }
 
 function installFsGuards(): void {
@@ -813,6 +937,7 @@ function installChildProcessGuards(): void {
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
+    ensureRuntimeIsolationForSubprocess();
     const proc = originalChildProcess.spawn(command, args, options);
     registerTrackedSubprocess(proc, commandLine);
     return proc;
@@ -828,6 +953,7 @@ function installChildProcessGuards(): void {
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
+    ensureRuntimeIsolationForSubprocess();
     return originalChildProcess.spawnSync(command, args, options);
   }) as ChildProcessModule["spawnSync"];
 
@@ -838,6 +964,7 @@ function installChildProcessGuards(): void {
     if (shouldBlockRealTestCli(command)) {
       throw blockedCliError(command);
     }
+    ensureRuntimeIsolationForSubprocess();
     return originalChildProcess.execSync(command, withDefaultTimeout(options));
   }) as ChildProcessModule["execSync"];
 
@@ -851,6 +978,7 @@ function installChildProcessGuards(): void {
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
+    ensureRuntimeIsolationForSubprocess();
     return originalChildProcess.execFileSync(file, args, options);
   }) as ChildProcessModule["execFileSync"];
 
@@ -866,6 +994,7 @@ function installChildProcessGuards(): void {
     }
     const options = typeof optionsOrCallback === "function" ? undefined : optionsOrCallback;
     const callback = typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback;
+    ensureRuntimeIsolationForSubprocess();
     const proc = originalChildProcess.exec(command, withDefaultTimeout(options), callback);
     registerTrackedSubprocess(proc, command);
     return proc;
@@ -899,6 +1028,7 @@ function installChildProcessGuards(): void {
     const callback = Array.isArray(argsOrOptions)
       ? (typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback)
       : (typeof argsOrOptions === "function" ? argsOrOptions : typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback);
+    ensureRuntimeIsolationForSubprocess();
     const proc = originalChildProcess.execFile(file, args, withDefaultTimeout(options), callback);
     registerTrackedSubprocess(proc, commandLine);
     return proc;
@@ -927,6 +1057,7 @@ function installChildProcessGuards(): void {
     if (shouldBlockRealTestCli(commandLine)) {
       throw blockedCliError(commandLine);
     }
+    ensureRuntimeIsolationForSubprocess();
     const proc = originalChildProcess.fork(modulePath, args, options);
     registerTrackedSubprocess(proc, commandLine);
     return proc;
@@ -1036,6 +1167,32 @@ afterEach(async () => {
   }
 });
 
+function sleepMsSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function removeSelfMintedWorkerRootWithRetry(
+  workerRoot = WORKER_ROOT,
+  selfMinted = SELF_MINTED_WORKER_ROOT,
+  delayMs = 25,
+): void {
+  if (!selfMinted) return;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      rmSync(workerRoot, { recursive: true, force: true });
+      return;
+    } catch {
+      if (attempt < 3) sleepMsSync(delayMs);
+    }
+  }
+}
+
+export const __fusionWorkerRootCleanupTestHooks = {
+  removeSelfMintedWorkerRootWithRetry,
+  writeWorkerRootOwnerMarker,
+};
+
 process.on("exit", () => {
   for (const [proc] of trackedSubprocesses) {
     try {
@@ -1045,11 +1202,14 @@ process.on("exit", () => {
     }
     cleanupTrackedSubprocess(proc);
   }
-  if (!workerTempDir) return;
-  try {
-    originalChdir(tmpdir());
-    rmSync(workerTempDir, { recursive: true, force: true });
-  } catch {
-    // Ignore — globalTeardown sweeps WORKER_ROOT anyway.
+  if (workerTempDir) {
+    try {
+      originalChdir(tmpdir());
+      rmSync(workerTempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore — globalTeardown sweeps env-owned WORKER_ROOT; self-minted roots
+      // get their own bounded best-effort removal below.
+    }
   }
+  removeSelfMintedWorkerRootWithRetry();
 });

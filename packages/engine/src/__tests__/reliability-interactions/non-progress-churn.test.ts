@@ -190,7 +190,62 @@ describe("reliability interactions: non-progress churn", () => {
     manager.stop();
   });
 
-  it("re-queues incomplete STUCK_LOOP_EXHAUSTED tasks in todo when the churn signal does not fire", async () => {
+  it("does not route active verification churn into loop recovery or stuck-kill budget", async () => {
+    const task = baseTask({ id: "FN-6598-RI" });
+    const store = createStore(task);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+    const beforeRequeue = vi.fn((taskId, reason, event) => manager.checkStuckBudget(taskId, reason, event));
+    const onLoopDetected = vi.fn().mockResolvedValue(false);
+    const detector = new StuckTaskDetector(store, { beforeRequeue, onLoopDetected });
+    const session = { dispose: vi.fn() };
+
+    detector.trackTask(task.id, session as any);
+    detector.beginVerification(task.id, 120_000);
+    vi.advanceTimersByTime(61_000);
+    for (let i = 0; i < 80; i++) {
+      detector.recordActivity(task.id);
+    }
+
+    await detector.checkNow();
+
+    expect(onLoopDetected).not.toHaveBeenCalled();
+    expect(beforeRequeue).not.toHaveBeenCalled();
+    expect(session.dispose).not.toHaveBeenCalled();
+    expect(task.column).toBe("in-progress");
+    expect(task.stuckKillCount).toBe(0);
+
+    manager.stop();
+  });
+
+  it("control: identical churn without active verification still reaches loop recovery and budget", async () => {
+    const task = baseTask({ id: "FN-6598-RI-CONTROL" });
+    const store = createStore(task);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+    const beforeRequeue = vi.fn((taskId, reason, event) => manager.checkStuckBudget(taskId, reason, event));
+    const onLoopDetected = vi.fn().mockResolvedValue(false);
+    const detector = new StuckTaskDetector(store, { beforeRequeue, onLoopDetected });
+    const session = { dispose: vi.fn() };
+
+    detector.trackTask(task.id, session as any);
+    vi.advanceTimersByTime(61_000);
+    for (let i = 0; i < 80; i++) {
+      detector.recordActivity(task.id);
+    }
+
+    await detector.checkNow();
+
+    expect(onLoopDetected).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.id, reason: "loop" }));
+    expect(beforeRequeue).toHaveBeenCalledWith(
+      task.id,
+      "loop",
+      expect.objectContaining({ taskId: task.id, reason: "loop" }),
+    );
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+
+    manager.stop();
+  });
+
+  it("parks incomplete STUCK_LOOP_EXHAUSTED tasks in todo when the churn signal does not fire", async () => {
     const task = baseTask({ id: "FN-5168-LOOP", stuckKillCount: 6 });
     const store = createStore(task);
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
@@ -210,17 +265,19 @@ describe("reliability interactions: non-progress churn", () => {
 
     await detector.killAndRetry(task.id, 60_000);
 
-    expect(task.error).toBeNull();
-    expect(task.status).toBe("queued");
+    expect(task.error).toContain("STUCK_LOOP_EXHAUSTED: incomplete task exhausted stuck kill budget");
+    expect(task.status).toBe("failed");
     expect(task.column).toBe("todo");
-    expect(task.paused).toBe(false);
-    expect(task.userPaused).toBe(false);
-    expect(task.pausedReason).toBeNull();
+    expect(task.paused).toBe(true);
+    // FN-6252 / Move-Task contract: engine rebounds do not write userPaused,
+    // so a never-user-paused task remains undefined while still not user-paused.
+    expect(task.userPaused).not.toBe(true);
+    expect(task.pausedReason).toBe("stuck-loop-exhausted-manual-intervention-required");
     expect(task.stuckKillCount).toBe(7);
     expect(task.steps).toEqual([{ name: "Implement", status: "in-progress" }]);
-    expect(task.log?.some((entry) => entry.action.includes("incomplete task exhausted stuck kill budget"))).toBe(true);
+    expect(task.log?.some((entry) => entry.action.includes("Parked in todo with progress preserved"))).toBe(true);
     expect(store.handoffToReview).not.toHaveBeenCalled();
-    expect(isRunnableQueuedOverlapCandidate(task, [task])).toBe(true);
+    expect(isRunnableQueuedOverlapCandidate(task, [task])).toBe(false);
 
     manager.stop();
   });

@@ -29,7 +29,16 @@ function parseTimestamp(updatedAt: string | undefined): number {
 }
 
 function shouldIncludeSession(session: AiSessionSummary): boolean {
-  return session.status === "generating" || session.status === "awaiting_input";
+  /*
+   * FNXC:SessionBanner 2026-06-14-19:32:
+   * Background session consumers need CLI agent `waiting_on_input` and `needs_attention` rows available so App can route them to SessionNotificationBanner. Counts below remain scoped to their legacy meanings, so BackgroundTasksIndicator panels are not reclassified by this inclusion.
+   */
+  return (
+    session.status === "generating" ||
+    session.status === "awaiting_input" ||
+    session.status === "waiting_on_input" ||
+    session.status === "needs_attention"
+  );
 }
 
 function isTerminalStatus(
@@ -388,7 +397,9 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
   return {
     sessions: active,
     generating: active.filter((session) => session.status === "generating").length,
-    needsInput: active.filter((session) => session.status === "awaiting_input").length,
+    needsInput: active.filter(
+      (session) => session.status === "awaiting_input" || session.status === "waiting_on_input",
+    ).length,
     planningSessions,
     dismissSession,
     refresh,

@@ -1,0 +1,8 @@
+/*
+ * SDLC funnel (U7). Layout-only; the funnel bars and stat cards reuse the shared
+ * `cc-funnel-*` (charts.css), `cc-area-*`, and `cc-stat-*` styles. This file just
+ * adds spacing between the funnel and the throughput cards.
+ */
+.cc-area[data-testid="cc-area-funnel"] .cc-area-section + .cc-area-section {
+  margin-top: var(--space-lg);
+}

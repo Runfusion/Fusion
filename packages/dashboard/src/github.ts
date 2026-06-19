@@ -3308,6 +3308,7 @@ export class GitHubClient {
     html_url: string;
     state: "open" | "closed";
     stateReason?: "completed" | "not_planned" | "reopened";
+    closedAt?: string;
   } | null> {
     if (this.hasGhAuth()) {
       try {
@@ -3337,6 +3338,7 @@ export class GitHubClient {
     html_url: string;
     state: "open" | "closed";
     stateReason?: "completed" | "not_planned" | "reopened";
+    closedAt?: string;
   } | null> {
     try {
       const issue = await runGhJsonAsync<{
@@ -3346,10 +3348,11 @@ export class GitHubClient {
         url: string;
         state: "OPEN" | "CLOSED";
         stateReason?: "completed" | "not_planned" | "reopened";
+        closedAt?: string | null;
       }>([
         "issue", "view", String(number),
         "--repo", `${owner}/${repo}`,
-        "--json", "number,title,body,url,state,stateReason",
+        "--json", "number,title,body,url,state,stateReason,closedAt",
       ]);
 
       return {
@@ -3359,6 +3362,7 @@ export class GitHubClient {
         html_url: issue.url,
         state: this.mapGhIssueState(issue.state),
         stateReason: issue.stateReason,
+        closedAt: normalizeIssueClosedAt(issue.closedAt),
       };
     } catch (err) {
       // gh issue view returns error if the issue is actually a PR
@@ -3383,6 +3387,7 @@ export class GitHubClient {
     html_url: string;
     state: "open" | "closed";
     stateReason?: "completed" | "not_planned" | "reopened";
+    closedAt?: string;
   } | null> {
     const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`;
     const headers = this.buildHeaders();
@@ -3403,6 +3408,7 @@ export class GitHubClient {
       html_url: string;
       state: string;
       state_reason?: "completed" | "not_planned" | "reopened";
+      closed_at?: string | null;
       pull_request?: unknown;
     };
 
@@ -3418,6 +3424,7 @@ export class GitHubClient {
       body: data.body,
       state: this.mapIssueState(data.state),
       stateReason: data.state_reason ?? undefined,
+      closedAt: normalizeIssueClosedAt(data.closed_at),
     };
   }
 
@@ -3973,6 +3980,17 @@ function normalizeBadgeBatchPayload(
   }
 
   return response;
+}
+
+/**
+ * FNXC:GithubSourceIssueAnalytics 2026-06-18-18:10:
+ * GitHub source-issue reconciliation must only persist real closure timestamps, so `getIssue()` surfaces provider close times while normalizing absent and sentinel values to undefined for open or not-yet-observed issues.
+ */
+function normalizeIssueClosedAt(value: string | null | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("0001-01-01T00:00:00")) return undefined;
+  return Number.isFinite(Date.parse(trimmed)) ? trimmed : undefined;
 }
 
 function isGraphQlBatchPullRequest(

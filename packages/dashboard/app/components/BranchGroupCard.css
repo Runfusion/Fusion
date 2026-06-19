@@ -28,7 +28,7 @@
 }
 
 .branch-group-card-badge {
-  background: var(--surface-elevated);
+  background: var(--surface-1);
 }
 
 .branch-group-card-header-meta .btn {
@@ -45,14 +45,14 @@
 
 .branch-group-card-progress-text {
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: 0.875rem;
 }
 
 .branch-group-card-progress {
   width: 100%;
   height: var(--space-xs);
   border-radius: var(--radius-pill);
-  background: var(--surface-elevated);
+  background: var(--surface-1);
   overflow: hidden;
 }
 

@@ -33,6 +33,13 @@ jobs:
   test-shards:
     name: Test shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
+    # Backstop for a wedged shard. The per-invocation watchdog (L2,
+    # scripts/lib/run-vitest-watchdog.mjs) kills any single hung invocation at
+    # its budget ceiling (<=30min), so this job budget only fires if L2 itself
+    # wedges — and it must sit strictly above that ceiling so L2 fires first.
+    # Without this, a hang ran to GitHub's 6h default (the silent-black-hole bug
+    # this plan closes).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -119,6 +126,9 @@ jobs:
   test-inventory-guard:
     name: Dashboard curated-gate guard
     runs-on: ubuntu-latest
+    # Runs only `vitest list` (no tests execute), so this is generous headroom,
+    # not a tight bound — but no CI job should be able to hang to the 6h ceiling.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -163,6 +173,9 @@ jobs:
   test-slow:
     name: Engine slow tier
     runs-on: ubuntu-latest
+    # Real-git slow suites; same backstop rationale as test-shards. Sits above
+    # the L2 per-invocation ceiling so the watchdog fires first on a single hang.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
