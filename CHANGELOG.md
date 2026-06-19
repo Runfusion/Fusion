@@ -2,6 +2,269 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.44.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.44.0
+- @fusion/engine@0.44.0
+- @fusion/i18n@0.39.7
+- @fusion-plugin-examples/cli-printing-press@0.1.24
+- @fusion-plugin-examples/compound-engineering@0.1.7
+- @fusion-plugin-examples/dependency-graph@0.1.38
+- @fusion-plugin-examples/roadmap@0.1.26
+- @fusion-plugin-examples/cursor-runtime@0.1.26
+- @fusion-plugin-examples/droid-runtime@0.1.33
+- @fusion-plugin-examples/hermes-runtime@0.2.57
+- @fusion-plugin-examples/openclaw-runtime@0.2.57
+- @fusion-plugin-examples/paperclip-runtime@0.2.57
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- @fusion/core@0.44.0
+- @fusion/dashboard@0.44.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.44.0
+- @fusion/pi-claude-cli@0.44.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.44.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 6427802: Route Fusion's Claude CLI path through the ACP bridge (`claude-code-cli-acp`) instead of `claude -p` (Route A, dormant behind an OFF-by-default kill-switch).
+
+  - **U10** — forward `mcpServers` on ACP `session/new` through the runtime contract (`AgentRuntimeOptions.mcpServers` + the plugin's `newAcpSession`); defaults to `[]` so existing read-only ACP "ask" turns are unchanged.
+  - **U11** — `streamViaAcp`: the `pi-claude-cli` provider can drive Claude through the bundled ACP bridge, returning the same `AssistantMessageEventStream` as the `-p` path. Dispatched only when `FUSION_CLAUDE_ACP=1` and a bridge path are present, so the live `-p` path is byte-for-byte untouched by default. Full-history prompting, schema-only MCP forwarding with break-early on pi-known tools, control-char/size sanitization, env allow-list, process-registry registration, and inactivity timeout.
+  - **KTD10** — the ACP runtime plugin publishes its identity-pinned bundled bridge path on load so the kill-switch needs no manual path; it does not enable the transport.
+  - **OQ2** — opt-in connection reuse (`FUSION_CLAUDE_ACP_REUSE=1`, default OFF): a warm bridge connection + ACP session is kept across turns of one conversation (keyed by `sessionId`), so multi-turn lanes skip the cold bridge/`claude` spawn and `session/new` round-trip and send only the latest-turn delta (`buildResumePrompt`). A stable `router` indirection serves each turn's handlers; a warm-child death routes failure to the current owner turn (no 30-min inactivity hang), eviction is cache-identity-aware (a concurrent cold turn can't kill a newer entry's child), an empty resume cold-starts instead of issuing an empty prompt, and a per-turn token drops cross-turn stray updates. The idle reaper is `unref`'d. Default OFF → the cold path is functionally unchanged.
+
+  The Claude-via-pi OAuth path is unchanged. Live verification confirmed the bridge gates tool execution behind `session/request_permission` (forwarded MCP tools and native tools do not execute when cancelled). Remaining for a follow-up: picker/auth/status surface (U12), workflow `model`-node verification (U13), and production rollout.
+
+- c1b581e: Add the **Command Center** dashboard — a combined analytics/observability and live Mission-Control view (`?view=command-center`).
+
+  - **Telemetry** — a queryable `usage_events` SQLite table populated via a dedicated `emitUsageEvent` capture seam (tool calls, messages, session lifecycle), feeding date-range aggregators for tokens, tool usage + autonomy ratio, activity (sessions/messages/active-nodes/stickiness), productivity (files/commits/PRs/LOC), and ecosystem breadth — all in `packages/core` and reusable by CLI/engine.
+  - **Cost** — derived from token counts via a hand-maintained `model-pricing` map carrying `pricingAsOf` + a staleness flag; unknown models report unavailable rather than guessing.
+  - **View** — a new lazy-loaded, ARIA-tabbed Command Center with hand-rolled CSS-bar chart primitives, a date-range picker, per-area panels, a live Mission-Control panel (SSE push + idle-aware polling), and an SDLC funnel.
+  - **API** — `GET /api/command-center/{tokens,tools,activity,productivity,live}` (agent-usable), each under session auth and project scoping, with `?format=csv` export and an opt-in OpenTelemetry (OTLP) metrics exporter.
+
+- 898ac1e: Add the Command Center signals analytics endpoint backed by local incidents data and document honest empty-state sentinels for signal metrics.
+- 863ebfa: Add a CLI session relaunch route and enable the dashboard's resume-exhausted "Relaunch fresh" action to re-enqueue the owning task for a fresh CLI-agent run.
+- 21c4d3e: Dashboard agent chat sessions now load the same agent-declared and enabled plugin-contributed skills as task execution sessions, so plugin skills such as `ce-debug` are available in chat.
+- a453716: Render assistant question tool calls as shared in-chat response cards in full Chat and Quick Chat.
+- a998f63: Enable creating workflow node connections from the mobile workflow editor.
+- e2a3a37: Add a project setting for configuring the auto-merge conflict retry cap before Fusion parks or bounces tasks for recovery.
+- 05fe6e5: Compound Engineering now treats stage launch settings as an explicit `disabledStages` opt-out list so newly bundled stages, including `ce-debug`, remain launchable on existing installs with stale settings snapshots.
+- b6ac5f2: Add bounded-by-default verification guardrails: project `verificationCommandTimeoutMs`, marathon command detection, and an explicit `allowFullSuite` escape hatch for full verification runs.
+- 0453a65: Request agent and enabled plugin skills across planning, mission interview, workflow design, memory insight, and scheduled automation agent sessions.
+- cdadac1: Load selected Fusion and enabled plugin skills in milestone/slice interview and agent-onboarding dashboard sessions.
+- f41732d: Add a live-updating, animated Command Center token-usage-over-time view with hour/day/week granularity and bounded polling for token totals.
+- 504305e: Add a Command Center GitHub issue analytics endpoint and dashboard area showing issues filed by Fusion, issues fixed by Fusion, net flow, daily trends, and by-repository breakdowns from the local project task store.
+- 64092ca: Add Command Center agent-run sheets that show total, active, completed, and failed heartbeat runs in the Activity area and Overview, plus agent-run daily activity and CSV export rows.
+- 36f1fee: Add the Command Center Team tab and `/api/command-center/team` endpoint for project-scoped per-agent token, cost, files-changed, task-completion, and live-status analytics.
+- af31f7d: Move System Stats into the Command Center as a redesigned graph-rich System area with gauges, trend sparklines, task/agent bars, and relocated Vitest controls; remove the standalone System Stats modal plus its Header and mobile More affordances.
+- 94a081f: Persist GitHub source issue closure timestamps and use them for exact Command Center "Fixed by Fusion" date bucketing, falling back to task `updatedAt` only when the real close time has not been observed.
+- 9b396b6: Add an optional project-scoped GitHub source-issue closed-at backfill endpoint that fills historical imported tasks with real GitHub `closed_at` values for more accurate Fixed by Fusion analytics.
+- 2059790: Add a Command Center GitHub affordance for operators to run the historical source-issue closed-at backfill and review accumulated scanned, filled, skipped, and error counts.
+- d6e2f92: Add `recharts` and shared Command Center PieChart/LineChart wrappers for downstream graphical chart migrations. The wrappers are token-themed, responsive, reduced-motion aware, and safe for empty, zero, negative, NaN, and Infinity inputs; the current production build shows no observable Command Center chunk-size increase yet because no Command Center surface imports the new wrappers until the dependent migration tasks land (CommandCenter chunk remains 74.68 kB / 16.46 kB gzip in this task's build output).
+- 99d799c: Add Command Center pie and line chart affordances to the Overview, Tokens, Tools, Activity, and Productivity analytics surfaces using existing analytics data.
+- 5e1a4ff: Add Command Center pie and line charts to Team, Ecosystem, GitHub, Signals, and System surfaces using existing analytics data.
+- 47e7b4a: Populate Command Center Productivity Lines changed from merge-time commit association diff stats when available.
+- c1b581e: Add the **Monitor stage** (U13) — deployment and incident tracking that closes the SDLC loop.
+
+  - **Schema** — new `deployments` and `incidents` SQLite tables (`packages/core/src/db.ts`, `SCHEMA_VERSION` 119 → 120, migration added in the same change; fingerprint auto-covers SCHEMA_SQL tables).
+  - **Metrics** — real MTTR (incident-open → resolved) plus deploy/incident counts in `activity-analytics`, replacing the prior unavailable seam.
+  - **Ingestion** — `POST /api/monitor/{deployments,incidents}` self-authenticate via a shared ingest secret (constant-time bearer check, fail-closed) with SSRF-untrusted payload links; `GET /api/monitor/metrics` exposes the aggregates.
+  - **Loop closure** — a `monitor` workflow trait can auto-open a single fix task on a regression signal, guarded by `groupingKey` grouping, a threshold/sustained gate, cooldown absorption, a per-window circuit breaker, and a self-loop guard.
+
+- 168dc2f: Export Command Center analytics over OpenTelemetry (OTLP) so teams can ship token / cost / activity metrics to Datadog / Grafana / etc. **Disabled by default** (U10, R4).
+
+  - New pure mapping `mapAnalyticsToOtlp` in `@fusion/core` (`otel-metrics.ts`) turns the token/cost/activity aggregator outputs into the OTLP/HTTP JSON wire shape (`resourceMetrics`) — counters for token/cost, gauges for activity — with `model` / `provider` / `node.id` / `agent.id` attributes per data point. Fully testable without a live collector; no SDK dependency in core.
+  - Dashboard exporter (`otel-exporter.ts`) periodically maps current analytics and POSTs them to a configured collector, wired into `server.ts` startup/shutdown.
+
+  **SDK choice:** ships a **minimal OTLP/HTTP JSON exporter rather than the official `@opentelemetry/*` SDK** — and therefore adds **no new runtime dependency**. The OTLP/HTTP JSON protocol is a single, stable `POST /v1/metrics` of a well-defined JSON envelope (built in core), so for a default-disabled feature we avoid pulling the multi-package SDK (sdk-metrics + exporter-metrics-otlp-http + resources + api). The wire shape is collector-compatible; swapping in the official SDK later is mechanical. (If maintainers prefer the real SDK, that is a follow-up changeset + dependency add.)
+
+  **Enabled only via env** (none set ⇒ nothing starts): `FUSION_OTEL_METRICS_ENDPOINT` (full `/v1/metrics` URL, required to enable), `FUSION_OTEL_METRICS_HEADERS` (`k=v,k2=v2` auth headers), `FUSION_OTEL_METRICS_INTERVAL_MS`, `FUSION_OTEL_METRICS_TIMEOUT_MS`, `FUSION_OTEL_RESOURCE_ATTRIBUTES`.
+
+  **Security:** endpoint validated on write — `http://` is rejected in production (exporter does not start) and warns loudly otherwise; auth header (Datadog/Grafana token) VALUES are never logged and are masked in diagnostics; a collector-unreachable failure logs (redacted) and backs off exponentially without crashing the server or blocking requests.
+
+- 951c6ef: Ingest external signals (Sentry / Datadog / PagerDuty / generic webhook) into triage tasks via a common `SignalSource` adapter seam (U11, KTD8).
+
+  - New `POST /api/signals/:provider` endpoints, mirroring the GitHub ingestion path. Verified, normalized signals create a task in the `triage` column via the existing task store.
+  - Generic webhook is the must-work path; Sentry/Datadog/PagerDuty are thin adapters with provider-specific HMAC verification + payload normalization. Each normalized `Signal` carries a `groupingKey` (Sentry `issue.id`, PagerDuty `incident.id`, Datadog monitor key; the generic webhook requires a caller-supplied key or falls back to `source + normalized-title`) for the downstream storm guard.
+  - Security (mandatory): per-provider HMAC against an env-sourced secret (never source-controlled) with 401 on missing/invalid secret or signature — the generic webhook is never an unauthenticated task-creation endpoint; ±5 min replay window + delivery-id nonce dedup; persistent external-id dedup; ~1 MB body cap; per-source rate limit; field-length + meta-byte caps; SSRF-untrusted handling of payload URLs; `meta` stored as data, never rendered as raw HTML.
+
+- 0a87890: Add a persistent, incrementally-refreshed knowledge index (U14) downstream agents can query.
+
+  - **Schema** — new `knowledge_pages` SQLite table (`packages/core/src/db.ts`) with `SCHEMA_VERSION` bumped 118 → 119 (added in the same change as the migration; the fingerprint auto-covers SCHEMA_SQL tables). Keyword search uses a denormalized lowercased `searchText` column with AND-of-terms `LIKE` matching, deliberately avoiding SQLite FTS5 (not available on every build) and any external embedding API.
+  - **Index module** (`packages/dashboard/src/knowledge-index.ts`) — upsert-by-source-key pages, a model-free keyword query API, and `refreshKnowledgeForTask` that re-indexes a single completed task (one upsert, never a full re-index, so unaffected pages keep their timestamps). This is the delta over the existing `insights`/`memoryView` surfaces, which are LLM-extracted learnings, not a deterministic searchable index of concrete task/PR history.
+  - **Refresh hook** — `KnowledgeIndexRefreshService` listens for `task:moved → done` (mirroring `GitHubSourceIssueCloseService`) and is wired alongside the other completion listeners; fail-soft so it can never disrupt task completion.
+  - **Query API** (`register-knowledge-routes.ts`) — `GET /api/knowledge/query` and `POST /api/knowledge/refresh`, registered as an `ApiRouteRegistrar` so they inherit the dashboard's standard session/auth middleware (401 when unauthenticated) and apply `getScopedStore(req)` (no cross-project reads), exactly like U9.
+
+#### Patch Changes
+
+- c8788d8: Align the workflow editor's client-side column trait validation details with the server validator so conflicting trait compositions identify the same source traits before save.
+- 265d9ec: Fix task workflow selection so successful workflow changes and clears notify dashboard clients to refresh board workflow lanes.
+- def4bd9: Add dashboard controls for renaming regular Chat and Quick Chat sessions.
+- 62335f8: Fix two post-merge Full Suite test failures. Sync the roadmap store's schema-version assertion to core's `SCHEMA_VERSION` (116 → 117). Stop `useCeSessions` background refreshes (poll fallback and push events) from clearing an error a `cancel`/`remove` just surfaced — an in-flight session kept the poll running, which silently erased the action error before the user could see it.
+- cd2da10: Wire dashboard CLI session banner actions so needs-attention sessions surface, supported actions call existing routes/settings flows, and unsupported actions render disabled instead of silently doing nothing.
+- fee0178: Guard no-commits-expected tasks from being finalized as done by no-op merge/self-healing lanes when skipped or incomplete steps outweigh completed work.
+- bc6dfd3: Surface paused workflow graph exits that occur outside `in-progress` as operator-actionable failures instead of leaving tasks stranded.
+- 0093678: Block release and publish-class tasks during triage unless they were explicitly authorized by a user-authored source.
+- 3158e9c: Fix the dashboard TUI Agents view so pressing `s` starts the selected agent without also switching back to Main.
+- 0db8134: Bound `fn_task_list` text output across CLI, dashboard, and engine tool surfaces so oversized board listings remain plain text with an explicit truncation marker instead of overflowing host response budgets.
+- a15b4ca: Keep the chat sidebar visible at a compact bounded width when a tablet software keyboard opens, then restore the previous width when the keyboard closes.
+- 198fb17: Keep prior chat thread messages visible while reconnecting to an in-flight streamed assistant response.
+- 98cb80d: Fix the tablet task detail modal sizing so the action footer remains on-screen and the modal uses more viewport width.
+- 4a9fe99: Allow chat attachments to be sent without accompanying text in Quick Chat and Main Chat while still rejecting fully empty sends.
+- d35f93e: Refresh dashboard mobile and PWA home-screen icons from the canonical Fusion logo and bump the service-worker cache for installed app updates.
+- 550715d: Bringing up Quick Chat now focuses the composer input on desktop (matching existing mobile behavior).
+- 89171e0: Polish the bundled Compound Engineering dashboard view so its spacing, radii, and controls align with Fusion dashboard design tokens and shared component classes.
+- 914842f: Make Chat the first tab and default active view in the task detail modal while preserving explicit initial tab requests.
+- 6ced5d7: Fix workflow graph merge-node failures so merge-seam aborts are not misclassified as pause/resume aborts. Non-paused merge failures now route to the bounded auto-merge retry path instead of being parked failed with no merge retry count.
+- a84a8e1: Fix `fn_task_list` crashes when the runtime `@fusion/core` formatter export is unavailable by resolving defensively and returning bounded fallback text.
+- 593ebac: Resolve task-list text formatting defensively when an installed core package is missing the `formatTaskListText` runtime export, preserving `fn_task_list` output with a bounded inline fallback.
+- 403bd9d: Prevent custom workflows from reaching terminal success when declared task-document artifacts are missing, and keep malformed blocking gate verdicts from being treated as successful workflow-step passes.
+- 01b80db: Add a Fusion-native `fn_ask_question` tool for dashboard chat agents so structured questions render in the existing chat response card and answers return through the next chat message.
+- 5b9ff04: Keep previously persisted main-chat conversation messages visible while reconnecting to an in-flight assistant response.
+- 1bd8f6d: Fix mobile terminal cell measurement by making xterm font stacks use real monospace text faces before the Nerd Font symbols fallback.
+- 19aac38: Load dashboard chat skills requested with `/skill:{name}` and strip the command token from model prompts.
+- a013bc0: Fix the perpetual step off-by-one: `fn_task_update` and `fn_review_step` now treat `step` as 0-based, matching the `### Step N:` numbering in PROMPT.md (Step 0 = Preflight) and `TaskStore.updateStep`. Previously the tools were 1-indexed while everything agent-facing was 0-based, so agents could not mark Step 0 done and reviews/progress landed one step early.
+- 4c3186d: Prefer fresher TypeScript plugin source over stale gitignored dist output in dev/worktree plugin resolution when no `bundled.js` exists. Production bundled installs remain unaffected because `bundled.js` still always wins.
+- 0767d1b: Generalize bundled plugin freshness checks across staged CLI plugin artifacts.
+- 29b27a7: Improve Command Center tool analytics by categorizing Fusion tool families and re-bucketing historical `other` rows.
+- 98ccf8a: Completed no-commit executions that finalize to in-review are no longer re-parked as failed "engine abort during pause/resume" operator-action graph failures; genuine pause and hard-cancel semantics are preserved.
+- 4dd5337: Close cached CLI extension TaskStore instances on session shutdown so task-tool runs do not leave SQLite handles behind.
+- 4929198: Lower the shared `fn_task_list` plain-text budget and cover filtered column listings with realistic regression cases so large todo, planning, and done outputs stay host-safe.
+- 673a8a6: Fix `fn_task_list` column filters so empty target columns return explicit text instead of an empty content block.
+- 58a34e9: Clamp Command Center SDLC completion analytics to cohort-based conversion rates and add the radial completion gauge plus animated live activity signals.
+- 3d28b3b: Preserve already-streamed chat text, thinking, and tool-call state when the dashboard reattaches to an in-flight assistant response.
+- dae0bde: Encourage dashboard chat agents to use structured `fn_ask_question` cards when offering choices or alternatives.
+- ab8ecb2: Stop the engine from registering merge-trait hooks that collided with core's in-review field-effects adapter and could crash workflow-column moves.
+- b1a2aee: Expose task document read/write tools to dashboard chat agents with explicit `task_id` targeting.
+- 16b6e5d: Fix mobile iOS terminal cell measurement by making xterm font remeasure resilient to strict FontFaceSet shorthand rejection and pinning text-size adjustment on terminal viewports.
+- 0ed46d9: Expose task document read/write tools to planning agents with explicit task IDs, matching chat session behavior.
+- 3b32b53: Completed/no-commit executions that finalize to review no longer get re-parked failed when later teardown overwrites completion-finalize abort provenance with a hard-cancel marker. Genuine user/global pauses, merge-seam retry routing, and active-execution hard-cancel behavior are preserved.
+- b6823af: Fix completed tasks being parked failed in in-review with a spurious "engine abort during pause/resume — operator action required" error (FN-6648; recurrence of FN-6478/FN-6568/FN-6625/FN-6644/FN-6647). The paused-after-completion graceful-exit path finalizes a fully completed task to in-review while leaving a non-user `paused` flag set; `handleGraphFailure`'s completion-finalized guards required `paused !== true`, so the trailing graph failure was misclassified as an operator-action pause abort once the volatile completion markers were lost. The classifier now recognizes finalized completions regardless of a lingering non-user pause flag, while genuine user/global pauses and in-progress tasks are unaffected.
+- 2367918: Add attractive Command Center Overview charts for tokens by model, tool categories, and daily activity using existing analytics data.
+- 662a09b: Add live animated Command Center Activity line charts for messages, active agents, active nodes, and combined throughput, backed by a reusable zero/NaN-safe LineChart primitive.
+- 11c4120: Fix mobile terminal font measurement by keeping the symbols-only Nerd Font out of xterm's measured ASCII font stack while retaining a scoped DOM glyph fallback.
+- 21d8076: Fix Command Center mobile chart rendering so chart primitives shrink inside the tabpanel without scroll-stealing overflow, zero-height collapse, or stretch artifacts, and normalize chart/card border and spacing rhythm across the combined analytics surfaces.
+- ef54459: Fix Command Center token analytics so Tokens by model and the per-model table group tasks by the actually-used runtime model instead of collapsing resolved-via-settings usage into `(unknown)`.
+- 317b08b: Command Center token-cost analytics now price resolved-via-settings task usage from the actually-used model snapshot, with legacy own-model fallback, instead of showing those costs as unavailable.
+- fe207ca: Fix Command Center mobile chart rendering by bounding chart label/track layouts in real mobile engines and normalizing chart/card/table border spacing across the dashboard bundle.
+- 0f021ae: Fix Command Center charts and shell styling to use the canonical `--accent` and `--text` dashboard tokens instead of undefined `--color-accent` and `--text-primary` aliases, so chart accents and primary text render with the intended colors.
+- 282b069: Replace non-Command-Center dashboard CSS references to the undefined `--text-primary` alias with the canonical `--text` token so primary text uses the intended theme-aware color.
+- 9d07e85: Fix served dashboard lazy-view preloads so persisted Command Center and other lazy views include their extracted CSS chunks.
+- cfddde5: Fix Command Center activity chart rendering so plotted extrema stay visible and chart wrappers keep a measurable default height.
+- cc02286: Inline direct and room chat attachments into agent prompts so agents can read text files and receive supported image attachments.
+- 84cf3ff: Guard task detail activity-log rendering against legacy/operator log entries that use text/detail instead of action/outcome.
+- 283f689: Repair mission autopilot reconciliation so stale triaged/in-progress features without live task cards are retriaged, while generated fix-loop debris is blocked instead of recreating duplicate tasks.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [c8788d8]
+- Updated dependencies [265d9ec]
+- Updated dependencies [6427802]
+- Updated dependencies [def4bd9]
+- Updated dependencies [c1b581e]
+- Updated dependencies [898ac1e]
+- Updated dependencies [62335f8]
+- Updated dependencies [cd2da10]
+- Updated dependencies [fee0178]
+- Updated dependencies [863ebfa]
+- Updated dependencies [bc6dfd3]
+- Updated dependencies [0093678]
+- Updated dependencies [3158e9c]
+- Updated dependencies [0db8134]
+- Updated dependencies [a15b4ca]
+- Updated dependencies [21c4d3e]
+- Updated dependencies [198fb17]
+- Updated dependencies [98cb80d]
+- Updated dependencies [a453716]
+- Updated dependencies [4a9fe99]
+- Updated dependencies [d35f93e]
+- Updated dependencies [550715d]
+- Updated dependencies [a998f63]
+- Updated dependencies [89171e0]
+- Updated dependencies [914842f]
+- Updated dependencies [6ced5d7]
+- Updated dependencies [e2a3a37]
+- Updated dependencies [a84a8e1]
+- Updated dependencies [593ebac]
+- Updated dependencies [05fe6e5]
+- Updated dependencies [403bd9d]
+- Updated dependencies [01b80db]
+- Updated dependencies [5b9ff04]
+- Updated dependencies [1bd8f6d]
+- Updated dependencies [19aac38]
+- Updated dependencies [a013bc0]
+- Updated dependencies [b6ac5f2]
+- Updated dependencies [0453a65]
+- Updated dependencies [4c3186d]
+- Updated dependencies [0767d1b]
+- Updated dependencies [29b27a7]
+- Updated dependencies [cdadac1]
+- Updated dependencies [98ccf8a]
+- Updated dependencies [4dd5337]
+- Updated dependencies [4929198]
+- Updated dependencies [673a8a6]
+- Updated dependencies [58a34e9]
+- Updated dependencies [3d28b3b]
+- Updated dependencies [dae0bde]
+- Updated dependencies [ab8ecb2]
+- Updated dependencies [b1a2aee]
+- Updated dependencies [16b6e5d]
+- Updated dependencies [0ed46d9]
+- Updated dependencies [3b32b53]
+- Updated dependencies [b6823af]
+- Updated dependencies [2367918]
+- Updated dependencies [f41732d]
+- Updated dependencies [504305e]
+- Updated dependencies [64092ca]
+- Updated dependencies [36f1fee]
+- Updated dependencies [662a09b]
+- Updated dependencies [af31f7d]
+- Updated dependencies [11c4120]
+- Updated dependencies [21d8076]
+- Updated dependencies [ef54459]
+- Updated dependencies [94a081f]
+- Updated dependencies [317b08b]
+- Updated dependencies [9b396b6]
+- Updated dependencies [2059790]
+- Updated dependencies [fe207ca]
+- Updated dependencies [d6e2f92]
+- Updated dependencies [99d799c]
+- Updated dependencies [5e1a4ff]
+- Updated dependencies [0f021ae]
+- Updated dependencies [282b069]
+- Updated dependencies [9d07e85]
+- Updated dependencies [cfddde5]
+- Updated dependencies [47e7b4a]
+- Updated dependencies [cc02286]
+- Updated dependencies [84cf3ff]
+- Updated dependencies [c1b581e]
+- Updated dependencies [283f689]
+- Updated dependencies [168dc2f]
+- Updated dependencies [951c6ef]
+- Updated dependencies [0a87890]
+  - @runfusion/fusion@0.44.0
+
 ## 0.43.1
 
 ### @fusion/dashboard
@@ -9059,6 +9322,14 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.7
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.44.0
+
 ## 0.39.6
 
 ### @fusion/i18n
@@ -9106,6 +9377,14 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.33
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.33
 
 ## 0.11.32
 
