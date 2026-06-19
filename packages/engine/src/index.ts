@@ -268,10 +268,13 @@ export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, typ
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, type AgentOptions, type AgentResult } from "./pi.js";
 export {
   createInteractiveAiSessionWith,
+  createCliAgentPlanningSessionWith,
+  resolvePlanningExecutorSession,
   parseAgentResponse as parseInteractiveAgentResponse,
   type InteractiveAgentSession,
   type InteractiveAgentResult,
   type InteractiveAgentFactory,
+  type PlanningExecutorSelection,
 } from "./interactive-ai-session.js";
 export { selectPermanentAgentForTask, listEligibleExecutorAgents } from "./agent-assignment.js";
 
@@ -286,7 +289,7 @@ import type {
   CreateInteractiveAiSessionOptions,
 } from "@fusion/core";
 import { createFnAgent as _createFnAgentForCore } from "./pi.js";
-import { createInteractiveAiSessionWith } from "./interactive-ai-session.js";
+import { resolvePlanningExecutorSession } from "./interactive-ai-session.js";
 
 const _createAiSessionAdapter: CreateAiSessionFactory = async (options: CreateAiSessionOptions): Promise<AiSessionResult> => {
   return _createFnAgentForCore({
@@ -298,12 +301,14 @@ const _createAiSessionAdapter: CreateAiSessionFactory = async (options: CreateAi
   });
 };
 
-// Interactive (multi-turn, await-input) adapter: builds the prompt→parse→
-// retry→pause→resume loop on top of the one-shot createFnAgent.
+// Interactive (multi-turn, await-input) adapter: resolves the default
+// model-backed planning executor, then builds the prompt→parse→retry→pause→
+// resume loop on top of the one-shot createFnAgent.
 const _createInteractiveAiSessionAdapter: CreateInteractiveAiSessionFactory = (
   options: CreateInteractiveAiSessionOptions,
 ) =>
-  createInteractiveAiSessionWith(
+  resolvePlanningExecutorSession(
+    { kind: "model" },
     (opts) =>
       _createFnAgentForCore({
         cwd: opts.cwd,
