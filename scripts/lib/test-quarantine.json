@@ -10,6 +10,11 @@
       "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
       "reason": "FN-6697 local workspace `pnpm test` observed the post-submission focus restoration test fail in the broad dashboard app backfill shard, while a targeted rerun of QuickEntryBox with MailboxModal passed the QuickEntryBox assertions; quarantine the focus-timing flake instead of appeasing it while the terminal shortcut fix remains scoped.",
       "quarantinedAt": "2026-06-19"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
+      "reason": "FN-6726 local workspace `pnpm test` observed the duplicate-merge-seam template conflict assertion fail only in the broad dashboard components-b shard, while a targeted rerun of that exact test passed; quarantine the workflow editor concurrency flake instead of appeasing unrelated template insertion behavior while the Command Center token containment fix remains scoped.",
+      "quarantinedAt": "2026-06-19"
     }
   ]
 }

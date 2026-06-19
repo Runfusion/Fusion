@@ -28,18 +28,18 @@ import type { DateRange } from "../DateRangePicker";
 const range7d: DateRange = { from: "2026-06-08", to: null, preset: "7d" };
 const customRange = (from: string, to: string): DateRange => ({ from, to, preset: "custom" });
 
-function tokenFixture() {
+function tokenFixture(totalTokens = 1500) {
   return {
     from: "2026-06-08",
     to: null,
     groupBy: "model",
     totals: {
-      inputTokens: 1000,
-      outputTokens: 500,
-      cachedTokens: 200,
+      inputTokens: Math.round(totalTokens * 0.6),
+      outputTokens: Math.round(totalTokens * 0.3),
+      cachedTokens: Math.round(totalTokens * 0.1),
       cacheWriteTokens: 0,
-      totalTokens: 1500,
-      nTasks: 5,
+      totalTokens,
+      nTasks: totalTokens > 0 ? 5 : 0,
     },
     cost: { usd: 12.5, unavailable: false, stale: false },
     series: [
@@ -123,11 +123,18 @@ function emptyTeamFixture() {
   };
 }
 
-function populatedTeamFixture() {
+function populatedTeamFixture(totalTokens = 1500) {
   return {
     ...emptyTeamFixture(),
     totals: {
-      tokens: { inputTokens: 900, outputTokens: 450, cachedTokens: 150, cacheWriteTokens: 0, totalTokens: 1500, nTasks: 2 },
+      tokens: {
+        inputTokens: Math.round(totalTokens * 0.6),
+        outputTokens: Math.round(totalTokens * 0.3),
+        cachedTokens: Math.round(totalTokens * 0.1),
+        cacheWriteTokens: 0,
+        totalTokens,
+        nTasks: 2,
+      },
       cost: { usd: 4.25, unavailable: false, stale: false },
       filesChanged: 7,
       tasksCompleted: 3,
@@ -140,7 +147,14 @@ function populatedTeamFixture() {
         agentName: "Alpha Agent",
         role: "executor",
         state: "running",
-        tokens: { inputTokens: 900, outputTokens: 450, cachedTokens: 150, cacheWriteTokens: 0, totalTokens: 1500, nTasks: 2 },
+        tokens: {
+          inputTokens: Math.round(totalTokens * 0.6),
+          outputTokens: Math.round(totalTokens * 0.3),
+          cachedTokens: Math.round(totalTokens * 0.1),
+          cacheWriteTokens: 0,
+          totalTokens,
+          nTasks: 2,
+        },
         cost: { usd: 4.25, unavailable: false, stale: false },
         filesChanged: 7,
         tasksCompleted: 3,
@@ -504,6 +518,14 @@ describe("TokensArea", () => {
     expect(screen.getByTestId("cc-tokens-row-claude-sonnet")).toBeTruthy();
   });
 
+  it("renders a large comma-grouped total unchanged in the total tokens card", async () => {
+    apiMock.mockResolvedValue(tokenFixture(1_234_567_890));
+    render(<TokensArea range={range7d} />);
+
+    await screen.findByTestId("cc-area-tokens");
+    expect(screen.getByTestId("cc-tokens-total").textContent).toContain("1,234,567,890");
+  });
+
   it("changes the requested endpoint when granularity changes", async () => {
     apiMock.mockResolvedValue(tokenFixture());
     render(<TokensArea range={range7d} />);
@@ -855,6 +877,14 @@ describe("TeamArea", () => {
     expectBarFillsFinite("cc-team-tokens-chart");
     expectBarFillsFinite("cc-team-completed-chart");
     expectSparklineHeightsFinite("cc-team-spread-chart");
+  });
+
+  it("renders a large comma-grouped total unchanged in the team total tokens stat", async () => {
+    apiMock.mockResolvedValue(populatedTeamFixture(1_234_567_890));
+    render(<TeamArea range={range7d} />);
+
+    await screen.findByTestId("cc-area-team");
+    expect(screen.getByTestId("cc-team-total-tokens").textContent).toContain("1,234,567,890");
   });
 
   it("keeps the team pie safe for single-item and non-finite data", async () => {

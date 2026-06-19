@@ -94,6 +94,27 @@ function collectAccentMixPercentages(ruleBlock: string): number[] {
   return percentages;
 }
 
+function expectRuleContainsDeclaration(ruleBlock: string, property: string, valuePattern: RegExp): void {
+  const declarationPattern = new RegExp(`(^|\\n)\\s*${property}\\s*:\\s*${valuePattern.source}\\s*;`);
+  expect(ruleBlock, `Expected ${property}: ${valuePattern.source} in rule block`).toMatch(declarationPattern);
+}
+
+/*
+FNXC:CommandCenterStyling 2026-06-19-00:00:
+FN-6726 guards Command Center stat and live-metric value containment at the emitted CSS-rule level because jsdom cannot measure min-content overflow from large comma-grouped token totals.
+*/
+describe("Command Center stat value overflow containment (FN-6726)", () => {
+  const css = readFileSync(join(COMMAND_CENTER_DIR, "CommandCenter.css"), "utf8");
+
+  it("keeps stat and live metric values shrinkable and wrappable", () => {
+    for (const selector of [".cc-stat-value", ".cc-live-metric-value"]) {
+      const block = extractRuleBlock(css, selector);
+      expectRuleContainsDeclaration(block, "min-width", /0/);
+      expectRuleContainsDeclaration(block, "overflow-wrap", /anywhere|break-word/);
+    }
+  });
+});
+
 /*
 FNXC:CommandCenterStyling 2026-06-19-19:05:
 FN-6700 keeps the Command Center main overview cards subdued by guarding the decorative accent color-mix percentages on both card bases and their animated overlays while also proving the --surface-1 layer remains in place.

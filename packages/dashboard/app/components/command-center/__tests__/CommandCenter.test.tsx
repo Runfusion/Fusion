@@ -401,6 +401,15 @@ describe("CommandCenter shell", () => {
     expectThroughputLastAfter("command-center-stat-tokens", "command-center-live-strip", "command-center-overview-charts");
   });
 
+  it("renders large comma-grouped token totals unchanged in Overview stat surfaces", async () => {
+    mockOverviewApi({ tokens: tokenFixture(1_234_567_890) });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-tokens");
+    expect(statValue("command-center-stat-tokens")).toBe("1,234,567,890");
+    expect(screen.getByTestId("command-center-live-tokens").textContent).toContain("1,234,567,890");
+  });
+
   it("live-polls token totals for the Overview card and live strip", async () => {
     vi.useFakeTimers();
     let tokenTotal = 1_500;

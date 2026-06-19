@@ -274,10 +274,15 @@ Quarantine the cleanup-flaky file under the deletion ratchet rather than changin
 FNXC:DashboardTestQuarantine 2026-06-19-05:20:
 FN-6697 workspace verification observed the QuickEntryBox post-submit focus restoration test fail only in the broad dashboard app backfill shard, then pass on targeted rerun.
 Quarantine the focus-timing flake under the deletion ratchet instead of changing unrelated terminal shortcut behavior or appeasing the test.
+
+FNXC:DashboardTestQuarantine 2026-06-19-08:17:
+FN-6726 workspace verification observed the WorkflowNodeEditor duplicate-merge-seam template conflict test fail only in the broad components-b shard, then pass on targeted rerun.
+Quarantine the concurrency-sensitive workflow editor file under the deletion ratchet instead of changing unrelated template insertion behavior or appeasing the test.
 */
 const quarantinedDashboardTests: string[] = [
   "src/__tests__/session-cross-tab.test.ts",
   "app/components/__tests__/QuickEntryBox.test.tsx",
+  "app/components/__tests__/WorkflowNodeEditor.test.tsx",
 ];
 
 const qualityApiTests = [

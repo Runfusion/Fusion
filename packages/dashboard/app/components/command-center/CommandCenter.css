@@ -121,7 +121,14 @@ FN-6680 standardizes the Command Center card rhythm across overview, area, table
   color: var(--text-muted);
 }
 
+/*
+FNXC:CommandCenterStyling 2026-06-19-00:00:
+FN-6726 requires large comma-grouped token totals to wrap instead of forcing stat cards or live metrics wider across desktop, tablet, and mobile. jsdom cannot prove pixel overflow for min-content sizing, so keep these containment declarations paired with the raw CSS-rule regression test.
+*/
 .cc-stat-value {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 1.5rem;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -244,6 +251,9 @@ FN-6700 reduces the live-strip decorative accent gradient, glow, and sweep inten
 }
 
 .cc-live-metric-value {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--text);
   font-size: 1.125rem;
   font-weight: 700;
