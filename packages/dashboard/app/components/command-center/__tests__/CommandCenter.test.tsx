@@ -343,6 +343,7 @@ describe("CommandCenter shell", () => {
     expect(screen.queryByTestId("command-center-overview-chart-activity")).toBeNull();
     await screen.findByTestId("command-center-empty");
     expectThroughputLastAfter("command-center-empty");
+    expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
     expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
     expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
     expect(screen.queryByTestId("cc-overview-line")).toBeNull();
@@ -363,6 +364,57 @@ describe("CommandCenter shell", () => {
     expect(statValue("command-center-stat-agentRuns")).toBe("5");
   });
 
+  it("renders the date-range Sessions stat card when sessions exist", async () => {
+    mockOverviewApi({
+      tokens: tokenFixture(0),
+      tools: toolsFixture(0),
+      activity: activityFixture({ sessions: 3, messages: 0, activeNodes: 0, activeAgents: 0, agentRuns: 0, doneInRange: 0 }),
+      signals: signalsFixture(0),
+      live: liveFixture([{ column: "in-progress", count: 0 }]),
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-sessions");
+    expect(statValue("command-center-stat-sessions")).toBe("3");
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+  });
+
+  it("renders zero in the Sessions card when other activity keeps Overview populated", async () => {
+    mockOverviewApi({
+      tokens: tokenFixture(0),
+      tools: toolsFixture(0),
+      activity: activityFixture({ sessions: 0, messages: 4, activeNodes: 0, activeAgents: 0, agentRuns: 0, doneInRange: 0 }),
+      signals: signalsFixture(0),
+      live: liveFixture([{ column: "in-progress", count: 0 }]),
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-sessions");
+    expect(statValue("command-center-stat-sessions")).toBe("0");
+    expect(screen.queryByTestId("command-center-empty")).toBeNull();
+  });
+
+  it("defaults the Sessions stat card to zero when activity payload omits sessions", async () => {
+    const { sessions: _omitted, ...activityWithoutSessions } = activityFixture({
+      messages: 5,
+      activeNodes: 0,
+      activeAgents: 0,
+      agentRuns: 0,
+      doneInRange: 0,
+    });
+    mockOverviewApi({
+      tokens: tokenFixture(0),
+      tools: toolsFixture(0),
+      activity: activityWithoutSessions,
+      signals: signalsFixture(0),
+      live: liveFixture([{ column: "in-progress", count: 0 }]),
+    });
+    render(<CommandCenter />);
+
+    await screen.findByTestId("command-center-stat-sessions");
+    expect(statValue("command-center-stat-sessions")).toBe("0");
+  });
+
   it("renders live Overview headline values when analytics data exists", async () => {
     mockOverviewApi();
     render(<CommandCenter />);
@@ -374,6 +426,7 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-stat-tokens").textContent).toContain("$12.50");
     expect(statValue("command-center-stat-autonomy")).toBe("10.0:1");
     expect(statValue("command-center-stat-nodes")).toBe("3");
+    expect(statValue("command-center-stat-sessions")).toBe("4");
     expect(statValue("command-center-stat-agentRuns")).toBe("8");
     expect(statValue("command-center-stat-tasksDone")).toBe("7");
     expect(statValue("command-center-stat-models")).toBe("2");

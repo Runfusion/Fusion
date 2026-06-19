@@ -125,6 +125,7 @@ function OverviewTab({ range }: { range: DateRange }) {
   const toolCalls = tools.data?.toolCalls ?? 0;
   const activeNodes = activity.data?.activeNodes ?? 0;
   const activeAgents = activity.data?.activeAgents ?? 0;
+  const sessionsCount = activity.data?.sessions ?? 0;
   const agentRunsTotal = activity.data?.agentRuns?.total ?? 0;
   const tasksDone = activity.data?.funnel?.doneInRange ?? 0;
   /*
@@ -175,10 +176,10 @@ function OverviewTab({ range }: { range: DateRange }) {
   const activityTrendValues =
     dailyActivityValues.length > 0
       ? dailyActivityValues
-      : [activity.data?.sessions ?? 0, activity.data?.messages ?? 0, activeAgents, activeNodes, tasksDone];
+      : [sessionsCount, activity.data?.messages ?? 0, activeAgents, activeNodes, tasksDone];
   const hasOverviewChartData = tokensByModelData.length > 0 || toolCategoryData.length > 0 || dailyActivityValues.length > 0;
   const hasActivityData =
-    (activity.data?.sessions ?? 0) > 0 ||
+    sessionsCount > 0 ||
     (activity.data?.messages ?? 0) > 0 ||
     activeNodes > 0 ||
     activeAgents > 0 ||
@@ -207,6 +208,11 @@ function OverviewTab({ range }: { range: DateRange }) {
     },
     { id: "autonomy", label: t("commandCenter.overview.autonomy", "Autonomy ratio"), value: autonomyLabel },
     { id: "nodes", label: t("commandCenter.overview.activeNodes", "Active nodes"), value: formatCount(activeNodes) },
+    /*
+    FNXC:CommandCenter 2026-06-19-00:00:
+    Session counts were already present on ActivityAnalytics for the selected date range but missing from the Overview stat grid. Surface the existing value here without adding a new endpoint.
+    */
+    { id: "sessions", label: t("commandCenter.overview.sessions", "Sessions"), value: formatCount(sessionsCount) },
     { id: "agentRuns", label: t("commandCenter.overview.agentRuns", "Agent runs"), value: formatCount(agentRunsTotal) },
     { id: "tasksDone", label: t("commandCenter.overview.tasksDone", "Tasks done"), value: formatCount(tasksDone) },
     { id: "models", label: t("commandCenter.overview.uniqueModels", "Unique models"), value: formatCount(uniqueModels) },
