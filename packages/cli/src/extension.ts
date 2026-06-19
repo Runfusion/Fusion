@@ -3916,6 +3916,100 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_agent_set_instructions ───────────────────────────────────
+
+  /**
+   * FNXC:AgentManagement 2026-06-19-06:58:
+   * Managing agents need a scoped runtime tool for updating a direct or indirect report's operating instructions without granting peer, ancestor, or self-mutation rights.
+   * The no-agent caller path remains privileged for CLI/user control, while agent callers must appear as an ancestor in the target's chain of command so AgentStore config revisions preserve an auditable record of each instruction edit.
+   */
+  pi.registerTool({
+    name: "fn_agent_set_instructions",
+    label: "fn: Set Agent Instructions",
+    description:
+      "Set the instructionsText and/or instructionsPath of one of the caller's direct or indirect reports. " +
+      "At least one of instructions_text or instructions_path is required; pass an empty string to clear a field. " +
+      "The change is persisted and recorded as a config revision.",
+    promptSnippet: "Update operating instructions for an agent in your management subtree",
+    promptGuidelines: [
+      "Use to update operating instructions for an agent in your management subtree",
+      "You can only target your own direct or indirect reports, not yourself, peers, or ancestors",
+      "Provide instructions_text, instructions_path, or both; use an explicit empty string to clear a field",
+    ],
+    parameters: Type.Object({
+      agent_id: Type.String({ description: "Target agent whose instructions to set" }),
+      instructions_text: Type.Optional(
+        Type.String({ description: "Inline instructions. Pass an empty string to clear." }),
+      ),
+      instructions_path: Type.Optional(
+        Type.String({ description: "Path to a markdown instructions file. Pass an empty string to clear." }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: getFusionDir(ctx.cwd) });
+      await agentStore.init();
+
+      const hasInstructionsText = params.instructions_text !== undefined;
+      const hasInstructionsPath = params.instructions_path !== undefined;
+      if (!hasInstructionsText && !hasInstructionsPath) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Provide instructions_text and/or instructions_path to update agent instructions." }],
+          isError: true,
+          details: { outcome: "invalid", error: "instructions_text or instructions_path is required" },
+        };
+      }
+
+      const target = await agentStore.resolveAgent(params.agent_id);
+      if (!target) {
+        return {
+          content: [{ type: "text" as const, text: `Agent '${params.agent_id}' not found` }],
+          isError: true,
+          details: { outcome: "not_found", error: "Agent not found", agentId: params.agent_id },
+        };
+      }
+
+      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const callerAgentId = fnCtx.agentId;
+      if (callerAgentId) {
+        if (callerAgentId === target.id) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: You can only set instructions for your own direct or indirect reports, not yourself." }],
+            isError: true,
+            details: { outcome: "denied", agentId: target.id, callerAgentId, rule: "direct-or-indirect-reports-only" },
+          };
+        }
+
+        const chain = await agentStore.getChainOfCommand(target.id);
+        const callerIndex = chain.findIndex((agent) => agent.id === callerAgentId);
+        if (callerIndex < 1) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: You can only set instructions for your own direct or indirect reports." }],
+            isError: true,
+            details: { outcome: "denied", agentId: target.id, callerAgentId, rule: "direct-or-indirect-reports-only" },
+          };
+        }
+      }
+
+      const updatedFields: string[] = [];
+      if (hasInstructionsText) updatedFields.push("instructionsText");
+      if (hasInstructionsPath) updatedFields.push("instructionsPath");
+
+      const updated = await agentStore.updateAgent(target.id, {
+        ...(hasInstructionsText ? { instructionsText: params.instructions_text } : {}),
+        ...(hasInstructionsPath ? { instructionsPath: params.instructions_path } : {}),
+      });
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Updated ${updated.name} (${updated.id}) instructions: ${updatedFields.join(", ")}`,
+        }],
+        details: { outcome: "updated", agentId: updated.id, updatedFields },
+      };
+    },
+  });
+
   // ── fn_agent_delete ─────────────────────────────────────────────
 
   pi.registerTool({

@@ -49,6 +49,18 @@ printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 
 > Replies require a running engine for the same project (for example `fn` dashboard or `fn serve`).
 
+## Agent instruction updates from agents
+
+The `fn_agent_set_instructions` extension tool lets a managing agent update a report's operating instructions without opening the dashboard. It accepts:
+
+- `agent_id` — target agent ID or resolvable agent name.
+- `instructions_text` — optional inline instructions; pass an explicit empty string to clear `instructionsText`.
+- `instructions_path` — optional markdown file path; pass an explicit empty string to clear `instructionsPath`.
+
+At least one instruction field must be provided. The tool persists changes through `AgentStore.updateAgent`, so instruction edits are captured as normal agent config revisions.
+
+Authorization is scoped to the org hierarchy. When the caller is an agent (`ctx.agentId` is present), the target must be one of that caller's direct or indirect reports; self-targeting, peer/unrelated targets, and ancestors are rejected. Direct CLI/user calls that do not carry `ctx.agentId` are treated as privileged operator actions and may update any agent.
+
 ## Agent Field Parity Matrix
 
 Every first-class editable agent field has a defined create/edit/import/template behavior. This ensures consistent round-tripping across all surfaces.

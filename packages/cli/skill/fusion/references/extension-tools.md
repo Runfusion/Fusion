@@ -418,6 +418,16 @@ Create a new non-ephemeral agent.
 | `max_concurrent_runs` | number | — |  |
 | `message_response_mode` | union | — |  |
 
+### fn_agent_set_instructions
+
+Set the instructionsText and/or instructionsPath of one of the caller's direct or indirect reports. At least one of instructions_text or instructions_path is required; pass an empty string to clear a field. The change is persisted and recorded as a config revision.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_id` | string | ✓ | Target agent whose instructions to set |
+| `instructions_text` | string | — | Inline instructions. Pass an empty string to clear. |
+| `instructions_path` | string | — | Path to a markdown instructions file. Pass an empty string to clear. |
+
 ### fn_agent_delete
 
 Delete a non-ephemeral agent.

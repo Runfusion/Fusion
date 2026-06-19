@@ -31,7 +31,7 @@ Mission → Milestone → Slice → Feature → Task
 - **GitHub tools** — `fn_task_import_github`, `fn_task_import_github_issue`, `fn_task_browse_github_issues`
 - **Mission tools** — `fn_mission_create`, `fn_mission_list`, `fn_mission_show`, `fn_mission_list_goals`, `fn_mission_link_goal`, `fn_mission_unlink_goal`, `fn_mission_backfill_assertions`, `fn_mission_delete`, `fn_mission_update`, `fn_milestone_add`, `fn_slice_add`, `fn_feature_add`, `fn_feature_delete`, `fn_slice_delete`, `fn_milestone_delete`, `fn_slice_activate`, `fn_feature_link_task`, `fn_feature_update`, `fn_milestone_update`
 - **Goal tools** — `fn_goal_list`, `fn_goal_create`, `fn_goal_archive`, `fn_goal_show`
-- **Agent tools** — `fn_agent_stop`, `fn_agent_start`, `fn_agent_create`, `fn_agent_delete`, `fn_list_agents`, `fn_delegate_task`, `fn_agent_show`, `fn_agent_org_chart`
+- **Agent tools** — `fn_agent_stop`, `fn_agent_start`, `fn_agent_create`, `fn_agent_set_instructions`, `fn_agent_delete`, `fn_list_agents`, `fn_delegate_task`, `fn_agent_show`, `fn_agent_org_chart`
 - **Skills tools** — `fn_skills_search`, `fn_skills_install`
 - **Insight tools** — `fn_insight_list`, `fn_insight_show`, `fn_insight_run_list`, `fn_insight_run_show`
 - **Other tools** — `fn_web_fetch`, `fn_secret_get`, `fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`, `fn_experiment_finalize`
