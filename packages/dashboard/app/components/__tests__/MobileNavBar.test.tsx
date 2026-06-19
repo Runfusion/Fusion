@@ -254,20 +254,36 @@ describe("MobileNavBar", () => {
     expect(props.onChangeView).toHaveBeenCalledWith("mailbox");
   });
 
-  it("places Command Center immediately after Mailbox and routes from the top-level tab", () => {
+  it("places Command Center after Mailbox while primary plugins stay More-only", () => {
     const props = createDefaultProps();
-    render(<MobileNavBar {...props} view="board" mailboxUnreadCount={3} mailboxPendingApprovalCount={1} />);
+    render(
+      <MobileNavBar
+        {...props}
+        view="board"
+        mailboxUnreadCount={3}
+        mailboxPendingApprovalCount={1}
+        pluginDashboardViews={[
+          {
+            pluginId: "fusion-plugin-compound-engineering",
+            view: { viewId: "compound-engineering", label: "Compound Engineering", componentPath: "./CompoundEngineeringView", icon: "Workflow", placement: "primary", order: 1 },
+          },
+        ]}
+      />,
+    );
 
     const mailboxTab = screen.getByTestId("mobile-nav-tab-mailbox");
     const commandCenterTab = screen.getByTestId("mobile-nav-tab-command-center");
     expect(mailboxTab.compareDocumentPosition(commandCenterTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(commandCenterTab.previousElementSibling).toBe(mailboxTab);
+    expect(mailboxTab.querySelector(".mobile-nav-tab-badge")?.textContent).toBe("3");
+    expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-compound-engineering-compound-engineering")).toBeNull();
 
     fireEvent.click(commandCenterTab);
     expect(props.onChangeView).toHaveBeenCalledWith("command-center");
 
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.queryByTestId("mobile-more-item-command-center")).toBeNull();
+    expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-compound-engineering-compound-engineering")).toBeDefined();
   });
 
   it("agents tab calls onChangeView with 'agents'", () => {

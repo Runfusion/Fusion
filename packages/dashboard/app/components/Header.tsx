@@ -1024,6 +1024,9 @@ export function Header({
               FNXC:Navigation 2026-06-19-12:00:
               Tablet navigation promotes Command Center immediately after Agents while desktop keeps Command Center in the More-views overflow.
               Documents moves to the tablet More-views overflow below to conserve horizontal space without changing desktop ordering.
+
+              FNXC:Navigation 2026-06-19-08:24:
+              FN-6725 re-verified this tablet contract after a suspected revert: Command Center remains a single inline tablet destination after Agents, Documents remains overflow-only on tablet, and desktop ordering stays unchanged.
               */
               <button
                 className={`view-toggle-btn${view === "command-center" ? " active" : ""}`}

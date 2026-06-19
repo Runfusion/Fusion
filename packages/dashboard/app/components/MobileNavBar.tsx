@@ -281,6 +281,9 @@ export function MobileNavBar({
   FNXC:Navigation 2026-06-19-12:05:
   Mobile navigation adds Command Center as a fixed top-level tab immediately after Mailbox.
   Primary plugin tabs, including Compound Engineering, are demoted to the More sheet so touch targets stay wide and Command Center is not duplicated.
+
+  FNXC:Navigation 2026-06-19-08:24:
+  FN-6725 re-verified the suspected-revert surface: Command Center remains adjacent to Mailbox even when mailbox badges render, primary plugin tabs remain More-sheet-only, and no Command Center More-sheet duplicate is allowed.
   */
   const MAX_PRIMARY_PLUGIN_TOP_LEVEL_TABS = 0;
   const topLevelPrimaryPluginViews = sortedPrimaryPluginViews.slice(0, MAX_PRIMARY_PLUGIN_TOP_LEVEL_TABS);
