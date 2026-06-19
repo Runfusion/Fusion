@@ -94,13 +94,13 @@ The Command Center must remain scrollable on mobile inside the overflow-hidden .
 
 .cc-stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--space-20) * 2)), 1fr));
   gap: var(--space-3);
 }
 
 /*
-FNXC:CommandCenterStyling 2026-06-18-00:00:
-Command Center chart/stat surfaces share one tokenized card rhythm so new chart areas do not drift in border, radius, or spacing when Team/System/agent-runs render together (FN-6664).
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+FN-6680 standardizes the Command Center card rhythm across overview, area, table, team, and system chart surfaces: use --space-3 padding/gaps, --border-width solid --border-subtle, --radius-md, and --surface-1 so mobile and tablet charts do not look like separate components.
 */
 .cc-stat-card {
   display: flex;
@@ -169,13 +169,13 @@ The GitHub closed-at backfill control lives inside the existing Fixed by Fusion 
 }
 
 /*
-FNXC:CommandCenterStyling 2026-06-18-00:00:
-Command Center live/chart containers must shrink inside the mobile tabpanel without creating a second scroll owner or clipping chart height (FN-6664).
+FNXC:CommandCenterStyling 2026-06-18-22:31:
+FN-6680 keeps the FN-6664 live/chart shrink contract but replaces hardcoded track minima with spacing tokens after real Blink mobile probing showed jsdom cannot catch min-content overflow or crushed chart tracks.
 */
 .cc-live-strip {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(10rem, 1fr) minmax(16rem, 2fr) minmax(10rem, 1fr);
+  grid-template-columns: minmax(calc(var(--space-20) * 2), 1fr) minmax(calc((var(--space-20) * 3) + var(--space-4)), 2fr) minmax(calc(var(--space-20) * 2), 1fr);
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3);
@@ -231,7 +231,6 @@ Command Center live/chart containers must shrink inside the mobile tabpanel with
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  min-inline-size: 0;
   padding: var(--space-2);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface-2) 70%, transparent);
@@ -334,7 +333,6 @@ Overview charts must use dashboard tokens only and keep motion decorative; anima
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  min-inline-size: 0;
   padding: var(--space-3);
   border: var(--border-width) solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -459,7 +457,7 @@ The Command Center subtree previously had no tablet tier, so at 769px–1024px t
 
   .cc-stat-grid,
   .cc-area .cc-stat-grid {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-20) * 2)), 1fr));
   }
 }
 

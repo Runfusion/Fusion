@@ -11,17 +11,19 @@ Chart labels and legends must use --text-muted so command-center CSS stays align
  */
 
 /*
-FNXC:CommandCenterStyling 2026-06-18-00:00:
-Command Center charts must render within the mobile tabpanel without overflow scroll-steal, zero-height collapse, or stretch; every primitive opts into logical shrink bounds before area layouts compose it (FN-6664).
+FNXC:CommandCenterStyling 2026-06-18-22:31:
+FN-6680 re-checked FN-6664 in a real Blink layout engine because jsdom does not compute grid/flex min-content sizes. Chart primitives and their text-bearing children need explicit logical shrink bounds so long labels cannot crush tracks or create hidden horizontal overflow inside the mobile tabpanel.
 */
 .cc-bar-chart,
 .cc-stacked-bar,
 .cc-sparkline,
 .cc-token-series,
 .cc-token-series-plot,
+.cc-token-series-axis,
 .cc-line-chart,
 .cc-radial-gauge,
-.cc-funnel {
+.cc-funnel,
+.cc-funnel-stage {
   min-inline-size: 0;
   max-inline-size: 100%;
 }
@@ -44,6 +46,7 @@ Command Center charts must render within the mobile tabpanel without overflow sc
 }
 
 .cc-bar-label {
+  min-inline-size: 0;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   overflow: hidden;
@@ -52,6 +55,7 @@ Command Center charts must render within the mobile tabpanel without overflow sc
 }
 
 .cc-bar-track {
+  min-inline-size: 0;
   position: relative;
   block-size: var(--space-3);
   background: var(--surface-2);
@@ -67,9 +71,12 @@ Command Center charts must render within the mobile tabpanel without overflow sc
 }
 
 .cc-bar-value {
+  min-inline-size: 0;
   font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
+  text-align: end;
 }
 
 /* ---- StackedBar ---- */
@@ -103,11 +110,13 @@ Command Center charts must render within the mobile tabpanel without overflow sc
 }
 
 .cc-stacked-legend-item {
+  min-inline-size: 0;
   display: flex;
   align-items: center;
   gap: var(--space-1);
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .cc-stacked-swatch {
@@ -183,6 +192,17 @@ The token-over-time chart is live-updated and animated, but the motion is decora
   color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.cc-token-series-axis span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-token-series-axis span:last-child {
+  text-align: end;
 }
 
 @keyframes cc-token-series-rise {
@@ -275,6 +295,7 @@ Line-chart motion is decorative, token-timed, and disabled for reduced-motion us
 
 /* ---- RadialGauge ---- */
 .cc-radial-gauge {
+  min-inline-size: 0;
   display: grid;
   place-items: center;
   gap: var(--space-2);
@@ -325,8 +346,10 @@ Line-chart motion is decorative, token-timed, and disabled for reduced-motion us
 }
 
 .cc-radial-gauge-label {
+  max-inline-size: 100%;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
   text-align: center;
 }
 
@@ -373,10 +396,24 @@ Line-chart motion is decorative, token-timed, and disabled for reduced-motion us
 }
 
 .cc-funnel-header {
+  min-inline-size: 0;
   display: flex;
   justify-content: space-between;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+}
+
+.cc-funnel-label,
+.cc-funnel-conversion,
+.cc-funnel-value {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.cc-funnel-conversion {
+  flex: 0 1 auto;
+  text-align: end;
 }
 
 .cc-funnel-conversion {
@@ -425,11 +462,13 @@ Line-chart motion is decorative, token-timed, and disabled for reduced-motion us
 @media (max-width: 768px) {
   .cc-bar-row {
     grid-template-columns: minmax(0, 1fr) minmax(var(--space-12), 2fr);
+    align-items: start;
   }
 
   .cc-bar-value {
     grid-column: 1 / -1;
     justify-self: end;
+    max-inline-size: 100%;
   }
 
   .cc-radial-gauge-ring {

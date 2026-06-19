@@ -15,8 +15,8 @@ Area headings, table metadata, and empty states use --text-muted so the analytic
 }
 
 /*
-FNXC:CommandCenterStyling 2026-06-18-00:00:
-Chart-bearing Command Center areas use one tokenized section rhythm and logical shrink bounds so mobile charts stay inside .cc-tabpanel without scroll-steal (FN-6664).
+FNXC:CommandCenterStyling 2026-06-18-22:31:
+FN-6680 preserves the FN-6664 section rhythm while adding real-layout shrink guarantees: jsdom missed mobile min-content pressure, so chart-bearing sections must bound their inline axis before shared chart primitives render labels, tables, or gauges.
 */
 .cc-area-section {
   display: flex;
@@ -44,7 +44,7 @@ Chart-bearing Command Center areas use one tokenized section rhythm and logical 
 /* Reuse the shell's stat-grid/stat-card look. */
 .cc-area .cc-stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--space-20) * 2)), 1fr));
   gap: var(--space-3);
 }
 
@@ -105,8 +105,8 @@ The Tokens area needs a real hour/day/week control and live token-number motion.
 
 /* ---- Tables ---- */
 /*
-FNXC:CommandCenterStyling 2026-06-18-00:00:
-Command Center table-heavy chart areas share the same border/radius rhythm as chart cards while keeping horizontal table overflow scoped to the table wrapper, not the mobile tabpanel vertical scroll owner (FN-6664).
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+FN-6680 keeps table-heavy chart areas on the same --border-width/--border-subtle/--radius-md/--surface-1 rhythm as chart cards while preserving the one allowed horizontal overflow owner: .cc-table-wrap.
 */
 .cc-table-wrap {
   max-inline-size: 100%;
@@ -205,8 +205,8 @@ Command Center table-heavy chart areas share the same border/radius rhythm as ch
 }
 
 /*
-FNXC:CommandCenterStyling 2026-06-18-16:57:
-The Team view must use dashboard design tokens only, preserve .cc-tabpanel as the scroll owner on mobile, reuse the shared .status-dot convention for live state, and keep any decorative motion duration-token based with reduced-motion disabled.
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+The Team view must use dashboard design tokens only, preserve .cc-tabpanel as the scroll owner on mobile, and match the shared card rhythm (--space-3 gap/padding, --border-width solid --border-subtle, --radius-md, --surface-1) while keeping decorative motion duration-token based with reduced-motion disabled.
 */
 .cc-team-chart-grid {
   display: grid;
@@ -285,7 +285,7 @@ Tablet Command Center areas share the FN-6679 overflow fix with the shell: area 
 */
 @media (min-width: 769px) and (max-width: 1024px) {
   .cc-area .cc-stat-grid {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-20) * 2)), 1fr));
   }
 
   .cc-team-chart-grid {
@@ -300,7 +300,8 @@ Tablet Command Center areas share the FN-6679 overflow fix with the shell: area 
 
 @media (max-width: 768px) {
   .cc-team-chart-grid {
-    grid-template-columns: 1fr;
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cc-team-spark-panel {

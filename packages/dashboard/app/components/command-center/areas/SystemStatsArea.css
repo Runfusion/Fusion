@@ -1,6 +1,6 @@
 /*
-FNXC:CommandCenter 2026-06-18-00:00:
-The Command Center System area replaces the standalone System Stats modal with graph-heavy telemetry while preserving the Command Center mobile scroll contract; keep area-specific styling layout-only and avoid nested overflow containers so .cc-tabpanel remains the sole vertical scroller.
+FNXC:CommandCenter 2026-06-18-22:31:
+The Command Center System area replaces the standalone System Stats modal with graph-heavy telemetry while preserving the Command Center mobile scroll contract; FN-6680 keeps System chart grids shrink-bounded because jsdom cannot prove real mobile gauge/sparkline layout.
 */
 
 .cc-system-refresh {
@@ -21,6 +21,7 @@ The Command Center System area replaces the standalone System Stats modal with g
 }
 
 .cc-system-chart-grid {
+  min-inline-size: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
@@ -40,12 +41,19 @@ The Command Center System area replaces the standalone System Stats modal with g
   color: var(--text-muted);
 }
 
+/*
+FNXC:CommandCenterStyling 2026-06-18-22:38:
+System control cards sit beside chart/stat cards, so FN-6680 gives them the same tokenized border, radius, surface, gap, and padding rhythm instead of relying on incidental global .card styling.
+*/
 .cc-system-vitest-card {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
 }
 
 .cc-system-vitest-card .btn {
@@ -103,7 +111,7 @@ The Command Center System area replaces the standalone System Stats modal with g
   }
 
   .cc-system-chart-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cc-system-vitest-card,

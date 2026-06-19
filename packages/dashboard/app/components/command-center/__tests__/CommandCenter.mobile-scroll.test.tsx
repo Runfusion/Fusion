@@ -303,6 +303,7 @@ function assertScrollOwnerContract(panel: HTMLElement) {
 }
 
 function assertNoChartScrollSteal(panel: HTMLElement) {
+  // FN-6680: jsdom does not compute real flex/grid layout, so this guards rule presence and scroll-owner structure only; the CSS-string regression plus Blink audit cover actual mobile pixel layout.
   const chartContainers = panel.querySelectorAll<HTMLElement>(
     ".cc-bar-chart, .cc-bar-row, .cc-sparkline, .cc-line-chart, .cc-radial-gauge, .cc-funnel, .cc-token-series, .cc-token-series-plot, .cc-overview-chart-card, .cc-team-chart-panel, .cc-stat-card",
   );
@@ -402,6 +403,9 @@ describe("CommandCenter mobile scroll regression (FN-6595)", () => {
     expect(styles).toContain(".cc-radial-gauge-ring");
     expect(styles).toContain("inline-size: clamp(var(--space-20), 44vw, var(--space-32))");
     expect(styles).toContain("min-inline-size: 0");
+    expect(styles).toContain(".cc-token-series-axis");
+    expect(styles).toContain("overflow-wrap: anywhere");
+    expect(styles).toContain("grid-template-columns: minmax(0, 1fr)");
   });
 
   it("keeps the same flex-fill scroll-owner contract outside the mobile breakpoint", () => {
