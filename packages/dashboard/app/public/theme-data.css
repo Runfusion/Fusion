@@ -333,6 +333,107 @@
   --accent-text: #fff;
 }
 
+/*
+FNXC:DashboardTheming 2026-06-19-15:39:
+Air must be the calmest, flattest theme: near-monochrome tokens, a restrained blue-gray accent, a clean system sans stack, and faint color-mix borders.
+The "remove unnecessary UI" requirement is intentionally CSS-only and scoped to [data-color-theme="air"] so shared DOM affordances remain present while borders, shadows, and decorative chrome flatten visually.
+*/
+[data-color-theme="air"] {
+  --bg: #0f1115;
+  --surface: #151820;
+  --card: #171a22;
+  --card-hover: color-mix(in srgb, var(--card) 92%, var(--text) 8%);
+  --text: #eef1f4;
+  --text-muted: #9aa3ad;
+  --border: color-mix(in srgb, var(--text) 8%, transparent);
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --font-primary: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --todo: #a5adba;
+  --in-progress: #b8c0cc;
+  --in-progress-rgb: 184, 192, 204;
+  --in-review: #c7ced8;
+  --triage: #8d96a3;
+  --done: #737d8a;
+  --color-success: #c7ced8;
+  --color-error: #d8a7a7;
+  --color-warning: #b7ad9a;
+  --color-info: #a8bfd8;
+  --cta-bg: #dbe5ef;
+  --cta-border: color-mix(in srgb, var(--cta-bg) 72%, transparent);
+  --cta-text: #111318;
+  --cta-bg-hover: #eef3f8;
+  --cta-border-hover: color-mix(in srgb, var(--cta-bg-hover) 82%, transparent);
+  --cta-glow: 0 0 0 transparent;
+  --logo-accent: var(--accent);
+  --accent: #a8bfd8;
+  --accent-text: #111318;
+}
+
+[data-color-theme="air"][data-theme="light"] {
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --card: #ffffff;
+  --card-hover: color-mix(in srgb, var(--card) 96%, var(--text) 4%);
+  --text: #1f242b;
+  --text-muted: #69717c;
+  --border: color-mix(in srgb, var(--text) 8%, transparent);
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --font-primary: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --todo: #667085;
+  --in-progress: #4f5f73;
+  --in-progress-rgb: 79, 95, 115;
+  --in-review: #5f6f83;
+  --triage: #7a7368;
+  --done: #8a929f;
+  --color-success: #526273;
+  --color-error: #b45f5f;
+  --color-warning: #8a7760;
+  --color-info: #536b86;
+  --cta-bg: #26313d;
+  --cta-border: color-mix(in srgb, var(--cta-bg) 76%, transparent);
+  --cta-text: #ffffff;
+  --cta-bg-hover: #354253;
+  --cta-border-hover: color-mix(in srgb, var(--cta-bg-hover) 84%, transparent);
+  --cta-glow: 0 0 0 transparent;
+  --logo-accent: var(--accent);
+  --accent: #536b86;
+  --accent-text: #ffffff;
+}
+
+[data-color-theme="air"] .card,
+[data-color-theme="air"] .column,
+[data-color-theme="air"] .panel,
+[data-color-theme="air"] .modal,
+[data-color-theme="air"] .task-card {
+  border-color: var(--border);
+  box-shadow: 0 0 0 transparent;
+  background-image: none;
+}
+
+[data-color-theme="air"] .btn,
+[data-color-theme="air"] .btn-icon,
+[data-color-theme="air"] .input,
+[data-color-theme="air"] input,
+[data-color-theme="air"] textarea,
+[data-color-theme="air"] select {
+  border-color: var(--border);
+  box-shadow: 0 0 0 transparent;
+}
+
+[data-color-theme="air"] .btn:hover,
+[data-color-theme="air"] .btn-icon:hover,
+[data-color-theme="air"] .card:hover,
+[data-color-theme="air"] .task-card:hover {
+  box-shadow: 0 0 0 transparent;
+}
+
+[data-color-theme="air"] .badge,
+[data-color-theme="air"] .pill,
+[data-color-theme="air"] .tag {
+  border-color: var(--border);
+  box-shadow: 0 0 0 transparent;
+}
+
 /* GRAPHITE - Dark graphite blacks */
 [data-color-theme="graphite"] {
   --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);

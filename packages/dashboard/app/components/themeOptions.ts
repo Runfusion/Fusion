@@ -23,6 +23,7 @@ export const COLOR_THEMES: { value: ColorTheme; label: string; className: string
   { value: "monochrome", label: "Mono", className: "theme-swatch-monochrome" },
   { value: "slate", label: "Slate", className: "theme-swatch-slate" },
   { value: "ash", label: "Ash", className: "theme-swatch-ash" },
+  { value: "air", label: "Air", className: "theme-swatch-air" },
   { value: "graphite", label: "Graphite", className: "theme-swatch-graphite" },
   { value: "silver", label: "Silver", className: "theme-swatch-silver" },
   { value: "solarized", label: "Solarized", className: "theme-swatch-solarized" },

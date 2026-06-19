@@ -283,6 +283,8 @@ export const COLOR_THEMES = [
   "monochrome",
   "slate",
   "ash",
+  // FNXC:DashboardTheming 2026-06-19-15:36: "air" is the source-of-truth id for the minimal, borderless, paper-like dashboard theme; keep bootstrap validators and theme options in sync with this union.
+  "air",
   "graphite",
   "silver",
   "solarized",

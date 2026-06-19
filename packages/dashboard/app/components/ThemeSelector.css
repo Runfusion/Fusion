@@ -248,6 +248,13 @@
   --swatch-sample-4: #d6d3d1;
 }
 
+.theme-swatch-air {
+  --swatch-sample-1: #0f1115;
+  --swatch-sample-2: #151820;
+  --swatch-sample-3: #a8bfd8;
+  --swatch-sample-4: #eef1f4;
+}
+
 .theme-swatch-graphite {
   --swatch-sample-1: #18181b;
   --swatch-sample-2: #27272a;
@@ -758,6 +765,13 @@
   --swatch-sample-2: #f5f5f4;
   --swatch-sample-3: #5a6a7a;
   --swatch-sample-4: #768694;
+}
+
+[data-theme="light"] .theme-swatch-air {
+  --swatch-sample-1: #fbfbfa;
+  --swatch-sample-2: #ffffff;
+  --swatch-sample-3: #536b86;
+  --swatch-sample-4: #26313d;
 }
 
 [data-theme="light"] .theme-swatch-graphite {
