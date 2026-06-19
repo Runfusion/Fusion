@@ -11,6 +11,13 @@ vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
 }));
 
+vi.mock("../../../api", () => ({
+  fetchSystemStats: () => Promise.resolve(systemStatsFixture()),
+  fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
+  killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),
+  updateGlobalSettings: () => Promise.resolve({}),
+}));
+
 function tokenFixture(totalTokens = 1_500) {
   return {
     from: "2026-06-08",
@@ -182,6 +189,37 @@ function liveFixture(columns: Array<{ column: string; count: number }> = [{ colu
   };
 }
 
+function systemStatsFixture() {
+  const gb = 1024 * 1024 * 1024;
+  const mb = 1024 * 1024;
+  return {
+    systemStats: {
+      rss: 2 * gb,
+      heapUsed: 500 * mb,
+      heapTotal: 700 * mb,
+      heapLimit: 1 * gb,
+      external: 20 * mb,
+      arrayBuffers: 8 * mb,
+      cpuPercent: 12,
+      loadAvg: [0.1, 0.2, 0.3] as [number, number, number],
+      cpuCount: 8,
+      systemTotalMem: 8 * gb,
+      systemFreeMem: 4 * gb,
+      pid: 456,
+      nodeVersion: "v22.0.0",
+      platform: "darwin/arm64",
+    },
+    taskStats: {
+      total: 1,
+      byColumn: { todo: 1 },
+      active: 0,
+      agents: { idle: 1, active: 0, running: 0, error: 0 },
+    },
+    vitestProcessCount: 0,
+    vitestLastAutoKillAt: null,
+  };
+}
+
 function mockOverviewApi({
   tokens = tokenFixture(),
   tools = toolsFixture(),
@@ -211,6 +249,8 @@ function mockOverviewApi({
     if (path === "/command-center/live") {
       return live instanceof Error ? Promise.reject(live) : Promise.resolve(live);
     }
+    if (path === "/system-stats") return Promise.resolve(systemStatsFixture());
+    if (path === "/settings/global") return Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
     return Promise.reject(new Error(`Unhandled api path: ${path}`));
   });
 }
@@ -520,8 +560,8 @@ describe("CommandCenter shell", () => {
     render(<CommandCenter />);
     const tablist = screen.getByRole("tablist");
     const tabs = within(tablist).getAllByRole("tab");
-    // Overview, Tokens, Tools, Activity, Productivity, Team, Ecosystem, GitHub, Signals, Mission Control.
-    expect(tabs.length).toBe(10);
+    // Overview, Tokens, Tools, Activity, Productivity, Team, Ecosystem, GitHub, Signals, System, Mission Control.
+    expect(tabs.length).toBe(11);
     // roving tabindex: exactly one tab is focusable.
     const focusable = tabs.filter((tab) => tab.getAttribute("tabindex") === "0");
     expect(focusable.length).toBe(1);
@@ -534,6 +574,18 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-tab-tokens").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("command-center-tab-overview").getAttribute("aria-selected")).toBe("false");
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
+  });
+
+  it("renders and routes the System tab exactly once", async () => {
+    mockOverviewApi();
+    render(<CommandCenter />);
+    expect(screen.getAllByTestId("command-center-tab-system")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    expect(screen.getByTestId("command-center-tab-system").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-panel-system")).toBeTruthy();
+    await screen.findByTestId("cc-area-system");
+    expect(screen.getByTestId("cc-system-cpu-gauge")).toBeTruthy();
   });
 
   it("renders and routes the GitHub tab exactly once", async () => {
@@ -642,6 +694,7 @@ describe("CommandCenter shell", () => {
       "ecosystem",
       "github",
       "signals",
+      "system",
       "mission-control",
       "team",
     ]) {

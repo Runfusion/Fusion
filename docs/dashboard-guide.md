@@ -654,7 +654,7 @@ Features:
 
 ## Command Center
 
-Command Center is the combined analytics and live-operations surface for a project: it pairs historical usage, cost, and throughput analytics with a live Mission Control panel.
+Command Center is the combined analytics and live-operations surface for a project: it pairs historical usage, cost, throughput analytics, live system telemetry, and a live Mission Control panel.
 
 Navigation:
 - Desktop: **Header → More views → Command Center**
@@ -672,6 +672,7 @@ Features:
 - **Ecosystem** shows active model breadth and per-model task activity; unavailable plugin-activation metrics render as unavailable rather than zero.
 - **GitHub** shows local GitHub issue flow for the selected range: **Filed by Fusion** counts tasks with a persisted `githubTracking.issue`, **Fixed by Fusion** counts tasks imported from GitHub source issues (`sourceIssueProvider = "github"`) that are currently in `done`, using the persisted `sourceIssueClosedAt` / `TaskSourceIssue.closedAt` close time when the reconciler has observed it. Rows that predate the field or have not been observed closed fall back to task `updatedAt` as the documented completion-time approximation; Fusion never fabricates a close timestamp and this analytics path never calls GitHub, the `gh` CLI, or any external network source. The area shows filed/fixed/net stat cards, filed-vs-fixed daily sparklines, and a by-repository bar breakdown.
 - **Signals** shows external signal totals, open/resolved counts, MTTR, and source/severity breakdowns when signal sources are connected.
+- **System** is the canonical system-telemetry destination. It reuses `GET /api/system-stats` with no new endpoint, renders live radial gauges for app CPU, host memory, and heap usage, keeps a small client-side rolling buffer for CPU/memory trend sparklines, and charts tasks by column plus agents by state with the shared Command Center chart primitives. The Vitest process count, manual kill confirmation, auto-kill toggle, threshold controls, and last-auto-kill timestamp moved here unchanged; the standalone System Stats modal and its desktop Header/mobile More affordances were removed.
 - **Mission Control** shows live active sessions/runs/nodes, current sessions and nodes, an animated live activity snapshot, and a live SDLC funnel; when idle it reports that live updates resume when work starts. Motion-heavy accents respect reduced-motion preferences.
 - CSV exports are available from the analytics endpoints with `?format=csv`. The Activity CSV includes daily `agentRuns` values plus summary rows for `(agentRuns.total)`, `(agentRuns.active)`, `(agentRuns.completed)`, and `(agentRuns.failed)`.
 
@@ -679,6 +680,7 @@ Data states:
 - Overview shows a loading state while core analytics settle, then shows `No usage data yet. Run some agents to populate the Command Center.` only after the selected range has settled with no core usage data.
 - GitHub issue analytics is local and additive: empty filed/fixed totals render the GitHub area's empty state; malformed historical `githubTracking` JSON is skipped instead of breaking the Command Center.
 - Team analytics renders its shared loading/error/empty states for null or zero-agent responses, omits empty chart shells for zero-value datasets, and keeps the Command Center tab panel as the mobile scroll owner.
+- System telemetry keeps the previous snapshot visible during refresh failures, renders a first-sample CPU `Sampling…` state without NaN values, shows zero-value task/agent bars for empty collections, and keeps the Command Center tab panel as the mobile scroll owner.
 - Signals is best-effort: if the Signals endpoint is absent or no signal source is connected, the Signals area falls back to its empty state and other Command Center metrics remain valid.
 
 ## Reliability View

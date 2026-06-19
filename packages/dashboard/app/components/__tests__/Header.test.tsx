@@ -113,18 +113,6 @@ describe("Header", () => {
     expect(screen.getByTitle("Import from GitHub")).toBeDefined();
   });
 
-  it("renders system stats button on desktop when handler is provided", () => {
-    renderHeader({ onOpenSystemStats: vi.fn() }, "desktop");
-    expect(screen.getByTitle("System Stats")).toBeDefined();
-  });
-
-  it("calls onOpenSystemStats when system stats button is clicked", () => {
-    const onOpenSystemStats = vi.fn();
-    renderHeader({ onOpenSystemStats }, "desktop");
-    fireEvent.click(screen.getByTitle("System Stats"));
-    expect(onOpenSystemStats).toHaveBeenCalled();
-  });
-
   it("calls onOpenSettings when settings button is clicked", () => {
     const onOpenSettings = vi.fn();
     renderHeader({ onOpenSettings });

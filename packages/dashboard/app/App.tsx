@@ -1335,11 +1335,6 @@ function AppInner() {
     pushNav({ type: "modal", close: modalManager.closeGitManager });
   }, [modalManager, pushNav]);
 
-  const openSystemStatsWithNav = useCallback(() => {
-    modalManager.openSystemStats();
-    pushNav({ type: "modal", close: modalManager.closeSystemStats });
-  }, [modalManager, pushNav]);
-
   const openSchedulesWithNav = useCallback(() => {
     modalManager.openSchedules();
     pushNav({ type: "modal", close: modalManager.closeSchedules });
@@ -1973,7 +1968,6 @@ function AppInner() {
         activePlanningSessionCount={bgPlanningSessions.length}
         onOpenUsage={openUsageWithNav}
         onOpenActivityLog={openActivityLogWithNav}
-        onOpenSystemStats={openSystemStatsWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         mailboxUnreadCount={mailboxUnreadCount}
         mailboxPendingApprovalCount={mailboxPendingApprovalCount}
@@ -2181,7 +2175,6 @@ function AppInner() {
         keyboardOpen={mobileNavKeyboardOpen}
         onOpenSettings={openSettingsWithNav}
         onOpenActivityLog={openActivityLogWithNav}
-        onOpenSystemStats={openSystemStatsWithNav}
         onOpenMailbox={() => handleTaskViewChange("mailbox")}
         onOpenNodes={handleOpenNodesWithNav}
         mailboxUnreadCount={mailboxUnreadCount}

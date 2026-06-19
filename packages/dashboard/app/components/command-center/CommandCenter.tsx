@@ -12,6 +12,7 @@ import { TeamArea } from "./areas/TeamArea";
 import { EcosystemArea } from "./areas/EcosystemArea";
 import { GithubArea } from "./areas/GithubArea";
 import { SignalsArea } from "./areas/SignalsArea";
+import { SystemStatsArea } from "./areas/SystemStatsArea";
 import { MissionControlPanel } from "./MissionControlPanel";
 import { SdlcFunnel } from "./SdlcFunnel";
 import { Bar, type BarDatum } from "./charts/Bar";
@@ -31,6 +32,7 @@ type SubViewId =
   | "ecosystem"
   | "github"
   | "signals"
+  | "system"
   | "mission-control";
 
 interface SubView {
@@ -54,6 +56,7 @@ function useSubViews(): SubView[] {
     { id: "ecosystem", label: t("commandCenter.tabs.ecosystem", "Ecosystem") },
     { id: "github", label: t("commandCenter.tabs.github", "GitHub") },
     { id: "signals", label: t("commandCenter.tabs.signals", "Signals") },
+    { id: "system", label: t("commandCenter.tabs.system", "System") },
     { id: "mission-control", label: t("commandCenter.tabs.missionControl", "Mission Control") },
   ];
 }
@@ -441,6 +444,8 @@ export function CommandCenter() {
         return <GithubArea range={range} />;
       case "signals":
         return <SignalsArea range={range} />;
+      case "system":
+        return <SystemStatsArea />;
       case "mission-control":
         return <MissionControlPanel />;
       default:

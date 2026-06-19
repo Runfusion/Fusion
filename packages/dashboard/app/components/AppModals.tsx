@@ -17,7 +17,6 @@ import { TodoModal } from "./TodoModal";
 import { UsageIndicator } from "./UsageIndicator";
 import { ScheduledTasksModal } from "./ScheduledTasksModal";
 import { NewTaskModal } from "./NewTaskModal";
-import { SystemStatsModal } from "./SystemStatsModal";
 import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
 import { AgentListModal } from "./AgentListModal";
@@ -186,11 +185,6 @@ export function AppModals({
     removeNav(modalManager.closeUsage);
     modalManager.closeUsage();
   }, [modalManager.closeUsage, removeNav]);
-
-  const closeSystemStatsWithNav = useCallback(() => {
-    removeNav(modalManager.closeSystemStats);
-    modalManager.closeSystemStats();
-  }, [modalManager.closeSystemStats, removeNav]);
 
   const closeSchedulesWithNav = useCallback(() => {
     removeNav(modalManager.closeSchedules);
@@ -424,12 +418,6 @@ export function AppModals({
         onClose={closeUsageWithNav}
         projectId={projectId}
         anchorRect={modalManager.usageAnchorRect}
-      />
-
-      <SystemStatsModal
-        isOpen={modalManager.systemStatsOpen}
-        onClose={closeSystemStatsWithNav}
-        projectId={projectId}
       />
 
       {modalManager.schedulesOpen && (

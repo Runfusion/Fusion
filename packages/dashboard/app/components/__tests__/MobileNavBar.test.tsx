@@ -33,7 +33,6 @@ const createDefaultProps = () => ({
   modalOpen: false,
   onOpenSettings: vi.fn(),
   onOpenActivityLog: vi.fn(),
-  onOpenSystemStats: vi.fn(),
   onOpenMailbox: vi.fn(),
   onOpenNodes: vi.fn(),
   mailboxUnreadCount: 0,
@@ -393,7 +392,6 @@ describe("MobileNavBar", () => {
 
     expect(screen.getByTestId("mobile-more-item-mailbox")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-activity")).toBeDefined();
-    expect(screen.getByTestId("mobile-more-item-system-stats")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();
@@ -561,17 +559,6 @@ describe("MobileNavBar", () => {
 
     expect(container.querySelector(".mobile-more-sheet")).toBeNull();
     expect(props.onOpenActivityLog).toHaveBeenCalledOnce();
-  });
-
-  it("system stats item in more sheet calls onOpenSystemStats", () => {
-    const props = createDefaultProps();
-    const { container } = render(<MobileNavBar {...props} />);
-
-    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
-    fireEvent.click(screen.getByTestId("mobile-more-item-system-stats"));
-
-    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
-    expect(props.onOpenSystemStats).toHaveBeenCalledOnce();
   });
 
   it("closes sheet and calls handler when item is clicked", () => {

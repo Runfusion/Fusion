@@ -854,7 +854,7 @@ Operator setup + troubleshooting guide: **[Remote Access runbook](./remote-acces
 
 Key server capabilities:
 - REST APIs for tasks, git, GitHub, agents, missions, planning, automations/routines, settings
-- System stats snapshot and vitest process controls APIs (`GET /api/system-stats`, `POST /api/kill-vitest`) exposing dashboard process/system telemetry (including app CPU percentage and host memory rendered as numeric values with visual usage bars in the System Stats modal), task/agent aggregates, and manual vitest process termination
+- System stats snapshot and vitest process controls APIs (`GET /api/system-stats`, `POST /api/kill-vitest`) exposing dashboard process/system telemetry (including app CPU percentage and host memory rendered as numeric values, radial gauges, and trend sparklines in the Command Center System area), task/agent aggregates, and manual vitest process termination
 - Remote access APIs (`/api/remote/*`) for provider config, activation, tunnel lifecycle, status, token issuance, authenticated URL generation, and QR payload generation
   - Operational runbook (prereqs/security/troubleshooting): [`docs/remote-access.md`](./remote-access.md)
   - `/api/remote/tunnel/start`, `/api/remote/tunnel/stop`, and `/api/remote/tunnel/kill-external` cover tunnel lifecycle and external funnel cleanup.

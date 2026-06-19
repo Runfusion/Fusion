@@ -205,29 +205,6 @@ describe("useModalManager", () => {
     expect(result.current.settingsInitialSection).toBeUndefined();
   });
 
-  it("tracks system stats modal state and includes it in anyModalOpen", () => {
-    const { result } = renderHook(() =>
-      useModalManager({ projectId: "proj_1", planningSessions: [] }),
-    );
-
-    expect(result.current.systemStatsOpen).toBe(false);
-    expect(result.current.anyModalOpen).toBe(false);
-
-    act(() => {
-      result.current.openSystemStats();
-    });
-
-    expect(result.current.systemStatsOpen).toBe(true);
-    expect(result.current.anyModalOpen).toBe(true);
-
-    act(() => {
-      result.current.closeSystemStats();
-    });
-
-    expect(result.current.systemStatsOpen).toBe(false);
-    expect(result.current.anyModalOpen).toBe(false);
-  });
-
   it("accepts plain Task object for optimistic modal opening", () => {
     const task = createTask("FN-456");
     const { result } = renderHook(() =>

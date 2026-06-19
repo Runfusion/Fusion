@@ -11,6 +11,13 @@ vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
 }));
 
+vi.mock("../../../api", () => ({
+  fetchSystemStats: () => Promise.resolve(systemStatsFixture()),
+  fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
+  killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),
+  updateGlobalSettings: () => Promise.resolve({}),
+}));
+
 function emptyTokenFixture() {
   return {
     totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 0, nTasks: 0 },
@@ -128,6 +135,37 @@ function populatedActivityFixture() {
   };
 }
 
+function systemStatsFixture() {
+  const gb = 1024 * 1024 * 1024;
+  const mb = 1024 * 1024;
+  return {
+    systemStats: {
+      rss: 2 * gb,
+      heapUsed: 500 * mb,
+      heapTotal: 700 * mb,
+      heapLimit: 1 * gb,
+      external: 20 * mb,
+      arrayBuffers: 8 * mb,
+      cpuPercent: 12,
+      loadAvg: [0.1, 0.2, 0.3] as [number, number, number],
+      cpuCount: 8,
+      systemTotalMem: 8 * gb,
+      systemFreeMem: 4 * gb,
+      pid: 456,
+      nodeVersion: "v22.0.0",
+      platform: "darwin/arm64",
+    },
+    taskStats: {
+      total: 1,
+      byColumn: { todo: 1 },
+      active: 0,
+      agents: { idle: 1, active: 0, running: 0, error: 0 },
+    },
+    vitestProcessCount: 0,
+    vitestLastAutoKillAt: null,
+  };
+}
+
 function mockOverviewApi({ populated = false }: { populated?: boolean } = {}) {
   apiMock.mockImplementation((path: string) => {
     if (path.startsWith("/command-center/tokens")) return Promise.resolve(populated ? populatedTokenFixture() : emptyTokenFixture());
@@ -136,6 +174,8 @@ function mockOverviewApi({ populated = false }: { populated?: boolean } = {}) {
     if (path.startsWith("/command-center/github")) return Promise.resolve(emptyGithubFixture());
     if (path.startsWith("/command-center/team")) return Promise.resolve(emptyTeamFixture());
     if (path.startsWith("/command-center/signals")) return Promise.resolve({ totalSignals: 0, open: 0, resolved: 0, mttr: { value: null, unavailable: true }, bySource: [], bySeverity: [] });
+    if (path === "/system-stats") return Promise.resolve(systemStatsFixture());
+    if (path === "/settings/global") return Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
     if (path === "/command-center/live") {
       return Promise.resolve({
         capturedAt: "2026-06-18T00:00:00.000Z",
@@ -224,6 +264,12 @@ describe("CommandCenter mobile scroll regression (FN-6595)", () => {
     const githubPanel = screen.getByTestId("command-center-panel-github");
     expect(githubPanel).toBe(screen.getByRole("tabpanel"));
     assertScrollOwnerContract(githubPanel);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-system"));
+    const systemPanel = screen.getByTestId("command-center-panel-system");
+    expect(systemPanel).toBe(screen.getByRole("tabpanel"));
+    await screen.findByTestId("cc-area-system");
+    assertScrollOwnerContract(systemPanel);
   });
 
   it("preserves the mobile scroll owner when the populated Overview charts render", async () => {
