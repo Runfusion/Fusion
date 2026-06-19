@@ -63,6 +63,11 @@ describe("settings-export", () => {
   });
 
   afterEach(() => {
+    /*
+    FNXC:CoreTests 2026-06-19-14:30:
+    FN-6741 rescues settings-export from the core suite-load quarantine by closing the in-memory TaskStore before removing its fixture root. The test still covers settings import/export behavior, but teardown must release store resources before temp cleanup instead of relying on process exit.
+    */
+    store.close();
     cleanupTestEnv(env.tempDir);
   });
 

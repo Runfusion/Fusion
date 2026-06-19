@@ -33,13 +33,14 @@ const quarantinedCoreTests = [
 
   FNXC:CoreTests 2026-06-19-10:24:
   FN-6705 verification then observed settings-export time out in beforeEach only under the broad changed-package core lane while the targeted file rerun passed in 5.1s. Quarantine the suite-load hook flake instead of increasing hookTimeout.
+
+  FNXC:CoreTests 2026-06-19-14:31:
+  FN-6741 reloaded the six 2026-06-19 core quarantine files under the broad @fusion/core lane and rescued them in lockstep with scripts/lib/test-quarantine.json. Keep this array empty; future core suite-load flakes must prove a remaining shared worker-root/temp-redirect or fixture close-order gap before re-quarantining.
+
+  FNXC:CoreTests 2026-06-19-15:05:
+  Merge verification for FN-6741 observed store-concurrent-writes fail again under the broad @fusion/core lane with SQLite BEGIN IMMEDIATE lock exhaustion. Re-quarantine that single suite-load lock flake in lockstep with the ledger; keep the other rescued core files loaded.
   */
-  "src/__tests__/activity-analytics.test.ts",
-  "src/__tests__/db.test.ts",
   "src/__tests__/store-concurrent-writes.test.ts",
-  "src/__tests__/store-create-summarize-deferred-hook.test.ts",
-  "src/__tests__/vitest-teardown-worker-root-cleanup.test.ts",
-  "src/__tests__/settings-export.test.ts",
 ];
 
 export default defineConfig({

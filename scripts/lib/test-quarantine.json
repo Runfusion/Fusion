@@ -17,33 +17,8 @@
       "quarantinedAt": "2026-06-19"
     },
     {
-      "file": "packages/core/src/__tests__/activity-analytics.test.ts",
-      "reason": "FN-6705 local workspace `pnpm test` observed this core file fail only in the broad changed-package core lane (hook/test timeout, ENOTEMPTY cleanup, or missed deferred hook under suite load); immediate targeted rerun of all five files passed, so quarantine the suite-load flake instead of appeasing it with wider timeouts/retries.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/core/src/__tests__/db.test.ts",
-      "reason": "FN-6705 local workspace `pnpm test` observed this core file fail only in the broad changed-package core lane (hook/test timeout, ENOTEMPTY cleanup, or missed deferred hook under suite load); immediate targeted rerun of all five files passed, so quarantine the suite-load flake instead of appeasing it with wider timeouts/retries.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
       "file": "packages/core/src/__tests__/store-concurrent-writes.test.ts",
-      "reason": "FN-6705 local workspace `pnpm test` observed this core file fail only in the broad changed-package core lane (hook/test timeout, ENOTEMPTY cleanup, or missed deferred hook under suite load); immediate targeted rerun of all five files passed, so quarantine the suite-load flake instead of appeasing it with wider timeouts/retries.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/core/src/__tests__/store-create-summarize-deferred-hook.test.ts",
-      "reason": "FN-6705 local workspace `pnpm test` observed this core file fail only in the broad changed-package core lane (hook/test timeout, ENOTEMPTY cleanup, or missed deferred hook under suite load); immediate targeted rerun of all five files passed, so quarantine the suite-load flake instead of appeasing it with wider timeouts/retries.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/core/src/__tests__/vitest-teardown-worker-root-cleanup.test.ts",
-      "reason": "FN-6705 local workspace `pnpm test` observed this core file fail only in the broad changed-package core lane (hook/test timeout, ENOTEMPTY cleanup, or missed deferred hook under suite load); immediate targeted rerun of all five files passed, so quarantine the suite-load flake instead of appeasing it with wider timeouts/retries.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/core/src/__tests__/settings-export.test.ts",
-      "reason": "FN-6705 local workspace `pnpm test` observed this core file time out in beforeEach only in the broad changed-package core lane; immediate targeted rerun passed in 5.1s, so quarantine the suite-load hook flake instead of appeasing it with wider hook timeouts/retries.",
+      "reason": "FN-6741 merge verification observed store-concurrent-writes fail again only under the broad @fusion/core lane with SQLite BEGIN IMMEDIATE lock exhaustion after the other same-day core quarantine entries stayed loaded; re-quarantine this suite-load lock flake instead of widening SQLite lock-recovery timing, adding retries, or weakening concurrent-write assertions.",
       "quarantinedAt": "2026-06-19"
     },
     {
