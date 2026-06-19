@@ -422,6 +422,47 @@ Overview charts must use dashboard tokens only and keep motion decorative; anima
   }
 }
 
+/*
+FNXC:CommandCenterStyling 2026-06-18-20:30:
+The Command Center subtree previously had no tablet tier, so at 769px–1024px the shell relied on desktop grids while the parent flex chain could collapse. Restore the flex/scroll-owner contract and collapse the widest live/chart grids before they create document overflow (FN-6679).
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .command-center {
+    flex: 1;
+    min-block-size: 0;
+    overflow: hidden;
+  }
+
+  .cc-tabpanel {
+    flex: 1;
+    min-block-size: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .cc-live-strip,
+  .cc-overview-charts,
+  .cc-team-chart-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-live-strip-metrics {
+    min-inline-size: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cc-overview-chart-card--trend,
+  .cc-team-spark-panel {
+    grid-column: auto;
+  }
+
+  .cc-stat-grid,
+  .cc-area .cc-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  }
+}
+
 @media (max-width: 768px) {
   .cc-live-strip {
     grid-template-columns: 1fr;

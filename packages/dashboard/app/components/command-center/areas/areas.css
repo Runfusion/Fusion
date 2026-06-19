@@ -279,6 +279,25 @@ The Team view must use dashboard design tokens only, preserve .cc-tabpanel as th
   }
 }
 
+/*
+FNXC:CommandCenterStyling 2026-06-18-20:30:
+Tablet Command Center areas share the FN-6679 overflow fix with the shell: area stat grids and Team charts must shrink within .cc-tabpanel instead of extending the document inline axis.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .cc-area .cc-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  }
+
+  .cc-team-chart-grid {
+    min-inline-size: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-team-spark-panel {
+    grid-column: auto;
+  }
+}
+
 @media (max-width: 768px) {
   .cc-team-chart-grid {
     grid-template-columns: 1fr;

@@ -3287,6 +3287,20 @@ input[type="range"]:focus-visible {
     grid-template-columns: repeat(6, minmax(260px, 1fr));
     overflow-x: auto;
   }
+
+  /*
+  FNXC:CommandCenterStyling 2026-06-18-20:30:
+  Command Center tablet rendering needs the same definite project-content flex chain as mobile so the shell and tabpanel resolve a real height instead of collapsing or overflowing the document at 769px–1024px (FN-6679).
+  */
+  .project-content {
+    display: flex;
+    flex: 1;
+    align-items: stretch;
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    overflow: hidden;
+  }
 }
 
 /* === Mobile Responsive Overrides ===

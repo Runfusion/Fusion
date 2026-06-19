@@ -678,6 +678,7 @@ Features:
 
 Rendering invariants:
 - On mobile (`max-width: 768px`), `.cc-tabpanel` remains the sole vertical scroll owner for every chart-bearing tab. Shared chart primitives (`Bar`, `StackedBar`, `Sparkline`, `LineChart`, `RadialGauge`, `Funnel`, and `TokenSeriesChart`) must shrink within the tabpanel, keep non-zero usable height, avoid stretch/clipping artifacts, and never introduce a competing vertical overflow container.
+- On tablet (`min-width: 769px` and `max-width: 1024px`), `.project-content`, `.command-center`, and `.cc-tabpanel` keep the same definite flex/min-height scroll-owner chain, while the live strip and chart grids collapse before they can create document-level horizontal overflow.
 - Command Center stat cards, overview chart cards, live strips, table wrappers, Team chart panels, token-series plots, and gauge/chart cards share the same tokenized rhythm: `--border-width` borders, `--radius-md` radii, and `--space-*` gaps/padding. Area-specific accents may use `color-mix(...)`, but layout, border, radius, text color, and motion must stay on design tokens.
 
 Data states:
