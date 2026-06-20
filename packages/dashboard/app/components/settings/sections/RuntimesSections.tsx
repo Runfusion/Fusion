@@ -1,35 +1,29 @@
-/**
- * Runtimes group sections (U9 / KTD-10) — thin wrappers around each plugin
- * runtime's self-contained card. These sections carry no modal form state; they
- * just title and mount the runtime card relocated from SettingsModal's switch.
- */
 import { HermesRuntimeCard } from "../../HermesRuntimeCard";
 import { OpenClawRuntimeCard } from "../../OpenClawRuntimeCard";
 import { PaperclipRuntimeCard } from "../../PaperclipRuntimeCard";
-
+import { useTranslation } from "react-i18next";
+/*
+ * FNXC:i18n-Localization 2026-06-20-00:00:
+ * Each exported runtime settings section is mounted independently, so each component owns its own translation hook scope.
+ */
 export function HermesRuntimeSection() {
-  return (
-    <>
-      <h4 className="settings-section-heading">Hermes Runtime</h4>
+    const { t } = useTranslation("app");
+    return (<>
+      <h4 className="settings-section-heading">{t("settings.runtimesRuntimes.hermesRuntime", "Hermes Runtime")}</h4>
       <HermesRuntimeCard />
-    </>
-  );
+    </>);
 }
-
 export function OpenClawRuntimeSection() {
-  return (
-    <>
-      <h4 className="settings-section-heading">OpenClaw Runtime</h4>
+    const { t } = useTranslation("app");
+    return (<>
+      <h4 className="settings-section-heading">{t("settings.runtimesRuntimes.openClawRuntime", "OpenClaw Runtime")}</h4>
       <OpenClawRuntimeCard />
-    </>
-  );
+    </>);
 }
-
 export function PaperclipRuntimeSection() {
-  return (
-    <>
-      <h4 className="settings-section-heading">Paperclip Runtime</h4>
+    const { t } = useTranslation("app");
+    return (<>
+      <h4 className="settings-section-heading">{t("settings.runtimesRuntimes.paperclipRuntime", "Paperclip Runtime")}</h4>
       <PaperclipRuntimeCard />
-    </>
-  );
+    </>);
 }

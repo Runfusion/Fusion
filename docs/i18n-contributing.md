@@ -52,7 +52,8 @@ content in `<kbd>`, instead of hiding source directories.
 Any remaining user-facing copy must be localized with `t()` / `<Trans>` and an
 `en` catalog entry. A temporary deferral is only acceptable when it is scoped to
 specific files or a small cluster in `lint.ignore`, includes an `FNXC` rationale,
-and has a filed follow-up task that removes the ignore.
+and has a filed follow-up task that removes the ignore. The settings sections
+cluster is no longer deferred as of FN-6771; keep those files covered by lint.
 
 ## Translating an existing language
 

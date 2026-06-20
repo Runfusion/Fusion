@@ -142,6 +142,14 @@
       "notConfigured": "Not configured"
     }
   },
+  "settings": {
+    "nodeRouting": {
+      "statusConnecting": "Connecting",
+      "statusError": "Error",
+      "statusOffline": "Offline",
+      "statusOnline": "Online"
+    }
+  },
   "setup": {
     "apiKeyFormatError": "{{providerName}} keys should follow this format: {{hint}} (e.g. {{example}})",
     "apiKeyLabel": {

@@ -8,8 +8,9 @@ import {
 const DEFERRED_I18N_LINT_FILES = [
   // FNXC:i18n-LintBaseline 2026-06-19-00:00:
   // These exact files still carry pre-existing user-facing copy debt after FN-6749 restored the guardrail scope and token suppression.
-  // Deferral split after FN-6769: 23 settings section files -> FN-6771 and workflow/task/setup/PR files -> FN-6770.
   // Keep the deferral file-scoped and remove entries as those follow-ups localize each cluster.
+  // FNXC:i18n-LintBaseline 2026-06-20-00:00:
+  // FN-6771 localized the settings/sections cluster, so those files are no longer deferred and must stay covered by i18n lint.
   "packages/dashboard/app/components/WorkflowSelector.tsx",
   "packages/dashboard/app/components/WorkflowResultsTab.tsx",
   "packages/dashboard/app/components/WorkflowNodeEditor.tsx",
@@ -22,29 +23,6 @@ const DEFERRED_I18N_LINT_FILES = [
   "packages/dashboard/app/components/PrPanel.tsx",
   "packages/dashboard/app/components/PrCreateModal.tsx",
   "packages/dashboard/app/components/Board.tsx",
-  "packages/dashboard/app/components/settings/sections/WorktreesSection.tsx",
-  "packages/dashboard/app/components/settings/sections/SchedulingSection.tsx",
-  "packages/dashboard/app/components/settings/sections/ScheduledEvalsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/RuntimesSections.tsx",
-  "packages/dashboard/app/components/settings/sections/ResearchProjectSection.tsx",
-  "packages/dashboard/app/components/settings/sections/ResearchGlobalSection.tsx",
-  "packages/dashboard/app/components/settings/sections/RemoteSection.tsx",
-  "packages/dashboard/app/components/settings/sections/ProjectModelsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/PluginsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/NotificationsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/NodeSyncSection.tsx",
-  "packages/dashboard/app/components/settings/sections/NodeRoutingSection.tsx",
-  "packages/dashboard/app/components/settings/sections/MergeSection.tsx",
-  "packages/dashboard/app/components/settings/sections/MemorySection.tsx",
-  "packages/dashboard/app/components/settings/sections/GlobalModelsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/GlobalGeneralSection.tsx",
-  "packages/dashboard/app/components/settings/sections/GeneralSection.tsx",
-  "packages/dashboard/app/components/settings/sections/ExperimentalSection.tsx",
-  "packages/dashboard/app/components/settings/sections/CommandsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/BackupsSection.tsx",
-  "packages/dashboard/app/components/settings/sections/AuthenticationSection.tsx",
-  "packages/dashboard/app/components/settings/sections/AppearanceSection.tsx",
-  "packages/dashboard/app/components/settings/sections/AgentPermissionsSection.tsx",
 ] as const;
 
 /**
