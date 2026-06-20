@@ -15,6 +15,14 @@
 - Archived-task flows (`archiveTask`, archived cleanup/migration) still hard-delete from the active `tasks` table after copying to cold storage (`archive.db`).
 - ID reservation is unchanged: soft-deleted IDs remain reserved. `distributed-task-id` and `task-id-integrity` intentionally scan all task rows (including soft-deleted rows), and must not filter on `deletedAt`.
 
+### Orphaned task-dir reconciliation (FN-6783)
+
+- Disk-backed `TaskStore` instances reconcile `.fusion/tasks/{ID}/task.json` directories against the SQLite `tasks` index on store open and during `SelfHealingManager` Batch 1 maintenance (`reconcile-orphaned-task-dirs`). This closes the visibility gap where a heartbeat-created task could exist on disk but be absent from `getTask`/`listTasks` and the dashboard board.
+- The reconcile is non-destructive: when an ID already exists anywhere the create path would reserve it (active task row, soft-deleted row, archived table/archive DB, or tombstone), the scan skips the directory and never overwrites or resurrects that ID. Only a valid live `task.json` with no DB record anywhere is re-imported.
+- Recovered rows preserve the on-disk task metadata, including `column`, `status`, dependencies, steps, and log, after the same defensive disk normalization used by task JSON fallback reads. Malformed or unparseable `task.json` files are skipped with a warning instead of failing store open or maintenance.
+- Recovery is visible: each inserted orphan emits a store warning, a `task:reconcile-orphaned-task-dir` run-audit event, and a `task:created` lifecycle event so live boards can render the recovered card.
+- On-disk retention matters for scan safety. `deleteTask()` leaves `.fusion/tasks/{ID}/task.json` and `agent-log.jsonl` on disk for forensics while marking the row `deletedAt`; the reconcile must skip those soft-deleted IDs. `archiveTask(id)` with the default cleanup removes the task directory, but `archiveTask(id, false)` and legacy archives can leave a `task.json` behind, so archived IDs are also guarded and skipped.
+
 ### Agent log storage + soft-delete visibility (FN-5143 / FN-5911)
 
 - Agent logs are no longer stored in SQLite. Each task now appends newline-delimited JSON records to `<rootDir>/.fusion/tasks/{ID}/agent-log.jsonl`.

@@ -192,6 +192,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 - FN-5419: git run-audit now includes `pull:fast-forward` and `stash:pop-conflict`; dashboard git surfaces now include the extended `POST /api/git/pull` integration-worktree path plus companion `POST /api/git/stash-resolve`, `POST /api/git/stash-drop`, and `POST /api/git/stash-apply` routes.
 - FN-6292: self-healing emits `task:reconcile-dependency-blocking-lease` when it rebounds an in-progress holder whose stale file-scope lease blocks an unmet dependency, and `task:reconcile-dependency-blocking-lease-no-action` when triple-proof blocks that backward move.
 - FN-6736: self-healing emits `task:reclaim-phantom-executor-binding` when it proves an in-memory executor-active binding is stale, clears the binding, and requeues the in-progress task with worktree/progress preserved.
+- FN-6783: task-store open and self-healing housekeeping emit `task:reconcile-orphaned-task-dir` when they non-destructively re-import a valid live `.fusion/tasks/{ID}/task.json` directory that has no task row anywhere, preserving soft-deleted/archived/tombstoned IDs.
 
 
 ## Reference docs (deeper detail)

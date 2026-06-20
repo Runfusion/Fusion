@@ -2005,6 +2005,20 @@ export class SelfHealingManager {
         },
         { name: "cleanup-orphaned-branches", fn: () => this.cleanupOrphanedBranches() },
         {
+          name: "reconcile-orphaned-task-dirs",
+          fn: async () => {
+            /*
+             * FNXC:TaskStoreConsistency 2026-06-20-00:00:
+             * Runtime heartbeat-created task dirs can appear after store init, so paused-safe housekeeping must reconcile orphaned task.json rows during maintenance instead of waiting for a restart.
+             */
+            const result = await this.store.reconcileOrphanedTaskDirs();
+            if (result.recovered.length > 0 || result.skipped.some((entry) => entry.reason.startsWith("malformed"))) {
+              log.warn(`Maintenance batch 1 step "reconcile-orphaned-task-dirs" recovered=${result.recovered.length} skipped=${result.skipped.length}`);
+            }
+            return result;
+          },
+        },
+        {
           name: "cleanup-old-chats",
           fn: async () => {
             const days = Number(settings.chatAutoCleanupDays ?? 0);
