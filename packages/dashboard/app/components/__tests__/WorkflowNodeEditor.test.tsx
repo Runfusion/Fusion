@@ -2655,26 +2655,42 @@ describe("WorkflowNodeEditor — U9 palette Templates section", () => {
     );
   });
 
-  it("clicking a fragment with a duplicate merge seam surfaces the inline conflict; no insertion", async () => {
+  it("clicking a fragment with a duplicate merge seam surfaces the desktop inline conflict; no insertion", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([def(), mergeFragment()]);
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
     await screen.findByTestId("wf-palette-templates");
     /*
-     * FNXC:WorkflowNodeEditor 2026-06-19-09:02:
-     * The duplicate-merge-seam guard must prove the fragment click is the only attempted canvas mutation.
-     * Wait for the base workflow node before taking the mutation baseline so cold ReactFlow rendering cannot masquerade as insertion.
+     * FNXC:WorkflowNodeEditor 2026-06-19-18:10:
+     * The duplicate-merge-seam guard must not wait for React Flow nodes before protecting insertion.
+     * Click as soon as the palette is usable, then prove the loaded merge prompt remains the only prompt node after the conflict surfaces.
      */
-    await screen.findByTestId("wf-node-gate");
-
-    const beforeNodes = document.querySelectorAll('[data-testid^="wf-node-"]').length;
     fireEvent.click(screen.getByTestId("wf-tpl-fragment-WF-FRAG-MERGE"));
 
     const conflict = await screen.findByTestId("wf-tpl-conflict");
     expect(conflict).toHaveAttribute("role", "alert");
     expect(conflict).toHaveTextContent(/merge/);
-    // No node added.
-    expect(document.querySelectorAll('[data-testid^="wf-node-"]').length).toBe(beforeNodes);
+    await screen.findByTestId("wf-node-gate");
+    await waitFor(() => expect(document.querySelectorAll('.wf-node[data-testid^="wf-node-"]')).toHaveLength(4));
+  });
+
+  it("clicking a duplicate merge fragment surfaces the mobile inline conflict; no insertion", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([def(), mergeFragment()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "QA" }));
+    const graph = await screen.findByTestId("wf-mobile-shell");
+    const beforeNodes = within(graph).queryAllByTestId(/^mobile-wf-node-/).length;
+
+    fireEvent.click(screen.getByTestId("wf-mobile-tab-add"));
+    fireEvent.click(await screen.findByTestId("wf-mobile-tpl-fragment-WF-FRAG-MERGE"));
+
+    const conflict = await screen.findByTestId("wf-mobile-tpl-conflict");
+    expect(conflict).toHaveAttribute("role", "alert");
+    expect(conflict).toHaveTextContent(/merge/);
+    fireEvent.click(screen.getByTestId("wf-mobile-tab-graph"));
+    await waitFor(() => expect(screen.getAllByTestId(/^mobile-wf-node-/)).toHaveLength(beforeNodes));
   });
 
   it("clicking a clean fragment inserts its non-start/end nodes", async () => {

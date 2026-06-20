@@ -14,8 +14,11 @@ vi.mock("../../../api/legacy", () => ({
 vi.mock("../../../api", () => ({
   fetchSystemStats: () => Promise.resolve(systemStatsFixture()),
   fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
+  fetchConfig: vi.fn().mockResolvedValue({ maxConcurrent: 2, rootDir: "/" }),
+  fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxTriageConcurrent: 1, maxWorktrees: 5 }),
   killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),
   updateGlobalSettings: () => Promise.resolve({}),
+  updateSettings: vi.fn().mockResolvedValue({}),
 }));
 
 function emptyTokenFixture() {
@@ -102,6 +105,14 @@ function populatedProductivityFixture() {
     commits: 2,
     pullRequests: 1,
     loc: { value: 42, unavailable: false },
+    taskDuration: {
+      completedTasks: 2,
+      averageMs: 1_800_000,
+      medianMs: 1_800_000,
+      p90Ms: 2_400_000,
+      totalMs: 3_600_000,
+      unavailable: false,
+    },
     byLanguage: [{ language: "TypeScript", count: 6 }],
   };
 }
@@ -112,6 +123,14 @@ function emptyProductivityFixture() {
     commits: 0,
     pullRequests: 0,
     loc: { value: null, unavailable: true },
+    taskDuration: {
+      completedTasks: 0,
+      averageMs: null,
+      medianMs: null,
+      p90Ms: null,
+      totalMs: null,
+      unavailable: true,
+    },
     byLanguage: [],
   };
 }

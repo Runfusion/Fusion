@@ -277,6 +277,10 @@ async function flushPendingTimers() {
   });
 }
 
+async function waitForSubmitSuccessToClear(textarea: HTMLTextAreaElement) {
+  await waitFor(() => expect(textarea.value).toBe(""));
+}
+
 function openPriorityMenu() {
   fireEvent.click(screen.getByTestId("quick-entry-priority-button"));
 }
@@ -456,6 +460,7 @@ describe("QuickEntryBox", () => {
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await waitForSubmitSuccessToClear(textarea);
       await flushPendingTimers();
 
       expect(focusSpy).toHaveBeenCalledTimes(1);
@@ -473,6 +478,7 @@ describe("QuickEntryBox", () => {
       clickSave();
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await waitForSubmitSuccessToClear(textarea);
       await flushPendingTimers();
 
       expect(focusSpy).toHaveBeenCalledTimes(1);
@@ -498,7 +504,7 @@ describe("QuickEntryBox", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create anyway" }));
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(textarea.value).toBe(""));
+      await waitForSubmitSuccessToClear(textarea);
       await flushPendingTimers();
 
       expect(focusSpy).toHaveBeenCalledTimes(1);
@@ -519,8 +525,29 @@ describe("QuickEntryBox", () => {
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await waitForSubmitSuccessToClear(textarea);
       await flushPendingTimers();
 
+      expect(focusSpy).not.toHaveBeenCalled();
+      expect(document.activeElement).not.toBe(textarea);
+    });
+
+    it("preserves the draft without auto-focus when submission fails", async () => {
+      mockDesktopViewport();
+      const addToast = vi.fn();
+      const onCreate = vi.fn().mockRejectedValue(new Error("create failed"));
+      renderQuickEntryBox({ addToast, onCreate });
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+      const focusSpy = vi.spyOn(textarea, "focus");
+
+      fireEvent.change(textarea, { target: { value: "Failed task" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(textarea.value).toBe("Failed task"));
+      await flushPendingTimers();
+
+      expect(addToast).toHaveBeenCalledWith("create failed", "error");
       expect(focusSpy).not.toHaveBeenCalled();
       expect(document.activeElement).not.toBe(textarea);
     });

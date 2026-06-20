@@ -97,6 +97,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     return "";
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [postSubmitFocusRequest, setPostSubmitFocusRequest] = useState(0);
   // isExpanded controls textarea height styling (auto-resize)
   const [isExpanded, setIsExpanded] = useState(true);
   // isDisclosureExpanded controls visibility of the controls panel (Deps, Models, etc.)
@@ -106,7 +107,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const fileInputRef = useRef<HTMLInputElement>(null);
   const touchButtonRef = useRef<HTMLButtonElement | null>(null);
   const justResetRef = useRef(false);
-  const justSubmittedRef = useRef(false);
+  const postSubmitFocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledPostSubmitFocusRequestRef = useRef(0);
   const previousProjectIdRef = useRef(projectId);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const pendingImagesRef = useRef<PendingImage[]>([]);
@@ -321,21 +323,46 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     }
   }, [description, isExpanded, autoResize]);
 
-  // Restore focus after an in-component submission completes (when textarea is re-enabled).
+  const requestFocusAfterSuccessfulSubmit = useCallback(() => {
+    setPostSubmitFocusRequest((request) => request + 1);
+  }, []);
+
+  /*
+  FNXC:QuickEntryFocus 2026-06-19-16:50:
+  Desktop users should keep typing after Enter, Save, or duplicate-confirmed task creation, while mobile users must not receive an automatic focus that opens the soft keyboard.
+  Drive the post-submit focus from a resolved-submit state request instead of a ref-gated effect so React state ordering cannot skip the restoration when the form clears under broad jsdom load.
+  */
   useEffect(() => {
-    if (!justSubmittedRef.current || isSubmitting || description !== "" || !textareaRef.current) {
+    if (
+      postSubmitFocusRequest === 0 ||
+      handledPostSubmitFocusRequestRef.current === postSubmitFocusRequest ||
+      isSubmitting ||
+      description !== "" ||
+      !textareaRef.current
+    ) {
       return;
     }
 
-    justSubmittedRef.current = false;
-    // Use setTimeout to ensure focus happens after React re-enables the textarea.
-    const focusTimeout = setTimeout(() => {
+    handledPostSubmitFocusRequestRef.current = postSubmitFocusRequest;
+
+    if (postSubmitFocusTimeoutRef.current) {
+      clearTimeout(postSubmitFocusTimeoutRef.current);
+    }
+
+    postSubmitFocusTimeoutRef.current = setTimeout(() => {
+      postSubmitFocusTimeoutRef.current = null;
       if (typeof window !== "undefined" && window.innerWidth > MOBILE_BREAKPOINT_PX) {
         textareaRef.current?.focus();
       }
     }, 0);
-    return () => clearTimeout(focusTimeout);
-  }, [isSubmitting, description]);
+
+    return () => {
+      if (postSubmitFocusTimeoutRef.current) {
+        clearTimeout(postSubmitFocusTimeoutRef.current);
+        postSubmitFocusTimeoutRef.current = null;
+      }
+    };
+  }, [description, isSubmitting, postSubmitFocusRequest]);
 
   // Clear dep search when dropdown closes
   useEffect(() => {
@@ -542,7 +569,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         }
       }
       resetForm();
-      justSubmittedRef.current = true;
+      requestFocusAfterSuccessfulSubmit();
     } catch (err) {
       setDescription(originalDescription);
       addToast(getErrorMessage(err) || t("tasks.createFailed", "Failed to create task"), "error");
@@ -574,6 +601,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     projectId,
     addToast,
     resetForm,
+    requestFocusAfterSuccessfulSubmit,
   ]);
 
   const handleSubmit = useCallback(async () => {

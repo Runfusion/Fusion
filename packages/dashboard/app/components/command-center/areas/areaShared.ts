@@ -29,6 +29,18 @@ export function formatCount(n: number): string {
   return Number.isFinite(n) ? Math.round(n).toLocaleString() : "0";
 }
 
+/** Format milliseconds as compact active execution duration text. */
+export function formatDurationMs(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return "";
+  const totalSeconds = Math.max(0, Math.round(ms / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  if (minutes > 0) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  return `${seconds}s`;
+}
+
 /** Format a USD cost result, returning the unavailable sentinel "—" when unknown. */
 export function formatCost(usd: number | null, unavailable: boolean): string {
   if (unavailable || usd === null || !Number.isFinite(usd)) {

@@ -17,7 +17,8 @@ import type { Database } from "./db.js";
  *
  * Inclusivity: `from`/`to` bounds are inclusive. Tasks are filtered by
  * `updatedAt` (the last time the task — and therefore its modifiedFiles — was
- * touched); commit associations by `authoredAt`; PRs by `createdAt`.
+ * touched); completed-task durations by `executionCompletedAt`; commit
+ * associations by `authoredAt`; PRs by `createdAt`.
  */
 
 /*
@@ -59,6 +60,19 @@ export interface HoursSavedSummary {
   unavailable: boolean;
 }
 
+/**
+ * FNXC:CommandCenterProductivity 2026-06-19-12:00:
+ * Task-duration productivity stats are derived from `tasks.cumulativeActiveMs` for done tasks completed in the selected range. Missing qualifying durations are unavailable, not zero, so old or untracked tasks do not read as instant work.
+ */
+export interface TaskDurationSummary {
+  completedTasks: number;
+  averageMs: number | null;
+  medianMs: number | null;
+  p90Ms: number | null;
+  totalMs: number | null;
+  unavailable: boolean;
+}
+
 export interface ProductivityAnalytics {
   from: string | null;
   to: string | null;
@@ -74,6 +88,8 @@ export interface ProductivityAnalytics {
   loc: LocSummary;
   /** Estimated human-hours equivalent derived from `loc` when LOC is available. */
   hoursSaved: HoursSavedSummary;
+  /** Active execution duration for done tasks completed in range. */
+  taskDuration: TaskDurationSummary;
 }
 
 interface CountRow {
@@ -91,6 +107,10 @@ interface ModifiedFilesRow {
   modifiedFiles: string | null;
 }
 
+interface TaskDurationRow {
+  cumulativeActiveMs: number;
+}
+
 /** Extract a coarse language key from a file path (its lowercased extension). */
 function languageOf(path: string): string {
   const base = path.split("/").pop() ?? path;
@@ -99,10 +119,26 @@ function languageOf(path: string): string {
   return base.slice(dot + 1).toLowerCase();
 }
 
+function median(sortedValues: readonly number[]): number | null {
+  if (sortedValues.length === 0) return null;
+  const middle = Math.floor(sortedValues.length / 2);
+  if (sortedValues.length % 2 === 1) return sortedValues[middle] ?? null;
+  return ((sortedValues[middle - 1] ?? 0) + (sortedValues[middle] ?? 0)) / 2;
+}
+
+function nearestRankPercentile(sortedValues: readonly number[], percentile: number): number | null {
+  if (sortedValues.length === 0) return null;
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil(percentile * sortedValues.length) - 1),
+  );
+  return sortedValues[index] ?? null;
+}
+
 /**
  * Aggregate productivity metrics over a date range. Empty range yields zeroed
- * structures (not nulls); LOC remains the unavailable sentinel unless at least
- * one in-range commit association carries diff stats.
+ * structures (not nulls); LOC and task duration remain unavailable sentinels
+ * unless at least one in-range row carries real source data.
  */
 export function aggregateProductivityAnalytics(
   db: Database,
@@ -181,6 +217,46 @@ export function aggregateProductivityAnalytics(
     ? { value: null, unavailable: true }
     : { value: Math.round((loc.value / HUMAN_LINES_PER_HOUR) * 10) / 10, unavailable: false };
 
+  const durationClauses: string[] = [
+    `"column" = 'done'`,
+    "executionCompletedAt IS NOT NULL",
+    "cumulativeActiveMs IS NOT NULL",
+    "cumulativeActiveMs > 0",
+  ];
+  const durationParams: string[] = [];
+  if (query.from !== undefined) {
+    durationClauses.push("executionCompletedAt >= ?");
+    durationParams.push(query.from);
+  }
+  if (query.to !== undefined) {
+    durationClauses.push("executionCompletedAt <= ?");
+    durationParams.push(query.to);
+  }
+  const durationRows = db
+    .prepare(
+      `SELECT cumulativeActiveMs FROM tasks WHERE ${durationClauses.join(" AND ")} ORDER BY cumulativeActiveMs ASC`,
+    )
+    .all(...durationParams) as TaskDurationRow[];
+  const durations = durationRows.map((row) => row.cumulativeActiveMs);
+  const totalDurationMs = durations.reduce((sum, durationMs) => sum + durationMs, 0);
+  const taskDuration: TaskDurationSummary = durations.length > 0
+    ? {
+      completedTasks: durations.length,
+      averageMs: totalDurationMs / durations.length,
+      medianMs: median(durations),
+      p90Ms: nearestRankPercentile(durations, 0.9),
+      totalMs: totalDurationMs,
+      unavailable: false,
+    }
+    : {
+      completedTasks: 0,
+      averageMs: null,
+      medianMs: null,
+      p90Ms: null,
+      totalMs: null,
+      unavailable: true,
+    };
+
   // Pull requests. `pull_requests.createdAt` is an INTEGER epoch-ms column, so
   // convert the ISO bounds to epoch ms for comparison.
   const prClauses: string[] = [];
@@ -209,5 +285,6 @@ export function aggregateProductivityAnalytics(
     pullRequests,
     loc,
     hoursSaved,
+    taskDuration,
   };
 }

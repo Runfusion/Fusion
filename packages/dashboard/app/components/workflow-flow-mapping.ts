@@ -1008,6 +1008,7 @@ function flowNodeSeam(node: FlowNode<WorkflowFlowNodeData>): string | undefined 
 
 /** Read the seam marker an IR node carries via its config.seam. */
 function irNodeSeam(node: WorkflowIrNode): string | undefined {
+  if ((node.kind as string) === "merge") return "merge";
   const seam = node.config?.seam;
   return typeof seam === "string" ? seam : undefined;
 }
@@ -1018,12 +1019,21 @@ function irNodeSeam(node: WorkflowIrNode): string | undefined {
  * empty result means the fragment is safe to insert. Other seam values
  * (planning, step-execute, …) are not pre-validated here (only the tracked
  * execute/review/merge seams are single-instance on the canvas).
+ *
+ * FNXC:WorkflowNodeEditor 2026-06-19-18:09:
+ * Fragment insertion guards must not depend only on React Flow nodes, because the palette can render before the loaded workflow graph fully materializes under components-b shard load.
+ * Union the transient canvas nodes with the authoritative active workflow IR so duplicate seam conflicts surface on desktop and mobile even during cold ReactFlow render timing.
  */
 export function fragmentSeamConflicts(
   fragmentIr: WorkflowIr,
   nodes: FlowNode<WorkflowFlowNodeData>[],
+  existingIr?: WorkflowIr,
 ): string[] {
   const canvasSeams = new Set<string>();
+  for (const node of existingIr?.nodes ?? []) {
+    const seam = irNodeSeam(node);
+    if (seam && SEAM_NAMES.has(seam)) canvasSeams.add(seam);
+  }
   for (const n of nodes) {
     const seam = flowNodeSeam(n);
     if (seam && SEAM_NAMES.has(seam)) canvasSeams.add(seam);

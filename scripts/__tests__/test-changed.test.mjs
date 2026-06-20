@@ -148,6 +148,26 @@ test("isSharedInfraChange: returns false for .fusion artifacts", () => {
   assert.equal(isSharedInfraChange([".fusion/tasks/FN-5157/PROMPT.md"]), false);
 });
 
+test("isSharedInfraChange: returns false for the test-quarantine data list", () => {
+  // FN: editing scripts/lib/test-quarantine.json (a runtime data list of
+  // quarantined tests, not executable infra) previously tripped the root
+  // catch-all and forced gate mode, which DROPS affected-package coverage.
+  assert.equal(isSharedInfraChange(["scripts/lib/test-quarantine.json"]), false);
+});
+
+test("isSharedInfraChange: quarantine edit plus package change stays changed-only", () => {
+  // A quarantine-list edit alongside real package work must keep the diff in
+  // changed mode so the changed packages actually get tested.
+  assert.equal(
+    isSharedInfraChange([
+      "scripts/lib/test-quarantine.json",
+      "packages/core/src/productivity-analytics.ts",
+      "packages/dashboard/app/components/QuickEntryBox.tsx",
+    ]),
+    false,
+  );
+});
+
 test("isSharedInfraChange: still returns true for root config edges", () => {
   for (const file of ["tsconfig.json", ".npmrc", "Dockerfile"]) {
     assert.equal(isSharedInfraChange([file]), true, `${file} should still force the full suite`);

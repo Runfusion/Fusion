@@ -762,6 +762,7 @@ function InnerEditor({
   });
   const [templateFilter, setTemplateFilter] = useState("");
   const [templateConflict, setTemplateConflict] = useState<string | null>(null);
+  const canvasNodesMaterializedRef = useRef(false);
 
   // U12: the columns/fields authoring panels live in the left sidebar (below the
   // workflow list) as collapsible disclosure sections. Each section's collapsed
@@ -1144,6 +1145,7 @@ function InnerEditor({
 
   // Load the active workflow graph into the canvas.
   useEffect(() => {
+    canvasNodesMaterializedRef.current = false;
     if (!activeWorkflow) {
       setNodes([]);
       setEdges([]);
@@ -1197,6 +1199,10 @@ function InnerEditor({
       setInterpreterOnly(false);
     }
   }, [activeWorkflow, setNodes, setEdges, setViewport]);
+
+  useEffect(() => {
+    if (nodes.length > 0) canvasNodesMaterializedRef.current = true;
+  }, [nodes]);
 
   // `?panel=settings` deep link (U6/U9 redirect stubs): once the active workflow
   // has loaded, scroll the settings panel into view. Runs once per editor open.
@@ -1391,7 +1397,8 @@ function InnerEditor({
   const handleInsertFragment = useCallback(
     (fragment: WorkflowDefinition) => {
       if (isBuiltin) return false;
-      const conflicts = fragmentSeamConflicts(fragment.ir, nodes);
+      const loadedIrFallback = canvasNodesMaterializedRef.current ? undefined : activeWorkflow?.ir;
+      const conflicts = fragmentSeamConflicts(fragment.ir, nodes, loadedIrFallback);
       if (conflicts.length > 0) {
         setTemplateConflict(conflicts.join(", "));
         return false;
@@ -1409,7 +1416,7 @@ function InnerEditor({
       setSelectedNodeId(result.insertedNodeIds[0] ?? null);
       return true;
     },
-    [isBuiltin, nodes, edges, setNodes, setEdges],
+    [isBuiltin, nodes, edges, activeWorkflow, setNodes, setEdges],
   );
 
   // Auto-layout: one-click left-to-right tidy (U5, R8). Recomputes positions

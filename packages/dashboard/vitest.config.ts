@@ -279,14 +279,19 @@ FNXC:DashboardTestQuarantine 2026-06-19-08:17:
 FN-6726 workspace verification observed the WorkflowNodeEditor duplicate-merge-seam template conflict test fail only in the broad components-b shard, then pass on targeted rerun.
 Quarantine the concurrency-sensitive workflow editor file under the deletion ratchet instead of changing unrelated template insertion behavior or appeasing the test.
 
+FNXC:DashboardTestQuarantine 2026-06-19-18:12:
+FN-6744 rescued WorkflowNodeEditor before the 2026-07-03 deletion deadline by deriving duplicate-fragment seam conflicts from the active workflow IR plus React Flow nodes.
+Keep it out of this exclude list so desktop and mobile template guards continue proving duplicate merge seams surface an inline alert with no insertion under components-b shard load.
+
 FNXC:DashboardTestQuarantine 2026-06-19-15:40:
 FN-6742 rescued session-cross-tab before the 2026-07-03 deletion ratchet by reproducing ENOTEMPTY in dashboard-api-quality-backfill and fixing the test-owned route/close-callback teardown seam.
 Keep it out of this exclude list so loaded API shards keep exercising cross-tab locking, beacon release, stale-lock expiry, SSE summaries, and stale-session cleanup.
+
+FNXC:DashboardTestQuarantine 2026-06-19-16:50:
+FN-6743 rescued QuickEntryBox's third quarantine cycle by replacing the ref-gated post-submit focus effect with a resolved-submit focus trigger and broadening desktop/mobile submit coverage.
+Keep QuickEntryBox out of this exclude list so the dashboard app lanes exercise Enter, Save, duplicate-confirmed creation, mobile non-focus, and failure-preserves-draft focus invariants.
 */
-const quarantinedDashboardTests: string[] = [
-  "app/components/__tests__/QuickEntryBox.test.tsx",
-  "app/components/__tests__/WorkflowNodeEditor.test.tsx",
-];
+const quarantinedDashboardTests: string[] = [];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,

@@ -604,6 +604,14 @@ function isTestIrrelevantRootPath(file) {
     return true;
   }
 
+  // The quarantine list is runtime DATA (which tests are skipped), not
+  // executable test infra. Editing it must not trip the root catch-all below
+  // and force gate mode — gate mode drops affected-package coverage, so a
+  // dev's real changes would go untested just because they touched the list.
+  if (file === "scripts/lib/test-quarantine.json") {
+    return true;
+  }
+
   return ["README", "CHANGELOG.md", "LICENSE", "LICENSE.md"].includes(file);
 }
 

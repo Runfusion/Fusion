@@ -777,7 +777,7 @@ describe("ToolsArea", () => {
 });
 
 describe("ProductivityArea", () => {
-  it("renders unavailable LOC and hours saved as dash sentinels, never 0 and keeps chart geometry finite", async () => {
+  it("renders unavailable LOC and hours saved as dash sentinels, duration stats, and finite chart geometry", async () => {
     apiMock.mockResolvedValue({
       from: "2026-06-08",
       to: null,
@@ -787,6 +787,14 @@ describe("ProductivityArea", () => {
       pullRequests: 2,
       loc: { value: null, unavailable: true },
       hoursSaved: { value: null, unavailable: true },
+      taskDuration: {
+        completedTasks: 3,
+        averageMs: 5_400_000,
+        medianMs: 3_600_000,
+        p90Ms: 7_200_000,
+        totalMs: 16_200_000,
+        unavailable: false,
+      },
     });
     render(<ProductivityArea range={range7d} />);
     await screen.findByTestId("cc-area-productivity");
@@ -799,6 +807,11 @@ describe("ProductivityArea", () => {
     expect(screen.getByTestId("cc-productivity-hours-saved").textContent).not.toContain("0");
     // The commits outcome counter still shows a real number.
     expect(screen.getByTestId("cc-productivity-commits").textContent).toContain("4");
+    expect(screen.getByTestId("cc-productivity-duration-completed").textContent).toContain("3");
+    expect(screen.getByTestId("cc-productivity-duration-avg").textContent).toContain("1h 30m");
+    expect(screen.getByTestId("cc-productivity-duration-median").textContent).toContain("1h");
+    expect(screen.getByTestId("cc-productivity-duration-p90").textContent).toContain("2h");
+    expect(screen.getByTestId("cc-productivity-duration-total").textContent).toContain("4h 30m");
     expect(screen.getByRole("list", { name: "Files by language" })).toBeTruthy();
     expect(screen.getByTestId("cc-productivity-pie")).toBeTruthy();
     expect(screen.getByRole("img", { name: "Language share" })).toBeTruthy();
@@ -815,11 +828,20 @@ describe("ProductivityArea", () => {
       pullRequests: 0,
       loc: { value: null, unavailable: true },
       hoursSaved: { value: null, unavailable: true },
+      taskDuration: {
+        completedTasks: 0,
+        averageMs: null,
+        medianMs: null,
+        p90Ms: null,
+        totalMs: null,
+        unavailable: true,
+      },
     });
     const { unmount } = render(<ProductivityArea range={range7d} />);
     await screen.findByTestId("cc-area-productivity-empty");
     expect(screen.queryByRole("list", { name: "Files by language" })).toBeNull();
     expect(screen.queryByTestId("cc-productivity-pie")).toBeNull();
+    expect(screen.queryByTestId("cc-productivity-duration-avg")).toBeNull();
     unmount();
 
     apiMock.mockImplementationOnce(() => new Promise(() => undefined));
@@ -832,6 +854,39 @@ describe("ProductivityArea", () => {
     await screen.findByTestId("cc-area-productivity-error");
     expect(screen.getByTestId("cc-area-productivity-error").textContent).toContain("productivity failed");
     expect(screen.queryByTestId("cc-productivity-pie")).toBeNull();
+    expect(screen.queryByTestId("cc-productivity-duration-avg")).toBeNull();
+  });
+
+  it("renders unavailable task duration as dash sentinels, never zero", async () => {
+    apiMock.mockResolvedValue({
+      from: "2026-06-08",
+      to: null,
+      modifiedFiles: 1,
+      byLanguage: [{ language: "ts", count: 1 }],
+      commits: 0,
+      pullRequests: 0,
+      loc: { value: null, unavailable: true },
+      hoursSaved: { value: null, unavailable: true },
+      taskDuration: {
+        completedTasks: 0,
+        averageMs: null,
+        medianMs: null,
+        p90Ms: null,
+        totalMs: null,
+        unavailable: true,
+      },
+    });
+
+    render(<ProductivityArea range={range7d} />);
+    await screen.findByTestId("cc-area-productivity");
+
+    const avg = screen.getByTestId("cc-productivity-duration-avg-unavailable");
+    expect(avg.textContent).toBe("—");
+    expect(avg.getAttribute("title")).toBeTruthy();
+    expect(screen.getByTestId("cc-productivity-duration-median-unavailable").textContent).toBe("—");
+    expect(screen.getByTestId("cc-productivity-duration-p90-unavailable").textContent).toBe("—");
+    expect(screen.getByTestId("cc-productivity-duration-total-unavailable").textContent).toBe("—");
+    expect(screen.getByTestId("cc-productivity-duration-avg").textContent).not.toContain("0");
   });
 
   it("keeps the productivity pie safe for single-item and non-finite language data", async () => {
@@ -844,6 +899,14 @@ describe("ProductivityArea", () => {
       pullRequests: 0,
       loc: { value: null, unavailable: true },
       hoursSaved: { value: null, unavailable: true },
+      taskDuration: {
+        completedTasks: 0,
+        averageMs: null,
+        medianMs: null,
+        p90Ms: null,
+        totalMs: null,
+        unavailable: true,
+      },
     });
     render(<ProductivityArea range={range7d} />);
 

@@ -2,16 +2,6 @@
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
   "entries": [
     {
-      "file": "packages/dashboard/app/components/__tests__/QuickEntryBox.test.tsx",
-      "reason": "FN-6697 local workspace `pnpm test` observed the post-submission focus restoration test fail in the broad dashboard app backfill shard, while a targeted rerun of QuickEntryBox with MailboxModal passed the QuickEntryBox assertions; quarantine the focus-timing flake instead of appeasing it while the terminal shortcut fix remains scoped.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
-      "reason": "FN-6726 local workspace `pnpm test` observed the duplicate-merge-seam template conflict assertion fail only in the broad dashboard components-b shard, while a targeted rerun of that exact test passed; quarantine the workflow editor concurrency flake instead of appeasing unrelated template insertion behavior while the Command Center token containment fix remains scoped.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
       "file": "packages/core/src/__tests__/store-concurrent-writes.test.ts",
       "reason": "FN-6741 merge verification observed store-concurrent-writes fail again only under the broad @fusion/core lane with SQLite BEGIN IMMEDIATE lock exhaustion after the other same-day core quarantine entries stayed loaded; re-quarantine this suite-load lock flake instead of widening SQLite lock-recovery timing, adding retries, or weakening concurrent-write assertions.",
       "quarantinedAt": "2026-06-19"

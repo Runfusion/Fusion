@@ -117,6 +117,14 @@ function populatedProductivityFixture() {
     commits: 2,
     pullRequests: 1,
     loc: { value: 42, unavailable: false },
+    taskDuration: {
+      completedTasks: 2,
+      averageMs: 1_800_000,
+      medianMs: 1_800_000,
+      p90Ms: 2_400_000,
+      totalMs: 3_600_000,
+      unavailable: false,
+    },
     byLanguage: [{ language: "TypeScript", count: 6 }],
   };
 }
@@ -127,6 +135,14 @@ function emptyProductivityFixture() {
     commits: 0,
     pullRequests: 0,
     loc: { value: null, unavailable: true },
+    taskDuration: {
+      completedTasks: 0,
+      averageMs: null,
+      medianMs: null,
+      p90Ms: null,
+      totalMs: null,
+      unavailable: true,
+    },
     byLanguage: [],
   };
 }

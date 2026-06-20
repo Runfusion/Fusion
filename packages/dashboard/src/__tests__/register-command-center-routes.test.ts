@@ -49,6 +49,14 @@ function seedDb(db: Database, opts: { taskId: string; model: string; tokens: num
   });
 }
 
+function seedCompletedTaskDuration(db: Database, opts: { id: string; cumulativeActiveMs: number; completedAt: string }): void {
+  db.prepare(
+    `INSERT INTO tasks
+       (id, description, "column", cumulativeActiveMs, executionCompletedAt, createdAt, updatedAt)
+     VALUES (?, 'desc', 'done', ?, ?, ?, ?)`,
+  ).run(opts.id, opts.cumulativeActiveMs, opts.completedAt, opts.completedAt, opts.completedAt);
+}
+
 function seedAgentRun(db: Database, opts: { id: string; agentId: string; startedAt: string; status: string }): void {
   db.prepare(
     `INSERT OR IGNORE INTO agents (id, name, role, state, createdAt, updatedAt)
@@ -295,6 +303,7 @@ describe("register-command-center-routes", () => {
   it("returns the tools / activity / productivity aggregator shapes", async () => {
     const range = "from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z";
     seedAgentRun(dbA, { id: "run-a1", agentId: "agent-route", startedAt: "2026-03-02T00:00:00.000Z", status: "active" });
+    seedCompletedTaskDuration(dbA, { id: "FN-D1", cumulativeActiveMs: 120_000, completedAt: "2026-03-03T00:00:00.000Z" });
     const tools = await request(app, "GET", `/api/command-center/tools?${range}&projectId=proj-a`);
     expect(tools.status).toBe(200);
     expect(tools.body).toHaveProperty("autonomyRatio");
@@ -312,6 +321,11 @@ describe("register-command-center-routes", () => {
     expect(prod.body).toHaveProperty("loc");
     expect(prod.body).toHaveProperty("hoursSaved");
     expect(prod.body).toHaveProperty("byLanguage");
+    expect(prod.body).toHaveProperty("taskDuration");
+    expect((prod.body as { taskDuration: { completedTasks: number; totalMs: number } }).taskDuration).toMatchObject({
+      completedTasks: 1,
+      totalMs: 120_000,
+    });
 
     seedGithubIssueMetrics(dbA, { prefix: "FN-A", repo: "acme/alpha", filed: 2, fixed: 1 });
     const github = await request(app, "GET", `/api/command-center/github?${range}&projectId=proj-a`);
@@ -539,6 +553,7 @@ describe("register-command-center-routes", () => {
 
   it("?format=csv works for tools / activity / productivity endpoints", async () => {
     const range = "from=2026-02-01T00:00:00.000Z&to=2026-04-01T00:00:00.000Z";
+    seedCompletedTaskDuration(dbA, { id: "FN-DCSV", cumulativeActiveMs: 120_000, completedAt: "2026-03-03T00:00:00.000Z" });
     for (const [path, filename] of [
       ["tools", "command-center-tools.csv"],
       ["activity", "command-center-activity.csv"],
@@ -556,6 +571,13 @@ describe("register-command-center-routes", () => {
         `attachment; filename="${filename}"`,
       );
       expect((res.body as string).split("\r\n")[0].length).toBeGreaterThan(0);
+      if (path === "productivity") {
+        expect(res.body as string).toContain("completedTasks,1");
+        expect(res.body as string).toContain("avgDurationMs,120000");
+        expect(res.body as string).toContain("medianDurationMs,120000");
+        expect(res.body as string).toContain("p90DurationMs,120000");
+        expect(res.body as string).toContain("totalDurationMs,120000");
+      }
     }
   });
 

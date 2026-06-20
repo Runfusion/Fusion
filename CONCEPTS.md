@@ -272,6 +272,9 @@ The minimal set of merge-blocking PR checks: lint, typecheck, build, a Boot Smok
 
 Gate membership is an explicit allow-list, never a glob: a test earns its slot with evidence of value and never graduates in by default. A flake inside the gate is *evicted* — its allow-list entry is removed — which deliberately requires no green run from the flaky test itself, so the gate can always be repaired while red.
 
+### Affected-package test selection
+How `pnpm test` chooses what to run against the working diff. In *changed mode* it runs the Merge Gate suite plus the workspace packages the diff touched and their dependents; in *gate mode* it runs only the Merge Gate suite. A change to shared test infrastructure routes to gate mode, which *replaces* changed-package coverage rather than adding to it — so a diff that trips the shared-infra signal but only edits data files gets no coverage of its own packages until that file is allow-listed as test-irrelevant.
+
 ### Boot Smoke
 The gate's "app starts and serves" proof: the CLI answers its help command and a real server boots on a throwaway port, answers its health endpoint, and shuts down cleanly on signal. A pass requires both that the shutdown signal was actually delivered and that the exit was clean — a crash after serving is a failed boot path, not a pass.
 

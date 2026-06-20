@@ -103,6 +103,14 @@ describe("productivityAnalyticsToTable", () => {
       pullRequests: 1,
       loc: hoursSaved.unavailable ? { value: null, unavailable: true } : { value: 15, unavailable: false },
       hoursSaved,
+      taskDuration: {
+        completedTasks: 0,
+        averageMs: null,
+        medianMs: null,
+        p90Ms: null,
+        totalMs: null,
+        unavailable: true,
+      },
     };
   }
 
