@@ -1255,6 +1255,29 @@ export function emitModeDecision(plan, log = console.log) {
   return line;
 }
 
+const VITEST_CONFIG_BASENAMES = [
+  "vitest.config.ts",
+  "vitest.config.mts",
+  "vitest.config.cts",
+  "vitest.config.js",
+  "vitest.config.mjs",
+  "vitest.config.cjs",
+];
+
+/**
+ * Whether a package can be run with `vitest --changed` scoping. True only when
+ * the package directory has a vitest config — otherwise the caller falls back to
+ * the package's own `test` script (e.g. desktop's `tsx scripts/test.ts`).
+ *
+ * @param {string|undefined} pkgDir  repo-relative package dir (e.g. "packages/engine")
+ * @param {string} [projectRoot]
+ * @returns {boolean}
+ */
+export function packageHasVitestConfig(pkgDir, projectRoot = rootDir) {
+  if (!pkgDir) return false;
+  return VITEST_CONFIG_BASENAMES.some((name) => existsSync(path.join(projectRoot, pkgDir, name)));
+}
+
 export function normalizeForwardedArgs(argv) {
   const normalized = [];
 
@@ -1444,21 +1467,60 @@ export async function main(argv = process.argv.slice(2)) {
     label: "test:gate (pre-affected)",
   });
 
-  const filterArgs = activePackages.flatMap((pkg) => ["--filter", pkg]);
   console.log(`[test-changed] running tests for changed packages: ${activePackages.join(", ")}`);
   if (cachedPackages.length > 0) {
     console.log(`[test-changed] skipping cached packages: ${cachedPackages.join(", ")}`);
   }
 
-  await runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
-    env: isolatedHomeEnv,
-    onBeforeAfterCheck: cleanupIsolatedHome,
-    // Affected sets can include dashboard (13 inner-watchdog'd lanes); use the
-    // generous full-suite backstop rather than the tight changed ceiling so a
-    // legitimately long local run is never false-killed.
-    budgetMs: FULL_SUITE_BUDGET_MS,
-    label: `affected: ${activePackages.join(", ")}`,
-  });
+  // Scope the affected run to only the tests in the module graph of the changed
+  // files (`vitest --changed <base>`) instead of each package's ENTIRE suite.
+  // A dashboard task otherwise re-ran all 822 dashboard test files (~5-8 min);
+  // scoping keeps verification proportional to the diff. Packages without a
+  // vitest config (or when we have no base to diff against) fall back to their
+  // full `test` script so coverage is never silently dropped. The curated gate
+  // suite already ran above as the cross-cutting safety net.
+  const scopable = comparisonBase
+    ? activePackages.filter((pkg) => packageHasVitestConfig(packageDirByName.get(pkg)))
+    : [];
+  const fallbackPkgs = activePackages.filter((pkg) => !scopable.includes(pkg));
+
+  for (const { packages, mode } of [
+    { packages: scopable, mode: "scoped" },
+    { packages: fallbackPkgs, mode: "full" },
+  ]) {
+    if (packages.length === 0) continue;
+    const filterArgs = packages.flatMap((pkg) => ["--filter", pkg]);
+    const commandArgs =
+      mode === "scoped"
+        ? [
+            ...filterArgs,
+            `--workspace-concurrency=${workspaceConcurrency}`,
+            "exec",
+            "vitest",
+            "run",
+            "--changed",
+            comparisonBase,
+            "--passWithNoTests",
+            "--silent=passed-only",
+            "--reporter=dot",
+            ...forwardedArgs,
+          ]
+        : [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs];
+    console.log(
+      mode === "scoped"
+        ? `[test-changed] scoped (vitest --changed) run for: ${packages.join(", ")}`
+        : `[test-changed] full package-suite run for: ${packages.join(", ")} (no vitest config / no base)`,
+    );
+    await runMaybeIsolated("pnpm", commandArgs, {
+      env: isolatedHomeEnv,
+      onBeforeAfterCheck: cleanupIsolatedHome,
+      // Scoped runs are proportional to the diff, so the tight "changed" ceiling
+      // applies; a hang fails fast instead of blocking the 60-min full backstop.
+      // Full fallback runs keep the generous backstop.
+      budgetMs: mode === "scoped" ? deriveBudgetMs({ klass: "changed" }) : FULL_SUITE_BUDGET_MS,
+      label: `affected (${mode}): ${packages.join(", ")}`,
+    });
+  }
 
   // Tests passed — record in cache (never cache failures; process.exit on failure above).
   recordCachePass(activePackages, packageDirByName, {
