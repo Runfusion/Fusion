@@ -1,9 +1,16 @@
+/*
+FNXC:GoalsViewStyling 2026-06-20-01:33:
+FN-6789 mounts Goals as a flex child of .project-content; grow, zero min-width, and use 100% width so the view fills the viewport instead of collapsing to intrinsic content width, mirroring the FN-6446 SecretsView fix.
+*/
 .goals-view {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-lg);
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: var(--space-lg);

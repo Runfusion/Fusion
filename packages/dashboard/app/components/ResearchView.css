@@ -1,9 +1,16 @@
+/*
+FNXC:ResearchViewStyling 2026-06-20-01:33:
+FN-6789 mounts Research as a flex child of .project-content; grow, zero min-width, and use 100% width so the view fills the viewport instead of collapsing to intrinsic content width, mirroring the FN-6446 SecretsView fix.
+*/
 .research-view {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-md);
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   overflow: hidden;
   padding: var(--space-lg);
   padding-bottom: var(--space-lg);

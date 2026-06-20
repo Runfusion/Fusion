@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Goal } from "@fusion/core";
 import { draftGoalDescription } from "../../api";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { GoalsView } from "../GoalsView";
 
 vi.mock("../../api", async () => ({
@@ -18,6 +19,20 @@ vi.mock("lucide-react", () => ({
 
 const mockDraftGoalDescription = vi.mocked(draftGoalDescription);
 
+function extractRuleBlock(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  return match?.[1] ?? "";
+}
+
+function expectRootGrowContract(css: string, selector: string) {
+  const rootBlock = extractRuleBlock(css, selector);
+
+  expect(rootBlock).toMatch(/flex\s*:\s*1\s+1\s+auto/);
+  expect(rootBlock).toMatch(/min-width\s*:\s*0/);
+  expect(rootBlock).toMatch(/width\s*:\s*100%/);
+}
+
 function makeGoal(overrides: Partial<Goal> & Pick<Goal, "id" | "title">): Goal {
   return {
     id: overrides.id,
@@ -30,6 +45,11 @@ function makeGoal(overrides: Partial<Goal> & Pick<Goal, "id" | "title">): Goal {
 }
 
 describe("GoalsView", () => {
+  it("grows the root container to fill the project-content flex row", () => {
+    expectRootGrowContract(loadAllAppCss(), ".goals-view");
+    expectRootGrowContract(loadAllAppCssBaseOnly(), ".goals-view");
+  });
+
   beforeEach(() => {
     vi.unstubAllGlobals();
     mockDraftGoalDescription.mockReset();

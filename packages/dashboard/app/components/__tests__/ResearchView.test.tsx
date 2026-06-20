@@ -54,6 +54,20 @@ function mockMatchMediaDesktop() {
   });
 }
 
+function extractRuleBlock(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  return match?.[1] ?? "";
+}
+
+function expectRootGrowContract(css: string, selector: string) {
+  const rootBlock = extractRuleBlock(css, selector);
+
+  expect(rootBlock).toMatch(/flex\s*:\s*1\s+1\s+auto/);
+  expect(rootBlock).toMatch(/min-width\s*:\s*0/);
+  expect(rootBlock).toMatch(/width\s*:\s*100%/);
+}
+
 describe("Research navigation", () => {
   it("shows research in header overflow and activates view change", async () => {
     mockMatchMediaDesktop();
@@ -81,6 +95,11 @@ describe("Research navigation", () => {
 });
 
 describe("ResearchView", () => {
+  it("grows the root container to fill the project-content flex row", () => {
+    expectRootGrowContract(loadAllAppCss(), ".research-view");
+    expectRootGrowContract(loadAllAppCssBaseOnly(), ".research-view");
+  });
+
   const baseHookValue = {
     runs: [],
     selectedRun: null,

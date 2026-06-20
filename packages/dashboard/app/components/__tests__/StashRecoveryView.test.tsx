@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { StashRecoveryView } from "../StashRecoveryView";
 
 const apiMock = vi.fn();
@@ -8,7 +9,26 @@ const confirmMock = vi.fn();
 vi.mock("../../api", () => ({ api: (...args: unknown[]) => apiMock(...args) }));
 vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: confirmMock }) }));
 
+function extractRuleBlock(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  return match?.[1] ?? "";
+}
+
+function expectRootGrowContract(css: string, selector: string) {
+  const rootBlock = extractRuleBlock(css, selector);
+
+  expect(rootBlock).toMatch(/flex\s*:\s*1\s+1\s+auto/);
+  expect(rootBlock).toMatch(/min-width\s*:\s*0/);
+  expect(rootBlock).toMatch(/width\s*:\s*100%/);
+}
+
 describe("StashRecoveryView", () => {
+  it("grows the root container to fill the project-content flex row", () => {
+    expectRootGrowContract(loadAllAppCss(), ".stash-recovery-view");
+    expectRootGrowContract(loadAllAppCssBaseOnly(), ".stash-recovery-view");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

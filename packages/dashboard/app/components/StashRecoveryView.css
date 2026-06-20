@@ -1,8 +1,15 @@
+/*
+FNXC:StashRecoveryStyling 2026-06-20-01:33:
+FN-6789 mounts Stash Recovery as a flex child of .project-content; grow, zero min-width, and use 100% width so the view fills the viewport instead of collapsing to intrinsic content width, mirroring the FN-6446 SecretsView fix.
+*/
 .stash-recovery-view {
   padding: var(--space-lg);
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-md);
+  min-width: 0;
+  width: 100%;
 }
 
 .stash-recovery-header {
