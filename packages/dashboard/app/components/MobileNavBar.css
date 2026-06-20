@@ -74,23 +74,28 @@
 }
 
 /* Individual tab button */
+/*
+FNXC:MobileNav 2026-06-20-02:04:
+Every mobile nav tab must be an equal-width column with a centered icon so inter-icon spacing stays uniform across tab counts, long labels, active state, badges, and status dots.
+Use a zero flex basis plus min-width:0 so intrinsic label width cannot bias flex distribution; badges and status dots stay absolutely positioned and out of flow.
+*/
 .mobile-nav-tab {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  min-width: 36px;
+  gap: calc(var(--space-xs) / 2);
   min-height: 36px;
-  padding: 6px 0;
+  padding: calc(var(--space-sm) - (var(--space-xs) / 2)) 0;
   background: none;
   border: none;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.2;
   cursor: pointer;
-  transition: color 0.15s ease;
+  transition: color var(--transition-fast);
   position: relative;
   -webkit-tap-highlight-color: transparent;
 }
@@ -120,11 +125,14 @@
 }
 
 .mobile-nav-tab-label {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 10px;
   line-height: 1.2;
+  text-align: center;
   white-space: nowrap;
 }
 

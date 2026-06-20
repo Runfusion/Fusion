@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MobileNavBar } from "../MobileNavBar";
@@ -24,6 +26,48 @@ function mockViewport(mode: "mobile" | "desktop") {
       };
     }),
   });
+}
+
+const mobileNavCss = readFileSync(resolve(process.cwd(), "app/components/MobileNavBar.css"), "utf8");
+
+function extractRuleBlock(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  return match?.[1] ?? "";
+}
+
+function getRenderedMobileTabs(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab"));
+}
+
+function expectUniformMobileNavColumns(container: HTMLElement, expectedTabCount: number) {
+  const tabs = getRenderedMobileTabs(container);
+  expect(tabs).toHaveLength(expectedTabCount);
+
+  const tabRule = extractRuleBlock(mobileNavCss, ".mobile-nav-tab");
+  expect(tabRule).toContain("flex: 1 1 0");
+  expect(tabRule).toContain("min-width: 0");
+  expect(tabRule).toContain("align-items: center");
+  expect(tabRule).toMatch(/padding:\s*[^;]+\s+0;/);
+  expect(tabRule).not.toMatch(/margin-left|margin-right/);
+
+  const labelRule = extractRuleBlock(mobileNavCss, ".mobile-nav-tab-label");
+  expect(labelRule).toContain("width: 100%");
+  expect(labelRule).toContain("min-width: 0");
+  expect(labelRule).toContain("text-align: center");
+
+  for (const tab of tabs) {
+    expect(tab.className).toContain("mobile-nav-tab");
+    expect(tab.querySelector(".mobile-nav-tab-label")).toBeInTheDocument();
+  }
+
+  if (container.querySelector(".mobile-nav-tab-badge")) {
+    expect(extractRuleBlock(mobileNavCss, ".mobile-nav-tab-badge")).toContain("position: absolute");
+  }
+
+  if (container.querySelector(".mobile-nav-chat-unread-dot")) {
+    expect(extractRuleBlock(mobileNavCss, ".mobile-nav-chat-unread-dot")).toContain("position: absolute");
+  }
 }
 
 const createDefaultProps = () => ({
@@ -103,6 +147,57 @@ describe("MobileNavBar", () => {
   it("does not render skills tab when showSkillsTab is omitted", () => {
     render(<MobileNavBar {...createDefaultProps()} />);
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
+  });
+
+  it("keeps every mobile tab in an equal-width column across tab, active, badge, and status-dot variants", () => {
+    const sevenTabRender = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        showSkillsTab={false}
+        view="command-center"
+        chatHasUnreadResponse={true}
+        mailboxUnreadCount={7}
+        mailboxPendingApprovalCount={2}
+      />,
+    );
+    expectUniformMobileNavColumns(sevenTabRender.container, 7);
+    expect(screen.getByTestId("mobile-nav-tab-command-center").className).toContain("mobile-nav-tab--active");
+    expect(screen.getByLabelText("Unread chat response")).toBeInTheDocument();
+    expect(screen.getByLabelText("Pending approvals")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")?.textContent).toBe("7");
+    sevenTabRender.unmount();
+
+    const eightTabRender = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        showSkillsTab={true}
+        view="skills"
+        chatHasUnreadResponse={true}
+        mailboxUnreadCount={101}
+        mailboxPendingApprovalCount={1}
+      />,
+    );
+    expectUniformMobileNavColumns(eightTabRender.container, 8);
+    expect(screen.getByTestId("mobile-nav-tab-skills").className).toContain("mobile-nav-tab--active");
+    expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")?.textContent).toBe("99+");
+    eightTabRender.unmount();
+
+    const pluginVariantRender = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        showSkillsTab={true}
+        pluginDashboardViews={[
+          {
+            pluginId: "fusion-plugin-spacing-check",
+            view: { viewId: "wide", label: "Very Long Plugin Destination", componentPath: "./WidePluginView", icon: "Workflow", placement: "primary", order: 1 },
+          },
+        ]}
+      />,
+    );
+    expectUniformMobileNavColumns(pluginVariantRender.container, 8);
+    expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-spacing-check-wide")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-spacing-check-wide")).toBeDefined();
   });
 
   it("keeps Todos in the mobile More sheet when todoView is enabled", () => {
