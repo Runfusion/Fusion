@@ -13986,6 +13986,25 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
    * The requesting task is excluded from the check because `cleanupConflictingWorktree` is
    * only called for worktrees the requesting task is trying to displace.
    */
+  /**
+   * FN-6782 leaked-slot reaper support: expose a read-only snapshot of the
+   * in-memory `activeWorktrees` holders so SelfHealingManager can cross-check
+   * each holder's task column and reclaim a slot whose holder is no longer
+   * legitimately in-progress (the "in todo yet still maxWorktrees holder"
+   * leak). Returns a copied array — never the live Map — so callers cannot
+   * mutate executor state. The actual release still goes through
+   * `clearPhantomExecutorBinding`, which refuses to detach live session
+   * surfaces, so this introspection cannot by itself pull a worktree out from
+   * under a running agent.
+   */
+  listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
+    const holders: Array<{ taskId: string; worktreePath: string }> = [];
+    for (const [taskId, worktreePath] of this.activeWorktrees) {
+      holders.push({ taskId, worktreePath });
+    }
+    return holders;
+  }
+
   private async findActiveWorktreeOwner(
     worktreePath: string,
     requestingTaskId: string,

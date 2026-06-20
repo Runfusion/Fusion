@@ -242,8 +242,19 @@ export interface SelfHealingOptions {
   rootDir: string;
   /** Optional callback to release TaskExecutor in-memory worktree ownership for a task. */
   releaseExecutorWorktreeOwnership?: (taskId: string) => void;
-  /** Optional callback to clear a demonstrably-stale executor binding without touching live sessions. */
-  clearPhantomExecutorBinding?: (taskId: string) => void;
+  /**
+   * FN-6782: read-only snapshot of the executor's in-memory worktree holders
+   * ({ taskId, worktreePath }), so the leaked-slot reaper can cross-check each
+   * holder's task column and reclaim a slot whose holder is no longer in-progress.
+   */
+  listWorktreeHolders?: () => Array<{ taskId: string; worktreePath: string }>;
+  /**
+   * Optional callback to clear a demonstrably-stale executor binding without
+   * touching live sessions. Returns `true` if the binding was cleared, `false`
+   * if the executor refused because a live session surface is still registered
+   * (the leaked-slot reaper relies on this refusal signal).
+   */
+  clearPhantomExecutorBinding?: (taskId: string) => boolean | void;
   /** Optional AgentStore for agent-level self-healing checks. */
   agentStore?: AgentStore;
   /** Canonical stale-lease recovery manager. */
@@ -357,6 +368,12 @@ const STARVED_REFINEMENT_RECOVERY_GRACE_MS = 10 * 60_000;
 const STARVED_PEER_PROGRESS_THRESHOLD = 3;
 const STARVED_REFINEMENT_ESCALATION_COOLDOWN_MS = STARVED_REFINEMENT_RECOVERY_GRACE_MS * 4;
 const ORPHANED_EXECUTION_RECOVERY_GRACE_MS = 60_000;
+/**
+ * FN-6782 leaked-slot reaper grace: a worktree holder whose task has sat in a
+ * reapable column (todo/triage) shorter than this is left alone, so the reaper
+ * never races a task mid-transition out of in-progress.
+ */
+const LEAKED_WORKTREE_SLOT_GRACE_MS = 60_000;
 export const VALIDATOR_RUN_STALE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
 const NON_TERMINAL_STEP_STATUSES = new Set(["pending", "in-progress"]);
@@ -2136,6 +2153,10 @@ export class SelfHealingManager {
           { name: "recover-stale-transition-pending", fn: () => this.runStaleTransitionPendingSweep() },
           { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies() },
           { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases() },
+          // FN-6782: reclaim in-memory worktree slots whose holder is no longer
+          // in-progress (defense-in-depth for the pause-abort leak; conservative,
+          // gated by clearPhantomExecutorBinding's live-session refusal).
+          { name: "reap-leaked-concurrency-slots", fn: () => this.reapLeakedConcurrencySlots() },
           { name: "reconcile-dependency-cycles", fn: () => this.reconcileDependencyCycles().then(() => undefined) },
           { name: "reclaim-pr-conflicts", fn: () => this.reclaimPrConflicts() },
           { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts() },
@@ -8003,6 +8024,72 @@ export class SelfHealingManager {
       log.error(`No-commits-expected audit failed: ${errorMessage}`);
       return 0;
     }
+  }
+
+  /**
+   * FN-6782 leaked-slot reaper (defense-in-depth). The source leak is closed in
+   * the executor's pause-abort park path, but a worktree slot leaked by any
+   * other/future path would silently pin `maxWorktrees` and concurrency-starve
+   * the whole queue (the FN-6756 "in todo yet still maxWorktrees=3/3 holder"
+   * symptom) until an engine restart. This sweep cross-checks each in-memory
+   * worktree holder against its task column and reclaims slots whose holder is
+   * no longer legitimately holding one.
+   *
+   * Conservative by construction — release happens ONLY when every guard agrees:
+   *   - the holder is NOT in the executor's executing set;
+   *   - its task is missing, or in `todo`/`triage` (a task waiting to run must
+   *     not pin a worktree). `in-progress` and `in-review` holders legitimately
+   *     retain their worktree; `done`/`archived` are handled by worktree-metadata
+   *     reconcile + merge cleanup, so they are left alone here;
+   *   - it has sat in the reapable column past a short grace (no mid-transition race);
+   *   - and finally `clearPhantomExecutorBinding` itself refuses (returns false)
+   *     if any live session surface is still registered — the last line of
+   *     defense against pulling a worktree out from under a running agent.
+   */
+  async reapLeakedConcurrencySlots(): Promise<number> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) {
+      return 0;
+    }
+
+    const holders = this.options.listWorktreeHolders?.() ?? [];
+    if (holders.length === 0) return 0;
+
+    const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+    const now = Date.now();
+    let reaped = 0;
+
+    for (const { taskId } of holders) {
+      try {
+        if (executingIds.has(taskId)) continue;
+
+        const task = await this.store.getTask(taskId).catch(() => null);
+        const reapableColumn = !task || task.column === "todo" || task.column === "triage";
+        if (!reapableColumn) continue;
+
+        if (task) {
+          const since = new Date(task.columnMovedAt ?? task.updatedAt).getTime();
+          if (Number.isFinite(since) && now - since < LEAKED_WORKTREE_SLOT_GRACE_MS) continue;
+        }
+
+        const released = this.options.clearPhantomExecutorBinding?.(taskId);
+        // false = executor refused (live session surface); undefined = not wired.
+        if (released !== true) continue;
+
+        reaped++;
+        await this.store.logEntry(
+          taskId,
+          "Auto-recovered: released leaked worktree/concurrency slot (holder no longer in-progress)",
+        );
+        log.warn(`Reaped leaked worktree slot held by ${taskId} (column=${task?.column ?? "missing"})`);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.error(`Leaked-slot reaper failed for ${taskId}: ${errorMessage}`);
+      }
+    }
+
+    if (reaped > 0) log.log(`Reaped ${reaped} leaked worktree slot(s)`);
+    return reaped;
   }
 
   /**
