@@ -3,6 +3,7 @@ import {
   Database,
   createDatabase,
   quickCheckSqliteFile,
+  integrityCheckSqliteFileAsync,
   toJson,
   toJsonNullable,
   fromJson,
@@ -446,9 +447,25 @@ describe("Database", () => {
   });
 
   describe("startup integrity check", () => {
-    it("schedules full integrity check after init instead of blocking startup", () => {
+    // The background check is offloaded to the sqlite3 CLI off the event loop
+    // (db.ts runBackgroundIntegrityCheck → integrityCheckSqliteFileAsync). Spy on
+    // that seam so these tests stay deterministic regardless of whether the
+    // sqlite3 CLI exists in the environment, and advance timers with the async
+    // variant so the awaited check resolves before assertions run.
+    type BackgroundCheckResult = { ok: true } | { ok: false; errors: string[] };
+    const spyBackgroundCheck = (result: BackgroundCheckResult) =>
+      vi
+        .spyOn(
+          Database.prototype as unknown as {
+            runBackgroundIntegrityCheck: () => Promise<BackgroundCheckResult>;
+          },
+          "runBackgroundIntegrityCheck",
+        )
+        .mockResolvedValue(result);
+
+    it("schedules full integrity check after init instead of blocking startup", async () => {
       vi.useFakeTimers();
-      const integritySpy = vi.spyOn(Database.prototype, "integrityCheck");
+      const checkSpy = spyBackgroundCheck({ ok: true });
 
       const freshDir = makeTmpDir();
       const freshFusionDir = join(freshDir, ".fusion");
@@ -457,24 +474,24 @@ describe("Database", () => {
       try {
         expect(() => freshDb.init()).not.toThrow();
         expect(freshDb.integrityCheckPending).toBe(true);
-        expect(integritySpy).not.toHaveBeenCalled();
+        expect(checkSpy).not.toHaveBeenCalled();
 
-        vi.advanceTimersByTime(60_000);
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(integritySpy).toHaveBeenCalledTimes(1);
+        expect(checkSpy).toHaveBeenCalledTimes(1);
         expect(freshDb.integrityCheckPending).toBe(false);
         expect(freshDb.integrityCheckLastRunAt).toBeTruthy();
       } finally {
         freshDb.close();
         removeTrackedTmpDirSync(freshDir);
-        integritySpy.mockRestore();
+        checkSpy.mockRestore();
         vi.useRealTimers();
       }
     });
 
-    it("does not schedule duplicate background integrity checks across repeated init calls", () => {
+    it("does not schedule duplicate background integrity checks across repeated init calls", async () => {
       vi.useFakeTimers();
-      const integritySpy = vi.spyOn(Database.prototype, "integrityCheck");
+      const checkSpy = spyBackgroundCheck({ ok: true });
       const freshDir = makeTmpDir();
       const freshFusionDir = join(freshDir, ".fusion");
       const freshDb = new Database(freshFusionDir);
@@ -484,20 +501,20 @@ describe("Database", () => {
         expect(freshDb.integrityCheckPending).toBe(true);
 
         freshDb.init();
-        vi.advanceTimersByTime(60_000);
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(integritySpy).toHaveBeenCalledTimes(1);
+        expect(checkSpy).toHaveBeenCalledTimes(1);
       } finally {
         freshDb.close();
         removeTrackedTmpDirSync(freshDir);
-        integritySpy.mockRestore();
+        checkSpy.mockRestore();
         vi.useRealTimers();
       }
     });
 
-    it("deduplicates background integrity check across multiple instances sharing a db path", () => {
+    it("deduplicates background integrity check across multiple instances sharing a db path", async () => {
       vi.useFakeTimers();
-      const integritySpy = vi.spyOn(Database.prototype, "integrityCheck");
+      const checkSpy = spyBackgroundCheck({ ok: true });
       const freshDir = makeTmpDir();
       const freshFusionDir = join(freshDir, ".fusion");
       const dbA = new Database(freshFusionDir);
@@ -510,9 +527,9 @@ describe("Database", () => {
         expect(dbA.integrityCheckPending).toBe(true);
         expect(dbB.integrityCheckPending).toBe(true);
 
-        vi.advanceTimersByTime(60_000);
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(integritySpy).toHaveBeenCalledTimes(1);
+        expect(checkSpy).toHaveBeenCalledTimes(1);
         expect(dbA.integrityCheckPending).toBe(false);
         expect(dbB.integrityCheckPending).toBe(false);
         expect(dbA.integrityCheckLastRunAt).toBeTruthy();
@@ -525,14 +542,14 @@ describe("Database", () => {
         dbA.close();
         dbB.close();
         removeTrackedTmpDirSync(freshDir);
-        integritySpy.mockRestore();
+        checkSpy.mockRestore();
         vi.useRealTimers();
       }
     });
 
-    it("fans out corruption detection to all instances participating in shared background check", () => {
+    it("fans out corruption detection to all instances participating in shared background check", async () => {
       vi.useFakeTimers();
-      const integritySpy = vi.spyOn(Database.prototype, "integrityCheck").mockReturnValue({
+      const checkSpy = spyBackgroundCheck({
         ok: false,
         errors: ["malformed database", "broken index"],
       });
@@ -545,9 +562,9 @@ describe("Database", () => {
         dbA.init();
         dbB.init();
 
-        vi.advanceTimersByTime(60_000);
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(integritySpy).toHaveBeenCalledTimes(1);
+        expect(checkSpy).toHaveBeenCalledTimes(1);
         expect(dbA.integrityCheckPending).toBe(false);
         expect(dbB.integrityCheckPending).toBe(false);
         expect(dbA.integrityCheckLastRunAt).toBeTruthy();
@@ -560,7 +577,7 @@ describe("Database", () => {
         dbA.close();
         dbB.close();
         removeTrackedTmpDirSync(freshDir);
-        integritySpy.mockRestore();
+        checkSpy.mockRestore();
         vi.useRealTimers();
       }
     });
@@ -729,6 +746,33 @@ describe("Database", () => {
         /Database vacuum maintenance failed during WAL checkpoint.*checkpoint exploded/,
       );
       checkpointSpy.mockRestore();
+    });
+  });
+
+  describe("integrityCheckSqliteFileAsync (off-event-loop integrity check)", () => {
+    it("verifies a healthy live DB via the sqlite3 CLI", async () => {
+      const now = new Date().toISOString();
+      db.prepare(
+        "INSERT INTO tasks (id, description, \"column\", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+      ).run("FN-IC-OK", "integrity ok", "todo", now, now);
+
+      // The harness keeps `db` open, so the -readonly CLI connection can attach
+      // to the live WAL (its -shm exists) — the production scenario.
+      const result = await integrityCheckSqliteFileAsync(join(fusionDir, "fusion.db"));
+
+      // If the sqlite3 CLI is unavailable in this environment, the helper reports
+      // verified:false so the caller falls back to the in-process check.
+      if (result.verified) {
+        expect(result.ok).toBe(true);
+        expect(result.errors).toBeUndefined();
+      } else {
+        expect(result.ok).toBe(true);
+      }
+    });
+
+    it("returns a verified failure for a non-existent file without spawning", async () => {
+      const result = await integrityCheckSqliteFileAsync(join(fusionDir, "does-not-exist.db"));
+      expect(result).toEqual({ ok: false, verified: true, errors: ["file does not exist"] });
     });
   });
 

@@ -11,7 +11,7 @@
 import { DatabaseSync } from "./sqlite-adapter.js";
 import { basename, isAbsolute, join } from "node:path";
 import { mkdirSync, existsSync, statSync, renameSync, rmSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
 import type { PluginOnSchemaInit } from "./plugin-types.js";
@@ -1689,6 +1689,88 @@ export function quickCheckSqliteFile(dbPath: string): { ok: boolean; verified: b
   return { ok: false, verified: true, errors: stdout.split("\n").slice(0, 5) };
 }
 
+/**
+ * Run `PRAGMA integrity_check(limit)` against a SQLite file via the `sqlite3`
+ * CLI in a child process, so the full page-walk (several seconds on a large DB)
+ * runs OFF the main event loop instead of freezing it the way the in-process
+ * `Database.integrityCheck()` does.
+ *
+ * The CLI connection is opened `-readonly` so it can never checkpoint or write
+ * the live WAL out from under the in-process connection. This relies on the
+ * caller's process holding the DB open (so the `-shm` exists) — which is exactly
+ * the case for the background check scheduled at init. `verified=false` means the
+ * check could not be run out-of-process (sqlite3 CLI absent, or the file could
+ * not be opened read-only) and the caller should fall back to the in-process
+ * `integrityCheck()`. Matches the non-blocking-on-failure contract of
+ * `quickCheckSqliteFile`.
+ */
+export function integrityCheckSqliteFileAsync(
+  dbPath: string,
+  limit = 100,
+): Promise<{ ok: boolean; verified: boolean; errors?: string[] }> {
+  return new Promise((resolve) => {
+    if (!existsSync(dbPath)) {
+      resolve({ ok: false, verified: true, errors: ["file does not exist"] });
+      return;
+    }
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("sqlite3", ["-readonly", dbPath, `PRAGMA integrity_check(${limit});`], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      resolve({ ok: true, verified: false });
+      return;
+    }
+
+    let stdout = "";
+    let settled = false;
+    const finish = (result: { ok: boolean; verified: boolean; errors?: string[] }) => {
+      if (!settled) {
+        settled = true;
+        resolve(result);
+      }
+    };
+
+    child.stdout?.setEncoding("utf-8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+      // integrity_check(limit) bounds the row count, but guard against a
+      // pathological file so a runaway child can't exhaust memory.
+      if (stdout.length > 16 * 1024 * 1024) {
+        child.kill();
+      }
+    });
+    // Drain stderr so the pipe never fills and stalls the child.
+    child.stderr?.resume();
+
+    child.on("error", () => finish({ ok: true, verified: false }));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        // integrity_check itself exits 0 and prints any problems to stdout, so a
+        // non-zero exit almost always means the DB could not be opened
+        // (locked / read-only -shm unavailable) rather than corruption. Report
+        // "could not verify" so the caller falls back to the in-process check
+        // instead of misreporting healthy data as corrupt.
+        finish({ ok: true, verified: false });
+        return;
+      }
+      const text = stdout.trim();
+      if (text.toLowerCase() === "ok") {
+        finish({ ok: true, verified: true });
+        return;
+      }
+      const errors = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && line.toLowerCase() !== "ok")
+        .slice(0, limit);
+      finish({ ok: errors.length === 0, verified: true, errors: errors.length ? errors : undefined });
+    });
+  });
+}
+
 // ── Database Class ───────────────────────────────────────────────────
 
 type SharedIntegrityCheckState = {
@@ -1991,6 +2073,27 @@ export class Database {
     }
 
     return { ok: true };
+  }
+
+  /**
+   * Resolve the background integrity-check result, preferring the off-event-loop
+   * `sqlite3` CLI (`integrityCheckSqliteFileAsync`) and falling back to the
+   * in-process `integrityCheck()` page-walk only when the CLI cannot run it.
+   *
+   * Kept as a single instance method so the background scheduler has one
+   * testable seam (and so the offload/fallback policy lives in one place).
+   * In-memory DBs have no on-disk file to hand the CLI, so they use the
+   * in-process check directly.
+   */
+  private async runBackgroundIntegrityCheck(): Promise<{ ok: true } | { ok: false; errors: string[] }> {
+    if (this.inMemory) {
+      return this.integrityCheck();
+    }
+    const offloaded = await integrityCheckSqliteFileAsync(this.dbPath);
+    if (offloaded.verified) {
+      return offloaded.ok ? { ok: true } : { ok: false, errors: offloaded.errors ?? [] };
+    }
+    return this.integrityCheck();
   }
 
   /**
@@ -5277,30 +5380,43 @@ export class Database {
       shared.timer = null;
       shared.running = true;
 
-      const participants = [...shared.subscribers].filter((instance) => !instance.closed);
-      const primary = participants[0];
-      const startedAt = new Date().toISOString();
+      // FNXC:Database 2026-06-20-13:30:
+      // Offload the integrity-check page-walk to the sqlite3 CLI in a child
+      // process so it no longer blocks the event loop for several seconds. The
+      // in-process check (primary.integrityCheck()) remains the fallback for
+      // environments without the sqlite3 CLI. Wrapped in an async IIFE because
+      // setTimeout callbacks can't be async; errors must be swallowed here so an
+      // unhandled rejection can't crash the process from a background timer.
+      void (async () => {
+        const participants = [...shared.subscribers].filter((instance) => !instance.closed);
+        const primary = participants[0];
+        const startedAt = new Date().toISOString();
 
-      let integrity: ReturnType<Database["integrityCheck"]> = { ok: true };
-      if (primary) {
-        integrity = primary.integrityCheck();
-      }
+        let integrity: ReturnType<Database["integrityCheck"]> = { ok: true };
+        if (primary) {
+          integrity = await primary.runBackgroundIntegrityCheck();
+        }
 
-      for (const participant of participants) {
-        participant.integrityCheckPending = false;
-        participant.integrityCheckLastRunAt = startedAt;
-        participant.corruptionDetected = !integrity.ok;
-        participant.integrityCheckErrors = integrity.ok ? [] : [...integrity.errors];
-      }
+        for (const participant of participants) {
+          participant.integrityCheckPending = false;
+          participant.integrityCheckLastRunAt = startedAt;
+          participant.corruptionDetected = !integrity.ok;
+          participant.integrityCheckErrors = integrity.ok ? [] : [...integrity.errors];
+        }
 
-      if (!integrity.ok) {
-        const errorSummary = integrity.errors.slice(0, 3).join(" | ");
-        console.error(
-          `[fusion:db] Background integrity check detected corruption for ${this.dbPath}: ${errorSummary}`,
-        );
-      }
-
-      Database.sharedIntegrityChecks.delete(this.dbPath);
+        if (!integrity.ok) {
+          const errorSummary = integrity.errors.slice(0, 3).join(" | ");
+          console.error(
+            `[fusion:db] Background integrity check detected corruption for ${this.dbPath}: ${errorSummary}`,
+          );
+        }
+      })()
+        .catch((error) => {
+          console.warn(`[fusion:db] Background integrity check failed for ${this.dbPath}`, error);
+        })
+        .finally(() => {
+          Database.sharedIntegrityChecks.delete(this.dbPath);
+        });
     }, 60_000);
 
     Database.sharedIntegrityChecks.set(this.dbPath, shared);
