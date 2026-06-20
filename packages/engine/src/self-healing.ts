@@ -5041,11 +5041,59 @@ export class SelfHealingManager {
     let recovered = 0;
     for (const task of tasks) {
       if (task.column !== "in-review" || task.deletedAt) continue;
-      if (task.paused === true || task.userPaused === true) continue;
-      if (!allowsAutoMergeProcessing(task, settings)) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(task, tasks, dependencyOptions);
       if (unmetDeps.length === 0) continue;
+
+      /*
+      FNXC:DependencyGating 2026-06-20-09:22:
+      In-review tasks with unmet dependencies must never be silently wedged. If a guard or store mutation prevents the rebound, emit the FN-6793 no-action audit event with the blocking reason so operators can distinguish allowed terminal holds from lifecycle bugs.
+      */
+      if (task.paused === true || task.userPaused === true) {
+        await this.emitBackwardMoveNoAction(
+          task,
+          "reconcile-in-review-unmet-dependencies",
+          "task:reconcile-in-review-unmet-dependencies-no-action",
+          {
+            stalenessMs: 0,
+            reason: "in-review-unmet-dependencies-paused",
+            metadata: {
+              taskId: task.id,
+              unmetDeps,
+              blockedBy: unmetDeps[0] ?? null,
+              priorColumn: task.column,
+              priorStatus: task.status ?? null,
+              paused: task.paused === true,
+              userPaused: task.userPaused === true,
+              reason: "paused-guard",
+            },
+          },
+        );
+        continue;
+      }
+
+      if (!allowsAutoMergeProcessing(task, settings)) {
+        await this.emitBackwardMoveNoAction(
+          task,
+          "reconcile-in-review-unmet-dependencies",
+          "task:reconcile-in-review-unmet-dependencies-no-action",
+          {
+            stalenessMs: 0,
+            reason: "in-review-unmet-dependencies-auto-merge-disabled",
+            metadata: {
+              taskId: task.id,
+              unmetDeps,
+              blockedBy: unmetDeps[0] ?? null,
+              priorColumn: task.column,
+              priorStatus: task.status ?? null,
+              autoMerge: settings.autoMerge ?? null,
+              taskAutoMerge: task.autoMerge ?? null,
+              reason: "auto-merge-processing-disabled",
+            },
+          },
+        );
+        continue;
+      }
 
       const proof = this.evaluateInReviewUnmetDependencyReboundSafety(task, settings, unmetDeps);
       if (!proof.ok) {
@@ -5058,36 +5106,55 @@ export class SelfHealingManager {
         continue;
       }
 
-      await this.store.moveTask(task.id, "todo", {
-        preserveProgress: true,
-        preserveWorktree: true,
-        preserveResumeState: true,
-        moveSource: "engine",
-        recoveryRehome: true,
-      });
-      await this.store.updateTask(task.id, { status: "queued", blockedBy: unmetDeps[0] });
-      await this.store.logEntry(
-        task.id,
-        `Auto-rebounded (FN-6793): in-review task had unmet dependencies: ${unmetDeps.join(", ")}`,
-      );
-      await createRunAuditor(this.store, {
-        runId: generateSyntheticRunId("fn6793-in-review-unmet-dependencies", task.id),
-        agentId: "self-healing",
-        taskId: task.id,
-        taskLineageId: task.lineageId,
-        phase: "reconcile-in-review-unmet-dependencies",
-      }).database({
-        type: "task:reconcile-in-review-unmet-dependencies" as DatabaseMutationType,
-        target: task.id,
-        metadata: {
+      try {
+        await this.store.moveTask(task.id, "todo", {
+          preserveProgress: true,
+          preserveWorktree: true,
+          preserveResumeState: true,
+          moveSource: "engine",
+          recoveryRehome: true,
+          bypassGuards: true,
+        });
+        await this.store.updateTask(task.id, { status: "queued", blockedBy: unmetDeps[0] });
+        await this.store.logEntry(
+          task.id,
+          `Auto-rebounded (FN-6793): in-review task had unmet dependencies: ${unmetDeps.join(", ")}`,
+        );
+        await createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("fn6793-in-review-unmet-dependencies", task.id),
+          agentId: "self-healing",
           taskId: task.id,
-          unmetDeps,
-          blockedBy: unmetDeps[0] ?? null,
-          priorColumn: "in-review",
-          priorStatus: task.status ?? null,
-        },
-      });
-      recovered++;
+          taskLineageId: task.lineageId,
+          phase: "reconcile-in-review-unmet-dependencies",
+        }).database({
+          type: "task:reconcile-in-review-unmet-dependencies" as DatabaseMutationType,
+          target: task.id,
+          metadata: {
+            taskId: task.id,
+            unmetDeps,
+            blockedBy: unmetDeps[0] ?? null,
+            priorColumn: "in-review",
+            priorStatus: task.status ?? null,
+          },
+        });
+        recovered++;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.emitBackwardMoveNoAction(
+          task,
+          "reconcile-in-review-unmet-dependencies",
+          "task:reconcile-in-review-unmet-dependencies-no-action",
+          {
+            stalenessMs: proof.stalenessMs,
+            reason: "in-review-unmet-dependencies-rebound-failed",
+            metadata: {
+              ...proof.metadata,
+              reason: "rebound-mutation-failed",
+              error: message,
+            },
+          },
+        );
+      }
     }
 
     return recovered;

@@ -90,25 +90,31 @@ describe("in-review unmet dependency reconciliation", () => {
     executingTaskLock._clearForTest();
   });
 
-  it("reproduces FN-6778/FN-6791-class review advancement and rebounds to queued todo", async () => {
+  it("reproduces FN-6778/FN-6779 review advancement and rebounds to queued todo", async () => {
     const { store, tasks } = createStore([
       task({ id: "FN-6778", column: "in-review", dependencies: ["FN-6777"] }),
-      task({ id: "FN-6777", column: "todo" }),
-      task({ id: "FN-6791", column: "in-review", dependencies: ["FN-6770", "FN-6771", "FN-6780"] }),
+      task({ id: "FN-6777", column: "in-progress" }),
+      task({ id: "FN-6779", column: "in-review", dependencies: ["FN-6770", "FN-6771", "FN-6780", "FN-TRIAGE"] }),
       task({ id: "FN-6770", column: "in-progress" }),
       task({ id: "FN-6771", column: "todo" }),
       task({ id: "FN-6780", column: "todo", status: "queued" }),
+      task({ id: "FN-TRIAGE", column: "triage" }),
     ]);
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
 
     await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(2);
 
     expect(tasks.get("FN-6778")).toMatchObject({ column: "todo", status: "queued", blockedBy: "FN-6777" });
-    expect(tasks.get("FN-6791")).toMatchObject({ column: "todo", status: "queued", blockedBy: "FN-6770" });
+    expect(tasks.get("FN-6779")).toMatchObject({ column: "todo", status: "queued", blockedBy: "FN-6770" });
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:reconcile-in-review-unmet-dependencies",
-      target: "FN-6791",
-      metadata: expect.objectContaining({ unmetDeps: ["FN-6770", "FN-6771", "FN-6780"] }),
+      target: "FN-6778",
+      metadata: expect.objectContaining({ unmetDeps: ["FN-6777"] }),
+    }));
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:reconcile-in-review-unmet-dependencies",
+      target: "FN-6779",
+      metadata: expect.objectContaining({ unmetDeps: ["FN-6770", "FN-6771", "FN-6780", "FN-TRIAGE"] }),
     }));
     manager.stop();
   });

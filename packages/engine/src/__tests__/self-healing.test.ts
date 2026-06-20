@@ -9457,10 +9457,11 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       const { store, manager, tasks } = setup([
         makeTask({ id: "FN-6778", column: "in-review", dependencies: ["FN-6777"], worktree: "/tmp/wt", branch: "fusion/fn-6778" }),
         makeTask({ id: "FN-6777", column: "todo", status: "queued" }),
-        makeTask({ id: "FN-6791", column: "in-review", dependencies: ["FN-6770", "FN-6771", "FN-6780", "FN-DONE"] }),
+        makeTask({ id: "FN-6779", column: "in-review", dependencies: ["FN-6770", "FN-6771", "FN-6780", "FN-TRIAGE", "FN-DONE"] }),
         makeTask({ id: "FN-6770", column: "in-progress" }),
         makeTask({ id: "FN-6771", column: "todo" }),
         makeTask({ id: "FN-6780", column: "todo", status: "queued" }),
+        makeTask({ id: "FN-TRIAGE", column: "triage" }),
         makeTask({ id: "FN-DONE", column: "done" }),
       ]);
 
@@ -9472,12 +9473,13 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
         preserveResumeState: true,
         moveSource: "engine",
         recoveryRehome: true,
+        bypassGuards: true,
       }));
       expect(store.updateTask).toHaveBeenCalledWith("FN-6778", { status: "queued", blockedBy: "FN-6777" });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-6791", { status: "queued", blockedBy: "FN-6770" });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-6779", { status: "queued", blockedBy: "FN-6770" });
       expect(tasks.get("FN-6778")?.column).toBe("todo");
       expect(tasks.get("FN-6778")?.blockedBy).toBe("FN-6777");
-      expect(tasks.get("FN-6791")?.blockedBy).toBe("FN-6770");
+      expect(tasks.get("FN-6779")?.blockedBy).toBe("FN-6770");
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:reconcile-in-review-unmet-dependencies",
         target: "FN-6778",
@@ -9485,8 +9487,8 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       }));
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
         mutationType: "task:reconcile-in-review-unmet-dependencies",
-        target: "FN-6791",
-        metadata: expect.objectContaining({ unmetDeps: ["FN-6770", "FN-6771", "FN-6780"], blockedBy: "FN-6770" }),
+        target: "FN-6779",
+        metadata: expect.objectContaining({ unmetDeps: ["FN-6770", "FN-6771", "FN-6780", "FN-TRIAGE"], blockedBy: "FN-6770" }),
       }));
       manager.stop();
     });
@@ -9505,7 +9507,24 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       manager.stop();
     });
 
-    it.each([{ userPaused: true }, { paused: true }])("does not move paused in-review tasks: %o", async (pauseState) => {
+    it("keeps in-review dependencies non-blocking when shadow contract is enabled without an accepted marker", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-MARKER", column: "in-review", dependencies: ["FN-D"] }),
+        makeTask({ id: "FN-D", column: "in-review" }),
+      ], { mergeRequestContractShadowEnabled: true });
+      vi.mocked(store.getCompletionHandoffAcceptedMarker).mockReturnValue(null);
+
+      await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(0);
+      expect(store.getCompletionHandoffAcceptedMarker).toHaveBeenCalledWith("FN-D");
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-in-review-unmet-dependencies",
+        target: "FN-MARKER",
+      }));
+      manager.stop();
+    });
+
+    it.each([{ userPaused: true }, { paused: true }])("does not move paused in-review tasks and emits no-action audit: %o", async (pauseState) => {
       const { store, manager } = setup([
         makeTask({ id: "FN-P", column: "in-review", dependencies: ["FN-D"], ...pauseState }),
         makeTask({ id: "FN-D", column: "todo" }),
@@ -9513,10 +9532,15 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
 
       await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(0);
       expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-in-review-unmet-dependencies-no-action",
+        target: "FN-P",
+        metadata: expect.objectContaining({ reason: "paused-guard" }),
+      }));
       manager.stop();
     });
 
-    it("honors autoMerge false as terminal-until-merged", async () => {
+    it("honors autoMerge false as terminal-until-merged and emits no-action audit", async () => {
       const { store, manager } = setup([
         makeTask({ id: "FN-AUTO", column: "in-review", dependencies: ["FN-D"] }),
         makeTask({ id: "FN-D", column: "todo" }),
@@ -9524,6 +9548,47 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
 
       await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(0);
       expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-in-review-unmet-dependencies-no-action",
+        target: "FN-AUTO",
+        metadata: expect.objectContaining({ reason: "auto-merge-processing-disabled", autoMerge: false }),
+      }));
+      manager.stop();
+    });
+
+    it("lets explicit autoMerge true rebound when global autoMerge is false", async () => {
+      const { store, manager, tasks } = setup([
+        makeTask({ id: "FN-OVERRIDE", column: "in-review", dependencies: ["FN-D"], autoMerge: true }),
+        makeTask({ id: "FN-D", column: "todo" }),
+      ], { autoMerge: false });
+
+      await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(1);
+      expect(tasks.get("FN-OVERRIDE")).toMatchObject({ column: "todo", status: "queued", blockedBy: "FN-D" });
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-in-review-unmet-dependencies",
+        target: "FN-OVERRIDE",
+      }));
+      manager.stop();
+    });
+
+    it("keeps shared-branch-group members held under autoMerge false with no-action audit", async () => {
+      const { store, manager } = setup([
+        makeTask({
+          id: "FN-SHARED",
+          column: "in-review",
+          dependencies: ["FN-D"],
+          branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"],
+        }),
+        makeTask({ id: "FN-D", column: "todo" }),
+      ], { autoMerge: false });
+
+      await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "task:reconcile-in-review-unmet-dependencies-no-action",
+        target: "FN-SHARED",
+        metadata: expect.objectContaining({ reason: "auto-merge-processing-disabled" }),
+      }));
       manager.stop();
     });
 
