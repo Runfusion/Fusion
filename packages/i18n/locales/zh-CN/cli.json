@@ -21,6 +21,7 @@
     "agentRunLogsBackHint": "[Esc/q] 返回运行列表",
     "agentRunLogsTitle": "运行日志（{{index}}）",
     "agentsFooterHints": "[s] 启动  [x] 停止  [D] 删除  [r] 刷新  [Tab] 焦点  ↑↓ 选择",
+    "agentsListTitle_one": "",
     "agentsListTitle_other": "",
     "agentsNoAgents": "未找到代理。",
     "agentStarted": "代理已启动",
@@ -44,6 +45,7 @@
     "filesEmpty": "（空）",
     "filesEmptyFile": "（空文件）",
     "filesFooterHints": "[Tab] 切换面板  [↑↓/jk] 移动  [Enter] 打开  [←/→] 折叠/展开  [.] 隐藏文件  [w] 换行  [p] 项目  [r] 重载",
+    "filesMoreLines_one": "",
     "filesMoreLines_other": "",
     "filesSelectProject": "选择项目",
     "filesSelectToPreview": "选择文件以预览",
@@ -151,6 +153,7 @@
     "settingsFooterHints": "[Tab] 切换面板  ↑↓ 选择设置  [Space] 切换布尔  [+/-] 调整数值  [←/→] 循环枚举  [C/V/X/P/L/U/K/R] 远程操作",
     "settingsInteractivePanelTitle": "设置",
     "settingsLoadingSettings": "正在加载设置…",
+    "settingsMoreModels_one": "",
     "settingsMoreModels_other": "",
     "settingsPanelTitle": "设置",
     "settingsPersistentTokenRegenerated": "持久令牌已重新生成",
@@ -218,9 +221,6 @@
     "utilitiesKillVitest": "终止 Vitest 进程",
     "utilitiesPanelTitle": "工具",
     "utilitiesRefreshStats": "刷新统计",
-    "utilitiesToggleEnginePause": "切换引擎暂停",
-    "agentsListTitle_one": "",
-    "filesMoreLines_one": "",
-    "settingsMoreModels_one": ""
+    "utilitiesToggleEnginePause": "切换引擎暂停"
   }
 }

@@ -48,6 +48,8 @@ export interface PendingImage {
 type TaskExecutionModeSelection = "standard" | "fast";
 export type BranchSelectionMode = "project-default" | "auto-new" | "existing" | "custom-new" | "shared-group";
 
+const PRESET_OPTION_SEPARATOR = "──────────";
+
 export interface TaskFormProps {
   mode: "create" | "edit";
 
@@ -1140,7 +1142,7 @@ export function TaskForm({
                 disabled={disabled}
               >
                 <option value="default">{t("taskForm.presetUseDefault", "Use default")}</option>
-                {availablePresets.length > 0 ? <option disabled>──────────</option> : null}
+                {availablePresets.length > 0 ? <option disabled>{PRESET_OPTION_SEPARATOR}</option> : null}
                 {availablePresets.map((preset) => (
                   <option key={preset.id} value={preset.id}>{preset.name}</option>
                 ))}

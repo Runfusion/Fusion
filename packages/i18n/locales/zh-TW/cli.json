@@ -21,6 +21,7 @@
     "agentRunLogsBackHint": "[Esc/q] 返回執行列表",
     "agentRunLogsTitle": "執行日誌（{{index}}）",
     "agentsFooterHints": "[s] 啟動  [x] 停止  [D] 刪除  [r] 重新整理  [Tab] 焦點  ↑↓ 選擇",
+    "agentsListTitle_one": "",
     "agentsListTitle_other": "",
     "agentsNoAgents": "找不到代理。",
     "agentStarted": "代理已啟動",
@@ -44,6 +45,7 @@
     "filesEmpty": "（空）",
     "filesEmptyFile": "（空檔案）",
     "filesFooterHints": "[Tab] 切換面板  [↑↓/jk] 移動  [Enter] 開啟  [←/→] 折疊/展開  [.] 隱藏檔案  [w] 換行  [p] 專案  [r] 重新載入",
+    "filesMoreLines_one": "",
     "filesMoreLines_other": "",
     "filesSelectProject": "選擇專案",
     "filesSelectToPreview": "選擇檔案以預覽",
@@ -151,6 +153,7 @@
     "settingsFooterHints": "[Tab] 切換面板  ↑↓ 選擇設定  [Space] 切換布林  [+/-] 調整數值  [←/→] 循環枚舉  [C/V/X/P/L/U/K/R] 遠端操作",
     "settingsInteractivePanelTitle": "設定",
     "settingsLoadingSettings": "正在載入設定…",
+    "settingsMoreModels_one": "",
     "settingsMoreModels_other": "",
     "settingsPanelTitle": "設定",
     "settingsPersistentTokenRegenerated": "持久金鑰已重新產生",
@@ -218,9 +221,6 @@
     "utilitiesKillVitest": "終止 Vitest 行程",
     "utilitiesPanelTitle": "工具",
     "utilitiesRefreshStats": "重新整理統計",
-    "utilitiesToggleEnginePause": "切換引擎暫停",
-    "agentsListTitle_one": "",
-    "filesMoreLines_one": "",
-    "settingsMoreModels_one": ""
+    "utilitiesToggleEnginePause": "切換引擎暫停"
   }
 }

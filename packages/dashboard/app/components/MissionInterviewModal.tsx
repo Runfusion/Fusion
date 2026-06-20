@@ -73,6 +73,8 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
+const WARNING_ICON = "⚠️";
+
 interface MissionInterviewModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -942,7 +944,7 @@ export function MissionInterviewModal({
                   className="ai-error-panel"
                   role="alert"
                 >
-                  <div className="ai-error-icon">⚠️</div>
+                  <div className="ai-error-icon">{WARNING_ICON}</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
                   <div className="ai-error-actions">
                     <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>

@@ -5,6 +5,8 @@ import type { PlanningQuestion } from "@fusion/core";
 import { useState } from "react";
 import type { ConversationHistoryEntry } from "../api";
 
+const COMMENT_ICON = "💬";
+
 interface ConversationHistoryProps {
   entries: ConversationHistoryEntry[];
   defaultShowThinking?: boolean;
@@ -129,7 +131,7 @@ export function ConversationHistory({ entries, defaultShowThinking = false }: Co
               <div className="conversation-entry-response">
                 <strong>{t("conversation.yourResponse", "Your response")}</strong>
                 <p>{formattedResponse || "—"}</p>
-                {comment && <p className="conversation-comment">💬 {comment}</p>}
+                {comment && <p className="conversation-comment">{COMMENT_ICON} {comment}</p>}
               </div>
             )}
 

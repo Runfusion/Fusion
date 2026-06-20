@@ -7,6 +7,8 @@ import { applyPresetToSelection } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Brain, X } from "lucide-react";
 
+const PRESET_OPTION_SEPARATOR = "──────────";
+
 interface ModelSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -218,7 +220,7 @@ export function ModelSelectionModal({
                           data-testid="model-selection-preset"
                         >
                           <option value="default">{t("modelSelection.useDefault", "Use default")}</option>
-                          {presets!.length > 0 && <option disabled>──────────</option>}
+                          {presets!.length > 0 && <option disabled>{PRESET_OPTION_SEPARATOR}</option>}
                           {presets!.map((preset) => (
                             <option key={preset.id} value={preset.id}>{preset.name}</option>
                           ))}

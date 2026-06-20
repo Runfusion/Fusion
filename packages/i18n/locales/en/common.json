@@ -1,9 +1,4 @@
 {
-  "actions": {
-    "cancel": "Cancel",
-    "close": "Close",
-    "save": "Save"
-  },
   "agents": {
     "ratings": {
       "trendDeclining": "↓ Declining",
@@ -34,7 +29,6 @@
       "minutesAgo_other": "{{count}}m ago"
     }
   },
-  "archive": "Archive",
   "board": {
     "rejection": {
       "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
@@ -44,7 +38,6 @@
       "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead."
     }
   },
-  "cancel": "Cancel",
   "chat": {
     "failedToGetResponse": "Failed to get response",
     "failureReferenceId": "ID",
@@ -54,25 +47,23 @@
     "openMailboxMessage": "Open mailbox message",
     "toolCallArgsPrefix": "args",
     "toolCallResultPrefix": "result",
+    "toolCallsCount_one": "{{count}} tool calls",
+    "toolCallsCount_other": "{{count}} tool calls",
+    "toolCallsHeader": "Tool calls",
     "toolCallStatusCompleted": "completed",
     "toolCallStatusError": "error",
     "toolCallStatusErrors": "errors",
     "toolCallStatusRunning": "running",
-    "toolCallsCount_one": "{{count}} tool calls",
-    "toolCallsCount_other": "{{count}} tool calls",
-    "toolCallsHeader": "Tool calls",
     "viewFailureDetails": "View failure details"
   },
-  "close": "Close",
-  "columns": {
-    "archived": "Archived",
-    "done": "Done",
-    "in-progress": "In Progress",
-    "in-review": "In Review",
-    "todo": "Todo",
-    "triage": "Planning"
+  "commandCenter": {
+    "range": {
+      "allTime": "All time",
+      "last24h": "Last 24h",
+      "last30d": "Last 30 days",
+      "last7d": "Last 7 days"
+    }
   },
-  "delete": "Delete",
   "health": {
     "anomaly": {
       "duplicateActiveId": "Duplicate active task ID",
@@ -110,13 +101,6 @@
       "modelSetToDefault": "{{label}} model set to default"
     }
   },
-  "nodeStatus": {
-    "connecting": "Connecting",
-    "error": "Error",
-    "offline": "Offline",
-    "online": "Online",
-    "unknown": "Unknown"
-  },
   "nodes": {
     "auth": {
       "differ": "Auth credentials differ",
@@ -137,7 +121,13 @@
       "stopped": "Stopped"
     }
   },
-  "refresh": "Refresh",
+  "nodeStatus": {
+    "connecting": "Connecting",
+    "error": "Error",
+    "offline": "Offline",
+    "online": "Online",
+    "unknown": "Unknown"
+  },
   "research": {
     "providerGitHub": "GitHub",
     "providerLlmSynthesis": "LLM Synthesis",
@@ -145,7 +135,6 @@
     "providerPageFetch": "Page Fetch",
     "providerWebSearch": "Web Search"
   },
-  "retry": "Retry",
   "routing": {
     "policyLabel": {
       "block": "Block execution",
@@ -205,14 +194,11 @@
       "zai": "GLM models by Zhipu AI — strong multilingual support"
     }
   },
-  "skip": "Skip",
   "taskForm": {
     "nodeStatusConnecting": "Connecting",
     "nodeStatusError": "Error",
     "nodeStatusOffline": "Offline",
-    "nodeStatusOnline": "Online",
-    "phasePostMerge": "Post-merge",
-    "phasePreMerge": "Pre-merge"
+    "nodeStatusOnline": "Online"
   },
   "taskReview": {
     "never": "Never",
@@ -220,8 +206,19 @@
     "refreshSourceInitialLoad": "Initial load",
     "refreshSourceManual": "Manual"
   },
-  "tryAgain": "Try Again",
   "workflow": {
+    "aggregateAllPassed": "All passed",
+    "aggregateInProgress": "In progress",
+    "aggregateNoResults": "No results",
+    "customWorkflowFallback": "Custom workflow",
+    "defaultWorkflow": "Default",
+    "executionAwaitingCliApproval": "Awaiting CLI approval",
+    "executionAwaitingInput": "Awaiting input",
+    "executionCompleted": "Completed",
+    "executionNotStarted": "Not started",
+    "executionPaused": "Paused",
+    "executionPostMerge": "Post-merge steps running",
+    "executionPreMerge": "Pre-merge steps running",
     "postMerge": "Post-merge",
     "preMerge": "Pre-merge",
     "statusAdvisory": "Advisory failure",
@@ -230,5 +227,24 @@
     "statusRunning": "Running…",
     "statusSkipped": "Skipped",
     "waitingForOutput": "Waiting for agent output…"
+  },
+  "workflowNodes": {
+    "summaryAwaitInput": "Waits for user input",
+    "summaryCodeDefault": "TypeScript",
+    "summaryGateAdvisory": "Advisory",
+    "summaryGateBlocks": "Gate (blocks)",
+    "summaryHoldRelease": "Release: {{release}}",
+    "summaryLoopIterations_one": "{{count}}x",
+    "summaryLoopIterations_other": "{{count}}x",
+    "summaryLoopUntilContains": "until contains \"{{value}}\"",
+    "summaryLoopUntilMatches": "until matches /{{pattern}}/",
+    "summaryNotConfigured": "Not configured",
+    "summaryReviewType": "{{type}} review",
+    "summarySeamExecute": "Execute (engine)",
+    "summarySeamMerge": "Merge boundary",
+    "summarySeamPlanning": "Plan (engine)",
+    "summarySeamReview": "Review (engine)",
+    "summarySeamStepExecute": "Step execute (engine)",
+    "summarySeamUnknown": "Seam: {{seam}}"
   }
 }

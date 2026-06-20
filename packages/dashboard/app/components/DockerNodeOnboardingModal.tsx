@@ -32,6 +32,10 @@ interface MountRow {
 }
 
 const DEFAULT_URL = "http://localhost:4040";
+const DOCKER_MOUNT_MODE_LABELS = {
+  readWrite: "rw",
+  readOnly: "ro",
+} as const;
 
 export function DockerNodeOnboardingModal({ isOpen, onClose, onSubmit, addToast: _addToast }: DockerNodeOnboardingModalProps) {
   const { t } = useTranslation("app");
@@ -477,8 +481,8 @@ export function DockerNodeOnboardingModal({ isOpen, onClose, onSubmit, addToast:
                           })
                         }
                       >
-                        <option value="rw">rw</option>
-                        <option value="ro">ro</option>
+                        <option value="rw">{DOCKER_MOUNT_MODE_LABELS.readWrite}</option>
+                        <option value="ro">{DOCKER_MOUNT_MODE_LABELS.readOnly}</option>
                       </select>
                       <button
                         type="button"

@@ -1,9 +1,4 @@
 {
-  "actions": {
-    "cancel": "取消",
-    "close": "關閉",
-    "save": "儲存"
-  },
   "agents": {
     "ratings": {
       "trendDeclining": "",
@@ -34,7 +29,6 @@
       "minutesAgo_other": ""
     }
   },
-  "archive": "封存",
   "board": {
     "rejection": {
       "capacityExhausted": "",
@@ -44,7 +38,6 @@
       "workflowMismatch": ""
     }
   },
-  "cancel": "取消",
   "chat": {
     "failedToGetResponse": "",
     "failureReferenceId": "",
@@ -54,25 +47,23 @@
     "openMailboxMessage": "",
     "toolCallArgsPrefix": "",
     "toolCallResultPrefix": "",
+    "toolCallsCount_one": "",
+    "toolCallsCount_other": "",
+    "toolCallsHeader": "",
     "toolCallStatusCompleted": "",
     "toolCallStatusError": "",
     "toolCallStatusErrors": "",
     "toolCallStatusRunning": "",
-    "toolCallsCount_one": "",
-    "toolCallsCount_other": "",
-    "toolCallsHeader": "",
     "viewFailureDetails": ""
   },
-  "close": "關閉",
-  "columns": {
-    "archived": "已封存",
-    "done": "已完成",
-    "in-progress": "進行中",
-    "in-review": "審查中",
-    "todo": "待辦",
-    "triage": "規劃"
+  "commandCenter": {
+    "range": {
+      "allTime": "",
+      "last24h": "",
+      "last30d": "",
+      "last7d": ""
+    }
   },
-  "delete": "刪除",
   "health": {
     "anomaly": {
       "duplicateActiveId": "",
@@ -110,13 +101,6 @@
       "modelSetToDefault": ""
     }
   },
-  "nodeStatus": {
-    "connecting": "",
-    "error": "",
-    "offline": "",
-    "online": "",
-    "unknown": ""
-  },
   "nodes": {
     "auth": {
       "differ": "",
@@ -137,7 +121,13 @@
       "stopped": ""
     }
   },
-  "refresh": "重新整理",
+  "nodeStatus": {
+    "connecting": "",
+    "error": "",
+    "offline": "",
+    "online": "",
+    "unknown": ""
+  },
   "research": {
     "providerGitHub": "",
     "providerLlmSynthesis": "",
@@ -145,7 +135,6 @@
     "providerPageFetch": "",
     "providerWebSearch": ""
   },
-  "retry": "重試",
   "routing": {
     "policyLabel": {
       "block": "",
@@ -205,14 +194,11 @@
       "zai": ""
     }
   },
-  "skip": "略過",
   "taskForm": {
     "nodeStatusConnecting": "",
     "nodeStatusError": "",
     "nodeStatusOffline": "",
-    "nodeStatusOnline": "",
-    "phasePostMerge": "",
-    "phasePreMerge": ""
+    "nodeStatusOnline": ""
   },
   "taskReview": {
     "never": "",
@@ -220,8 +206,19 @@
     "refreshSourceInitialLoad": "",
     "refreshSourceManual": ""
   },
-  "tryAgain": "重試",
   "workflow": {
+    "aggregateAllPassed": "",
+    "aggregateInProgress": "",
+    "aggregateNoResults": "",
+    "customWorkflowFallback": "",
+    "defaultWorkflow": "",
+    "executionAwaitingCliApproval": "",
+    "executionAwaitingInput": "",
+    "executionCompleted": "",
+    "executionNotStarted": "",
+    "executionPaused": "",
+    "executionPostMerge": "",
+    "executionPreMerge": "",
     "postMerge": "",
     "preMerge": "",
     "statusAdvisory": "",
@@ -230,5 +227,24 @@
     "statusRunning": "",
     "statusSkipped": "",
     "waitingForOutput": ""
+  },
+  "workflowNodes": {
+    "summaryAwaitInput": "",
+    "summaryCodeDefault": "",
+    "summaryGateAdvisory": "",
+    "summaryGateBlocks": "",
+    "summaryHoldRelease": "",
+    "summaryLoopIterations_one": "",
+    "summaryLoopIterations_other": "",
+    "summaryLoopUntilContains": "",
+    "summaryLoopUntilMatches": "",
+    "summaryNotConfigured": "",
+    "summaryReviewType": "",
+    "summarySeamExecute": "",
+    "summarySeamMerge": "",
+    "summarySeamPlanning": "",
+    "summarySeamReview": "",
+    "summarySeamStepExecute": "",
+    "summarySeamUnknown": ""
   }
 }

@@ -27,6 +27,13 @@ import { SettingsSyncConflictModal } from "./SettingsSyncConflictModal";
 import type { SettingsConflictEntry, ConflictResolutionResult } from "./SettingsSyncConflictModal";
 import "./NodeDetailModal.css";
 
+const DOCKER_MOUNT_LABELS = {
+  readWrite: "rw",
+  readOnly: "ro",
+  volume: "volume",
+  bind: "bind",
+} as const;
+
 interface NodeDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -614,16 +621,16 @@ export function NodeDetailModal({
                             next[index] = { ...next[index], mode: event.target.value as "rw" | "ro" };
                             setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: next });
                           }}>
-                            <option value="rw">rw</option>
-                            <option value="ro">ro</option>
+                            <option value="rw">{DOCKER_MOUNT_LABELS.readWrite}</option>
+                            <option value="ro">{DOCKER_MOUNT_LABELS.readOnly}</option>
                           </select>
                           <select className="input" value={mount.type ?? "volume"} onChange={(event) => {
                             const next = [...dockerConfigDraft.volumeMounts];
                             next[index] = { ...next[index], type: event.target.value as "volume" | "bind" };
                             setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: next });
                           }}>
-                            <option value="volume">volume</option>
-                            <option value="bind">bind</option>
+                            <option value="volume">{DOCKER_MOUNT_LABELS.volume}</option>
+                            <option value="bind">{DOCKER_MOUNT_LABELS.bind}</option>
                           </select>
                           <button className="btn btn-sm" onClick={() => setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: dockerConfigDraft.volumeMounts.filter((_, i: number) => i !== index) })}>{t("nodes.removeButton", "Remove")}</button>
                         </div>

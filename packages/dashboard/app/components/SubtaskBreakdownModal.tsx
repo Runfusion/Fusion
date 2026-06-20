@@ -27,6 +27,8 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
+const WARNING_ICON = "⚠️";
+
 interface SubtaskBreakdownModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -718,7 +720,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
                   className="ai-error-panel"
                   role="alert"
                 >
-                  <div className="ai-error-icon">⚠️</div>
+                  <div className="ai-error-icon">{WARNING_ICON}</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
                   <div className="ai-error-actions">
                     <button className="btn btn-primary" onClick={() => void handleRetry()} disabled={isRetrying}>

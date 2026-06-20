@@ -21,6 +21,7 @@
     "agentRunLogsBackHint": "[Esc/q] 실행 목록으로 돌아가기",
     "agentRunLogsTitle": "실행 로그 ({{index}})",
     "agentsFooterHints": "[s] 시작  [x] 중지  [D] 삭제  [r] 새로고침  [Tab] 포커스  ↑↓ 선택",
+    "agentsListTitle_one": "",
     "agentsListTitle_other": "",
     "agentsNoAgents": "에이전트가 없습니다.",
     "agentStarted": "에이전트 시작됨",
@@ -44,6 +45,7 @@
     "filesEmpty": "(비어 있음)",
     "filesEmptyFile": "(빈 파일)",
     "filesFooterHints": "[Tab] 창 전환  [↑↓/jk] 이동  [Enter] 열기  [←/→] 접기/펼치기  [.] 숨김  [w] 줄 바꿈  [p] 프로젝트  [r] 새로고침",
+    "filesMoreLines_one": "",
     "filesMoreLines_other": "",
     "filesSelectProject": "프로젝트 선택",
     "filesSelectToPreview": "미리볼 파일을 선택하세요",
@@ -151,6 +153,7 @@
     "settingsFooterHints": "[Tab] 패널 전환  ↑↓ 설정 선택  [Space] 불리언 토글  [+/-] 숫자 조정  [←/→] 열거형 순환  [C/V/X/P/L/U/K/R] 원격 작업",
     "settingsInteractivePanelTitle": "설정",
     "settingsLoadingSettings": "설정 불러오는 중…",
+    "settingsMoreModels_one": "",
     "settingsMoreModels_other": "",
     "settingsPanelTitle": "설정",
     "settingsPersistentTokenRegenerated": "영구 토큰이 재생성됨",
@@ -218,9 +221,6 @@
     "utilitiesKillVitest": "Vitest 프로세스 종료",
     "utilitiesPanelTitle": "유틸리티",
     "utilitiesRefreshStats": "통계 새로고침",
-    "utilitiesToggleEnginePause": "엔진 일시 정지 전환",
-    "agentsListTitle_one": "",
-    "filesMoreLines_one": "",
-    "settingsMoreModels_one": ""
+    "utilitiesToggleEnginePause": "엔진 일시 정지 전환"
   }
 }

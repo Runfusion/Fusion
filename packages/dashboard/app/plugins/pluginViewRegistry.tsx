@@ -1,6 +1,7 @@
 import type { PluginDashboardViewContext } from "./types";
 import { AlertTriangle } from "lucide-react";
 import { lazy, Suspense, type LazyExoticComponent, type ReactElement, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import "./pluginViewRegistry.css";
 
@@ -47,14 +48,16 @@ export function __test_clearPluginViewRegistry(): void {
 }
 
 function PluginViewUnavailable({ viewId }: { viewId: string }): ReactNode {
+  const { t } = useTranslation("app");
+
   return (
     <section className="card plugin-dashboard-view-missing" data-testid="plugin-view-unavailable">
       <h2 className="plugin-dashboard-view-missing-title">
         <AlertTriangle />
-        Plugin view unavailable
+        {t("plugins.viewUnavailable", "Plugin view unavailable")}
       </h2>
       <p className="plugin-dashboard-view-missing-description">
-        No host registration found for <code>{viewId}</code>.
+        {t("plugins.noHostRegistration", "No host registration found for")} <code>{viewId}</code>.
       </p>
     </section>
   );

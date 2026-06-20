@@ -72,6 +72,8 @@ export function relativeTime(iso: string, t?: (key: string, defaultValue: string
   return tr("time.daysAgo", "{{n}}d ago", { n });
 }
 
+const WARNING_ICON = "⚠️";
+
 interface AgentDetailViewProps {
   agentId: string;
   projectId?: string;
@@ -1186,7 +1188,7 @@ function DashboardTab({
     <div className="dashboard-tab dashboard-summary-layout">
       {budgetStatus?.isOverBudget && (
         <div className="budget-warning-banner" role="alert">
-          <span>⚠️</span>
+          <span>{WARNING_ICON}</span>
           <span><strong>{t("agents.budgetExhaustedTitle", "Budget Exhausted:")}</strong> {t("agents.budgetExhaustedBody", "This agent has exceeded its token budget and may operate with limited functionality.")}</span>
         </div>
       )}

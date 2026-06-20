@@ -57,6 +57,8 @@ import { useAutosizeTextarea } from "../hooks/useAutosizeTextarea";
 import { useToast } from "../hooks/useToast";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
+const WARNING_ICON = "⚠️";
+
 interface PlanningModeModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -2106,7 +2108,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   className="ai-error-panel"
                   role="alert"
                 >
-                  <div className="ai-error-icon">⚠️</div>
+                  <div className="ai-error-icon">{WARNING_ICON}</div>
                   <div className="ai-error-message">{view.errorMessage}</div>
                   <div className="ai-error-actions">
                     <button className="btn btn-primary" onClick={() => void handleRetryFromError()} disabled={isRetrying}>

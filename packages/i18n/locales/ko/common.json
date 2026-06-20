@@ -1,9 +1,4 @@
 {
-  "actions": {
-    "cancel": "취소",
-    "close": "닫기",
-    "save": "저장"
-  },
   "agents": {
     "ratings": {
       "trendDeclining": "",
@@ -34,7 +29,6 @@
       "minutesAgo_other": ""
     }
   },
-  "archive": "보관",
   "board": {
     "rejection": {
       "capacityExhausted": "",
@@ -44,7 +38,6 @@
       "workflowMismatch": ""
     }
   },
-  "cancel": "취소",
   "chat": {
     "failedToGetResponse": "",
     "failureReferenceId": "",
@@ -54,25 +47,23 @@
     "openMailboxMessage": "",
     "toolCallArgsPrefix": "",
     "toolCallResultPrefix": "",
+    "toolCallsCount_one": "",
+    "toolCallsCount_other": "",
+    "toolCallsHeader": "",
     "toolCallStatusCompleted": "",
     "toolCallStatusError": "",
     "toolCallStatusErrors": "",
     "toolCallStatusRunning": "",
-    "toolCallsCount_one": "",
-    "toolCallsCount_other": "",
-    "toolCallsHeader": "",
     "viewFailureDetails": ""
   },
-  "close": "닫기",
-  "columns": {
-    "archived": "보관됨",
-    "done": "완료",
-    "in-progress": "진행 중",
-    "in-review": "검토 중",
-    "todo": "할 일",
-    "triage": "계획"
+  "commandCenter": {
+    "range": {
+      "allTime": "",
+      "last24h": "",
+      "last30d": "",
+      "last7d": ""
+    }
   },
-  "delete": "삭제",
   "health": {
     "anomaly": {
       "duplicateActiveId": "",
@@ -110,13 +101,6 @@
       "modelSetToDefault": ""
     }
   },
-  "nodeStatus": {
-    "connecting": "",
-    "error": "",
-    "offline": "",
-    "online": "",
-    "unknown": ""
-  },
   "nodes": {
     "auth": {
       "differ": "",
@@ -137,7 +121,13 @@
       "stopped": ""
     }
   },
-  "refresh": "새로고침",
+  "nodeStatus": {
+    "connecting": "",
+    "error": "",
+    "offline": "",
+    "online": "",
+    "unknown": ""
+  },
   "research": {
     "providerGitHub": "",
     "providerLlmSynthesis": "",
@@ -145,7 +135,6 @@
     "providerPageFetch": "",
     "providerWebSearch": ""
   },
-  "retry": "재시도",
   "routing": {
     "policyLabel": {
       "block": "",
@@ -205,14 +194,11 @@
       "zai": ""
     }
   },
-  "skip": "건너뛰기",
   "taskForm": {
     "nodeStatusConnecting": "",
     "nodeStatusError": "",
     "nodeStatusOffline": "",
-    "nodeStatusOnline": "",
-    "phasePostMerge": "",
-    "phasePreMerge": ""
+    "nodeStatusOnline": ""
   },
   "taskReview": {
     "never": "",
@@ -220,8 +206,19 @@
     "refreshSourceInitialLoad": "",
     "refreshSourceManual": ""
   },
-  "tryAgain": "다시 시도",
   "workflow": {
+    "aggregateAllPassed": "",
+    "aggregateInProgress": "",
+    "aggregateNoResults": "",
+    "customWorkflowFallback": "",
+    "defaultWorkflow": "",
+    "executionAwaitingCliApproval": "",
+    "executionAwaitingInput": "",
+    "executionCompleted": "",
+    "executionNotStarted": "",
+    "executionPaused": "",
+    "executionPostMerge": "",
+    "executionPreMerge": "",
     "postMerge": "",
     "preMerge": "",
     "statusAdvisory": "",
@@ -230,5 +227,24 @@
     "statusRunning": "",
     "statusSkipped": "",
     "waitingForOutput": ""
+  },
+  "workflowNodes": {
+    "summaryAwaitInput": "",
+    "summaryCodeDefault": "",
+    "summaryGateAdvisory": "",
+    "summaryGateBlocks": "",
+    "summaryHoldRelease": "",
+    "summaryLoopIterations_one": "",
+    "summaryLoopIterations_other": "",
+    "summaryLoopUntilContains": "",
+    "summaryLoopUntilMatches": "",
+    "summaryNotConfigured": "",
+    "summaryReviewType": "",
+    "summarySeamExecute": "",
+    "summarySeamMerge": "",
+    "summarySeamPlanning": "",
+    "summarySeamReview": "",
+    "summarySeamStepExecute": "",
+    "summarySeamUnknown": ""
   }
 }

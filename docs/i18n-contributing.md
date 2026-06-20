@@ -31,6 +31,20 @@ pnpm i18n:lint      # flag hardcoded user-facing strings
 pnpm i18n:gen-cli   # regenerate the CLI static catalog import map
 ```
 
+## Lint baseline policy
+
+`pnpm i18n:lint` is the hardcoded user-facing string guardrail and must stay
+green. Its file scope intentionally matches extraction: tests and stories are
+excluded because they are non-shipping fixtures and `extract` already ignores
+them. Suppress non-translatable token categories with narrow
+`lint.ignoredTags` / `lint.ignoredAttributes` entries, such as keyboard-key
+content in `<kbd>`, instead of hiding source directories.
+
+Any remaining user-facing copy must be localized with `t()` / `<Trans>` and an
+`en` catalog entry. A temporary deferral is only acceptable when it is scoped to
+specific files or a small cluster in `lint.ignore`, includes an `FNXC` rationale,
+and has a filed follow-up task that removes the ignore.
+
 ## Translating an existing language
 
 1. Run `pnpm i18n:sync` so every catalog has the current `en` keys (untranslated

@@ -49,6 +49,13 @@ const SEQ_ARROW_DOWN = "\x1b[B"; // CSI B
 const SEQ_ARROW_RIGHT = "\x1b[C"; // CSI C
 const SEQ_ARROW_LEFT = "\x1b[D"; // CSI D
 
+const CLI_TERMINAL_KEY_LABELS = {
+  ctrl: "Ctrl",
+  escape: "Esc",
+  tab: "Tab",
+  ctrlC: "^C",
+} as const;
+
 /**
  * Resolve the control byte for a sticky-Ctrl + key combination. Ctrl maps a
  * letter to its control code (A→0x01 … Z→0x1A): code = (toUpper(ch) & 0x1f).
@@ -700,7 +707,7 @@ export function SessionTerminal({
               onMouseDown={keepFocus}
               onClick={() => setCtrlSticky((v) => !v)}
             >
-              Ctrl
+              {CLI_TERMINAL_KEY_LABELS.ctrl}
             </button>
             <button
               type="button"
@@ -711,7 +718,7 @@ export function SessionTerminal({
               onMouseDown={keepFocus}
               onClick={() => emitBarKey(SEQ_ESC)}
             >
-              Esc
+              {CLI_TERMINAL_KEY_LABELS.escape}
             </button>
             <button
               type="button"
@@ -722,7 +729,7 @@ export function SessionTerminal({
               onMouseDown={keepFocus}
               onClick={() => emitBarKey(SEQ_TAB)}
             >
-              Tab
+              {CLI_TERMINAL_KEY_LABELS.tab}
             </button>
             <button
               type="button"
@@ -737,7 +744,7 @@ export function SessionTerminal({
                 sendInput(SEQ_CTRL_C);
               }}
             >
-              ^C
+              {CLI_TERMINAL_KEY_LABELS.ctrlC}
             </button>
             <button
               type="button"

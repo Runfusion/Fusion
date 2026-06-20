@@ -49,6 +49,14 @@ const XTERM_INIT_TIMEOUT_MS = 10000;
 
 const XTERM_IMPORT_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
 
+const TERMINAL_KEY_LABELS = {
+  ctrl: "Ctrl",
+  alt: "Alt",
+  escape: "ESC",
+  tab: "Tab",
+  pxUnit: "px",
+} as const;
+
 export function ctrlChar(key: string): string {
   if (!key) {
     return "";
@@ -1588,7 +1596,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 onClick={() => toggleModifier("ctrl")}
                 aria-pressed={stickyModifier === "ctrl"}
               >
-                Ctrl
+                {TERMINAL_KEY_LABELS.ctrl}
               </button>
               <button
                 type="button"
@@ -1602,7 +1610,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 onClick={() => toggleModifier("alt")}
                 aria-pressed={stickyModifier === "alt"}
               >
-                Alt
+                {TERMINAL_KEY_LABELS.alt}
               </button>
               <button
                 type="button"
@@ -1612,7 +1620,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 onTouchStart={preserveShortcutFocus}
                 onClick={() => sendLiteralShortcut("\x1b")}
               >
-                ESC
+                {TERMINAL_KEY_LABELS.escape}
               </button>
               <button
                 type="button"
@@ -1622,7 +1630,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 onTouchStart={preserveShortcutFocus}
                 onClick={() => sendLiteralShortcut("\t")}
               >
-                Tab
+                {TERMINAL_KEY_LABELS.tab}
               </button>
             </div>
             {/*
@@ -1780,7 +1788,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
               <Minus size={14} />
             </button>
             <span className="terminal-font-size-value" data-testid="terminal-font-size-value">
-              {fontSize}px
+              {fontSize}{TERMINAL_KEY_LABELS.pxUnit}
             </span>
             <button
               type="button"
