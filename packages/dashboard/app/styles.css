@@ -332,6 +332,11 @@ svg.spin {
   --cta-border-hover: #3fb950;
   --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
 
+  /* Toast status text tokens */
+  --toast-text: var(--text);
+  --toast-error-text: #fff;
+  --toast-info-text: #fff;
+
   /* === Agent State Colors === */
   --state-idle-bg: color-mix(in srgb, var(--state-idle-text) 15%, transparent);
   --state-idle-text: #8b949e;
@@ -607,6 +612,7 @@ html .column.drag-over * {
 
 [data-theme="light"] .toast-success {
   background: var(--cta-bg);
+  color: var(--cta-text);
 }
 
 [data-theme="light"] .toast-error {
@@ -2701,6 +2707,10 @@ input[type="range"]:focus-visible {
 }
 
 /* === Toasts === */
+/*
+FNXC:ToastTheming 2026-06-21-00:00:
+Toast text must contrast its status background across every dashboard theme and mode. Success toasts default to --cta-text because Shadcn dark themes can pair a near-white --cta-bg with dark CTA copy; Shadcn color-family success/info overrides choose existing page text tokens when the family CTA/info token pairs are below AA contrast.
+*/
 .toast-container {
   position: fixed;
   bottom: 20px;
@@ -2715,18 +2725,50 @@ input[type="range"]:focus-visible {
   padding: 10px 16px;
   border-radius: var(--radius);
   font-size: 13px;
-  color: #fff;
+  color: var(--toast-text);
   animation: toast-in 0.25s ease-out;
   box-shadow: var(--shadow);
 }
 .toast-success {
   background: var(--cta-bg);
+  color: var(--cta-text);
 }
 .toast-error {
   background: var(--color-error-dark);
+  color: var(--toast-error-text);
 }
 .toast-info {
   background: var(--color-info);
+  color: var(--toast-info-text);
+}
+
+[data-color-theme^="shadcn"] .toast-success,
+[data-color-theme^="shadcn"] .toast-info {
+  color: var(--bg);
+}
+
+[data-color-theme="shadcn-gray"]:not([data-theme="light"]) .toast-success,
+[data-color-theme="shadcn-gray-blue"]:not([data-theme="light"]) .toast-success,
+[data-color-theme="shadcn-gray-blue"]:not([data-theme="light"]) .toast-info {
+  color: var(--text);
+}
+
+[data-color-theme^="shadcn"][data-theme="light"] .toast-success,
+[data-color-theme^="shadcn"][data-theme="light"] .toast-info {
+  color: var(--bg);
+}
+
+[data-color-theme="shadcn"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-green"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-green"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-orange"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-orange"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-yellow"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-yellow"][data-theme="light"] .toast-info,
+[data-color-theme="shadcn-mono-green"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-mono-orange"][data-theme="light"] .toast-success,
+[data-color-theme="shadcn-mono-yellow"][data-theme="light"] .toast-success {
+  color: var(--text);
 }
 
 @media (max-width: 768px) {
