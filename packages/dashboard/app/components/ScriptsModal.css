@@ -3751,6 +3751,11 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
     flex-direction: column;
   }
 
+  /*
+  FNXC:GitManager 2026-06-21-11:27:
+  The mobile global `* { touch-action: pan-y; }` lock from FN-6365 blocks horizontal swipes unless the actual overflowing scroller opts back into pan-x.
+  The Git Manager section toolbar must keep all fixed section tabs reachable on touch viewports, so mirror the FN-6450 tab-strip treatment and prevent tab compression (FN-6857).
+  */
   .gm-sidebar {
     flex-direction: row;
     width: 100%;
@@ -3758,11 +3763,15 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
     padding: var(--space-xs) var(--space-sm);
     gap: var(--space-xs);
   }
 
   .gm-nav-item {
+    flex: 0 0 auto;
     flex-direction: column;
     gap: calc(var(--space-xs) / 2);
     padding: var(--space-xs) var(--space-sm);
@@ -4209,12 +4218,15 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
+    touch-action: pan-x pan-y;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
     padding: var(--space-xs) var(--space-sm);
     gap: var(--space-xs);
   }
 
   .gm-nav-item {
+    flex: 0 0 auto;
     border-left: none;
     border-bottom: 2px solid transparent;
     text-align: center;

@@ -236,6 +236,25 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain("flex-direction: row;");
   });
 
+  it("GitManagerModal: mobile section toolbar opts back into horizontal touch scrolling", () => {
+    const css = loadAllAppCss();
+    const mobileBlock = getMainMobileBlock(css);
+
+    const sidebarRules = getRuleBlocks(mobileBlock, ".gm-sidebar");
+    expect(sidebarRules.length).toBeGreaterThan(0);
+    for (const sidebarRule of sidebarRules) {
+      expect(sidebarRule).toContain("overflow-x: auto;");
+      expect(sidebarRule).toContain("touch-action: pan-x pan-y;");
+      expect(sidebarRule).toContain("-webkit-overflow-scrolling: touch;");
+    }
+
+    const navItemRules = getRuleBlocks(mobileBlock, ".gm-nav-item");
+    expect(navItemRules.length).toBeGreaterThan(0);
+    for (const navItemRule of navItemRules) {
+      expect(navItemRule).toMatch(/flex:\s*0 0 auto;|flex-shrink:\s*0;/);
+    }
+  });
+
   it("GitManagerModal: nav items keep 36px touch target on mobile", () => {
     const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
