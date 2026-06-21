@@ -36,7 +36,17 @@ const MINUTE = 60_000;
  */
 export const CLASS_BUDGET_BANDS = {
   // One CI shard command (may fan out across several packages via --filter).
-  shard: { floor: 5 * MINUTE, ceiling: 30 * MINUTE },
+  // Floor is 15min, not 5min: the heaviest shard slices (@fusion/engine and
+  // @fusion/core, each split [1/2]+[2/2]) are import- and real-git-subprocess
+  // heavy, and the committed scripts/test-timings.json undercounts that
+  // overhead (most files bucket to the 100ms floor; the snapshot total is far
+  // below current wall-clock). A "fresh" but undercounting snapshot was
+  // tightening these slices to ~340-405s and SIGKILLing healthy runs on slower
+  // CI runners — the exact false-kill the band is meant to prevent (see the
+  // deriveBudgetMs note above and KTD-2). 15min sits comfortably above the
+  // observed CI need while still bounding a true hang far under the job's
+  // 60min ceiling. Mirrors the dashboard-lane heavy-lane floor.
+  shard: { floor: 15 * MINUTE, ceiling: 30 * MINUTE },
   // One local changed-file package invocation.
   changed: { floor: 2 * MINUTE, ceiling: 20 * MINUTE },
   // One dashboard quality lane (heap-managed). Matches the historical 15min.

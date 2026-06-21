@@ -39,7 +39,9 @@ test("deriveBudgetMs: no fresh timing falls back to the per-class ceiling", () =
 
 test("deriveBudgetMs: fresh timing tightens within the band", () => {
   // expected×multiplier between floor and ceiling → use the tightened value.
-  const expected = 200_000; // 200s
+  // 300s × 3.5 = 1050s, which sits between the shard floor (15min) and
+  // ceiling (30min) so the tightened value is used un-clamped.
+  const expected = 300_000; // 300s
   const derived = deriveBudgetMs({ klass: "shard", expectedDurationMs: expected, timingsFresh: true });
   assert.equal(derived, Math.round(expected * DEFAULT_BUDGET_MULTIPLIER));
   assert.ok(derived >= CLASS_BUDGET_BANDS.shard.floor);
