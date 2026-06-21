@@ -978,6 +978,37 @@ export function parseAwaitInputSentinel(output: string | undefined): string | nu
   return question ? question : null;
 }
 
+/**
+ * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
+ * step's prompt at the skill-prompt build path (runGraphCustomNode). It teaches
+ * any bundled skill the conventions Fusion needs — in ONE engine-side place, so
+ * the skills stay byte-for-byte upstream. The block is skill-agnostic and rides
+ * on the node prompt; it deliberately overrides the upstream skill bodies that
+ * still say "call AskUserQuestion" / "Task ce-*". Stable text — the await-input
+ * grammar here must match `parseAwaitInputSentinel` and the persona-override
+ * contract (fn_spawn_agent's `systemPromptOverride` param) verbatim.
+ *
+ * (U9 / KTD-7) The persona-fan-out instruction is path-confined: the skill must
+ * resolve `<persona>.md` strictly within `$FUSION_CE_AGENTS_DIR` and reject any
+ * `../` traversal before reading, since the file body is injected verbatim into a
+ * child's system prompt (a filesystem prompt-injection surface otherwise).
+ */
+export const FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE = `## Fusion workflow-step conventions
+
+You are running as a Fusion autonomous workflow step — NOT an interactive Claude Code session. Follow these conventions; they override any contrary instruction in the skill body below.
+
+1. Asking the user: there is no interactive listener here. \`AskUserQuestion\` / \`request_user_input\` go into the void. When you must ask the user a question, emit EXACTLY ONE block of the form:
+   ===FUSION_AWAIT_INPUT===
+   <your question for the user>
+   ===END_FUSION_AWAIT_INPUT===
+   and then STOP. Fusion parks the task awaiting the user's answer and re-runs this step with their reply.
+
+2. Headless runs: when the environment variable \`FUSION_HEADLESS=1\` is set, do NOT ask the user anything. Record a reasonable assumption explicitly in your output and proceed — never emit the await-input block in this mode.
+
+3. Dispatching a \`ce-<persona>\` subagent: do NOT use a raw \`Task ce-*(...)\` call. Instead, read the persona definition from \`$FUSION_CE_AGENTS_DIR/<persona>.md\`, strip its YAML frontmatter, and pass the remaining body as the \`systemPromptOverride\` argument to the \`fn_spawn_agent\` tool. Resolve the path strictly inside \`$FUSION_CE_AGENTS_DIR\` — reject any \`<persona>\` containing \`/\` or \`..\` (path traversal), and skip a def whose body is empty or implausibly large. If \`fn_spawn_agent\` is not available (a readonly step), do the persona's work inline yourself instead of spawning.
+
+`;
+
 /** Result returned from fn_spawn_agent tool */
 interface SpawnAgentResult {
   agentId: string;
@@ -4021,6 +4052,13 @@ export class TaskExecutor {
    *  coding/step session runs as a column agent. Cleared in the run's finally. */
   private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
 
+  /** (U3) Task ids whose current graph run is genuinely unattended (LFG /
+   *  pipeline / disable-model-invocation — no human will ever answer). Set only
+   *  by an explicit `unattended` workflow-run option; default-absent means a
+   *  board run. runGraphCustomNode reads this to set FUSION_HEADLESS on skill
+   *  steps. Cleared in maybeExecuteWorkflowGraph's finally alongside the resolver. */
+  private graphUnattendedRuns = new Set<string>();
+
   /** Column-agent seam wiring (column-agent plan U4). The governing graph node id
    *  for the implementation pass currently in flight for a task — the execute-seam
    *  prompt node's id (execute seam), or the foreach instance node id (step-execute
@@ -4142,6 +4180,22 @@ export class TaskExecutor {
         this.graphColumnAgentResolver.set(task.id, resolveBindingForNode);
       }
 
+      // (U3) Genuinely-unattended run signal. This is an EXPLICIT opt-in, not an
+      // inferred heuristic: a run is unattended only when an entrypoint that
+      // knows no human will ever answer (LFG / pipeline / disable-model-invocation)
+      // marks it so. No such marker reaches this executor path today (verified —
+      // KTD-3), so this resolves to false (board run) for every current run, and
+      // the safe default is preserved: absence of the explicit flag ALWAYS yields
+      // no FUSION_HEADLESS, so a board task can only ever park (a human can answer
+      // via the await-input card button), never silently skip approval. When such
+      // an entrypoint is added, it sets `unattended` here.
+      const unattendedRun = false;
+      if (unattendedRun) {
+        this.graphUnattendedRuns.add(task.id);
+      } else {
+        this.graphUnattendedRuns.delete(task.id);
+      }
+
       const runner = new WorkflowGraphTaskRunner({
         store: {
           ...this.store,
@@ -4252,6 +4306,7 @@ export class TaskExecutor {
       // Clear per-run column-agent seam wiring (U4): the resolver and any dangling
       // governing-node-id are scoped to this run only.
       this.graphColumnAgentResolver.delete(task.id);
+      this.graphUnattendedRuns.delete(task.id);
       this.graphSeamGoverningNodeId.delete(task.id);
       // Per-instance keys: clear every instance slot owned by this task.
       const ctxPrefix = `${task.id}:`;
@@ -5988,6 +6043,37 @@ export class TaskExecutor {
     return false;
   }
 
+  /** Build the task-scoped runtime env that carries plugin-injected keys
+   *  (e.g. compound-engineering `FUSION_CE_SKILLS_DIR` / `FUSION_CE_AGENTS_DIR`)
+   *  plus the plugin PATH contribution. Shared by the legacy single-session path
+   *  (agentWork, ~7434) and the graph-node skill-step path (runGraphCustomNode,
+   *  U8) so both deliver the same injected env to their sessions. We never mutate
+   *  process.env globally — this scoped env is threaded through taskEnv so session
+   *  subprocesses inherit it without leaking across concurrent tasks. */
+  private async buildInjectedRuntimeEnv(
+    taskId: string,
+    worktreePath: string,
+    branch: string | undefined,
+  ): Promise<{ env: NodeJS.ProcessEnv; injectedKeyCount: number; pathEntryCount: number }> {
+    const runtimeEnvContribution = await this.options.pluginRunner?.collectExecutorRuntimeEnv({
+      taskId,
+      worktreePath,
+      rootDir: this.rootDir,
+      branch,
+    });
+    const pathPrepend = runtimeEnvContribution?.pathPrepend ?? [];
+    const injectedEnv = runtimeEnvContribution?.env ?? {};
+    return {
+      env: {
+        ...process.env,
+        ...injectedEnv,
+        PATH: [...pathPrepend, process.env.PATH ?? ""].filter(Boolean).join(delimiter),
+      },
+      injectedKeyCount: Object.keys(injectedEnv).length,
+      pathEntryCount: pathPrepend.length,
+    };
+  }
+
   /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery.
    *
    *  `columnBinding` (plan U3) is the agent binding governing this node's
@@ -6170,7 +6256,10 @@ export class TaskExecutor {
         // Agent lookup is best-effort; fall back to the default model.
       }
     } else if (executorKind === "skill" && typeof cfg.skillName === "string" && cfg.skillName.trim()) {
-      prompt = `Invoke the "${cfg.skillName}" skill with the following input, following the skill's instructions exactly:\n\n${prompt}`;
+      // (U2) Prepend the Fusion workflow-step conventions preamble BEFORE the
+      // "Invoke the skill" line. A skill node always runs as a workflow step here
+      // (graph path → executeWorkflowStep), so the conventions always apply.
+      prompt = `${FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE}Invoke the "${cfg.skillName}" skill with the following input, following the skill's instructions exactly:\n\n${prompt}`;
     } else if (executorKind === "cli") {
       const rawCommand = rawCliCommand;
       if (rawCommand) {
@@ -6227,6 +6316,13 @@ export class TaskExecutor {
 
     const mode: "prompt" | "script" = executorKind === "cli" || node.kind === "script" || (node.kind === "gate" && scriptName) ? "script" : "prompt";
     const now = new Date().toISOString();
+    // (U1) Carry the node's skill name onto the synthesized step so the step
+    // session can actually LOAD it (executeWorkflowStep merges it into the
+    // resolved skillSelection). Without this, the named skill was only injected
+    // as prompt text pointing at a skill the session never discovered.
+    const stepSkillName = executorKind === "skill" && typeof cfg.skillName === "string" && cfg.skillName.trim()
+      ? cfg.skillName.trim()
+      : undefined;
     const step: WorkflowStep = {
       id: `graph:${node.id}`,
       name: typeof cfg.name === "string" && cfg.name.trim() ? cfg.name : node.id,
@@ -6240,16 +6336,36 @@ export class TaskExecutor {
       enabled: true,
       createdAt: now,
       updatedAt: now,
+      ...(stepSkillName ? { skillName: stepSkillName } : {}),
       ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
     };
 
-    // CLI executor passes the node prompt to the named script via env.
-    const nodeEnv: NodeJS.ProcessEnv | undefined =
-      executorKind === "cli" && prompt ? { ...process.env, FUSION_NODE_PROMPT: prompt } : undefined;
+    // (U8a) Thread the plugin-injected runtime env (FUSION_CE_SKILLS_DIR /
+    // FUSION_CE_AGENTS_DIR + PATH contribution) into prompt-mode skill/model
+    // steps on the GRAPH path. The legacy single-session caller builds this in
+    // agentWork; the graph path never did, so skill loading and persona fan-out
+    // silently no-op'd here. CLI executor keeps its own FUSION_NODE_PROMPT env.
+    let nodeEnv: NodeJS.ProcessEnv | undefined;
+    if (executorKind === "cli" && prompt) {
+      nodeEnv = { ...process.env, FUSION_NODE_PROMPT: prompt };
+    } else if (mode === "prompt") {
+      const injected = await this.buildInjectedRuntimeEnv(live.id, worktreePath, live.branch ?? undefined);
+      nodeEnv = injected.env;
+      executorLog.log(
+        `${live.id}: graph node '${node.id}' runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`,
+      );
+    }
+
+    // (U3) Genuinely-unattended signal. `unattended` is an explicit opt-in
+    // threaded from the workflow-run options (default false = board run, where a
+    // human can still answer asynchronously via the await-input card button).
+    // No origin heuristic — absence always yields a board run. executeWorkflowStep
+    // sets FUSION_HEADLESS=1 only when this is explicitly true.
+    const unattended = this.graphUnattendedRuns.has(live.id);
 
     const outcome = mode === "script"
       ? await this.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv)
-      : await this.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+      : await this.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, { unattended });
 
     // Skill-emitted await-input (U6): if the skill asked the user a blocking
     // question via the ===FUSION_AWAIT_INPUT=== sentinel, park the task
@@ -7431,24 +7547,10 @@ export class TaskExecutor {
       this.activeWorktrees.set(task.id, worktreePath);
       executorLog.log(`${task.id}: worktree ready at ${worktreePath}`);
 
-      const runtimeEnvContribution = await this.options.pluginRunner?.collectExecutorRuntimeEnv({
-        taskId: task.id,
-        worktreePath,
-        rootDir: this.rootDir,
-        branch: acquisition.branch ?? undefined,
-      });
-      const pathPrepend = runtimeEnvContribution?.pathPrepend ?? [];
-      const injectedEnv = runtimeEnvContribution?.env ?? {};
-      // We intentionally do NOT mutate process.env globally. This task-scoped env is
-      // passed through AgentRuntimeOptions so executor session subprocesses inherit it
-      // without leaking across concurrent tasks.
-      taskEnv = {
-        ...process.env,
-        ...injectedEnv,
-        PATH: [...pathPrepend, process.env.PATH ?? ""].filter(Boolean).join(delimiter),
-      };
+      const injected = await this.buildInjectedRuntimeEnv(task.id, worktreePath, acquisition.branch ?? undefined);
+      taskEnv = injected.env;
       executorLog.log(
-        `${task.id}: executor runtime env injected (${pathPrepend.length} PATH entries, ${Object.keys(injectedEnv).length} env keys)`,
+        `${task.id}: executor runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`,
       );
 
       this.options.onStart?.(task, worktreePath);
@@ -12412,8 +12514,13 @@ ${failureFeedback}
     worktreePath: string,
     settings: Settings,
     taskEnv?: NodeJS.ProcessEnv,
+    stepOptions?: { unattended?: boolean },
   ): Promise<WorkflowStepOutcome> {
     const toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
+    // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
+    // assumptions and proceed instead of parking on a question. Explicit opt-in
+    // only (default false = board run); see runGraphCustomNode / KTD-3.
+    const unattended = stepOptions?.unattended === true;
 
     // Compute the diff scope so the workflow step agent reviews only what THIS
     // task changed — not unrelated files it might wander into. Without this,
@@ -12450,6 +12557,42 @@ CRITICAL SCOPING RULES — read before doing anything else:
 - If NONE of the files in the diff scope are relevant to your review category (e.g. a UX/design reviewer with no UI/CSS/component files in scope, a security reviewer with no auth/network code in scope, an a11y reviewer with no markup changes), respond IMMEDIATELY with a single short approval line such as "No relevant changes in scope — approved." and STOP. Do not start exploring the codebase.
 - Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.`;
 
+    // (KTD-6) Verdict-contract reconciliation. The trailing-verdict JSON is the
+    // gate-parsing contract — it only matters for steps that gate merge. A skill
+    // step that isn't a gate (e.g. ce-plan / ce-work / ce-compound) produces
+    // skill-native output (and may emit a ===FUSION_AWAIT_INPUT=== sentinel and
+    // stop), so forcing a verdict would contradict the U2 preamble. Require the
+    // verdict only for gate steps (and skill-less prompt steps, which keep the
+    // legacy reviewer contract); relax it for non-gate skill steps. The executor
+    // runs parseAwaitInputSentinel on output regardless, so the await-input
+    // sentinel always takes priority when present.
+    const isSkillStep = typeof workflowStep.skillName === "string" && workflowStep.skillName.trim().length > 0;
+    const requireVerdict = workflowStep.gateMode === "gate" || !isSkillStep;
+    const verdictBlock = requireVerdict
+      ? `
+
+## Feedback Format
+
+When your review is complete, your final line MUST be a single JSON object (no markdown fences):
+
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}
+
+Rules:
+- Output exactly one trailing JSON object and stop.
+- verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
+- notes should be concise and actionable. Use an empty string when there are no notes.
+- For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}
+
+Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`
+      : `
+
+## Output Format
+
+Follow the skill's own output conventions. You are NOT required to end with a
+verdict JSON object — this step does not gate merge. If you need to ask the user
+a question, emit a single ===FUSION_AWAIT_INPUT=== block and stop (see the
+workflow-step conventions in your instructions).`;
+
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
 
 Task Context:
@@ -12467,21 +12610,7 @@ Your role:
 Your Instructions:
 ${workflowStep.prompt}
 
-You have access to the file system to review changes.
-
-## Feedback Format
-
-When your review is complete, your final line MUST be a single JSON object (no markdown fences):
-
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}
-
-Rules:
-- Output exactly one trailing JSON object and stop.
-- verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
-- notes should be concise and actionable. Use an empty string when there are no notes.
-- For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}
-
-Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`;
+You have access to the file system to review changes.${verdictBlock}`;
 
     const agentLogger = new AgentLogger({
       store: this.store,
@@ -12548,12 +12677,64 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
       // convention (which the dashboard / task card renders) instead of calling
       // AskUserQuestion into the void. Scoped to the step session — the main
       // executor session deliberately does not carry it.
-      // (FUSION_HEADLESS is reserved for a future genuinely-unattended run signal —
-      // LFG/pipeline — where no human can answer even asynchronously.)
-      const stepEnv: NodeJS.ProcessEnv = { ...(taskEnv ?? process.env), FUSION_WORKFLOW_STEP: "1" };
+      // (U3) FUSION_HEADLESS=1 marks a genuinely-unattended run (LFG/pipeline) so
+      // skills record assumptions and proceed instead of parking. Set ONLY when
+      // the explicit `unattended` flag is true; absent on a board run.
+      const stepEnv: NodeJS.ProcessEnv = {
+        ...(taskEnv ?? process.env),
+        FUSION_WORKFLOW_STEP: "1",
+        ...(unattended ? { FUSION_HEADLESS: "1" } : {}),
+      };
+
+      // (U1) Load the step's named skill into THIS session. The interactive fix
+      // proved the resolver works when fed BOTH a requested name AND a discovery
+      // path (compound-engineering-skill-resolution.test.ts). Here we mirror it:
+      // merge the step's skillName (both namespaced `compound-engineering:ce-work`
+      // and bare `ce-work` — the resolver matches bare names case-insensitively)
+      // into the resolved requestedSkillNames, and pass the CE install root (from
+      // the injected FUSION_CE_SKILLS_DIR env) as additionalSkillPaths so the
+      // loader can actually discover the bundled SKILL.md. Without both halves the
+      // named skill was only prompt text pointing at a skill the session never had.
+      let effectiveSkillSelection = skillContext.skillSelectionContext;
+      const ceSkillsDir = typeof stepEnv.FUSION_CE_SKILLS_DIR === "string" && stepEnv.FUSION_CE_SKILLS_DIR.trim()
+        ? stepEnv.FUSION_CE_SKILLS_DIR.trim()
+        : undefined;
+      if (workflowStep.skillName && workflowStep.skillName.trim()) {
+        const namespaced = workflowStep.skillName.trim();
+        const bare = namespaced.includes(":") ? namespaced.slice(namespaced.lastIndexOf(":") + 1) : namespaced;
+        const existing = effectiveSkillSelection?.requestedSkillNames ?? [];
+        const mergedNames = [...new Set([...existing, namespaced, bare])];
+        effectiveSkillSelection = {
+          projectRootDir: effectiveSkillSelection?.projectRootDir ?? this.rootDir,
+          ...(effectiveSkillSelection?.sessionPurpose ? { sessionPurpose: effectiveSkillSelection.sessionPurpose } : { sessionPurpose: "executor" }),
+          requestedSkillNames: mergedNames,
+        };
+      }
+      const additionalSkillPaths = ceSkillsDir ? [ceSkillsDir] : undefined;
+
+      // (U8b) Coding-mode skill steps fan out to ce-<persona> subagents via
+      // fn_spawn_agent (read the persona def, pass its body as systemPromptOverride).
+      // That tool is registered only in the main executor session — never here —
+      // so coding mode granted write/edit but NOT spawn. Register it for
+      // coding-mode steps now; readonly steps keep no spawn (filterCustomToolsForReadonly
+      // strips it). The spawn tool inherits the injected env so children also see
+      // FUSION_CE_AGENTS_DIR.
+      //
+      // (U9 / KTD-4, Risk-1) ACCEPTED WRITE-CAPABILITY POSTURE: coding mode also
+      // exposes write/edit. The CE plan/code-review steps run coding ONLY to gain
+      // spawn (they are not supposed to mutate the tree), but the tool policy is
+      // binary today — coding is the only mode that carries fn_spawn_agent. There
+      // is NO engine guard preventing those steps from writing; the only protection
+      // is skill discipline plus the U6 no-diff detection assertion. The proper fix
+      // (a dedicated readonly-plus-spawn tool mode) is deferred; this is a
+      // knowingly-accepted gap, not a closed one — re-evaluate before enabling the
+      // CE workflow for genuinely-unattended (FUSION_HEADLESS) LFG/pipeline runs.
+      const codingCustomTools: ToolDefinition[] = toolMode === "coding"
+        ? [this.createSpawnAgentTool(task.id, worktreePath, settings, stepEnv)]
+        : [];
       const readonlyCustomTools = toolMode === "readonly"
-        ? filterCustomToolsForReadonly([])
-        : { allowed: [] as ToolDefinition[], denied: [] as string[] };
+        ? filterCustomToolsForReadonly(codingCustomTools)
+        : { allowed: codingCustomTools, denied: [] as string[] };
       if (toolMode === "readonly" && readonlyCustomTools.denied.length > 0) {
         await this.store.logEntry(
           task.id,
@@ -12576,8 +12757,10 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
         settings,
         taskEnv: stepEnv,
-        // Skill selection: use assigned agent skills if available, otherwise role fallback
-        ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+        // Skill selection: assigned-agent / role-fallback skills, plus the step's
+        // own named skill (U1) made discoverable via additionalSkillPaths.
+        ...(effectiveSkillSelection ? { skillSelection: effectiveSkillSelection } : {}),
+        ...(additionalSkillPaths ? { additionalSkillPaths } : {}),
         ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
       });
 
@@ -15214,6 +15397,16 @@ Backward compat fallback: if JSON is unavailable, you may still begin output wit
           // A non-empty systemPromptOverride lets the caller run the child as a
           // specific persona (e.g. a compound-engineering reviewer) instead of the
           // generic child executor. Executor instructions are still appended below.
+          //
+          // (U9 / KTD-7) The engine does NOT itself resolve the persona def file —
+          // the calling skill reads `$FUSION_CE_AGENTS_DIR/<persona>.md` (the
+          // FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE instructs a path-confined
+          // read: confined to the install dir, `../` rejected, body-size sanity
+          // checked) and passes the stripped body here. The override body is
+          // therefore trusted only to the extent that read was confined; the
+          // agents dir is plugin-installer-owned and lives OUTSIDE the task
+          // worktree (so coding-mode plan/code-review steps can't write into it —
+          // see assertPluginLocalAgentsTarget in the CE plugin installer).
           const personaOverride = systemPromptOverride?.trim();
           const childBasePrompt = personaOverride
             ? `${personaOverride}

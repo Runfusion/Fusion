@@ -1,0 +1,5 @@
+---
+"@runfusion/fusion": patch
+---
+
+Make the compound-engineering built-in workflow actually load skills and run the full CE flow. Previously the workflow named CE skills at each node but the graph-node execution path (`runGraphCustomNode`) never loaded them: the named skill was only injected as prompt text, the plugin-injected `FUSION_CE_*` runtime env never reached the step session, and `fn_spawn_agent` was never registered for workflow steps, so persona fan-out and skill loading silently no-op'd. Now skill-executor graph steps thread the injected env, load the named skill (discovery + selection via `additionalSkillPaths`), register the spawn tool in coding mode, and receive an engine-injected Fusion workflow-step conventions preamble (await-input for questions, `FUSION_HEADLESS` degrade path, persona fan-out via `systemPromptOverride`). Adds an explicit `unattended` opt-in for `FUSION_HEADLESS`, reconciles the preamble with the gate verdict-JSON contract, and carries `skillName` through the `WorkflowStep` round-trip.

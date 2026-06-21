@@ -88,6 +88,12 @@ export interface AgentRuntimeOptions {
   skillSelection?: SkillSelectionContext;
   /** Convenience: skill names to include in the session */
   skills?: string[];
+  /** Extra directories to scan for skills (each holding `<id>/SKILL.md`), in
+   *  addition to the default cwd/agent-dir roots. Forwarded to the resource
+   *  loader so caller-requested `skills`/`skillSelection` names installed to a
+   *  private dir (e.g. a plugin's bundled-skill root) are discoverable in the
+   *  live session. Mirrors `AgentOptions.additionalSkillPaths` in pi.ts. */
+  additionalSkillPaths?: string[];
   /** Runtime-facing context for non-pi runtimes that cannot consume JS ToolDefinition objects directly. */
   runtimeContext?: AgentRuntimeContext;
   /**
