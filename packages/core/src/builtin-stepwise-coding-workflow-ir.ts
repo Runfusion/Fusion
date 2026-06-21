@@ -123,8 +123,12 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     },
     // KTD-5: rework exhaustion escalates to a manual hold (a human releases it).
     { id: "rework-hold", kind: "hold", column: "in-progress", config: { release: "manual" } },
-    // Pre-merge workflow-step seam (parity with builtin-coding-workflow-ir): the
-    // ONLY node that makes the graph invoke `runWorkflowSteps`, so a per-task
+    // FNXC:WorkflowOptionalSteps 2026-06-21-00:00:
+    // The stepwise workflow must actually run a task's enabled optional steps (e.g.
+    // browser verification), so it needs the same pre-merge workflow-step seam the
+    // coding workflow has — declaring the optional step without this node would be a
+    // dead toggle. Pre-merge workflow-step seam (parity with builtin-coding-workflow-ir):
+    // the ONLY node that makes the graph invoke `runWorkflowSteps`, so a per-task
     // `enabledWorkflowSteps` (e.g. the optional browser-verification step declared
     // below) actually executes. Runs ONCE after the foreach completes, between
     // implementation and review — not per step-instance.

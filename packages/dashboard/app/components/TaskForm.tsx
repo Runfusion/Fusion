@@ -295,6 +295,10 @@ export function TaskForm({
       .catch(() => setGlobalSettings(null));
   }, [isActive, projectId, onWorkflowIdChange]);
 
+  // FNXC:WorkflowOptionalSteps 2026-06-21-00:00:
+  // Creating a task should let the user opt into the selected workflow's optional
+  // steps, seeded from each step's defaultOn. TaskForm fetches + seeds these in
+  // create mode and lifts the enabled set to NewTaskModal for the create payload.
   // Optional workflow steps for the currently-selected workflow (create mode only).
   // `null` selection ("No workflow") → no steps; `undefined` → project default.
   const effectiveOptionalWorkflowId =

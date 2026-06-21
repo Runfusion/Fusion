@@ -456,9 +456,12 @@ export function flowToIr(
   const hasFields = Array.isArray(fields) && fields.length > 0;
   const hasSettings = Array.isArray(settings) && settings.length > 0;
   const hasOptionalSteps = Array.isArray(optionalSteps) && optionalSteps.length > 0;
-  // Fields, settings, and optional steps are v2-only declarations: a workflow with
-  // any of them but no custom columns still serializes as v2 (with the synthesized
-  // default columns). Empty/absent → not a v2 signal (R6 byte-identity).
+  // FNXC:WorkflowOptionalSteps 2026-06-21-00:00:
+  // Optional steps must round-trip through the node editor without data loss, yet
+  // must never upgrade a legacy v1 graph. Fields, settings, and optional steps are
+  // v2-only declarations: a workflow with any of them but no custom columns still
+  // serializes as v2 (with the synthesized default columns). Empty/absent → not a
+  // v2 signal, and the key is omitted entirely (R6 byte-identity for legacy graphs).
   const v2 =
     (Array.isArray(columns) && columns.length > 0) || hasFields || hasSettings || hasOptionalSteps;
   const layout: Record<string, { x: number; y: number }> = {};
