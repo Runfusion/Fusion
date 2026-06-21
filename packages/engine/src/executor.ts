@@ -9276,26 +9276,36 @@ export class TaskExecutor {
               executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErrMessage}`);
             }
           }
-          // FN-6722: a mid-run abort on a task that already has real step
-          // progress must not discard that progress on the bounce to todo. The
-          // sibling pause-park path (parkTaskAfterWorkflowStepPause, ~1826) moves
-          // with preserveResumeState; this teardown branch historically did not —
-          // it cleared `branch` AND moved without preservation, which reset every
-          // step to pending (store.moveTaskInternal ~7322 resetAllStepsToPending)
-          // and dropped the pointer to the commits already on the task branch.
-          // The next dispatch then re-planned from Step 0 even though the work was
-          // committed on `task.branch` — observably a "lost all progress / stuck"
-          // failure. Preserve the branch + resume state when there is resumable
-          // progress so execute() resumes onto the existing branch (the
-          // `acquisition.isResume && task.branch` reconciliation ~7679) from the
-          // first incomplete step. The worktree is still removed above and its
-          // binding cleared below to free the concurrency slot (FN-6782) — only the
-          // durable pointers (branch + step state) are kept. The 9227 guard above
-          // covers the same intent but is race-contingent on the move having
-          // already landed; this makes the fall-through path safe regardless.
+          // FNXC:WorkflowLifecycle 2026-06-21-00:00: FN-6722 — a mid-run abort on
+          // a task that already has real step progress must not discard that
+          // progress on the bounce to todo. The sibling pause-park path
+          // (parkTaskAfterWorkflowStepPause, ~1826) moves with preserveResumeState;
+          // this teardown branch historically did not — it cleared `branch` AND
+          // moved without preservation, which reset every step to pending
+          // (store.moveTaskInternal ~7322 resetAllStepsToPending) and dropped the
+          // pointer to the commits already on the task branch. The next dispatch
+          // then re-planned from Step 0 even though the work was committed on the
+          // branch — observably a "lost all progress / stuck" failure. Preserve the
+          // branch + resume state when there is resumable progress so execute()
+          // resumes onto the existing branch (the `acquisition.isResume &&
+          // task.branch` reconciliation ~7679) from the first incomplete step. The
+          // worktree is still removed above and its binding cleared below to free
+          // the concurrency slot (FN-6782) — only the durable pointers (branch +
+          // step state) are kept. The 9227 guard above covers the same intent but
+          // is race-contingent on the move having already landed; this makes the
+          // fall-through path safe regardless.
+          //
+          // Read progress from `latestTask` (the store snapshot fetched at ~9226),
+          // NOT the `task` parameter: `task` is frozen at dispatch time and never
+          // mutated mid-run, so a fresh task (currentStep 0, all steps pending at
+          // dispatch) whose agent committed step progress to the store during this
+          // session would otherwise look progress-less here and hit the destructive
+          // reset — the exact FN-6722 failure mode. Fall back to `task` when the
+          // store read came back empty.
+          const progressSource = latestTask ?? task;
           const hasResumableProgress =
-            (task.currentStep ?? 0) > 0
-            || (task.steps?.some((step) => step.status === "done" || step.status === "in-progress") ?? false);
+            (progressSource.currentStep ?? 0) > 0
+            || (progressSource.steps?.some((step) => step.status === "done" || step.status === "in-progress") ?? false);
           await this.store.updateTask(
             task.id,
             hasResumableProgress ? { worktree: undefined } : { worktree: undefined, branch: undefined },
