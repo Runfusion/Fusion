@@ -40,8 +40,8 @@
   "dependencies": {
     "@fusion/core": "workspace:*",
     "@fusion/pi-claude-cli": "workspace:*",
-    "@earendil-works/pi-ai": "^0.79.1",
-    "@earendil-works/pi-coding-agent": "^0.79.1",
+    "@earendil-works/pi-ai": "^0.79.9",
+    "@earendil-works/pi-coding-agent": "^0.79.9",
     "cron-parser": "^5.5.0",
     "esbuild": "^0.25.12",
     "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
