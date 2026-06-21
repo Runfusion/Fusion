@@ -330,7 +330,7 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
             </Box>
             <Box flexDirection="row" gap={1} flexShrink={0}>
               <Text dimColor>Engine</Text>
-              {info.engineMode === "dev" && <Text color="yellow">dev</Text>}
+              {info.engineMode === "no-engine" && <Text color="yellow">no-engine</Text>}
               {info.engineMode === "paused" && <Text color="yellow">paused</Text>}
               {info.engineMode === "active" && <Text color="green">active</Text>}
             </Box>

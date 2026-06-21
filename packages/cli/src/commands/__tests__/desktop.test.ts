@@ -87,6 +87,21 @@ const mocks = vi.hoisted(() => {
     updateSettings: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
   };
+  const project = { id: "project-1", name: "Repo", path: "/repo", status: "active" };
+  const centralCore = {
+    init: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  const engine = { id: "engine-1" };
+  const engineMap = new Map([[project.id, engine]]);
+  const engineManager = {
+    startAll: vi.fn().mockResolvedValue(undefined),
+    startReconciliation: vi.fn(),
+    ensureEngine: vi.fn().mockResolvedValue(engine),
+    onProjectAccessed: vi.fn(),
+    stopAll: vi.fn().mockResolvedValue(undefined),
+    getAllEngines: vi.fn(() => engineMap),
+  };
 
   const server = Object.assign(createEmitter(), {
     address: vi.fn(() => ({ port: 4545 })),
@@ -125,6 +140,17 @@ const mocks = vi.hoisted(() => {
     taskStoreCtor: vi.fn(function () {
       return store;
     }),
+    centralCoreCtor: vi.fn(function () {
+      return centralCore;
+    }),
+    project,
+    centralCore,
+    engine,
+    engineManager,
+    projectEngineManagerCtor: vi.fn(function () {
+      return engineManager;
+    }),
+    ensureCwdProjectRegistered: vi.fn().mockResolvedValue(project),
     createServer: vi.fn(() => app),
   };
 });
@@ -135,6 +161,15 @@ vi.mock("node:child_process", () => ({
 
 vi.mock("@fusion/core", () => ({
   TaskStore: mocks.taskStoreCtor,
+  CentralCore: mocks.centralCoreCtor,
+}));
+
+vi.mock("@fusion/engine", () => ({
+  ProjectEngineManager: mocks.projectEngineManagerCtor,
+}));
+
+vi.mock("../ensure-project-registered.js", () => ({
+  ensureCwdProjectRegistered: mocks.ensureCwdProjectRegistered,
 }));
 
 vi.mock("@fusion/dashboard", () => ({
@@ -200,6 +235,20 @@ describe("runDesktop", () => {
     );
     expect(mocks.taskStoreCtor).toHaveBeenCalledWith("/repo");
     expect(mocks.store.updateSettings).toHaveBeenCalledWith({ enginePaused: true });
+    expect(mocks.ensureCwdProjectRegistered).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/repo", central: mocks.centralCore, autoRegister: true }),
+    );
+    expect(mocks.projectEngineManagerCtor).toHaveBeenCalledWith(mocks.centralCore);
+    expect(mocks.engineManager.startAll).toHaveBeenCalled();
+    expect(mocks.engineManager.ensureEngine).toHaveBeenCalledWith("project-1");
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      mocks.store,
+      expect.objectContaining({
+        engine: mocks.engine,
+        engineManager: mocks.engineManager,
+        centralCore: mocks.centralCore,
+      }),
+    );
     expect(mocks.app.listen).toHaveBeenCalledWith(0);
 
     // In production mode (not dev), renderer uses embedded assets, so no FUSION_DASHBOARD_URL
@@ -249,6 +298,7 @@ describe("runDesktop", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mocks.server.close).toHaveBeenCalledTimes(1);
+    expect(mocks.engineManager.stopAll).toHaveBeenCalledTimes(1);
     expect(mocks.store.close).toHaveBeenCalledTimes(1);
     expect(process.exit).toHaveBeenCalledWith(7);
   });
@@ -261,6 +311,7 @@ describe("runDesktop", () => {
 
     expect(mocks.state.electronChild.kill).toHaveBeenCalledWith("SIGTERM");
     expect(mocks.server.close).toHaveBeenCalledTimes(1);
+    expect(mocks.engineManager.stopAll).toHaveBeenCalledTimes(1);
     expect(mocks.store.close).toHaveBeenCalledTimes(1);
     expect(process.exit).toHaveBeenCalledWith(0);
   });

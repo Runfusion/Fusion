@@ -35,6 +35,24 @@ const mocks = vi.hoisted(() => {
     watch: vi.fn(async () => undefined),
     close: vi.fn(),
   };
+  const centralCore = {
+    init: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    getProjectByPath: vi.fn(async () => ({ id: "project-1", name: "Repo", path: "/repo", status: "active" })),
+    listProjects: vi.fn(async () => []),
+    registerProject: vi.fn(async ({ path, name }: { path: string; name: string }) => ({ id: "project-1", name, path, status: "initializing" })),
+    updateProject: vi.fn(async (id: string, patch: Record<string, unknown>) => ({ id, name: "Repo", path: "/repo", status: patch.status ?? "active" })),
+  };
+  const engine = { id: "engine-1" };
+  const engineMap = new Map([["project-1", engine]]);
+  const engineManager = {
+    startAll: vi.fn(async () => undefined),
+    startReconciliation: vi.fn(),
+    stopAll: vi.fn(async () => undefined),
+    getAllEngines: vi.fn(() => engineMap),
+    ensureEngine: vi.fn(async () => engine),
+    onProjectAccessed: vi.fn(),
+  };
 
   class TaskStore {
     constructor(_rootDir: string) {}
@@ -55,11 +73,19 @@ const mocks = vi.hoisted(() => {
 
   const createServer = vi.fn(() => ({ listen }));
 
-  return { TaskStore, createServer, store, listen };
+  const CentralCore = vi.fn(function () {
+    return centralCore;
+  });
+  const ProjectEngineManager = vi.fn(function () {
+    return engineManager;
+  });
+
+  return { TaskStore, CentralCore, ProjectEngineManager, createServer, store, listen, centralCore, engineManager, engine };
 });
 
-vi.mock("@fusion/core", () => ({ TaskStore: mocks.TaskStore }));
+vi.mock("@fusion/core", () => ({ TaskStore: mocks.TaskStore, CentralCore: mocks.CentralCore }));
 vi.mock("@fusion/dashboard", () => ({ createServer: mocks.createServer }));
+vi.mock("@fusion/engine", () => ({ ProjectEngineManager: mocks.ProjectEngineManager }));
 
 describe("DesktopLocalServerManager", () => {
   beforeEach(() => {
@@ -75,6 +101,17 @@ describe("DesktopLocalServerManager", () => {
     expect(runtime.port).toBe(4545);
     expect(manager.getPort()).toBe(4545);
     expect(manager.getState().status).toBe("ready");
+    expect(mocks.engineManager.startAll).toHaveBeenCalledTimes(1);
+    expect(mocks.centralCore.getProjectByPath).toHaveBeenCalledWith("/repo");
+    expect(mocks.engineManager.ensureEngine).toHaveBeenCalledWith("project-1");
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        engine: mocks.engine,
+        engineManager: mocks.engineManager,
+        centralCore: mocks.centralCore,
+      }),
+    );
   });
 
   it("stops local runtime and resets state", async () => {
@@ -84,6 +121,8 @@ describe("DesktopLocalServerManager", () => {
 
     await manager.stop();
 
+    expect(mocks.engineManager.stopAll).toHaveBeenCalled();
+    expect(mocks.centralCore.close).toHaveBeenCalled();
     expect(mocks.store.close).toHaveBeenCalled();
     expect(manager.getState().status).toBe("idle");
     expect(manager.getPort()).toBeUndefined();
@@ -96,6 +135,37 @@ describe("DesktopLocalServerManager", () => {
 
     await expect(manager.start()).rejects.toThrow("init failed");
     expect(manager.getState()).toMatchObject({ status: "error", error: "init failed" });
+  });
+
+  it("cleans up engine and central core when server creation fails", async () => {
+    mocks.createServer.mockImplementationOnce(() => {
+      throw new Error("server failed");
+    });
+    const { DesktopLocalServerManager } = await import("../local-server.ts");
+    const manager = new DesktopLocalServerManager("/repo");
+
+    await expect(manager.start()).rejects.toThrow("server failed");
+
+    expect(mocks.engineManager.stopAll).toHaveBeenCalled();
+    expect(mocks.centralCore.close).toHaveBeenCalled();
+    expect(mocks.store.close).toHaveBeenCalled();
+    expect(manager.getState()).toMatchObject({ status: "error", error: "server failed" });
+  });
+
+  it("registers an active runtime-root project when no projects exist", async () => {
+    mocks.centralCore.getProjectByPath.mockResolvedValueOnce(undefined);
+    const { DesktopLocalServerManager } = await import("../local-server.ts");
+    const manager = new DesktopLocalServerManager("/repo");
+
+    await manager.start();
+
+    expect(mocks.centralCore.registerProject).toHaveBeenCalledWith({
+      path: "/repo",
+      name: "repo",
+      isolationMode: "in-process",
+    });
+    expect(mocks.centralCore.updateProject).toHaveBeenCalledWith("project-1", { status: "active" });
+    expect(mocks.engineManager.ensureEngine).toHaveBeenCalledWith("project-1");
   });
 
   it("returns existing runtime when start is called twice", async () => {

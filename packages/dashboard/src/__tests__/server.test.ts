@@ -363,6 +363,9 @@ describe("createServer health and headless mode", () => {
       status: "ok",
       version: CLI_PACKAGE_VERSION,
       uptime: expect.any(Number),
+      engine: {
+        available: false,
+      },
       database: {
         healthy: true,
         corruptionDetected: false,
@@ -377,6 +380,39 @@ describe("createServer health and headless mode", () => {
         recommendedAction: null,
       },
     });
+  });
+
+  it("reports the engine unavailable when the manager has no running engines", async () => {
+    const store = createMockStore();
+    const app = createServer(store, {
+      engineManager: {
+        getAllEngines: vi.fn().mockReturnValue(new Map()),
+        getEngine: vi.fn(),
+      } as any,
+    });
+
+    const res = await GET(app, "/api/health");
+
+    expect(res.status).toBe(200);
+    expect(res.body.engine).toEqual({ available: false });
+  });
+
+  it("reports the engine available when the manager has a running engine", async () => {
+    const store = createMockStore();
+    const engine = {
+      attachChatStore: vi.fn(),
+    };
+    const app = createServer(store, {
+      engineManager: {
+        getAllEngines: vi.fn().mockReturnValue(new Map([["proj_123", engine]])),
+        getEngine: vi.fn(),
+      } as any,
+    });
+
+    const res = await GET(app, "/api/health");
+
+    expect(res.status).toBe(200);
+    expect(res.body.engine).toEqual({ available: true });
   });
 
   it("reports degraded status when database corruption is detected", async () => {
@@ -398,6 +434,9 @@ describe("createServer health and headless mode", () => {
       status: "degraded",
       version: CLI_PACKAGE_VERSION,
       uptime: expect.any(Number),
+      engine: {
+        available: false,
+      },
       database: {
         healthy: false,
         corruptionDetected: true,
@@ -438,6 +477,9 @@ describe("createServer health and headless mode", () => {
       status: "degraded",
       version: CLI_PACKAGE_VERSION,
       uptime: expect.any(Number),
+      engine: {
+        available: false,
+      },
       database: {
         healthy: true,
         corruptionDetected: false,
@@ -487,6 +529,9 @@ describe("createServer health and headless mode", () => {
       status: "degraded",
       version: CLI_PACKAGE_VERSION,
       uptime: expect.any(Number),
+      engine: {
+        available: false,
+      },
       database: {
         healthy: true,
         corruptionDetected: false,
@@ -530,6 +575,9 @@ describe("createServer health and headless mode", () => {
       status: "degraded",
       version: CLI_PACKAGE_VERSION,
       uptime: expect.any(Number),
+      engine: {
+        available: false,
+      },
       database: {
         healthy: false,
         corruptionDetected: true,

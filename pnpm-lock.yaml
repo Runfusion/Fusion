@@ -400,6 +400,9 @@ importers:
       '@fusion/dashboard':
         specifier: workspace:*
         version: link:../dashboard
+      '@fusion/engine':
+        specifier: workspace:*
+        version: link:../engine
       electron-updater:
         specifier: ^6.6.0
         version: 6.8.3

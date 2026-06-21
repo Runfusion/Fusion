@@ -57,7 +57,8 @@ From a shell:
 ```bash
 fn dashboard                 # or: fusion dashboard / npx @runfusion/fusion dashboard
 fn dashboard --paused        # start with automation paused
-fn dashboard --dev           # web UI only, no AI engine
+fn dashboard --dev           # development-mode dashboard + AI engine
+fn dashboard --no-engine     # web UI only, no AI engine
 ```
 
 The dashboard gives you:

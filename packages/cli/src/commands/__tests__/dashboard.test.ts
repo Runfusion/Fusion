@@ -1247,7 +1247,7 @@ describe("runDashboard — PR-first auto-merge queue", () => {
       globalPause: false,
     });
 
-    await runDashboard(0, { open: false, dev: true });
+    await runDashboard(0, { open: false, noEngine: true });
 
     const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
     const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
@@ -2112,7 +2112,7 @@ describe("runDashboard — --paused flag", () => {
   });
 });
 
-describe("runDashboard — --dev mode", () => {
+describe("runDashboard — --no-engine mode", () => {
   let mockStore: ReturnType<typeof makeMockStore>;
   let consoleSpy: ReturnType<typeof vi.spyOn>;
 
@@ -2140,27 +2140,27 @@ describe("runDashboard — --dev mode", () => {
     consoleSpy.mockRestore();
   });
 
-  it("does NOT start TriageProcessor in dev mode", async () => {
+  it("does NOT start TriageProcessor in no-engine mode", async () => {
     const { TriageProcessor } = await import("@fusion/engine");
-    await runDashboard(0, { open: false, dev: true });
+    await runDashboard(0, { open: false, noEngine: true });
     expect(TriageProcessor).not.toHaveBeenCalled();
   });
 
-  it("does NOT start TaskExecutor in dev mode", async () => {
+  it("does NOT start TaskExecutor in no-engine mode", async () => {
     const { TaskExecutor } = await import("@fusion/engine");
-    await runDashboard(0, { open: false, dev: true });
+    await runDashboard(0, { open: false, noEngine: true });
     expect(TaskExecutor).not.toHaveBeenCalled();
   });
 
-  it("does NOT start Scheduler in dev mode", async () => {
+  it("does NOT start Scheduler in no-engine mode", async () => {
     const { Scheduler } = await import("@fusion/engine");
-    await runDashboard(0, { open: false, dev: true });
+    await runDashboard(0, { open: false, noEngine: true });
     expect(Scheduler).not.toHaveBeenCalled();
   });
 
-  it("starts the server correctly in dev mode", async () => {
+  it("starts the server correctly in no-engine mode", async () => {
     const { createServer } = await import("@fusion/dashboard");
-    await runDashboard(4040, { open: false, dev: true });
+    await runDashboard(4040, { open: false, noEngine: true });
 
     await waitForAsyncExpectation(() => {
       expect(mockListen).toHaveBeenCalledWith(4040, "127.0.0.1");
@@ -2176,23 +2176,23 @@ describe("runDashboard — --dev mode", () => {
     );
   });
 
-  it("shows 'AI engine: disabled (dev mode)' in dev mode", async () => {
-    await runDashboard(0, { open: false, dev: true });
+  it("shows 'AI engine: disabled (--no-engine)' in no-engine mode", async () => {
+    await runDashboard(0, { open: false, noEngine: true });
 
     await waitForAsyncExpectation(() => {
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("✗ disabled (dev mode)"),
+        expect.stringContaining("✗ disabled (--no-engine)"),
       );
     });
 
     // Should show disabled message
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("✗ disabled (dev mode)"),
+      expect.stringContaining("✗ disabled (--no-engine)"),
     );
   });
 
-  it("does NOT show triage/scheduler details in dev mode", async () => {
-    await runDashboard(0, { open: false, dev: true });
+  it("does NOT show triage/scheduler details in no-engine mode", async () => {
+    await runDashboard(0, { open: false, noEngine: true });
 
     await Promise.resolve();
 
@@ -2207,7 +2207,7 @@ describe("runDashboard — --dev mode", () => {
     expect(schedulerCall).toBeUndefined();
   });
 
-  it("starts all engine components when dev is false (default)", async () => {
+  it("starts all engine components by default", async () => {
     const { TriageProcessor, TaskExecutor, Scheduler } = await import("@fusion/engine");
     await runDashboard(0, { open: false });
 
@@ -2216,6 +2216,26 @@ describe("runDashboard — --dev mode", () => {
       expect(TaskExecutor).toHaveBeenCalled();
       expect(Scheduler).toHaveBeenCalled();
     });
+  });
+
+  it("starts all engine components in dev mode unless noEngine is passed", async () => {
+    const { TriageProcessor, TaskExecutor, Scheduler } = await import("@fusion/engine");
+    await runDashboard(0, { open: false, dev: true });
+
+    await waitForAsyncExpectation(() => {
+      expect(TriageProcessor).toHaveBeenCalled();
+      expect(TaskExecutor).toHaveBeenCalled();
+      expect(Scheduler).toHaveBeenCalled();
+    });
+  });
+
+  it("does not start engine components when dev mode is launched with noEngine", async () => {
+    const { TriageProcessor, TaskExecutor, Scheduler } = await import("@fusion/engine");
+    await runDashboard(0, { open: false, dev: true, noEngine: true });
+
+    expect(TriageProcessor).not.toHaveBeenCalled();
+    expect(TaskExecutor).not.toHaveBeenCalled();
+    expect(Scheduler).not.toHaveBeenCalled();
   });
 
   it("shows 'AI engine: ✓ active' when not in dev mode", async () => {
@@ -2910,7 +2930,7 @@ describe("runDashboard — CentralCore cleanup diagnostics", () => {
     const baselineSigtermHandlers = process.listeners("SIGTERM");
 
     try {
-      await runDashboard(0, { open: false, dev: true });
+      await runDashboard(0, { open: false, noEngine: true });
       const sigtermHandler = getNewSignalHandler("SIGTERM", baselineSigtermHandlers);
       sigtermHandler();
 
@@ -3200,7 +3220,7 @@ describe("runDashboard — merge stream sink routing", () => {
       },
     );
 
-    await runDashboard(0, { open: false, dev: true });
+    await runDashboard(0, { open: false, noEngine: true });
     consoleLogSpy.mockClear();
     stdoutWriteSpy.mockClear();
 

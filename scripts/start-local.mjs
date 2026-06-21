@@ -5,7 +5,7 @@
  * Defaults are intentionally conservative:
  * - localhost only
  * - first free port at/above 4050
- * - dashboard/API without the AI engine unless --engine is passed
+ * - dashboard/API with the AI engine unless --no-engine is passed
  * - no bearer-token auth on localhost
  */
 
@@ -25,7 +25,8 @@ Usage:
   pnpm local [options]
 
 Options:
-  --engine            Start the full AI engine. Default: dashboard/API only.
+  --engine            Start the full AI engine. Default.
+  --no-engine         Start dashboard/API only, without the AI engine.
   --paused            Start with automation paused.
   --port <port>       Preferred port. Default: 4050. Port 4040 is reserved.
   --host <host>       Host to bind. Default: 127.0.0.1.
@@ -58,7 +59,11 @@ function warn(message) {
 
 function parseArgs(argv) {
   const opts = {
-    engine: false,
+    /*
+     * FNXC:LocalStartup 2026-06-20-22:11:
+     * `pnpm local` must start a working local Fusion node by default, including the AI engine, so users do not land in a dashboard that cannot execute tasks unless they deliberately pass `--no-engine`.
+     */
+    engine: true,
     paused: false,
     port: 4050,
     host: "127.0.0.1",
@@ -361,7 +366,7 @@ async function main() {
   }
 
   const dashboardArgs = ["dashboard", "--host", opts.host, "--port", String(port)];
-  if (!opts.engine) dashboardArgs.push("--dev");
+  if (!opts.engine) dashboardArgs.push("--no-engine");
   if (opts.paused) dashboardArgs.push("--paused");
   if (shouldDisableAuth(opts)) dashboardArgs.push("--no-auth");
 

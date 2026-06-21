@@ -3,8 +3,10 @@ import { once } from "node:events";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
-import { TaskStore } from "@fusion/core";
+import { CentralCore, TaskStore } from "@fusion/core";
 import { createServer } from "@fusion/dashboard";
+import { ProjectEngineManager } from "@fusion/engine";
+import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 
 const require = createRequire(import.meta.url);
 
@@ -18,6 +20,8 @@ interface DashboardRuntime {
   store: TaskStore;
   server: import("node:http").Server;
   port: number;
+  engineManager?: ProjectEngineManager;
+  centralCore?: CentralCore;
 }
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
@@ -46,46 +50,82 @@ async function buildDesktopArtifacts(rootDir: string): Promise<void> {
 
 async function startDashboardRuntime(rootDir: string, paused: boolean): Promise<DashboardRuntime> {
   const store = new TaskStore(rootDir);
-  await store.init();
-  await store.watch();
-
-  if (paused) {
-    await store.updateSettings({ enginePaused: true });
-  }
-
-  const app = createServer(store);
-  const server = app.listen(0);
-
+  let server: import("node:http").Server | null = null;
+  let engineManager: ProjectEngineManager | undefined;
+  let centralCore: CentralCore | undefined;
   try {
+    await store.init();
+    await store.watch();
+
+    if (paused) {
+      await store.updateSettings({ enginePaused: true });
+    }
+
+    /*
+     * FNXC:DesktopRuntime 2026-06-20-23:39:
+     * Desktop local mode must start the same project engine lifecycle as CLI dashboard mode; a desktop window without engines leaves users with a live dashboard that cannot execute tasks.
+     */
+    centralCore = new CentralCore();
+    await centralCore.init();
+    const cwdRegistered = await ensureCwdProjectRegistered({
+      cwd: rootDir,
+      central: centralCore,
+      logPrefix: "desktop",
+      autoRegister: true,
+    });
+    engineManager = new ProjectEngineManager(centralCore);
+    await engineManager.startAll();
+    engineManager.startReconciliation();
+    const cwdEngine = cwdRegistered
+      ? await engineManager.ensureEngine(cwdRegistered.id).catch((err) => {
+          console.warn(`[desktop] Failed to warm cwd project engine: ${err instanceof Error ? err.message : String(err)}`);
+          return undefined;
+        })
+      : undefined;
+
+    const app = createServer(store, {
+      engine: cwdEngine,
+      engineManager,
+      centralCore,
+      onProjectFirstAccessed: (projectId: string) => engineManager?.onProjectAccessed(projectId),
+    });
+    server = app.listen(0);
+
     await Promise.race([
       once(server, "listening"),
       once(server, "error").then(([error]) => {
         throw error;
       }),
     ]);
+    const address = server.address() as AddressInfo | null;
+    if (!address?.port) {
+      throw new Error("Failed to determine dashboard server port");
+    }
+
+    return {
+      store,
+      server,
+      port: address.port,
+      engineManager,
+      centralCore,
+    };
   } catch (error) {
+    if (server) {
+      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    }
+    await engineManager?.stopAll().catch(() => undefined);
+    await centralCore?.close?.().catch(() => undefined);
     store.close();
     throw error;
   }
-
-  const address = server.address() as AddressInfo | null;
-  if (!address?.port) {
-    server.close();
-    store.close();
-    throw new Error("Failed to determine dashboard server port");
-  }
-
-  return {
-    store,
-    server,
-    port: address.port,
-  };
 }
 
 async function closeDashboardRuntime(runtime: DashboardRuntime): Promise<void> {
   await new Promise<void>((resolve) => {
     runtime.server.close(() => resolve());
   });
+  await runtime.engineManager?.stopAll().catch(() => undefined);
+  await runtime.centralCore?.close?.().catch(() => undefined);
   runtime.store.close();
 }
 

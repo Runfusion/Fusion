@@ -18,7 +18,7 @@ export interface SystemInfo {
   authEnabled: boolean;
   authToken?: string;
   tokenizedUrl?: string;
-  engineMode: "dev" | "active" | "paused";
+  engineMode: "no-engine" | "active" | "paused";
   fileWatcher: boolean;
   startTimeMs: number;
   startupDurationMs?: number;

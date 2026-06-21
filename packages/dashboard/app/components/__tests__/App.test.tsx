@@ -71,6 +71,9 @@ vi.mock("../../api", async (importOriginal) => {
       status: "ok",
       version: "1.0.0",
       uptime: 1,
+      engine: {
+        available: true,
+      },
       database: {
         healthy: true,
         corruptionDetected: false,
@@ -599,7 +602,7 @@ vi.mock("../../hooks/useMobileScrollLock", () => ({
 
 import { App, didEnterAwaitingApproval, didEnterDone } from "../../App";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
-import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews } from "../../api";
+import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews, fetchDashboardHealth } from "../../api";
 import { __resetShellHostContextForTests } from "../../shell-host";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 
@@ -711,6 +714,105 @@ beforeEach(() => {
 });
 
 describe("FN-4250 FileBrowserProvider coverage", () => {
+  it("shows engine restart instructions when health reports a UI-only dashboard", async () => {
+    vi.mocked(fetchDashboardHealth).mockResolvedValueOnce({
+      status: "ok",
+      version: "1.0.0",
+      uptime: 1,
+      engine: {
+        available: false,
+      },
+      database: {
+        healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
+        lastCheckedAt: null,
+        isRunning: false,
+      },
+      taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
+    });
+    mockProjectsState.loading = false;
+    mockProjectsState.projects = [
+      { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+    ];
+    mockCurrentProjectState.loading = false;
+
+    render(<App />);
+
+    expect(await screen.findByText("AI engine is not running")).toBeInTheDocument();
+    expect(screen.getByText("pnpm local")).toBeInTheDocument();
+    expect(screen.getByText("fn dashboard")).toBeInTheDocument();
+  });
+
+  it("does not show engine restart instructions when health reports an engine", async () => {
+    mockProjectsState.loading = false;
+    mockProjectsState.projects = [
+      { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+    ];
+    mockCurrentProjectState.loading = false;
+
+    render(<App />);
+
+    await waitFor(() => expect(fetchDashboardHealth).toHaveBeenCalled());
+    expect(screen.queryByText("AI engine is not running")).not.toBeInTheDocument();
+  });
+
+  it("does not show engine restart instructions when an older health payload omits engine status", async () => {
+    vi.mocked(fetchDashboardHealth).mockResolvedValueOnce({
+      status: "ok",
+      version: "1.0.0",
+      uptime: 1,
+      database: {
+        healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
+        lastCheckedAt: null,
+        isRunning: false,
+      },
+      taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
+    });
+    mockProjectsState.loading = false;
+    mockProjectsState.projects = [
+      { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+    ];
+    mockCurrentProjectState.loading = false;
+
+    render(<App />);
+
+    await waitFor(() => expect(fetchDashboardHealth).toHaveBeenCalled());
+    expect(screen.queryByText("AI engine is not running")).not.toBeInTheDocument();
+  });
+
+  it("shows engine restart instructions on mobile when health reports a UI-only dashboard", async () => {
+    vi.mocked(fetchDashboardHealth).mockResolvedValueOnce({
+      status: "ok",
+      version: "1.0.0",
+      uptime: 1,
+      engine: {
+        available: false,
+      },
+      database: {
+        healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
+        lastCheckedAt: null,
+        isRunning: false,
+      },
+      taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
+    });
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockProjectsState.loading = false;
+    mockProjectsState.projects = [
+      { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" },
+    ];
+    mockCurrentProjectState.loading = false;
+
+    render(<App />);
+
+    expect(await screen.findByText("AI engine is not running")).toBeInTheDocument();
+    expect(screen.getByText("fn dashboard")).toBeInTheDocument();
+  });
+
   it("FN-4779: renders app shell immediately when project data is ready", () => {
     mockProjectsState.loading = false;
     mockProjectsState.projects = [

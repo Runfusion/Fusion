@@ -2,6 +2,8 @@ import { once } from "node:events";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
+import { ensureDesktopRuntimeProject } from "./engine-runtime.js";
+
 export type RuntimeSource = "embedded-local" | "external-cli" | "none";
 export type RuntimeState = "stopped" | "starting" | "running" | "error";
 
@@ -19,18 +21,21 @@ type TaskStoreLike = {
   close(): void;
 };
 
+type RuntimeCleanup = () => Promise<void> | void;
+
 type RuntimeInstance = {
   store: TaskStoreLike;
   server: Server;
   port: number;
   baseUrl: string;
+  cleanup?: RuntimeCleanup;
 };
 
 export interface LocalRuntimeManagerOptions {
   rootDir: string;
   getExternalPort?: () => number | undefined;
   createStore?: (rootDir: string) => Promise<TaskStoreLike>;
-  createDashboardServer?: (store: TaskStoreLike) => Promise<Server>;
+  createDashboardServer?: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
 }
 
 async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
@@ -38,9 +43,43 @@ async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
   return new TaskStore(rootDir) as TaskStoreLike;
 }
 
-async function createDashboardServerDefault(store: TaskStoreLike): Promise<Server> {
+async function createDashboardServerDefault(store: TaskStoreLike, rootDir: string): Promise<{ server: Server; cleanup: RuntimeCleanup }> {
+  const { CentralCore } = await import("@fusion/core");
   const { createServer } = await import("@fusion/dashboard");
-  return createServer(store as never).listen(0);
+  const { ProjectEngineManager } = await import("@fusion/engine");
+
+  /*
+   * FNXC:DesktopRuntime 2026-06-20-23:39:
+   * Embedded desktop local mode should be an executable Fusion node, not a dashboard-only shell. Start all registered project engines and pass the manager to the API server so project-scoped routes can start newly accessed engines.
+   */
+  const centralCore = new CentralCore();
+  const engineManager = new ProjectEngineManager(centralCore);
+  const cleanup = async () => {
+    await engineManager.stopAll();
+    await centralCore.close?.();
+  };
+
+  try {
+    await centralCore.init();
+    const rootProject = await ensureDesktopRuntimeProject(centralCore, rootDir);
+    await engineManager.startAll();
+    engineManager.startReconciliation();
+    const primaryEngine = await engineManager.ensureEngine(rootProject.id);
+    const app = createServer(store as never, {
+      engine: primaryEngine,
+      engineManager,
+      centralCore,
+      onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
+    });
+
+    return {
+      server: app.listen(0),
+      cleanup,
+    };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
 }
 
 function parsePort(raw: string | undefined): number | undefined {
@@ -73,7 +112,7 @@ export class LocalRuntimeManager {
 
   private readonly getExternalPort: () => number | undefined;
   private readonly createStore: (rootDir: string) => Promise<TaskStoreLike>;
-  private readonly createDashboardServer: (store: TaskStoreLike) => Promise<Server>;
+  private readonly createDashboardServer: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
 
   constructor(private readonly options: LocalRuntimeManagerOptions) {
     this.getExternalPort = options.getExternalPort ?? (() => parsePort(process.env.FUSION_SERVER_PORT));
@@ -141,13 +180,16 @@ export class LocalRuntimeManager {
   private async startEmbedded(): Promise<DesktopRuntimeStatus> {
     let store: TaskStoreLike | null = null;
     let server: Server | null = null;
+    let cleanup: RuntimeCleanup | undefined;
 
     try {
       store = await this.createStore(this.options.rootDir);
       await store.init();
       await store.watch();
 
-      server = await this.createDashboardServer(store);
+      const dashboardServer = await this.createDashboardServer(store, this.options.rootDir);
+      cleanup = "server" in dashboardServer ? dashboardServer.cleanup : undefined;
+      server = "server" in dashboardServer ? dashboardServer.server : dashboardServer;
       await Promise.race([
         once(server, "listening"),
         once(server, "error").then(([error]) => {
@@ -157,7 +199,7 @@ export class LocalRuntimeManager {
 
       const port = getAddressPort(server);
       const baseUrl = `http://127.0.0.1:${port}`;
-      this.runtime = { store, server, port, baseUrl };
+      this.runtime = { store, server, port, baseUrl, cleanup };
       this.status = { source: "embedded-local", state: "running", port, baseUrl };
       return this.status;
     } catch (error) {
@@ -166,6 +208,7 @@ export class LocalRuntimeManager {
           server!.close(() => resolve());
         });
       }
+      await cleanup?.();
       if (store) {
         store.close();
       }
@@ -197,6 +240,7 @@ export class LocalRuntimeManager {
       const runtime = this.runtime;
       this.runtime = null;
       await new Promise<void>((resolve) => runtime.server.close(() => resolve()));
+      await runtime.cleanup?.();
       runtime.store.close();
       this.status = { source: "none", state: "stopped" };
       return this.status;

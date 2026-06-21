@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
     focus: vi.fn(),
     hide: vi.fn(),
     maximize: vi.fn(),
+    webContents: { reload: vi.fn() },
   };
 
   const BrowserWindow = vi.fn(function () {
@@ -384,6 +385,21 @@ describe("main process", () => {
     await options?.onDesktopModeChange?.("remote");
 
     expect(mainDeps.saveDesktopLaunchMode).toHaveBeenCalledWith("remote");
+  });
+
+  it("does not persist local menu mode when local runtime startup fails", async () => {
+    mainDeps.startLocal.mockRejectedValueOnce(new Error("boom"));
+    const { initializeApp, getCurrentDesktopLaunchMode } = await importMainModule();
+
+    await initializeApp();
+
+    const menuOptions = mainDeps.buildAppMenu.mock.calls[0]?.[0] as
+      | { onStartLocalRuntime?: () => Promise<void> }
+      | undefined;
+    await expect(menuOptions?.onStartLocalRuntime?.()).rejects.toThrow("boom");
+
+    expect(mainDeps.saveDesktopLaunchMode).not.toHaveBeenCalledWith("local");
+    expect(getCurrentDesktopLaunchMode()).toBe("choose");
   });
 
   it("createMainWindow registers close and closed handlers", async () => {

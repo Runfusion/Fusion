@@ -281,7 +281,8 @@ Usage:
                                       and auto-skips for serve/daemon, non-TTY, --skip-onboarding, and FUSION_SKIP_ONBOARDING
   fn dashboard                        Start the board web UI
   fn dashboard --paused               Start with automation paused
-  fn dashboard --dev                  Start web UI only (no AI engine)
+  fn dashboard --dev                  Start dashboard in development mode
+  fn dashboard --no-engine            Start web UI only (no AI engine)
   fn dashboard --interactive          Start with interactive port selection
   fn serve [--port <port>] [--host <host>] [--paused] [--daemon] [--project <id|name>] [--no-auto-register]
                                       Start Fusion as a headless node (API + engine, no UI)
@@ -449,7 +450,8 @@ Options:
   --no-auth                  Disable dashboard bearer-token auth (local-only; not recommended on 0.0.0.0)
   --interactive              Interactive mode (port selection for dashboard, issue selection for import)
   --paused                   Start with engine paused (automation disabled)
-  --dev                      Start dashboard only (no AI engine)
+  --dev                      Start dashboard in development mode
+  --no-engine                Start dashboard only (no AI engine)
   --lang <locale>            Terminal-UI locale for this run (en, zh-CN, zh-TW, fr, es, ko); the browser dashboard resolves its own language
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
@@ -787,6 +789,7 @@ async function main() {
         const port = pi !== -1 ? parseInt(args[pi + 1], 10) : 4040;
         const paused = args.includes("--paused");
         const dev = args.includes("--dev");
+        const noEngine = args.includes("--no-engine");
         const interactive = args.includes("--interactive");
         const dashHostIdx = args.indexOf("--host");
         const host = dashHostIdx !== -1 && dashHostIdx + 1 < args.length ? args[dashHostIdx + 1] : undefined;
@@ -804,7 +807,7 @@ async function main() {
             process.exit(1);
           }
         }
-        await runDashboard(port, { paused, dev, interactive, host, noAuth, token, lang });
+        await runDashboard(port, { paused, dev, noEngine, interactive, host, noAuth, token, lang });
         break;
       }
 

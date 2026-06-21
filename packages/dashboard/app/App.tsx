@@ -27,6 +27,7 @@ import { CliBinaryInstallBanner } from "./components/CliBinaryInstallBanner";
 import { SetupWarningBanner } from "./components/SetupWarningBanner";
 import { CapacityRiskBanner } from "./components/CapacityRiskBanner";
 import { TestModeBanner } from "./components/TestModeBanner";
+import { EngineUnavailableBanner } from "./components/EngineUnavailableBanner";
 import { OAuthReloginBanner } from "./components/OAuthReloginBanner";
 import { TaskIdIntegrityBanner } from "./components/TaskIdIntegrityBanner";
 import { DbCorruptionBanner } from "./components/DbCorruptionBanner";
@@ -2005,6 +2006,7 @@ function AppInner() {
       {viewMode === "project" && currentProject && (
         <>
           <TestModeBanner isActive={isTestMode} />
+          <EngineUnavailableBanner isVisible={dashboardHealth?.engine?.available === false} />
           <OAuthReloginBanner
             onReLogin={(_providerId) => modalManager.openSettings("authentication" as SectionId)}
           />

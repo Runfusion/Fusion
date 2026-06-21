@@ -39,7 +39,8 @@ fn dashboard
 fn dashboard --port 8080
 fn dashboard --interactive     # Interactive port selection (prompts for port)
 fn dashboard --paused        # Start with automation paused (review before work begins)
-fn dashboard --dev           # Start web UI only (no AI engine)
+fn dashboard --dev           # Start in development mode with the AI engine
+fn dashboard --no-engine     # Start web UI only (no AI engine)
 ```
 
 ### Multi-Instance Deployments

@@ -703,7 +703,7 @@ async function resolveDashboardAuthToken(opts: { noAuth?: boolean; token?: strin
   return tokenManager.generateToken();
 }
 
-export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; interactive?: boolean; open?: boolean; host?: string; noAuth?: boolean; token?: string; lang?: string } = {}) {
+export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; noEngine?: boolean; interactive?: boolean; open?: boolean; host?: string; noAuth?: boolean; token?: string; lang?: string } = {}) {
   // Default to localhost so the dashboard (and its shell-capable terminal API)
   // is not exposed on the LAN. Pass --host 0.0.0.0 explicitly to opt-in.
   const selectedHost = opts.host ?? "127.0.0.1";
@@ -870,7 +870,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // CentralCore.init() is independent of store inits — start it early so it
   // overlaps with plugin loading and extension resolution instead of running
   // after them.
-  const centralCoreInitPromise = !opts.dev
+  const noEngine = opts.noEngine === true;
+
+  const centralCoreInitPromise = !noEngine
     ? (async () => {
         const core = new CentralCore();
         try { await core.init(); } catch { /* non-fatal — fallback defaults */ }
@@ -1268,12 +1270,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
   // ── HeartbeatMonitor + HeartbeatTriggerScheduler ──────────────────────
   //
-  // In non-dev mode: obtained from ProjectEngine after engine.start(), which
+  // In engine mode: obtained from ProjectEngine after engine.start(), which
   // delegates to InProcessRuntime's already-initialized instances. This avoids
   // running duplicate heartbeat infrastructure alongside the engine's own.
   //
-  // In dev mode: created inline inside the opts.dev block below, since the
-  // engine does not start in dev mode.
+  // In UI-only mode: created inline inside the noEngine block below, since the
+  // engine does not start when --no-engine is passed.
   //
   // heartbeatMonitorImpl is a mutable reference. The proxy passed to
   // createServer delegates through it so routes work in both modes.
@@ -1291,10 +1293,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   // onMergeImpl is a mutable reference so createServer always gets a stable
   // wrapper function while the underlying implementation is swapped when the
-  // engine starts in non-dev mode.
+  // engine starts in engine mode.
   //
-  // In dev mode: calls aiMergeTask directly (no engine, no semaphore).
-  // In non-dev mode: replaced by engine.onMerge() after ProjectEngine starts
+  // In UI-only mode: calls aiMergeTask directly (no engine, no semaphore).
+  // In engine mode: replaced by engine.onMerge() after ProjectEngine starts
   // (semaphore-gated via the engine's InProcessRuntime).
   //
   const onMergeImpl = async (taskId: string) => {
@@ -1339,8 +1341,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
   // ── MissionAutopilot + MissionExecutionLoop: mission lifecycle ────
   //
-  // Created inline for dev mode (engine doesn't start in dev mode).
-  // In non-dev mode, the engine is passed to createServer which derives these.
+  // Created inline for UI-only mode (engine doesn't start with --no-engine).
+  // In engine mode, the engine is passed to createServer which derives these.
   //
   const missionAutopilotImpl: MissionAutopilot | undefined = new MissionAutopilot(store, store.getMissionStore());
   const missionExecutionLoopImpl: MissionExecutionLoop | undefined = new MissionExecutionLoop({
@@ -1582,9 +1584,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
   // ── createServer: deferred until engine is conditionally started ────
   //
-  // In non-dev mode, pass the engine so createServer derives subsystem
+  // In engine mode, pass the engine so createServer derives subsystem
   // options (onMerge, automationStore, missionAutopilot, etc.) automatically.
-  // In dev mode, no engine — pass individual proxy objects instead.
+  // In UI-only mode, no engine — pass individual proxy objects instead.
   //
   let app: ReturnType<typeof createServer>;
 
@@ -1598,9 +1600,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   let centralCoreForMesh: CentralCore | null = null;
   let localNodeIdForMesh: string | undefined;
 
-  // Start the AI engine (unless in dev mode)
+  // Start the AI engine unless the caller explicitly requested a UI-only process.
   if (tui) tui.setLoadingStatus(DASHBOARD_STARTUP_STATUS.startingEngine);
-  if (!opts.dev) {
+  if (!noEngine) {
     // ── ProjectEngineManager: uniform engine lifecycle for all projects ──
     //
     // Every registered project gets an identical ProjectEngine with the
@@ -1951,11 +1953,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       logSink.log("Received SIGHUP (terminal disconnected) — ignoring", "dashboard");
     });
   } else {
-  // Dev mode: create HeartbeatMonitor + TriggerScheduler inline (engine not started)
+    // UI-only mode: create HeartbeatMonitor + TriggerScheduler inline (engine not started)
 
-    // ── Mesh networking for dev mode ─────────────────────────────────────
+    // ── Mesh networking for UI-only mode ─────────────────────────────────
     //
-    // In dev mode we don't use the engine's CentralCore, so create a separate
+    // In UI-only mode we don't use the engine's CentralCore, so create a separate
     // instance for peer exchange and mDNS discovery.
     //
     try {
@@ -2008,7 +2010,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           });
         },
         store,
-        // Dev-mode scheduler: no TaskExecutor runs here (engine not started), so
+        // UI-only scheduler: no TaskExecutor runs here (engine not started), so
         // neither `isTaskExecuting` nor the U5 reverse-direction
         // `isAgentEffectivelyExecuting` guard has a source — both stay unwired (the
         // guards simply never fire), matching the prior `isTaskExecuting` omission.
@@ -2083,7 +2085,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // to createServer — routes derived from getPluginRoutes() rely on it.
     await phaseTime("pluginLoadingPromise (await)", () => pluginLoadingPromise);
 
-    // Dev mode: no engine, pass individual proxy objects to createServer
+    // UI-only mode: no engine, pass individual proxy objects to createServer.
+    //
+    // FNXC:DashboardStartup 2026-06-20-23:39:
+    // Dashboard development mode still needs a running engine by default; only the explicit `--no-engine` flag should produce a UI-only process so local and dev startup paths match user expectations.
     app = createServer(store, {
       onMerge,
       centralCore: centralCoreForMesh ?? undefined,
@@ -2191,8 +2196,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     });
   }
 
-  // Dev mode: simplified shutdown handlers (no engine components)
-  if (opts.dev) {
+  // UI-only mode: simplified shutdown handlers (no engine components)
+  if (noEngine) {
     const devShutdown = async (signal: NodeJS.Signals) => {
       if (shutdownInProgress) return;
       shutdownInProgress = true;
@@ -2375,7 +2380,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     if (isTTY && tui) {
       // Determine engine mode
       const settings = await store.getSettings();
-      const engineMode = opts.dev ? "dev" : settings.enginePaused ? "paused" : "active";
+      const engineMode = noEngine ? "no-engine" : settings.enginePaused ? "paused" : "active";
       const startupDurationMs = Date.now() - dashboardStartedAt;
 
       const systemInfo: SystemInfo = {
@@ -2900,8 +2905,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       tui.log(`Dashboard started at ${baseUrl}`);
       if (engineMode === "active") {
         tui.log("AI engine active");
-      } else if (engineMode === "dev") {
-        tui.log("AI engine disabled (dev mode)");
+      } else if (engineMode === "no-engine") {
+        tui.log("AI engine disabled (--no-engine)");
       } else {
         tui.log("AI engine paused");
       }
@@ -2930,8 +2935,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       console.log();
       console.log(`  Tasks stored in .fusion/tasks/`);
       console.log(`  Merge:      AI-assisted (conflict resolution + commit messages)`);
-      if (opts.dev) {
-        console.log(`  AI engine:  ✗ disabled (dev mode)`);
+      if (noEngine) {
+        console.log(`  AI engine:  ✗ disabled (--no-engine)`);
       } else {
         console.log(`  AI engine:  ✓ active`);
         console.log(`    • planning: auto-planning tasks`);

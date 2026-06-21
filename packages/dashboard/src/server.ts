@@ -109,13 +109,25 @@ function buildTaskIdIntegrityHealth(report: TaskIdIntegrityReport) {
   };
 }
 
-function buildHealthPayload(store: TaskStore, cliPackageVersion: string) {
-  const database = store.getDatabaseHealth();
-  const taskIdIntegrity = buildTaskIdIntegrityHealth(store.getTaskIdIntegrityReport());
+function buildHealthPayload(args: {
+  database: ReturnType<TaskStore["getDatabaseHealth"]>;
+  taskIdIntegrityReport: ReturnType<TaskStore["getTaskIdIntegrityReport"]>;
+  cliPackageVersion: string;
+  engineAvailable: boolean;
+}) {
+  const { database, cliPackageVersion, engineAvailable } = args;
+  const taskIdIntegrity = buildTaskIdIntegrityHealth(args.taskIdIntegrityReport);
   return {
     status: !database.healthy || database.corruptionDetected || taskIdIntegrity.status === "anomaly" ? "degraded" : "ok",
     version: cliPackageVersion,
     uptime: Math.floor(process.uptime()),
+    /*
+     * FNXC:DashboardHealth 2026-06-20-22:11:
+     * The dashboard must distinguish "engine not started" from "engine paused" so UI-only launches can show remediation instructions instead of leaving users to infer why automation cannot run.
+     */
+    engine: {
+      available: engineAvailable,
+    },
     database,
     taskIdIntegrity,
   };
@@ -464,6 +476,11 @@ export interface ServerOptions {
     key: string | Buffer;
     ca?: string | Buffer | Array<string | Buffer>;
   };
+}
+
+function hasDashboardEngine(options?: ServerOptions): boolean {
+  const engines = options?.engineManager?.getAllEngines?.();
+  return Boolean(options?.engine || (engines && engines.size > 0));
 }
 
 type DashboardExpressApp = ReturnType<typeof express> & {
@@ -1411,7 +1428,12 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   app.get("/api/health", (_req, res) => {
-    res.json(buildHealthPayload(store, cliPackageVersion));
+    res.json(buildHealthPayload({
+      database: store.getDatabaseHealth(),
+      taskIdIntegrityReport: store.getTaskIdIntegrityReport(),
+      cliPackageVersion,
+      engineAvailable: hasDashboardEngine(options),
+    }));
   });
 
   app.get("/api/health/reliability", async (req, res) => {
@@ -1525,15 +1547,17 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   });
 
   app.post("/api/health/refresh", (_req, res) => {
-    const report = store.refreshTaskIdIntegrityReport();
-    const database = store.refreshDatabaseHealth();
-    res.json({
-      status: !database.healthy || database.corruptionDetected || report.status === "anomaly" ? "degraded" : "ok",
-      version: cliPackageVersion,
-      uptime: Math.floor(process.uptime()),
-      database,
-      taskIdIntegrity: buildTaskIdIntegrityHealth(report),
-    });
+    // Force-recompute integrity + database health, then shape the response via
+    // buildHealthPayload so this endpoint cannot drift from GET /api/health as
+    // the payload evolves (the `engine` field had to be hand-synced here
+    // before). The refreshed snapshots are passed in directly so the response
+    // reflects the freshly-recomputed values, not a separately-read cache.
+    res.json(buildHealthPayload({
+      database: store.refreshDatabaseHealth(),
+      taskIdIntegrityReport: store.refreshTaskIdIntegrityReport(),
+      cliPackageVersion,
+      engineAvailable: hasDashboardEngine(options),
+    }));
   });
 
   app.get("/api/updates/check", async (_req, res) => {

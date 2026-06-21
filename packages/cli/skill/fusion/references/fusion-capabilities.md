@@ -82,7 +82,8 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 ### Dashboard and Node Runtime
 - `fn dashboard` — Start web UI + AI engine
 - `fn dashboard --paused` — Start with automation paused
-- `fn dashboard --dev` — Start web UI only (no AI engine)
+- `fn dashboard --dev` — Start development-mode dashboard + AI engine
+- `fn dashboard --no-engine` — Start web UI only (no AI engine)
 - `fn serve` — Start headless node mode (API + engine, no UI)
 - `fn daemon` — Start daemon mode with auth
 

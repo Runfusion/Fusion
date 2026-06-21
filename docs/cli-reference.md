@@ -211,7 +211,8 @@ fn dashboard --token fn_yourStaticToken    # reuse a fixed token
 fn dashboard --no-auth                     # disable bearer auth (local only)
 fn dashboard --interactive
 fn dashboard --paused
-fn dashboard --dev
+fn dashboard --dev                       # development-mode dashboard + engine
+fn dashboard --no-engine                 # dashboard/API only
 fn dashboard --lang zh-TW                   # force a UI locale for this run
 ```
 
@@ -228,7 +229,8 @@ The terminal UI is localized. `--lang <code>` (one of `en`, `zh-CN`, `zh-TW`,
 | `--no-auth` | Disable bearer-token auth. Not recommended when binding to `0.0.0.0`. |
 | `--paused` | Start with the engine paused (automation disabled). |
 | `--interactive` | Interactive port selection. |
-| `--dev` | Start dashboard only (no AI engine, no planning/scheduler). |
+| `--dev` | Start dashboard in development mode. The AI engine still starts unless `--no-engine` is also passed. |
+| `--no-engine` | Start dashboard/API only with no AI engine, planning, or scheduler runtime. |
 
 ### Interactive Terminal UI (TTY Mode)
 
@@ -1062,6 +1064,7 @@ Subcommands: `search`, `install`.
 | `--interactive` | `fn dashboard`, `fn serve`, `fn daemon`, `fn desktop`, `fn task import`, `fn project add` |
 | `--paused` | `fn dashboard`, `fn serve`, `fn daemon`, `fn desktop` |
 | `--dev` | `fn dashboard`, `fn desktop` |
+| `--no-engine` | `fn dashboard` |
 | `--attach` | `fn task create` |
 | `--depends` | `fn task create` |
 | `--node` | `fn task create` |

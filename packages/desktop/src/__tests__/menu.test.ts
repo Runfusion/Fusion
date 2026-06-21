@@ -224,6 +224,28 @@ describe("application menu", () => {
     );
   });
 
+  it("Connection menu exposes local, shutdown, and remote actions", async () => {
+    const onStartLocalRuntime = vi.fn();
+    const onStopLocalRuntime = vi.fn();
+    const onConnectRemoteServer = vi.fn();
+    const { buildMenuTemplate } = await import("../menu.ts");
+    const template = buildMenuTemplate({
+      mainWindow: createMainWindowMock() as never,
+      appName: "Fusion",
+      onStartLocalRuntime,
+      onStopLocalRuntime,
+      onConnectRemoteServer,
+    });
+
+    findMenuItem(template, "Use Local Server")?.click?.({} as never, {} as never, {} as never);
+    findMenuItem(template, "Shut Down Local Server")?.click?.({} as never, {} as never, {} as never);
+    findMenuItem(template, "Connect to Remote Server…")?.click?.({} as never, {} as never, {} as never);
+
+    expect(onStartLocalRuntime).toHaveBeenCalledTimes(1);
+    expect(onStopLocalRuntime).toHaveBeenCalledTimes(1);
+    expect(onConnectRemoteServer).toHaveBeenCalledTimes(1);
+  });
+
   it("all keyboard shortcuts use CmdOrCtrl prefix convention", async () => {
     const { buildMenuTemplate } = await import("../menu.ts");
     const template = buildMenuTemplate({

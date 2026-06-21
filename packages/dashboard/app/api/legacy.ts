@@ -227,6 +227,9 @@ export interface DashboardHealthResponse {
   status: string;
   version: string;
   uptime: number;
+  engine?: {
+    available: boolean;
+  };
   database: {
     healthy: boolean;
     corruptionDetected: boolean;

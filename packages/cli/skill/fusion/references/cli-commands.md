@@ -9,7 +9,8 @@ fn dashboard                              # Start web UI + AI engine (port 4040)
 fn dashboard --port 8080                  # Custom port
 fn dashboard --interactive                # Interactive port selection
 fn dashboard --paused                     # Start with automation paused
-fn dashboard --dev                        # Web UI only (no AI engine)
+fn dashboard --dev                        # Development-mode dashboard + AI engine
+fn dashboard --no-engine                  # Web UI only (no AI engine)
 ```
 
 ## Task Management

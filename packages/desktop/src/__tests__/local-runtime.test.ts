@@ -136,6 +136,25 @@ describe("LocalRuntimeManager", () => {
     expect(manager.getStatus()).toEqual({ source: "none", state: "stopped" });
   });
 
+  it("runs embedded runtime cleanup on stop", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const server = new FakeServer(4545);
+    const cleanup = vi.fn(async () => undefined);
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => store,
+      createDashboardServer: async () => {
+        setTimeout(() => server.emit("listening"), 0);
+        return { server: server as unknown as Server, cleanup };
+      },
+    });
+
+    await manager.startLocal();
+    await manager.stopLocal();
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
   it("startLocal while already running returns current status", async () => {
     const { LocalRuntimeManager } = await import("../local-runtime.ts");
     const server = new FakeServer(4545);
