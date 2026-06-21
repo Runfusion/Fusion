@@ -16,6 +16,9 @@ feature and test growth, while also tightening three entries that had already
 shrunk. Large-file reduction remains the intended long-term direction, but that
 work belongs in dedicated follow-up refactors rather than a pretest-unblock
 maintenance change.
+
+FNXC:CI 2026-06-21-12:35:
+FN-6871 corrects the stale premise that line-count drift blocks `pnpm test`: FN-5048 removed this guard from pretest, so it now runs only through the opt-in `check:line-count` audit. Eleven grandfathered files were re-ratcheted to current counts after small organic feature/test growth; broad shrink/refactor work for these god-files remains the long-term direction and belongs in dedicated follow-up tasks.
 */
 // Repo-wide guard: hand-written source files may not exceed a hard line-count
 // cap (MAX_LINES). This stops the next god-file from being born while leaving
