@@ -6,6 +6,7 @@ import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec, PluginRunt
 import { createAgent, fetchAgents, fetchModels } from "../api";
 import * as apiModule from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentGenerationModal } from "./AgentGenerationModal";
 import { AGENT_PRESETS, type AgentPreset } from "./agent-presets";
@@ -353,7 +354,7 @@ export function NewAgentDialog({
         <div className="agent-dialog-field">
           <label>{t("agents.model", "Model")}</label>
           {modelsLoading ? (
-            <div className="agent-dialog-loading">{t("agents.loadingModels", "Loading models…")}</div>
+            <div className="agent-dialog-loading"><LoadingSpinner label={t("agents.loadingModels", "Loading models…")} /></div>
           ) : (
             <CustomModelDropdown
               id="agent-model"
@@ -373,7 +374,7 @@ export function NewAgentDialog({
         <div className="agent-dialog-field">
           <label htmlFor="agent-runtime-hint">{t("agents.runtime", "Runtime")}</label>
           {runtimesLoading ? (
-            <div className="agent-dialog-loading">{t("agents.loadingRuntimes", "Loading runtimes…")}</div>
+            <div className="agent-dialog-loading"><LoadingSpinner label={t("agents.loadingRuntimes", "Loading runtimes…")} /></div>
           ) : (
             <select
               id="agent-runtime-hint"

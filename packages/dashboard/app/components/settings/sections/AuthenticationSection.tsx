@@ -8,6 +8,7 @@ import { LlamaCppProviderCard } from "../../LlamaCppProviderCard";
 import { ProviderIcon } from "../../ProviderIcon";
 import { PluginSlot } from "../../PluginSlot";
 import { LoginInstructions } from "../../LoginInstructions";
+import { LoadingSpinner } from "../../LoadingSpinner";
 import { OAuthManualCodeForm } from "../../OAuthManualCodeForm";
 import { CustomProvidersSection } from "../../CustomProvidersSection";
 import { copyTextToClipboard } from "../../../utils/copyToClipboard";
@@ -80,7 +81,7 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
         (llamaCppProvider && !llamaCppProvider.authenticated);
     return (<>
       <h4 className="settings-section-heading">{t("settings.auth.title", "Authentication")}</h4>
-      {authLoading ? (<div className="settings-empty-state">{t("settings.auth.loadingStatus", "Loading authentication status…")}</div>) : authProviders.length === 0 ? (<div className="settings-empty-state settings-muted">
+      {authLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.auth.loadingStatus", "Loading authentication status…")} /></div>) : authProviders.length === 0 ? (<div className="settings-empty-state settings-muted">
           {t("settings.auth.noProviders", "No providers available")}
         </div>) : (<div className="auth-panel-body">
           <PluginSlot slotId="settings-provider-card" projectId={projectId} renderPlaceholder={false} actions={{ refreshAuthProviders: () => { void loadAuthStatus(); } }}/>

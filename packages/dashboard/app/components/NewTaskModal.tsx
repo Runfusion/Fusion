@@ -8,6 +8,7 @@ import { uploadAttachment } from "../api";
 import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { TaskForm, type BranchSelectionMode, type PendingImage } from "./TaskForm";
 import { REPO_OVERRIDE_RE } from "./githubTracking";
 import { useConfirm } from "../hooks/useConfirm";
@@ -424,7 +425,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
           {showAgentPicker && (
             <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
               <div className="dep-dropdown-search-header">{t("newTaskModal.selectAgent", "Select agent")}</div>
-              {agentsLoading && <div className="dep-dropdown-empty">{t("newTaskModal.loadingAgents", "Loading agents...")}</div>}
+              {agentsLoading && <div className="dep-dropdown-empty"><LoadingSpinner label={t("newTaskModal.loadingAgents", "Loading agents...")} /></div>}
               {!agentsLoading && agents.map((a) => (
                 <div
                   key={a.id}

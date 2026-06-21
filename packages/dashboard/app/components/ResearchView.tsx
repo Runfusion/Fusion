@@ -7,6 +7,7 @@ import { fetchAuthStatus, fetchSettings } from "../api";
 import { useResearch } from "../hooks/useResearch";
 import type { ResearchProviderOption } from "../research-types";
 import { ResearchTaskActionModal } from "./ResearchTaskActionModal";
+import { LoadingSpinner } from "./LoadingSpinner";
 import type { SectionId } from "./SettingsModal";
 import "./ResearchView.css";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -355,7 +356,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
         </aside>
 
         <div className="research-view__reader card">
-          {loading && <p data-testid="research-state-loading">{t("research.loadingRuns", "Loading research runs…")}</p>}
+          {loading && <p data-testid="research-state-loading"><LoadingSpinner label={t("research.loadingRuns", "Loading research runs…")} /></p>}
           {!loading && error && <p data-testid="research-state-error">{error}</p>}
           {!loading && !error && runs.length === 0 && <p data-testid="research-state-empty">{t("research.noRunsYet", "No research runs yet")}</p>}
           <div className="research-view__reader-content">

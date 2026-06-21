@@ -12,6 +12,7 @@ import { useNodes } from "../hooks/useNodes";
 import { ModelSelectionModal } from "./ModelSelectionModal";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { applyPresetToSelection } from "../utils/modelPresets";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { WorkflowSelector } from "./WorkflowSelector";
@@ -1042,7 +1043,7 @@ export function InlineCreateCard({
               {showAgentPicker && (
                 <div className="dep-dropdown agent-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
                   <div className="dep-dropdown-search-header">{t("inline.selectAgent", "Select agent")}</div>
-                  {agentsLoading && <div className="dep-dropdown-empty">{t("inline.loadingAgents", "Loading agents...")}</div>}
+                  {agentsLoading && <div className="dep-dropdown-empty"><LoadingSpinner label={t("inline.loadingAgents", "Loading agents...")} /></div>}
                   {!agentsLoading && agents.map((a) => (
                     <div
                       key={a.id}

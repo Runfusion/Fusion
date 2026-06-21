@@ -4,6 +4,7 @@ import { AlertCircle, Gauge } from "lucide-react";
 import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics } from "@fusion/core";
 import { api } from "../../api/legacy";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
+import { LoadingSpinner } from "../LoadingSpinner";
 import { TokensArea } from "./areas/TokensArea";
 import { ToolsArea } from "./areas/ToolsArea";
 import { ActivityArea } from "./areas/ActivityArea";
@@ -274,7 +275,7 @@ function OverviewTab({
         {controlsSection}
         <div className="cc-loading" data-testid="command-center-overview-loading">
           <div className="cc-chart-skeleton" />
-          <p>{t("commandCenter.loading", "Loading command center...")}</p>
+          <p><LoadingSpinner label={t("commandCenter.loading", "Loading command center...")} /></p>
         </div>
         {throughputSection}
       </div>

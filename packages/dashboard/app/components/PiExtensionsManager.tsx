@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { fetchPiSettings, updatePiSettings, installPiPackage, reinstallFusionPiPackage, fetchPiExtensions, updatePiExtensions, type PiSettings, type PiExtensionEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 interface PiExtensionsManagerProps {
   addToast: (message: string, type?: ToastType) => void;
@@ -248,7 +249,7 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
       </div>
 
       {loading ? (
-        <div className="loading-state">{t("piManager.loading", "Loading Pi settings…")}</div>
+        <div className="loading-state"><LoadingSpinner label={t("piManager.loading", "Loading Pi settings…")} /></div>
       ) : !settings ? (
         <div className="empty-state">
           <Package size={32} className="text-muted" />
@@ -434,7 +435,7 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
         </p>
 
         {extensionsLoading ? (
-          <div className="loading-state">{t("piManager.loadingExtensions", "Loading extensions…")}</div>
+          <div className="loading-state"><LoadingSpinner label={t("piManager.loadingExtensions", "Loading extensions…")} /></div>
         ) : extensions.length === 0 ? (
           <div className="empty-state">
             <Package size={32} className="text-muted" />

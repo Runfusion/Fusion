@@ -18,6 +18,7 @@ import type { Agent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules } from "@fusion/core";
 import { getErrorMessage, isEphemeralAgent } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
 import { getAgentHealthStatus } from "../utils/agentHealth";
 import type { AgentHealthStatus } from "../utils/agentHealth";
@@ -4682,7 +4683,7 @@ function ConfigTab({
             <div className="config-field">
               <label htmlFor="agent-runtime-hint">{t("agents.runtimeLabel", "Runtime")}</label>
               {runtimesLoading ? (
-                <span className="config-hint">{t("agents.loadingRuntimes", "Loading runtimes…")}</span>
+                <span className="config-hint"><LoadingSpinner label={t("agents.loadingRuntimes", "Loading runtimes…")} /></span>
               ) : (
                 <select
                   id="agent-runtime-hint"

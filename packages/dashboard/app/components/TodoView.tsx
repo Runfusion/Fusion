@@ -19,6 +19,7 @@ import { createTask, fetchAgents } from "../api";
 import type { Agent } from "../api";
 import { useTodoLists } from "../hooks/useTodoLists";
 import { useConfirm } from "../hooks/useConfirm";
+import { LoadingSpinner } from "./LoadingSpinner";
 import "./TodoView.css";
 
 interface TodoViewProps {
@@ -684,7 +685,7 @@ export function TodoView({
                                     }}
                                   >
                                     {agentsLoading ? (
-                                      <div className="todo-agent-picker-loading">{t("todo.loadingAgents", "Loading agents...")}</div>
+                                      <div className="todo-agent-picker-loading"><LoadingSpinner label={t("todo.loadingAgents", "Loading agents...")} /></div>
                                     ) : agents.length > 0 ? (
                                       agents
                                         .map((agent) => (

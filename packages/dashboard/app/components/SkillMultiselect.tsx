@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchDiscoveredSkills } from "../api";
 import type { DiscoveredSkill } from "../api";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 export interface SkillMultiselectProps {
   /** Currently selected skill IDs */
@@ -116,7 +117,7 @@ export function SkillMultiselect({
       <div className="skill-multiselect-add">
         {isLoading ? (
           <span className="skill-multiselect-loading" data-testid="skills-loading">
-            {t("skills.loading", "Loading skills…")}
+            <LoadingSpinner label={t("skills.loading", "Loading skills…")} />
           </span>
         ) : availableSkills.length === 0 ? (
           <span className="skill-multiselect-empty" data-testid="skills-empty">

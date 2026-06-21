@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { BackupListResponse } from "../../../api";
 import type { SectionBaseProps } from "./context";
+import { LoadingSpinner } from "../../LoadingSpinner";
 export interface BackupsSectionProps extends SectionBaseProps {
     scopeBanner: ReactNode;
     backupInfo: BackupListResponse | null;
@@ -75,7 +76,7 @@ export function BackupsSection({ scopeBanner, form, setForm, backupInfo, backupL
           <option value="agents">{t("settings.backups.agentsOnlyFusionAgentMemory", "Agents only (.fusion/agent-memory)")}</option>
         </select>
       </div>
-      {backupLoading ? (<div className="settings-empty-state">{t("settings.backups.loadingBackupInfo", "Loading backup info\u2026")}</div>) : backupInfo ? (<div className="form-group">
+      {backupLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.backups.loadingBackupInfo", "Loading backup info\u2026")} /></div>) : backupInfo ? (<div className="form-group">
           <label>{t("settings.backups.currentBackups", "Current Backups")}</label>
           <div className="backup-stats">
             <div className="backup-stat">

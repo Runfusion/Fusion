@@ -9,6 +9,7 @@ import type { CostResult, OrgTreeNode, TeamAgentSummary, TeamAnalytics } from "@
 import { fetchExecutorStats, fetchOrgTree } from "../../../api/legacy";
 import { useAppSettings } from "../../../hooks/useAppSettings";
 import { AgentAvatar } from "../../AgentAvatar";
+import { LoadingSpinner } from "../../LoadingSpinner";
 import type { DateRange } from "../DateRangePicker";
 import { Bar, type BarDatum } from "../charts/Bar";
 import { Sparkline } from "../charts/Sparkline";
@@ -292,7 +293,7 @@ export function TeamArea({ range, projectId }: { range: DateRange; projectId?: s
           </div>
           <div className="cc-team-org-scroll" aria-live="polite">
             {orgTreeState.status === "loading" ? (
-              <p className="cc-team-muted">{t("commandCenter.controls.orgChart.loading", "Loading org chart…")}</p>
+              <p className="cc-team-muted"><LoadingSpinner label={t("commandCenter.controls.orgChart.loading", "Loading org chart…")} /></p>
             ) : orgTreeState.status === "error" ? (
               <p className="cc-team-error" role="alert">{orgTreeState.error}</p>
             ) : orgTreeState.data.length === 0 ? (

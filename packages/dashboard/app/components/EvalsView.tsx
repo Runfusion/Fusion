@@ -4,6 +4,7 @@ import { ExternalLink, RefreshCw, Settings } from "lucide-react";
 import { fetchSettings } from "../api";
 import { useEvals } from "../hooks/useEvals";
 import type { SectionId } from "./SettingsModal";
+import { LoadingSpinner } from "./LoadingSpinner";
 import "./EvalsView.css";
 
 interface EvalsViewProps {
@@ -74,7 +75,7 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
           <button className="btn btn-icon" type="button" onClick={() => void refresh()} aria-label={t("evals.refreshAria", "Refresh evals")}><RefreshCw size={16} /></button>
         </div>
 
-        {loading && <p className="evals-state" data-testid="evals-loading">{t("evals.loading", "Loading evals…")}</p>}
+        {loading && <p className="evals-state" data-testid="evals-loading"><LoadingSpinner label={t("evals.loading", "Loading evals…")} /></p>}
         {error && <p className="evals-state evals-state--error">{error}</p>}
         {!loading && !error && !hasResults && (
           <p className="evals-state">{t("evals.empty", "No evals yet. Scheduled evals review tasks completed since the last run.")}</p>

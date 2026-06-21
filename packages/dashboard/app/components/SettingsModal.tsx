@@ -38,6 +38,7 @@ import { AgentPermissionsSection } from "./settings/sections/AgentPermissionsSec
 import { MemorySection } from "./settings/sections/MemorySection";
 import { ResearchProjectSection } from "./settings/sections/ResearchProjectSection";
 import { BackupsSection } from "./settings/sections/BackupsSection";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -2910,7 +2911,7 @@ export function SettingsModal({
           </button>
         </div>
         {loading ? (
-          <div className="settings-empty-state settings-loading">{t("settings.loading", "Loading…")}</div>
+          <div className="settings-empty-state settings-loading"><LoadingSpinner label={t("settings.loading", "Loading…")} /></div>
         ) : (
           <div className="settings-layout">
             {showMobileSectionPicker && (

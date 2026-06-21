@@ -7,6 +7,7 @@ import { CustomModelDropdown } from "../../CustomModelDropdown";
 import { applyPresetToSelection } from "../../../utils/modelPresets";
 import type { ToastType } from "../../../hooks/useToast";
 import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState } from "./context";
+import { LoadingSpinner } from "../../LoadingSpinner";
 type LaneStatus = "inherited" | "overridden";
 type WorkflowModelPair = {
     id: "planning" | "execution" | "validator" | "planning-fallback" | "validator-fallback" | "title-summarizer-fallback";
@@ -270,7 +271,7 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       {/* --- Project Model Lanes --- */}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelLanes", "Model Lanes")}</h4>
       <p className="settings-description">{t("settings.projectModels.overrideGlobalModelSettingsAtTheProjectLevel", " Override global model settings at the project level. Each lane controls a specific AI usage context. Unset lanes inherit from the corresponding global lane. The Project Default Model is the fallback for this project when a more specific lane is unset. ")}</p>
-      {modelsLoading ? (<div className="settings-empty-state">{t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")}</div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
+      {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingAvailableModels", "Loading available models\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationFirst", " No models available. Configure authentication first. ")}</div>) : (<>
           {projectModelLanes.map((lane) => {
                 const status = getLaneStatus(lane);
                 const value = getLaneValue(lane);
@@ -300,7 +301,7 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.defaultWorkflowModelLanes", "Default workflow model lanes")}</h4>
       <p className="settings-description">
         {t("settings.movedStub.modelLanes", "Per-phase model lanes (execution, planning, reviewer, and their fallbacks) now live on the workflow.")}{t("settings.projectModels.theseProjectOverridesApplyToTheActiveDefault", " These project overrides apply to the active default workflow. ")}</p>
-      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state">{t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")}</div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
+      {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
           {workflowModelPairs.map((pair) => {
                 const value = modelPairValue(effectiveWorkflowValues, pair);
                 const customized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)

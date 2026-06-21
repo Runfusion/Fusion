@@ -11,6 +11,7 @@ import { useDocuments } from "../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../hooks/useProjectMarkdownFiles";
 import { useSelectionComment } from "../hooks/useSelectionComment";
 import { SelectionCommentPopover } from "./SelectionCommentPopover";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -482,7 +483,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
         ) : activeTab === "project" ? (
           projectFilesLoading && projectFiles.length === 0 ? (
             <div className="documents-view-loading">
-              <p>{t("documents.loadingProjectFiles", "Loading project markdown files…")}</p>
+              <p><LoadingSpinner label={t("documents.loadingProjectFiles", "Loading project markdown files…")} /></p>
             </div>
           ) : filteredProjectFiles.length === 0 ? (
             <div className="documents-view-empty">
@@ -555,7 +556,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
                         </button>
                       </div>
                       {fileLoading ? (
-                        <p className="documents-content-state">{t("documents.loadingFileContent", "Loading file content…")}</p>
+                        <p className="documents-content-state"><LoadingSpinner label={t("documents.loadingFileContent", "Loading file content…")} /></p>
                       ) : fileError ? (
                         <p className="documents-content-state documents-content-state--error">{fileError}</p>
                       ) : renderProjectMarkdown ? (
@@ -576,7 +577,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
           )
         ) : documentsLoading && documents.length === 0 ? (
           <div className="documents-view-loading">
-            <p>{t("documents.loadingTaskDocuments", "Loading task documents…")}</p>
+            <p><LoadingSpinner label={t("documents.loadingTaskDocuments", "Loading task documents…")} /></p>
           </div>
         ) : groupedDocuments.length === 0 ? (
           <div className="documents-view-empty">

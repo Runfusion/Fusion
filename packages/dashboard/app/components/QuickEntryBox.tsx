@@ -10,6 +10,7 @@ import { checkDuplicateTasks, fetchModels, fetchSettings, refineText, getRefineE
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
 import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Flag } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { useNodes } from "../hooks/useNodes";
 import { NodeHealthDot } from "./NodeHealthDot";
@@ -1992,7 +1993,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 }}
               >
                 <div className="dep-dropdown-search-header">{t("tasks.selectAgent", "Select agent")}</div>
-                {agentsLoading && <div className="dep-dropdown-empty">{t("tasks.loadingAgents", "Loading agents...")}</div>}
+                {agentsLoading && <div className="dep-dropdown-empty"><LoadingSpinner label={t("tasks.loadingAgents", "Loading agents...")} /></div>}
                 {!agentsLoading && agents.map((a) => (
                   <div
                     key={a.id}

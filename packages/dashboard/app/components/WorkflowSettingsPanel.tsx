@@ -58,6 +58,7 @@ import {
 } from "./settings";
 import type { ToastType } from "../hooks/useToast";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { LoadingSpinner } from "./LoadingSpinner";
 import "./WorkflowSettingsPanel.css";
 
 interface WorkflowSettingsPanelProps {
@@ -922,7 +923,7 @@ function ValuesTab({
       {settings.length === 0 ? (
         <p className="wf-settings-empty">
           {loading
-            ? t("workflowSettings.loading", "Loading…")
+            ? <LoadingSpinner label={t("workflowSettings.loading", "Loading…")} />
             : t("workflowSettings.noDeclarations", "This workflow declares no settings, so there are no values to edit.")}
         </p>
       ) : (

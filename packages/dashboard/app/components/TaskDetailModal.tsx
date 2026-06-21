@@ -48,6 +48,7 @@ import { TaskTokenStatsPanel } from "./TaskTokenStatsPanel";
 import { BranchGroupCard } from "./BranchGroupCard";
 import { PluginSlot } from "./PluginSlot";
 import { ProviderIcon } from "./ProviderIcon";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { subscribeSse } from "../sse-bus";
 import type { SessionTerminalMode, SessionTerminalPosture } from "./SessionTerminal";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
@@ -3492,7 +3493,7 @@ export function TaskDetailContent({
           ) : activeTab === "terminal" ? (
             <div className="detail-section detail-section--terminal">
               {cliSession && cliTabVisibility.kind !== "hidden" ? (
-                <Suspense fallback={<div className="detail-loading">{t("taskDetail.terminal.loading", "Loading terminal…")}</div>}>
+                <Suspense fallback={<div className="detail-loading"><LoadingSpinner label={t("taskDetail.terminal.loading", "Loading terminal…")} /></div>}>
                   <LazySessionTerminal
                     sessionId={cliSession.id}
                     projectId={projectId}
@@ -3672,7 +3673,7 @@ export function TaskDetailContent({
                 )}
                 {showAgentPicker && (
                   <div className="agent-picker-dropdown">
-                    {agentsLoading && <div className="agent-picker-loading">{t("taskDetail.agent.loadingAgents", "Loading agents...")}</div>}
+                    {agentsLoading && <div className="agent-picker-loading"><LoadingSpinner label={t("taskDetail.agent.loadingAgents", "Loading agents...")} /></div>}
                     {!agentsLoading && agents.map((a) => (
                       <button
                         key={a.id}
@@ -3782,7 +3783,7 @@ export function TaskDetailContent({
                 </div>
               </div>
             ) : detailLoading ? (
-              <div className="spec-loading">{t("taskDetail.spec.loading", "Loading specification…")}</div>
+              <div className="spec-loading"><LoadingSpinner label={t("taskDetail.spec.loading", "Loading specification…")} /></div>
             ) : workingTask.prompt ? (
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkifyComponents}>

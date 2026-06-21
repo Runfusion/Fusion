@@ -11,6 +11,7 @@ import { AlertTriangle, Clock, Folder, Pause, Play, Zap } from "lucide-react";
 import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 import { useExecutorStats } from "../hooks/useExecutorStats";
 import { isLikelyTabSuspensionError } from "../hooks/visibilitySuspension";
+import { LoadingSpinner } from "./LoadingSpinner";
 import type { ExecutorState, AiSessionSummary } from "../api";
 import { BackgroundTasksIndicator } from "./BackgroundTasksIndicator";
 
@@ -149,7 +150,7 @@ export function ExecutorStatusBar({ tasks, projectId, taskStuckTimeoutMs, staleH
   if (loading && stats.runningTaskCount === 0) {
     return (
       <div className="executor-status-bar executor-status-bar--loading" role="status" aria-label={t("executor.status", "Executor status")}>
-        <span className="executor-status-bar__loading-text">{t("executor.loading", "Loading...")}</span>
+        <LoadingSpinner className="executor-status-bar__loading-text" label={t("executor.loading", "Loading...")} />
       </div>
     );
   }

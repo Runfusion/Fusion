@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, Download, Upload } from "lucide-react";
 import "./SettingsSyncLog.css";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -168,7 +169,7 @@ export function SettingsSyncLog({
           </div>
 
           {loading && entries.length === 0 ? (
-            <div className="settings-sync-log__empty">{t("syncLog.loading", "Loading...")}</div>
+            <div className="settings-sync-log__empty"><LoadingSpinner label={t("syncLog.loading", "Loading...")} /></div>
           ) : filteredEntries.length === 0 ? (
             <div className="settings-sync-log__empty">{t("syncLog.noHistory", "No sync history available")}</div>
           ) : (

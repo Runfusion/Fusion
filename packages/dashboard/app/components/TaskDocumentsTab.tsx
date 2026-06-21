@@ -13,6 +13,7 @@ import {
   putTaskDocument,
   deleteTaskDocument,
 } from "../api";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 // Document key validation: alphanumeric, hyphens, underscores, 1-64 chars
 const DOCUMENT_KEY_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -213,7 +214,7 @@ export function TaskDocumentsTab({
     return (
       <div className="detail-section">
         <h4>{t("taskDocuments.heading", "Documents")}</h4>
-        <div className="detail-log-empty">{t("taskDocuments.loading", "Loading documents…")}</div>
+        <div className="detail-log-empty"><LoadingSpinner label={t("taskDocuments.loading", "Loading documents…")} /></div>
       </div>
     );
   }
@@ -325,7 +326,7 @@ export function TaskDocumentsTab({
                     <div className="task-document-revisions">
                       <h5>{t("taskDocuments.revisionHistory", "Revision History")}</h5>
                       {loadingRevisions ? (
-                        <div className="detail-log-empty">{t("taskDocuments.loadingRevisions", "Loading…")}</div>
+                        <div className="detail-log-empty"><LoadingSpinner label={t("taskDocuments.loadingRevisions", "Loading…")} /></div>
                       ) : revisions.length <= 1 ? (
                         <div className="detail-log-empty">{t("taskDocuments.noPreviousRevisions", "No previous revisions.")}</div>
                       ) : (

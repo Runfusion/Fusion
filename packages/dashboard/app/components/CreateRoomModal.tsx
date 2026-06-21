@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { fetchAgents } from "../api";
 import type { Agent } from "@fusion/core";
 import { AgentAvatar } from "./AgentAvatar";
+import { LoadingSpinner } from "./LoadingSpinner";
 import "./CreateRoomModal.css";
 
 export interface RoomDraft {
@@ -195,7 +196,7 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
 
         <div className="create-room-modal-member-list" data-testid="create-room-member-list">
           {loadingAgents ? (
-            <div className="create-room-modal-empty">{t("createRoom.loadingAgents", "Loading agents...")}</div>
+            <div className="create-room-modal-empty"><LoadingSpinner label={t("createRoom.loadingAgents", "Loading agents...")} /></div>
           ) : filteredAgents.length === 0 ? (
             <div className="create-room-modal-empty">
               {agents.length === 0 ? t("createRoom.noAgents", "No agents in this project yet.") : t("createRoom.noMatch", "No agents match your search.")}

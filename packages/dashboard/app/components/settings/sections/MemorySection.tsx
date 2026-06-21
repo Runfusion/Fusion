@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { MemoryBackendCapabilities, MemoryBackendStatus, MemoryFileInfo, MemoryRetrievalTestResult, } from "../../../api";
 import { FileEditor } from "../../FileEditor";
 import type { SectionBaseProps } from "./context";
+import { LoadingSpinner } from "../../LoadingSpinner";
 const MEMORY_FILE_OPTION_LABEL_MAX_CHARS = 72;
 function truncateMiddle(value: string, maxChars: number): string {
     if (value.length <= maxChars) {
@@ -164,7 +165,7 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
       {!isMemoryEnabled && (<div className="settings-empty-state memory-status-message">{t("settings.memory.memoryIsCurrentlyDisabledYouCanViewThe", " Memory is currently disabled. You can view the file, but editing is read-only until memory is re-enabled. ")}</div>)}
       {isMemoryEnabled && backendStatusResolved && !isBackendWritable && (<div className="settings-empty-state memory-status-message">{t("settings.memory.memoryIsConfiguredWithAReadOnlyBackend", " Memory is configured with a read-only backend. You can view the file, but saving is disabled. ")}</div>)}
 
-      {memoryLoading ? (<div className="settings-empty-state">{t("settings.memory.loadingMemory", "Loading memory\u2026")}</div>) : (<div className="memory-editor-section">
+      {memoryLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.memory.loadingMemory", "Loading memory\u2026")} /></div>) : (<div className="memory-editor-section">
           <div className="form-group">
             <label htmlFor="memoryFilePath">{t("settings.memory.memoryFile", "Memory File")}</label>
             <select id="memoryFilePath" value={selectedMemoryPath} onChange={(e) => {

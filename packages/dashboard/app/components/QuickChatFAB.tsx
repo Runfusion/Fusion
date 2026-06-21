@@ -19,6 +19,7 @@ import { ChevronDown, Eye, EyeOff, Hash, MessageSquare, Paperclip, Pencil, Plus,
 import { attachmentBaseUrlForRoom, type Agent, type ModelInfo } from "../api";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentMentionPopup } from "./AgentMentionPopup";
@@ -3205,7 +3206,7 @@ export function QuickChatFAB({
 
           <div className="quick-chat-panel-messages" ref={messagesRef} data-testid="quick-chat-messages" onScroll={updateScrollState}>
             {sessionsLoading ? (
-              <div className="quick-chat-panel-empty">{t("chat.loadingConversation", "Loading conversation…")}</div>
+              <div className="quick-chat-panel-empty"><LoadingSpinner label={t("chat.loadingConversation", "Loading conversation…")} /></div>
             ) : !roomThreadActive && isStreaming ? (
               <>
                 {displayedMessages.map((message: ChatMessageInfo, index) => (
@@ -3264,7 +3265,7 @@ export function QuickChatFAB({
                 </div>
               </>
             ) : roomThreadActive ? roomsState.messagesLoading ? (
-              <div className="quick-chat-panel-empty">{t("chat.loadingConversation", "Loading conversation…")}</div>
+              <div className="quick-chat-panel-empty"><LoadingSpinner label={t("chat.loadingConversation", "Loading conversation…")} /></div>
             ) : displayedMessages.length === 0 && !helpMessageVisible ? (
               <div className="quick-chat-panel-empty">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
             ) : (
@@ -3290,7 +3291,7 @@ export function QuickChatFAB({
                 )}
               </>
             ) : messagesLoading ? (
-              <div className="quick-chat-panel-empty">{t("chat.loadingConversation", "Loading conversation…")}</div>
+              <div className="quick-chat-panel-empty"><LoadingSpinner label={t("chat.loadingConversation", "Loading conversation…")} /></div>
             ) : displayedMessages.length === 0 && !streamingText && !streamingThinking && !isStreaming && !helpMessageVisible ? (
               <div className="quick-chat-panel-empty">{t("chat.noMessagesYet", "No messages yet. Start the conversation!")}</div>
             ) : (
@@ -3510,7 +3511,7 @@ export function QuickChatFAB({
               {showSkillMenu && (
                 <div className="chat-skill-menu" data-testid="quick-chat-skill-menu" role="listbox" aria-label={t("chat.skillSuggestions", "Skill suggestions")}>
                   {skillsLoading ? (
-                    <div className="chat-skill-menu-empty">{t("chat.loadingSkills", "Loading skills…")}</div>
+                    <div className="chat-skill-menu-empty"><LoadingSpinner label={t("chat.loadingSkills", "Loading skills…")} /></div>
                   ) : filteredSkills.length === 0 ? (
                     <div className="chat-skill-menu-empty">
                       {skillFilter ? t("chat.noSkillsFound", "No skills found") : t("chat.noSkillsAvailable", "No skills available")}

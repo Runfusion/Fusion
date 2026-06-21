@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { Package, Settings, Trash2, Plus, X, RefreshCw, RotateCcw, ExternalLink, Shield } from "lucide-react";
 import { fetchPlugins, fetchPluginRegistry, installPlugin, enablePlugin, disablePlugin, uninstallPlugin, fetchPluginSettings, updatePluginSettings, reloadPlugin, fetchPluginSetupStatus, installPluginSetup, updatePlugin, rescanPlugin } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { LoadingSpinner } from "./LoadingSpinner";
 import type { PluginInstallation, PluginState, PluginSettingSchema } from "@fusion/core";
 import type { PluginSetupStatusResponse, RegistryPluginEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
@@ -726,7 +727,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
           <div className="plugin-detail-card">
             <h5 className="plugin-detail-section-heading">{t("plugins.settings", "Settings")}</h5>
             {settingsLoading ? (
-              <p className="text-muted">{t("plugins.loading", "Loading...")}</p>
+              <p className="text-muted"><LoadingSpinner label={t("plugins.loading", "Loading...")} /></p>
             ) : (() => {
               const effectiveSettingsSchema = resolveSettingsSchema(selectedPlugin);
 
@@ -1198,7 +1199,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
       )}
 
       {loading ? (
-        <div className="settings-empty-state">{t("plugins.loadingPlugins", "Loading plugins...")}</div>
+        <div className="settings-empty-state"><LoadingSpinner label={t("plugins.loadingPlugins", "Loading plugins...")} /></div>
       ) : (
         <>
           {installedPlugins.length === 0 ? (

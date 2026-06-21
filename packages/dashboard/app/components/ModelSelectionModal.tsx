@@ -6,6 +6,7 @@ import type { ModelInfo } from "../api";
 import { applyPresetToSelection } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Brain, X } from "lucide-react";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 const PRESET_OPTION_SEPARATOR = "──────────";
 
@@ -175,7 +176,7 @@ export function ModelSelectionModal({
           {modelsLoading ? (
             <div className="planning-loading">
               <div className="detail-section">
-                <p className="text-muted">{t("modelSelection.loading", "Loading models…")}</p>
+                <p className="text-muted"><LoadingSpinner label={t("modelSelection.loading", "Loading models…")} /></p>
               </div>
             </div>
           ) : modelsError ? (

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { FileCode, ChevronDown, ChevronRight, ChevronLeft, AlertCircle, GitCommit, WrapText, Maximize2 } from "lucide-react";
 import type { MergeDetails, ColumnId } from "@fusion/core";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { getErrorMessage } from "@fusion/core";
 import {
   fetchTaskDiff,
@@ -290,8 +291,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
     return (
       <div className="detail-section">
         <div className="task-changes-state task-changes-state--loading">
-          <div className="loading-spinner" />
-          <span>{t("taskChanges.loading", "Loading changes...")}</span>
+          <LoadingSpinner label={t("taskChanges.loading", "Loading changes...")} />
         </div>
       </div>
     );

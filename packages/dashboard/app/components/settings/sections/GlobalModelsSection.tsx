@@ -5,6 +5,7 @@ import type { Settings, ThinkingLevel } from "@fusion/core";
 import type { ModelInfo } from "../../../api";
 import { CustomModelDropdown } from "../../CustomModelDropdown";
 import type { SectionBaseProps, ModelLane } from "./context";
+import { LoadingSpinner } from "../../LoadingSpinner";
 function toCommaSeparatedInput(values?: string[]): string {
     return values?.join(", ") ?? "";
 }
@@ -32,7 +33,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
 
       {/* --- Default Model --- */}
       <h4 className="settings-section-heading">{t("settings.globalModels.defaultModel", "Default Model")}</h4>
-      {modelsLoading ? (<div className="settings-empty-state">{t("settings.models.loadingModels", "Loading available models…")}</div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">
+      {modelsLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.models.loadingModels", "Loading available models…")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">
           {t("settings.models.noModels", "No models available. Configure authentication first.")}
         </div>) : (<>
           <div className="form-group">

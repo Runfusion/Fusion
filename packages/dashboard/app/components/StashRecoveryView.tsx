@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { useConfirm } from "../hooks/useConfirm";
+import { LoadingSpinner } from "./LoadingSpinner";
 import "./StashRecoveryView.css";
 
 type RecordItem = {
@@ -127,7 +128,7 @@ export function StashRecoveryView() {
                 &times;
               </button>
             </div>
-            {diffState.loading && <p>{t("stashRecovery.loadingDiff", "Loading diff…")}</p>}
+            {diffState.loading && <p><LoadingSpinner label={t("stashRecovery.loadingDiff", "Loading diff…")} /></p>}
             {diffState.error && <div className="form-error">{diffState.error}</div>}
             {!diffState.loading && !diffState.error && (
               <>

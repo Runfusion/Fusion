@@ -14,6 +14,7 @@ import { useFavorites } from "../hooks/useFavorites";
 import { useModelsCache } from "../hooks/useModelsCache";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 interface ModelSelectorTabProps {
   task: Task | TaskDetail;
@@ -376,7 +377,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
       </p>
 
       {modelsLoading ? (
-        <div className="model-selector-loading">{t("models.states.loading", "Loading available models…")}</div>
+        <div className="model-selector-loading"><LoadingSpinner label={t("models.states.loading", "Loading available models…")} /></div>
       ) : availableModels.length === 0 ? (
         <div className="model-selector-empty">
           {t("models.emptyStates.noModels", "No models available. Configure authentication in Settings to enable model selection.")}

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { FileCode, ChevronDown, ChevronRight, AlertCircle, GitCommit } from "lucide-react";
 import type { MergeDetails } from "@fusion/core";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { fetchCommitDiff } from "../api";
 import { getErrorMessage } from "@fusion/core";
 import { highlightDiff } from "../utils/highlightDiff";
@@ -137,8 +138,7 @@ export function CommitDiffTab({ commitSha, mergeDetails }: CommitDiffTabProps) {
     return (
       <div className="detail-section">
         <div className="task-changes-state task-changes-state--loading">
-          <div className="loading-spinner" />
-          <span>{t("commitDiff.loading", "Loading commit diff...")}</span>
+          <LoadingSpinner label={t("commitDiff.loading", "Loading commit diff...")} />
         </div>
       </div>
     );

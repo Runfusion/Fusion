@@ -6,6 +6,7 @@ import { fetchModels, fetchSettings, fetchWorkflows, refineText, getRefineErrorM
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
+import { LoadingSpinner } from "./LoadingSpinner";
 import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
 
@@ -1108,7 +1109,7 @@ export function TaskForm({
           </div>
         )}
         {modelsLoading ? (
-          <div className="model-selector-loading">{t("taskForm.loadingModels", "Loading models…")}</div>
+          <div className="model-selector-loading"><LoadingSpinner label={t("taskForm.loadingModels", "Loading models…")} /></div>
         ) : availableModels.length === 0 ? (
           <small>{t("taskForm.noModelsAvailable", "No models available. Configure authentication in Settings.")}</small>
         ) : (
@@ -1292,7 +1293,7 @@ export function TaskForm({
           <label htmlFor="task-workflow-select">{t("taskForm.workflowLabel", "Workflow")}</label>
           {workflowsLoading ? (
             <div className="workflow-select-loading" data-testid="task-workflow-loading">
-              {t("taskForm.workflowsLoading", "Loading workflows…")}
+              <LoadingSpinner label={t("taskForm.workflowsLoading", "Loading workflows…")} />
             </div>
           ) : workflows.length === 0 ? (
             // Built-ins are always present, so an empty list means the fetch

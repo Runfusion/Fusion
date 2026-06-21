@@ -11,6 +11,7 @@ import { fetchTaskReview, refreshTaskReview, reviseTaskReviewItems, updateTask }
 import type { SelectedReviewItem } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
+import { LoadingSpinner } from "./LoadingSpinner";
 
 interface Props {
   task: Task | TaskDetail;
@@ -373,7 +374,7 @@ export function TaskReviewTab({
           source: formatRefreshSource(review?.refreshSource, t),
         })}</span>
       </div>
-      {loading ? <div className="task-review-tab__meta">{t("taskReview.loadingData", "Loading review data…")}</div> : null}
+      {loading ? <div className="task-review-tab__meta"><LoadingSpinner label={t("taskReview.loadingData", "Loading review data…")} /></div> : null}
       {!loading && error ? <div className="task-review-tab__error">{error}</div> : null}
       {!loading && !error && !isPrMode && displayItems.length === 0 ? <div className="task-review-tab__empty">{emptyMessage ?? t("taskReview.noFeedbackDirect", "No reviewer feedback yet — this task has not produced reviewer-agent feedback in direct mode.")}</div> : null}
       {!loading && !error && displayItems.length > 0 ? (
