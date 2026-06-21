@@ -54,7 +54,7 @@ describe("extension mission goal tools", () => {
   });
 
   afterEach(async () => {
-    closeCachedStores();
+    await closeCachedStores();
     await rm(tmpDir, { recursive: true, force: true });
   });
 

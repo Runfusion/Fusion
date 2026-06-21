@@ -158,20 +158,20 @@ async function getStore(cwd: string): Promise<TaskStore> {
 }
 
 /** @internal Exposed so tests and the extension shutdown hook can close cached stores deterministically; not a public CLI API contract. */
-export function closeCachedStores(): void {
+export async function closeCachedStores(): Promise<void> {
   /*
-  FNXC:CliTests 2026-06-17-23:58:
-  FN-6626 found the CLI extension cache cleared real TaskStore instances without closing them, leaving SQLite/WAL handles to survive module resets and making canonical-project-root task-tool tests timeout under suite load.
-  Close every cached store deterministically on extension shutdown and in tests; do not appease the load-sensitive seam with timeouts, retries, or worker changes.
+  FNXC:CliTests 2026-06-17-23:58: FN-6626 found the CLI extension cache cleared real TaskStore instances without closing them, leaving SQLite/WAL handles to survive module resets and making canonical-project-root task-tool tests timeout under suite load.
+  FNXC:CliTests 2026-06-21-09:58: FN-6839 requires awaiting TaskStore.close() so deferred task-created filesystem work and SQLite/WAL handles drain before temp-root removal; do not appease this loaded-lane seam with timeouts, retries, or worker changes.
   */
-  for (const store of storeCache.values()) {
+  const stores = [...storeCache.values()];
+  storeCache.clear();
+  for (const store of stores) {
     try {
-      store.close();
+      await store.close();
     } catch (error) {
       console.warn("[fusion-extension] cached TaskStore close skipped", error);
     }
   }
-  storeCache.clear();
 }
 
 function getFusionDir(cwd: string): string {
@@ -4699,6 +4699,6 @@ export default function kbExtension(pi: ExtensionAPI) {
       dashboardProcess = null;
       dashboardPort = null;
     }
-    closeCachedStores();
+    void closeCachedStores();
   });
 }

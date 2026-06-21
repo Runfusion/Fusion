@@ -5,21 +5,6 @@
       "file": "packages/dashboard/src/__tests__/session-cross-tab.test.ts",
       "reason": "FN-6690 local workspace `pnpm test` observed ENOTEMPTY while removing the test's temp .fusion directory in dashboard-api-quality-backfill shard; isolated rerun passed, indicating cleanup flake rather than a lazy-view CSS regression.",
       "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/cli/src/__tests__/bin.test.ts",
-      "reason": "FN-6795 final @runfusion/fusion package verification observed `launches dashboard when no args are provided` time out at the existing 15s budget only under the full package lane; a targeted rerun with the failing CLI files passed, so quarantine this newly observed suite-load flake on sight instead of widening timeouts or worker budgets.",
-      "quarantinedAt": "2026-06-20"
-    },
-    {
-      "file": "packages/cli/src/__tests__/extension-task-tools.test.ts",
-      "reason": "FN-6795 loaded @runfusion/fusion package verification after attempted rescue still timed out both canonical-root task-tool cases only under the full package lane while the targeted rerun with bin/extension-task/extension passed; retain under the original 2026-06-19 deletion ratchet instead of widening the 5s test timeout, adding retries, or changing workers.",
-      "quarantinedAt": "2026-06-19"
-    },
-    {
-      "file": "packages/cli/src/__tests__/extension.test.ts",
-      "reason": "FN-6795 loaded @runfusion/fusion package verification after attempted rescue still timed out the built-dist-barrel fn_task_list case only under the full package lane while the targeted rerun with bin/extension-task/extension passed; retain under the original 2026-06-19 deletion ratchet instead of widening the 5s test timeout or weakening assertions.",
-      "quarantinedAt": "2026-06-19"
     }
   ]
 }

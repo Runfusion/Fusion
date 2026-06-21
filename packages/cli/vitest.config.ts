@@ -33,10 +33,10 @@ const quarantinedCliTests: string[] = [
 
   FNXC:CliTests 2026-06-20-10:04:
   FN-6795 final loaded verification re-exposed extension-task-tools, extension.test's built-dist-barrel case, and bin's no-args dashboard launch as package-lane-only timeouts while targeted reruns passed. Retain/quarantine these files in lockstep with the ledger rather than widening 5s/15s timeouts, adding retries, or changing worker budgets; the 2026-06-19 entries still delete on 2026-07-03 unless a real fixture-load invariant is found.
+
+  FNXC:CliTests 2026-06-21-09:58:
+  FN-6839 rescues the retained bin, extension-task-tools, and extension suites by awaiting async TaskStore/cache shutdown before temp-root cleanup and proving the grouped/package lanes can run unexcluded. Keep the exclude list empty in lockstep with scripts/lib/test-quarantine.json; do not re-quarantine this loaded-lane signature without a new root-cause invariant.
   */
-  "src/__tests__/bin.test.ts",
-  "src/__tests__/extension-task-tools.test.ts",
-  "src/__tests__/extension.test.ts",
 ];
 
 export default defineConfig({

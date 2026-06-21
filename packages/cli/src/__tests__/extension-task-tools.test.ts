@@ -20,7 +20,7 @@ function makeCtx(cwd: string) {
   return { cwd } as any;
 }
 
-let closeLoadedExtensionStores: (() => void) | undefined;
+let closeLoadedExtensionStores: (() => Promise<void>) | undefined;
 
 async function loadExtension() {
   const mod = await import("../extension.js");
@@ -37,8 +37,12 @@ describe("extension task tools resolve repo root from worktrees", () => {
     vi.resetModules();
   });
 
-  afterEach(() => {
-    closeLoadedExtensionStores?.();
+  afterEach(async () => {
+    /*
+    FNXC:CliTests 2026-06-21-09:58:
+    FN-6839 requires canonical-root fixture cleanup to await cached and direct TaskStore shutdown before temp roots are removed; this preserves the loaded-lane rescue without timeout or worker appeasement.
+    */
+    await closeLoadedExtensionStores?.();
     closeLoadedExtensionStores = undefined;
     vi.restoreAllMocks();
     vi.doUnmock("@fusion/core");
@@ -86,7 +90,7 @@ describe("extension task tools resolve repo root from worktrees", () => {
       expect(show.content[0].text).toContain("Task from canonical root");
       expect(list.content[0].text).toContain(created.id);
     } finally {
-      store?.close();
+      await store?.close();
       await rm(repoRoot, { recursive: true, force: true });
     }
   });
@@ -130,7 +134,7 @@ describe("extension task tools resolve repo root from worktrees", () => {
       expect(show.content[0].text).toContain("Task visible from merge worktree");
       expect(list.content[0].text).toContain(created.id);
     } finally {
-      store?.close();
+      await store?.close();
       try {
         git(repoRoot, `worktree remove --force ${JSON.stringify(mergeRoot)}`);
       } catch {
@@ -185,7 +189,7 @@ describe("extension task tools resolve repo root from worktrees", () => {
       expect(show.content[0]?.text).toContain(created.id);
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
-      store?.close();
+      await store?.close();
       await rm(repoRoot, { recursive: true, force: true });
     }
   });

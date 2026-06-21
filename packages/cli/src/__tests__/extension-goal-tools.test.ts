@@ -59,7 +59,7 @@ describe("extension goal retrieval tools", () => {
   });
 
   afterEach(async () => {
-    closeCachedStores();
+    await closeCachedStores();
     await rm(tmpDir, { recursive: true, force: true });
   });
 

@@ -58,7 +58,7 @@ async function withOrg(
       ids: { manager: manager.id, middle: middle.id, leaf: leaf.id, peer: peer.id },
     });
   } finally {
-    closeCachedStores();
+    await closeCachedStores();
     agentStore.close();
     await rm(cwd, { recursive: true, force: true });
   }

@@ -123,7 +123,7 @@ async function seedWorkflow(cwd: string, name = "QA workflow"): Promise<string> 
     const workflow = await store.createWorkflowDefinition({ name, ir: linearWorkflowIr(name) });
     return workflow.id;
   } finally {
-    store.close();
+    await store.close();
   }
 }
 
@@ -135,7 +135,7 @@ async function readTaskWorkflowState(cwd: string, taskId: string) {
     const selection = store.getTaskWorkflowSelection(taskId);
     return { task, selection };
   } finally {
-    store.close();
+    await store.close();
   }
 }
 
@@ -246,7 +246,7 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
   });
 
   afterEach(async () => {
-    closeCachedStores();
+    await closeCachedStores();
     await removeDirWithRetries(tmpDir);
   });
 
@@ -406,7 +406,7 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
       try {
         await store.setDefaultWorkflowId(workflowId);
       } finally {
-        store.close();
+        await store.close();
       }
 
       const tool = api.tools.get("fn_task_create")!;
@@ -2439,7 +2439,7 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
           url: "https://github.com/acme/demo/issues/1",
         },
       });
-      store.close();
+      await store.close();
 
       const tool = api.tools.get("fn_task_import_github")!;
       vi.mocked(runGhJsonAsync).mockResolvedValueOnce([
@@ -2471,7 +2471,7 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
           url: "https://github.com/acme/demo/issues/1",
         },
       });
-      store.close();
+      await store.close();
 
       const tool = api.tools.get("fn_task_import_github_issue")!;
       vi.mocked(runGhJsonAsync).mockResolvedValueOnce({
@@ -2554,27 +2554,27 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
     */
     for (const store of openStores.splice(0)) {
       try {
-        store.close();
+        await store.close();
       } catch {
         // Best effort: close all real stores before removing fixture roots.
       }
     }
-    closeCachedStores();
+    await closeCachedStores();
     await removeDirWithRetries(tmpDir);
   });
 
-  it("closes cached TaskStore handles before fixture removal (FN-6734 regression)", async () => {
-    /*
-    FNXC:CliTests 2026-06-19-11:35:
-    FN-6734 needs a deterministic guard for the close-before-remove invariant: extension tools cache a real TaskStore, so cleanup must close cached stores before removing the fixture root.
-    */
-    const closeSpy = vi.spyOn(TaskStore.prototype, "close");
-    const createTool = api.tools.get("fn_task_create")!;
-
-    await createTool.execute("close-before-remove", { description: "seed cached store" }, undefined, undefined, makeCtx(tmpDir));
-    closeCachedStores();
-
+  it("closes cached TaskStore handles before fixture removal (FN-6734/FN-6839 regression)", async () => {
+    /* FNXC:CliTests 2026-06-21-09:58: FN-6839 extends FN-6734 from "close was called" to "close was awaited" because TaskStore.close() quiesces deferred task-created writes before SQLite/WAL handles are safe to remove under loaded CLI lanes. */
+    const originalClose = TaskStore.prototype.close; let closeSettled = false;
+    const closeSpy = vi.spyOn(TaskStore.prototype, "close").mockImplementation(async function (this: TaskStore) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await originalClose.call(this);
+      closeSettled = true;
+    });
+    await api.tools.get("fn_task_create")!.execute("close-before-remove", { description: "seed cached store" }, undefined, undefined, makeCtx(tmpDir));
+    await closeCachedStores();
     expect(closeSpy).toHaveBeenCalled();
+    expect(closeSettled).toBe(true);
     await expect(rm(tmpDir, { recursive: true, force: true })).resolves.not.toThrow();
     tmpDir = await mkdtemp(join(tmpdir(), "kb-ext-fast-"));
   });
@@ -2618,7 +2618,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
         await store.createTask({ description: "Planning task one" });
         await store.createTask({ description: "Todo task one", column: "todo" });
       } finally {
-        store.close();
+        await store.close();
       }
 
       const listTool = api.tools.get("fn_task_list")!;
@@ -2639,7 +2639,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
       try {
         await store.createTask({ description: "Finished task keeps the board non-empty", column: "done" });
       } finally {
-        store.close();
+        await store.close();
       }
 
       const listTool = api.tools.get("fn_task_list")!;
@@ -2671,7 +2671,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
         const first = await store.createTask({ description: "Small todo task one", column: "todo" });
         await store.createTask({ description: "Small todo task two", column: "todo", dependencies: [first.id] });
       } finally {
-        store.close();
+        await store.close();
       }
 
       const listTool = api.tools.get("fn_task_list")!;
@@ -2729,7 +2729,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
           });
         }
       } finally {
-        store.close();
+        await store.close();
       }
 
       const listTool = api.tools.get("fn_task_list")!;
@@ -2790,7 +2790,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
           });
         }
       } finally {
-        store.close();
+        await store.close();
       }
 
       const listTool = api.tools.get("fn_task_list")!;
@@ -2832,7 +2832,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
           });
         }
       } finally {
-        store.close();
+        await store.close();
       }
 
       const listTool = api.tools.get("fn_task_list")!;
@@ -2893,7 +2893,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
             });
           }
         } finally {
-          store.close();
+          await store.close();
         }
 
         vi.resetModules();
@@ -3861,7 +3861,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
         expect(result.content[0].text).toContain("Start the project engine to process pending runs");
         expect(result.details.status).toBe("queued");
       } finally {
-        store.close();
+        await store.close();
       }
     });
 
@@ -3911,7 +3911,7 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
         expect(result.details.summary).toBe("done");
         expect(result.content[0].text).toContain("is completed");
       } finally {
-        store.close();
+        await store.close();
       }
     });
   });

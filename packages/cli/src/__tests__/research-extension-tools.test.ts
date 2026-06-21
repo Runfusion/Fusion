@@ -59,12 +59,12 @@ describe("research extension tools", () => {
     */
     for (const store of openStores.splice(0)) {
       try {
-        store.close();
+        await store.close();
       } catch {
         // Best effort: cleanup must continue so the temp root can be removed.
       }
     }
-    closeCachedStores();
+    await closeCachedStores();
     await rm(tmpDir, { recursive: true, force: true });
   });
 
