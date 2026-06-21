@@ -296,6 +296,14 @@ function expectSvgLinePointsInsideViewBox(testId: string, label: string): void {
   }
 }
 
+function expectSvgLineMarkersUndistorted(testId: string, label: string): void {
+  const section = screen.getByTestId(testId);
+  const chart = within(section).getByRole("img", { name: label });
+  expect(chart.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
+  expect(chart.getAttribute("preserveAspectRatio")).not.toBe("none");
+  expect(chart.querySelectorAll(".cc-line-chart-point").length).toBeGreaterThan(0);
+}
+
 describe("useAnalyticsArea", () => {
   it("polls only when pollMs is provided and clears the interval on unmount", async () => {
     vi.useFakeTimers();
@@ -390,9 +398,13 @@ describe("ActivityArea", () => {
     expect(screen.getByRole("img", { name: "Activity trend" })).toHaveAttribute("data-scale-mode", "series");
     expectRechartsWrapperWithin("cc-activity-pie", "Agent run outcome share");
     expectSvgLinePointsInsideViewBox("cc-activity-line-messages", "Messages / day");
+    expectSvgLineMarkersUndistorted("cc-activity-line-messages", "Messages / day");
     expectSvgLinePointsInsideViewBox("cc-activity-line-agents", "Active agents / day");
+    expectSvgLineMarkersUndistorted("cc-activity-line-agents", "Active agents / day");
     expectSvgLinePointsInsideViewBox("cc-activity-line-nodes", "Active nodes / day");
+    expectSvgLineMarkersUndistorted("cc-activity-line-nodes", "Active nodes / day");
     expectSvgLinePointsInsideViewBox("cc-activity-line-throughput", "Throughput / day");
+    expectSvgLineMarkersUndistorted("cc-activity-line-throughput", "Throughput / day");
     expect(within(screen.getByTestId("cc-activity-agent-runs-sparkline")).getByRole("img", { name: "Agent runs / day" }).classList).toContain("cc-sparkline");
     expectSparklineHeightsFinite("cc-activity-agent-runs-sparkline");
   });

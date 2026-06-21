@@ -68,6 +68,9 @@ function computedMaxFor(series: LineChartSeries[], max?: number): number {
  *
  * FNXC:CommandCenterCharts 2026-06-19-05:24:
  * Activity line charts were clipping max/min points because the data domain mapped to the full SVG viewBox edge. Reserve plot padding equal to the rendered point/stroke margin so populated, single-point, zero, and max-value series stay inside the viewBox on desktop and mobile.
+ *
+ * FNXC:CommandCenterCharts 2026-06-20-22:59:
+ * FN-6818 requires Activity markers to render as true circles independent of the chart container's aspect ratio. `preserveAspectRatio="none"` on the square viewBox stretched circle coordinates into ovals on narrow/mobile layouts; `vectorEffect="non-scaling-stroke"` only protects stroke width, not coordinate geometry, so the SVG must use uniform scaling.
  */
 export function LineChart({ series, ariaLabel, max }: LineChartProps) {
   const computedMax = computedMaxFor(series, max);
@@ -78,7 +81,7 @@ export function LineChart({ series, ariaLabel, max }: LineChartProps) {
       role="img"
       aria-label={ariaLabel}
       viewBox={`0 0 ${VIEWBOX_SIZE} ${VIEWBOX_SIZE}`}
-      preserveAspectRatio="none"
+      preserveAspectRatio="xMidYMid meet"
     >
       {series.map((entry, seriesIndex) => {
         const points = pointsFor(entry.values, computedMax);

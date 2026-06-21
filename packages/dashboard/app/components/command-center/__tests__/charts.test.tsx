@@ -245,6 +245,12 @@ function expectLineChartPointsInsideViewBox(chart: Element): void {
   }
 }
 
+function expectLineChartMarkersDistortionProof(chart: Element): void {
+  expect(chart.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
+  expect(chart.getAttribute("preserveAspectRatio")).not.toBe("none");
+  expect(chart.querySelectorAll(".cc-line-chart-point").length).toBeGreaterThan(0);
+}
+
 describe("LineChart", () => {
   it("renders a populated finite SVG line with an accessible label", () => {
     render(<LineChart ariaLabel="activity trend" series={[{ label: "messages", values: [2, 4, 1] }]} />);
@@ -257,6 +263,22 @@ describe("LineChart", () => {
     expect(points).not.toBe("");
     expect(points).not.toMatch(/NaN|Infinity/);
     expectLineChartPointsInsideViewBox(chart);
+    expectLineChartMarkersDistortionProof(chart);
+  });
+
+  it("uses uniform SVG scaling so marker circles cannot stretch into ovals", () => {
+    render(<LineChart ariaLabel="mobile activity trend" series={[{ label: "agents", values: [1, 3, 2] }]} />);
+
+    const chart = screen.getByRole("img", { name: "mobile activity trend" });
+    expectLineChartMarkersDistortionProof(chart);
+  });
+
+  it("keeps mobile sizing non-square while SVG geometry remains uniformly scaled", () => {
+    expect(chartCss).toMatch(/@media \(max-width: 768px\)\s*\{[^@]*\.cc-line-chart\s*\{[^}]*aspect-ratio:\s*auto;/s);
+
+    render(<LineChart ariaLabel="narrow activity trend" series={[{ label: "nodes", values: [1, 2, 1] }]} />);
+
+    expectLineChartMarkersDistortionProof(screen.getByRole("img", { name: "narrow activity trend" }));
   });
 
   it("renders all-zero values as valid baseline geometry without NaN or edge clipping", () => {
