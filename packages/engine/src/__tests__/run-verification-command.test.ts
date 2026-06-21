@@ -9,6 +9,7 @@ import {
   detectMarathonVerification,
   normalizeVerificationCommand,
   runVerificationCommand,
+  __testOnlyReapVerificationProcessGroup,
   type RunVerificationOptions,
 } from "../run-verification-tool.js";
 
@@ -18,19 +19,6 @@ import {
 // `shell: true` (Node picks cmd.exe on Windows, /bin/sh on POSIX).
 const onPosix = process.platform !== "win32";
 const itPosix = onPosix ? it : it.skip;
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Tests for runVerificationCommand - the core verification execution logic.
@@ -404,11 +392,32 @@ describe("runVerificationCommand", { timeout: 30000 }, () => {
       expect(result.success).toBe(true);
       const leakedPid = Number.parseInt(result.stdout.trim(), 10);
       expect(Number.isFinite(leakedPid)).toBe(true);
+      expect(result.timedOut).toBe(false);
+    });
 
-      for (let i = 0; i < 15 && isProcessAlive(leakedPid); i++) {
-        await sleep(100);
+    it("escalates non-timeout process-group reaping with fake timers", () => {
+      /*
+       * FNXC:Verification 2026-06-21-10:26:
+       * Keep timer assertions on a narrow seam with fake timers so the integration test above never polls wall-clock time while still pinning SIGTERM -> SIGKILL escalation.
+       */
+      vi.useFakeTimers();
+      const kill = vi.fn();
+      const supervised = { kill } as unknown as Parameters<typeof __testOnlyReapVerificationProcessGroup>[0];
+
+      try {
+        __testOnlyReapVerificationProcessGroup(supervised);
+        expect(kill).toHaveBeenCalledTimes(1);
+        expect(kill).toHaveBeenCalledWith("SIGTERM");
+
+        vi.advanceTimersByTime(499);
+        expect(kill).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(1);
+        expect(kill).toHaveBeenCalledTimes(2);
+        expect(kill).toHaveBeenLastCalledWith("SIGKILL");
+      } finally {
+        vi.useRealTimers();
       }
-      expect(isProcessAlive(leakedPid)).toBe(false);
     });
   });
 

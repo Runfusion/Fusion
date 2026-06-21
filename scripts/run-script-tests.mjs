@@ -2,6 +2,8 @@
 
 import { globSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
+import { fileURLToPath, URL } from "node:url";
 
 /*
 FNXC:TestInfrastructure 2026-06-21-10:00:
@@ -10,12 +12,19 @@ The old package script always expanded scripts/__tests__/*.test.mjs before forwa
 */
 
 const forwarded = process.argv.slice(2).filter((arg) => arg !== "--");
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const testFiles = forwarded.length > 0
-  ? forwarded
-  : globSync("scripts/__tests__/*.test.mjs").sort();
+  ? forwarded.map((file) => resolve(repoRoot, file))
+  : globSync("scripts/__tests__/*.test.mjs", { cwd: repoRoot }).sort().map((file) => resolve(repoRoot, file));
+
+if (testFiles.length === 0) {
+  console.error("[run-script-tests] no script test files matched");
+  process.exit(1);
+}
 
 const child = spawn(process.execPath, ["--test", ...testFiles], {
   stdio: "inherit",
+  cwd: repoRoot,
 });
 
 child.on("exit", (code, signal) => {

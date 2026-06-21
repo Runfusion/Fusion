@@ -166,6 +166,26 @@ jobs:
       - name: Assert every dashboard test file is gated or skip-listed
         run: node scripts/check-test-inventory.mjs --dashboard-curated
 
+  line-count-audit:
+    name: Line-count audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          skip-install: "true"
+
+      # FNXC:TestInfrastructure 2026-06-21-10:26:
+      # Keep line-count drift visible in automated post-merge signal without restoring it to the blocking PR gate.
+      # The guard is intentionally absent from pretest/pr-checks so task verification and merge progress are not blocked by file-size cleanup work.
+      - name: Run line-count audit
+        continue-on-error: true
+        run: pnpm check:line-count
+
   # The engine-slow tier (src/**/*.slow.test.ts) runs here with a non-empty
   # execution assertion, so a glob/config drift that silently empties the tier
   # fails this workflow instead of passing vacuously. Engine slow tests do real
