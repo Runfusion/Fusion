@@ -25,6 +25,35 @@ function extractRuleBlock(css: string, selector: string): string {
   return match?.[1] ?? "";
 }
 
+function extractAtRuleBlocks(css: string, atRule: string): string[] {
+  const blocks: string[] = [];
+  let start = css.indexOf(atRule);
+
+  while (start !== -1) {
+    const open = css.indexOf("{", start);
+    if (open === -1) break;
+
+    let depth = 1;
+    let cursor = open + 1;
+    while (cursor < css.length && depth > 0) {
+      if (css[cursor] === "{") depth++;
+      if (css[cursor] === "}") depth--;
+      cursor++;
+    }
+
+    blocks.push(css.slice(open + 1, cursor - 1));
+    start = css.indexOf(atRule, cursor);
+  }
+
+  return blocks;
+}
+
+function extractRuleBlockFromAtRule(css: string, atRule: string, selector: string): string {
+  return extractAtRuleBlocks(css, atRule)
+    .map((block) => extractRuleBlock(block, selector))
+    .find((block) => block !== "") ?? "";
+}
+
 function expectRootGrowContract(css: string, selector: string) {
   const rootBlock = extractRuleBlock(css, selector);
 
@@ -48,6 +77,34 @@ describe("GoalsView", () => {
   it("grows the root container to fill the project-content flex row", () => {
     expectRootGrowContract(loadAllAppCss(), ".goals-view");
     expectRootGrowContract(loadAllAppCssBaseOnly(), ".goals-view");
+  });
+
+  it("keeps goal card action controls top-aligned instead of stretched", () => {
+    const css = loadAllAppCss();
+    const baseCss = loadAllAppCssBaseOnly();
+
+    const cardBlock = extractRuleBlock(css, ".goals-card");
+    const baseCardBlock = extractRuleBlock(baseCss, ".goals-card");
+    const actionsBlock = extractRuleBlock(css, ".goals-card-actions");
+    const baseActionsBlock = extractRuleBlock(baseCss, ".goals-card-actions");
+
+    expect(cardBlock).toMatch(/align-items\s*:\s*flex-start/);
+    expect(baseCardBlock).toMatch(/align-items\s*:\s*flex-start/);
+    expect(actionsBlock).toMatch(/align-self\s*:\s*flex-start/);
+    expect(baseActionsBlock).toMatch(/align-self\s*:\s*flex-start/);
+    expect(baseCardBlock).not.toMatch(/align-items\s*:\s*stretch/);
+  });
+
+  it("stacks goal cards at tablet widths before the three zones cramp", () => {
+    const css = loadAllAppCss();
+    const tabletCardBlock = extractRuleBlockFromAtRule(css, "@media (min-width: 769px) and (max-width: 1024px)", ".goals-card");
+    const mobileCardBlock = extractRuleBlockFromAtRule(css, "@media (max-width: 768px)", ".goals-card");
+    const baseCardBlock = extractRuleBlock(loadAllAppCssBaseOnly(), ".goals-card");
+
+    expect(tabletCardBlock).toMatch(/flex-direction\s*:\s*column/);
+    expect(tabletCardBlock).toMatch(/align-items\s*:\s*stretch/);
+    expect(mobileCardBlock).toMatch(/flex-direction\s*:\s*column/);
+    expect(baseCardBlock).not.toMatch(/flex-direction\s*:\s*column/);
   });
 
   beforeEach(() => {

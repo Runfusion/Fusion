@@ -100,9 +100,13 @@ FN-6789 mounts Goals as a flex child of .project-content; grow, zero min-width, 
   gap: var(--space-md);
 }
 
+/*
+FNXC:GoalsViewStyling 2026-06-20-12:00:
+FN-6828 keeps Goals action controls and linked-mission panels at intrinsic height on wide cards instead of stretching them to the card height, while tablet widths stack the three card zones before columns cramp or clip.
+*/
 .goals-card {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-md);
   scroll-margin-top: var(--space-xl);
@@ -168,6 +172,7 @@ FN-6789 mounts Goals as a flex child of .project-content; grow, zero min-width, 
 
 .goals-card-actions {
   display: flex;
+  align-self: flex-start;
   gap: var(--space-sm);
 }
 
@@ -250,6 +255,34 @@ FN-6789 mounts Goals as a flex child of .project-content; grow, zero min-width, 
 
 .goals-empty {
   color: var(--text-muted);
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .goals-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .goals-card-actions {
+    align-self: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .goals-linked-missions {
+    padding-left: 0;
+    padding-top: var(--space-md);
+    border-left: 0;
+    border-top: calc(var(--space-xs) / 4) solid var(--border);
+  }
+
+  .goals-linked-missions-controls {
+    align-items: stretch;
+  }
+
+  .goals-linked-missions-link-button,
+  .goals-linked-missions-picker {
+    width: 100%;
+  }
 }
 
 @media (max-width: 768px) {
