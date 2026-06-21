@@ -1,4 +1,15 @@
 #!/usr/bin/env node
+/*
+FNXC:CI 2026-06-21-00:04:
+New source files must not be born as god-files. This guard caps new files under
+packages/scripts/plugins at MAX_LINES (2000) lines to keep the codebase
+splittable and reviewable. The 106 files already over the cap can't be
+refactored in one PR, so they are grandfathered through a ratchet baseline
+(line-count-baseline.json): each is pinned to its current count and may shrink
+but never grow, applying steady downward pressure without blocking unrelated
+work. Generated/lock/locale/.d.ts files are out of scope so the guard only
+governs hand-written source.
+*/
 // Repo-wide guard: hand-written source files may not exceed a hard line-count
 // cap (MAX_LINES). This stops the next god-file from being born while leaving
 // today's known offenders to be refactored down over time.
@@ -18,7 +29,7 @@
 // after an intentional, reviewed change to the set of oversized files.
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 export const MAX_LINES = 2000;
 
@@ -91,11 +102,13 @@ export function evaluate(counts, baseline = loadBaseline()) {
 export function collectCounts(files = listTrackedSources()) {
   const counts = {};
   for (const filePath of files) {
+    // A tracked file that can't be read must fail the guard, not be skipped:
+    // silently continuing would let an unreadable file evade the cap (false pass).
     let content;
     try {
       content = readFileSync(filePath, "utf8");
-    } catch {
-      continue;
+    } catch (error) {
+      throw new Error(`[check-file-line-count] failed to read tracked file ${filePath}: ${error.message}`);
     }
     counts[filePath] = countLines(content);
   }
@@ -143,14 +156,14 @@ export function main(argv = process.argv.slice(2)) {
 
   const { violations, staleBaseline } = evaluate(counts);
 
+  // Any stale entry — shrunk, dropped under the cap, or deleted — means the
+  // baseline can ratchet down. Deleted-only entries must trigger this note too,
+  // otherwise removed files sit in the baseline forever with no prompt to prune.
   if (staleBaseline.length > 0) {
-    const shrunk = staleBaseline.filter((s) => s.reason !== "deleted");
-    if (shrunk.length > 0) {
-      console.error(
-        `[check-file-line-count] note: ${staleBaseline.length} baseline entr(ies) can be tightened ` +
-          "(files shrank or were removed). Run with --update to ratchet the baseline down.",
-      );
-    }
+    console.error(
+      `[check-file-line-count] note: ${staleBaseline.length} baseline entr(ies) can be tightened ` +
+        "(files shrank, dropped under the cap, or were deleted). Run with --update to ratchet the baseline down.",
+    );
   }
 
   if (violations.length === 0) return 0;

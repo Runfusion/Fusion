@@ -1,3 +1,12 @@
+/*
+FNXC:CI 2026-06-21-00:04:
+Tests for the line-count guardrail. Pin the behavior the guard promises: a new
+file at exactly MAX_LINES passes but one line over fails; grandfathered files may
+sit at or below their recorded ceiling but a single line of growth is a failure;
+and shrunk, under-cap, or deleted baseline entries surface as tightenable so the
+ratchet can only move down. Line counting must agree whether or not the file ends
+in a trailing newline.
+*/
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
