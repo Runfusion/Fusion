@@ -449,7 +449,13 @@ fn daemon [--port <port>] [--host <host>] [--token <token>] [--paused] [--intera
 
 ## `fn desktop`
 
-Launch the Fusion desktop app (Electron).
+<!--
+FNXC:DesktopCLI 2026-06-21-12:00:
+`fn desktop` now starts the same local AI engine lifecycle as CLI dashboard mode by default.
+Document `--paused` as automation-paused startup and explicitly note that desktop does not expose a `--no-engine` mode so users do not infer dashboard-only flags exist here.
+-->
+
+Launch the Fusion desktop app (Electron) with a local AI engine running by default, mirroring `fn dashboard` engine-on startup.
 
 ```bash
 fn desktop
@@ -461,8 +467,10 @@ fn desktop --interactive
 | Option | Description |
 |---|---|
 | `--dev` | Launch with hot-reload (connects to Vite dev server). |
-| `--paused` | Launch with automation paused. |
+| `--paused` | Launch with the AI engine paused (automation disabled). |
 | `--interactive` | Interactive port selection. |
+
+`fn desktop` does not support `--no-engine`. Unlike `fn dashboard`, which can run in dashboard/API-only mode, desktop always starts the local AI engine; use `--paused` when you want the engine process running without automation doing work.
 
 ---
 

@@ -25,16 +25,22 @@ By default it uses `http://localhost:5173`. Override with `FUSION_DASHBOARD_URL`
 
 ### Production-style desktop launch (from CLI)
 
+<!--
+FNXC:DesktopCLI 2026-06-21-12:00:
+Desktop CLI launch shares the local dashboard runtime path, so the docs must state that `fn desktop` starts the embedded dashboard server and the local AI engine by default.
+`--paused` keeps the engine process running but disables automation, and desktop must not imply a dashboard-only no-engine mode exists.
+-->
+
 ```bash
 fn desktop
 ```
 
-`fn desktop` builds desktop artifacts, starts an embedded dashboard server on an ephemeral port, and launches Electron with embedded renderer assets.
+`fn desktop` builds desktop artifacts, starts an embedded dashboard server plus the local AI engine on an ephemeral port, and launches Electron with embedded renderer assets.
 
 Useful flags:
 
 - `fn desktop --dev` — use dev renderer URL (`FUSION_DASHBOARD_URL` or `http://localhost:5173`)
-- `fn desktop --paused` — start with engine paused
+- `fn desktop --paused` — start with the AI engine paused (automation disabled)
 
 ## Renderer Architecture
 
@@ -431,8 +437,9 @@ The Windows desktop workflow (`.github/workflows/desktop-windows.yml`) supports 
 
 ### CLI Launch (`fn desktop`)
 1. Build desktop artifacts (unless `--dev`)
-2. Start embedded API server on ephemeral port
-3. Launch Electron:
+2. Start the embedded API server and local AI engine on an ephemeral port
+3. If `--paused` is set, keep the AI engine in an automation-paused state during startup
+4. Launch Electron:
    - **Production:** Uses embedded renderer assets, `getServerPort()` for API connection
    - **Development (`--dev`):** Uses `FUSION_DASHBOARD_URL` for live reload
 
