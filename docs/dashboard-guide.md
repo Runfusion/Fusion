@@ -31,6 +31,16 @@ The footer collapse toggle uses the same row styling as other sidebar items: exp
 
 On mobile viewports (`<=768px`), the sidebar is not rendered even when the default-on setting is enabled. The existing bottom `MobileNavBar` remains the navigation surface.
 
+## Right Dock (experimental, default on)
+
+The **Right Dock Panel** experiment is enabled by default. To disable it, open **Settings → Experimental Features** and turn off **Right Dock Panel**.
+
+When enabled on desktop or tablet project screens, the Header **More views** three-dots control becomes a right-panel toggle. It opens a persistent dock on the right side of the project content instead of the overflow dropdown, and the icon changes to communicate the panel toggle behavior. If Left Sidebar Navigation is also enabled and the Header view-toggle row is hidden, the same right-dock toggle remains available as a standalone Header icon.
+
+The dock toolbar includes Files plus the same overflow destinations that would appear in the Header overflow menu, including gated experimental/plugin views only when their own flags or plugins are active. The dock opens to **Files** by default, then restores the last selected dock view from browser storage on later visits. Each docked view has an expand button that opens the same view in a resizable modal, and both the dock width and expanded modal size persist across reloads.
+
+On mobile viewports, the Right Dock never renders. The compact Header overflow and bottom `MobileNavBar` keep their existing behavior even when the experiment is enabled.
+
 ## Deep Links
 
 Use deep links to open a specific task directly from notifications, chat, or external tools.

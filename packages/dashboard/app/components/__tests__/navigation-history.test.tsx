@@ -25,7 +25,7 @@ const defaultSettings: Settings = {
   worktreeInitCommand: "",
   testCommand: "",
   buildCommand: "",
-  experimentalFeatures: { insights: true, roadmap: true, skillsView: true, agentsView: true, evalsView: true, todoView: true },
+  experimentalFeatures: { insights: true, roadmap: true, skillsView: true, agentsView: true, evalsView: true, todoView: true, leftSidebarNav: false, rightDock: false },
 };
 
 const mockSubscribeSse = vi.fn((..._args: any[]) => vi.fn());

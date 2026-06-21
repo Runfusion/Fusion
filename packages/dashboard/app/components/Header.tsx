@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, Play, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock, Gauge } from "lucide-react";
+import { Settings, Play, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock, Gauge, PanelRight } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -110,6 +110,10 @@ export interface HeaderProps {
   mobileNavEnabled?: boolean;
   /** When true on non-mobile screens, persistent left sidebar owns primary view navigation. */
   leftSidebarNavActive?: boolean;
+  /** When true on tablet/desktop, the More views overflow trigger toggles the auxiliary right dock instead of a menu. */
+  rightDockActive?: boolean;
+  rightDockOpen?: boolean;
+  onToggleRightDock?: () => void;
   /** Available nodes for the node selector */
   availableNodes?: NodeConfig[];
   /** Currently selected node (null for local) */
@@ -119,7 +123,7 @@ export interface HeaderProps {
   /** Whether the current view is a remote node */
   isRemote?: boolean;
   /** Experimental feature flags controlling visibility of nav items. */
-  experimentalFeatures?: { insights?: boolean; memoryView?: boolean; devServer?: boolean; devServerView?: boolean; researchView?: boolean; evalsView?: boolean; goalsView?: boolean; leftSidebarNav?: boolean };
+  experimentalFeatures?: { insights?: boolean; memoryView?: boolean; devServer?: boolean; devServerView?: boolean; researchView?: boolean; evalsView?: boolean; goalsView?: boolean; leftSidebarNav?: boolean; rightDock?: boolean };
   pluginDashboardViews?: PluginDashboardViewEntry[];
   shellConnectionControl?: ReactNode;
 }
@@ -166,6 +170,9 @@ export function Header({
   shellHost = { kind: "browser" },
   mobileNavEnabled,
   leftSidebarNavActive = false,
+  rightDockActive = false,
+  rightDockOpen = false,
+  onToggleRightDock,
   availableNodes = [],
   currentNode,
   onSelectNode,
@@ -188,6 +195,7 @@ export function Header({
   The hidden Header view-toggle location becomes the workflow-control portal slot only when left sidebar navigation is active on tablet/desktop. Mobile and flag-off paths keep workflow controls inline so the board/list chrome remains byte-identical.
   */
   const hideHeaderViewNav = leftSidebarNavActive && !isMobile;
+  const shouldRouteMoreViewsToRightDock = rightDockActive && !isMobile && typeof onToggleRightDock === "function";
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [isNonMobileSearchOpen, setIsNonMobileSearchOpen] = useState(false);
   // Track when user has explicitly closed the search (used for toggle visibility)
@@ -948,6 +956,25 @@ export function Header({
           />
         )}
 
+        {/*
+        FNXC:Navigation 2026-06-21-00:00:
+        The default-on right dock changes the tablet/desktop More views affordance into a true panel toggle, so the icon must communicate a right panel and expose pressed/expanded state. When left-sidebar navigation hides Header view tabs, this standalone control keeps the dock reachable without duplicating the hidden overflow trigger; mobile and flag-off paths keep the legacy chevron menu.
+        */}
+        {hideHeaderViewNav && shouldRouteMoreViewsToRightDock && (
+          <button
+            type="button"
+            className="btn-icon header-right-dock-toggle"
+            onClick={onToggleRightDock}
+            title={t("header.toggleRightDock", "Toggle right dock")}
+            aria-label={t("header.toggleRightDock", "Toggle right dock")}
+            aria-pressed={rightDockOpen}
+            aria-expanded={rightDockOpen}
+            data-testid="view-toggle-overflow-trigger"
+          >
+            <PanelRight size={16} />
+          </button>
+        )}
+
         {/**
          * FNXC:Header 2026-06-21-00:00:
          * Desktop and tablet header search must render after the workflow portal slot so a populated WorkflowSwitcher appears left of the search icon while preserving the mobile search trigger's existing position and behavior.
@@ -1085,17 +1112,29 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${["research", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph", "stash-recovery", "todos"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view) ? " active" : ""}`}
-                  onClick={() => setIsViewOverflowOpen((prev) => !prev)}
-                  title={t("header.moreViews", "More views")}
-                  aria-label={t("header.moreViews", "More views")}
-                  aria-haspopup="menu"
-                  aria-expanded={isViewOverflowOpen}
+                  className={`view-toggle-btn${!shouldRouteMoreViewsToRightDock && (["research", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph", "stash-recovery", "todos"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
+                  onClick={() => {
+                    if (shouldRouteMoreViewsToRightDock) {
+                      setIsViewOverflowOpen(false);
+                      onToggleRightDock?.();
+                      return;
+                    }
+                    setIsViewOverflowOpen((prev) => !prev);
+                  }}
+                  title={shouldRouteMoreViewsToRightDock ? t("header.toggleRightDock", "Toggle right dock") : t("header.moreViews", "More views")}
+                  aria-label={shouldRouteMoreViewsToRightDock ? t("header.toggleRightDock", "Toggle right dock") : t("header.moreViews", "More views")}
+                  {...(shouldRouteMoreViewsToRightDock ? {
+                    "aria-pressed": rightDockOpen,
+                    "aria-expanded": rightDockOpen,
+                  } : {
+                    "aria-haspopup": "menu" as const,
+                    "aria-expanded": isViewOverflowOpen,
+                  })}
                   data-testid="view-toggle-overflow-trigger"
                 >
-                  <ChevronDown size={12} />
+                  {shouldRouteMoreViewsToRightDock ? <PanelRight size={16} /> : <ChevronDown size={12} />}
                 </button>
-                {isViewOverflowOpen && (
+                {!shouldRouteMoreViewsToRightDock && isViewOverflowOpen && (
                   <div
                     ref={viewOverflowRef}
                     className="view-toggle-overflow-menu"
@@ -1518,8 +1557,11 @@ export function Header({
           </div>
         )}
 
-        {/* Settings - always inline on desktop; engine controls now live in the footer status bar. */}
-        {!isCompact && (
+        {/*
+        FNXC:Navigation 2026-06-21-13:48:
+        Left sidebar navigation owns desktop Settings when active, so Header hides its duplicate icon to preserve a single titled Settings control for users and navigation-history tests.
+        */}
+        {!isCompact && !leftSidebarNavActive && (
           <button className="btn-icon" onClick={onOpenSettings} title={t("header.settings", "Settings")}>
             <Settings size={16} />
           </button>

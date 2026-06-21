@@ -1,0 +1,165 @@
+/*
+FNXC:Navigation 2026-06-21-00:00:
+The right dock CSS uses a mobile media query as a belt-and-suspenders guard only. The authoritative mobile gate is the JS `rightDockActive` value from `useViewportMode`, which also covers phone classes that a width-only query cannot classify reliably.
+*/
+.right-dock {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: min(100%, var(--right-dock-min-width, calc(var(--space-2xl) * 8)));
+  max-width: min(100%, var(--right-dock-max-width, calc(var(--space-2xl) * 22)));
+  min-height: 0;
+  background: var(--surface);
+  border-left: thin solid var(--border);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+
+.right-dock--with-footer {
+  padding-bottom: var(--executor-footer-height);
+}
+
+.right-dock__resize-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--space-xs) * -1);
+  z-index: 2;
+  width: var(--space-sm);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.right-dock__resize-handle::before {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--space-xs) - var(--btn-border-width));
+  width: var(--btn-border-width);
+  background: transparent;
+  content: "";
+  transition: background var(--transition-fast);
+}
+
+.right-dock__resize-handle:hover::before,
+.right-dock__resize-handle:focus-visible::before {
+  background: var(--todo);
+}
+
+.right-dock__resize-handle:focus-visible {
+  outline: none;
+}
+
+.right-dock__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-bottom: thin solid var(--border);
+}
+
+.right-dock__tabs,
+.right-dock__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.right-dock__tabs {
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.right-dock__tab {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.right-dock__tab--active,
+.right-dock__tab[aria-selected="true"] {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+
+.right-dock__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: thin solid var(--border);
+  color: var(--text);
+}
+
+.right-dock__title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+.right-dock__body > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.right-dock-expand-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(90vw, calc(var(--space-2xl) * 36));
+  height: min(85vh, calc(var(--space-2xl) * 24));
+  min-width: min(90vw, calc(var(--space-2xl) * 12));
+  min-height: min(85vh, calc(var(--space-2xl) * 10));
+  max-width: 95vw;
+  max-height: 90vh;
+  resize: both;
+  overflow: hidden;
+}
+
+.right-dock-expand-modal__header,
+.right-dock-expand-modal__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.right-dock-expand-modal__title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock-expand-modal__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+.right-dock-expand-modal__body > * {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .right-dock {
+    display: none;
+  }
+}

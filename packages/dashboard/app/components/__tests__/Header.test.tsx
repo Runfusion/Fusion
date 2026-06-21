@@ -256,6 +256,76 @@ describe("Header", () => {
       expect(screen.getByTestId("view-overflow-todos")).toBeInTheDocument();
     });
 
+    it.each(["desktop", "tablet"] as const)("routes More views to the right dock panel toggle on %s", (tier) => {
+      const onToggleRightDock = vi.fn();
+      const { rerender } = renderHeader({
+        onChangeView: noop,
+        rightDockActive: true,
+        rightDockOpen: false,
+        onToggleRightDock,
+      }, tier);
+
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger.querySelector(".lucide-panel-right")).toBeTruthy();
+      expect(trigger.querySelector(".lucide-chevron-down")).toBeNull();
+      expect(trigger).toHaveAttribute("aria-pressed", "false");
+      expect(trigger).not.toHaveAttribute("aria-haspopup");
+
+      fireEvent.click(trigger);
+      expect(onToggleRightDock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("menu", { name: "More views" })).toBeNull();
+
+      rerender(
+        <Header
+          onOpenSettings={noop}
+          onOpenGitHubImport={noop}
+          onChangeView={noop}
+          rightDockActive={true}
+          rightDockOpen={true}
+          onToggleRightDock={onToggleRightDock}
+        />,
+      );
+      expect(screen.getByTestId("view-toggle-overflow-trigger")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it.each(["desktop", "tablet"] as const)("keeps one standalone right dock toggle when left sidebar hides view nav on %s", (tier) => {
+      const onToggleRightDock = vi.fn();
+      renderHeader({
+        onChangeView: noop,
+        leftSidebarNavActive: true,
+        rightDockActive: true,
+        rightDockOpen: true,
+        onToggleRightDock,
+      }, tier);
+
+      const triggers = screen.getAllByTestId("view-toggle-overflow-trigger");
+      expect(triggers).toHaveLength(1);
+      expect(triggers[0].querySelector(".lucide-panel-right")).toBeTruthy();
+      expect(triggers[0]).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(triggers[0]);
+      expect(onToggleRightDock).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("menu", { name: "More views" })).toBeNull();
+    });
+
+    it("keeps the legacy chevron dropdown on mobile even when right dock props are present", () => {
+      const onToggleRightDock = vi.fn();
+      renderHeader({
+        onChangeView: noop,
+        mobileNavEnabled: false,
+        rightDockActive: true,
+        rightDockOpen: false,
+        onToggleRightDock,
+      }, "mobile");
+
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger.querySelector(".lucide-chevron-down")).toBeTruthy();
+      expect(trigger.querySelector(".lucide-panel-right")).toBeNull();
+      expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+      fireEvent.click(trigger);
+      expect(onToggleRightDock).not.toHaveBeenCalled();
+      expect(screen.getByRole("menu", { name: "More views" })).toBeInTheDocument();
+    });
+
     it("shows secrets in overflow and routes to secrets view", () => {
       const onChangeView = vi.fn();
       renderHeader({ onChangeView, view: "board" });

@@ -277,6 +277,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   evalsView: "Evals View",
   goalsView: "Goals View",
   leftSidebarNav: "Left Sidebar Navigation",
+  rightDock: "Right Dock Panel",
   sandbox: "Sandbox (command isolation)",
   chatRooms: "Chat Rooms",
   agentOnboarding: "Planning-style Agent Onboarding",
@@ -286,9 +287,9 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
 
 /*
 FNXC:Navigation 2026-06-21-00:00:
-The dashboard owns the left sidebar default-on rollout because the shared experimental-feature helper must keep default-off semantics for unrelated experiments. Keep this set local to Settings so the toggle checked-state matches App's `leftSidebarNav !== false` derivation without changing core behavior.
+The dashboard owns the left sidebar and right dock default-on rollout because the shared experimental-feature helper must keep default-off semantics for unrelated experiments. Keep this set local to Settings so toggle checked-state matches App's `leftSidebarNav !== false` and `rightDock !== false` derivations without changing core behavior.
 */
-const DEFAULT_ON_EXPERIMENTAL_FEATURES = new Set<string>(["leftSidebarNav"]);
+const DEFAULT_ON_EXPERIMENTAL_FEATURES = new Set<string>(["leftSidebarNav", "rightDock"]);
 
 const EXPERIMENTAL_FEATURE_LEGACY_ALIASES: Record<string, string> = {
   devServer: "devServerView",
@@ -297,15 +298,11 @@ const EXPERIMENTAL_FEATURE_LEGACY_ALIASES: Record<string, string> = {
 function getCanonicalExperimentalFeatureKey(key: string): string {
   return EXPERIMENTAL_FEATURE_LEGACY_ALIASES[key] ?? key;
 }
-
 function isExperimentalFeatureEnabled(features: Record<string, boolean>, key: string): boolean {
-  if (features[key] === true) {
-    return true;
-  }
-
-  return Object.entries(EXPERIMENTAL_FEATURE_LEGACY_ALIASES).some(
-    ([legacyKey, canonicalKey]) => canonicalKey === key && features[legacyKey] === true,
-  );
+  if (features[key] === true) return true;
+  if (features[key] === false) return false;
+  if (Object.entries(EXPERIMENTAL_FEATURE_LEGACY_ALIASES).some(([legacyKey, canonicalKey]) => canonicalKey === key && features[legacyKey] === true)) return true;
+  return DEFAULT_ON_EXPERIMENTAL_FEATURES.has(key);
 }
 
 function isDashboardExperimentalFeatureEnabled(features: Record<string, boolean>, key: string): boolean {

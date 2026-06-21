@@ -276,6 +276,59 @@ describe("Mobile Feature Access Regression Guard", () => {
     }
   });
 
+  it("right dock reroutes desktop and tablet More views without leaving the dropdown or chevron behind", () => {
+    for (const tier of ["desktop", "tablet"] as const) {
+      mockViewport(tier);
+      const onToggleRightDock = vi.fn();
+      const { unmount } = render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          mobileNavEnabled={false}
+          showAgentsTab={true}
+          rightDockActive={true}
+          rightDockOpen={false}
+          onToggleRightDock={onToggleRightDock}
+        />,
+      );
+
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger.querySelector(".lucide-panel-right")).toBeTruthy();
+      expect(trigger.querySelector(".lucide-chevron-down")).toBeNull();
+      fireEvent.click(trigger);
+      expect(onToggleRightDock).toHaveBeenCalledOnce();
+      expect(screen.queryByRole("menu", { name: "More views" })).toBeNull();
+      unmount();
+    }
+  });
+
+  it("right dock stays reachable as one standalone toggle when left sidebar nav is active", () => {
+    for (const tier of ["desktop", "tablet"] as const) {
+      mockViewport(tier);
+      const onToggleRightDock = vi.fn();
+      const { unmount } = render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          mobileNavEnabled={false}
+          showAgentsTab={true}
+          leftSidebarNavActive={true}
+          rightDockActive={true}
+          rightDockOpen={true}
+          onToggleRightDock={onToggleRightDock}
+        />,
+      );
+
+      const triggers = screen.getAllByTestId("view-toggle-overflow-trigger");
+      expect(triggers).toHaveLength(1);
+      expect(triggers[0].querySelector(".lucide-panel-right")).toBeTruthy();
+      expect(triggers[0]).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(triggers[0]);
+      expect(onToggleRightDock).toHaveBeenCalledOnce();
+      unmount();
+    }
+  });
+
   it("desktop and tablet header view navigation remains intact when left sidebar is inactive", () => {
     for (const tier of ["desktop", "tablet"] as const) {
       mockViewport(tier);
@@ -291,6 +344,31 @@ describe("Mobile Feature Access Regression Guard", () => {
       expect(screen.getByTitle("Board view")).toBeDefined();
       expect(screen.getByTitle("List view")).toBeDefined();
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
+      unmount();
+    }
+  });
+
+  it("right dock flag off keeps the desktop and tablet More views chevron dropdown", () => {
+    for (const tier of ["desktop", "tablet"] as const) {
+      mockViewport(tier);
+      const onToggleRightDock = vi.fn();
+      const { unmount } = render(
+        <Header
+          view="board"
+          onChangeView={vi.fn()}
+          mobileNavEnabled={false}
+          showAgentsTab={true}
+          rightDockActive={false}
+          rightDockOpen={false}
+          onToggleRightDock={onToggleRightDock}
+        />,
+      );
+
+      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
+      expect(trigger.querySelector(".lucide-chevron-down")).toBeTruthy();
+      fireEvent.click(trigger);
+      expect(onToggleRightDock).not.toHaveBeenCalled();
+      expect(screen.getByRole("menu", { name: "More views" })).toBeInTheDocument();
       unmount();
     }
   });

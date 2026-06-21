@@ -45,6 +45,7 @@ import {
 import type { SectionId } from "./components/SettingsModal";
 import { MobileNavBar } from "./components/MobileNavBar";
 import { LeftSidebarNav } from "./components/LeftSidebarNav";
+import { useRightDockController } from "./components/useRightDockController";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
@@ -1037,7 +1038,10 @@ function AppInner() {
   Left sidebar navigation is now the default primary navigation on non-mobile project screens. Keep `leftSidebarNav: false` as the explicit opt-out and keep mobile on the bottom navigation bar.
   */
   const leftSidebarNavEnabled = experimentalFeatures.leftSidebarNav !== false;
+  /* FNXC:Navigation 2026-06-21-00:00: The default-on right dock makes tablet/desktop More views toggle a persistent right panel unless settings store `rightDock: false`; mobile remains legacy. */
+  const rightDockEnabled = experimentalFeatures.rightDock !== false;
   const executorFooterVisible = viewMode === "project" && !!currentProject;
+  const rightDockActive = rightDockEnabled && !isMobile && executorFooterVisible;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && executorFooterVisible;
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;
   const agentsEnabled = true;
@@ -1919,6 +1923,7 @@ function AppInner() {
   // Top progress bar reflects any in-flight revalidation: projects, current-project, or tasks.
   // Add new sources here, not inside TopProgressBar.
   const isRevalidating = projectsLoading || currentProjectLoading || isStale;
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openFileInBrowser, openSettings: (section?: string) => modalManager.openSettings(section as SectionId), onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), workflowStepNameLookup, prAuthAvailable, autoMerge, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   return (
     <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
@@ -1974,6 +1979,7 @@ function AppInner() {
         projectId={currentProject?.id}
         mobileNavEnabled={isMobile}
         leftSidebarNavActive={sidebarActive}
+        rightDockActive={rightDockActive} rightDockOpen={rightDock.open} onToggleRightDock={rightDock.toggle}
         // Node switching props
         availableNodes={nodes}
         currentNode={currentNode}
@@ -1994,6 +2000,7 @@ function AppInner() {
           evalsView: evalsEnabled,
           goalsView: goalsEnabled,
           leftSidebarNav: leftSidebarNavEnabled,
+          rightDock: rightDockEnabled,
         }}
         pluginDashboardViews={pluginDashboardViews}
         shellConnectionControl={
@@ -2112,11 +2119,7 @@ function AppInner() {
           }}
         />
       )}
-      {/*
-      FNXC:Navigation 2026-06-19-00:00:
-      The left sidebar experiment wraps only the project content region on non-mobile project screens; mobile keeps MobileNavBar as the navigation owner and the flag leaves project-content unwrapped when inactive.
-      */}
-      <div className={`dashboard-project-shell${sidebarActive ? " dashboard-project-shell--with-sidebar" : ""}`} data-testid="dashboard-project-shell">
+      <div className={`dashboard-project-shell${sidebarActive ? " dashboard-project-shell--with-sidebar" : ""}${rightDockActive ? " dashboard-project-shell--with-right-dock" : ""}`} data-testid="dashboard-project-shell">
         {sidebarActive && (
           <LeftSidebarNav
             view={taskView}
@@ -2150,7 +2153,9 @@ function AppInner() {
         >
           {renderMainContent()}
         </div>
+        {rightDock.dock}
       </div>
+      {rightDock.modal}
       {executorFooterVisible && currentProject && (
         <ExecutorStatusBar
           tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
