@@ -194,7 +194,7 @@ describe("PWA configuration", () => {
     expect(swSource).toContain('addEventListener("install"');
     expect(swSource).toContain('addEventListener("fetch"');
     expect(swSource).toContain('addEventListener("activate"');
-    expect(swSource).toContain('const CACHE_NAME = "fusion-cache-v4";');
+    expect(swSource).toContain('const CACHE_NAME = "fusion-cache-v5";');
   });
 
   it("service worker bypasses SSE requests instead of trying to cache them", () => {
@@ -316,7 +316,7 @@ describe("PWA configuration", () => {
 
       expect(indexHtml).toContain('<link rel="icon" type="image/svg+xml" href="/logo.svg" />');
       expect(indexHtml).toContain('<link rel="apple-touch-icon" href="/icons/icon-192.png" />');
-      expect(swSource).toContain('const CACHE_NAME = "fusion-cache-v4";');
+      expect(swSource).toContain('const CACHE_NAME = "fusion-cache-v5";');
     });
   });
 });

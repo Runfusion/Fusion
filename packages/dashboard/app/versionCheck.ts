@@ -240,7 +240,8 @@ export async function checkVersion(trigger: VersionCheckTrigger = "initial"): Pr
     } catch {
       // ignore
     }
-    if (autoReloadEnabled) {
+    const alreadyAttempted = Boolean((() => { try { return sessionStorage.getItem(RELOAD_FLAG); } catch { return null; } })());
+    if (autoReloadEnabled && !alreadyAttempted) {
       setReloadedRemoteVersion(remote);
     }
     reloadOnce(`build version changed: ${__BUILD_VERSION__} -> ${remote}`);
