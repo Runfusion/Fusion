@@ -21,6 +21,10 @@ import type { AgentCapability, AgentPromptTemplate, AgentPromptsConfig } from ".
 // Built-in prompt text (canonical source for workflow seam prompts)
 // ---------------------------------------------------------------------------
 
+/*
+FNXC:ExecutorPrompt 2026-06-21-03:59:
+Agents must not run the full/workspace-wide test suite by default; targeted/package-scoped verification is the norm, full runs require explicit task/workflow opt-in.
+*/
 const EXECUTOR_PROMPT_TEXT = `You are a task execution agent for "fn", an AI-orchestrated task board.
 
 You are working in a git worktree isolated from the main branch. Your job is to implement the task described in the PROMPT.md specification you're given.
@@ -198,9 +202,10 @@ Lint, tests, and typecheck are also hard quality gates:
 For ALL test/lint/build/typecheck verification, use the \`fn_run_verification\` tool, NOT raw bash.
 The tool prevents your session from being killed by the inactivity watchdog during long compiles, and verification is time-bounded by default (project \`verificationCommandTimeoutMs\` when set, otherwise 300s package / 900s workspace, hard-capped at 1800s).
 
-- Prefer **targeted package-scoped** verification first: use direct Vitest execution with package-relative paths: \`pnpm --filter @fusion/<pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot\`. Do not use \`pnpm --filter @fusion/<pkg> test -- --run <files>\`; package test scripts can expand into broad quality suites before the filter is applied.
-- Marathon verification invocations (root \`pnpm test\`, \`pnpm test:full\`, \`pnpm verify:workspace\`, whole-package tests with no file filter, and repeat loops) are soft-capped by default. Use \`allowFullSuite: true\` only when the task explicitly requires a genuinely full run; the run still respects the hard timeout and emits progress heartbeats.
-- Run **workspace-scoped** verification (\`pnpm test\`, \`pnpm lint\`, \`pnpm build\` from root) only when it is explicitly required by the task/workflow or after impacted/package-scoped checks pass and you are doing final integration.
+- Default to **targeted package-scoped** verification: use direct Vitest execution with package-relative paths: \`pnpm --filter @fusion/<pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot\`. Do not use \`pnpm --filter @fusion/<pkg> test -- --run <files>\`; package test scripts can expand into broad quality suites before the filter is applied.
+- Do NOT run the full/workspace-wide test suite as your normal verification path. This prohibition includes root \`pnpm test\`, \`pnpm test:full\`, \`pnpm verify:workspace\`, whole-package tests with no file filter, and repeat loops.
+- A full/workspace-wide run is allowed ONLY when the task or workflow explicitly requires it. In that case, use \`fn_run_verification\` with \`allowFullSuite: true\`; the marathon soft-cap and hard timeout still apply, and the run still emits progress heartbeats.
+- Run **workspace-scoped non-test gates** (\`pnpm lint\`, \`pnpm build\`, and typecheck commands from root) when required for completion, but keep test verification targeted unless explicit task/workflow instructions require a full run.
 - If you need to run \`pnpm install\` (e.g. you added a new package), use \`fn_run_verification\` with \`scope: "workspace"\` and \`timeoutSec: 600\`.
 - If a verification command times out, do NOT blindly retry — investigate. Check for hung subprocesses, infinite test loops, or tests waiting on missing dependencies. Use \`node_modules/.modules.yaml\` presence to confirm bootstrap.`;
 

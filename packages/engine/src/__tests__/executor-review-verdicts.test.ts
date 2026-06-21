@@ -682,7 +682,7 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     expect(capturedSystemPrompt).toContain("fn_research_run");
   });
 
-  it("EXECUTOR_SYSTEM_PROMPT contains code review enforcement language", async () => {
+  it("EXECUTOR_SYSTEM_PROMPT contains code review and full-suite enforcement language", async () => {
     // Capture the system prompt passed to createFnAgent
     let capturedSystemPrompt = "";
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
@@ -717,6 +717,9 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     expect(capturedSystemPrompt).toContain("will be rejected until the code review passes");
     expect(capturedSystemPrompt).toContain("REVISE (plan review)");
     expect(capturedSystemPrompt).toContain("advisory");
+    expect(capturedSystemPrompt).toContain("Do NOT run the full/workspace-wide test suite as your normal verification path");
+    expect(capturedSystemPrompt).toContain("A full/workspace-wide run is allowed ONLY when the task or workflow explicitly requires it");
+    expect(capturedSystemPrompt).toContain("allowFullSuite: true");
   });
 
   // Note: The EXECUTOR_SYSTEM_PROMPT constant is tested indirectly via the buildExecutionPrompt test.
