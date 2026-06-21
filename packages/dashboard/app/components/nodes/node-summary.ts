@@ -71,6 +71,26 @@ function joinModeSummary(config: Record<string, unknown>): string {
 }
 
 /**
+ * Normalize any of the skill-name forms the workflow editor encounters down to
+ * a single bare token (lowercased) for matching:
+ *   "compound-engineering:ce-work"          → "ce-work"  (plugin-namespaced node skillName)
+ *   "ce-work/SKILL.md"                       → "ce-work"  (catalog two-segment name)
+ *   "<source>::skills/ce-work/SKILL.md"      → "ce-work"  (catalog id)
+ *   "ce-work"                                → "ce-work"
+ * Builtin workflow nodes store a `pluginId:skill` skillName, but the discovered-
+ * skills catalog keys entries by two-segment name / `source::path` id, so an
+ * exact comparison never matches. Reducing both sides to the bare skill token
+ * lets them resolve.
+ */
+export function bareSkillName(name: string): string {
+  if (!name) return "";
+  const withoutSkillMd = name.replace(/\/SKILL\.md$/i, "");
+  const lastPathSegment = withoutSkillMd.split("/").pop() ?? withoutSkillMd;
+  const afterNamespace = lastPathSegment.split(":").pop() ?? lastPathSegment;
+  return afterNamespace.toLowerCase();
+}
+
+/**
  * Map a node's `data.kind` + `data.config` to a short, single-line summary used
  * by the card-style node's summary row. Returns "" for kinds with no meaningful
  * summary (start/end/split/merge) so the card can skip the summary row.
@@ -116,8 +136,18 @@ export function nodeConfigSummary(
       if (executor === "skill") {
         const skillName = str(config.skillName);
         if (!skillName) return t("workflowNodes.summaryNotConfigured", "Not configured");
-        // skillName is stored as the skill's name; resolve by name or id.
-        const match = catalogs.skills?.find((s) => s.name === skillName || s.id === skillName);
+        // skillName may be stored namespaced (e.g. "compound-engineering:ce-work")
+        // while catalog entries use a two-segment name ("ce-work/SKILL.md") or a
+        // "<source>::path" id — bareSkillName() normalizes all forms so plugin-
+        // contributed and builtin-workflow skills resolve, not just exact matches.
+        const bare = bareSkillName(skillName);
+        const match = catalogs.skills?.find(
+          (s) =>
+            s.name === skillName ||
+            s.id === skillName ||
+            bareSkillName(s.name) === bare ||
+            bareSkillName(s.id) === bare,
+        );
         return match?.name || skillName;
       }
       if (executor === "cli") {

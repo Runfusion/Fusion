@@ -685,6 +685,9 @@ export async function runDaemon(opts: DaemonOptions = {}) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
+        // Surface plugin-contributed skills (e.g. compound-engineering ce-*) in
+        // the editor catalog; the package manager only scans disk.
+        getPluginSkills: () => pluginLoader.getPluginSkills(),
       })
     : undefined;
 

@@ -1551,6 +1551,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
+        // Surface plugin-contributed skills (e.g. compound-engineering ce-*) in
+        // the discovered-skills catalog so the workflow editor can resolve and
+        // display them. Lazy thunk: plugins finish loading before discovery runs.
+        getPluginSkills: () => pluginLoader.getPluginSkills(),
       })
     : undefined;
 

@@ -52,7 +52,7 @@ import { useAppSettings } from "../hooks/useAppSettings";
 import { isMobileViewport, useViewportMode } from "../hooks/useViewportMode";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { WorkflowEditorCatalogContext } from "./nodes/WorkflowEditorCatalogContext";
-import type { NodeSummaryCatalogs } from "./nodes/node-summary";
+import { bareSkillName, type NodeSummaryCatalogs } from "./nodes/node-summary";
 import {
   irToFlow,
   flowToIr,
@@ -3419,20 +3419,32 @@ function InnerEditor({
                     );
                   })()}
 
-                  {currentExecutor === "skill" && (
-                    <label className="wf-field">
-                      <span>{t("workflowEditor.skill", "Skill")}</span>
-                      <select
-                        value={String(selectedNode.data.config?.skillName ?? "")}
-                        onChange={(e) => updateSelectedData({ config: { skillName: e.target.value || undefined } })}
-                      >
-                        <option value="">{t("workflowEditor.selectSkill", "— select skill —")}</option>
-                        {skills.map((s) => (
-                          <option key={s.id} value={s.name}>{s.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                  {currentExecutor === "skill" && (() => {
+                    // The stored skillName may be namespaced (e.g.
+                    // "compound-engineering:ce-work") while the <option> values are
+                    // the catalog's two-segment names ("ce-work/SKILL.md"). Resolve
+                    // through bareSkillName so the matching option shows as selected
+                    // instead of falling back to "— select skill —".
+                    const rawSkill = String(selectedNode.data.config?.skillName ?? "");
+                    const matchedSkill = rawSkill
+                      ? skills.find((s) => bareSkillName(s.name) === bareSkillName(rawSkill))
+                      : undefined;
+                    const selectedSkillValue = matchedSkill ? matchedSkill.name : rawSkill;
+                    return (
+                      <label className="wf-field">
+                        <span>{t("workflowEditor.skill", "Skill")}</span>
+                        <select
+                          value={selectedSkillValue}
+                          onChange={(e) => updateSelectedData({ config: { skillName: e.target.value || undefined } })}
+                        >
+                          <option value="">{t("workflowEditor.selectSkill", "— select skill —")}</option>
+                          {skills.map((s) => (
+                            <option key={s.id} value={s.name}>{s.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })()}
 
                   {currentExecutor === "cli" && (
                     <>

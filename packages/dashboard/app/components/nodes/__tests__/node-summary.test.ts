@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nodeConfigSummary, type NodeSummaryCatalogs } from "../node-summary";
+import { bareSkillName, nodeConfigSummary, type NodeSummaryCatalogs } from "../node-summary";
 import type { WorkflowFlowNodeData, WorkflowEditorNodeKind } from "../WorkflowNodeTypes";
 
 function node(kind: WorkflowEditorNodeKind, config: Record<string, unknown> = {}): WorkflowFlowNodeData {
@@ -48,6 +48,35 @@ describe("nodeConfigSummary", () => {
       catalogs,
     );
     expect(summary).toBe("deep-research");
+  });
+
+  it("skill executor → resolves a plugin-namespaced skillName to the catalog's bare name", () => {
+    const catalogs: NodeSummaryCatalogs = { skills: [{ id: "p::skills/ce-work/SKILL.md", name: "ce-work" }] };
+    const summary = nodeConfigSummary(
+      node("prompt", { executor: "skill", skillName: "compound-engineering:ce-work" }),
+      catalogs,
+    );
+    expect(summary).toBe("ce-work");
+  });
+
+  it("skill executor → resolves a namespaced skillName against a two-segment catalog name", () => {
+    const catalogs: NodeSummaryCatalogs = {
+      skills: [{ id: "src::skills/ce-work/SKILL.md", name: "ce-work/SKILL.md" }],
+    };
+    const summary = nodeConfigSummary(
+      node("prompt", { executor: "skill", skillName: "compound-engineering:ce-work" }),
+      catalogs,
+    );
+    expect(summary).toBe("ce-work/SKILL.md");
+  });
+
+  it("skill executor → falls back to raw skillName when no catalog entry matches", () => {
+    const catalogs: NodeSummaryCatalogs = { skills: [{ id: "s1", name: "something-else" }] };
+    const summary = nodeConfigSummary(
+      node("prompt", { executor: "skill", skillName: "compound-engineering:ce-work" }),
+      catalogs,
+    );
+    expect(summary).toBe("compound-engineering:ce-work");
   });
 
   it("cli command executor → truncated command", () => {
@@ -185,5 +214,19 @@ describe("nodeConfigSummary", () => {
   it("uses the provided translate function for structural phrases", () => {
     const t = (key: string) => `T:${key}`;
     expect(nodeConfigSummary(node("prompt", {}), {}, t)).toBe("T:workflowNodes.summaryNotConfigured");
+  });
+});
+
+describe("bareSkillName", () => {
+  it("reduces every skill-name form to the same bare token", () => {
+    expect(bareSkillName("compound-engineering:ce-work")).toBe("ce-work");
+    expect(bareSkillName("ce-work/SKILL.md")).toBe("ce-work");
+    expect(bareSkillName("compound-engineering::skills/ce-work/SKILL.md")).toBe("ce-work");
+    expect(bareSkillName("ce-work")).toBe("ce-work");
+  });
+
+  it("is case-insensitive and handles empty input", () => {
+    expect(bareSkillName("Compound-Engineering:CE-Work")).toBe("ce-work");
+    expect(bareSkillName("")).toBe("");
   });
 });
