@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
+import { ApiError } from "../api-error.js";
 import { createApiRoutes } from "../routes.js";
 import {
   getProjectIdFromRequest as getProjectIdFromRouteRequest,
@@ -41,6 +42,7 @@ import { __setAgentReflectionServiceForTests } from "../routes/register-agent-re
 
 // Mock @fusion/core for gh CLI auth checks
 const mockCentralListProjects = vi.fn().mockResolvedValue([]);
+const mockCentralGetNode = vi.fn();
 const mockCentralInit = vi.fn().mockResolvedValue(undefined);
 const mockCentralClose = vi.fn().mockResolvedValue(undefined);
 const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
@@ -51,6 +53,7 @@ const {
   mockExecFile,
   mockReloadExemptTools,
   mockGetExemptToolNames,
+  mockFetchFromRemoteNode,
 } = vi.hoisted(() => ({
   mockPerformUpdateCheck: vi.fn(),
   mockClearUpdateCheckCache: vi.fn(),
@@ -58,6 +61,7 @@ const {
   mockExecFile: vi.fn(),
   mockReloadExemptTools: vi.fn(),
   mockGetExemptToolNames: vi.fn().mockReturnValue(["read", "find"]),
+  mockFetchFromRemoteNode: vi.fn(),
 }));
 
 vi.mock("../update-check.js", async () => {
@@ -66,6 +70,14 @@ vi.mock("../update-check.js", async () => {
     ...actual,
     performUpdateCheck: mockPerformUpdateCheck,
     clearUpdateCheckCache: mockClearUpdateCheckCache,
+  };
+});
+
+vi.mock("../routes/register-settings-sync-helpers.js", async () => {
+  const actual = await vi.importActual<typeof import("../routes/register-settings-sync-helpers.js")>("../routes/register-settings-sync-helpers.js");
+  return {
+    ...actual,
+    fetchFromRemoteNode: mockFetchFromRemoteNode,
   };
 });
 
@@ -112,6 +124,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
       init: mockCentralInit,
       close: mockCentralClose,
       listProjects: mockCentralListProjects,
+      getNode: mockCentralGetNode,
       reconcileProjectStatuses: mockCentralReconcileProjectStatuses,
     }; }),
   });
@@ -565,6 +578,115 @@ describe("GET /api/system-stats", () => {
       },
     });
     expect(res.body.vitestLastAutoKillAt).toBeNull();
+  });
+
+  describe("GET /api/nodes/:id/system-stats", () => {
+    const remoteStatsPayload = {
+      systemStats: {
+        rss: 123,
+        heapUsed: 45,
+        heapTotal: 67,
+        heapLimit: 89,
+        external: 10,
+        arrayBuffers: 11,
+        cpuPercent: 12.5,
+        loadAvg: [1, 2, 3],
+        cpuCount: 8,
+        systemTotalMem: 1600,
+        systemFreeMem: 400,
+        pid: 999,
+        nodeVersion: "v26.0.0",
+        platform: "darwin/arm64",
+      },
+      taskStats: {
+        total: 2,
+        byColumn: { triage: 0, todo: 1, "in-progress": 1, "in-review": 0, done: 0, archived: 0 },
+        active: 1,
+        agents: { idle: 1, active: 0, running: 1, error: 0 },
+      },
+      vitestProcessCount: 0,
+      vitestLastAutoKillAt: null,
+    };
+
+    beforeEach(() => {
+      mockCentralGetNode.mockReset();
+      mockCentralInit.mockClear();
+      mockCentralClose.mockClear();
+      mockFetchFromRemoteNode.mockReset();
+      vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+      vi.spyOn(AgentStore.prototype, "listAgents").mockResolvedValue([]);
+    });
+
+    it("returns local stats for a local node id through the shared builder", async () => {
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([{ id: "FN-local", column: "in-progress" }]),
+        getFusionDir: vi.fn().mockReturnValue("/fake/default"),
+      });
+      mockCentralGetNode.mockResolvedValue({ id: "node-local", name: "local", type: "local", status: "online" });
+
+      const directRes = await GET(buildApp(store), "/api/system-stats");
+      const nodeRes = await GET(buildApp(store), "/api/nodes/node-local/system-stats");
+
+      expect(directRes.status).toBe(200);
+      expect(nodeRes.status).toBe(200);
+      expect(nodeRes.body).toEqual(
+        expect.objectContaining({
+          systemStats: expect.objectContaining({
+            rss: expect.any(Number),
+            heapUsed: expect.any(Number),
+            pid: expect.any(Number),
+          }),
+          taskStats: {
+            total: 1,
+            byColumn: { triage: 0, todo: 0, "in-progress": 1, "in-review": 0, done: 0, archived: 0 },
+            active: 1,
+            agents: { idle: 0, active: 0, running: 0, error: 0 },
+          },
+          vitestProcessCount: expect.any(Number),
+          vitestLastAutoKillAt: null,
+        }),
+      );
+      expect(Object.keys(nodeRes.body)).toEqual(Object.keys(directRes.body));
+      expect(mockFetchFromRemoteNode).not.toHaveBeenCalled();
+      expect(mockCentralClose).toHaveBeenCalled();
+    });
+
+    it("proxies remote node stats through the authenticated remote helper", async () => {
+      const remoteNode = { id: "node-remote", name: "Remote", type: "remote", url: "http://remote.test", apiKey: "secret", status: "online" };
+      mockCentralGetNode.mockResolvedValue(remoteNode);
+      mockFetchFromRemoteNode.mockResolvedValue(remoteStatsPayload);
+
+      const res = await GET(buildApp(createMockStore()), "/api/nodes/node-remote/system-stats");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(remoteStatsPayload);
+      expect(mockFetchFromRemoteNode).toHaveBeenCalledWith(remoteNode, "/api/system-stats");
+      expect(mockCentralClose).toHaveBeenCalled();
+    });
+
+    it("returns 404 when the selected node is unknown", async () => {
+      mockCentralGetNode.mockResolvedValue(null);
+
+      const res = await GET(buildApp(createMockStore()), "/api/nodes/missing/system-stats");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Node not found");
+      expect(mockFetchFromRemoteNode).not.toHaveBeenCalled();
+      expect(mockCentralClose).toHaveBeenCalled();
+    });
+
+    it("surfaces missing remote URL/api-key configuration as a non-500 route error", async () => {
+      const remoteNodeWithoutUrl = { id: "node-docker", name: "Managed Docker", type: "docker-managed", status: "offline" };
+      mockCentralGetNode.mockResolvedValue(remoteNodeWithoutUrl);
+      mockFetchFromRemoteNode.mockRejectedValue(new ApiError(400, "Node has no URL configured"));
+
+      const res = await GET(buildApp(createMockStore()), "/api/nodes/node-docker/system-stats");
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Node has no URL configured");
+      expect(mockFetchFromRemoteNode).toHaveBeenCalledWith(remoteNodeWithoutUrl, "/api/system-stats");
+      expect(mockCentralClose).toHaveBeenCalled();
+    });
   });
 });
 

@@ -28,7 +28,9 @@ vi.mock("../../../hooks/useAppSettings", () => ({
 
 vi.mock("../../../api", () => ({
   fetchSystemStats: () => Promise.resolve(systemStatsFixture()),
+  fetchNodeSystemStats: () => Promise.resolve(systemStatsFixture()),
   fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
+  fetchNodes: () => Promise.resolve([]),
   killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),
   updateGlobalSettings: () => Promise.resolve({}),
 }));

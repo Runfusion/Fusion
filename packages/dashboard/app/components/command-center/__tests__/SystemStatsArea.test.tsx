@@ -1,22 +1,38 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { SystemStatsArea } from "../areas/SystemStatsArea";
 
 const mockFetchSystemStats = vi.fn();
+const mockFetchNodeSystemStats = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
+const mockFetchNodes = vi.fn();
 const mockKillVitestProcesses = vi.fn();
 const mockUpdateGlobalSettings = vi.fn();
 
 vi.mock("../../../api", () => ({
   fetchSystemStats: (...args: unknown[]) => mockFetchSystemStats(...args),
+  fetchNodeSystemStats: (...args: unknown[]) => mockFetchNodeSystemStats(...args),
   fetchGlobalSettings: (...args: unknown[]) => mockFetchGlobalSettings(...args),
+  fetchNodes: (...args: unknown[]) => mockFetchNodes(...args),
   killVitestProcesses: (...args: unknown[]) => mockKillVitestProcesses(...args),
   updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
 }));
 
 const gb = 1024 * 1024 * 1024;
 const mb = 1024 * 1024;
+
+type NodeFixture = {
+  id: string;
+  name: string;
+  type: "local" | "remote";
+  status: "online";
+  maxConcurrent: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 type SystemStatsFixture = ReturnType<typeof baseStats>;
 type SystemStatsFixtureOverrides = Partial<Omit<SystemStatsFixture, "systemStats" | "taskStats">> & {
@@ -43,6 +59,10 @@ function sampleStats(overrides: SystemStatsFixtureOverrides = {}) {
       },
     },
   };
+}
+
+function nodeFixture(id: string, name: string, type: "local" | "remote"): NodeFixture {
+  return { id, name, type, status: "online", maxConcurrent: 1, createdAt: "", updatedAt: "" };
 }
 
 function baseStats() {
@@ -89,7 +109,9 @@ describe("SystemStatsArea", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchSystemStats.mockResolvedValue(sampleStats());
+    mockFetchNodeSystemStats.mockResolvedValue(sampleStats());
     mockFetchGlobalSettings.mockResolvedValue({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
+    mockFetchNodes.mockResolvedValue([]);
     mockKillVitestProcesses.mockResolvedValue({ killed: 2, pids: [111, 222] });
     mockUpdateGlobalSettings.mockResolvedValue({});
   });
@@ -211,6 +233,144 @@ describe("SystemStatsArea", () => {
     await waitFor(() => {
       expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ vitestKillThresholdPct: 99 });
     });
+  });
+
+  it("renders a node selector with local and remote nodes", async () => {
+    mockFetchNodes.mockResolvedValue([
+      nodeFixture("local-node", "Local", "local"),
+      nodeFixture("remote-a", "Remote A", "remote"),
+      nodeFixture("remote-b", "Remote B", "remote"),
+    ]);
+
+    render(<SystemStatsArea projectId="proj-1" />);
+
+    const selector = await screen.findByTestId("cc-system-node-select");
+    expect(selector).toHaveAccessibleName("Select system stats node");
+    expect(within(selector).getByRole("option", { name: "Local (this node)" })).toBeInTheDocument();
+    expect(within(selector).getByRole("option", { name: "Remote A" })).toBeInTheDocument();
+    expect(within(selector).getByRole("option", { name: "Remote B" })).toBeInTheDocument();
+    expect(screen.getByText("Viewing Local")).toBeInTheDocument();
+  });
+
+  it("routes remote stats and Vitest kills with the selected node id while local calls stay local", async () => {
+    mockFetchNodes.mockResolvedValue([
+      nodeFixture("local-node", "Local", "local"),
+      nodeFixture("remote-a", "Remote A", "remote"),
+    ]);
+
+    render(<SystemStatsArea projectId="proj-1" />);
+
+    const selector = await screen.findByTestId("cc-system-node-select");
+    await waitFor(() => {
+      expect(mockFetchSystemStats).toHaveBeenCalledWith("proj-1");
+    });
+    expect(mockFetchSystemStats).not.toHaveBeenCalledWith("proj-1", "local-node", "local-node");
+
+    mockFetchSystemStats.mockClear();
+    fireEvent.change(selector, { target: { value: "remote-a" } });
+
+    await waitFor(() => {
+      expect(mockFetchNodeSystemStats).toHaveBeenCalledWith("remote-a", "proj-1");
+    });
+    expect(mockFetchSystemStats).not.toHaveBeenCalledWith("proj-1", "remote-a", "local-node");
+    expect(screen.getByText("Viewing Remote A")).toBeInTheDocument();
+
+    const killButton = screen.getByTestId("cc-system-kill-vitest");
+    fireEvent.click(killButton);
+    fireEvent.click(killButton);
+
+    await waitFor(() => {
+      expect(mockKillVitestProcesses).toHaveBeenCalledWith("proj-1", "remote-a", "local-node");
+    });
+  });
+
+  it("shows a remote fetch error while keeping the node selector usable", async () => {
+    mockFetchNodes.mockResolvedValue([
+      nodeFixture("local-node", "Local", "local"),
+      nodeFixture("remote-a", "Remote A", "remote"),
+    ]);
+    mockFetchNodeSystemStats.mockRejectedValueOnce(new Error("remote offline"));
+
+    render(<SystemStatsArea projectId="proj-1" />);
+
+    const selector = await screen.findByTestId("cc-system-node-select");
+    await waitFor(() => expect(mockFetchSystemStats).toHaveBeenCalledWith("proj-1"));
+
+    fireEvent.change(selector, { target: { value: "remote-a" } });
+
+    expect(await screen.findByText("Latest refresh failed: remote offline")).toBeInTheDocument();
+    expect(screen.getByTestId("cc-system-node-select")).toBeInTheDocument();
+
+    mockFetchSystemStats.mockClear();
+    fireEvent.change(selector, { target: { value: "local-node" } });
+
+    await waitFor(() => expect(mockFetchSystemStats).toHaveBeenCalledWith("proj-1"));
+  });
+
+  it("resets the rolling sample buffer and re-fetches when switching nodes", async () => {
+    mockFetchNodes.mockResolvedValue([
+      nodeFixture("local-node", "Local", "local"),
+      nodeFixture("remote-a", "Remote A", "remote"),
+    ]);
+    mockFetchSystemStats
+      .mockResolvedValueOnce(sampleStats({ systemStats: { cpuPercent: 10, systemFreeMem: 9 * gb, heapUsed: 100 * mb } }))
+      .mockResolvedValueOnce(sampleStats({ systemStats: { cpuPercent: 20, systemFreeMem: 8 * gb, heapUsed: 200 * mb } }))
+      .mockResolvedValue(sampleStats({ systemStats: { cpuPercent: 30, systemFreeMem: 7 * gb, heapUsed: 300 * mb } }));
+    mockFetchNodeSystemStats.mockResolvedValue(sampleStats({ systemStats: { cpuPercent: 70, systemFreeMem: 3 * gb, heapUsed: 700 * mb } }));
+
+    const { container } = render(<SystemStatsArea projectId="proj-1" />);
+    const selector = await screen.findByTestId("cc-system-node-select");
+
+    await waitFor(() => {
+      expect(container.querySelectorAll("[data-testid='cc-system-cpu-trend'] .cc-sparkline-bar").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.change(selector, { target: { value: "remote-a" } });
+
+    await waitFor(() => {
+      expect(mockFetchNodeSystemStats).toHaveBeenCalledWith("remote-a", "proj-1");
+      expect(container.querySelectorAll("[data-testid='cc-system-cpu-trend'] .cc-sparkline-bar")).toHaveLength(1);
+    });
+  });
+
+  it("hides the node selector for local-only, empty, and failed node lists while telemetry still loads", async () => {
+    mockFetchNodes.mockResolvedValueOnce([nodeFixture("local-node", "Local", "local")]);
+    const { unmount } = render(<SystemStatsArea projectId="proj-1" />);
+    await screen.findByTestId("cc-area-system");
+    await waitFor(() => expect(mockFetchNodes).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("cc-system-node-select")).toBeNull();
+    expect(mockFetchSystemStats).toHaveBeenCalledWith("proj-1");
+
+    unmount();
+    vi.clearAllMocks();
+    mockFetchSystemStats.mockResolvedValue(sampleStats());
+    mockFetchNodeSystemStats.mockResolvedValue(sampleStats());
+    mockFetchGlobalSettings.mockResolvedValue({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
+    mockFetchNodes.mockResolvedValueOnce([]);
+    const { unmount: unmountEmpty } = render(<SystemStatsArea projectId="proj-1" />);
+    await screen.findByTestId("cc-area-system");
+    await waitFor(() => expect(mockFetchNodes).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("cc-system-node-select")).toBeNull();
+    expect(mockFetchSystemStats).toHaveBeenCalledWith("proj-1");
+
+    unmountEmpty();
+    vi.clearAllMocks();
+    mockFetchSystemStats.mockResolvedValue(sampleStats());
+    mockFetchNodeSystemStats.mockResolvedValue(sampleStats());
+    mockFetchGlobalSettings.mockResolvedValue({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
+    mockFetchNodes.mockRejectedValueOnce(new Error("nodes unavailable"));
+    render(<SystemStatsArea projectId="proj-2" />);
+    await screen.findByTestId("cc-area-system");
+    await waitFor(() => expect(mockFetchNodes).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("cc-system-node-select")).toBeNull();
+    expect(mockFetchSystemStats).toHaveBeenCalledWith("proj-2");
+  });
+
+  it("keeps the node selector inside the mobile System-area layout contract", () => {
+    const css = readFileSync(join(process.cwd(), "app/components/command-center/areas/SystemStatsArea.css"), "utf8");
+    expect(css).toContain("@media (max-width: 768px)");
+    expect(css).toContain(".cc-system-node-selector");
+    expect(css).toContain("inline-size: 100%");
   });
 
   it("polls every five seconds and clears the interval on unmount", async () => {

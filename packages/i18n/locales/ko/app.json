@@ -6959,6 +6959,10 @@
     "resultSuccess": "성공"
   },
   "systemStats": {
+    "agentActive": "active",
+    "agentError": "error",
+    "agentIdle": "idle",
+    "agentRunning": "running",
     "autoKillLabel": "메모리 압박 시 vitest 자동 종료",
     "autoRefresh": "자동 새로 고침 · 5초",
     "confirmKill": "종료를 확인하시겠습니까?",
@@ -6977,6 +6981,10 @@
     "killThresholdSliderAriaLabel": "종료 임계값 슬라이더 (%)",
     "killVitest": "Vitest 프로세스 종료",
     "lastAutoKill": "마지막 자동 종료: {{time}}",
+    "localNodeFallback": "Local node",
+    "nodeSelectorAriaLabel": "Select system stats node",
+    "nodeSelectorLabel": "Node",
+    "nodeStatusSuffix": "{{status}}",
     "notYet": "아직 없음",
     "refreshAriaLabel": "시스템 통계 새로 고침",
     "refreshTitle": "새로 고침",
@@ -7000,7 +7008,9 @@
     "sectionTasks": "작업",
     "sectionTasksAriaLabel": "작업 통계",
     "sectionVitest": "Vitest 컨트롤",
+    "thisNodeSuffix": "this node",
     "updatedAt": "{{time}} 업데이트됨",
+    "viewingNode": "Viewing {{node}}",
     "vitestProcesses": "Vitest 프로세스",
     "waitingFirstUpdate": "첫 업데이트 대기 중"
   },

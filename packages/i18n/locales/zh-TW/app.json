@@ -6959,6 +6959,10 @@
     "resultSuccess": "成功"
   },
   "systemStats": {
+    "agentActive": "active",
+    "agentError": "error",
+    "agentIdle": "idle",
+    "agentRunning": "running",
     "autoKillLabel": "記憶體壓力時自動終止 vitest",
     "autoRefresh": "自動重新整理 · 5s",
     "confirmKill": "確認終止？",
@@ -6977,6 +6981,10 @@
     "killThresholdSliderAriaLabel": "終止閾值滑桿 (%)",
     "killVitest": "終止 Vitest 程序",
     "lastAutoKill": "上次自動終止：{{time}}",
+    "localNodeFallback": "Local node",
+    "nodeSelectorAriaLabel": "Select system stats node",
+    "nodeSelectorLabel": "Node",
+    "nodeStatusSuffix": "{{status}}",
     "notYet": "尚未",
     "refreshAriaLabel": "重新整理系統統計",
     "refreshTitle": "重新整理",
@@ -7000,7 +7008,9 @@
     "sectionTasks": "任務",
     "sectionTasksAriaLabel": "任務統計",
     "sectionVitest": "Vitest 控制",
+    "thisNodeSuffix": "this node",
     "updatedAt": "已更新 {{time}}",
+    "viewingNode": "Viewing {{node}}",
     "vitestProcesses": "Vitest 程序",
     "waitingFirstUpdate": "等待首次更新"
   },

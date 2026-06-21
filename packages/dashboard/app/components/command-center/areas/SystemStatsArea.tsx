@@ -3,12 +3,14 @@ import { useTranslation } from "react-i18next";
 import { RefreshCw, ShieldAlert, Skull } from "lucide-react";
 import {
   fetchGlobalSettings,
+  fetchNodeSystemStats,
   fetchSystemStats,
   killVitestProcesses,
   updateGlobalSettings,
   type KillVitestResponse,
   type SystemStatsResponse,
 } from "../../../api";
+import { useNodes } from "../../../hooks/useNodes";
 import { Bar, type BarDatum } from "../charts/Bar";
 import { RadialGauge } from "../charts/RadialGauge";
 import { Sparkline } from "../charts/Sparkline";
@@ -125,11 +127,35 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
   const [killResult, setKillResult] = useState<KillVitestResponse | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const { nodes } = useNodes();
 
+  const localNodeId = useMemo(() => nodes.find((node) => node.type === "local")?.id, [nodes]);
+  const effectiveSelectedNodeId = selectedNodeId ?? localNodeId ?? null;
+  const selectedNode = nodes.find((node) => node.id === effectiveSelectedNodeId) ?? null;
+  const shouldRenderNodeSelector = nodes.length > 1;
+  const activeNodeName = selectedNode?.name ?? t("systemStats.localNodeFallback", "Local node");
+  const formatNodeOptionLabel = useCallback((node: (typeof nodes)[number]) => {
+    const suffixes = [];
+    if (node.type === "local") {
+      suffixes.push(t("systemStats.thisNodeSuffix", "this node"));
+    }
+    if (node.status && node.status !== "online") {
+      suffixes.push(t("systemStats.nodeStatusSuffix", "{{status}}", { status: node.status }));
+    }
+    return suffixes.length > 0 ? `${node.name} (${suffixes.join(" · ")})` : node.name;
+  }, [nodes, t]);
+
+  /*
+  FNXC:CommandCenter 2026-06-21-00:00:
+  The System area node selector must reuse useNodes, default to local telemetry, hide when no remote choice exists, fetch remote telemetry through fetchNodeSystemStats, and clear rolling samples whenever the selected host changes so CPU, memory, heap, workload, and Vitest controls never mix data across nodes.
+  */
   const loadStats = useCallback(async (options?: { preserveKillResult?: boolean }) => {
     setLoading(true);
     try {
-      const response = await fetchSystemStats(projectId);
+      const response = effectiveSelectedNodeId && effectiveSelectedNodeId !== localNodeId
+        ? await fetchNodeSystemStats(effectiveSelectedNodeId, projectId)
+        : await fetchSystemStats(projectId);
       setStats(response);
       setSamples((prev) => [...prev, sampleFromStats(response)].slice(-MAX_SYSTEM_SAMPLES));
       setError(null);
@@ -142,7 +168,7 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
     } finally {
       setLoading(false);
     }
-  }, [projectId, t]);
+  }, [effectiveSelectedNodeId, localNodeId, projectId, t]);
 
   useEffect(() => {
     void loadStats();
@@ -153,6 +179,17 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
       window.clearInterval(timer);
     };
   }, [loadStats]);
+
+  useEffect(() => {
+    setSelectedNodeId((current) => (current && nodes.some((node) => node.id === current) ? current : null));
+  }, [nodes]);
+
+  useEffect(() => {
+    setSamples([]);
+    setError(null);
+    setKillResult(null);
+    setConfirmKill(false);
+  }, [effectiveSelectedNodeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,7 +243,9 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
 
     setIsKilling(true);
     try {
-      const result = await killVitestProcesses(projectId);
+      const result = effectiveSelectedNodeId && effectiveSelectedNodeId !== localNodeId
+        ? await killVitestProcesses(projectId, effectiveSelectedNodeId, localNodeId)
+        : await killVitestProcesses(projectId);
       setKillResult(result);
       setConfirmKill(false);
       await loadStats({ preserveKillResult: true });
@@ -215,7 +254,7 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
     } finally {
       setIsKilling(false);
     }
-  }, [confirmKill, isKilling, loadStats, projectId, t]);
+  }, [confirmKill, effectiveSelectedNodeId, isKilling, loadStats, localNodeId, projectId, t]);
 
   const system = stats?.systemStats;
   const taskStats = stats?.taskStats;
@@ -298,6 +337,31 @@ export function SystemStatsArea({ projectId }: { projectId?: string }) {
         <div className="cc-area-section-header">
           <h3 className="cc-area-section-title">{t("commandCenter.system.healthTitle", "Live system health")}</h3>
           <div className="cc-system-refresh" aria-live="polite">
+            {shouldRenderNodeSelector ? (
+              <label className="cc-system-node-selector" htmlFor="cc-system-node-select">
+                <span>{t("systemStats.nodeSelectorLabel", "Node")}</span>
+                <select
+                  id="cc-system-node-select"
+                  className="input"
+                  data-testid="cc-system-node-select"
+                  aria-label={t("systemStats.nodeSelectorAriaLabel", "Select system stats node")}
+                  value={effectiveSelectedNodeId ?? ""}
+                  onChange={(event) => {
+                    setSamples([]);
+                    setKillResult(null);
+                    setConfirmKill(false);
+                    setSelectedNodeId(event.target.value || null);
+                  }}
+                >
+                  {nodes.map((node) => (
+                    <option key={node.id} value={node.id}>
+                      {formatNodeOptionLabel(node)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <span>{t("systemStats.viewingNode", "Viewing {{node}}", { node: activeNodeName })}</span>
             <span>{t("systemStats.autoRefresh", "Auto-refresh · 5s")}</span>
             <span>{refreshLabel}</span>
             <button

@@ -54,6 +54,7 @@ import {
   unauthorized,
 } from "./api-error.js";
 import { createPluginRouter, resolvePluginManifest } from "./plugin-routes.js";
+import { fetchFromRemoteNode } from "./routes/register-settings-sync-helpers.js";
 import { hermesRuntimeMetadata } from "@fusion-plugin-examples/hermes-runtime";
 import { openclawRuntimeMetadata } from "@fusion-plugin-examples/openclaw-runtime";
 
@@ -1517,93 +1518,132 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     return findVitestProcessIds();
   };
 
+  const collectSystemStatsResponse = async (req: Request) => {
+    const mem = process.memoryUsage();
+    const heapStats = v8.getHeapStatistics();
+    const load = os.loadavg();
+    const vitestProcessIds = await getVitestProcessIds();
+    const cpuPercent = getAppCpuPercent();
+
+    let totalTasks = 0;
+    let activeTasks = 0;
+    const byColumn: Record<string, number> = {
+      triage: 0,
+      todo: 0,
+      "in-progress": 0,
+      "in-review": 0,
+      done: 0,
+      archived: 0,
+    };
+    const agentCounts = { idle: 0, active: 0, running: 0, error: 0 };
+    let vitestLastAutoKillAt: string | null = null;
+
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+
+      const globalSettingsStore = scopedStore.getGlobalSettingsStore?.();
+      if (globalSettingsStore?.getSettings) {
+        const globalSettings = await globalSettingsStore.getSettings();
+        const candidate = (globalSettings as Record<string, unknown>).vitestLastAutoKillAt;
+        if (typeof candidate === "string" && candidate.length > 0) {
+          vitestLastAutoKillAt = candidate;
+        }
+      }
+
+      const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
+      totalTasks = tasks.length;
+
+      for (const task of tasks) {
+        byColumn[task.column] = (byColumn[task.column] ?? 0) + 1;
+        if (task.column === "in-progress" || task.column === "in-review") {
+          activeTasks += 1;
+        }
+      }
+
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+      const agents = await agentStore.listAgents();
+      for (const agent of agents) {
+        const state = agent.state as keyof typeof agentCounts;
+        if (state in agentCounts) {
+          agentCounts[state] += 1;
+        }
+      }
+    } catch {
+      // System stats should still be available even when project resolution/scoped store fails.
+    }
+
+    return {
+      systemStats: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        heapLimit: heapStats.heap_size_limit,
+        external: mem.external,
+        arrayBuffers: mem.arrayBuffers,
+        cpuPercent,
+        loadAvg: [load[0] ?? 0, load[1] ?? 0, load[2] ?? 0],
+        cpuCount: os.cpus().length,
+        systemTotalMem: os.totalmem(),
+        systemFreeMem: os.freemem(),
+        pid: process.pid,
+        nodeVersion: process.version,
+        platform: `${process.platform}/${process.arch}`,
+      },
+      taskStats: {
+        total: totalTasks,
+        byColumn,
+        active: activeTasks,
+        agents: agentCounts,
+      },
+      vitestProcessCount: vitestProcessIds.length,
+      vitestLastAutoKillAt,
+    };
+  };
+
   /**
    * GET /api/system-stats
    * Returns process/system metrics plus task and agent aggregates.
    */
   router.get("/system-stats", async (req, res) => {
     try {
-      const mem = process.memoryUsage();
-      const heapStats = v8.getHeapStatistics();
-      const load = os.loadavg();
-      const vitestProcessIds = await getVitestProcessIds();
-      const cpuPercent = getAppCpuPercent();
+      res.json(await collectSystemStatsResponse(req));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
 
-      let totalTasks = 0;
-      let activeTasks = 0;
-      const byColumn: Record<string, number> = {
-        triage: 0,
-        todo: 0,
-        "in-progress": 0,
-        "in-review": 0,
-        done: 0,
-        archived: 0,
-      };
-      const agentCounts = { idle: 0, active: 0, running: 0, error: 0 };
-      let vitestLastAutoKillAt: string | null = null;
-
+  /*
+  FNXC:CommandCenter 2026-06-21-00:00:
+  The Command Center System area can view per-node stats by defaulting to this local process and proxying remote selections to the node's own /api/system-stats endpoint through the existing authenticated remote-node helper.
+  Keep this route in routes.ts, rather than a domain registrar, because it intentionally reuses the local getAppCpuPercent/getVitestProcessIds closures and the shared local stats builder.
+  */
+  router.get("/nodes/:id/system-stats", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      let node: Awaited<ReturnType<typeof central.getNode>>;
+      await central.init();
       try {
-        const { store: scopedStore } = await getProjectContext(req);
-
-        const globalSettingsStore = scopedStore.getGlobalSettingsStore?.();
-        if (globalSettingsStore?.getSettings) {
-          const globalSettings = await globalSettingsStore.getSettings();
-          const candidate = (globalSettings as Record<string, unknown>).vitestLastAutoKillAt;
-          if (typeof candidate === "string" && candidate.length > 0) {
-            vitestLastAutoKillAt = candidate;
-          }
-        }
-
-        const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
-        totalTasks = tasks.length;
-
-        for (const task of tasks) {
-          byColumn[task.column] = (byColumn[task.column] ?? 0) + 1;
-          if (task.column === "in-progress" || task.column === "in-review") {
-            activeTasks += 1;
-          }
-        }
-
-        const { AgentStore } = await import("@fusion/core");
-        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
-        await agentStore.init();
-        const agents = await agentStore.listAgents();
-        for (const agent of agents) {
-          const state = agent.state as keyof typeof agentCounts;
-          if (state in agentCounts) {
-            agentCounts[state] += 1;
-          }
-        }
-      } catch {
-        // System stats should still be available even when project resolution/scoped store fails.
+        node = await central.getNode(req.params.id);
+      } finally {
+        await central.close();
       }
 
-      res.json({
-        systemStats: {
-          rss: mem.rss,
-          heapUsed: mem.heapUsed,
-          heapTotal: mem.heapTotal,
-          heapLimit: heapStats.heap_size_limit,
-          external: mem.external,
-          arrayBuffers: mem.arrayBuffers,
-          cpuPercent,
-          loadAvg: [load[0] ?? 0, load[1] ?? 0, load[2] ?? 0],
-          cpuCount: os.cpus().length,
-          systemTotalMem: os.totalmem(),
-          systemFreeMem: os.freemem(),
-          pid: process.pid,
-          nodeVersion: process.version,
-          platform: `${process.platform}/${process.arch}`,
-        },
-        taskStats: {
-          total: totalTasks,
-          byColumn,
-          active: activeTasks,
-          agents: agentCounts,
-        },
-        vitestProcessCount: vitestProcessIds.length,
-        vitestLastAutoKillAt,
-      });
+      if (!node) {
+        throw notFound("Node not found");
+      }
+
+      if (node.type === "local") {
+        res.json(await collectSystemStatsResponse(req));
+        return;
+      }
+
+      res.json(await fetchFromRemoteNode(node, "/api/system-stats"));
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

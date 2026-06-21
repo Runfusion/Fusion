@@ -17,7 +17,9 @@ This test renders the real useAppSettings hook rather than mocking it, so the ..
 */
 vi.mock("../../../api", () => ({
   fetchSystemStats: () => Promise.resolve(systemStatsFixture()),
+  fetchNodeSystemStats: () => Promise.resolve(systemStatsFixture()),
   fetchGlobalSettings: () => Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 }),
+  fetchNodes: () => Promise.resolve([]),
   fetchConfig: vi.fn().mockResolvedValue({ maxConcurrent: 2, rootDir: "/" }),
   fetchSettings: vi.fn().mockResolvedValue({ autoMerge: false, globalPause: false, enginePaused: false }),
   killVitestProcesses: () => Promise.resolve({ killed: 0, pids: [] }),

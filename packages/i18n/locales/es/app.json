@@ -6959,6 +6959,10 @@
     "resultSuccess": "Éxito"
   },
   "systemStats": {
+    "agentActive": "active",
+    "agentError": "error",
+    "agentIdle": "idle",
+    "agentRunning": "running",
     "autoKillLabel": "Terminar vitest automáticamente bajo presión de memoria",
     "autoRefresh": "Actualización automática · 5s",
     "confirmKill": "¿Confirmar cierre?",
@@ -6977,6 +6981,10 @@
     "killThresholdSliderAriaLabel": "Control deslizante del umbral de cierre (%)",
     "killVitest": "Terminar procesos de vitest",
     "lastAutoKill": "Último cierre automático: {{time}}",
+    "localNodeFallback": "Local node",
+    "nodeSelectorAriaLabel": "Select system stats node",
+    "nodeSelectorLabel": "Node",
+    "nodeStatusSuffix": "{{status}}",
     "notYet": "Aún no",
     "refreshAriaLabel": "Actualizar estadísticas del sistema",
     "refreshTitle": "Actualizar",
@@ -7000,7 +7008,9 @@
     "sectionTasks": "Tareas",
     "sectionTasksAriaLabel": "Estadísticas de tareas",
     "sectionVitest": "Controles de vitest",
+    "thisNodeSuffix": "this node",
     "updatedAt": "Actualizado {{time}}",
+    "viewingNode": "Viewing {{node}}",
     "vitestProcesses": "Procesos de vitest",
     "waitingFirstUpdate": "Esperando la primera actualización"
   },

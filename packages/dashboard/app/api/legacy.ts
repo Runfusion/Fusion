@@ -7213,13 +7213,23 @@ export interface GithubSourceIssueClosedAtBackfillResult {
   hasMore: boolean;
 }
 
+/*
+FNXC:CommandCenter 2026-06-21-00:00:
+The Command Center System area keeps the direct local /system-stats client and uses the explicit /nodes/:id/system-stats route for selected remote nodes so authenticated node proxying stays server-side and local project scoping is not forwarded across nodes.
+*/
 export function fetchSystemStats(projectId?: string): Promise<SystemStatsResponse> {
   return api<SystemStatsResponse>(withProjectId("/system-stats", projectId));
 }
 
-export function killVitestProcesses(projectId?: string): Promise<KillVitestResponse> {
-  return api<KillVitestResponse>(withProjectId("/kill-vitest", projectId), {
+export function fetchNodeSystemStats(nodeId: string, projectId?: string): Promise<SystemStatsResponse> {
+  return api<SystemStatsResponse>(withProjectId(`/nodes/${encodeURIComponent(nodeId)}/system-stats`, projectId));
+}
+
+export function killVitestProcesses(projectId?: string, nodeId?: string, localNodeId?: string): Promise<KillVitestResponse> {
+  return proxyApi<KillVitestResponse>(withProjectId("/kill-vitest", projectId), {
     method: "POST",
+    nodeId,
+    localNodeId,
   });
 }
 

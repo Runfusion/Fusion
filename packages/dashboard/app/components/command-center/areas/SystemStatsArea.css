@@ -16,6 +16,17 @@ The Command Center System area replaces the standalone System Stats modal with g
   flex: 0 0 auto;
 }
 
+.cc-system-node-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text);
+}
+
+.cc-system-node-selector .input {
+  min-inline-size: 10rem;
+}
+
 .cc-system-gauges .cc-stat-card {
   min-block-size: 100%;
 }
@@ -114,6 +125,7 @@ System control cards sit beside chart/stat cards, so FN-6680 gives them the same
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .cc-system-node-selector,
   .cc-system-vitest-card,
   .cc-system-toggle-row,
   .cc-system-threshold-row,
@@ -123,6 +135,7 @@ System control cards sit beside chart/stat cards, so FN-6680 gives them the same
     inline-size: 100%;
   }
 
+  .cc-system-node-selector .input,
   .cc-system-vitest-card .btn,
   .cc-system-threshold-controls .input {
     inline-size: 100%;
