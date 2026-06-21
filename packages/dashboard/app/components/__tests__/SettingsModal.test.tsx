@@ -3977,6 +3977,45 @@ describe("SettingsModal", () => {
       expect(payload.experimentalFeatures.devServer).toBeUndefined();
     });
 
+    it("checks Left Sidebar Navigation by default when its flag is unset", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: {},
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      expect(screen.getByLabelText("Left Sidebar Navigation")).toBeChecked();
+    });
+
+    it("persists an explicit leftSidebarNav=false opt-out when disabling the default-on toggle", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: {},
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const leftSidebarToggle = screen.getByLabelText("Left Sidebar Navigation") as HTMLInputElement;
+      expect(leftSidebarToggle).toBeChecked();
+
+      await userEvent.click(leftSidebarToggle);
+      expect(leftSidebarToggle).not.toBeChecked();
+
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ leftSidebarNav: false });
+    });
+
     it("shows feature flags when experimentalFeatures is set", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,

@@ -1032,8 +1032,11 @@ function AppInner() {
   /*
   FNXC:Navigation 2026-06-19-00:00:
   Experimental left sidebar navigation replaces the Header view shortcuts with a persistent sidebar on non-mobile project screens, while mobile continues to use the bottom navigation bar as the only primary navigation surface.
+
+  FNXC:Navigation 2026-06-21-00:00:
+  Left sidebar navigation is now the default primary navigation on non-mobile project screens. Keep `leftSidebarNav: false` as the explicit opt-out and keep mobile on the bottom navigation bar.
   */
-  const leftSidebarNavEnabled = experimentalFeatures.leftSidebarNav === true;
+  const leftSidebarNavEnabled = experimentalFeatures.leftSidebarNav !== false;
   const executorFooterVisible = viewMode === "project" && !!currentProject;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && executorFooterVisible;
   const agentOnboardingEnabled = experimentalFeatures.agentOnboarding === true;

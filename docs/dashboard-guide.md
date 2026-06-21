@@ -21,7 +21,7 @@ Task Detail modal opens from onboarding, activity log, and task-to-task navigati
 
 ## Left Sidebar Navigation (experimental)
 
-Enable **Left Sidebar Navigation** from **Settings → Experimental Features** to move the desktop/tablet project navigation out of the Header and into a persistent left sidebar.
+**Left Sidebar Navigation** is enabled by default for desktop/tablet project screens, moving project navigation out of the Header and into a persistent left sidebar. To opt out, open **Settings → Experimental Features** and turn **Left Sidebar Navigation** off (`leftSidebarNav: false`).
 
 When enabled on desktop or tablet project screens, the sidebar contains the primary destinations (Board, List, Agents, Command Center, Missions, Chat, Documents, Mailbox, and plugin primary views), Header overflow destinations as regular entries (Research, Insights, Skills, Memory, Secrets, Stash Recovery, Evals, Goals, Dev Server, Todos, and plugin overflow views when their flags/plugins are enabled), and a footer with the collapse toggle directly above the Settings button. The Header retains the Fusion brand and project selector, keeps its non-navigation controls, and hides the view-toggle row and **More views** trigger so there is only one canonical navigation surface.
 
@@ -29,7 +29,7 @@ While the sidebar is active on desktop/tablet project screens, Board and List wo
 
 The footer collapse toggle uses the same row styling as other sidebar items: expanded mode shows a **Collapse** label, while collapsed rail mode hides the label and keeps the icon-only button accessible through its label/title. The active nav-item highlight and the resize-handle hover/focus accent track the active color theme's `--accent` token across all themes, so shadcn, forest, ocean, and other themes no longer show a fixed blue selected state. The expanded width can still be resized from the right-edge separator. Collapsed state and expanded width are saved in browser `localStorage` (`fusion:left-sidebar-collapsed` and `fusion:left-sidebar-width`) and restored on reload.
 
-On mobile viewports (`<=768px`), the sidebar is not rendered even when the experiment is enabled. The existing bottom `MobileNavBar` remains the navigation surface.
+On mobile viewports (`<=768px`), the sidebar is not rendered even when the default-on setting is enabled. The existing bottom `MobileNavBar` remains the navigation surface.
 
 ## Deep Links
 

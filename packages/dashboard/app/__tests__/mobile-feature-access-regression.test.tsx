@@ -63,11 +63,12 @@ const createDefaultMobileNavProps = () => ({
   projectId: "proj_1",
 });
 
-function LeftSidebarAppGateHarness({ leftSidebarNavEnabled = true }: { leftSidebarNavEnabled?: boolean }) {
+function LeftSidebarAppGateHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?: boolean }) {
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
   const viewMode = "project";
   const currentProject = createProjects()[0];
+  const leftSidebarNavEnabled = leftSidebarNavFlag !== false;
   const sidebarActive = leftSidebarNavEnabled && !isMobile && viewMode === "project" && !!currentProject;
 
   return sidebarActive ? (
@@ -81,6 +82,28 @@ function LeftSidebarAppGateHarness({ leftSidebarNavEnabled = true }: { leftSideb
       onViewAllProjects={vi.fn()}
     />
   ) : null;
+}
+
+function PrimaryNavigationSurfaceHarness({ leftSidebarNavFlag }: { leftSidebarNavFlag?: boolean }) {
+  const mode = useViewportMode();
+  const isMobile = mode === "mobile";
+  const currentProject = createProjects()[0];
+  const leftSidebarNavEnabled = leftSidebarNavFlag !== false;
+  const sidebarActive = leftSidebarNavEnabled && !isMobile && !!currentProject;
+
+  return (
+    <>
+      <Header
+        view="board"
+        onChangeView={vi.fn()}
+        mobileNavEnabled={isMobile}
+        showAgentsTab={true}
+        leftSidebarNavActive={sidebarActive}
+      />
+      <LeftSidebarAppGateHarness leftSidebarNavFlag={leftSidebarNavFlag} />
+      <MobileNavBar {...createDefaultMobileNavProps()} />
+    </>
+  );
 }
 
 const createProjects = () => [
@@ -272,17 +295,43 @@ describe("Mobile Feature Access Regression Guard", () => {
     }
   });
 
-  it("left sidebar app gate renders on desktop and tablet but not mobile", () => {
-    for (const tier of ["desktop", "tablet"] as const) {
-      mockViewport(tier);
-      const { unmount } = render(<LeftSidebarAppGateHarness />);
-      expect(screen.getByTestId("left-sidebar-nav")).toBeDefined();
+  it("left sidebar app gate renders by default on desktop and tablet, honors explicit opt-out, and never renders on mobile", () => {
+    /*
+     * Surface Enumeration checklist asserted here:
+     * - leftSidebarNav unset/undefined -> sidebar renders on desktop and tablet.
+     * - leftSidebarNav true -> sidebar renders on desktop and tablet.
+     * - leftSidebarNav false -> sidebar does not render and legacy Header nav returns.
+     * - mobile never renders the sidebar for any flag state; MobileNavBar owns navigation.
+     * - active sidebar state suppresses Header view-toggle and overflow shells.
+     */
+    const flagStates = [
+      { label: "unset", leftSidebarNavFlag: undefined, sidebarExpected: true },
+      { label: "true", leftSidebarNavFlag: true, sidebarExpected: true },
+      { label: "false", leftSidebarNavFlag: false, sidebarExpected: false },
+    ] as const;
+
+    for (const { label, leftSidebarNavFlag, sidebarExpected } of flagStates) {
+      for (const tier of ["desktop", "tablet"] as const) {
+        mockViewport(tier);
+        const { unmount } = render(<PrimaryNavigationSurfaceHarness leftSidebarNavFlag={leftSidebarNavFlag} />);
+        expect(screen.queryByTestId("left-sidebar-nav"), `${label} flag on ${tier}`).toBe(
+          sidebarExpected ? screen.getByTestId("left-sidebar-nav") : null,
+        );
+        expect(screen.queryByTitle("Board view"), `${label} flag header board shortcut on ${tier}`).toBe(
+          sidebarExpected ? null : screen.getByTitle("Board view"),
+        );
+        expect(screen.queryByTestId("view-toggle-overflow-trigger"), `${label} flag overflow on ${tier}`).toBe(
+          sidebarExpected ? null : screen.getByTestId("view-toggle-overflow-trigger"),
+        );
+        unmount();
+      }
+
+      mockViewport("mobile");
+      const { container, unmount } = render(<PrimaryNavigationSurfaceHarness leftSidebarNavFlag={leftSidebarNavFlag} />);
+      expect(screen.queryByTestId("left-sidebar-nav"), `${label} flag on mobile`).toBeNull();
+      expect(container.querySelector(".mobile-nav-bar"), `${label} flag mobile nav`).not.toBeNull();
       unmount();
     }
-
-    mockViewport("mobile");
-    render(<LeftSidebarAppGateHarness />);
-    expect(screen.queryByTestId("left-sidebar-nav")).toBeNull();
   });
 
   it("left sidebar suppression does not affect the mobile header fallback", () => {

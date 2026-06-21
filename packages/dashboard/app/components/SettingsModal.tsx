@@ -284,6 +284,12 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   workflowInterpreterDualObserve: "Workflow Graph Engine — dual-observe parity (diagnostic)",
 };
 
+/*
+FNXC:Navigation 2026-06-21-00:00:
+The dashboard owns the left sidebar default-on rollout because the shared experimental-feature helper must keep default-off semantics for unrelated experiments. Keep this set local to Settings so the toggle checked-state matches App's `leftSidebarNav !== false` derivation without changing core behavior.
+*/
+const DEFAULT_ON_EXPERIMENTAL_FEATURES = new Set<string>(["leftSidebarNav"]);
+
 const EXPERIMENTAL_FEATURE_LEGACY_ALIASES: Record<string, string> = {
   devServer: "devServerView",
 };
@@ -300,6 +306,14 @@ function isExperimentalFeatureEnabled(features: Record<string, boolean>, key: st
   return Object.entries(EXPERIMENTAL_FEATURE_LEGACY_ALIASES).some(
     ([legacyKey, canonicalKey]) => canonicalKey === key && features[legacyKey] === true,
   );
+}
+
+function isDashboardExperimentalFeatureEnabled(features: Record<string, boolean>, key: string): boolean {
+  const canonicalKey = getCanonicalExperimentalFeatureKey(key);
+  if (DEFAULT_ON_EXPERIMENTAL_FEATURES.has(canonicalKey) && features[canonicalKey] === undefined) {
+    return true;
+  }
+  return isExperimentalFeatureEnabled(features, canonicalKey);
 }
 
 function normalizeExperimentalFeaturesForSave(features?: Record<string, boolean>): Record<string, boolean | null> {
@@ -2749,7 +2763,7 @@ export function SettingsModal({
             knownFeatures={KNOWN_EXPERIMENTAL_FEATURES}
             legacyAliases={EXPERIMENTAL_FEATURE_LEGACY_ALIASES}
             getCanonicalKey={getCanonicalExperimentalFeatureKey}
-            isFeatureEnabled={isExperimentalFeatureEnabled}
+            isFeatureEnabled={isDashboardExperimentalFeatureEnabled}
           />
         );
       case "backups":
