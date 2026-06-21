@@ -482,11 +482,16 @@ function hasDashboardEngine(options?: ServerOptions): boolean {
   if (options?.engine) return true;
   const manager = options?.engineManager;
   if (!manager) return false;
-  // `hasRunningEngine` counts engines owned by this process AND engines owned
-  // by another fusion process on the machine (detected via the singleton
-  // lock). Without the latter, a UI-only launch alongside an already-running
-  // engine would show a false "engine not running" banner. Fall back to the
-  // owned-engine map for older manager instances / test doubles.
+  /*
+   * FNXC:DashboardHealth 2026-06-21-03:30:
+   * Engine availability must reflect machine-level truth, not only engines
+   * owned by this dashboard process. `hasRunningEngine` counts engines owned
+   * by this process AND engines owned by another fusion process on the machine
+   * (detected via the singleton lock); without the latter a UI-only launch
+   * alongside an already-running engine shows a false "engine not running"
+   * banner. Fall back to the owned-engine map for older manager instances /
+   * test doubles.
+   */
   if (typeof manager.hasRunningEngine === "function") {
     return manager.hasRunningEngine();
   }

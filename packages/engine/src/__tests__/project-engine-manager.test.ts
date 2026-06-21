@@ -793,5 +793,42 @@ describe("ProjectEngineManager", () => {
       expect(manager.getExternalEngineIds().has("proj_aaa")).toBe(false);
       expect(manager.hasRunningEngine()).toBe(true);
     });
+
+    it("stays quiet across reconciliation ticks for an externally-owned engine", async () => {
+      // Drives the reconciliation wrapper (not just a direct ensureEngine call):
+      // across many intervals neither the inner "Refusing to start" warning nor
+      // the outer "Failed to start engine..." reconciliation warning should
+      // repeat for the same externally-owned engine.
+      vi.useFakeTimers();
+      const manager = new ProjectEngineManager(centralCore);
+      const acquire = acquireEngineSingleton as ReturnType<typeof vi.fn>;
+      acquire.mockRejectedValue(
+        new EngineAlreadyRunningError("proj_aaa", "socket"),
+      );
+      const warnSpy = vi.spyOn(
+        (await import("../logger.js")).runtimeLog,
+        "warn",
+      );
+
+      manager.startReconciliation(1000);
+      // Immediate tick + several scheduled ticks.
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      manager.stopReconciliation();
+
+      const refusals = warnSpy.mock.calls.filter(([msg]) =>
+        String(msg).includes("Refusing to start engine for proj_aaa"),
+      );
+      const failures = warnSpy.mock.calls.filter(([msg]) =>
+        String(msg).includes("Failed to start engine for project proj_aaa"),
+      );
+      expect(refusals).toHaveLength(1); // deduped to first detection
+      expect(failures).toHaveLength(0); // reconciliation swallows expected error
+      expect(manager.getExternalEngineIds().has("proj_aaa")).toBe(true);
+
+      warnSpy.mockRestore();
+      vi.useRealTimers();
+    });
   });
 });
