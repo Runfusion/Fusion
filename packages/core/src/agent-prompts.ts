@@ -295,7 +295,7 @@ For bug-class/bug-fix tasks, add and fill in the exact \`## Symptom Verification
 
 ### Step {N-1}: Testing & Verification
 
-> ZERO failures allowed for checks required by this task's quality gates. Run impacted/package-scoped verification first; run workspace-wide suites only when the task or workflow explicitly requires them, or during final integration after impacted checks pass.
+> ZERO failures allowed for checks required by this task's quality gates. Run impacted/package-scoped verification first. Do NOT run the full workspace test suite (\`pnpm test:full\`, \`pnpm verify:workspace\`, or whole-package \`pnpm --filter <pkg> test\`) as routine or final-integration verification — a full run is allowed ONLY when the task or workflow explicitly requires it.
 > If keeping lint/tests/build/typecheck green requires edits outside the initial File Scope, make those fixes as part of this task.
 
 - [ ] Run lint check (\`pnpm lint\`)
@@ -363,7 +363,7 @@ If this task REMOVES existing functionality (deleting modules, settings, API end
 - For bug fixes and UI-affordance add/remove tasks, populate \`## Surface Enumeration\` with this checklist from \`docs/testing.md\`: providers/bridges/execution paths; desktop + mobile breakpoints/platforms; empty/undefined/duplicate/populated data states; shared hooks/components/modules/helpers; every component that renders the affordance; leftover shells after removal.
 - For bug fixes and UI-affordance add/remove tasks, regression tests must assert the invariant across all known surfaces — enumerate every provider/bridge, desktop + mobile breakpoints, empty/undefined/populated data states, and for UI-affordance changes every component rendering the affordance plus leftover shells after removal — not just the reported repro (see FN-5787/FN-5789/FN-5803, FN-5751, and FN-6115/FN-6118/FN-6123)
 - For bug-class/bug-fix tasks, the spec MUST include a \`## Symptom Verification\` section with **Original symptom**, **Exact reproduction**, and **Assertion it is gone**. The final verification step must perform symptom-based acceptance: reproduce the original failure and prove it is gone with a real automated test. Green build/tests alone are insufficient. Feature/docs/non-bug tasks are not required to carry \`## Symptom Verification\`.
-- Include targeted tests in implementation steps and full quality-gate runs in final verification
+- Include targeted tests in implementation steps and bounded/changed-scoped quality-gate runs in final verification; never run the full workspace test suite unless the task explicitly requires it
 
 ## Duplicate check
 Before writing a spec, call \`fn_task_list\` to find existing active tasks, then call \`fn_task_search\` with 2-4 distinct keyword phrases from the task title and description (for example file paths, error symptoms, and symbol names).
@@ -525,7 +525,7 @@ For bug-class/bug-fix tasks, add and fill in the exact \`## Symptom Verification
 
 ### Step {N-1}: Testing & Verification
 
-> ZERO failures allowed for checks required by this task's quality gates. Run impacted/package-scoped verification first; run workspace-wide suites only when the task or workflow explicitly requires them, or during final integration after impacted checks pass.
+> ZERO failures allowed for checks required by this task's quality gates. Run impacted/package-scoped verification first. Do NOT run the full workspace test suite (\`pnpm test:full\`, \`pnpm verify:workspace\`, or whole-package \`pnpm --filter <pkg> test\`) as routine or final-integration verification — a full run is allowed ONLY when the task or workflow explicitly requires it.
 > If keeping lint/tests/build/typecheck green requires edits outside the initial File Scope, make those fixes as part of this task.
 
 - [ ] Run lint check (\`pnpm lint\`)

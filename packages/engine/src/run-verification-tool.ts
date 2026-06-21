@@ -37,8 +37,13 @@ export const DEFAULT_TIMEOUT_PACKAGE_SEC = 300;
 export const DEFAULT_TIMEOUT_WORKSPACE_SEC = 900;
 export const MAX_TIMEOUT_SEC = 1800;
 
+/*
+FNXC:Verification 2026-06-21-12:05:
+Verification must stay bounded — never run the full workspace test suite as the verification path.
+A foundational-package edit reverse-expands a full run across the whole workspace and stalls the task (see FN-5048 + the test-changed reverse-dependent blast cap); scope verification to the changed files/package instead.
+*/
 export const BOUNDED_VERIFICATION_GUIDANCE =
-  "Prefer a bounded targeted command such as `pnpm --filter <pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot` before rerunning broader suites.";
+  "Scope verification to the changed files: prefer a bounded targeted command such as `pnpm --filter <pkg> exec vitest run src/path/to/test.ts --silent=passed-only --reporter=dot`. Do NOT run the full workspace test suite (`pnpm test:full`, `pnpm verify:workspace`, or whole-package `pnpm --filter <pkg> test`) as verification.";
 export const MARATHON_SOFT_CAP_SEC = 120;
 
 const packageDirCache = new Map<string, string | null>();
@@ -315,12 +320,20 @@ function reapVerificationProcessGroup(supervised: SupervisedChild): void {
    * FNXC:Verification 2026-06-21-10:00:
    * Verification commands may spawn background test/dev children and then let the shell exit cleanly.
    * Reap the process group after normal close so fn_run_verification does not report completion while orphaned test workers keep later task progress stuck.
+   *
+   * FNXC:Verification 2026-06-21-10:26:
+   * Apply this reap to every non-timeout close, including externally signal-terminated exits.
+   * The supervisor kill path tolerates already-gone process groups, and the extra reap keeps all non-timeout exits from leaking background verification workers.
    */
   killVerificationProcess(supervised, "SIGTERM");
   const forceKillTimer = setTimeout(() => {
     killVerificationProcess(supervised, "SIGKILL");
   }, NORMAL_EXIT_REAP_GRACE_MS);
   forceKillTimer.unref?.();
+}
+
+export function __testOnlyReapVerificationProcessGroup(supervised: SupervisedChild): void {
+  reapVerificationProcessGroup(supervised);
 }
 
 // ---------------------------------------------------------------------------
