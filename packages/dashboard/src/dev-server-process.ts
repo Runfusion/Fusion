@@ -83,6 +83,9 @@ export class DevServerProcessManager extends EventEmitter {
   private hasDetectedUrl = false;
   private closePromise: Promise<DevServerState> | null = null;
   private resolveClosePromise: ((state: DevServerState) => void) | null = null;
+  private lifecycleId = 0;
+  private isDisposed = false;
+  private readonly activeLifecycleWork = new Set<Promise<void>>();
 
   private readonly stopTimeoutMs: number;
   private readonly probeDelayMs: number;
@@ -118,6 +121,9 @@ export class DevServerProcessManager extends EventEmitter {
       throw new Error("cwd is required");
     }
 
+    this.lifecycleId += 1;
+    this.isDisposed = false;
+    const lifecycleId = this.lifecycleId;
     this.hasDetectedUrl = false;
     await this.store.updateState({
       status: "starting",
@@ -157,14 +163,17 @@ export class DevServerProcessManager extends EventEmitter {
 
     const handleLine = async (line: string, stream: "stdout" | "stderr"): Promise<void> => {
       const trimmed = line.replace(/\r$/, "");
-      if (!trimmed) {
+      if (!trimmed || !this.isCurrentLifecycle(lifecycleId)) {
         return;
       }
 
       await this.store.appendLog(trimmed);
+      if (!this.isCurrentLifecycle(lifecycleId)) {
+        return;
+      }
       const payload = { line: trimmed, stream, timestamp: new Date().toISOString() };
       this.emit("output", payload);
-      void this.handleDetectionFromLine(trimmed);
+      await this.handleDetectionFromLine(trimmed, lifecycleId);
     };
 
     this.attachOutput(child.stdout, "stdout", handleLine);
@@ -187,7 +196,7 @@ export class DevServerProcessManager extends EventEmitter {
     });
 
     this.portProbeTimer = setTimeout(() => {
-      void this.runFallbackProbe();
+      this.trackLifecycleWork(this.runFallbackProbe(lifecycleId));
     }, this.probeDelayMs);
 
     return runningState;
@@ -245,6 +254,8 @@ export class DevServerProcessManager extends EventEmitter {
   }
 
   cleanup(): void {
+    this.lifecycleId += 1;
+    this.isDisposed = true;
     this.clearTimers();
 
     if (this.childProcess && typeof this.childProcess.pid === "number") {
@@ -274,7 +285,7 @@ export class DevServerProcessManager extends EventEmitter {
       pending = lines.pop() ?? "";
 
       for (const line of lines) {
-        void onLine(line, source);
+        this.trackLifecycleWork(onLine(line, source));
       }
     });
 
@@ -282,7 +293,7 @@ export class DevServerProcessManager extends EventEmitter {
       if (pending.length > 0) {
         const line = pending;
         pending = "";
-        void onLine(line, source);
+        this.trackLifecycleWork(onLine(line, source));
       }
     };
 
@@ -290,8 +301,8 @@ export class DevServerProcessManager extends EventEmitter {
     stream.on("close", flushPending);
   }
 
-  private async handleDetectionFromLine(line: string): Promise<void> {
-    if (this.hasDetectedUrl) {
+  private async handleDetectionFromLine(line: string, lifecycleId = this.lifecycleId): Promise<void> {
+    if (this.hasDetectedUrl || !this.isCurrentLifecycle(lifecycleId)) {
       return;
     }
 
@@ -300,26 +311,28 @@ export class DevServerProcessManager extends EventEmitter {
       return;
     }
 
-    await this.persistDetection(detected);
+    await this.persistDetection(detected, lifecycleId);
   }
 
-  private async runFallbackProbe(): Promise<void> {
-    this.portProbeTimer = null;
+  private async runFallbackProbe(lifecycleId = this.lifecycleId): Promise<void> {
+    if (this.isCurrentLifecycle(lifecycleId)) {
+      this.portProbeTimer = null;
+    }
 
-    if (this.hasDetectedUrl || !this.isRunning()) {
+    if (this.hasDetectedUrl || !this.isRunning() || !this.isCurrentLifecycle(lifecycleId)) {
       return;
     }
 
     const detected = await probeFallbackPorts(DEFAULT_PROBE_HOST, this.probeTimeoutMs);
-    if (!detected || this.hasDetectedUrl || !this.isRunning()) {
+    if (!detected || this.hasDetectedUrl || !this.isRunning() || !this.isCurrentLifecycle(lifecycleId)) {
       return;
     }
 
-    await this.persistDetection(detected);
+    await this.persistDetection(detected, lifecycleId);
   }
 
-  private async persistDetection(detected: PortDetectionResult): Promise<void> {
-    if (this.hasDetectedUrl) {
+  private async persistDetection(detected: PortDetectionResult, lifecycleId = this.lifecycleId): Promise<void> {
+    if (this.hasDetectedUrl || !this.isCurrentLifecycle(lifecycleId)) {
       return;
     }
 
@@ -333,6 +346,9 @@ export class DevServerProcessManager extends EventEmitter {
         detectedUrl: detected.url,
         detectedPort: detected.port,
       });
+      if (!this.isCurrentLifecycle(lifecycleId)) {
+        return;
+      }
 
       const payload: UrlDetectedEventPayload = {
         url: updated.detectedUrl ?? detected.url,
@@ -348,6 +364,7 @@ export class DevServerProcessManager extends EventEmitter {
 
   private async handleClose(code: number): Promise<void> {
     this.clearTimers();
+    await this.waitForActiveLifecycleWork();
 
     const updated = await this.store.updateState({
       status: "stopped",
@@ -365,6 +382,7 @@ export class DevServerProcessManager extends EventEmitter {
 
   private async handleFailure(error: Error): Promise<void> {
     this.clearTimers();
+    await this.waitForActiveLifecycleWork();
 
     const updated = await this.store.updateState({
       status: "failed",
@@ -377,6 +395,32 @@ export class DevServerProcessManager extends EventEmitter {
     this.resolveClosePromise = null;
     this.closePromise = null;
     this.emit("failed", { error: error.message });
+  }
+
+  private isCurrentLifecycle(lifecycleId: number): boolean {
+    return !this.isDisposed && lifecycleId === this.lifecycleId;
+  }
+
+  /*
+  FNXC:DevServerProcess 2026-06-21-12:35:
+  Loaded dashboard API shards can close a child process while stdout parsing, URL persistence, or fallback probing is still settling. Track lifecycle work and invalidate stale callbacks so every stop, close, failure, restart, and cleanup path clears the probe timer without leaving late store writes or process-handle work racing test fixture removal.
+  */
+  private trackLifecycleWork(promise: Promise<void>): void {
+    this.activeLifecycleWork.add(promise);
+    void promise.then(
+      () => {
+        this.activeLifecycleWork.delete(promise);
+      },
+      () => {
+        this.activeLifecycleWork.delete(promise);
+      },
+    );
+  }
+
+  private async waitForActiveLifecycleWork(): Promise<void> {
+    while (this.activeLifecycleWork.size > 0) {
+      await Promise.allSettled([...this.activeLifecycleWork]);
+    }
   }
 
   private clearProbeTimer(): void {

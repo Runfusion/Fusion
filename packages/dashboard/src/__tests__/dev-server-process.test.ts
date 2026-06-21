@@ -3,6 +3,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { DevServerProcessManager } from "../dev-server-process.js";
 import { loadDevServerStore, resetDevServerStore } from "../dev-server-store.js";
@@ -25,6 +26,11 @@ function isProcessAlive(pid: number): boolean {
     return false;
   }
 }
+
+type DevServerProcessManagerInternals = {
+  childProcess: ChildProcess | null;
+  handleFailure(error: Error): Promise<void>;
+};
 
 describe("DevServerProcessManager", () => {
   const tempDirs: string[] = [];
@@ -219,14 +225,17 @@ describe("DevServerProcessManager", () => {
 
   it("clears fallback probe timer when URL is detected from logs", async () => {
     const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+    const detectedEvents: unknown[] = [];
+    manager.on("url-detected", (payload) => detectedEvents.push(payload));
 
     await manager.start(
-      "node -e \"console.log('ready at http://localhost:4321');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
+      "node -e \"console.log('ready at http://localhost:4321');console.log('ready again at http://localhost:4321');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       root,
     );
 
     await waitFor(() => store.getState().detectedPort === 4321);
     expect(manager.hasPendingProbeTimer()).toBe(false);
+    expect(detectedEvents).toHaveLength(1);
   });
 
   it("clears fallback probe timer on stop", async () => {
@@ -251,6 +260,20 @@ describe("DevServerProcessManager", () => {
     expect(manager.hasPendingProbeTimer()).toBe(false);
   });
 
+  it("clears fallback probe timer when the child process reports failure", async () => {
+    const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
+
+    await manager.start("node -e \"setTimeout(() => process.exit(0), 50)\"", root);
+    expect(manager.hasPendingProbeTimer()).toBe(true);
+
+    const internals = manager as unknown as DevServerProcessManagerInternals;
+    internals.childProcess?.emit("error", new Error("synthetic process failure"));
+
+    await waitFor(() => store.getState().status === "failed");
+
+    expect(manager.hasPendingProbeTimer()).toBe(false);
+  });
+
   it("restarts with a fresh fallback probe timer", async () => {
     const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
 
@@ -260,6 +283,8 @@ describe("DevServerProcessManager", () => {
     await manager.restart();
 
     expect(manager.hasPendingProbeTimer()).toBe(true);
+    await manager.stop();
+    expect(manager.hasPendingProbeTimer()).toBe(false);
   });
 
   it("cleanup() kills process and clears listeners", async () => {
@@ -272,6 +297,7 @@ describe("DevServerProcessManager", () => {
     manager.cleanup();
     await waitFor(() => manager.isRunning() === false);
 
+    expect(manager.hasPendingProbeTimer()).toBe(false);
     expect(manager.listenerCount("output")).toBe(0);
   });
 });

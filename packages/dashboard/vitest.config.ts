@@ -293,8 +293,11 @@ Keep QuickEntryBox out of this list so the dashboard app lanes exercise Enter, S
 
 FNXC:DashboardTestQuarantine 2026-06-21-06:50:
 FN-6722 workspace verification observed dev-server-process time out only in the broad dashboard API backfill shard while the isolated file passed immediately. Quarantine the process/timer race under the deletion ratchet instead of widening waits or changing unrelated Command Center behavior.
+
+FNXC:DashboardTestQuarantine 2026-06-21-12:42:
+FN-6860 rescued dev-server-process by settling stdout detection and fallback-probe lifecycle work before stop/close/failure teardown, then removed its ledger/config quarantine entry. The same loaded API shard also confirmed FN-6742's session-cross-tab rescue still holds, so its stale ledger-only entry was removed to restore lockstep.
 */
-const quarantinedDashboardTests: string[] = ["src/__tests__/dev-server-process.test.ts"];
+const quarantinedDashboardTests: string[] = [];
 
 const qualityApiTests = [
   // Critical HTTP/server behavior: auth, task/project/settings mutation,

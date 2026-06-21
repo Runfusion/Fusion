@@ -1,15 +1,4 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
-  "entries": [
-    {
-      "file": "packages/dashboard/src/__tests__/dev-server-process.test.ts",
-      "reason": "FN-6722 broad workspace `pnpm test` observed `clears fallback probe timer when URL is detected from logs` time out only in the dashboard-api-quality-backfill shard; isolated rerun passed, so quarantine the timer/process race on sight instead of widening waits or changing unrelated Command Center behavior.",
-      "quarantinedAt": "2026-06-21"
-    },
-    {
-      "file": "packages/dashboard/src/__tests__/session-cross-tab.test.ts",
-      "reason": "FN-6690 local workspace `pnpm test` observed ENOTEMPTY while removing the test's temp .fusion directory in dashboard-api-quality-backfill shard; isolated rerun passed, indicating cleanup flake rather than a lazy-view CSS regression.",
-      "quarantinedAt": "2026-06-19"
-    }
-  ]
+  "entries": []
 }
