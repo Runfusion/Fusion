@@ -91,16 +91,20 @@
   line-height: calc(var(--space-md) / var(--space-sm));
 }
 
+/*
+FNXC:WorkflowSwitcher 2026-06-20-00:00:
+The switcher's inline Todo, In Progress, and Done count badges intentionally mirror the board column color tokens so each count reads as the same color as the column it summarizes.
+*/
 .workflow-switcher-count--todo {
-  color: var(--text-muted);
+  color: var(--todo);
 }
 
 .workflow-switcher-count--in-progress {
-  color: var(--color-warning);
+  color: var(--in-progress);
 }
 
 .workflow-switcher-count--done {
-  color: var(--color-success);
+  color: var(--done);
 }
 
 .workflow-switcher-count-separator {

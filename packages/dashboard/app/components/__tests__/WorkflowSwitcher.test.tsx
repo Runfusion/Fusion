@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { BoardWorkflowDefinition } from "../../api";
+import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { WorkflowSwitcher } from "../WorkflowSwitcher";
 import type { WorkflowStatusCounts } from "../workflowStatusCounts";
 
@@ -19,6 +20,11 @@ const workflows: BoardWorkflowDefinition[] = [
 
 function countMap(entries: Array<[string, WorkflowStatusCounts]> = []) {
   return new Map<string, WorkflowStatusCounts>(entries);
+}
+
+function cssRuleFor(css: string, selector: string) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 }
 
 describe("WorkflowSwitcher", () => {
@@ -108,5 +114,21 @@ describe("WorkflowSwitcher", () => {
     expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--todo" })).toBeInTheDocument();
     expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--in-progress" })).toBeInTheDocument();
     expect(within(designOption).getByText("0", { selector: ".workflow-switcher-count--done" })).toBeInTheDocument();
+  });
+
+  it("colors status counts with board column color tokens", () => {
+    const css = loadAllAppCssBaseOnly();
+    const badgeRules = [
+      [".workflow-switcher-count--todo", "--todo"],
+      [".workflow-switcher-count--in-progress", "--in-progress"],
+      [".workflow-switcher-count--done", "--done"],
+    ] as const;
+
+    for (const [selector, token] of badgeRules) {
+      const rule = cssRuleFor(css, selector);
+      expect(rule).toMatch(new RegExp(`color:\\s*var\\(${token}\\)`));
+      expect(rule).not.toMatch(/var\(--(?:text-muted|color-warning|color-success)\)/);
+      expect(rule).not.toMatch(/#[0-9a-fA-F]{3,8}|rgba?\(/);
+    }
   });
 });
