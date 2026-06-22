@@ -192,7 +192,8 @@ describe("LeftSidebarNav", () => {
     const newTaskRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__new-task");
     const hoverRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav__new-task:hover,\n.left-sidebar-nav__new-task:focus-visible");
 
-    expect(newTaskRule).toContain("margin: var(--space-sm) var(--space-sm) 0");
+    // FNXC:Navigation 2026-06-23-02:45: New Task moved to the footer — no inset margins so it matches the Collapse/Settings footer items.
+    expect(newTaskRule).toContain("margin: 0");
     expect(newTaskRule).toContain("border-radius: var(--radius-md)");
     expect(newTaskRule).toContain("background: var(--accent)");
     expect(newTaskRule).toContain("color: var(--accent-text)");

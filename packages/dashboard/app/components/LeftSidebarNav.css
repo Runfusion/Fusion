@@ -45,13 +45,17 @@ The New Task CTA must occupy exactly the same box as a sidebar item highlight: s
 FNXC:Navigation 2026-06-22-00:10:
 The CTA carries .left-sidebar-nav__item, whose width:100% rule is declared later and otherwise wins over a single-class width:auto. Because the CTA is a direct child of the unpadded aside (not the padded list), width:100% + side margins overflows the aside by 2×--space-sm, overlapping the resize bar and rendering wider than the padded item highlights. Raise specificity (.left-sidebar-nav .left-sidebar-nav__new-task) so width:auto wins: align-self:stretch then fills the aside minus the --space-sm side margins, exactly matching an item highlight box (list content width).
 */
+/*
+FNXC:Navigation 2026-06-23-02:45:
+New Task lives in the footer with Collapse/Settings and must be the SAME height + width as them. It inherits the base .left-sidebar-nav__item height; dropping the old CTA side/top margins (which inset it as a top-of-rail CTA) lets it fill the footer's padded width exactly like the other footer items, separated only by the footer gap. It keeps the accent CTA fill so it still reads as the primary action.
+*/
 .left-sidebar-nav .left-sidebar-nav__new-task {
   flex-shrink: 0;
   justify-content: center;
   align-self: stretch;
   box-sizing: border-box;
   width: auto;
-  margin: var(--space-sm) var(--space-sm) 0;
+  margin: 0;
   border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--accent-text);
@@ -127,7 +131,13 @@ The secondary section has no divider and no extra top padding, so the gap across
 FNXC:DashboardStyling 2026-06-21-11:16:
 The left sidebar active highlight and resize accent must use the per-theme --accent token so the selected state reflects the active color theme instead of the workflow todo-status blue. FN-6830 keeps this requirement in the base sidebar rules so every theme inherits it without per-theme overrides.
 */
-.left-sidebar-nav__item--active {
+/*
+FNXC:Navigation 2026-06-23-02:45:
+The active/selected state must WIN over :hover. Plain `.item:hover` (specificity 0,2,0) outranks a bare `.item--active` (0,1,0), so a selected row under the cursor wrongly showed the hover color. Pin the active accent for the active row in its hover/focus states too (`--active:hover` = 0,3,0) so the selected color always shows.
+*/
+.left-sidebar-nav__item--active,
+.left-sidebar-nav__item--active:hover,
+.left-sidebar-nav__item--active:focus-visible {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
 }
