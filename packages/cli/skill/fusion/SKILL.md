@@ -1,6 +1,6 @@
 ---
 name: fusion
-description: AI-orchestrated task board (Fusion) interface. Use when working with the Fusion task management system, creating or managing tasks, understanding task workflows, organizing work into missions, or interfacing with the Fusion dashboard. Triggers on "create a task", "list tasks", "show board", "plan a mission", "check task status", "import issues", or any Fusion interaction.
+description: Use Fusion to initialize repositories and manage projects, tasks, goals, missions, research, agents, and dashboards. Trigger when the user says "Fusion," "Fusion skill," "use Fusion," or asks Fusion to create, inspect, organize, execute, or monitor project work. Use registered fn_* tools when available and otherwise use the global Fusion CLI.
 ---
 
 <essential_principles>

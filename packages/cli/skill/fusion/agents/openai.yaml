@@ -1,4 +1,4 @@
 interface:
-  display_name: "Fusion Orchestrator"
-  short_description: "Manage Fusion tasks, missions, and dashboards"
-  default_prompt: "Use $fusion to initialize this project and manage its work through Fusion."
+  display_name: "Fusion Skill"
+  short_description: "Manage project work safely with Fusion"
+  default_prompt: "Use Fusion ($fusion) to initialize this project and manage its work."
