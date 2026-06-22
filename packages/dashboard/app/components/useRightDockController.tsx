@@ -53,11 +53,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   const [open, setOpen] = useState(readStoredRightDockOpen);
   const [expandedView, setExpandedView] = useState<OverflowViewKey | null>(null);
 
-  const setPersistedOpen = useCallback((nextOpen: boolean) => {
-    setOpen(nextOpen);
-    persistRightDockOpen(nextOpen);
-    if (!nextOpen) setExpandedView(null);
-  }, []);
   const toggle = useCallback(() => {
     setOpen((current) => {
       const next = !current;
@@ -130,7 +125,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   return {
     open,
     toggle,
-    dock: input.active ? <RightDock open={open} onOpenChange={setPersistedOpen} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} onExpand={setExpandedView} /> : null,
+    dock: input.active ? <RightDock open={open} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} onExpand={setExpandedView} /> : null,
     modal: input.active ? <RightDockExpandModal viewKey={expandedView} renderProps={renderProps} visibilityOptions={input.visibilityOptions} onClose={() => setExpandedView(null)} /> : null,
   };
 }

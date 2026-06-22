@@ -533,8 +533,7 @@ Header migrated to the shared ViewHeader component (.view-header). The old .insi
     height: calc(var(--space-2xl) + var(--space-sm));
   }
 
-  .view-header__actions .insights-view-actions-btn,
-  .insights-view-actions .btn {
+  .view-header__actions .insights-view-actions-btn {
     min-height: calc(var(--space-2xl) + var(--space-xs));
   }
 

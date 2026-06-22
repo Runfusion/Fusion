@@ -2066,6 +2066,11 @@ function AppInner() {
                 onRetryTask={retryTask}
                 onResetTask={resetTask}
                 onDuplicateTask={duplicateTask}
+                /*
+                FNXC:Navigation 2026-06-22-09:00:
+                The full-panel task-detail must dismiss back to the board when a destructive/terminal action (delete/merge/archive/retry/reset/duplicate) fires, mirroring the modal path. Without onRequestClose the panel kept showing a ghost of the just-acted-on task.
+                */
+                onRequestClose={closeTaskDetailMainPanel}
                 onTaskUpdated={(updatedTask) => {
                   setMainPanelDetailTask((previous) => {
                     if (!previous || previous.id !== updatedTask.id) return previous;

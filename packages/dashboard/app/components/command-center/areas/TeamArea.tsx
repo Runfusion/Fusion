@@ -11,7 +11,6 @@ import { getErrorMessage } from "@fusion/core";
 import { fetchExecutorStats, fetchOrgTree, fetchSettings, updateSettings } from "../../../api/legacy";
 import { useAppSettings } from "../../../hooks/useAppSettings";
 import type { ToastType } from "../../../hooks/useToast";
-import type { TaskView } from "../../../hooks/useViewState";
 import { AgentAvatar } from "../../AgentAvatar";
 import { LoadingSpinner } from "../../LoadingSpinner";
 import type { DateRange } from "../DateRangePicker";
@@ -169,12 +168,10 @@ export function TeamArea({
   range,
   projectId,
   addToast,
-  onChangeView,
 }: {
   range: DateRange;
   projectId?: string;
   addToast?: (message: string, type?: ToastType) => void;
-  onChangeView?: (view: TaskView) => void;
 }) {
   const { t } = useTranslation("app");
   const {
@@ -190,6 +187,19 @@ export function TeamArea({
   const [isSavingMultiplier, setIsSavingMultiplier] = useState(false);
   const [orgTreeState, setOrgTreeState] = useState<AsyncState<OrgTreeNode[]>>({ status: "loading", data: null, error: null });
   const [executorStatsState, setExecutorStatsState] = useState<AsyncState<ExecutorStats>>({ status: "loading", data: null, error: null });
+  /*
+  FNXC:CommandCenter 2026-06-22-09:00:
+  The heartbeat slider fires onChange on every input event. Persist the network write through a 300ms debounce (the local optimistic value updates immediately) so dragging the slider does not spray updateSettings calls. mountedRef guards the post-await setState/addToast so they never fire after unmount.
+  */
+  const heartbeatPersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (heartbeatPersistTimeoutRef.current) clearTimeout(heartbeatPersistTimeoutRef.current);
+    };
+  }, []);
   const orgChartViewportRef = useRef<HTMLDivElement | null>(null);
   const orgChartDragStateRef = useRef<OrgChartDragState | null>(null);
   const orgChartDidPanRef = useRef(false);
@@ -288,18 +298,29 @@ export function TeamArea({
   }, [projectId]);
 
   const handleHeartbeatMultiplierChange = useCallback(
-    async (multiplier: number) => {
+    (multiplier: number) => {
       const clampedValue = Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+      // Optimistic local update is immediate; the network persist is debounced.
       setHeartbeatMultiplier(clampedValue);
-      setIsSavingMultiplier(true);
-      try {
-        await updateSettings({ heartbeatMultiplier: clampedValue }, projectId);
-        addToast?.(t("agents.heartbeatSpeedSet", "Heartbeat speed set to ×{{value}}", { value: clampedValue.toFixed(1) }), "success");
-      } catch (err) {
-        addToast?.(t("agents.heartbeatSpeedSaveFailed", "Failed to save heartbeat multiplier: {{error}}", { error: getErrorMessage(err) }), "error");
-      } finally {
-        setIsSavingMultiplier(false);
-      }
+      if (heartbeatPersistTimeoutRef.current) clearTimeout(heartbeatPersistTimeoutRef.current);
+      heartbeatPersistTimeoutRef.current = setTimeout(() => {
+        heartbeatPersistTimeoutRef.current = null;
+        if (mountedRef.current) setIsSavingMultiplier(true);
+        void (async () => {
+          try {
+            await updateSettings({ heartbeatMultiplier: clampedValue }, projectId);
+            if (mountedRef.current) {
+              addToast?.(t("agents.heartbeatSpeedSet", "Heartbeat speed set to ×{{value}}", { value: clampedValue.toFixed(1) }), "success");
+            }
+          } catch (err) {
+            if (mountedRef.current) {
+              addToast?.(t("agents.heartbeatSpeedSaveFailed", "Failed to save heartbeat multiplier: {{error}}", { error: getErrorMessage(err) }), "error");
+            }
+          } finally {
+            if (mountedRef.current) setIsSavingMultiplier(false);
+          }
+        })();
+      }, 300);
     },
     [projectId, addToast, t],
   );
@@ -478,7 +499,8 @@ export function TeamArea({
           </div>
         </section>
 
-        <section className="card cc-team-ops-card" data-testid="cc-team-heartbeat">
+        {/* FNXC:CommandCenter 2026-06-22-15:30: Heartbeat card spans the full Team grid width; its controls space out and wrap (see .cc-team-ops-card--heartbeat). */}
+        <section className="card cc-team-ops-card cc-team-ops-card--heartbeat" data-testid="cc-team-heartbeat">
           <div className="cc-team-ops-card-header">
             <div>
               <h3>{t("commandCenter.controls.heartbeat.title", "Heartbeat control")}</h3>
@@ -518,28 +540,9 @@ export function TeamArea({
           ) : null}
 
           {/*
-          FNXC:CommandCenter 2026-06-22-14:30:
-          AI engine card shortcuts (View Board / View Agents) sit directly UNDER the engine toggle button so they read as engine-card navigation, above the heartbeat-speed slider. Navigation is owned by App (onChangeView), so these only render when wired up.
+          FNXC:CommandCenter 2026-06-22-15:30:
+          The "View Board" / "View Agents" engine-nav shortcuts moved OUT of this Heartbeat card to the Command Center Overview tab (under the Live activity snapshot). The Heartbeat card keeps only its pause control and the heartbeat-speed slider.
           */}
-          {onChangeView ? (
-            <div className="cc-team-engine-nav">
-              <button
-                type="button"
-                className="btn btn-sm cc-team-engine-nav-btn"
-                onClick={() => onChangeView("board")}
-              >
-                {t("commandCenter.controls.engine.viewBoard", "View Board")}
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm cc-team-engine-nav-btn"
-                onClick={() => onChangeView("agents")}
-              >
-                {t("commandCenter.controls.engine.viewAgents", "View Agents")}
-              </button>
-            </div>
-          ) : null}
-
           {/*
           FNXC:CommandCenter 2026-06-22-00:00:
           Heartbeat-speed multiplier slider replicated from the Agents page (range 0.1–10, step 0.1, ×0.1–×10 presets) so users can scale all agent heartbeat intervals from the dashboard's AI engine card. Wired to the same settings.heartbeatMultiplier endpoint.

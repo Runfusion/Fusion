@@ -397,17 +397,31 @@
   gap: 8px;
 }
 
+/*
+FNXC:Chat 2026-06-22-15:30:
+The active-chat pane header must give the title the full available line to the LEFT of the actions. The identity row grows (flex:1, min-width:0) and the title truncates with an ellipsis instead of being squeezed to one-word-per-line by the model badge, eye/preview toggle, and New Chat button. Those action controls stay flex-shrink:0 so they keep their size and the title absorbs all slack.
+*/
 .chat-thread-header-identity {
   display: inline-flex;
   align-items: center;
   gap: var(--space-sm);
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .chat-thread-header-title {
+  flex: 1 1 auto;
   font-weight: 600;
   font-size: 15px;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Model badge keeps its intrinsic size next to the truncating title. */
+.chat-thread-header-identity .chat-model-tag {
+  flex-shrink: 0;
 }
 
 .chat-mobile-session-menu {
@@ -662,6 +676,7 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
  * used to live inside every assistant bubble. */
 .chat-thread-header-render-toggle {
   margin-left: auto;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

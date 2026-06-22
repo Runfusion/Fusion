@@ -554,3 +554,17 @@ The Command Center subtree previously had no tablet tier, so at 769px–1024px t
     opacity: 0.9;
   }
 }
+
+/*
+FNXC:CommandCenter 2026-06-22-15:30:
+Overview "View Board" / "View Agents" shortcut row sits directly under the Live activity snapshot. Self-styled here (OverviewTab does not pull in areas.css) using theme tokens only; mirrors the .cc-team-engine-nav wrapping-row look. Buttons grow to share the row and wrap on narrow widths.
+*/
+.cc-overview-engine-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.cc-overview-engine-nav-btn {
+  flex: 1 1 auto;
+}

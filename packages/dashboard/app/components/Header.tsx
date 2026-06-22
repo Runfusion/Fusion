@@ -966,7 +966,8 @@ export function Header({
         Left sidebar navigation owns desktop Settings when active, so Header hides its duplicate icon to preserve a single titled Settings control for users and navigation-history tests.
         */}
         {!isCompact && !leftSidebarNavActive && (
-          <button className="btn-icon" onClick={onOpenSettings} title={t("header.settings", "Settings")}>
+          // FNXC:Navigation 2026-06-22-12:00: Wrap so React's MouseEvent is not forwarded as onOpenSettings' settingsInitialSection arg.
+          <button className="btn-icon" onClick={() => onOpenSettings?.()} title={t("header.settings", "Settings")}>
             <Settings size={16} />
           </button>
         )}

@@ -99,8 +99,14 @@ export function PlanningWorkflowSwitcherSlot({ projectId, onOpenWorkflowEditor, 
       return slot;
     };
     if (resolve()) return;
+    /*
+    FNXC:PlanningWorkflowSwitcher 2026-06-22-09:00:
+    On mobile the Header never renders `#header-workflow-slot`, so this poll would otherwise spin every 250ms for the entire Planning session. Cap it at 20 attempts (~5s); after that the slot is presumed absent and the poll self-cancels. The unmount cleanup still clears any in-flight interval.
+    */
+    let attempts = 0;
     const interval = window.setInterval(() => {
-      if (resolve()) window.clearInterval(interval);
+      attempts += 1;
+      if (resolve() || attempts >= 20) window.clearInterval(interval);
     }, 250);
     return () => window.clearInterval(interval);
   }, []);

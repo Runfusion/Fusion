@@ -431,6 +431,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const initializedRendererRef = useRef<TerminalRenderer>(terminalPreferences.renderer);
   /** Tracks a pending requestAnimationFrame for deferred xterm re-fit. */
   const pendingFitRef = useRef<number | null>(null);
+  /*
+  FNXC:Terminal 2026-06-22-09:00:
+  Docked-resize, floating-drag, and floating-resize each attach document pointer listeners (and docked schedules a rAF) for the duration of a drag. If the modal closes or the component unmounts mid-drag, those listeners + the pending frame would leak. Track the active drag teardown here and run it from the close/unmount effect.
+  */
+  const dragTeardownRef = useRef<(() => void) | null>(null);
   /** Tracks the previous projectId to detect project switches and invalidate xterm. */
   const previousProjectIdRef = useRef<string | undefined>(projectId);
 
@@ -514,6 +519,17 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       document.removeEventListener("pointermove", handlePointerMove);
       document.removeEventListener("pointerup", handlePointerUp);
       document.removeEventListener("pointercancel", handlePointerUp);
+      dragTeardownRef.current = null;
+    };
+
+    // FNXC:Terminal 2026-06-22-09:00: Unmount/close-mid-drag teardown cancels the pending rAF and removes the document listeners without persisting a partial drag.
+    dragTeardownRef.current = () => {
+      if (frame) cancelAnimationFrame(frame);
+      document.body.style.userSelect = previousUserSelect;
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
+      document.removeEventListener("pointercancel", handlePointerUp);
+      dragTeardownRef.current = null;
     };
 
     document.addEventListener("pointermove", handlePointerMove);
@@ -539,8 +555,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       document.removeEventListener("pointermove", handlePointerMove);
       document.removeEventListener("pointerup", handlePointerUp);
       document.removeEventListener("pointercancel", handlePointerUp);
+      dragTeardownRef.current = null;
     };
 
+    // FNXC:Terminal 2026-06-22-09:00: Unmount/close-mid-drag teardown removes the document listeners so a floating-drag never leaks them.
+    dragTeardownRef.current = handlePointerUp;
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
     document.addEventListener("pointercancel", handlePointerUp);
@@ -578,8 +597,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       document.removeEventListener("pointermove", handlePointerMove);
       document.removeEventListener("pointerup", handlePointerUp);
       document.removeEventListener("pointercancel", handlePointerUp);
+      dragTeardownRef.current = null;
     };
 
+    // FNXC:Terminal 2026-06-22-09:00: Unmount/close-mid-drag teardown removes the document listeners so a floating-resize never leaks them.
+    dragTeardownRef.current = handlePointerUp;
     document.addEventListener("pointermove", handlePointerMove);
     document.addEventListener("pointerup", handlePointerUp);
     document.addEventListener("pointercancel", handlePointerUp);
@@ -1118,9 +1140,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // (Input forwarding + window resize listener are wired inside initTerminal
   // so they share the xterm instance's lifetime — see comment there.)
 
+  // FNXC:Terminal 2026-06-22-09:00: Run any active drag teardown when the component unmounts mid-drag so document pointer listeners + the pending docked-resize rAF never outlive the modal.
+  useEffect(() => () => dragTeardownRef.current?.(), []);
+
   // Cleanup xterm when modal closes
   useEffect(() => {
     if (isOpen) return;
+
+    // A close mid-drag must also drop the active drag's document listeners + rAF.
+    dragTeardownRef.current?.();
 
     // Modal is closed - cleanup xterm
     if (xtermRef.current) {

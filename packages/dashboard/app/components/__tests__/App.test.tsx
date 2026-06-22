@@ -455,7 +455,7 @@ vi.mock("../../components/SettingsModal", async () => {
     );
   }
 
-  // FNXC:Settings 2026-06-22: Settings opens as an embedded main-content view (SettingsView) reusing the same body.
+  // FNXC:Settings 2026-06-22-12:00: Settings opens as an embedded main-content view (SettingsView) reusing the same body.
   return { SettingsModal: MockSettingsModal, SettingsView: MockSettingsModal };
 });
 

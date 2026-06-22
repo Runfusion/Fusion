@@ -11,6 +11,9 @@ The root is a query container (container-type: inline-size, container-name: dock
 
 FNXC:Files 2026-06-22-01:00:
 Breakpoint lowered 720px -> 640px and root forced to width:100%. The expand modal body has horizontal padding/overflow, so the root's content-box landed just under 720px at common laptop widths and the query never fired, leaving the pop-out stacked. 640px triggers two-pane for any realistic pop-out while staying above the narrow dock width.
+
+FNXC:RightDockFiles 2026-06-22-15:00:
+DETERMINISTIC replacement for the container query in the pop-out. The @container rule kept missing inside RightDockExpandModal (the root content-box measured under the breakpoint despite width:100%, because the modal body's flex/overflow context never gave the root the expected inline-size), so the pop-out stayed stacked. The expand host now passes `layout="two-pane"` -> `.dock-files-view--two-pane`, which forces the LEFT|RIGHT split with NO container-query gate. The @container path below is kept ONLY for the default `auto` (dock) layout.
 */
 .dock-files-view {
   display: flex;
@@ -24,12 +27,12 @@ Breakpoint lowered 720px -> 640px and root forced to width:100%. The expand moda
   the @container breakpoint never fired in the expand modal and the layout stayed stacked. Pair with width:100%.
   */
   width: 100%;
-  /* FNXC:Files — establish the query container so child panes can respond to the dock vs expand-modal width. */
+  /* FNXC:RightDockFiles 2026-06-22-12:00: establish the query container so child panes can respond to the dock vs expand-modal width. */
   container-type: inline-size;
   container-name: dock-files;
 }
 
-/* FNXC:Files — NARROW default: tree fills the root as the single panel. */
+/* FNXC:RightDockFiles 2026-06-22-12:00: NARROW default: tree fills the root as the single panel. */
 .dock-files-view__tree {
   display: flex;
   flex-direction: column;
@@ -39,7 +42,7 @@ Breakpoint lowered 720px -> 640px and root forced to width:100%. The expand moda
 }
 
 /*
-FNXC:Files — NARROW default: viewer is the stacked second panel.
+FNXC:RightDockFiles 2026-06-22-12:00: NARROW default: viewer is the stacked second panel.
 Hidden until a file is selected; when selected it overlays the tree as the single visible panel (the tree is hidden below).
 */
 .dock-files-view__viewer {
@@ -106,7 +109,7 @@ Hidden until a file is selected; when selected it overlays the tree as the singl
   color: var(--danger, var(--text));
 }
 
-/* FNXC:Files — empty-state placeholder shown in the wide right pane until a file is selected. */
+/* FNXC:RightDockFiles 2026-06-22-12:00: empty-state placeholder shown in the wide right pane until a file is selected. */
 .dock-files-viewer__empty {
   display: flex;
   align-items: center;
@@ -151,4 +154,42 @@ Both panes are always visible; data-selected no longer toggles visibility here.
   .dock-files-view__viewer .dock-files-viewer__back {
     display: none;
   }
+}
+
+/*
+FNXC:RightDockFiles 2026-06-22-15:00:
+DETERMINISTIC two-pane layout for the RightDockExpandModal pop-out. Driven by the `.dock-files-view--two-pane` modifier (DockFilesView layout="two-pane"), NOT by any @container width, so it always renders LEFT|RIGHT regardless of how the modal body measures the root's inline-size. Mirrors the @container rules above but unconditionally.
+- Tree pinned LEFT: clamped/resizable-feel fixed width, scrolls independently, divider against the viewer.
+- Viewer fills the RIGHT, scrolls independently, empty-state until a file is selected.
+- data-selected never toggles pane visibility here (both panes always visible); BACK is hidden because the tree never disappears.
+*/
+.dock-files-view--two-pane {
+  flex-direction: row;
+}
+
+.dock-files-view--two-pane .dock-files-view__tree {
+  display: flex;
+  flex: 0 0 clamp(220px, 32%, 360px);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+
+.dock-files-view--two-pane .dock-files-view__viewer,
+.dock-files-view--two-pane[data-selected="true"] .dock-files-view__viewer {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dock-files-view--two-pane[data-selected="true"] .dock-files-view__tree {
+  display: flex;
+}
+
+/* BACK is meaningless when the tree is always visible in the two-pane split. */
+.dock-files-view--two-pane .dock-files-view__viewer .dock-files-viewer__back {
+  display: none;
 }

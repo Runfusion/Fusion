@@ -731,9 +731,18 @@ actions wrap, candidate rows wrap, and logs/preview keep a bounded min-height. T
 vertically (.dev-server-view overflow-y:auto), so each panel just needs to be full-width and not overflow.
 */
 @container right-dock-body (max-width: 768px) {
+  /*
+  FNXC:DevServer 2026-06-22-15:30:
+  In the narrow right dock the view is a flex child of .right-dock__body. Force the single-column flex layout and make
+  the view the bounded vertical scroll owner (flex:1 + min-height:0 + overflow-y:auto, inherited from base) so a tall
+  panel scrolls within the dock instead of overflowing it.
+  */
   .dev-server-view {
     display: flex;
+    flex: 1;
     flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
     padding: 0 var(--space-md) var(--space-md);
   }
 

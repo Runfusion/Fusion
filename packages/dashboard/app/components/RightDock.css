@@ -148,9 +148,15 @@ container. NOTE: the wide right-dock expand modal is NOT this container, so its 
   container-name: right-dock-body;
 }
 
+/*
+FNXC:RightDockEmbedded 2026-06-22-15:30:
+The hosted view is a flex child of the dock body; without min-height:0 it cannot shrink below its content height, so a tall view (e.g. DevServerView) blows past the dock and its own overflow-y:auto never engages. min-height:0 + min-block-size:0 lets the child bound itself so the view (or the dock body) actually scrolls vertically.
+*/
 .right-dock__body > * {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  min-block-size: 0;
 }
 
 .right-dock-expand-modal {
@@ -199,6 +205,8 @@ wide child cannot collapse the flex line.
 .right-dock-expand-modal__body > * {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  min-block-size: 0;
 }
 
 @media (max-width: 768px) {

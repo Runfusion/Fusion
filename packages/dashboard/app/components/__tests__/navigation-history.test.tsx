@@ -181,7 +181,7 @@ vi.mock("../../components/SettingsModal", () => ({
       <button type="button" data-testid="settings-close-btn" onClick={onClose}>Close</button>
     </div>
   ),
-  // FNXC:Settings 2026-06-22: Settings now opens as an embedded main-content view (presentation="embedded").
+  // FNXC:Settings 2026-06-22-12:00: Settings now opens as an embedded main-content view (presentation="embedded").
   SettingsView: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="settings-view">
       <h2>Settings</h2>
@@ -429,7 +429,7 @@ describe("Navigation history integration", () => {
   }
 
   // 1. Desktop: opening Settings pushes a history entry
-  // FNXC:Settings 2026-06-22: Settings opens as an embedded main-content view (settings-view), not a modal overlay.
+  // FNXC:Settings 2026-06-22-12:00: Settings opens as an embedded main-content view (settings-view), not a modal overlay.
   it("pushes history entry when opening Settings view on desktop", async () => {
     await renderAppAndWait();
 

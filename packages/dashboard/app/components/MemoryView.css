@@ -77,11 +77,29 @@ After the header migrated to the shared .view-header (which is flex-shrink:0), t
   overflow-y: auto;
 }
 
+/*
+FNXC:MemoryView 2026-06-22-16:15:
+The Working Memory tab is BOTH the scroll owner (overflow-y:auto) and a flex column. Its non-editor siblings — the label/char-count action bar (.memory-action-bar) and the settings stack (.memory-config-section) — must never be flex-compressed by the greedy editor section. Flex children default to flex-shrink:1, so when .memory-editor-section claims flex:1 of the tab height, the siblings shrank below their natural height and their content overran into the next block: the "{n} characters" count overlapped the MEMORY FILE label, the file <select> struck through its divider, and the "Project Memory (Compressed)" header overlapped the card beneath it. Pinning the siblings to flex-shrink:0 keeps each block at its intrinsic height so they stack vertically and the tab scrolls instead of overlapping.
+*/
+.memory-action-bar,
+.memory-config-section {
+  flex-shrink: 0;
+}
+
 .memory-editor-section {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1;
+}
+
+/*
+FNXC:MemoryView 2026-06-22-16:15:
+Inside the editor section only .memory-editor-form-group is allowed to grow/shrink (it hosts the CodeMirror editor). The file-picker form-group and the layer summary must hold their natural height; otherwise the <select> and its hint collapse onto the divider line and look struck-through. Direct-child form-groups other than the editor one are pinned to flex-shrink:0.
+*/
+.memory-editor-section > .form-group:not(.memory-editor-form-group),
+.memory-editor-section > .memory-file-summary {
+  flex-shrink: 0;
 }
 
 .memory-editor-form-group {

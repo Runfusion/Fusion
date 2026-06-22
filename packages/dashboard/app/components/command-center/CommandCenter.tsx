@@ -108,8 +108,8 @@ interface CommandCenterProps {
   addToast?: (message: string, type?: ToastType) => void;
   nodesEnabled?: boolean;
   /*
-  FNXC:CommandCenter 2026-06-22-00:00:
-  The AI engine card (Team-tab Heartbeat control) offers "View Board"/"View Agents" shortcuts. Navigation is owned by App's view router, so thread an optional onChangeView down to TeamArea rather than letting the Command Center mutate routing state itself.
+  FNXC:CommandCenter 2026-06-22-15:30:
+  The Overview (Command Center landing) surfaces "View Board"/"View Agents" shortcuts directly under the Live activity snapshot (the engine-activity strip, the closest "AI engine" element on Overview). Navigation is owned by App's view router, so thread an optional onChangeView down to OverviewTab rather than letting the Command Center mutate routing state itself. Moved here from the Team-tab Heartbeat card (FN earlier).
   */
   onChangeView?: (view: TaskView) => void;
 }
@@ -124,6 +124,7 @@ function OverviewTab({
   onColorThemeChange = () => {},
   onThemeModeChange = () => {},
   onShadcnCustomColorsChange = () => {},
+  onChangeView,
 }: { range: DateRange } & CommandCenterProps) {
   const { t } = useTranslation("app");
   const tokens = useAnalyticsArea<TokenAnalytics>("/command-center/tokens?groupBy=model", range, {
@@ -373,6 +374,28 @@ function OverviewTab({
           />
         </div>
       </div>
+      {/*
+      FNXC:CommandCenter 2026-06-22-15:30:
+      "View Board" / "View Agents" shortcuts live on the Overview landing, directly under the Live activity snapshot (the engine-activity strip — the closest "AI engine" element on Overview). Moved here from the Team-tab Heartbeat card. Navigation is owned by App (onChangeView), so this row only renders when wired up. Reuses the .cc-team-engine-nav row styling.
+      */}
+      {onChangeView ? (
+        <div className="cc-overview-engine-nav" data-testid="command-center-overview-engine-nav">
+          <button
+            type="button"
+            className="btn btn-sm cc-overview-engine-nav-btn"
+            onClick={() => onChangeView("board")}
+          >
+            {t("commandCenter.controls.engine.viewBoard", "View Board")}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm cc-overview-engine-nav-btn"
+            onClick={() => onChangeView("agents")}
+          >
+            {t("commandCenter.controls.engine.viewAgents", "View Agents")}
+          </button>
+        </div>
+      ) : null}
       {hasOverviewChartData ? (
         /*
         FNXC:CommandCenter 2026-06-18-00:00:
@@ -528,6 +551,7 @@ export function CommandCenter({
             onColorThemeChange={onColorThemeChange}
             onThemeModeChange={onThemeModeChange}
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
+            onChangeView={onChangeView}
           />
         );
       case "tokens":
@@ -539,7 +563,7 @@ export function CommandCenter({
       case "productivity":
         return <ProductivityArea range={range} />;
       case "team":
-        return <TeamArea range={range} projectId={projectId} addToast={addToast} onChangeView={onChangeView} />;
+        return <TeamArea range={range} projectId={projectId} addToast={addToast} />;
       case "ecosystem":
         return <EcosystemArea range={range} />;
       case "github":

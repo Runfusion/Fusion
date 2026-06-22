@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Maximize2 } from "lucide-react";
 import {
   findOverflowViewEntry,
@@ -70,7 +70,6 @@ function persistRightDockView(key: OverflowViewKey): void {
 
 export interface RightDockProps {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
   renderProps: OverflowViewRenderProps;
   visibilityOptions?: OverflowViewVisibilityOptions;
   onExpand?: (key: OverflowViewKey) => void;
@@ -84,8 +83,8 @@ The right dock is an auxiliary tablet/desktop surface: it remembers the last ove
 FNXC:Navigation 2026-06-21-20:14:
 FN-6882 splits right-dock entries into launcher actions and inline views. Action tabs invoke their existing Header handlers without replacing the Files body; only inline entries persist selection or expand into the modal.
 
-FNXC:Navigation 2026-06-21-23:40:
-The right dock is persistent and visible by default on tablet/desktop project screens. Its in-dock collapse toggle replaces the removed Header right-dock toggle, keeping one far-right control surface while preserving a narrow rail for restoring the panel.
+FNXC:Navigation 2026-06-22-09:00:
+The right dock is visible by default on tablet/desktop project screens. Show/hide is owned solely by the canonical Header right-sidebar toggle (the in-dock collapse toggle was removed); the dock takes only `open` and renders null when closed so the main content reclaims the space.
 */
 export function RightDock({
   open,
@@ -97,6 +96,12 @@ export function RightDock({
   const entries = useMemo(() => getVisibleOverflowViewEntries(visibilityOptions), [visibilityOptions]);
   const [selectedKey, setSelectedKey] = useState<OverflowViewKey>(() => readStoredRightDockView(visibilityOptions));
   const [width, setWidth] = useState(readStoredRightDockWidth);
+  /*
+  FNXC:Navigation 2026-06-22-09:00:
+  The dock renders null while closed, so a resize drag that is still mid-flight when the dock closes (or the component unmounts) would leave document pointer listeners and a frozen body.userSelect behind. Store the active drag teardown in a ref and run it from an unmount-cleanup effect to plug that leak.
+  */
+  const resizeTeardownRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => resizeTeardownRef.current?.(), []);
 
   useEffect(() => {
     if (!isOverflowViewKeyVisible(selectedKey, visibilityOptions) || !isInlineOverflowViewKey(selectedKey, visibilityOptions)) {
@@ -132,6 +137,7 @@ export function RightDock({
     const startX = event.clientX;
     const startWidth = width;
     let latestWidth = startWidth;
+    const previousUserSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
 
     const onPointerMove = (moveEvent: PointerEvent) => {
@@ -140,18 +146,28 @@ export function RightDock({
       setWidth(nextWidth);
     };
 
-    const onPointerUp = (upEvent: PointerEvent) => {
-      if (typeof resizeHandle.releasePointerCapture === "function") {
+    /*
+    FNXC:Navigation 2026-06-22-09:00:
+    teardown restores body.userSelect, drops the document pointermove/up/cancel listeners, and persists the final width. It runs on pointerup, pointercancel (touch/pen interruption), and on unmount/dock-close via resizeTeardownRef so listeners never leak.
+    */
+    const teardown = (upEvent?: PointerEvent) => {
+      if (upEvent && typeof resizeHandle.releasePointerCapture === "function") {
         resizeHandle.releasePointerCapture(upEvent.pointerId);
       }
-      document.body.style.userSelect = "";
+      document.body.style.userSelect = previousUserSelect;
       document.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerUp);
+      resizeTeardownRef.current = null;
       persistRightDockWidth(latestWidth);
     };
 
+    const onPointerUp = (upEvent: PointerEvent) => teardown(upEvent);
+
+    resizeTeardownRef.current = () => teardown();
     document.addEventListener("pointermove", onPointerMove);
     document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerUp);
   }, [width]);
 
   const handleResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -170,7 +186,7 @@ export function RightDock({
 
   /*
   FNXC:Navigation 2026-06-22-00:00:
-  The right dock is no longer a persistent rail: when closed it renders nothing so the main content reclaims the space (the shell is flex, so a null dock simply reflows). The Header right-sidebar toggle is the canonical reopen control; the in-dock collapse toggle still hides the panel from inside.
+  The right dock is no longer a persistent rail: when closed it renders nothing so the main content reclaims the space (the shell is flex, so a null dock simply reflows). The Header right-sidebar toggle is the canonical show/hide control.
   */
   if (!open) {
     return null;

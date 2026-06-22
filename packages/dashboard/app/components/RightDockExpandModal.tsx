@@ -67,8 +67,12 @@ export function RightDockExpandModal({
             <X size={20} />
           </button>
         </div>
+        {/*
+        FNXC:RightDockFiles 2026-06-22-15:00:
+        Tag the render props with `surface="expand"` so registry entries (notably Files) deterministically choose their pop-out layout instead of guessing from a measured container width. DockFilesView reads this to force its LEFT|RIGHT two-pane layout.
+        */}
         <div className="right-dock-expand-modal__body" data-testid="right-dock-expand-body">
-          {entry.render(renderProps)}
+          {entry.render({ ...renderProps, surface: "expand" })}
         </div>
       </div>
     </div>

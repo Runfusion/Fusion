@@ -60,10 +60,14 @@ interface MailboxViewProps {
 
 const ALL_AGENTS_MAILBOX_ID = "__all_agents__";
 
-const MAILBOX_SIDEBAR_MIN_WIDTH = 280;
+/*
+FNXC:Mailbox 2026-06-22-16:00:
+The mailbox message-list pane defaults narrow and can be dragged narrower than before. Lowered min 280->180 and default 320->220 so the conversation list takes less horizontal room by default while the active-message pane gets more; users can still widen via the resize handle (persisted per project).
+*/
+const MAILBOX_SIDEBAR_MIN_WIDTH = 180;
 const MAILBOX_SIDEBAR_MAX_RATIO = 0.65;
 const MAILBOX_SIDEBAR_KEYBOARD_STEP = 16;
-const MAILBOX_SIDEBAR_DEFAULT_WIDTH = 320;
+const MAILBOX_SIDEBAR_DEFAULT_WIDTH = 220;
 
 function getMailboxSidebarMaxWidth(containerWidth: number): number {
   return Math.max(MAILBOX_SIDEBAR_MIN_WIDTH, containerWidth * MAILBOX_SIDEBAR_MAX_RATIO);

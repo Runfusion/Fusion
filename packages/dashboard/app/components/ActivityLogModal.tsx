@@ -1,6 +1,8 @@
-// ActivityLogModal styles (.activity-log-*, .activity-icon, etc.) currently live
-// in ScriptsModal.css. Until extracted, import that file so this eager modal is styled.
+// Base ActivityLogModal styles (.activity-log-*, .activity-icon, etc.) currently live
+// in ScriptsModal.css. Until fully extracted, import that file so this eager modal is styled.
 import "./ScriptsModal.css";
+// Embedded (right-dock) activity-log styles were extracted to their own file next to this component.
+import "./ActivityLogModal.css";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";

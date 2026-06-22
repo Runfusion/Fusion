@@ -23,7 +23,7 @@ vi.mock("../FileEditor", () => ({
 
 vi.mock("lucide-react", () => ({
   Loader2: () => <span data-testid="loader-icon" />,
-  // Brain backs the shared ViewHeader icon for the Memory view header (FNXC:Navigation 2026-06-22).
+  // Brain backs the shared ViewHeader icon for the Memory view header (FNXC:Navigation 2026-06-22-12:00).
   Brain: () => <span data-testid="icon-brain" />,
 }));
 
