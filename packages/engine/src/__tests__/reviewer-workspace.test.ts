@@ -96,13 +96,17 @@ afterEach(() => {
 });
 
 describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared loop both call sites use)", () => {
+  // FNXC:Workspace 2026-06-21-15:00: F7 — the per-repo callback is single-arg `(cwd)` now; tests map
+  // cwd→repo themselves (the loop no longer passes repoRel through to runForCwd).
+  const repoOfCwd = (cwd: string): string => (cwd === WT_A ? "repo-a" : cwd === WT_B ? "repo-b" : cwd);
+
   it("conjunction: two repos both APPROVE → aggregate APPROVE, one reviewer pass per repo cwd", async () => {
     const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
     const executor = workspaceExecutor(makeStore(task));
     const seen: string[] = [];
-    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string, repo: string) => {
+    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
       seen.push(cwd);
-      return { verdict: "APPROVE", review: `clean in ${repo}`, summary: `clean ${repo}` };
+      return { verdict: "APPROVE", review: `clean in ${repoOfCwd(cwd)}`, summary: `clean ${repoOfCwd(cwd)}` };
     });
     expect(seen).toEqual([WT_A, WT_B]); // one pass per sub-repo cwd, never ROOT
     expect(result.verdict).toBe("APPROVE");
@@ -113,7 +117,8 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
   it("conjunction: one repo REVISE → aggregate REVISE, tagged with the failing repo", async () => {
     const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
     const executor = workspaceExecutor(makeStore(task));
-    const result = await (executor as any).reviewWorkspacePerRepo(task, async (_cwd: string, repo: string) => {
+    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
+      const repo = repoOfCwd(cwd);
       return repo === "repo-b"
         ? { verdict: "REVISE", review: `bug in ${repo}`, summary: `revise ${repo}` }
         : { verdict: "APPROVE", review: `clean ${repo}`, summary: `clean ${repo}` };
@@ -122,6 +127,35 @@ describe("U2 KTD3 — reviewWorkspacePerRepo conjunction + tagging (the shared l
     expect(result.review).toContain("repo-b"); // finding repo-tagged
     expect(result.review).toContain("bug in repo-b");
     expect(result.summary).toMatch(/^repo-b:/);
+  });
+
+  // FNXC:Workspace 2026-06-21-15:00: F3 — break on the FIRST non-APPROVE repo.
+  it("F3: repo-a APPROVE + repo-b REVISE (no throw) → aggregate REVISE tagged repo-b", async () => {
+    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
+    const executor = workspaceExecutor(makeStore(task));
+    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
+      const repo = repoOfCwd(cwd);
+      return repo === "repo-a"
+        ? { verdict: "APPROVE", review: "clean repo-a", summary: "clean a" }
+        : { verdict: "REVISE", review: "bug repo-b", summary: "revise b" };
+    });
+    expect(result.verdict).toBe("REVISE");
+    expect(result.summary).toMatch(/^repo-b:/);
+  });
+
+  it("F3: repo-a REVISE + repo-b throws → REVISE preserved (break before repo-b; NOT masked to UNAVAILABLE)", async () => {
+    const task = makeTask({ workspaceWorktrees: TWO_REPO_WORKTREES });
+    const executor = workspaceExecutor(makeStore(task));
+    const seen: string[] = [];
+    const result = await (executor as any).reviewWorkspacePerRepo(task, async (cwd: string) => {
+      seen.push(cwd);
+      if (cwd === WT_B) throw new Error("repo-b reviewer blew up");
+      return { verdict: "REVISE", review: "bug repo-a", summary: "revise a" };
+    });
+    // repo-a recorded the first non-APPROVE and the loop BROKE, so repo-b's reviewer is never invoked.
+    expect(seen).toEqual([WT_A]);
+    expect(result.verdict).toBe("REVISE");
+    expect(result.summary).toMatch(/^repo-a:/);
   });
 
   it("zero-acquire workspace task → UNAVAILABLE (caller routes; no fabricated APPROVE)", async () => {

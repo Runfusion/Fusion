@@ -82,6 +82,12 @@ import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
+// FNXC:Workspace 2026-06-21-15:00: F5/F8 — wire in the previously dead workspace-path helpers.
+// `normalizeRepoRelPath` is the single shared scope-path normalizer (F8); `deriveRepoScopeSubset`
+// maps the task's repo-prefixed declared File Scope to a repo-LOCAL subset so the per-repo scope-leak
+// filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
+// executor→workspace-paths edge (workspace-paths imports nothing).
+import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./workspace-paths.js";
 import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type WorktreePool } from "./worktree-pool.js";
 import { attemptBranchAutocorrect } from "./branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree-backend.js";
@@ -592,13 +598,14 @@ export interface WorkflowRevisionFeedbackPartition {
 const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
 const WORKFLOW_FEEDBACK_PATH_REGEX = /`([^`\n]+)`|(?<![A-Za-z0-9_.-])((?:\.\.?\/)?(?:@?[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+(?:\.[A-Za-z0-9._-]+)?)/g;
 
+// FNXC:Workspace 2026-06-21-15:00: F8 — delegate to the single shared normalizer (workspace-paths.ts).
+// Was a near-duplicate that did NOT strip a leading slash and only collapsed a single trailing slash;
+// the shared `normalizeRepoRelPath` additionally strips leading slashes and collapses repeated trailing
+// slashes. For repo-relative inputs (the only inputs in practice) the result is unchanged; the extra
+// canonicalization only hardens absolute/trailing-slash edge cases so workspace and non-workspace scope
+// matching agree. Kept as a thin alias so existing call sites stay put.
 function normalizeWorkflowScopePath(pathValue: string): string {
-  return pathValue
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\//, "")
-    .replace(/\/+/g, "/")
-    .replace(/\/$/, "");
+  return normalizeRepoRelPath(pathValue);
 }
 
 function stripTrailingPathPunctuation(pathValue: string): string {
@@ -10563,7 +10570,10 @@ export class TaskExecutor {
     // Phase A returned a flat {ok:true} stub here (no root worktree to verify against the non-git root). Phase B iterates every `task.workspaceWorktrees` entry, asserting (a) the sub-repo worktree's git toplevel matches the recorded repo.worktreePath and (b) its HEAD is on the recorded `fusion/<id>` branch (repo.branch). The result union is PRESERVED EXACTLY — `{ok:true} | {ok:false; reason:'wrong_toplevel'|'wrong_branch'|'no_commits'; observed; expected}` — because the :10889 consumer switches on `reason` to drive requeue/handoff (:10894-10936). We ADD an optional `repo` field to the failure shape (purely additive; the consumer only reads reason/observed/expected) and return the FIRST failing repo. A zero-acquire workspace task (empty map) verifies vacuously → {ok:true}, matching Phase A so fn_task_done does not requeue it.
     if (this.workspaceConfig) {
       const workspaceWorktrees = task.workspaceWorktrees ?? {};
-      for (const [repoRel, repo] of Object.entries(workspaceWorktrees)) {
+      // FNXC:Workspace 2026-06-21-15:00: F6 — iterate sorted repo keys so the FIRST failing repo
+      // returned here is deterministic across runs/rehydrate (the value is surfaced to the operator).
+      for (const repoRel of Object.keys(workspaceWorktrees).sort()) {
+        const repo = workspaceWorktrees[repoRel];
         const expectedBranch = repo.branch || canonicalFusionBranchName(task.id);
         // Skip git checks if the worktree dir is gone (mirrors the singular FN-009 carve-out below): completion does not require a live worktree on disk.
         if (!existsSync(repo.worktreePath)) {
@@ -10873,29 +10883,74 @@ export class TaskExecutor {
     // against `worktreePath`. In workspace mode `worktreePath` is the browse-only non-git workspace
     // root, so both silently return [] (git failures swallowed) and the uncommitted-in-scope block
     // never fires — a workspace task could complete with off-scope changes in any sub-repo. So we
-    // ITERATE every acquired sub-repo (cwd = repo.worktreePath, base = repo.baseCommitSha),
-    // repo-prefix each repo's touched files (`<repoRel>/<file>`) so they compare against the task's
-    // repo-prefixed declared File Scope, and block on the FIRST repo carrying off-scope changes —
-    // naming the repo. The task-level preamble above (scopeOverride / declaredScope / enforcementMode)
-    // is shared and runs once. Return shape is preserved: `{blocked:false} | {blocked:true; message}`.
+    // ITERATE every acquired sub-repo (cwd = repo.worktreePath, base = repo.baseCommitSha) and block
+    // on the FIRST repo carrying off-scope changes — naming the repo. The task-level preamble above
+    // (scopeOverride / declaredScope / enforcementMode) is shared and runs once. Return shape is
+    // preserved: `{blocked:false} | {blocked:true; message}`.
+    //
+    // FNXC:Workspace 2026-06-21-15:00: F1/F2/F5/F6 hardening of the per-repo scope-leak guard.
+    // F5 (false-block fix + dead-code wiring + single filter surface): we previously repo-prefixed each
+    // touched file (`${repoRel}/${file}`) BEFORE filtering, so `isAlwaysAllowedScopeLeakPath`'s
+    // `startsWith(".changeset/")` carve-out never matched a sub-repo changeset (`repo-a/.changeset/x.md`)
+    // and a legit per-repo changeset was wrongly flagged off-scope → fn_task_done wrongly REFUSED. Now we
+    // derive each repo's repo-LOCAL declared-scope subset (`deriveRepoScopeSubset`) and run the SAME
+    // `workflowPathMatchesDeclaredScope` + `isAlwaysAllowedScopeLeakPath` filter the non-workspace path
+    // uses against the repo-LOCAL touched file — one filter surface, not two. This wires in the formerly
+    // dead `deriveRepoScopeSubset`/`splitRepoScopedPath` helpers.
+    // F1 (fail CLOSED on throw): each repo iteration is wrapped in its own try/catch (like the
+    // attribution-audit loop). A thrown capture/diff error in workspace mode surfaces as a BLOCK naming
+    // the repo instead of bubbling to the outer `.catch()` that fails OPEN — an incomplete scope check
+    // must never let fn_task_done proceed.
+    // F2 (scoped-but-zero-acquire): a scoped task that acquired NO sub-repo worktrees aggregates zero
+    // off-scope files and would silently pass; we block it (scope is declared but unverifiable).
+    // F6 (deterministic ordering): iterate sorted repo keys so the reported offending repo is stable
+    // across runs/rehydrate.
     let touchedFiles: string[];
     let offendingRepo: string | undefined;
     if (this.workspaceConfig) {
       const workspaceWorktrees = task.workspaceWorktrees ?? {};
+      const repoKeys = Object.keys(workspaceWorktrees).sort();
+      // F2: declaredScope is non-empty here (the `declaredScope.length === 0` early-return above
+      // handled the unscoped case). A scoped task that acquired no sub-repo worktrees cannot have its
+      // scope verified at all — refuse rather than silently passing scope enforcement.
+      if (repoKeys.length === 0) {
+        const message = "workspace task declares File Scope but acquired no sub-repo worktrees — cannot verify scope";
+        executorLog.warn(`${task.id}: [scope-leak] ${message}`);
+        await this.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, this.getRunContextFor(task.id));
+        return { blocked: true, message };
+      }
       const aggregatedOffScope: string[] = [];
-      for (const [repoRel, repo] of Object.entries(workspaceWorktrees)) {
-        const [repoUncommitted, repoCommitted] = await Promise.all([
-          this.captureUncommittedModifiedFiles(repo.worktreePath),
-          this.captureModifiedFiles(repo.worktreePath, repo.baseCommitSha, task.id, audit, "scope-leak-guard"),
-        ]);
-        const repoTouched = [...new Set([...repoUncommitted, ...repoCommitted])].map((f) => `${repoRel}/${f}`);
-        const repoOffScope = repoTouched
-          .filter((filePath) => !workflowPathMatchesDeclaredScope(filePath, declaredScope))
-          .filter((filePath) => !isAlwaysAllowedScopeLeakPath(filePath));
-        if (repoOffScope.length > 0) {
-          // First offending repo wins (mirrors verifyWorktreeInvariants' first-failing-repo return).
-          if (!offendingRepo) offendingRepo = repoRel;
-          aggregatedOffScope.push(...repoOffScope);
+      for (const repoRel of repoKeys) {
+        const repo = workspaceWorktrees[repoRel];
+        try {
+          const [repoUncommitted, repoCommitted] = await Promise.all([
+            this.captureUncommittedModifiedFiles(repo.worktreePath),
+            this.captureModifiedFiles(repo.worktreePath, repo.baseCommitSha, task.id, audit, "scope-leak-guard"),
+          ]);
+          // Repo-LOCAL touched files (no `${repoRel}/` prefix) so the always-allowed `.changeset/`
+          // carve-out and the scope match operate as the reviewer/cwd=repo sees them (F5).
+          const repoTouched = [...new Set([...repoUncommitted, ...repoCommitted])];
+          // Repo-LOCAL declared-scope subset for THIS repo (prefix stripped). Same filter as the
+          // non-workspace branch below — one surface.
+          const repoScopeSubset = deriveRepoScopeSubset(declaredScope, repoRel);
+          const repoOffScope = repoTouched
+            .filter((filePath) => !workflowPathMatchesDeclaredScope(filePath, repoScopeSubset))
+            .filter((filePath) => !isAlwaysAllowedScopeLeakPath(filePath))
+            // Re-prefix the surviving off-scope files for the operator-facing message/attribution.
+            .map((filePath) => `${repoRel}/${filePath}`);
+          if (repoOffScope.length > 0) {
+            // First offending repo wins (mirrors verifyWorktreeInvariants' first-failing-repo return).
+            if (!offendingRepo) offendingRepo = repoRel;
+            aggregatedOffScope.push(...repoOffScope);
+          }
+        } catch (repoErr: unknown) {
+          // F1: fail CLOSED. A capture/diff throw means scope is UNVERIFIED for this repo; refuse
+          // fn_task_done as a precaution rather than letting the outer `.catch()` fail open.
+          const errMessage = repoErr instanceof Error ? repoErr.message : String(repoErr);
+          const message = `workspace scope-leak guard failed to evaluate (${repoRel}/${errMessage}) — refusing fn_task_done as a precaution`;
+          executorLog.warn(`${task.id}: [scope-leak] ${message}`);
+          await this.store.logEntry(task.id, `[scope-leak] ${message}`, undefined, this.getRunContextFor(task.id));
+          return { blocked: true, message };
         }
       }
       touchedFiles = aggregatedOffScope;
@@ -12455,11 +12510,21 @@ ${failureFeedback}
     source = "post-session",
   ): Promise<string[]> {
     const workspaceWorktrees = task.workspaceWorktrees ?? {};
+    // FNXC:Workspace 2026-06-21-15:00: F4/F6 — per-repo error isolation + deterministic ordering.
+    // F4: an unexpected throw from one repo's `captureModifiedFiles` must NOT escape and skip the
+    // downstream `updateTask({modifiedFiles})` write — that would leave `task.modifiedFiles` empty and
+    // blind the merge file audit. Wrap each per-repo call (log + continue), mirroring the post-session
+    // branch-attribution loop. F6: iterate sorted repo keys so aggregation order is stable across runs.
     const aggregated: string[] = [];
-    for (const [repoRel, repo] of Object.entries(workspaceWorktrees)) {
-      const repoFiles = await this.captureModifiedFiles(repo.worktreePath, repo.baseCommitSha, task.id, audit, source);
-      for (const file of repoFiles) {
-        aggregated.push(`${repoRel}/${file}`);
+    for (const repoRel of Object.keys(workspaceWorktrees).sort()) {
+      const repo = workspaceWorktrees[repoRel];
+      try {
+        const repoFiles = await this.captureModifiedFiles(repo.worktreePath, repo.baseCommitSha, task.id, audit, source);
+        for (const file of repoFiles) {
+          aggregated.push(`${repoRel}/${file}`);
+        }
+      } catch (repoErr: unknown) {
+        executorLog.warn(`${task.id}: per-repo modified-file capture failed for ${repoRel}: ${repoErr instanceof Error ? repoErr.message : String(repoErr)}`);
       }
     }
     return aggregated;
@@ -12483,12 +12548,18 @@ ${failureFeedback}
    * UNAVAILABLE retry) is unchanged.
    */
   private async reviewWorkspacePerRepo(
+    // FNXC:Workspace 2026-06-21-15:00: F7 — drop the dead `repoRel` callback param.
+    // Both call sites bind `(cwd) => runForCwd(cwd)` and discard the second arg, so the type wrongly
+    // implied repo identity is observable inside `runForCwd`. Removed until a real consumer needs it
+    // (Phase C). The loop below still tags findings with `repoRel` from its own iteration key.
     task: Task,
-    invokeForCwd: (cwd: string, repoRel: string) => Promise<ReviewResult>,
+    invokeForCwd: (cwd: string) => Promise<ReviewResult>,
   ): Promise<ReviewResult> {
     const workspaceWorktrees = task.workspaceWorktrees ?? {};
-    const entries = Object.entries(workspaceWorktrees);
-    if (entries.length === 0) {
+    // FNXC:Workspace 2026-06-21-15:00: F6 — sort repo keys so the reported FIRST failing repo is
+    // deterministic across runs/rehydrate.
+    const repoKeys = Object.keys(workspaceWorktrees).sort();
+    if (repoKeys.length === 0) {
       // No acquired worktree — surface UNAVAILABLE so the caller routes it rather than
       // fabricating an authoritative APPROVE for an un-reviewable workspace task.
       return {
@@ -12501,13 +12572,19 @@ ${failureFeedback}
     const reviewSections: string[] = [];
     const summarySections: string[] = [];
     let firstFailing: { repo: string; result: ReviewResult } | undefined;
-    for (const [repoRel, repo] of entries) {
-      const result = await invokeForCwd(repo.worktreePath, repoRel);
+    for (const repoRel of repoKeys) {
+      const repo = workspaceWorktrees[repoRel];
+      const result = await invokeForCwd(repo.worktreePath);
       // Tag every per-repo finding with its sub-repo so downstream readers attribute it correctly.
       reviewSections.push(`### [${repoRel}] ${result.verdict}\n${result.review}`);
       summarySections.push(`[${repoRel}] ${result.verdict}: ${result.summary}`);
-      if (result.verdict !== "APPROVE" && !firstFailing) {
+      if (result.verdict !== "APPROVE") {
+        // FNXC:Workspace 2026-06-21-15:00: F3 — BREAK on the first non-APPROVE repo.
+        // The contract is "the FIRST non-APPROVE repo's verdict becomes the aggregate". Without the
+        // break, a LATER repo's reviewer throwing would discard this already-determined REVISE/RETHINK
+        // and the caller would see UNAVAILABLE — masking the real verdict. Stop at the first failure.
         firstFailing = { repo: repoRel, result };
+        break;
       }
     }
 
@@ -12524,8 +12601,8 @@ ${failureFeedback}
     // Every sub-repo approved → the task is reviewed (conjunction satisfied).
     return {
       verdict: "APPROVE",
-      review: `All ${entries.length} sub-repo(s) approved. Per-repo verdicts:\n\n${reviewSections.join("\n\n")}`,
-      summary: `APPROVE across ${entries.length} sub-repo(s): ${summarySections.join(" | ")}`,
+      review: `All ${repoKeys.length} sub-repo(s) approved. Per-repo verdicts:\n\n${reviewSections.join("\n\n")}`,
+      summary: `APPROVE across ${repoKeys.length} sub-repo(s): ${summarySections.join(" | ")}`,
     };
   }
 

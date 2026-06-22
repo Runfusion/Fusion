@@ -164,6 +164,77 @@ describeIfGit("U2 KTD4 — per-repo scope-leak guard in fn_task_done", () => {
     const result = await (executor as any).evaluateTaskDoneScopeLeak(task, fx.rootDir, PROMPT, SETTINGS);
     expect(result.blocked).toBe(false);
   });
+
+  // FNXC:Workspace 2026-06-21-15:00: F5 — per-repo `.changeset/` carve-out honored in workspace mode.
+  // A legit sub-repo changeset (`repo-a/.changeset/x.md`) must NOT be flagged off-scope: the always-allowed
+  // filter now runs against the repo-LOCAL remainder (`.changeset/x.md`), so the carve-out matches. Before
+  // the fix the file was prefixed BEFORE filtering, the `.changeset/` startsWith never matched, and
+  // fn_task_done was wrongly REFUSED.
+  it("F5: a sub-repo `.changeset/` file is NOT flagged off-scope (always-allowed honored)", async () => {
+    fx = await createWorkspaceFixture();
+    const a = addRepoWorktree(fx, "repo-a", "src/a.ts");
+    const b = addRepoWorktree(fx, "repo-b", "src/b.ts");
+    // A per-repo changeset OUTSIDE the declared `repo-a/src/**` scope — only the always-allowed
+    // carve-out can keep this from being a leak.
+    mkdirSync(path.join(a.worktreePath, ".changeset"), { recursive: true });
+    writeFileSync(path.join(a.worktreePath, ".changeset", "tidy-foo.md"), "---\n'@x': patch\n---\n", "utf-8");
+    execSync("git add .changeset/tidy-foo.md", { cwd: a.worktreePath, stdio: "pipe" });
+    const store = createStore(["repo-a/src/**", "repo-b/src/**"]);
+    const executor = workspaceExecutor(fx, store);
+    const task = makeTask({
+      branch: BRANCH,
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: a.worktreePath, branch: BRANCH, baseCommitSha: a.baseCommitSha },
+        "repo-b": { worktreePath: b.worktreePath, branch: BRANCH, baseCommitSha: b.baseCommitSha },
+      },
+    });
+
+    const result = await (executor as any).evaluateTaskDoneScopeLeak(task, fx.rootDir, PROMPT, SETTINGS);
+    expect(result.blocked).toBe(false);
+  });
+
+  // FNXC:Workspace 2026-06-21-15:00: F2 — scoped task that acquired ZERO sub-repo worktrees is blocked.
+  // declaredScope is non-empty but `workspaceWorktrees` is empty → scope cannot be verified at all. The
+  // guard must refuse fn_task_done rather than silently aggregating zero off-scope files and passing.
+  it("F2: scoped task with zero acquired worktrees → blocked (cannot verify scope)", async () => {
+    fx = await createWorkspaceFixture();
+    const store = createStore(["repo-a/src/**"]);
+    const executor = workspaceExecutor(fx, store);
+    const task = makeTask({ branch: BRANCH, workspaceWorktrees: {} });
+
+    const result = await (executor as any).evaluateTaskDoneScopeLeak(task, fx.rootDir, PROMPT, SETTINGS);
+    expect(result.blocked).toBe(true);
+    expect(result.message).toContain("acquired no sub-repo worktrees");
+  });
+
+  // FNXC:Workspace 2026-06-21-15:00: F1 — fail CLOSED on a mid-loop capture throw.
+  // If one repo's capture throws (scope is UNVERIFIED for that repo), the guard must BLOCK naming the
+  // repo — not let the outer `.catch()` fail open and proceed with an incomplete scope check.
+  it("F1: a mid-loop capture throw → blocked (fail-closed), names the repo", async () => {
+    fx = await createWorkspaceFixture();
+    const a = addRepoWorktree(fx, "repo-a", "src/a.ts");
+    const b = addRepoWorktree(fx, "repo-b", "src/b.ts");
+    const store = createStore(["repo-a/src/**", "repo-b/src/**"]);
+    const executor = workspaceExecutor(fx, store);
+    // Narrow seam: force the per-repo uncommitted capture to throw for repo-a's worktree only.
+    const realCapture = (executor as any).captureUncommittedModifiedFiles.bind(executor);
+    vi.spyOn(executor as any, "captureUncommittedModifiedFiles").mockImplementation(async (wt: unknown) => {
+      if (wt === a.worktreePath) throw new Error("simulated capture failure");
+      return realCapture(wt as string);
+    });
+    const task = makeTask({
+      branch: BRANCH,
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: a.worktreePath, branch: BRANCH, baseCommitSha: a.baseCommitSha },
+        "repo-b": { worktreePath: b.worktreePath, branch: BRANCH, baseCommitSha: b.baseCommitSha },
+      },
+    });
+
+    const result = await (executor as any).evaluateTaskDoneScopeLeak(task, fx.rootDir, PROMPT, SETTINGS);
+    expect(result.blocked).toBe(true);
+    expect(result.message).toContain("repo-a");
+    expect(result.message).toContain("refusing fn_task_done");
+  });
 });
 
 describeIfGit("U2 KTD4 — per-repo worktree-invariant verify in fn_task_done", () => {

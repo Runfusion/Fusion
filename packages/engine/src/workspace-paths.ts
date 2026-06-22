@@ -10,13 +10,11 @@ Matching rule: canonicalize the path to forward-slash relative segments, then pi
 /** Sentinel returned when a path does not belong to any configured sub-repo. */
 export const UNSCOPED_REPO = "unscoped" as const;
 
-/**
- * Normalize a workspace-relative path token to forward-slash form with no leading
- * `./`, no leading/trailing slashes, and collapsed duplicate slashes. Mirrors the
- * executor's `normalizeWorkflowScopePath` shape so File-Scope tokens and modified
- * files compare consistently, but kept local to avoid an executor import cycle.
- */
-function normalizeRepoRelPath(value: string): string {
+/*
+FNXC:Workspace 2026-06-21-15:00:
+F8 — single normalize helper. The executor previously kept its own `normalizeWorkflowScopePath` that was a near-duplicate of this function, differing only in leading-slash stripping (`/^\/+/` here vs none there) and trailing-slash greediness (`/\/+$/` here vs `/\/$/` there). Two slightly-different normalizers meant an absolute or trailing-slash-laden path could derive a different scope key in the two code paths. We promote THIS (more aggressive: strips leading slash + collapses repeated trailing slashes) to the single exported normalizer and have the executor import it for scope-path normalization, so workspace and non-workspace scope matching canonicalize identically. workspace-paths.ts stays dependency-light (imports nothing), so executor→workspace-paths is a one-way, acyclic edge.
+*/
+export function normalizeRepoRelPath(value: string): string {
   return value
     .trim()
     .replace(/\\/g, "/")
