@@ -5771,11 +5771,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       const steps = await this.parseStepsFromPrompt(task.id);
       return steps.length > 0 ? { ...task, steps } : task;
     }));
-    const archivedTasks = includeArchived && (!columnFilter || columnFilter === "archived")
-      ? this.archiveDb.list().map((entry) => this.archiveEntryToTask(entry, slim))
-      : [];
-    const tasks = [...activeTasks, ...archivedTasks];
-
+    const archivedTasks = includeArchived && (!columnFilter || columnFilter === "archived") ? this.archiveDb.list().map((entry) => this.archiveEntryToTask(entry, slim)) : [];
+    // FNXC:BoardConsistency 2026-06-21-08:34: FN-6851's cache-sync fix is primary; listTasks still collapses duplicate storage sources so one task ID cannot render in two columns. Active SQLite rows are authoritative over archive snapshots.
+    const tasksById = new Map<string, Task>(activeTasks.map((task) => [task.id, task]));
+    for (const task of archivedTasks) if (!tasksById.has(task.id)) tasksById.set(task.id, task);
+    const tasks = [...tasksById.values()];
     // Sort by createdAt, then by numeric ID suffix for tie-breaking
     const sorted = tasks.sort((a, b) => {
       const cmp = a.createdAt.localeCompare(b.createdAt);
@@ -5788,10 +5788,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     const offset = Math.max(0, options?.offset ?? 0);
     const limit = options?.limit;
 
-    if (limit === undefined) {
-      return sorted.slice(offset);
-    }
-
+    if (limit === undefined) return sorted.slice(offset);
     return sorted.slice(offset, offset + Math.max(0, limit));
   }
 
@@ -7763,7 +7760,6 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     }
   }
 
-
   async updateTaskDependencies(
     id: string,
     mutation: TaskDependencyMutation,
@@ -7922,6 +7918,8 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         },
       };
       await this.atomicWriteTaskJsonWithAudit(dir, task, auditEvent);
+      // FNXC:BoardConsistency 2026-06-21-08:31: updateTaskDependencies' todo→triage re-spec move can also carry title/blocker changes, and leaving taskCache on the pre-move row made watch/SSE/board consumers surface one task ID in two columns (FN-6851/FN-6812). Sync the cache after the authoritative write like sibling mutation paths.
+      if (this.isWatching) this.taskCache.set(id, { ...task });
       if (movedToTriage) {
         this.emit("task:moved", { task, from: "todo" as Column, to: "triage" as Column, source: "engine" });
       }
